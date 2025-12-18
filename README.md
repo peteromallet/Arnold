@@ -103,9 +103,30 @@ CREATE TABLE dev_tasks (
   area TEXT,
   notes TEXT,
   commit_hash TEXT,
+  execution_details JSONB,
   created_at TIMESTAMPTZ DEFAULT now(),
   completed_at TIMESTAMPTZ
 );
+```
+
+**Existing users:** Add the execution_details column with:
+```sql
+ALTER TABLE dev_tasks ADD COLUMN execution_details JSONB;
+```
+
+The `execution_details` column stores Claude Code usage stats:
+```json
+{
+  "num_turns": 5,
+  "total_cost_usd": 0.15,
+  "duration_ms": 45000,
+  "usage": {
+    "input_tokens": 12000,
+    "output_tokens": 3500,
+    "cache_creation_input_tokens": 5000,
+    "cache_read_input_tokens": 8000
+  }
+}
 ```
 
 | Status | Meaning |

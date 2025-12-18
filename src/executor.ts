@@ -11,6 +11,7 @@ import type {
   ClaudeCodeResult,
   GitPushResult,
   NotifyCallback,
+  ExecutionDetails,
 } from './types.js';
 
 const PROJECT_DIR = `${config.executor.workspaceDir}/${config.github.repoName}`;
@@ -265,7 +266,7 @@ class TaskExecutor {
 
         // Task completed successfully
         const devNotes = result.devNotes || 'Completed successfully.';
-        await updateTaskStatus(task.id, 'done', devNotes, pushResult.commitHash || null);
+        await updateTaskStatus(task.id, 'done', devNotes, pushResult.commitHash || null, result.executionDetails);
 
         let pushInfo: string;
         if (pushResult.success) {
@@ -277,7 +278,11 @@ class TaskExecutor {
           pushInfo = `\n\n⚠️ Changes committed locally but push failed: ${pushResult.message}`;
         }
 
-        this.notify(`✅ **Done:** ${task.title}${pushInfo}\n\`${task.id}\``);
+        // Include cost in notification
+        const costInfo = result.executionDetails?.total_cost_usd 
+          ? `\n💰 $${result.executionDetails.total_cost_usd.toFixed(4)}` 
+          : '';
+        this.notify(`✅ **Done:** ${task.title}${pushInfo}${costInfo}\n\`${task.id}\``);
         logger.info('Task completed', { taskId: task.id, pushed: pushResult.success });
       } else {
         // Task failed - mark as stuck
@@ -343,7 +348,7 @@ class TaskExecutor {
    */
   private runClaudeCode(prompt: string): Promise<ClaudeCodeResult> {
     return new Promise((resolve) => {
-      const args = ['-p', prompt, '--permission-mode', 'bypassPermissions'];
+      const args = ['-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'json'];
 
       logger.debug('Spawning Claude Code', { workingDir: PROJECT_DIR });
 
@@ -376,9 +381,13 @@ class TaskExecutor {
         logger.info('Claude Code exited', { code, stdoutLen: stdout.length, stderrLen: stderr.length });
 
         if (code === 0) {
+          // Parse JSON output to extract usage stats
+          const { executionDetails, result } = this.parseClaudeCodeOutput(stdout);
+          
           resolve({
             success: true,
-            devNotes: this.extractDevNotes(stdout),
+            devNotes: this.extractDevNotes(result || stdout),
+            executionDetails,
           });
         } else {
           const errorText = stderr || stdout || '';
@@ -421,6 +430,41 @@ class TaskExecutor {
         }
       }, config.executor.taskTimeoutMs);
     });
+  }
+
+  /**
+   * Parse Claude Code JSON output to extract usage stats
+   */
+  private parseClaudeCodeOutput(output: string): { executionDetails?: ExecutionDetails; result?: string } {
+    try {
+      const json = JSON.parse(output);
+      
+      const executionDetails: ExecutionDetails = {
+        num_turns: json.num_turns,
+        total_cost_usd: json.total_cost_usd,
+        duration_ms: json.duration_ms,
+        usage: json.usage ? {
+          input_tokens: json.usage.input_tokens,
+          output_tokens: json.usage.output_tokens,
+          cache_creation_input_tokens: json.usage.cache_creation_input_tokens,
+          cache_read_input_tokens: json.usage.cache_read_input_tokens,
+        } : undefined,
+      };
+      
+      const result = json.result || undefined;
+      
+      logger.info('Claude Code usage', { 
+        numTurns: executionDetails.num_turns,
+        costUsd: executionDetails.total_cost_usd,
+        durationMs: executionDetails.duration_ms,
+      });
+      
+      return { executionDetails, result };
+    } catch {
+      // Not JSON or parse error - return empty
+      logger.debug('Could not parse Claude Code output as JSON');
+      return {};
+    }
   }
 
   /**

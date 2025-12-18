@@ -161,7 +161,7 @@ export async function searchTasks(filters: TaskSearchFilters): Promise<Task[]> {
 }
 
 /**
- * Update task status with optional notes and commit hash
+ * Update task status with optional notes, commit hash, and execution details
  * Used by executor when completing tasks
  */
 export async function updateTaskStatus(
@@ -169,6 +169,7 @@ export async function updateTaskStatus(
   status: TaskStatus,
   notes?: string | null,
   commitHash?: string | null,
+  executionDetails?: object | null,
 ): Promise<void> {
   const updates: Record<string, unknown> = { status };
 
@@ -184,6 +185,10 @@ export async function updateTaskStatus(
     updates.commit_hash = commitHash;
   }
 
+  if (executionDetails !== undefined && executionDetails !== null) {
+    updates.execution_details = executionDetails;
+  }
+
   const { error } = await supabase.from('dev_tasks').update(updates).eq('id', taskId);
 
   if (error) {
@@ -191,7 +196,7 @@ export async function updateTaskStatus(
     throw new ExternalServiceError('supabase', `Failed to update task status: ${error.message}`);
   }
 
-  logger.info('Task status updated', { taskId, status });
+  logger.info('Task status updated', { taskId, status, hasCostData: !!executionDetails });
 }
 
 /**

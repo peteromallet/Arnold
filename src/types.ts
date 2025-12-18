@@ -14,6 +14,21 @@ export type UserStatus = 'queued' | 'upcoming' | TaskStatus;
 export type TaskArea = 'ui' | 'api' | 'backend' | 'frontend' | 'database' | 'tools' | 'docs' | 'infra' | string;
 
 /**
+ * Execution details from Claude Code
+ */
+export interface ExecutionDetails {
+  num_turns?: number;
+  total_cost_usd?: number;
+  duration_ms?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+}
+
+/**
  * A development task from the dev_tasks table
  */
 export interface Task {
@@ -24,6 +39,7 @@ export interface Task {
   area: TaskArea | null;
   notes: string | null;
   commit_hash: string | null;
+  execution_details: ExecutionDetails | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -87,6 +103,8 @@ export interface ClaudeCodeResult {
   devNotes?: string | null;
   error?: string;
   isSystemError?: boolean;
+  /** Full execution details from Claude Code */
+  executionDetails?: ExecutionDetails;
 }
 
 /**
