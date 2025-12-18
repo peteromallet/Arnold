@@ -77,7 +77,7 @@ ${historyText}`;
   const actions: ToolAction[] = [];
   let finalReply: string | null = null;
   let iterations = 0;
-  const maxIterations = 5;
+  const maxIterations = 10;
 
   const systemPrompt = buildSystemPrompt();
   const tools = getToolSchemas();
