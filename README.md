@@ -14,22 +14,32 @@ A Discord bot that manages development tasks using natural language. Talk to it 
 
 ```bash
 npm install
+npm run build
 cp .env.example .env  # Fill in your keys
 npm start
+```
+
+## Development
+
+```bash
+npm run dev       # Build and run with watch mode
+npm run typecheck # Type check without emitting
+npm run build     # Compile TypeScript to dist/
 ```
 
 ## Environment Variables
 
 ### Required
+
 | Variable | Description |
 |----------|-------------|
 | `DISCORD_TOKEN` | Discord bot token |
-| `DISCORD_USER_ID` | Your Discord user ID (restricts who can use the bot) |
 | `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
 
 ### For Executor
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `GITHUB_API_KEY` | GitHub PAT for pushing commits | - |
@@ -42,9 +52,12 @@ npm start
 | `GIT_USER_EMAIL` | Git commit email | bot@example.com |
 
 ### Optional
+
 | Variable | Description |
 |----------|-------------|
+| `DISCORD_USER_ID` | Restrict commands to this user ID |
 | `GROQ_API_KEY` | Groq API key for voice transcription |
+| `NODE_ENV` | Set to `production` for JSON logging |
 
 ## Usage
 
@@ -72,6 +85,7 @@ The bot understands context and can chain actions (search → update → reply).
    - Pushes to GitHub
    - Saves dev notes and commit hash to the task
 4. Notifies you in Discord when done or stuck
+5. Gracefully shuts down on SIGTERM/SIGINT (waits for current task)
 
 ## Task Schema
 
@@ -113,26 +127,73 @@ CREATE TABLE dev_tasks (
 1. Push to GitHub (don't commit `.env`)
 2. [Railway](https://railway.app) → New Project → Deploy from GitHub
 3. Add environment variables in Railway dashboard
-4. Railway auto-detects Node.js and runs `npm start`
+4. Set build command: `npm run build`
+5. Set start command: `npm start`
 
 **Note:** On Railway, the executor clones the target repo into `WORKSPACE_DIR`. Set `CLAUDE_PATH` to the installed location (usually works without setting it).
 
 ## Architecture
 
 ```
-Arnold (this bot)          Target Repo (e.g., Reigh)
-├── src/
-│   ├── bot.js            → Discord message handling
-│   ├── taskParser.js     → Claude AI for understanding messages
-│   ├── executor.js       → Runs Claude Code on tasks
-│   ├── supabase.js       → Database operations
-│   └── transcribe.js     → Voice note transcription
-│
-│   Clones & works on:
-│   └── /tmp/workspace/Reigh/
-│       ├── structure.md  ← Claude Code reads this first
-│       └── structure_docs/
+src/
+├── bot.ts              → Discord message handling + graceful shutdown
+├── agent.ts            → Claude AI conversation loop
+├── tools/
+│   ├── index.ts        → Tool registry and dispatcher
+│   ├── types.ts        → Tool type definitions
+│   ├── tasks.ts        → create_task, update_task, search_tasks
+│   ├── executor.ts     → start_executor, stop_executor, get_executor_status
+│   └── reply.ts        → reply tool
+├── executor.ts         → Claude Code task runner
+├── supabase.ts         → Database operations
+├── transcribe.ts       → Voice note transcription (Groq Whisper)
+├── config.ts           → Validated environment config
+├── logger.ts           → Structured logging (JSON in prod)
+├── errors.ts           → Typed error classes
+└── types.ts            → Shared TypeScript types
 ```
+
+### Adding a New Tool
+
+1. Create `src/tools/mytool.ts`:
+
+```typescript
+import type { RegisteredTool } from './types.js';
+
+export const myTool: RegisteredTool = {
+  name: 'my_tool',
+  schema: {
+    name: 'my_tool',
+    description: 'Does something useful',
+    input_schema: {
+      type: 'object',
+      properties: {
+        param: { type: 'string', description: 'A parameter' },
+      },
+      required: ['param'],
+    },
+  },
+  handler: async (input, context) => {
+    // Do something
+    return { success: true, action: 'my_tool', message: 'Done!' };
+  },
+};
+```
+
+2. Register in `src/tools/index.ts`:
+
+```typescript
+import { myTool } from './mytool.js';
+
+const allTools: RegisteredTool[] = [
+  ...taskTools,
+  ...executorTools,
+  replyTool,
+  myTool,  // Add here
+];
+```
+
+3. The tool is automatically available to Claude and documented in the system prompt.
 
 ## License
 
