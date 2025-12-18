@@ -35,7 +35,7 @@ npm run build     # Compile TypeScript to dist/
 |----------|-------------|
 | `DISCORD_TOKEN` | Discord bot token |
 | `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
-| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_URL` | Supabase project URL (see [Task Schema](#task-schema) below) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
 
 ### For Executor
