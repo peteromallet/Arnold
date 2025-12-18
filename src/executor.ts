@@ -278,11 +278,7 @@ class TaskExecutor {
           pushInfo = `\n\n⚠️ Changes committed locally but push failed: ${pushResult.message}`;
         }
 
-        // Include cost in notification
-        const costInfo = result.executionDetails?.total_cost_usd 
-          ? `\n💰 $${result.executionDetails.total_cost_usd.toFixed(4)}` 
-          : '';
-        this.notify(`✅ **Done:** ${task.title}${pushInfo}${costInfo}\n\`${task.id}\``);
+        this.notify(`✅ **Done:** ${task.title}${pushInfo}\n\`${task.id}\``);
         logger.info('Task completed', { taskId: task.id, pushed: pushResult.success });
       } else {
         // Task failed - mark as stuck

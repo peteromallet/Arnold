@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.js';
 import { taskTools } from './tasks.js';
 import { executorTools } from './executor.js';
+import { statsTools } from './stats.js';
 import { replyTool } from './reply.js';
 import type { RegisteredTool, ToolContext } from './types.js';
 import type { ToolResult } from '../types.js';
@@ -15,6 +16,7 @@ export type { RegisteredTool, ToolContext, ToolHandler } from './types.js';
 const allTools: RegisteredTool[] = [
   ...taskTools,
   ...executorTools,
+  ...statsTools,
   replyTool,
 ];
 

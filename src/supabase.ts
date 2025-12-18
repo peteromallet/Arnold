@@ -240,3 +240,125 @@ export async function resetInProgressTasks(): Promise<number> {
   }
   return count;
 }
+
+/**
+ * Usage statistics result
+ */
+export interface UsageStats {
+  period: string;
+  startDate: string;
+  endDate: string;
+  totalTasks: number;
+  completedTasks: number;
+  stuckTasks: number;
+  totalCostUsd: number;
+  totalTokens: number;
+  avgCostPerTask: number;
+  avgTokensPerTask: number;
+  tasksByStatus: Record<string, number>;
+  tasksByArea: Record<string, number>;
+}
+
+/**
+ * Get usage statistics for a time period
+ */
+export async function getUsageStats(
+  period: 'today' | 'yesterday' | 'week' | 'month' | 'all',
+  customStartDate?: string,
+  customEndDate?: string,
+): Promise<UsageStats> {
+  // Calculate date range based on period
+  const now = new Date();
+  let startDate: Date;
+  let endDate: Date = now;
+  let periodLabel: string = period;
+
+  switch (period) {
+    case 'today':
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      break;
+    case 'yesterday':
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      break;
+    case 'week':
+      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      periodLabel = 'Last 7 days';
+      break;
+    case 'month':
+      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      periodLabel = 'Last 30 days';
+      break;
+    case 'all':
+      startDate = new Date(0); // Beginning of time
+      periodLabel = 'All time';
+      break;
+    default:
+      startDate = customStartDate ? new Date(customStartDate) : new Date(0);
+      endDate = customEndDate ? new Date(customEndDate) : now;
+      periodLabel = `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`;
+  }
+
+  // Query tasks in the date range
+  let query = supabase.from('dev_tasks').select('*');
+
+  if (period !== 'all') {
+    query = query
+      .gte('created_at', startDate.toISOString())
+      .lt('created_at', endDate.toISOString());
+  }
+
+  const { data: tasks, error } = await query;
+
+  if (error) {
+    logger.error('Failed to get usage stats', error);
+    throw new ExternalServiceError('supabase', `Failed to get usage stats: ${error.message}`);
+  }
+
+  // Calculate aggregates
+  let totalCostUsd = 0;
+  let totalTokens = 0;
+  const tasksByStatus: Record<string, number> = {};
+  const tasksByArea: Record<string, number> = {};
+
+  for (const task of tasks || []) {
+    // Count by status
+    tasksByStatus[task.status] = (tasksByStatus[task.status] || 0) + 1;
+
+    // Count by area
+    const area = task.area || 'unspecified';
+    tasksByArea[area] = (tasksByArea[area] || 0) + 1;
+
+    // Sum execution details if available
+    if (task.execution_details) {
+      const details = task.execution_details as { total_cost_usd?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } };
+      totalCostUsd += details.total_cost_usd || 0;
+      
+      if (details.usage) {
+        totalTokens += details.usage.input_tokens || 0;
+        totalTokens += details.usage.output_tokens || 0;
+        totalTokens += details.usage.cache_creation_input_tokens || 0;
+        totalTokens += details.usage.cache_read_input_tokens || 0;
+      }
+    }
+  }
+
+  const totalTasks = tasks?.length || 0;
+  const completedTasks = tasksByStatus['done'] || 0;
+  const stuckTasks = tasksByStatus['stuck'] || 0;
+
+  return {
+    period: periodLabel,
+    startDate: startDate.toISOString(),
+    endDate: endDate.toISOString(),
+    totalTasks,
+    completedTasks,
+    stuckTasks,
+    totalCostUsd,
+    totalTokens,
+    avgCostPerTask: totalTasks > 0 ? totalCostUsd / totalTasks : 0,
+    avgTokensPerTask: totalTasks > 0 ? totalTokens / totalTasks : 0,
+    tasksByStatus,
+    tasksByArea,
+  };
+}
