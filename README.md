@@ -65,19 +65,22 @@ DM the bot or use `!task` prefix in a server. Just talk naturally:
 
 ```
 "add a task to fix the login bug"
-"start working on tasks"
 "what's the status?"
 "find the homepage task and mark it done"
-"stop"
+"stop"                                    # pause execution
+"start"                                   # resume execution
 ```
+
+The executor runs automatically on startup - tasks with status `todo` are picked up immediately. Use "stop" to pause execution and "start" to resume.
 
 The bot understands context and can chain actions (search → update → reply).
 
 ## How the Executor Works
 
-1. Tell Arnold to "start" or "go"
-2. It polls Supabase for tasks with status `todo`
-3. For each task:
+The executor starts automatically when Arnold launches. It continuously polls for tasks:
+
+1. Polls Supabase for tasks with status `todo`
+2. For each task:
    - Pulls latest from git
    - Runs Claude Code with the task details
    - Claude Code reads `structure.md` to understand the codebase

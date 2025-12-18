@@ -5,7 +5,23 @@ import { toUserMessage } from './errors.js';
 import { parseTask } from './agent.js';
 import { transcribeAudio, isTranscriptionAvailable } from './transcribe.js';
 import { executor } from './executor.js';
-import type { ConversationMessage } from './types.js';
+import type { ConversationMessage, NotifyCallback } from './types.js';
+
+// Store the last channel used for notifications
+let notifyChannel: TextChannel | null = null;
+
+/**
+ * Get the current notify callback (uses last active channel)
+ */
+function getNotifyCallback(): NotifyCallback {
+  return (msg: string) => {
+    if (notifyChannel) {
+      notifyChannel.send(msg).catch((err) => logger.error('Failed to send notification', err));
+    } else {
+      logger.info('Notification (no channel)', { message: msg });
+    }
+  };
+}
 
 // Create Discord client
 const client = new Client({
@@ -131,8 +147,8 @@ async function handleMessage(message: Message): Promise<void> {
     return;
   }
 
-  // Store notify channel for executor callbacks
-  const notifyChannel = message.channel as TextChannel;
+  // Store notify channel for executor callbacks (updates the global)
+  notifyChannel = message.channel as TextChannel;
 
   // Fetch conversation history
   const conversationHistory = await fetchConversationHistory(message);
@@ -150,9 +166,7 @@ async function handleMessage(message: Message): Promise<void> {
       preview: taskDescription.substring(0, 50),
     });
 
-    const result = await parseTask(taskDescription, conversationHistory, (msg) => {
-      notifyChannel.send(msg).catch((err) => logger.error('Failed to send notification', err));
-    });
+    const result = await parseTask(taskDescription, conversationHistory, getNotifyCallback());
 
     logger.debug('Parse result', { actionsCount: result.actions.length, hasReply: !!result.reply });
 
@@ -223,13 +237,25 @@ async function shutdown(signal: string): Promise<void> {
 }
 
 // Register event handlers
-client.once(Events.ClientReady, (c) => {
+client.once(Events.ClientReady, async (c) => {
   logger.info('Bot ready', { tag: c.user.tag });
 
   if (config.discord.allowedUserId) {
     logger.info('User restriction enabled', { allowedUserId: config.discord.allowedUserId });
   } else {
     logger.warn('No DISCORD_USER_ID set - accepting commands from anyone');
+  }
+
+  // Auto-start the executor
+  try {
+    const result = await executor.start(getNotifyCallback());
+    if (result.success) {
+      logger.info('Executor auto-started');
+    } else {
+      logger.error('Failed to auto-start executor', undefined, { message: result.message });
+    }
+  } catch (error) {
+    logger.error('Error auto-starting executor', error instanceof Error ? error : undefined);
   }
 });
 

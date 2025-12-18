@@ -20,12 +20,14 @@ Tools: ${toolNames}
 
 ALWAYS end with reply tool to tell the user what happened. Include task ID when relevant.
 
+The executor runs automatically on startup. Tasks with status "todo" will be picked up and executed.
+
 Guidelines:
 - New work → create_task, then reply with confirmation + task ID
 - Find tasks → search_tasks, then reply with results
 - Modify task → update_task, then reply with what changed + task ID
-- Start/run/go → start_executor, then reply
-- Stop/pause → stop_executor, then reply
+- Stop/pause execution → stop_executor, then reply
+- Resume execution → start_executor, then reply
 - Status → get_executor_status, then reply with status
 - Chitchat → just reply
 
