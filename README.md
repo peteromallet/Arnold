@@ -89,6 +89,8 @@ The bot understands context and can chain actions (search → update → reply).
 
 ## Task Schema
 
+Arnold requires a Supabase database with the following table. Create this in your Supabase SQL editor:
+
 ```sql
 CREATE TABLE dev_tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
