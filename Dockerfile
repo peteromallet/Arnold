@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y \
 # Install Claude Code CLI globally
 RUN npm install -g @anthropic-ai/claude-code
 
+# Create non-root user for security (required for Claude Code bypassPermissions)
+RUN useradd -m -s /bin/bash arnold
+RUN mkdir -p /tmp/workspace && chown arnold:arnold /tmp/workspace
+
 # Set working directory
 WORKDIR /app
 
@@ -28,6 +32,12 @@ RUN npm run build
 
 # Remove devDependencies to slim down
 RUN npm prune --production
+
+# Change ownership to arnold user
+RUN chown -R arnold:arnold /app
+
+# Switch to non-root user
+USER arnold
 
 # Set environment
 ENV NODE_ENV=production
