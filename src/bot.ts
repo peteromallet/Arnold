@@ -343,6 +343,18 @@ client.once(Events.ClientReady, async (c) => {
   } catch (error) {
     logger.error('Error auto-starting executor', error instanceof Error ? error : undefined);
   }
+
+  // Send startup notification to allowed user
+  if (config.discord.allowedUserId) {
+    try {
+      const user = await c.users.fetch(config.discord.allowedUserId);
+      const dm = await user.createDM();
+      await dm.send('🤖 Arnold has restarted and is ready.');
+      logger.info('Sent startup notification');
+    } catch (error) {
+      logger.error('Failed to send startup notification', error instanceof Error ? error : undefined);
+    }
+  }
 });
 
 client.on(Events.MessageCreate, (message) => {
