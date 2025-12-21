@@ -228,12 +228,30 @@ class TaskExecutor {
           return;
         }
 
-        // Task completed successfully - Claude Code handled git operations
-        const devNotes = result.devNotes || 'Completed successfully.';
-        await updateTaskStatus(task.id, 'done', devNotes, null, result.executionDetails);
+        // Verify commit was pushed if a hash was provided
+        let pushInfo = '';
+        if (result.commitHash) {
+          const verified = this.verifyCommitPushed(result.commitHash);
+          const shortHash = result.commitHash.substring(0, 7);
+          const commitUrl = `https://github.com/${config.github.repoOwner}/${config.github.repoName}/commit/${result.commitHash}`;
+          
+          if (verified) {
+            pushInfo = `\n\n🔗 Pushed [\`${shortHash}\`](${commitUrl}) to \`${config.github.repoBranch}\``;
+            logger.info('Commit verified on remote', { commitHash: result.commitHash });
+          } else {
+            pushInfo = `\n\n⚠️ Commit \`${shortHash}\` was not found on remote - push may have failed`;
+            logger.warn('Commit not found on remote', { commitHash: result.commitHash });
+          }
+        } else {
+          pushInfo = '\n\n📝 No commit was made';
+        }
 
-        this.notify(`✅ **Done:** ${task.title}\n\`${task.id}\``);
-        logger.info('Task completed', { taskId: task.id });
+        // Task completed successfully
+        const devNotes = result.devNotes || 'Completed successfully.';
+        await updateTaskStatus(task.id, 'done', devNotes, result.commitHash || null, result.executionDetails);
+
+        this.notify(`✅ **Done:** ${task.title}${pushInfo}\n\`${task.id}\``);
+        logger.info('Task completed', { taskId: task.id, commitHash: result.commitHash });
       } else {
         // Task failed - mark as stuck
         logger.error('Task failed', undefined, { taskId: task.id, error: result.error });
@@ -324,8 +342,12 @@ class TaskExecutor {
       '  - Resolve any rebase conflicts',
       '  - Then push again',
       '',
-      '### Step 5: Dev Notes',
-      'At the very end, output dev notes in this format:',
+      '### Step 5: Report Results',
+      'At the very end, output the commit hash and dev notes in this format:',
+      '',
+      'COMMIT_HASH_START',
+      '[The full commit hash that was pushed, or "none" if no commit was made]',
+      'COMMIT_HASH_END',
       '',
       'DEV_NOTES_START',
       '- What files were changed and why',
@@ -387,6 +409,7 @@ class TaskExecutor {
             success: true,
             devNotes: this.extractDevNotes(outputText),
             flaggedReason: this.extractFlaggedReason(outputText),
+            commitHash: this.extractCommitHash(outputText),
             executionDetails,
           });
         } else {
@@ -503,6 +526,57 @@ class TaskExecutor {
     }
 
     return null;
+  }
+
+  /**
+   * Extract commit hash from Claude Code output
+   */
+  private extractCommitHash(output: string): string | null {
+    const startMarker = 'COMMIT_HASH_START';
+    const endMarker = 'COMMIT_HASH_END';
+
+    const startIdx = output.indexOf(startMarker);
+    const endIdx = output.indexOf(endMarker);
+
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      const hash = output.substring(startIdx + startMarker.length, endIdx).trim();
+      // Return null if "none" or empty
+      if (!hash || hash.toLowerCase() === 'none') {
+        return null;
+      }
+      // Validate it looks like a git hash (7-40 hex chars)
+      if (/^[a-f0-9]{7,40}$/i.test(hash)) {
+        return hash;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Verify that a commit exists on the remote
+   */
+  private verifyCommitPushed(commitHash: string): boolean {
+    try {
+      // Fetch latest refs from remote
+      execSync('git fetch origin', {
+        cwd: PROJECT_DIR,
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+
+      // Check if commit exists on remote branch
+      const result = execSync(`git branch -r --contains ${commitHash}`, {
+        cwd: PROJECT_DIR,
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+
+      return result.includes(`origin/${config.github.repoBranch}`);
+    } catch (error) {
+      logger.warn('Failed to verify commit on remote', { commitHash, error: error instanceof Error ? error.message : String(error) });
+      return false;
+    }
   }
 
   /**

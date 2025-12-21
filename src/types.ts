@@ -107,6 +107,8 @@ export interface ClaudeCodeResult {
   executionDetails?: ExecutionDetails;
   /** If task was flagged as potentially harmful, the reason */
   flaggedReason?: string | null;
+  /** The git commit hash that was pushed */
+  commitHash?: string | null;
 }
 
 /**
