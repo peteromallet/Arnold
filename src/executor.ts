@@ -476,13 +476,32 @@ class TaskExecutor {
         if (code === 0) {
           // Parse JSON output to extract usage stats
           const { executionDetails, result } = this.parseClaudeCodeOutput(stdout);
-          const outputText = result || stdout;
+          
+          // Search for markers in both result AND full stdout (markers might be in earlier turns)
+          const outputText = result || '';
+          const fullOutput = stdout;
+          
+          // Debug: log what we're extracting from
+          logger.debug('Extracting results', { 
+            hasResult: !!result, 
+            resultLength: result?.length || 0,
+            stdoutLength: stdout.length,
+            resultHasCommitMarker: outputText.includes('COMMIT_HASH'),
+            stdoutHasCommitMarker: fullOutput.includes('COMMIT_HASH'),
+            resultHasDevNotesMarker: outputText.includes('DEV_NOTES'),
+            stdoutHasDevNotesMarker: fullOutput.includes('DEV_NOTES'),
+          });
+          
+          // Try to extract from result first, then fall back to full stdout
+          const devNotes = this.extractDevNotes(outputText) || this.extractDevNotes(fullOutput);
+          const flaggedReason = this.extractFlaggedReason(outputText) || this.extractFlaggedReason(fullOutput);
+          const commitHash = this.extractCommitHash(outputText) || this.extractCommitHash(fullOutput);
           
           resolve({
             success: true,
-            devNotes: this.extractDevNotes(outputText),
-            flaggedReason: this.extractFlaggedReason(outputText),
-            commitHash: this.extractCommitHash(outputText),
+            devNotes,
+            flaggedReason,
+            commitHash,
             executionDetails,
           });
         } else {
