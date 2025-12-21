@@ -11,6 +11,95 @@ import type { ConversationMessage, NotifyCallback } from './types.js';
 let notifyChannel: TextChannel | null = null;
 
 /**
+ * Natural typing indicator that simulates human-like typing behavior
+ * - Starts after a random delay (0.5-2s)
+ * - Randomly pauses and resumes
+ * - Stops when stop() is called
+ */
+class NaturalTypingIndicator {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private channel: any;
+  private running = false;
+  private timeoutId: NodeJS.Timeout | null = null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  constructor(channel: any) {
+    this.channel = channel;
+  }
+
+  /**
+   * Start the typing indicator with natural delays
+   */
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    
+    // Random initial delay: 500ms - 2000ms
+    const initialDelay = 500 + Math.random() * 1500;
+    this.timeoutId = setTimeout(() => this.typeLoop(), initialDelay);
+  }
+
+  /**
+   * Stop the typing indicator
+   */
+  stop(): void {
+    this.running = false;
+    if (this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = null;
+    }
+  }
+
+  /**
+   * Internal typing loop with random pauses
+   */
+  private async typeLoop(): Promise<void> {
+    if (!this.running) return;
+
+    // Send typing indicator if channel supports it
+    if (typeof this.channel?.sendTyping === 'function') {
+      try {
+        await this.channel.sendTyping();
+      } catch {
+        // Ignore errors (channel might be unavailable)
+      }
+    }
+
+    if (!this.running) return;
+
+    // Random behavior: 70% chance to continue typing, 30% chance to pause
+    const shouldPause = Math.random() < 0.3;
+    
+    if (shouldPause) {
+      // Pause for 1-3 seconds, then resume
+      const pauseDuration = 1000 + Math.random() * 2000;
+      this.timeoutId = setTimeout(() => this.typeLoop(), pauseDuration);
+    } else {
+      // Continue typing - Discord typing lasts ~10s, so refresh every 5-8s
+      const typingDuration = 5000 + Math.random() * 3000;
+      this.timeoutId = setTimeout(() => this.typeLoop(), typingDuration);
+    }
+  }
+}
+
+/**
+ * Run an async operation with natural typing indicator
+ */
+async function withTypingIndicator<T>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  channel: any,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const typing = new NaturalTypingIndicator(channel);
+  typing.start();
+  try {
+    return await operation();
+  } finally {
+    typing.stop();
+  }
+}
+
+/**
  * Get the current notify callback (uses last active channel)
  */
 function getNotifyCallback(): NotifyCallback {
@@ -124,16 +213,12 @@ async function handleMessage(message: Message): Promise<void> {
     });
 
     try {
-      if ('sendTyping' in message.channel) {
-        await message.channel.sendTyping();
-      }
-
-      // Download the audio file
-      const response = await fetch(voiceAttachment.url);
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
-
-      // Transcribe it
-      taskDescription = await transcribeAudio(audioBuffer, voiceAttachment.name || 'audio.ogg');
+      // Transcribe with natural typing indicator
+      taskDescription = await withTypingIndicator(message.channel, async () => {
+        const response = await fetch(voiceAttachment.url);
+        const audioBuffer = Buffer.from(await response.arrayBuffer());
+        return transcribeAudio(audioBuffer, voiceAttachment.name || 'audio.ogg');
+      });
       logger.info('Voice note transcribed', { preview: taskDescription.substring(0, 50) });
     } catch (error) {
       logger.error('Transcription failed', error instanceof Error ? error : undefined);
@@ -155,18 +240,15 @@ async function handleMessage(message: Message): Promise<void> {
   logger.debug('Conversation context loaded', { messageCount: conversationHistory.length });
 
   try {
-    // Show typing indicator
-    if ('sendTyping' in message.channel) {
-      await message.channel.sendTyping();
-    }
-
-    // Parse and execute with Claude
+    // Parse and execute with Claude (with natural typing indicator)
     logger.info('Processing message', {
       userId: message.author.id,
       preview: taskDescription.substring(0, 50),
     });
 
-    const result = await parseTask(taskDescription, conversationHistory, getNotifyCallback());
+    const result = await withTypingIndicator(message.channel, () =>
+      parseTask(taskDescription, conversationHistory, getNotifyCallback())
+    );
 
     logger.debug('Parse result', { actionsCount: result.actions.length, hasReply: !!result.reply });
 
