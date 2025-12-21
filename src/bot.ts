@@ -28,15 +28,14 @@ class NaturalTypingIndicator {
   }
 
   /**
-   * Start the typing indicator with natural delays
+   * Start the typing indicator immediately
    */
   start(): void {
     if (this.running) return;
     this.running = true;
     
-    // Random initial delay: 500ms - 2000ms
-    const initialDelay = 500 + Math.random() * 1500;
-    this.timeoutId = setTimeout(() => this.typeLoop(), initialDelay);
+    // Start typing immediately - no initial delay
+    this.typeLoop();
   }
 
   /**
@@ -239,16 +238,18 @@ async function handleMessage(message: Message): Promise<void> {
   const conversationHistory = await fetchConversationHistory(message);
   logger.debug('Conversation context loaded', { messageCount: conversationHistory.length });
 
+  // Start typing indicator immediately and keep it running until reply is sent
+  const typing = new NaturalTypingIndicator(message.channel);
+  typing.start();
+
   try {
-    // Parse and execute with Claude (with natural typing indicator)
+    // Parse and execute with Claude
     logger.info('Processing message', {
       userId: message.author.id,
       preview: taskDescription.substring(0, 50),
     });
 
-    const result = await withTypingIndicator(message.channel, () =>
-      parseTask(taskDescription, conversationHistory, getNotifyCallback())
-    );
+    const result = await parseTask(taskDescription, conversationHistory, getNotifyCallback());
 
     logger.debug('Parse result', { actionsCount: result.actions.length, hasReply: !!result.reply });
 
@@ -266,7 +267,7 @@ async function handleMessage(message: Message): Promise<void> {
       replyParts.push(result.reply);
     }
 
-    // Send the combined response
+    // Send the combined response (typing indicator still running)
     if (replyParts.length > 0) {
       const finalReply = replyParts.join('\n\n---\n\n');
       // Discord has a 2000 char limit
@@ -283,6 +284,9 @@ async function handleMessage(message: Message): Promise<void> {
       userId: message.author.id,
     });
     await message.reply(`❌ Something went wrong: ${toUserMessage(error)}`);
+  } finally {
+    // Stop typing indicator after reply is sent
+    typing.stop();
   }
 }
 
