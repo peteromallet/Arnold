@@ -16,6 +16,36 @@ import type {
 const PROJECT_DIR = `${config.executor.workspaceDir}/${config.github.repoName}`;
 
 /**
+ * Redact sensitive information from strings (tokens, keys, etc.)
+ */
+function redactSecrets(text: string): string {
+  let redacted = text;
+  
+  // Redact GitHub token from URLs
+  if (config.github.token) {
+    redacted = redacted.replace(new RegExp(config.github.token, 'g'), '[REDACTED]');
+  }
+  
+  // Redact Anthropic API key
+  if (config.anthropic.apiKey) {
+    redacted = redacted.replace(new RegExp(config.anthropic.apiKey, 'g'), '[REDACTED]');
+  }
+  
+  // Redact Supabase service role key
+  if (config.supabase.serviceRoleKey) {
+    redacted = redacted.replace(new RegExp(config.supabase.serviceRoleKey, 'g'), '[REDACTED]');
+  }
+  
+  // Redact common secret patterns (API keys, tokens)
+  redacted = redacted.replace(/sk-[a-zA-Z0-9]{20,}/g, '[REDACTED]');
+  redacted = redacted.replace(/ghp_[a-zA-Z0-9]{36}/g, '[REDACTED]');
+  redacted = redacted.replace(/gho_[a-zA-Z0-9]{36}/g, '[REDACTED]');
+  redacted = redacted.replace(/github_pat_[a-zA-Z0-9_]{22,}/g, '[REDACTED]');
+  
+  return redacted;
+}
+
+/**
  * Task executor that polls for and executes tasks using Claude Code
  */
 class TaskExecutor {
@@ -175,7 +205,11 @@ class TaskExecutor {
       this.repoReady = true;
       return true;
     } catch (error) {
-      logger.error('Failed to setup repository', error instanceof Error ? error : undefined);
+      // Redact secrets from error message before logging
+      const safeError = error instanceof Error 
+        ? new Error(redactSecrets(error.message))
+        : undefined;
+      logger.error('Failed to setup repository', safeError);
       return false;
     }
   }
@@ -388,13 +422,15 @@ class TaskExecutor {
       proc.stdout.on('data', (data: Buffer) => {
         const text = data.toString();
         stdout += text;
-        logger.debug('Claude Code output', { text: text.substring(0, 200) });
+        // Redact secrets before logging
+        logger.debug('Claude Code output', { text: redactSecrets(text.substring(0, 200)) });
       });
 
       proc.stderr.on('data', (data: Buffer) => {
         const text = data.toString();
         stderr += text;
-        logger.debug('Claude Code stderr', { text: text.substring(0, 200) });
+        // Redact secrets before logging
+        logger.debug('Claude Code stderr', { text: redactSecrets(text.substring(0, 200)) });
       });
 
       proc.on('close', (code) => {
@@ -426,17 +462,18 @@ class TaskExecutor {
 
           resolve({
             success: false,
-            error: errorText || `Exit code ${code}`,
+            // Redact any secrets from error messages
+            error: redactSecrets(errorText) || `Exit code ${code}`,
             isSystemError,
           });
         }
       });
 
       proc.on('error', (err) => {
-        logger.error('Failed to spawn Claude Code', err);
+        logger.error('Failed to spawn Claude Code', new Error(redactSecrets(err.message)));
         resolve({
           success: false,
-          error: `Failed to run Claude Code: ${err.message}`,
+          error: `Failed to run Claude Code: ${redactSecrets(err.message)}`,
           isSystemError: true,
         });
       });
@@ -574,7 +611,7 @@ class TaskExecutor {
 
       return result.includes(`origin/${config.github.repoBranch}`);
     } catch (error) {
-      logger.warn('Failed to verify commit on remote', { commitHash, error: error instanceof Error ? error.message : String(error) });
+      logger.warn('Failed to verify commit on remote', { commitHash, error: redactSecrets(error instanceof Error ? error.message : String(error)) });
       return false;
     }
   }
