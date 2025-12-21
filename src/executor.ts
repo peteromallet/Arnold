@@ -436,7 +436,8 @@ class TaskExecutor {
   private runClaudeCode(prompt: string): Promise<ClaudeCodeResult> {
     return new Promise((resolve) => {
       // CI=true env var enables non-interactive mode
-      const args = ['-p', prompt, '--output-format', 'json'];
+      // --permission-mode bypassPermissions allows automated execution without approval prompts
+      const args = ['-p', prompt, '--output-format', 'json', '--permission-mode', 'bypassPermissions'];
 
       logger.debug('Spawning Claude Code', { workingDir: PROJECT_DIR });
 
