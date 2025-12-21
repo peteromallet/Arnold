@@ -2,14 +2,13 @@ import { spawn, execSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { GitError, ExecutorBusyError, ExecutorNotRunningError } from './errors.js';
+import { ExecutorBusyError, ExecutorNotRunningError } from './errors.js';
 import { getNextTodoTask, updateTaskStatus, resetInProgressTasks } from './supabase.js';
 import type {
   Task,
   ExecutorState,
   ExecutorResult,
   ClaudeCodeResult,
-  GitPushResult,
   NotifyCallback,
   ExecutionDetails,
 } from './types.js';
@@ -25,7 +24,6 @@ class TaskExecutor {
   private notifyCallback: NotifyCallback | null = null;
   private pollInterval: NodeJS.Timeout | null = null;
   private repoReady = false;
-  private lastPullTime = 0;
   private idleResolvers: Array<() => void> = [];
 
   /**
@@ -195,15 +193,7 @@ class TaskExecutor {
 
       if (task) {
         logger.info('Found task to execute', { taskId: task.id, title: task.title });
-        const pullResult = await this.gitPull();
-        await this.executeTask(task, pullResult);
-      } else {
-        // No tasks - pull periodically to stay in sync
-        const now = Date.now();
-        if (now - this.lastPullTime > 60_000) {
-          await this.gitPull();
-          this.lastPullTime = now;
-        }
+        await this.executeTask(task);
       }
     } catch (error) {
       logger.error('Poll error', error instanceof Error ? error : undefined);
@@ -211,32 +201,10 @@ class TaskExecutor {
   }
 
   /**
-   * Pull latest changes from GitHub
-   */
-  private async gitPull(): Promise<{ success: boolean; output?: string }> {
-    try {
-      logger.debug('Pulling latest changes');
-      const output = execSync('git pull', {
-        cwd: PROJECT_DIR,
-        encoding: 'utf-8',
-        stdio: 'pipe',
-      });
-
-      if (!output.includes('Already up to date')) {
-        logger.info('Pulled changes', { output: output.trim() });
-      }
-
-      return { success: true, output };
-    } catch (error) {
-      logger.error('Git pull failed', error instanceof Error ? error : undefined);
-      return { success: false };
-    }
-  }
-
-  /**
    * Execute a single task using Claude Code
+   * Claude Code handles git pull, merge, commit, and push
    */
-  private async executeTask(task: Task, pullResult?: { success: boolean; output?: string }): Promise<void> {
+  private async executeTask(task: Task): Promise<void> {
     this.currentTask = task;
 
     try {
@@ -245,41 +213,19 @@ class TaskExecutor {
       this.notify(`🔄 **Starting:** ${task.title}`);
 
       // Build the prompt for Claude Code
-      const prompt = this.buildPrompt(task, pullResult);
+      const prompt = this.buildPrompt(task);
 
       logger.info('Running Claude Code', { taskId: task.id, promptLength: prompt.length });
 
       const result = await this.runClaudeCode(prompt);
 
       if (result.success) {
-        // Try to push changes to GitHub
-        let pushResult: GitPushResult = { success: false, message: 'Push not attempted' };
-        try {
-          pushResult = await this.pushToGitHub();
-        } catch (error) {
-          logger.error('Push failed', error instanceof Error ? error : undefined);
-          pushResult = {
-            success: false,
-            message: error instanceof Error ? error.message : String(error),
-          };
-        }
-
-        // Task completed successfully
+        // Task completed successfully - Claude Code handled git operations
         const devNotes = result.devNotes || 'Completed successfully.';
-        await updateTaskStatus(task.id, 'done', devNotes, pushResult.commitHash || null, result.executionDetails);
+        await updateTaskStatus(task.id, 'done', devNotes, null, result.executionDetails);
 
-        let pushInfo: string;
-        if (pushResult.success) {
-          pushInfo = `\n\n🔗 ${pushResult.message}`;
-          if (pushResult.commitMessage) {
-            pushInfo += `\n📝 *"${pushResult.commitMessage}"*`;
-          }
-        } else {
-          pushInfo = `\n\n⚠️ Changes committed locally but push failed: ${pushResult.message}`;
-        }
-
-        this.notify(`✅ **Done:** ${task.title}${pushInfo}\n\`${task.id}\``);
-        logger.info('Task completed', { taskId: task.id, pushed: pushResult.success });
+        this.notify(`✅ **Done:** ${task.title}\n\`${task.id}\``);
+        logger.info('Task completed', { taskId: task.id });
       } else {
         // Task failed - mark as stuck
         logger.error('Task failed', undefined, { taskId: task.id, error: result.error });
@@ -305,19 +251,8 @@ class TaskExecutor {
   /**
    * Build a prompt for Claude Code based on the task
    */
-  private buildPrompt(task: Task, pullResult?: { success: boolean; output?: string }): string {
+  private buildPrompt(task: Task): string {
     const parts: string[] = [`# Task: ${task.title}`, ''];
-
-    if (pullResult) {
-      if (pullResult.success) {
-        parts.push('## Git Status', 'Git pull was successful.', '');
-        if (pullResult.output) {
-            parts.push('Output:', '```', pullResult.output, '```', '');
-        }
-      } else {
-        parts.push('## Git Status', 'WARNING: Git pull FAILED. You may be working with outdated code or have merge conflicts.', '');
-      }
-    }
 
     if (task.description) {
       parts.push('## Description', task.description, '');
@@ -331,18 +266,43 @@ class TaskExecutor {
       parts.push('## Notes', task.notes, '');
     }
 
+    const branch = config.github.repoBranch;
+    
     parts.push(
       '## Instructions',
-      '1. Read structure.md first to understand the codebase layout and conventions. For deeper details, check structure_docs/ subdirectory.',
-      '2. Implement the requested changes',
-      '3. Make sure the code follows existing patterns and conventions',
-      '4. Test that your changes work (run build, check for errors)',
-      '5. Commit your changes with a clear, descriptive commit message',
-      '6. At the very end, output dev notes in this format:',
+      '',
+      '### Step 1: Sync with Remote',
+      `- Run \`git pull origin ${branch}\` to get the latest changes`,
+      '- If there are merge conflicts:',
+      '  - Analyze the conflicts carefully',
+      '  - Resolve them sensibly, preserving both your work and incoming changes where possible',
+      '  - If unsure, prefer the remote version and re-apply your changes on top',
+      '  - After resolving, run `git add .` and `git commit -m "Merge remote changes"`',
+      '',
+      '### Step 2: Understand the Codebase',
+      '- Read structure.md first to understand the codebase layout and conventions',
+      '- For deeper details, check structure_docs/ subdirectory',
+      '',
+      '### Step 3: Implement Changes',
+      '- Implement the requested changes',
+      '- Make sure the code follows existing patterns and conventions',
+      '- Test that your changes work (run build, check for errors)',
+      '',
+      '### Step 4: Commit and Push',
+      '- Commit your changes with a clear, descriptive commit message',
+      `- Run \`git push origin ${branch}\` to push your changes`,
+      '- If push fails due to remote changes:',
+      `  - Run \`git pull --rebase origin ${branch}\``,
+      '  - Resolve any rebase conflicts',
+      '  - Then push again',
+      '',
+      '### Step 5: Dev Notes',
+      'At the very end, output dev notes in this format:',
       '',
       'DEV_NOTES_START',
       '- What files were changed and why',
       '- Any decisions made or trade-offs',
+      '- Any merge conflicts encountered and how they were resolved',
       '- Anything to watch out for',
       'DEV_NOTES_END',
     );
@@ -366,6 +326,7 @@ class TaskExecutor {
           ANTHROPIC_API_KEY: config.anthropic.apiKey,
           SUPABASE_URL: config.supabase.url,
           SUPABASE_SERVICE_ROLE_KEY: config.supabase.serviceRoleKey,
+          GITHUB_API_KEY: config.github.token || '',
           CI: 'true',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -492,67 +453,6 @@ class TaskExecutor {
     }
 
     return null;
-  }
-
-  /**
-   * Push changes to GitHub
-   */
-  private async pushToGitHub(): Promise<GitPushResult> {
-    if (!config.github.token) {
-      return { success: false, message: 'GITHUB_API_KEY not configured' };
-    }
-
-    try {
-      // Get current branch
-      const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-        cwd: PROJECT_DIR,
-        encoding: 'utf-8',
-      }).trim();
-
-      // Get the commit hash
-      const commitHash = execSync('git rev-parse HEAD', {
-        cwd: PROJECT_DIR,
-        encoding: 'utf-8',
-      }).trim();
-
-      const shortHash = commitHash.substring(0, 7);
-
-      // Get commit message
-      const commitMessage = execSync('git log -1 --pretty=%B', {
-        cwd: PROJECT_DIR,
-        encoding: 'utf-8',
-      })
-        .trim()
-        .split('\n')[0];
-
-      logger.info('Pushing to GitHub', { branch, shortHash, commitMessage });
-
-      // Push changes
-      const repoUrl = `https://${config.github.token}@github.com/${config.github.repoOwner}/${config.github.repoName}.git`;
-      execSync(`git push ${repoUrl} ${branch}`, {
-        cwd: PROJECT_DIR,
-        encoding: 'utf-8',
-        stdio: 'pipe',
-      });
-
-      const commitUrl = `https://github.com/${config.github.repoOwner}/${config.github.repoName}/commit/${commitHash}`;
-
-      logger.info('Pushed to GitHub', { branch, commitUrl });
-
-      return {
-        success: true,
-        message: `Pushed [\`${shortHash}\`](${commitUrl}) to \`${branch}\``,
-        commitHash,
-        shortHash,
-        commitMessage,
-        commitUrl,
-        branch,
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('Git push failed', error instanceof Error ? error : undefined);
-      throw new GitError('push', errorMessage);
-    }
   }
 
   /**
