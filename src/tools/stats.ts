@@ -101,3 +101,4 @@ function formatStatsReport(
  * All stats-related tools
  */
 export const statsTools: RegisteredTool[] = [getUsageStatsTool];
+

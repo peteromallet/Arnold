@@ -195,8 +195,8 @@ class TaskExecutor {
 
       if (task) {
         logger.info('Found task to execute', { taskId: task.id, title: task.title });
-        await this.gitPull();
-        await this.executeTask(task);
+        const pullResult = await this.gitPull();
+        await this.executeTask(task, pullResult);
       } else {
         // No tasks - pull periodically to stay in sync
         const now = Date.now();
@@ -236,7 +236,7 @@ class TaskExecutor {
   /**
    * Execute a single task using Claude Code
    */
-  private async executeTask(task: Task): Promise<void> {
+  private async executeTask(task: Task, pullResult?: { success: boolean; output?: string }): Promise<void> {
     this.currentTask = task;
 
     try {
@@ -245,7 +245,7 @@ class TaskExecutor {
       this.notify(`🔄 **Starting:** ${task.title}`);
 
       // Build the prompt for Claude Code
-      const prompt = this.buildPrompt(task);
+      const prompt = this.buildPrompt(task, pullResult);
 
       logger.info('Running Claude Code', { taskId: task.id, promptLength: prompt.length });
 
@@ -305,8 +305,19 @@ class TaskExecutor {
   /**
    * Build a prompt for Claude Code based on the task
    */
-  private buildPrompt(task: Task): string {
+  private buildPrompt(task: Task, pullResult?: { success: boolean; output?: string }): string {
     const parts: string[] = [`# Task: ${task.title}`, ''];
+
+    if (pullResult) {
+      if (pullResult.success) {
+        parts.push('## Git Status', 'Git pull was successful.', '');
+        if (pullResult.output) {
+            parts.push('Output:', '```', pullResult.output, '```', '');
+        }
+      } else {
+        parts.push('## Git Status', 'WARNING: Git pull FAILED. You may be working with outdated code or have merge conflicts.', '');
+      }
+    }
 
     if (task.description) {
       parts.push('## Description', task.description, '');
@@ -353,6 +364,8 @@ class TaskExecutor {
         env: {
           ...process.env,
           ANTHROPIC_API_KEY: config.anthropic.apiKey,
+          SUPABASE_URL: config.supabase.url,
+          SUPABASE_SERVICE_ROLE_KEY: config.supabase.serviceRoleKey,
           CI: 'true',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
