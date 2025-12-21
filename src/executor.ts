@@ -229,6 +229,15 @@ class TaskExecutor {
       execSync(`git config user.name "${config.executor.gitUserName}"`, { cwd: PROJECT_DIR });
       execSync(`git config user.email "${config.executor.gitUserEmail}"`, { cwd: PROJECT_DIR });
 
+      // Ensure remote URL has token for push authentication
+      if (config.github.token) {
+        const remoteUrl = `https://${config.github.token}@github.com/${config.github.repoOwner}/${config.github.repoName}.git`;
+        execSync(`git remote set-url origin ${remoteUrl}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+        // Also configure credential helper to store the token
+        execSync('git config credential.helper store', { cwd: PROJECT_DIR, stdio: 'pipe' });
+        logger.info('Git remote URL configured with token');
+      }
+
       // Checkout the right branch
       execSync(`git checkout ${config.github.repoBranch}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
 
