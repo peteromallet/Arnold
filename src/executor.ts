@@ -1,7 +1,7 @@
 import { spawn, execSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { config } from './config.js';
-import { logger } from './logger.js';
+import { logger, setLogTaskContext } from './logger.js';
 import { ExecutorBusyError, ExecutorNotRunningError } from './errors.js';
 import { getNextTodoTask, updateTaskStatus, resetInProgressTasks } from './supabase.js';
 import type {
@@ -240,6 +240,9 @@ class TaskExecutor {
    */
   private async executeTask(task: Task): Promise<void> {
     this.currentTask = task;
+    
+    // Set task context for logging
+    setLogTaskContext(task.id);
 
     try {
       // Update status to in_progress
@@ -302,6 +305,8 @@ class TaskExecutor {
       this.notify(`⚠️ **Stuck:** ${task.title}\n${message}`);
     } finally {
       this.currentTask = null;
+      // Clear task context for logging
+      setLogTaskContext(null);
       // Resolve any waitForIdle promises
       this.idleResolvers.forEach((resolve) => resolve());
       this.idleResolvers = [];

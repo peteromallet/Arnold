@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/bot.js",
     "dev": "tsc && node --watch dist/bot.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "logs": "tsc && node dist/logs-cli.js"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^0.2.57",

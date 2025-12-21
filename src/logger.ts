@@ -1,9 +1,57 @@
 import { config } from './config.js';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+type DbLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
 
 interface LogMeta {
   [key: string]: unknown;
+}
+
+// Map local log levels to database log levels
+const levelToDbLevel: Record<LogLevel, DbLogLevel> = {
+  debug: 'DEBUG',
+  info: 'INFO',
+  warn: 'WARNING',
+  error: 'ERROR',
+};
+
+// Current task context for associating logs with tasks
+let currentTaskId: string | null = null;
+
+// Lazy-loaded supabase module to avoid circular dependency
+let supabaseModule: { insertSystemLog: (level: DbLogLevel, message: string, taskId?: string | null, metadata?: Record<string, unknown>) => Promise<void> } | null = null;
+let supabaseLoadPromise: Promise<void> | null = null;
+
+/**
+ * Lazy load the supabase module to avoid circular dependency
+ */
+async function getSupabaseModule() {
+  if (supabaseModule) return supabaseModule;
+  if (supabaseLoadPromise) {
+    await supabaseLoadPromise;
+    return supabaseModule;
+  }
+  
+  supabaseLoadPromise = import('./supabase.js').then((mod) => {
+    supabaseModule = mod;
+  });
+  
+  await supabaseLoadPromise;
+  return supabaseModule;
+}
+
+/**
+ * Set the current task context for log association
+ */
+export function setLogTaskContext(taskId: string | null): void {
+  currentTaskId = taskId;
+}
+
+/**
+ * Get the current task context
+ */
+export function getLogTaskContext(): string | null {
+  return currentTaskId;
 }
 
 /**
@@ -52,28 +100,60 @@ function formatLog(level: LogLevel, message: string, meta?: LogMeta, error?: Err
 }
 
 /**
+ * Write log to Supabase (fire-and-forget)
+ */
+function writeToSupabase(level: LogLevel, message: string, meta?: LogMeta, error?: Error): void {
+  const dbLevel = levelToDbLevel[level];
+  
+  // Build metadata including error info if present
+  const metadata: Record<string, unknown> = { ...meta };
+  if (error) {
+    metadata.error = {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  
+  // Fire and forget - don't await, don't let errors propagate
+  getSupabaseModule()
+    .then((mod) => mod?.insertSystemLog(dbLevel, message, currentTaskId, metadata))
+    .catch(() => {
+      // Silently ignore - we already log to console
+    });
+}
+
+/**
  * Simple structured logger
  * - JSON output in production
  * - Pretty output in development
+ * - Also writes to Supabase system_logs table
  */
 export const logger = {
   debug(message: string, meta?: LogMeta): void {
     if (!config.isProd) {
       console.debug(formatLog('debug', message, meta));
     }
+    // Only write debug to Supabase in development to avoid noise
+    if (!config.isProd) {
+      writeToSupabase('debug', message, meta);
+    }
   },
   
   info(message: string, meta?: LogMeta): void {
     console.info(formatLog('info', message, meta));
+    writeToSupabase('info', message, meta);
   },
   
   warn(message: string, meta?: LogMeta): void {
     console.warn(formatLog('warn', message, meta));
+    writeToSupabase('warn', message, meta);
   },
   
   error(message: string, error?: Error | unknown, meta?: LogMeta): void {
     const err = error instanceof Error ? error : undefined;
     const extraMeta = error && !(error instanceof Error) ? { errorValue: error, ...meta } : meta;
     console.error(formatLog('error', message, extraMeta, err));
+    writeToSupabase('error', message, extraMeta, err);
   },
 };

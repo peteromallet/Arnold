@@ -12,6 +12,34 @@ import type {
 } from './types.js';
 
 /**
+ * Log levels matching the database constraint
+ */
+export type DbLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+
+/**
+ * System log entry for insertion
+ */
+export interface SystemLogEntry {
+  source_type: 'dev_agent';
+  source_id: string;
+  log_level: DbLogLevel;
+  message: string;
+  task_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * System log entry from database
+ */
+export interface SystemLog extends SystemLogEntry {
+  id: string;
+  timestamp: string;
+}
+
+// Generate a unique source ID for this instance
+const SOURCE_ID = `arnold-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+/**
  * Map user-friendly status to database status
  */
 function mapStatusToDb(status: UserStatus): TaskStatus {
@@ -361,4 +389,128 @@ export async function getUsageStats(
     tasksByStatus,
     tasksByArea,
   };
+}
+
+// ============================================================================
+// System Logs
+// ============================================================================
+
+/**
+ * Get the source ID for this Arnold instance
+ */
+export function getSourceId(): string {
+  return SOURCE_ID;
+}
+
+/**
+ * Insert a log entry into system_logs table
+ * This is fire-and-forget - errors are logged to console but don't throw
+ */
+export async function insertSystemLog(
+  level: DbLogLevel,
+  message: string,
+  taskId?: string | null,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const { error } = await supabase.from('system_logs').insert({
+      source_type: 'dev_agent',
+      source_id: SOURCE_ID,
+      log_level: level,
+      message,
+      task_id: taskId || null,
+      metadata: metadata || {},
+    });
+
+    if (error) {
+      // Log to console but don't throw - we don't want logging failures to break the app
+      console.error('Failed to insert system log:', error.message);
+    }
+  } catch (err) {
+    console.error('Failed to insert system log:', err);
+  }
+}
+
+/**
+ * Query filters for system logs
+ */
+export interface SystemLogFilters {
+  level?: DbLogLevel | DbLogLevel[];
+  taskId?: string;
+  sourceId?: string;
+  since?: Date | string;
+  until?: Date | string;
+  search?: string;
+  limit?: number;
+}
+
+/**
+ * Query system logs with filters
+ */
+export async function querySystemLogs(filters: SystemLogFilters = {}): Promise<SystemLog[]> {
+  let query = supabase
+    .from('system_logs')
+    .select('*')
+    .eq('source_type', 'dev_agent')
+    .order('timestamp', { ascending: false });
+
+  // Filter by level(s)
+  if (filters.level) {
+    if (Array.isArray(filters.level)) {
+      query = query.in('log_level', filters.level);
+    } else {
+      query = query.eq('log_level', filters.level);
+    }
+  }
+
+  // Filter by task
+  if (filters.taskId) {
+    query = query.eq('task_id', filters.taskId);
+  }
+
+  // Filter by source instance
+  if (filters.sourceId) {
+    query = query.eq('source_id', filters.sourceId);
+  }
+
+  // Filter by time range
+  if (filters.since) {
+    const since = typeof filters.since === 'string' ? filters.since : filters.since.toISOString();
+    query = query.gte('timestamp', since);
+  }
+
+  if (filters.until) {
+    const until = typeof filters.until === 'string' ? filters.until : filters.until.toISOString();
+    query = query.lte('timestamp', until);
+  }
+
+  // Text search in message
+  if (filters.search) {
+    query = query.ilike('message', `%${filters.search}%`);
+  }
+
+  // Limit results
+  query = query.limit(filters.limit || 100);
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new ExternalServiceError('supabase', `Failed to query system logs: ${error.message}`);
+  }
+
+  return data as SystemLog[];
+}
+
+/**
+ * Get logs for a specific task
+ */
+export async function getTaskLogs(taskId: string, limit: number = 50): Promise<SystemLog[]> {
+  return querySystemLogs({ taskId, limit });
+}
+
+/**
+ * Get recent error logs
+ */
+export async function getRecentErrors(limit: number = 20): Promise<SystemLog[]> {
+  return querySystemLogs({ level: ['ERROR', 'CRITICAL'], limit });
 }
