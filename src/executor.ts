@@ -435,7 +435,9 @@ class TaskExecutor {
    */
   private runClaudeCode(prompt: string): Promise<ClaudeCodeResult> {
     return new Promise((resolve) => {
-      const args = ['-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'json'];
+      // Use --yes for non-interactive execution (auto-accept all prompts)
+      // Note: --permission-mode bypassPermissions doesn't work as root in Docker
+      const args = ['-p', prompt, '--yes', '--output-format', 'json'];
 
       logger.debug('Spawning Claude Code', { workingDir: PROJECT_DIR });
 
