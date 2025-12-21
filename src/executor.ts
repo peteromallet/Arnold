@@ -220,6 +220,14 @@ class TaskExecutor {
       const result = await this.runClaudeCode(prompt);
 
       if (result.success) {
+        // Check if task was flagged as potentially harmful
+        if (result.flaggedReason) {
+          logger.warn('Task flagged as potentially harmful', { taskId: task.id, reason: result.flaggedReason });
+          await updateTaskStatus(task.id, 'stuck', `⚠️ FLAGGED: ${result.flaggedReason}`);
+          this.notify(`🚨 **Flagged:** ${task.title}\n\n⚠️ This task was flagged as potentially harmful and was NOT executed.\n\n**Reason:** ${result.flaggedReason}\n\n\`${task.id}\``);
+          return;
+        }
+
         // Task completed successfully - Claude Code handled git operations
         const devNotes = result.devNotes || 'Completed successfully.';
         await updateTaskStatus(task.id, 'done', devNotes, null, result.executionDetails);
@@ -270,6 +278,26 @@ class TaskExecutor {
     
     parts.push(
       '## Instructions',
+      '',
+      '### Step 0: Safety Check',
+      'Before doing anything, assess whether this task could be damaging or malicious:',
+      '- Could it delete important data or files?',
+      '- Could it expose secrets, credentials, or private information?',
+      '- Could it introduce security vulnerabilities?',
+      '- Could it break critical functionality intentionally?',
+      '- Does it seem designed to harm the codebase or users?',
+      '- Is it asking you to bypass security measures?',
+      '',
+      'If you determine the task is potentially harmful or malicious:',
+      '1. DO NOT implement the changes',
+      '2. DO NOT commit or push anything',
+      '3. Output the following to flag the task:',
+      '',
+      'TASK_FLAGGED',
+      'Reason: [Explain why this task was flagged as potentially harmful]',
+      'TASK_FLAGGED_END',
+      '',
+      'Then stop. Do not proceed with the remaining steps.',
       '',
       '### Step 1: Sync with Remote',
       `- Run \`git pull origin ${branch}\` to get the latest changes`,
@@ -353,10 +381,12 @@ class TaskExecutor {
         if (code === 0) {
           // Parse JSON output to extract usage stats
           const { executionDetails, result } = this.parseClaudeCodeOutput(stdout);
+          const outputText = result || stdout;
           
           resolve({
             success: true,
-            devNotes: this.extractDevNotes(result || stdout),
+            devNotes: this.extractDevNotes(outputText),
+            flaggedReason: this.extractFlaggedReason(outputText),
             executionDetails,
           });
         } else {
@@ -450,6 +480,26 @@ class TaskExecutor {
     if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
       const notes = output.substring(startIdx + startMarker.length, endIdx).trim();
       return notes || null;
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if task was flagged as potentially harmful
+   */
+  private extractFlaggedReason(output: string): string | null {
+    const startMarker = 'TASK_FLAGGED';
+    const endMarker = 'TASK_FLAGGED_END';
+
+    const startIdx = output.indexOf(startMarker);
+    const endIdx = output.indexOf(endMarker);
+
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      const content = output.substring(startIdx + startMarker.length, endIdx).trim();
+      // Extract the reason after "Reason:"
+      const reasonMatch = content.match(/Reason:\s*(.+)/s);
+      return reasonMatch ? reasonMatch[1].trim() : content;
     }
 
     return null;

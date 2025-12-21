@@ -105,6 +105,8 @@ export interface ClaudeCodeResult {
   isSystemError?: boolean;
   /** Full execution details from Claude Code */
   executionDetails?: ExecutionDetails;
+  /** If task was flagged as potentially harmful, the reason */
+  flaggedReason?: string | null;
 }
 
 /**
