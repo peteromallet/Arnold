@@ -178,6 +178,18 @@ class TaskExecutor {
 
       // Clone if not exists
       if (!existsSync(PROJECT_DIR)) {
+        // Check if git is installed
+        try {
+          const gitVersion = execSync('git --version', { encoding: 'utf-8' }).trim();
+          logger.info('Git available', { version: gitVersion });
+        } catch {
+          console.error('=== GIT NOT INSTALLED ===');
+          console.error('git --version failed. Git is not installed in this container.');
+          console.error('Make sure nixpacks.toml is being used and includes git.');
+          console.error('=========================');
+          throw new Error('Git is not installed');
+        }
+
         logger.info('Cloning repository', {
           repo: `${config.github.repoOwner}/${config.github.repoName}`,
         });
@@ -194,9 +206,20 @@ class TaskExecutor {
           });
         } catch (cloneError) {
           // Extract stderr from execSync error for better debugging
-          const err = cloneError as { stderr?: string; message?: string };
-          const errorMsg = err.stderr || err.message || 'Unknown clone error';
-          throw new Error(`Git clone failed: ${redactSecrets(errorMsg)}`);
+          const err = cloneError as { stderr?: string; stdout?: string; message?: string; status?: number };
+          const errorDetails = [
+            err.stderr ? `stderr: ${err.stderr}` : null,
+            err.stdout ? `stdout: ${err.stdout}` : null,
+            err.message ? `message: ${err.message}` : null,
+            err.status !== undefined ? `exit code: ${err.status}` : null,
+          ].filter(Boolean).join('; ');
+          
+          // Log directly to console to bypass any formatting issues
+          console.error('=== GIT CLONE ERROR ===');
+          console.error('Error details:', redactSecrets(errorDetails));
+          console.error('=======================');
+          
+          throw new Error(`Git clone failed: ${redactSecrets(errorDetails)}`);
         }
 
         logger.info('Repository cloned', { path: PROJECT_DIR });
