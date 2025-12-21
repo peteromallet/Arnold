@@ -473,6 +473,20 @@ class TaskExecutor {
       proc.on('close', (code) => {
         logger.info('Claude Code exited', { code, stdoutLen: stdout.length, stderrLen: stderr.length });
 
+        // Log full output (with secrets redacted) for debugging
+        if (stdout.length > 0) {
+          logger.info('Claude Code stdout', { 
+            output: redactSecrets(stdout),
+            outputLength: stdout.length 
+          });
+        }
+        if (stderr.length > 0) {
+          logger.info('Claude Code stderr', { 
+            output: redactSecrets(stderr),
+            outputLength: stderr.length 
+          });
+        }
+
         if (code === 0) {
           // Parse JSON output to extract usage stats
           const { executionDetails, result } = this.parseClaudeCodeOutput(stdout);
@@ -481,21 +495,24 @@ class TaskExecutor {
           const outputText = result || '';
           const fullOutput = stdout;
           
-          // Debug: log what we're extracting from
-          logger.debug('Extracting results', { 
-            hasResult: !!result, 
-            resultLength: result?.length || 0,
-            stdoutLength: stdout.length,
-            resultHasCommitMarker: outputText.includes('COMMIT_HASH'),
-            stdoutHasCommitMarker: fullOutput.includes('COMMIT_HASH'),
-            resultHasDevNotesMarker: outputText.includes('DEV_NOTES'),
-            stdoutHasDevNotesMarker: fullOutput.includes('DEV_NOTES'),
-          });
-          
           // Try to extract from result first, then fall back to full stdout
           const devNotes = this.extractDevNotes(outputText) || this.extractDevNotes(fullOutput);
           const flaggedReason = this.extractFlaggedReason(outputText) || this.extractFlaggedReason(fullOutput);
           const commitHash = this.extractCommitHash(outputText) || this.extractCommitHash(fullOutput);
+          
+          // Log extraction results for debugging
+          logger.info('Extracted Claude Code results', { 
+            hasResult: !!result, 
+            resultLength: result?.length || 0,
+            stdoutLength: stdout.length,
+            hasCommitHash: !!commitHash,
+            commitHash: commitHash || null,
+            hasDevNotes: !!devNotes,
+            devNotesLength: devNotes?.length || 0,
+            hasFlaggedReason: !!flaggedReason,
+            resultHasCommitMarker: outputText.includes('COMMIT_HASH'),
+            stdoutHasCommitMarker: fullOutput.includes('COMMIT_HASH'),
+          });
           
           resolve({
             success: true,
@@ -631,18 +648,33 @@ class TaskExecutor {
     const startIdx = output.indexOf(startMarker);
     const endIdx = output.indexOf(endMarker);
 
-    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-      const hash = output.substring(startIdx + startMarker.length, endIdx).trim();
-      // Return null if "none" or empty
-      if (!hash || hash.toLowerCase() === 'none') {
-        return null;
-      }
-      // Validate it looks like a git hash (7-40 hex chars)
-      if (/^[a-f0-9]{7,40}$/i.test(hash)) {
-        return hash;
-      }
+    if (startIdx === -1 || endIdx === -1) {
+      logger.debug('Commit hash markers not found', { 
+        hasStartMarker: startIdx !== -1, 
+        hasEndMarker: endIdx !== -1 
+      });
+      return null;
     }
 
+    if (endIdx <= startIdx) {
+      logger.debug('Commit hash markers in wrong order', { startIdx, endIdx });
+      return null;
+    }
+
+    const hash = output.substring(startIdx + startMarker.length, endIdx).trim();
+    
+    // Return null if "none" or empty
+    if (!hash || hash.toLowerCase() === 'none') {
+      logger.debug('Commit hash is empty or "none"', { hash });
+      return null;
+    }
+    
+    // Validate it looks like a git hash (7-40 hex chars)
+    if (/^[a-f0-9]{7,40}$/i.test(hash)) {
+      return hash;
+    }
+    
+    logger.debug('Commit hash failed validation', { hash, hashLength: hash.length });
     return null;
   }
 
