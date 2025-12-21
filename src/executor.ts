@@ -186,11 +186,18 @@ class TaskExecutor {
           ? `https://${config.github.token}@github.com/${config.github.repoOwner}/${config.github.repoName}.git`
           : `https://github.com/${config.github.repoOwner}/${config.github.repoName}.git`;
 
-        execSync(`git clone ${cloneUrl} ${config.github.repoName}`, {
-          cwd: config.executor.workspaceDir,
-          encoding: 'utf-8',
-          stdio: 'pipe',
-        });
+        try {
+          execSync(`git clone ${cloneUrl} ${config.github.repoName}`, {
+            cwd: config.executor.workspaceDir,
+            encoding: 'utf-8',
+            stdio: 'pipe',
+          });
+        } catch (cloneError) {
+          // Extract stderr from execSync error for better debugging
+          const err = cloneError as { stderr?: string; message?: string };
+          const errorMsg = err.stderr || err.message || 'Unknown clone error';
+          throw new Error(`Git clone failed: ${redactSecrets(errorMsg)}`);
+        }
 
         logger.info('Repository cloned', { path: PROJECT_DIR });
       }
@@ -206,10 +213,11 @@ class TaskExecutor {
       return true;
     } catch (error) {
       // Redact secrets from error message before logging
-      const safeError = error instanceof Error 
-        ? new Error(redactSecrets(error.message))
-        : undefined;
-      logger.error('Failed to setup repository', safeError);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const safeMessage = redactSecrets(errorMessage);
+      logger.error('Failed to setup repository', new Error(safeMessage), { 
+        errorDetails: safeMessage 
+      });
       return false;
     }
   }
