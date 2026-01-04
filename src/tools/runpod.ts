@@ -8,6 +8,9 @@ const RUNPOD_API_URL = 'https://api.runpod.io/graphql';
 // RAM tiers to try in order (highest first - 72GB has lowest failure rate)
 const RAM_TIERS_GB = [72, 60, 48, 32];
 
+// Cloud types to try in order (SECURE first, then ALL which includes community)
+const CLOUD_TYPES = ['SECURE', 'ALL'] as const;
+
 /**
  * Make a GraphQL request to RunPod API
  */
@@ -208,101 +211,126 @@ export const createRunpodInstance: RegisteredTool = {
 
       logger.info('Creating RunPod instance', { podName, gpuTypeId });
 
-      // Try RAM tiers from highest to lowest (higher RAM = lower failure rate)
-      let pod: { id: string; name: string; desiredStatus: string } | null = null;
+      // Try cloud types and RAM tiers until we get a machine
+      let pod: { id: string; name: string; desiredStatus: string; machineId?: string } | null = null;
       let lastError: string | null = null;
       let usedRamTier: number | undefined = undefined;
+      let usedCloudType: string | undefined = undefined;
+      const failedPodIds: string[] = []; // Track pods created without machines (to terminate later)
 
-      for (const ramTier of RAM_TIERS_GB) {
-        try {
-          logger.info(`Trying RAM tier: ${ramTier}GB`, { podName, gpuTypeId });
+      // Try each cloud type, and within each, try RAM tiers from highest to lowest
+      cloudLoop: for (const cloudType of CLOUD_TYPES) {
+        for (const ramTier of RAM_TIERS_GB) {
+          try {
+            logger.info(`Trying: ${cloudType} cloud, ${ramTier}GB RAM`, { podName, gpuTypeId });
 
-          const mutation = `
-            mutation {
-              podFindAndDeployOnDemand(input: {
-                name: "${podName}"
-                imageName: "${config.runpod.image}"
-                gpuTypeId: "${gpuTypeId}"
-                gpuCount: 1
-                cloudType: SECURE
-                volumeInGb: ${config.runpod.diskSizeGb}
-                containerDiskInGb: ${config.runpod.containerDiskGb}
-                minVcpuCount: 8
-                minMemoryInGb: ${ramTier}
-                ports: "22/tcp,8888/http"
-              }) {
-                id
-                name
-                desiredStatus
-                imageName
-                machineId
+            const mutation = `
+              mutation {
+                podFindAndDeployOnDemand(input: {
+                  name: "${podName}"
+                  imageName: "${config.runpod.image}"
+                  gpuTypeId: "${gpuTypeId}"
+                  gpuCount: 1
+                  cloudType: ${cloudType}
+                  volumeInGb: ${config.runpod.diskSizeGb}
+                  containerDiskInGb: ${config.runpod.containerDiskGb}
+                  minVcpuCount: 8
+                  minMemoryInGb: ${ramTier}
+                  ports: "22/tcp,8888/http"
+                }) {
+                  id
+                  name
+                  desiredStatus
+                  imageName
+                  machineId
+                }
               }
-            }
-          `;
+            `;
 
-          const data = await runpodGraphQL(mutation) as { 
-            podFindAndDeployOnDemand: { id: string; name: string; desiredStatus: string } | null
-          };
-          
-          if (data.podFindAndDeployOnDemand?.id) {
-            pod = data.podFindAndDeployOnDemand;
-            usedRamTier = ramTier;
-            logger.info(`Success with ${ramTier}GB RAM tier`, { podId: pod.id });
-            break;
-          } else {
-            lastError = 'No pod ID returned';
-            logger.warn(`RAM tier ${ramTier}GB failed: no pod returned, trying next tier`);
+            const data = await runpodGraphQL(mutation) as { 
+              podFindAndDeployOnDemand: { id: string; name: string; desiredStatus: string; machineId?: string } | null
+            };
+            
+            const result = data.podFindAndDeployOnDemand;
+            
+            if (result?.id) {
+              // Check if a machine was actually assigned
+              if (result.machineId) {
+                // Success! Machine was assigned
+                pod = result;
+                usedRamTier = ramTier;
+                usedCloudType = cloudType;
+                logger.info(`Success: ${cloudType} cloud, ${ramTier}GB RAM, machine ${result.machineId}`, { podId: pod.id });
+                break cloudLoop;
+              } else {
+                // Pod created but no machine available - terminate it and try next config
+                logger.warn(`No machine available for ${cloudType}/${ramTier}GB, terminating orphan pod ${result.id}`);
+                failedPodIds.push(result.id);
+                
+                // Terminate the orphan pod
+                try {
+                  const terminateMutation = `mutation { podTerminate(input: {podId: "${result.id}"}) }`;
+                  await runpodGraphQL(terminateMutation);
+                  logger.info(`Terminated orphan pod ${result.id}`);
+                } catch (termError) {
+                  logger.warn(`Failed to terminate orphan pod ${result.id}`, { error: termError });
+                }
+                
+                lastError = `No machine available for ${cloudType}/${ramTier}GB`;
+              }
+            } else {
+              lastError = 'No pod ID returned';
+              logger.warn(`${cloudType}/${ramTier}GB: no pod returned, trying next config`);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            lastError = message;
+            logger.warn(`${cloudType}/${ramTier}GB failed: ${message}, trying next config`);
           }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          lastError = message;
-          
-          // Check if it's an availability error (worth trying next tier)
-          if (message.toLowerCase().includes('no longer any instances available') ||
-              message.toLowerCase().includes('insufficient capacity')) {
-            logger.warn(`RAM tier ${ramTier}GB unavailable: ${message}, trying next tier`);
-            continue;
-          }
-          
-          // Other errors might be worth retrying with lower tier too
-          logger.warn(`RAM tier ${ramTier}GB failed: ${message}, trying next tier`);
         }
       }
       
       if (!pod || !pod.id) {
-        logger.error('Pod creation failed - all RAM tiers exhausted', { lastError });
+        logger.error('Pod creation failed - all configurations exhausted', { lastError, failedPodIds });
         return {
           success: false,
           action: 'create_runpod_instance',
-          error: `Pod creation failed after trying all RAM tiers (72/60/48/32 GB). Last error: ${lastError}`,
+          error: `Pod creation failed after trying all configurations (SECURE/ALL × 72/60/48/32 GB). No 4090s available. Last error: ${lastError}`,
         };
       }
 
-      logger.info('RunPod instance created, waiting for it to start', { podId: pod.id, podName: pod.name, status: pod.desiredStatus, ramTier: usedRamTier });
+      logger.info('RunPod instance created, waiting for it to start', { 
+        podId: pod.id, 
+        podName: pod.name, 
+        status: pod.desiredStatus, 
+        ramTier: usedRamTier,
+        cloudType: usedCloudType,
+        machineId: pod.machineId 
+      });
 
       // Wait for the pod to be running
       const jupyterUrl = await waitForPodReady(pod.id);
 
       if (jupyterUrl) {
-        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl, ramTier: usedRamTier });
+        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl, ramTier: usedRamTier, cloudType: usedCloudType });
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `RunPod instance "${pod.name}" is ready! (${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterUrl}`,
+          message: `RunPod instance "${pod.name}" is ready! (${usedCloudType}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterUrl}`,
         };
       } else {
-        // Still return success since pod was created
-        logger.warn('Pod created but Jupyter URL not available yet', { podId: pod.id, ramTier: usedRamTier });
+        // Still return success since pod was created with a machine
+        logger.warn('Pod created but Jupyter URL not available yet', { podId: pod.id, ramTier: usedRamTier, cloudType: usedCloudType });
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `Created RunPod instance "${pod.name}" (ID: ${pod.id}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n🔗 Jupyter (when ready): https://${pod.id}-8888.proxy.runpod.net`,
+          message: `Created RunPod instance "${pod.name}" (${usedCloudType}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n🔗 Jupyter (when ready): https://${pod.id}-8888.proxy.runpod.net`,
         };
       }
     } catch (error) {
