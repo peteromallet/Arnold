@@ -354,6 +354,25 @@ async function executeSSHCommand(
 }
 
 /**
+ * Get Jupyter token via SSH by running `jupyter server list`
+ */
+async function getJupyterTokenViaSSH(sshDetails: SSHConnectionInfo, podId: string): Promise<string | null> {
+  try {
+    const result = await executeSSHCommand(sshDetails, 'jupyter server list', 15000);
+    const match = result.stdout.match(/token=([a-zA-Z0-9]+)/);
+    if (match) {
+      logger.info('Got Jupyter token via SSH', { podId, token: match[1].substring(0, 8) + '...' });
+      return match[1];
+    }
+    logger.warn('Could not find Jupyter token in output', { podId, output: result.stdout });
+    return null;
+  } catch (error) {
+    logger.error('Failed to get Jupyter token via SSH', error instanceof Error ? error : undefined, { podId });
+    return null;
+  }
+}
+
+/**
  * Run setup script on a pod via SSH (installs Node.js, Claude Code, etc.)
  */
 async function runSetupScriptViaSSH(sshDetails: SSHConnectionInfo, podId: string): Promise<boolean> {
@@ -636,10 +655,6 @@ export const createRunpodInstance: RegisteredTool = {
             // Build environment variables for the pod
             const envVars: Array<{ key: string; value: string }> = [];
             
-            // Set a known Jupyter token so we can include it in the URL
-            const jupyterToken = 'arnold';
-            envVars.push({ key: 'JUPYTER_TOKEN', value: jupyterToken });
-            
             // SSH public key for authentication (RunPod images use PUBLIC_KEY env var)
             if (config.runpod.sshPublicKey) {
               envVars.push({ key: 'PUBLIC_KEY', value: config.runpod.sshPublicKey });
@@ -750,8 +765,23 @@ export const createRunpodInstance: RegisteredTool = {
       });
 
       // Wait for the pod to be running with ports
-      const jupyterUrl = await waitForPodReady(pod.id);
-      const jupyterProxyUrl = `https://${pod.id}-8888.proxy.runpod.net/?token=arnold`;
+      await waitForPodReady(pod.id);
+      
+      // Get Jupyter token via SSH
+      let jupyterToken: string | null = null;
+      if (config.runpod.sshPrivateKey && config.runpod.sshPublicKey) {
+        logger.info('Getting Jupyter token via SSH...', { podId: pod.id });
+        const sshDetails = await waitForSSH(pod.id, 60000);
+        if (sshDetails) {
+          // Wait a bit for Jupyter to start
+          await new Promise(resolve => setTimeout(resolve, 10000));
+          jupyterToken = await getJupyterTokenViaSSH(sshDetails, pod.id);
+        }
+      }
+      
+      const jupyterProxyUrl = jupyterToken 
+        ? `https://${pod.id}-8888.proxy.runpod.net/?token=${jupyterToken}`
+        : `https://${pod.id}-8888.proxy.runpod.net/`;
 
       // If using a template, Jupyter is already running/configured (and terminals work when created manually).
       // So: do NOT install/upgrade Jupyter packages and do NOT start another Jupyter server.
@@ -775,15 +805,16 @@ export const createRunpodInstance: RegisteredTool = {
         logger.info('SSH keys not configured, skipping setup', { podId: pod.id });
       }
       
-      if (jupyterUrl || templateId) {
-        // Template has Jupyter pre-configured, so it should be working
-        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl: jupyterProxyUrl, ramTier: usedRamTier, storage: usedStorageVolume, setupComplete, usingTemplate: !!templateId });
+      if (jupyterToken || templateId) {
+        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl: jupyterProxyUrl, ramTier: usedRamTier, storage: usedStorageVolume, setupComplete, hasToken: !!jupyterToken });
         
         const setupNote = setupComplete 
           ? '\n\n✅ Node.js 20 & Claude Code CLI installed!' 
-          : '\n\n⚠️ Run setup manually if needed (Node.js, Claude Code)';
+          : '';
         
-        const message = `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}${setupNote}`;
+        const tokenNote = jupyterToken ? '' : '\n\n⚠️ Could not get Jupyter token - get URL from RunPod dashboard';
+        
+        const message = `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}${setupNote}${tokenNote}`;
         
         return {
           success: true,
