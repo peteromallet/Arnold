@@ -317,9 +317,13 @@ echo "📦 Installing system dependencies..."
 apt-get update
 apt-get install -y curl gnupg python3.10-venv ffmpeg
 
-# Install terminado for Jupyter terminal support
+# Install/upgrade terminado and jupyter-server for terminal support
 echo "📦 Installing Jupyter terminal support..."
-pip install terminado
+pip install --upgrade terminado jupyter-server jupyterlab
+
+# Enable terminal server extension
+echo "📦 Enabling Jupyter terminal extension..."
+jupyter server extension enable --py terminado --sys-prefix 2>/dev/null || true
 
 # Remove old Node.js if present and install Node.js 20
 echo "📦 Installing Node.js 20..."
@@ -384,7 +388,7 @@ async function startJupyterViaSSH(podId: string, runSetup = true): Promise<boole
     }
   }
 
-  const jupyterCmd = `nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --ServerApp.root_dir=/workspace > /var/log/jupyter.log 2>&1 &`;
+  const jupyterCmd = `nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --ServerApp.terminals_enabled=True --ServerApp.root_dir=/workspace > /var/log/jupyter.log 2>&1 &`;
 
   try {
     logger.info('Starting Jupyter via SSH', { podId });
