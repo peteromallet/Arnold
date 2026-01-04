@@ -579,12 +579,12 @@ export const createRunpodInstance: RegisteredTool = {
 
       // Look up template ID (templates have Jupyter properly configured)
       let templateId: string | null = null;
-      if (config.runpod.templateName) {
-        templateId = await findTemplateId(config.runpod.templateName);
+      if (config.runpod.templateId) {
+        templateId = await findTemplateId(config.runpod.templateId);
         if (templateId) {
-          logger.info('Using template', { name: config.runpod.templateName, id: templateId });
+          logger.info('Using template', { configured: config.runpod.templateId, resolved: templateId });
         } else {
-          logger.warn(`Template "${config.runpod.templateName}" not found, will use raw image`);
+          logger.warn(`Template "${config.runpod.templateId}" not found, will use raw image`);
         }
       }
 
