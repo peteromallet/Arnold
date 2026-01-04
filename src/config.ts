@@ -105,6 +105,8 @@ export const config = {
     sshPublicKey: process.env.RUNPOD_SSH_PUBLIC_KEY || null,
     /** SSH private key (used to connect to pod) */
     sshPrivateKey: process.env.RUNPOD_SSH_PRIVATE_KEY || null,
+    /** Anthropic API key to inject into pods (for Claude Code) */
+    podAnthropicApiKey: process.env.RUNPOD_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || null,
   },
 } as const;
 

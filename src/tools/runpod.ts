@@ -303,9 +303,60 @@ async function executeSSHCommand(
 }
 
 /**
+ * Run setup script on a pod via SSH (installs Node.js, Claude Code, etc.)
+ */
+async function runSetupScriptViaSSH(sshDetails: SSHConnectionInfo, podId: string): Promise<boolean> {
+  // Setup script that installs dependencies
+  const setupScript = `
+#!/bin/bash
+set -e
+echo "🚀 Starting pod setup..."
+
+# Update and install basic dependencies
+echo "📦 Installing system dependencies..."
+apt-get update
+apt-get install -y curl gnupg python3.10-venv ffmpeg
+
+# Remove old Node.js if present and install Node.js 20
+echo "📦 Installing Node.js 20..."
+apt-get remove -y nodejs npm libnode-dev libnode72 nodejs-doc 2>/dev/null || true
+apt-get autoremove -y
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+
+# Install Claude Code CLI
+echo "📦 Installing Claude Code CLI..."
+npm install -g @anthropic-ai/claude-code
+
+# Set up Anthropic API key in bashrc for interactive sessions
+echo "export ANTHROPIC_API_KEY='${config.runpod.podAnthropicApiKey || ''}'" >> /root/.bashrc
+
+echo "✅ Pod setup complete!"
+`;
+
+  try {
+    logger.info('Running setup script via SSH (this may take a few minutes)...', { podId });
+    
+    // Run setup script with longer timeout (5 minutes)
+    const result = await executeSSHCommand(sshDetails, setupScript, 300000);
+    
+    if (result.code === 0) {
+      logger.info('Setup script completed successfully', { podId });
+      return true;
+    } else {
+      logger.error('Setup script failed', { podId, code: result.code, stderr: result.stderr });
+      return false;
+    }
+  } catch (error) {
+    logger.error('Failed to run setup script', error instanceof Error ? error : undefined, { podId });
+    return false;
+  }
+}
+
+/**
  * Start Jupyter Lab on a pod via SSH
  */
-async function startJupyterViaSSH(podId: string): Promise<boolean> {
+async function startJupyterViaSSH(podId: string, runSetup = true): Promise<boolean> {
   if (!config.runpod.sshPrivateKey) {
     logger.warn('SSH private key not configured, cannot auto-start Jupyter');
     return false;
@@ -320,6 +371,14 @@ async function startJupyterViaSSH(podId: string): Promise<boolean> {
 
   // Give the container a moment to fully initialize
   await new Promise(resolve => setTimeout(resolve, 3000));
+
+  // Run setup script first if requested
+  if (runSetup) {
+    const setupSuccess = await runSetupScriptViaSSH(sshDetails, podId);
+    if (!setupSuccess) {
+      logger.warn('Setup script failed, continuing with Jupyter start anyway', { podId });
+    }
+  }
 
   const jupyterCmd = `nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --ServerApp.root_dir=/workspace > /var/log/jupyter.log 2>&1 &`;
 
@@ -505,9 +564,21 @@ export const createRunpodInstance: RegisteredTool = {
               ? `networkVolumeId: "${volume.id}"\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`
               : `volumeInGb: ${config.runpod.diskSizeGb}\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`;
 
-            // Inject SSH public key for authentication (RunPod images use PUBLIC_KEY env var)
-            const envParams = config.runpod.sshPublicKey
-              ? `env: [{ key: "PUBLIC_KEY", value: "${config.runpod.sshPublicKey.replace(/"/g, '\\"')}" }]`
+            // Build environment variables for the pod
+            const envVars: Array<{ key: string; value: string }> = [];
+            
+            // SSH public key for authentication (RunPod images use PUBLIC_KEY env var)
+            if (config.runpod.sshPublicKey) {
+              envVars.push({ key: 'PUBLIC_KEY', value: config.runpod.sshPublicKey });
+            }
+            
+            // Anthropic API key for Claude Code
+            if (config.runpod.podAnthropicApiKey) {
+              envVars.push({ key: 'ANTHROPIC_API_KEY', value: config.runpod.podAnthropicApiKey });
+            }
+            
+            const envParams = envVars.length > 0
+              ? `env: [${envVars.map(e => `{ key: "${e.key}", value: "${e.value.replace(/"/g, '\\"')}" }`).join(', ')}]`
               : '';
 
             const mutation = `
