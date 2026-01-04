@@ -636,8 +636,9 @@ export const createRunpodInstance: RegisteredTool = {
             // Build environment variables for the pod
             const envVars: Array<{ key: string; value: string }> = [];
             
-            // Disable Jupyter token auth (startJupyter: true starts Jupyter, this disables the token)
-            envVars.push({ key: 'JUPYTER_TOKEN', value: '' });
+            // Set a known Jupyter token so we can include it in the URL
+            const jupyterToken = 'arnold';
+            envVars.push({ key: 'JUPYTER_TOKEN', value: jupyterToken });
             
             // SSH public key for authentication (RunPod images use PUBLIC_KEY env var)
             if (config.runpod.sshPublicKey) {
@@ -750,7 +751,7 @@ export const createRunpodInstance: RegisteredTool = {
 
       // Wait for the pod to be running with ports
       const jupyterUrl = await waitForPodReady(pod.id);
-      const jupyterProxyUrl = `https://${pod.id}-8888.proxy.runpod.net`;
+      const jupyterProxyUrl = `https://${pod.id}-8888.proxy.runpod.net/?token=arnold`;
 
       // If using a template, Jupyter is already running/configured (and terminals work when created manually).
       // So: do NOT install/upgrade Jupyter packages and do NOT start another Jupyter server.
