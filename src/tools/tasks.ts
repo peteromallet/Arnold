@@ -9,7 +9,7 @@ export const createTask: RegisteredTool = {
   name: 'create_task',
   schema: {
     name: 'create_task',
-    description: 'Create a new development task',
+    description: 'Create a new development task. Defaults to backlog unless user explicitly asks to do it now/immediately.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -24,7 +24,7 @@ export const createTask: RegisteredTool = {
         status: {
           type: 'string',
           enum: ['queued', 'upcoming'],
-          description: 'queued = do now, upcoming = for later',
+          description: 'queued = do now (only if explicitly requested), upcoming = backlog (default)',
         },
         area: {
           type: 'string',
@@ -35,14 +35,14 @@ export const createTask: RegisteredTool = {
           description: 'Any additional context or notes',
         },
       },
-      required: ['title', 'status'],
+      required: ['title'],
     },
   },
   handler: async (input: CreateTaskInput, _context: ToolContext): Promise<ToolResult> => {
     const task = await insertTask({
       title: input.title,
       description: input.description || null,
-      status: input.status || 'upcoming',
+      status: input.status || 'upcoming', // Default to backlog
       area: input.area || null,
       notes: input.notes || null,
     });

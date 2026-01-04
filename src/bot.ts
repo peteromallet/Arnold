@@ -349,7 +349,7 @@ client.once(Events.ClientReady, async (c) => {
     try {
       const user = await c.users.fetch(config.discord.allowedUserId);
       const dm = await user.createDM();
-      await dm.send('🤖 Arnold has restarted and is ready.');
+      await dm.send('🤖 Arnold has relaunched and is ready.');
       logger.info('Sent startup notification');
     } catch (error) {
       logger.error('Failed to send startup notification', error instanceof Error ? error : undefined);
@@ -385,3 +385,4 @@ client.login(config.discord.token).catch((error) => {
   logger.error('Failed to login to Discord', error instanceof Error ? error : undefined);
   process.exit(1);
 });
+

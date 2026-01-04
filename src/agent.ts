@@ -23,15 +23,16 @@ ALWAYS end with reply tool to tell the user what happened. Include task ID when 
 The executor runs automatically on startup. Tasks with status "todo" will be picked up and executed.
 
 Guidelines:
-- New work → create_task, then reply with confirmation + task ID
+- New work → create_task (defaults to backlog unless user says "now"/"immediately"/"urgent"), then reply with confirmation + task ID
 - Find tasks → search_tasks, then reply with results
 - Modify task → update_task, then reply with what changed + task ID
 - Stop/pause execution → stop_executor, then reply
 - Resume execution → start_executor, then reply
 - Status → get_executor_status, then reply with status
+- RunPod GPU → create_runpod_instance or terminate_runpod_instances
 - Chitchat → just reply
 
-Status: queued/todo=now, upcoming/backlog=later, in_progress, stuck, done, cancelled
+Status: queued/todo=do now, upcoming/backlog=later (DEFAULT), in_progress, stuck, done, cancelled
 Area: ui, api, backend, frontend, database, tools, docs, infra`;
 }
 
@@ -178,3 +179,4 @@ ${historyText}`;
     reply: finalReply,
   };
 }
+
