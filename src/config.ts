@@ -98,7 +98,7 @@ export const config = {
     /** Container disk size in GB */
     containerDiskGb: parseInt(optionalEnv('RUNPOD_CONTAINER_DISK_GB', '50')),
     /** Network storage volume names to try in order (comma-separated) */
-    storageVolumes: optionalEnv('RUNPOD_STORAGE_VOLUMES', 'Peter,EU-NO-1,EU-CZ-1,EUR-IS-1').split(',').map(s => s.trim()).filter(Boolean),
+    storageVolumes: optionalEnv('RUNPOD_STORAGE_VOLUMES', 'Peter').split(',').map(s => s.trim()).filter(Boolean),
     /** Volume mount path */
     volumeMountPath: optionalEnv('RUNPOD_VOLUME_MOUNT_PATH', '/workspace'),
   },
