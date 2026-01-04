@@ -1,0 +1,27 @@
+{
+  "name": "arnold-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for managing dev tasks with Claude AI",
+  "main": "dist/bot.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bot.js",
+    "dev": "tsc && node --watch dist/bot.js",
+    "typecheck": "tsc --noEmit",
+    "logs": "tsc && node dist/logs-cli.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^0.2.57",
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@supabase/supabase-js": "^2.47.10",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "groq-sdk": "^0.37.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
+
