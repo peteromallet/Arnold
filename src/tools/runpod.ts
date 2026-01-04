@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import type { RegisteredTool, ToolContext } from './types.js';
 import type { ToolResult } from '../types.js';
+import { Client as SSHClient } from 'ssh2';
 
 const RUNPOD_API_URL = 'https://api.runpod.io/graphql';
 
@@ -144,6 +145,212 @@ async function findNetworkVolumeId(volumeName: string): Promise<string | null> {
   }
   
   return volume?.id || null;
+}
+
+// ============================================================================
+// SSH Functions
+// ============================================================================
+
+interface SSHConnectionInfo {
+  ip: string;
+  port: number;
+}
+
+/**
+ * Get SSH connection details for a pod
+ */
+async function getPodSSHDetails(podId: string): Promise<SSHConnectionInfo | null> {
+  const query = `
+    query {
+      pod(input: {podId: "${podId}"}) {
+        id
+        desiredStatus
+        runtime {
+          ports {
+            ip
+            isIpPublic
+            privatePort
+            publicPort
+            type
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const data = await runpodGraphQL(query) as {
+      pod: {
+        id: string;
+        desiredStatus: string;
+        runtime?: {
+          ports?: Array<{
+            ip: string;
+            isIpPublic: boolean;
+            privatePort: number;
+            publicPort: number;
+            type: string;
+          }>;
+        };
+      } | null;
+    };
+
+    const pod = data.pod;
+    if (!pod || pod.desiredStatus !== 'RUNNING' || !pod.runtime?.ports) {
+      return null;
+    }
+
+    // Find SSH port (private port 22)
+    const sshPort = pod.runtime.ports.find(p => p.privatePort === 22);
+    if (!sshPort || !sshPort.ip || !sshPort.publicPort) {
+      return null;
+    }
+
+    return {
+      ip: sshPort.ip,
+      port: sshPort.publicPort,
+    };
+  } catch (error) {
+    logger.warn('Error getting SSH details', { podId, error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
+/**
+ * Wait for SSH to be available on a pod
+ */
+async function waitForSSH(podId: string, maxWaitMs = 120000): Promise<SSHConnectionInfo | null> {
+  const startTime = Date.now();
+  const pollIntervalMs = 5000;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const sshDetails = await getPodSSHDetails(podId);
+    if (sshDetails) {
+      logger.info('SSH available', { podId, ip: sshDetails.ip, port: sshDetails.port });
+      return sshDetails;
+    }
+    
+    logger.debug('Waiting for SSH...', { podId, elapsed: Date.now() - startTime });
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+
+  return null;
+}
+
+/**
+ * Execute a command on a pod via SSH
+ */
+async function executeSSHCommand(
+  sshDetails: SSHConnectionInfo,
+  command: string,
+  timeoutMs = 30000
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const privateKey = config.runpod.sshPrivateKey;
+  if (!privateKey) {
+    throw new Error('RUNPOD_SSH_PRIVATE_KEY not configured');
+  }
+
+  return new Promise((resolve, reject) => {
+    const conn = new SSHClient();
+    let stdout = '';
+    let stderr = '';
+    
+    const timeout = setTimeout(() => {
+      conn.end();
+      reject(new Error(`SSH command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    conn.on('ready', () => {
+      logger.debug('SSH connection established');
+      
+      conn.exec(command, (err, stream) => {
+        if (err) {
+          clearTimeout(timeout);
+          conn.end();
+          reject(err);
+          return;
+        }
+
+        stream.on('close', (code: number) => {
+          clearTimeout(timeout);
+          conn.end();
+          resolve({ stdout, stderr, code: code || 0 });
+        });
+
+        stream.on('data', (data: Buffer) => {
+          stdout += data.toString();
+        });
+
+        stream.stderr.on('data', (data: Buffer) => {
+          stderr += data.toString();
+        });
+      });
+    });
+
+    conn.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+
+    conn.connect({
+      host: sshDetails.ip,
+      port: sshDetails.port,
+      username: 'root',
+      privateKey: privateKey,
+      readyTimeout: 10000,
+    });
+  });
+}
+
+/**
+ * Start Jupyter Lab on a pod via SSH
+ */
+async function startJupyterViaSSH(podId: string): Promise<boolean> {
+  if (!config.runpod.sshPrivateKey) {
+    logger.warn('SSH private key not configured, cannot auto-start Jupyter');
+    return false;
+  }
+
+  // Wait for SSH to be available
+  const sshDetails = await waitForSSH(podId);
+  if (!sshDetails) {
+    logger.error('SSH not available after waiting', { podId });
+    return false;
+  }
+
+  // Give the container a moment to fully initialize
+  await new Promise(resolve => setTimeout(resolve, 3000));
+
+  const jupyterCmd = `nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --ServerApp.root_dir=/workspace > /var/log/jupyter.log 2>&1 &`;
+
+  try {
+    logger.info('Starting Jupyter via SSH', { podId });
+    
+    const result = await executeSSHCommand(sshDetails, jupyterCmd);
+    
+    if (result.code === 0) {
+      logger.info('Jupyter start command executed', { podId, stdout: result.stdout, stderr: result.stderr });
+      
+      // Wait a moment for Jupyter to start
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Verify Jupyter is running
+      const checkResult = await executeSSHCommand(sshDetails, 'pgrep -f "jupyter-lab" || pgrep -f "jupyter lab"');
+      if (checkResult.stdout.trim()) {
+        logger.info('Jupyter confirmed running', { podId, pid: checkResult.stdout.trim() });
+        return true;
+      } else {
+        logger.warn('Jupyter process not found after starting', { podId });
+        return false;
+      }
+    } else {
+      logger.error('Jupyter start command failed', { podId, code: result.code, stderr: result.stderr });
+      return false;
+    }
+  } catch (error) {
+    logger.error('Failed to start Jupyter via SSH', error instanceof Error ? error : undefined, { podId });
+    return false;
+  }
 }
 
 // ============================================================================
@@ -298,6 +505,11 @@ export const createRunpodInstance: RegisteredTool = {
               ? `networkVolumeId: "${volume.id}"\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`
               : `volumeInGb: ${config.runpod.diskSizeGb}\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`;
 
+            // Inject SSH public key for authentication (RunPod images use PUBLIC_KEY env var)
+            const envParams = config.runpod.sshPublicKey
+              ? `env: [{ key: "PUBLIC_KEY", value: "${config.runpod.sshPublicKey.replace(/"/g, '\\"')}" }]`
+              : '';
+
             const mutation = `
               mutation {
                 podFindAndDeployOnDemand(input: {
@@ -311,6 +523,7 @@ export const createRunpodInstance: RegisteredTool = {
                   minVcpuCount: 8
                   minMemoryInGb: ${ramTier}
                   ports: "22/tcp,8888/http"
+                  ${envParams}
                 }) {
                   id
                   name
@@ -386,22 +599,39 @@ export const createRunpodInstance: RegisteredTool = {
         machineId: pod.machineId 
       });
 
-      // Wait for the pod to be running
+      // Wait for the pod to be running with ports
       const jupyterUrl = await waitForPodReady(pod.id);
+      const jupyterProxyUrl = `https://${pod.id}-8888.proxy.runpod.net`;
 
-      // Note: Jupyter isn't auto-started. User needs to start it via SSH or web terminal:
-      // jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password=''
-      const jupyterCmd = "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password=''";
+      // Try to start Jupyter via SSH if we have SSH keys configured
+      let jupyterStarted = false;
+      if (config.runpod.sshPrivateKey && config.runpod.sshPublicKey) {
+        logger.info('Starting Jupyter via SSH...', { podId: pod.id });
+        jupyterStarted = await startJupyterViaSSH(pod.id);
+        
+        if (jupyterStarted) {
+          logger.info('Jupyter started successfully via SSH', { podId: pod.id });
+        } else {
+          logger.warn('Failed to auto-start Jupyter via SSH', { podId: pod.id });
+        }
+      } else {
+        logger.info('SSH keys not configured, skipping Jupyter auto-start', { podId: pod.id });
+      }
       
-      if (jupyterUrl) {
-        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl, ramTier: usedRamTier, storage: usedStorageVolume });
+      if (jupyterUrl || jupyterStarted) {
+        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl: jupyterProxyUrl, ramTier: usedRamTier, storage: usedStorageVolume, jupyterStarted });
+        
+        const message = jupyterStarted
+          ? `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}\n\n✅ Jupyter Lab auto-started!`
+          : `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}\n\n⚠️ Start Jupyter manually via web terminal:\n\`jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password=''\``;
+        
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter URL: ${jupyterUrl}\n\n⚠️ Start Jupyter via web terminal:\n\`${jupyterCmd}\``,
+          message,
         };
       } else {
         // Still return success since pod was created with a machine
@@ -412,7 +642,7 @@ export const createRunpodInstance: RegisteredTool = {
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `Created RunPod instance "${pod.name}" (${usedStorageVolume}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n\n🔗 Jupyter URL (when ready): https://${pod.id}-8888.proxy.runpod.net\n\n⚠️ Start Jupyter via web terminal:\n\`${jupyterCmd}\``,
+          message: `Created RunPod instance "${pod.name}" (${usedStorageVolume}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n\n🔗 Jupyter URL (when ready): ${jupyterProxyUrl}`,
         };
       }
     } catch (error) {

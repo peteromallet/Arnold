@@ -101,6 +101,10 @@ export const config = {
     storageVolumes: optionalEnv('RUNPOD_STORAGE_VOLUMES', 'Peter').split(',').map(s => s.trim()).filter(Boolean),
     /** Volume mount path */
     volumeMountPath: optionalEnv('RUNPOD_VOLUME_MOUNT_PATH', '/workspace'),
+    /** SSH public key (injected into pod for authentication) */
+    sshPublicKey: process.env.RUNPOD_SSH_PUBLIC_KEY || null,
+    /** SSH private key (used to connect to pod) */
+    sshPrivateKey: process.env.RUNPOD_SSH_PRIVATE_KEY || null,
   },
 } as const;
 
