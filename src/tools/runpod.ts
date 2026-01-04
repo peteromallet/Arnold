@@ -317,6 +317,10 @@ echo "📦 Installing system dependencies..."
 apt-get update
 apt-get install -y curl gnupg python3.10-venv ffmpeg
 
+# Install terminado for Jupyter terminal support
+echo "📦 Installing Jupyter terminal support..."
+pip install terminado
+
 # Remove old Node.js if present and install Node.js 20
 echo "📦 Installing Node.js 20..."
 apt-get remove -y nodejs npm libnode-dev libnode72 nodejs-doc 2>/dev/null || true
