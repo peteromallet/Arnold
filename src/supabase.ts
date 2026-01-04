@@ -361,6 +361,25 @@ export async function getUsageStats(
 // ============================================================================
 
 /**
+ * Database log levels
+ */
+export type DbLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+
+/**
+ * System log entry from the database
+ */
+export interface SystemLog {
+  id: string;
+  timestamp: string;
+  source_type: string;
+  source_id: string;
+  log_level: DbLogLevel;
+  message: string;
+  task_id: string | null;
+  metadata: Record<string, unknown>;
+}
+
+/**
  * Get the source ID for this Arnold instance
  */
 export function getSourceId(): string {
@@ -412,7 +431,7 @@ interface LogFilters {
 /**
  * Query system logs with filters
  */
-export async function querySystemLogs(filters: LogFilters = {}) {
+export async function querySystemLogs(filters: LogFilters = {}): Promise<SystemLog[]> {
   let query = supabase
     .from('system_logs')
     .select('*')
@@ -463,20 +482,20 @@ export async function querySystemLogs(filters: LogFilters = {}) {
     throw new ExternalServiceError('supabase', `Failed to query system logs: ${error.message}`);
   }
 
-  return data;
+  return data as SystemLog[];
 }
 
 /**
  * Get logs for a specific task
  */
-export async function getTaskLogs(taskId: string, limit = 50) {
+export async function getTaskLogs(taskId: string, limit = 50): Promise<SystemLog[]> {
   return querySystemLogs({ taskId, limit });
 }
 
 /**
  * Get recent error logs
  */
-export async function getRecentErrors(limit = 20) {
+export async function getRecentErrors(limit = 20): Promise<SystemLog[]> {
   return querySystemLogs({ level: ['ERROR', 'CRITICAL'], limit });
 }
 
