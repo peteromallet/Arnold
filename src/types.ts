@@ -1,7 +1,7 @@
 /**
  * Task status values as stored in the database
  */
-export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'stuck' | 'done' | 'cancelled';
+export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'stuck' | 'done' | 'cancelled' | 'needs_info';
 
 /**
  * User-friendly status aliases (mapped to TaskStatus in supabase.ts)
@@ -109,6 +109,8 @@ export interface ClaudeCodeResult {
   flaggedReason?: string | null;
   /** The git commit hash that was pushed */
   commitHash?: string | null;
+  /** If Claude Code needs more info to complete the task */
+  needsInfo?: string | null;
 }
 
 /**
@@ -131,14 +133,32 @@ export interface ToolResult {
   success: boolean;
   action: string;
   error?: string;
-  // Tool-specific fields
   task?: Task;
   tasks?: Task[];
   count?: number;
   message?: string;
   updatedFields?: string[];
   running?: boolean;
-  currentTask?: { id: string; title: string } | null;
+  currentTask?: {
+    id: string;
+    title: string;
+  } | null;
+  // RunPod-specific fields
+  pod_id?: string;
+  pod_name?: string;
+  gpu_type?: string;
+  instances?: Array<{
+    id: string;
+    name: string;
+    status: string;
+    gpu: string;
+    cost_per_hour: number;
+    uptime_minutes: number;
+    is_arnold_managed: boolean;
+  }>;
+  total_cost_per_hour?: number;
+  terminated?: string[];
+  failed?: Array<{ id: string; error: string }>;
 }
 
 /**
@@ -170,3 +190,4 @@ export interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
 }
+

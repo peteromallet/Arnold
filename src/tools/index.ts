@@ -1,14 +1,11 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import { logger } from '../logger.js';
 import { taskTools } from './tasks.js';
 import { executorTools } from './executor.js';
 import { statsTools } from './stats.js';
 import { replyTool } from './reply.js';
+import { runpodTools } from './runpod.js';
 import type { RegisteredTool, ToolContext } from './types.js';
 import type { ToolResult } from '../types.js';
-
-// Re-export types
-export type { RegisteredTool, ToolContext, ToolHandler } from './types.js';
 
 /**
  * All registered tools
@@ -17,6 +14,7 @@ const allTools: RegisteredTool[] = [
   ...taskTools,
   ...executorTools,
   ...statsTools,
+  ...runpodTools,
   replyTool,
 ];
 
@@ -24,20 +22,20 @@ const allTools: RegisteredTool[] = [
  * Tool registry - maps tool names to their handlers
  */
 const toolRegistry = new Map<string, RegisteredTool>(
-  allTools.map((tool) => [tool.name, tool]),
+  allTools.map((tool) => [tool.name, tool])
 );
 
 /**
  * Get all tool schemas for Claude
  */
-export function getToolSchemas(): Anthropic.Tool[] {
+export function getToolSchemas() {
   return allTools.map((tool) => tool.schema);
 }
 
 /**
  * Get list of tool names (for system prompt)
  */
-export function getToolNames(): string[] {
+export function getToolNames() {
   return allTools.map((tool) => tool.name);
 }
 
@@ -46,8 +44,8 @@ export function getToolNames(): string[] {
  */
 export async function executeTool(
   toolName: string,
-  input: Record<string, unknown>,
-  context: ToolContext,
+  input: unknown,
+  context: ToolContext
 ): Promise<ToolResult> {
   const tool = toolRegistry.get(toolName);
 
@@ -63,7 +61,7 @@ export async function executeTool(
   logger.debug('Executing tool', { tool: toolName, input });
 
   try {
-    const result = await tool.handler(input as any, context);
+    const result = await tool.handler(input, context);
     logger.debug('Tool result', { tool: toolName, success: result.success });
     return result;
   } catch (error) {
@@ -97,3 +95,4 @@ export function registerTool(tool: RegisteredTool): void {
   allTools.push(tool);
   logger.info('Tool registered', { toolName: tool.name });
 }
+

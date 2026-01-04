@@ -4,14 +4,7 @@ import { config } from './config.js';
 import { logger, setLogTaskContext } from './logger.js';
 import { ExecutorBusyError, ExecutorNotRunningError } from './errors.js';
 import { getNextTodoTask, updateTaskStatus, resetInProgressTasks } from './supabase.js';
-import type {
-  Task,
-  ExecutorState,
-  ExecutorResult,
-  ClaudeCodeResult,
-  NotifyCallback,
-  ExecutionDetails,
-} from './types.js';
+import type { Task, ClaudeCodeResult, ExecutorState, ExecutorResult, ExecutionDetails, NotifyCallback } from './types.js';
 
 const PROJECT_DIR = `${config.executor.workspaceDir}/${config.github.repoName}`;
 
@@ -20,28 +13,28 @@ const PROJECT_DIR = `${config.executor.workspaceDir}/${config.github.repoName}`;
  */
 function redactSecrets(text: string): string {
   let redacted = text;
-  
+
   // Redact GitHub token from URLs
   if (config.github.token) {
     redacted = redacted.replace(new RegExp(config.github.token, 'g'), '[REDACTED]');
   }
-  
+
   // Redact Anthropic API key
   if (config.anthropic.apiKey) {
     redacted = redacted.replace(new RegExp(config.anthropic.apiKey, 'g'), '[REDACTED]');
   }
-  
+
   // Redact Supabase service role key
   if (config.supabase.serviceRoleKey) {
     redacted = redacted.replace(new RegExp(config.supabase.serviceRoleKey, 'g'), '[REDACTED]');
   }
-  
+
   // Redact common secret patterns (API keys, tokens)
   redacted = redacted.replace(/sk-[a-zA-Z0-9]{20,}/g, '[REDACTED]');
   redacted = redacted.replace(/ghp_[a-zA-Z0-9]{36}/g, '[REDACTED]');
   redacted = redacted.replace(/gho_[a-zA-Z0-9]{36}/g, '[REDACTED]');
   redacted = redacted.replace(/github_pat_[a-zA-Z0-9_]{22,}/g, '[REDACTED]');
-  
+
   return redacted;
 }
 
@@ -52,7 +45,7 @@ class TaskExecutor {
   private running = false;
   private currentTask: Task | null = null;
   private notifyCallback: NotifyCallback | null = null;
-  private pollInterval: NodeJS.Timeout | null = null;
+  private pollInterval: ReturnType<typeof setInterval> | null = null;
   private repoReady = false;
   private idleResolvers: Array<() => void> = [];
 
@@ -144,7 +137,7 @@ class TaskExecutor {
       timeoutMs,
     });
 
-    return new Promise<void>((resolve) => {
+    return new Promise((resolve) => {
       // Set up timeout
       const timeout = setTimeout(() => {
         const idx = this.idleResolvers.indexOf(resolve);
@@ -213,12 +206,12 @@ class TaskExecutor {
             err.message ? `message: ${err.message}` : null,
             err.status !== undefined ? `exit code: ${err.status}` : null,
           ].filter(Boolean).join('; ');
-          
+
           // Log directly to console to bypass any formatting issues
           console.error('=== GIT CLONE ERROR ===');
           console.error('Error details:', redactSecrets(errorDetails));
           console.error('=======================');
-          
+
           throw new Error(`Git clone failed: ${redactSecrets(errorDetails)}`);
         }
 
@@ -233,8 +226,10 @@ class TaskExecutor {
       if (config.github.token) {
         const remoteUrl = `https://${config.github.token}@github.com/${config.github.repoOwner}/${config.github.repoName}.git`;
         execSync(`git remote set-url origin ${remoteUrl}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+
         // Also configure credential helper to store the token
         execSync('git config credential.helper store', { cwd: PROJECT_DIR, stdio: 'pipe' });
+
         logger.info('Git remote URL configured with token');
       }
 
@@ -247,8 +242,8 @@ class TaskExecutor {
       // Redact secrets from error message before logging
       const errorMessage = error instanceof Error ? error.message : String(error);
       const safeMessage = redactSecrets(errorMessage);
-      logger.error('Failed to setup repository', new Error(safeMessage), { 
-        errorDetails: safeMessage 
+      logger.error('Failed to setup repository', new Error(safeMessage), {
+        errorDetails: safeMessage
       });
       return false;
     }
@@ -264,7 +259,6 @@ class TaskExecutor {
 
     try {
       const task = await getNextTodoTask();
-
       if (task) {
         logger.info('Found task to execute', { taskId: task.id, title: task.title });
         await this.executeTask(task);
@@ -280,7 +274,7 @@ class TaskExecutor {
    */
   private async executeTask(task: Task): Promise<void> {
     this.currentTask = task;
-    
+
     // Set task context for logging
     setLogTaskContext(task.id);
 
@@ -293,7 +287,6 @@ class TaskExecutor {
       const prompt = this.buildPrompt(task);
 
       logger.info('Running Claude Code', { taskId: task.id, promptLength: prompt.length });
-
       const result = await this.runClaudeCode(prompt);
 
       if (result.success) {
@@ -305,13 +298,29 @@ class TaskExecutor {
           return;
         }
 
+        // Check if Claude Code needs more information
+        if (result.needsInfo) {
+          logger.info('Task needs more information', { taskId: task.id });
+
+          // Append to existing notes instead of replacing
+          const timestamp = new Date().toISOString().split('T')[0];
+          const needsInfoEntry = `\n\n---\n**[${timestamp}] Executor needs info:**\n${result.needsInfo}`;
+          const updatedNotes = (task.notes || '') + needsInfoEntry;
+
+          await updateTaskStatus(task.id, 'needs_info', updatedNotes, null, result.executionDetails);
+          this.notify(
+            `❓ **Needs Info:** ${task.title}\n\n${result.needsInfo}\n\nReply with more details and I'll update the task and re-queue it.\n\`${task.id}\``
+          );
+          return;
+        }
+
         // Verify commit was pushed if a hash was provided
         let pushInfo = '';
         if (result.commitHash) {
           const verified = this.verifyCommitPushed(result.commitHash);
           const shortHash = result.commitHash.substring(0, 7);
           const commitUrl = `https://github.com/${config.github.repoOwner}/${config.github.repoName}/commit/${result.commitHash}`;
-          
+
           if (verified) {
             pushInfo = `\n\n🔗 Pushed [\`${shortHash}\`](${commitUrl}) to \`${config.github.repoBranch}\``;
             logger.info('Commit verified on remote', { commitHash: result.commitHash });
@@ -326,7 +335,6 @@ class TaskExecutor {
         // Task completed successfully
         const devNotes = result.devNotes || 'Completed successfully.';
         await updateTaskStatus(task.id, 'done', devNotes, result.commitHash || null, result.executionDetails);
-
         this.notify(`✅ **Done:** ${task.title}${pushInfo}\n\`${task.id}\``);
         logger.info('Task completed', { taskId: task.id, commitHash: result.commitHash });
       } else {
@@ -345,8 +353,10 @@ class TaskExecutor {
       this.notify(`⚠️ **Stuck:** ${task.title}\n${message}`);
     } finally {
       this.currentTask = null;
+
       // Clear task context for logging
       setLogTaskContext(null);
+
       // Resolve any waitForIdle promises
       this.idleResolvers.forEach((resolve) => resolve());
       this.idleResolvers = [];
@@ -357,7 +367,19 @@ class TaskExecutor {
    * Build a prompt for Claude Code based on the task
    */
   private buildPrompt(task: Task): string {
-    const parts: string[] = [`# Task: ${task.title}`, ''];
+    const parts = [`# Task: ${task.title}`, ''];
+
+    // Check if this is a retry after needing more info
+    const isRetry = task.notes?.includes('Executor needs info:');
+    if (isRetry) {
+      parts.push(
+        '## ⚠️ RETRY - Previous Attempt Needed More Information',
+        'This task was previously attempted but you needed clarification.',
+        'The user has now provided additional information (see Description and Notes below).',
+        'Please use this new context to complete the task.',
+        ''
+      );
+    }
 
     if (task.description) {
       parts.push('## Description', task.description, '');
@@ -372,7 +394,7 @@ class TaskExecutor {
     }
 
     const branch = config.github.repoBranch;
-    
+
     parts.push(
       '## Instructions',
       '',
@@ -434,6 +456,19 @@ class TaskExecutor {
       '- Any merge conflicts encountered and how they were resolved',
       '- Anything to watch out for',
       'DEV_NOTES_END',
+      '',
+      '### If You Need More Information',
+      'If you cannot complete the task because the description is unclear, you cannot find the relevant code,',
+      'or you need clarification from the user, DO NOT make guesses or incomplete changes.',
+      'Instead, output:',
+      '',
+      'NEEDS_INFO_START',
+      '- What specific information you need',
+      '- What you tried to find but could not locate',
+      '- Any clarifying questions for the user',
+      'NEEDS_INFO_END',
+      '',
+      'Then output COMMIT_HASH_START none COMMIT_HASH_END and stop.'
     );
 
     return parts.join('\n');
@@ -480,39 +515,40 @@ class TaskExecutor {
         logger.debug('Claude Code stderr', { text: redactSecrets(text.substring(0, 200)) });
       });
 
-      proc.on('close', (code) => {
+      proc.on('close', (code: number | null) => {
         logger.info('Claude Code exited', { code, stdoutLen: stdout.length, stderrLen: stderr.length });
 
         // Log full output (with secrets redacted) for debugging
         if (stdout.length > 0) {
-          logger.info('Claude Code stdout', { 
+          logger.info('Claude Code stdout', {
             output: redactSecrets(stdout),
-            outputLength: stdout.length 
+            outputLength: stdout.length
           });
         }
         if (stderr.length > 0) {
-          logger.info('Claude Code stderr', { 
+          logger.info('Claude Code stderr', {
             output: redactSecrets(stderr),
-            outputLength: stderr.length 
+            outputLength: stderr.length
           });
         }
 
         if (code === 0) {
           // Parse JSON output to extract usage stats
           const { executionDetails, result } = this.parseClaudeCodeOutput(stdout);
-          
+
           // Search for markers in both result AND full stdout (markers might be in earlier turns)
           const outputText = result || '';
           const fullOutput = stdout;
-          
+
           // Try to extract from result first, then fall back to full stdout
           const devNotes = this.extractDevNotes(outputText) || this.extractDevNotes(fullOutput);
           const flaggedReason = this.extractFlaggedReason(outputText) || this.extractFlaggedReason(fullOutput);
           const commitHash = this.extractCommitHash(outputText) || this.extractCommitHash(fullOutput);
-          
+          const needsInfo = this.extractNeedsInfo(outputText) || this.extractNeedsInfo(fullOutput);
+
           // Log extraction results for debugging
-          logger.info('Extracted Claude Code results', { 
-            hasResult: !!result, 
+          logger.info('Extracted Claude Code results', {
+            hasResult: !!result,
             resultLength: result?.length || 0,
             stdoutLength: stdout.length,
             hasCommitHash: !!commitHash,
@@ -520,15 +556,17 @@ class TaskExecutor {
             hasDevNotes: !!devNotes,
             devNotesLength: devNotes?.length || 0,
             hasFlaggedReason: !!flaggedReason,
+            hasNeedsInfo: !!needsInfo,
             resultHasCommitMarker: outputText.includes('COMMIT_HASH'),
             stdoutHasCommitMarker: fullOutput.includes('COMMIT_HASH'),
           });
-          
+
           resolve({
             success: true,
             devNotes,
             flaggedReason,
             commitHash,
+            needsInfo,
             executionDetails,
           });
         } else {
@@ -552,7 +590,7 @@ class TaskExecutor {
         }
       });
 
-      proc.on('error', (err) => {
+      proc.on('error', (err: Error) => {
         logger.error('Failed to spawn Claude Code', new Error(redactSecrets(err.message)));
         resolve({
           success: false,
@@ -581,27 +619,29 @@ class TaskExecutor {
   private parseClaudeCodeOutput(output: string): { executionDetails?: ExecutionDetails; result?: string } {
     try {
       const json = JSON.parse(output);
-      
+
       const executionDetails: ExecutionDetails = {
         num_turns: json.num_turns,
         total_cost_usd: json.total_cost_usd,
         duration_ms: json.duration_ms,
-        usage: json.usage ? {
-          input_tokens: json.usage.input_tokens,
-          output_tokens: json.usage.output_tokens,
-          cache_creation_input_tokens: json.usage.cache_creation_input_tokens,
-          cache_read_input_tokens: json.usage.cache_read_input_tokens,
-        } : undefined,
+        usage: json.usage
+          ? {
+              input_tokens: json.usage.input_tokens,
+              output_tokens: json.usage.output_tokens,
+              cache_creation_input_tokens: json.usage.cache_creation_input_tokens,
+              cache_read_input_tokens: json.usage.cache_read_input_tokens,
+            }
+          : undefined,
       };
-      
+
       const result = json.result || undefined;
-      
-      logger.info('Claude Code usage', { 
+
+      logger.info('Claude Code usage', {
         numTurns: executionDetails.num_turns,
         costUsd: executionDetails.total_cost_usd,
         durationMs: executionDetails.duration_ms,
       });
-      
+
       return { executionDetails, result };
     } catch {
       // Not JSON or parse error - return empty
@@ -623,6 +663,24 @@ class TaskExecutor {
     if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
       const notes = output.substring(startIdx + startMarker.length, endIdx).trim();
       return notes || null;
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract "needs more info" request from Claude Code output
+   */
+  private extractNeedsInfo(output: string): string | null {
+    const startMarker = 'NEEDS_INFO_START';
+    const endMarker = 'NEEDS_INFO_END';
+
+    const startIdx = output.indexOf(startMarker);
+    const endIdx = output.indexOf(endMarker);
+
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      const info = output.substring(startIdx + startMarker.length, endIdx).trim();
+      return info || null;
     }
 
     return null;
@@ -659,9 +717,9 @@ class TaskExecutor {
     const endIdx = output.indexOf(endMarker);
 
     if (startIdx === -1 || endIdx === -1) {
-      logger.debug('Commit hash markers not found', { 
-        hasStartMarker: startIdx !== -1, 
-        hasEndMarker: endIdx !== -1 
+      logger.debug('Commit hash markers not found', {
+        hasStartMarker: startIdx !== -1,
+        hasEndMarker: endIdx !== -1
       });
       return null;
     }
@@ -672,18 +730,18 @@ class TaskExecutor {
     }
 
     const hash = output.substring(startIdx + startMarker.length, endIdx).trim();
-    
+
     // Return null if "none" or empty
     if (!hash || hash.toLowerCase() === 'none') {
       logger.debug('Commit hash is empty or "none"', { hash });
       return null;
     }
-    
+
     // Validate it looks like a git hash (7-40 hex chars)
     if (/^[a-f0-9]{7,40}$/i.test(hash)) {
       return hash;
     }
-    
+
     logger.debug('Commit hash failed validation', { hash, hashLength: hash.length });
     return null;
   }
@@ -709,7 +767,10 @@ class TaskExecutor {
 
       return result.includes(`origin/${config.github.repoBranch}`);
     } catch (error) {
-      logger.warn('Failed to verify commit on remote', { commitHash, error: redactSecrets(error instanceof Error ? error.message : String(error)) });
+      logger.warn('Failed to verify commit on remote', {
+        commitHash,
+        error: redactSecrets(error instanceof Error ? error.message : String(error))
+      });
       return false;
     }
   }
@@ -731,3 +792,4 @@ export const executor = new TaskExecutor();
 export const startExecutor = (onNotify: NotifyCallback) => executor.start(onNotify);
 export const stopExecutor = () => executor.stop();
 export const getExecutorStatus = () => executor.getStatus();
+

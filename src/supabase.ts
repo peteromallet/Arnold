@@ -1,40 +1,8 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { ExternalServiceError, TaskNotFoundError } from './errors.js';
-import type {
-  Task,
-  TaskStatus,
-  UserStatus,
-  CreateTaskInput,
-  UpdateTaskInput,
-  TaskSearchFilters,
-} from './types.js';
-
-/**
- * Log levels matching the database constraint
- */
-export type DbLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
-
-/**
- * System log entry for insertion
- */
-export interface SystemLogEntry {
-  source_type: 'dev_agent';
-  source_id: string;
-  log_level: DbLogLevel;
-  message: string;
-  task_id?: string | null;
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * System log entry from database
- */
-export interface SystemLog extends SystemLogEntry {
-  id: string;
-  timestamp: string;
-}
+import type { Task, CreateTaskInput, UpdateTaskInput, TaskSearchFilters, ExecutionDetails, TaskStatus } from './types.js';
 
 // Generate a unique source ID for this instance
 const SOURCE_ID = `arnold-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
@@ -42,21 +10,18 @@ const SOURCE_ID = `arnold-${Date.now()}-${Math.random().toString(36).substring(2
 /**
  * Map user-friendly status to database status
  */
-function mapStatusToDb(status: UserStatus): TaskStatus {
-  const statusMap: Record<string, TaskStatus> = {
+function mapStatusToDb(status: string): string {
+  const statusMap: Record<string, string> = {
     queued: 'todo',
     upcoming: 'backlog',
   };
-  return (statusMap[status] as TaskStatus) || (status as TaskStatus);
+  return statusMap[status] || status;
 }
 
 /**
  * Supabase client instance
  */
-export const supabase: SupabaseClient = createClient(
-  config.supabase.url,
-  config.supabase.serviceRoleKey,
-);
+export const supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey);
 
 /**
  * Insert a new task into the dev_tasks table
@@ -88,7 +53,7 @@ export async function insertTask(input: CreateTaskInput): Promise<Task> {
 /**
  * Get recent tasks from the database
  */
-export async function getRecentTasks(limit: number = 10): Promise<Task[]> {
+export async function getRecentTasks(limit = 10): Promise<Task[]> {
   const { data, error } = await supabase
     .from('dev_tasks')
     .select('*')
@@ -195,9 +160,9 @@ export async function searchTasks(filters: TaskSearchFilters): Promise<Task[]> {
 export async function updateTaskStatus(
   taskId: string,
   status: TaskStatus,
-  notes?: string | null,
+  notes?: string,
   commitHash?: string | null,
-  executionDetails?: object | null,
+  executionDetails?: ExecutionDetails | null
 ): Promise<void> {
   const updates: Record<string, unknown> = { status };
 
@@ -266,13 +231,14 @@ export async function resetInProgressTasks(): Promise<number> {
   if (count > 0) {
     logger.info('Reset in_progress tasks', { count });
   }
+
   return count;
 }
 
 /**
- * Usage statistics result
+ * Usage stats result
  */
-export interface UsageStats {
+interface UsageStats {
   period: string;
   startDate: string;
   endDate: string;
@@ -291,15 +257,15 @@ export interface UsageStats {
  * Get usage statistics for a time period
  */
 export async function getUsageStats(
-  period: 'today' | 'yesterday' | 'week' | 'month' | 'all',
+  period: string,
   customStartDate?: string,
-  customEndDate?: string,
+  customEndDate?: string
 ): Promise<UsageStats> {
   // Calculate date range based on period
   const now = new Date();
   let startDate: Date;
   let endDate: Date = now;
-  let periodLabel: string = period;
+  let periodLabel = period;
 
   switch (period) {
     case 'today':
@@ -359,9 +325,8 @@ export async function getUsageStats(
 
     // Sum execution details if available
     if (task.execution_details) {
-      const details = task.execution_details as { total_cost_usd?: number; usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } };
+      const details = task.execution_details as ExecutionDetails;
       totalCostUsd += details.total_cost_usd || 0;
-      
       if (details.usage) {
         totalTokens += details.usage.input_tokens || 0;
         totalTokens += details.usage.output_tokens || 0;
@@ -407,10 +372,10 @@ export function getSourceId(): string {
  * This is fire-and-forget - errors are logged to console but don't throw
  */
 export async function insertSystemLog(
-  level: DbLogLevel,
+  level: string,
   message: string,
-  taskId?: string | null,
-  metadata?: Record<string, unknown>,
+  taskId: string | null,
+  metadata?: Record<string, unknown>
 ): Promise<void> {
   try {
     const { error } = await supabase.from('system_logs').insert({
@@ -432,14 +397,14 @@ export async function insertSystemLog(
 }
 
 /**
- * Query filters for system logs
+ * System log filters
  */
-export interface SystemLogFilters {
-  level?: DbLogLevel | DbLogLevel[];
+interface LogFilters {
+  level?: string | string[];
   taskId?: string;
   sourceId?: string;
-  since?: Date | string;
-  until?: Date | string;
+  since?: string | Date;
+  until?: string | Date;
   search?: string;
   limit?: number;
 }
@@ -447,7 +412,7 @@ export interface SystemLogFilters {
 /**
  * Query system logs with filters
  */
-export async function querySystemLogs(filters: SystemLogFilters = {}): Promise<SystemLog[]> {
+export async function querySystemLogs(filters: LogFilters = {}) {
   let query = supabase
     .from('system_logs')
     .select('*')
@@ -498,19 +463,20 @@ export async function querySystemLogs(filters: SystemLogFilters = {}): Promise<S
     throw new ExternalServiceError('supabase', `Failed to query system logs: ${error.message}`);
   }
 
-  return data as SystemLog[];
+  return data;
 }
 
 /**
  * Get logs for a specific task
  */
-export async function getTaskLogs(taskId: string, limit: number = 50): Promise<SystemLog[]> {
+export async function getTaskLogs(taskId: string, limit = 50) {
   return querySystemLogs({ taskId, limit });
 }
 
 /**
  * Get recent error logs
  */
-export async function getRecentErrors(limit: number = 20): Promise<SystemLog[]> {
+export async function getRecentErrors(limit = 20) {
   return querySystemLogs({ level: ['ERROR', 'CRITICAL'], limit });
 }
+

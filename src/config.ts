@@ -83,6 +83,21 @@ export const config = {
     /** Graceful shutdown timeout in ms */
     shutdownTimeoutMs: 30_000,
   },
+  
+  runpod: {
+    /** RunPod API key (optional, needed for GPU instance management) */
+    apiKey: process.env.RUNPOD_API_KEY || null,
+    /** Prefix for Arnold-created pods (for identification/cleanup) */
+    podPrefix: optionalEnv('RUNPOD_POD_PREFIX', 'arnold_'),
+    /** Default GPU type */
+    gpuType: optionalEnv('RUNPOD_GPU_TYPE', 'NVIDIA GeForce RTX 4090'),
+    /** Default Docker image */
+    image: optionalEnv('RUNPOD_IMAGE', 'runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04'),
+    /** Disk size in GB */
+    diskSizeGb: parseInt(optionalEnv('RUNPOD_DISK_SIZE_GB', '50')),
+    /** Container disk size in GB */
+    containerDiskGb: parseInt(optionalEnv('RUNPOD_CONTAINER_DISK_GB', '50')),
+  },
 } as const;
 
 // Validate Supabase config separately (allows either naming convention)
