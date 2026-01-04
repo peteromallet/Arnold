@@ -214,25 +214,18 @@ export const createRunpodInstance: RegisteredTool = {
         }
       `;
 
-      // Startup script to launch Jupyter immediately
-      const dockerStartCmd = `
-cd /workspace && \
-nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
-  --ServerApp.token='' --ServerApp.password='' --ServerApp.root_dir=/workspace \
-  > /var/log/jupyter.log 2>&1 &
-      `.trim();
-
       const variables = {
         input: {
           name: podName,
           imageName: config.runpod.image,
           gpuTypeId: gpuTypeId,
           gpuCount: 1,
-          cloudType: 'SECURE',
+          cloudType: 'ALL', // Allow any cloud type for better availability
           volumeInGb: config.runpod.diskSizeGb,
           containerDiskInGb: config.runpod.containerDiskGb,
           ports: '22/tcp,8888/http',
-          dockerArgs: dockerStartCmd,
+          minVcpuCount: 4,
+          minMemoryInGb: 16,
         },
       };
 
