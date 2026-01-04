@@ -177,16 +177,22 @@ async function getPodTemplates(): Promise<PodTemplate[]> {
 }
 
 /**
- * Find a pod template ID by name
+ * Find a pod template ID by name or ID
  */
-async function findTemplateId(templateName: string): Promise<string | null> {
+async function findTemplateId(templateNameOrId: string): Promise<string | null> {
   const templates = await getPodTemplates();
-  const template = templates.find(t => t.name === templateName);
+  
+  // Try to match by name first, then by ID
+  const template = templates.find(t => 
+    t.name === templateNameOrId || 
+    t.id === templateNameOrId ||
+    t.name.toLowerCase() === templateNameOrId.toLowerCase()
+  );
   
   if (template) {
-    logger.debug('Found template', { name: templateName, id: template.id, image: template.imageName });
+    logger.info('Found template', { search: templateNameOrId, name: template.name, id: template.id, image: template.imageName });
   } else {
-    logger.debug('Template not found', { name: templateName, available: templates.map(t => t.name) });
+    logger.warn('Template not found', { search: templateNameOrId, available: templates.map(t => `${t.name} (${t.id})`) });
   }
   
   return template?.id || null;
