@@ -668,6 +668,7 @@ export const createRunpodInstance: RegisteredTool = {
                   minVcpuCount: 8
                   minMemoryInGb: ${ramTier}
                   ports: "22/tcp,8888/http"
+                  startJupyter: true
                   ${envParams}
                 }) {
                   id
