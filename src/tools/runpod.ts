@@ -391,9 +391,154 @@ export const terminateRunpodInstances: RegisteredTool = {
 };
 
 /**
+ * List all RunPod instances with detailed status
+ */
+export const listRunpodInstances: RegisteredTool = {
+  name: 'list_runpod_instances',
+  schema: {
+    name: 'list_runpod_instances',
+    description: 'List all RunPod GPU instances with detailed status information.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  handler: async (_input: Record<string, never>, _context: ToolContext): Promise<ToolResult> => {
+    if (!config.runpod.apiKey) {
+      return {
+        success: false,
+        action: 'list_runpod_instances',
+        error: 'RunPod API key not configured. Set RUNPOD_API_KEY environment variable.',
+      };
+    }
+
+    try {
+      const query = `
+        query {
+          myself {
+            pods {
+              id
+              name
+              desiredStatus
+              lastStatusChange
+              imageName
+              machineId
+              costPerHr
+              machine {
+                gpuDisplayName
+              }
+              runtime {
+                uptimeInSeconds
+                ports {
+                  ip
+                  isIpPublic
+                  privatePort
+                  publicPort
+                  type
+                }
+                gpus {
+                  id
+                  gpuUtilPercent
+                  memoryUtilPercent
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const data = await runpodGraphQL(query) as {
+        myself: {
+          pods: Array<{
+            id: string;
+            name: string;
+            desiredStatus: string;
+            lastStatusChange: string;
+            imageName: string;
+            machineId: string;
+            costPerHr: number;
+            machine?: { gpuDisplayName: string };
+            runtime?: {
+              uptimeInSeconds: number;
+              ports?: Array<{
+                ip: string;
+                isIpPublic: boolean;
+                privatePort: number;
+                publicPort: number;
+                type: string;
+              }>;
+              gpus?: Array<{
+                id: string;
+                gpuUtilPercent: number;
+                memoryUtilPercent: number;
+              }>;
+            };
+          }>;
+        };
+      };
+
+      const allPods = data.myself?.pods || [];
+      const prefix = config.runpod.podPrefix;
+      
+      const instances = allPods.map(pod => ({
+        id: pod.id,
+        name: pod.name,
+        status: pod.desiredStatus,
+        gpu: pod.machine?.gpuDisplayName || 'Unknown',
+        cost_per_hour: pod.costPerHr || 0,
+        uptime_minutes: Math.round((pod.runtime?.uptimeInSeconds || 0) / 60),
+        has_ports: !!(pod.runtime?.ports && pod.runtime.ports.length > 0),
+        port_8888: pod.runtime?.ports?.find(p => p.privatePort === 8888)?.publicPort || null,
+        is_arnold_managed: pod.name.startsWith(prefix),
+        last_status_change: pod.lastStatusChange,
+      }));
+
+      const arnoldInstances = instances.filter(i => i.is_arnold_managed);
+      const totalCost = arnoldInstances.reduce((sum, i) => sum + i.cost_per_hour, 0);
+
+      // Build a detailed message
+      let message = `Found ${arnoldInstances.length} Arnold-managed instance(s)`;
+      if (arnoldInstances.length > 0) {
+        message += `:\n\n`;
+        for (const inst of arnoldInstances) {
+          message += `• **${inst.name}** (${inst.id})\n`;
+          message += `  Status: ${inst.status}\n`;
+          message += `  GPU: ${inst.gpu}\n`;
+          message += `  Uptime: ${inst.uptime_minutes} min\n`;
+          message += `  Ports ready: ${inst.has_ports ? 'Yes' : 'No'}\n`;
+          if (inst.has_ports) {
+            message += `  Jupyter: https://${inst.id}-8888.proxy.runpod.net\n`;
+          }
+          message += `\n`;
+        }
+        message += `Total cost: $${totalCost.toFixed(3)}/hr`;
+      }
+
+      return {
+        success: true,
+        action: 'list_runpod_instances',
+        instances,
+        count: arnoldInstances.length,
+        total_cost_per_hour: totalCost,
+        message,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Failed to list RunPod instances', error instanceof Error ? error : undefined);
+      return {
+        success: false,
+        action: 'list_runpod_instances',
+        error: message,
+      };
+    }
+  },
+};
+
+/**
  * All RunPod-related tools
  */
 export const runpodTools: RegisteredTool[] = [
   createRunpodInstance,
   terminateRunpodInstances,
+  listRunpodInstances,
 ];
