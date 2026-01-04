@@ -636,6 +636,9 @@ export const createRunpodInstance: RegisteredTool = {
             // Build environment variables for the pod
             const envVars: Array<{ key: string; value: string }> = [];
             
+            // Disable Jupyter token auth (startJupyter: true starts Jupyter, this disables the token)
+            envVars.push({ key: 'JUPYTER_TOKEN', value: '' });
+            
             // SSH public key for authentication (RunPod images use PUBLIC_KEY env var)
             if (config.runpod.sshPublicKey) {
               envVars.push({ key: 'PUBLIC_KEY', value: config.runpod.sshPublicKey });
