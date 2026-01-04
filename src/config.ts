@@ -91,8 +91,10 @@ export const config = {
     podPrefix: optionalEnv('RUNPOD_POD_PREFIX', 'arnold_'),
     /** Default GPU type */
     gpuType: optionalEnv('RUNPOD_GPU_TYPE', 'NVIDIA GeForce RTX 4090'),
-    /** Default Docker image */
+    /** Default Docker image (used if no template specified) */
     image: optionalEnv('RUNPOD_IMAGE', 'runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04'),
+    /** RunPod template name to use (recommended - has Jupyter pre-configured) */
+    templateName: optionalEnv('RUNPOD_TEMPLATE_NAME', 'runpod-torch-v240'),
     /** Disk size in GB (used when no network volume) */
     diskSizeGb: parseInt(optionalEnv('RUNPOD_DISK_SIZE_GB', '50')),
     /** Container disk size in GB */

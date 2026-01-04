@@ -147,6 +147,51 @@ async function findNetworkVolumeId(volumeName: string): Promise<string | null> {
   return volume?.id || null;
 }
 
+interface PodTemplate {
+  id: string;
+  name: string;
+  imageName: string;
+}
+
+/**
+ * Get available pod templates
+ */
+async function getPodTemplates(): Promise<PodTemplate[]> {
+  const query = `
+    query {
+      myself {
+        podTemplates {
+          id
+          name
+          imageName
+        }
+      }
+    }
+  `;
+
+  const data = await runpodGraphQL(query) as { 
+    myself: { podTemplates: PodTemplate[] } 
+  };
+  
+  return data.myself?.podTemplates || [];
+}
+
+/**
+ * Find a pod template ID by name
+ */
+async function findTemplateId(templateName: string): Promise<string | null> {
+  const templates = await getPodTemplates();
+  const template = templates.find(t => t.name === templateName);
+  
+  if (template) {
+    logger.debug('Found template', { name: templateName, id: template.id, image: template.imageName });
+  } else {
+    logger.debug('Template not found', { name: templateName, available: templates.map(t => t.name) });
+  }
+  
+  return template?.id || null;
+}
+
 // ============================================================================
 // SSH Functions
 // ============================================================================
@@ -527,7 +572,18 @@ export const createRunpodInstance: RegisteredTool = {
         };
       }
 
-      logger.info('Creating RunPod instance', { podName, gpuTypeId, storageVolumes: config.runpod.storageVolumes });
+      // Look up template ID (templates have Jupyter properly configured)
+      let templateId: string | null = null;
+      if (config.runpod.templateName) {
+        templateId = await findTemplateId(config.runpod.templateName);
+        if (templateId) {
+          logger.info('Using template', { name: config.runpod.templateName, id: templateId });
+        } else {
+          logger.warn(`Template "${config.runpod.templateName}" not found, will use raw image`);
+        }
+      }
+
+      logger.info('Creating RunPod instance', { podName, gpuTypeId, templateId, storageVolumes: config.runpod.storageVolumes });
 
       // Build list of network volume IDs to try (in order)
       const storageVolumesToTry: Array<{ name: string; id: string }> = [];
@@ -589,11 +645,16 @@ export const createRunpodInstance: RegisteredTool = {
               ? `env: [${envVars.map(e => `{ key: "${e.key}", value: "${e.value.replace(/"/g, '\\"')}" }`).join(', ')}]`
               : '';
 
+            // Use templateId if available (templates have Jupyter pre-configured), otherwise use raw image
+            const imageOrTemplate = templateId
+              ? `templateId: "${templateId}"`
+              : `imageName: "${config.runpod.image}"`;
+
             const mutation = `
               mutation {
                 podFindAndDeployOnDemand(input: {
                   name: "${podName}"
-                  imageName: "${config.runpod.image}"
+                  ${imageOrTemplate}
                   gpuTypeId: "${gpuTypeId}"
                   gpuCount: 1
                   cloudType: SECURE
@@ -682,27 +743,39 @@ export const createRunpodInstance: RegisteredTool = {
       const jupyterUrl = await waitForPodReady(pod.id);
       const jupyterProxyUrl = `https://${pod.id}-8888.proxy.runpod.net`;
 
-      // Try to start Jupyter via SSH if we have SSH keys configured
-      let jupyterStarted = false;
+      // If using a template, Jupyter is already running - just run setup script for Node.js/Claude Code
+      // If not using a template, we need to start Jupyter ourselves
+      let setupComplete = false;
       if (config.runpod.sshPrivateKey && config.runpod.sshPublicKey) {
-        logger.info('Starting Jupyter via SSH...', { podId: pod.id });
-        jupyterStarted = await startJupyterViaSSH(pod.id);
-        
-        if (jupyterStarted) {
-          logger.info('Jupyter started successfully via SSH', { podId: pod.id });
+        if (templateId) {
+          // Template handles Jupyter - just run setup script for extra tools
+          logger.info('Running setup script via SSH (template handles Jupyter)...', { podId: pod.id });
+          // startJupyterViaSSH with runSetup=true but we'll skip the Jupyter start since template handles it
+          setupComplete = await startJupyterViaSSH(pod.id, true); // This runs setup + starts Jupyter (harmless if already running)
         } else {
-          logger.warn('Failed to auto-start Jupyter via SSH', { podId: pod.id });
+          // No template - we need to start Jupyter ourselves
+          logger.info('Starting Jupyter via SSH (no template)...', { podId: pod.id });
+          setupComplete = await startJupyterViaSSH(pod.id, true);
+        }
+        
+        if (setupComplete) {
+          logger.info('Setup completed via SSH', { podId: pod.id });
+        } else {
+          logger.warn('SSH setup had issues', { podId: pod.id });
         }
       } else {
-        logger.info('SSH keys not configured, skipping Jupyter auto-start', { podId: pod.id });
+        logger.info('SSH keys not configured, skipping setup', { podId: pod.id });
       }
       
-      if (jupyterUrl || jupyterStarted) {
-        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl: jupyterProxyUrl, ramTier: usedRamTier, storage: usedStorageVolume, jupyterStarted });
+      if (jupyterUrl || templateId) {
+        // Template has Jupyter pre-configured, so it should be working
+        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl: jupyterProxyUrl, ramTier: usedRamTier, storage: usedStorageVolume, setupComplete, usingTemplate: !!templateId });
         
-        const message = jupyterStarted
-          ? `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}\n\n✅ Jupyter Lab auto-started!`
-          : `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}\n\n⚠️ Start Jupyter manually via web terminal:\n\`jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password=''\``;
+        const setupNote = setupComplete 
+          ? '\n\n✅ Node.js 20 & Claude Code CLI installed!' 
+          : '\n\n⚠️ Run setup manually if needed (Node.js, Claude Code)';
+        
+        const message = `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}${setupNote}`;
         
         return {
           success: true,
