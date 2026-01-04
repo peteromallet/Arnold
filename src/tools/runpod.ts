@@ -234,6 +234,7 @@ export const createRunpodInstance: RegisteredTool = {
                   cloudType: ${cloudType}
                   volumeInGb: ${config.runpod.diskSizeGb}
                   containerDiskInGb: ${config.runpod.containerDiskGb}
+                  volumeMountPath: "/workspace"
                   minVcpuCount: 8
                   minMemoryInGb: ${ramTier}
                   ports: "22/tcp,8888/http"
