@@ -67,6 +67,35 @@ function generatePodName(): string {
   return `${prefix}${timestamp}_${random}`;
 }
 
+/**
+ * Find GPU type ID from display name
+ */
+async function findGpuTypeId(gpuName: string): Promise<string | null> {
+  const query = `
+    query {
+      gpuTypes {
+        id
+        displayName
+      }
+    }
+  `;
+
+  const data = await runpodGraphQL(query) as { 
+    gpuTypes: Array<{ id: string; displayName: string }> 
+  };
+  
+  const gpuTypes = data.gpuTypes || [];
+  
+  // Try exact match first, then partial match
+  const gpu = gpuTypes.find(g => 
+    g.displayName === gpuName || 
+    g.id === gpuName ||
+    g.displayName.toLowerCase().includes(gpuName.toLowerCase())
+  );
+  
+  return gpu?.id || null;
+}
+
 // ============================================================================
 // Tools
 // ============================================================================
@@ -79,9 +108,10 @@ async function waitForPodReady(podId: string, maxWaitMs = 300000): Promise<strin
   const pollIntervalMs = 5000;
 
   while (Date.now() - startTime < maxWaitMs) {
+    // Use the simpler query format that matches RunPod's API
     const query = `
-      query getPod($input: PodFilter!) {
-        pod(input: $input) {
+      query {
+        pod(input: {podId: "${podId}"}) {
           id
           desiredStatus
           runtime {
@@ -97,7 +127,7 @@ async function waitForPodReady(podId: string, maxWaitMs = 300000): Promise<strin
       }
     `;
 
-    const data = await runpodGraphQL(query, { input: { podId } }) as {
+    const data = await runpodGraphQL(query) as {
       pod: {
         id: string;
         desiredStatus: string;
@@ -110,21 +140,28 @@ async function waitForPodReady(podId: string, maxWaitMs = 300000): Promise<strin
             type: string;
           }>;
         };
-      };
+      } | null;
     };
 
     const pod = data.pod;
     
+    if (!pod) {
+      logger.debug('Pod not found yet', { podId });
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      continue;
+    }
+    
+    logger.debug('Pod status', { podId, status: pod.desiredStatus, hasRuntime: !!pod.runtime });
+    
     if (pod.desiredStatus === 'RUNNING' && pod.runtime?.ports) {
       // Find the Jupyter port (8888)
       const jupyterPort = pod.runtime.ports.find(p => p.privatePort === 8888);
-      if (jupyterPort && jupyterPort.ip) {
+      if (jupyterPort) {
         // RunPod proxies HTTP ports via their domain
         return `https://${podId}-8888.proxy.runpod.net`;
       }
     }
 
-    logger.debug('Waiting for pod to be ready', { podId, status: pod.desiredStatus });
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
   }
 
@@ -156,7 +193,17 @@ export const createRunpodInstance: RegisteredTool = {
     try {
       const podName = generatePodName();
 
-      logger.info('Creating RunPod instance', { podName });
+      // Look up GPU type ID from display name
+      const gpuTypeId = await findGpuTypeId(config.runpod.gpuType);
+      if (!gpuTypeId) {
+        return {
+          success: false,
+          action: 'create_runpod_instance',
+          error: `GPU type "${config.runpod.gpuType}" not found. Check RUNPOD_GPU_TYPE config.`,
+        };
+      }
+
+      logger.info('Creating RunPod instance', { podName, gpuTypeId });
 
       const mutation = `
         mutation createPod($input: PodFindAndDeployOnDemandInput!) {
@@ -179,7 +226,7 @@ nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
         input: {
           name: podName,
           imageName: config.runpod.image,
-          gpuTypeId: config.runpod.gpuType,
+          gpuTypeId: gpuTypeId,
           gpuCount: 1,
           cloudType: 'SECURE',
           volumeInGb: config.runpod.diskSizeGb,
