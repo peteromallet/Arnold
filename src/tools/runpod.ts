@@ -298,9 +298,6 @@ export const createRunpodInstance: RegisteredTool = {
               ? `networkVolumeId: "${volume.id}"\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`
               : `volumeInGb: ${config.runpod.diskSizeGb}\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`;
 
-            // Startup command to launch Jupyter Lab automatically
-            const jupyterStartCmd = "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --ServerApp.root_dir=/workspace &";
-
             const mutation = `
               mutation {
                 podFindAndDeployOnDemand(input: {
@@ -314,7 +311,6 @@ export const createRunpodInstance: RegisteredTool = {
                   minVcpuCount: 8
                   minMemoryInGb: ${ramTier}
                   ports: "22/tcp,8888/http"
-                  dockerStartCmd: "${jupyterStartCmd}"
                 }) {
                   id
                   name
@@ -393,6 +389,10 @@ export const createRunpodInstance: RegisteredTool = {
       // Wait for the pod to be running
       const jupyterUrl = await waitForPodReady(pod.id);
 
+      // Note: Jupyter isn't auto-started. User needs to start it via SSH or web terminal:
+      // jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password=''
+      const jupyterCmd = "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password=''";
+      
       if (jupyterUrl) {
         logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl, ramTier: usedRamTier, storage: usedStorageVolume });
         return {
@@ -401,18 +401,18 @@ export const createRunpodInstance: RegisteredTool = {
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterUrl}`,
+          message: `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter URL: ${jupyterUrl}\n\n⚠️ Start Jupyter via web terminal:\n\`${jupyterCmd}\``,
         };
       } else {
         // Still return success since pod was created with a machine
-        logger.warn('Pod created but Jupyter URL not available yet', { podId: pod.id, ramTier: usedRamTier, storage: usedStorageVolume });
+        logger.warn('Pod created but ports not available yet', { podId: pod.id, ramTier: usedRamTier, storage: usedStorageVolume });
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `Created RunPod instance "${pod.name}" (${usedStorageVolume}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n🔗 Jupyter (when ready): https://${pod.id}-8888.proxy.runpod.net`,
+          message: `Created RunPod instance "${pod.name}" (${usedStorageVolume}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n\n🔗 Jupyter URL (when ready): https://${pod.id}-8888.proxy.runpod.net\n\n⚠️ Start Jupyter via web terminal:\n\`${jupyterCmd}\``,
         };
       }
     } catch (error) {
