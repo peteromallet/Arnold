@@ -362,14 +362,6 @@ echo "📦 Installing system dependencies..."
 apt-get update
 apt-get install -y curl gnupg python3.10-venv ffmpeg
 
-# Install/upgrade terminado and jupyter-server for terminal support
-echo "📦 Installing Jupyter terminal support..."
-pip install --upgrade terminado jupyter-server jupyterlab
-
-# Enable terminal server extension
-echo "📦 Enabling Jupyter terminal extension..."
-jupyter server extension enable --py terminado --sys-prefix 2>/dev/null || true
-
 # Remove old Node.js if present and install Node.js 20
 echo "📦 Installing Node.js 20..."
 apt-get remove -y nodejs npm libnode-dev libnode72 nodejs-doc 2>/dev/null || true
@@ -409,7 +401,10 @@ echo "✅ Pod setup complete!"
 /**
  * Start Jupyter Lab on a pod via SSH
  */
-async function startJupyterViaSSH(podId: string, runSetup = true): Promise<boolean> {
+async function startJupyterViaSSH(
+  podId: string,
+  options: { runSetup?: boolean; startJupyter?: boolean } = { runSetup: true, startJupyter: true },
+): Promise<boolean> {
   if (!config.runpod.sshPrivateKey) {
     logger.warn('SSH private key not configured, cannot auto-start Jupyter');
     return false;
@@ -426,11 +421,15 @@ async function startJupyterViaSSH(podId: string, runSetup = true): Promise<boole
   await new Promise(resolve => setTimeout(resolve, 3000));
 
   // Run setup script first if requested
-  if (runSetup) {
+  if (options.runSetup) {
     const setupSuccess = await runSetupScriptViaSSH(sshDetails, podId);
     if (!setupSuccess) {
       logger.warn('Setup script failed, continuing with Jupyter start anyway', { podId });
     }
+  }
+
+  if (options.startJupyter === false) {
+    return true;
   }
 
   const jupyterCmd = `nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --ServerApp.terminals_enabled=True --ServerApp.root_dir=/workspace > /var/log/jupyter.log 2>&1 &`;
@@ -743,23 +742,21 @@ export const createRunpodInstance: RegisteredTool = {
       const jupyterUrl = await waitForPodReady(pod.id);
       const jupyterProxyUrl = `https://${pod.id}-8888.proxy.runpod.net`;
 
-      // If using a template, Jupyter is already running - just run setup script for Node.js/Claude Code
-      // If not using a template, we need to start Jupyter ourselves
+      // If using a template, Jupyter is already running/configured (and terminals work when created manually).
+      // So: do NOT install/upgrade Jupyter packages and do NOT start another Jupyter server.
+      // Only run the Node/Claude setup via SSH.
       let setupComplete = false;
       if (config.runpod.sshPrivateKey && config.runpod.sshPublicKey) {
         if (templateId) {
-          // Template handles Jupyter - just run setup script for extra tools
-          logger.info('Running setup script via SSH (template handles Jupyter)...', { podId: pod.id });
-          // startJupyterViaSSH with runSetup=true but we'll skip the Jupyter start since template handles it
-          setupComplete = await startJupyterViaSSH(pod.id, true); // This runs setup + starts Jupyter (harmless if already running)
+          logger.info('Running setup script via SSH (template manages Jupyter)...', { podId: pod.id });
+          setupComplete = await startJupyterViaSSH(pod.id, { runSetup: true, startJupyter: false });
         } else {
-          // No template - we need to start Jupyter ourselves
           logger.info('Starting Jupyter via SSH (no template)...', { podId: pod.id });
-          setupComplete = await startJupyterViaSSH(pod.id, true);
+          setupComplete = await startJupyterViaSSH(pod.id, { runSetup: true, startJupyter: true });
         }
-        
+
         if (setupComplete) {
-          logger.info('Setup completed via SSH', { podId: pod.id });
+          logger.info('SSH setup completed', { podId: pod.id });
         } else {
           logger.warn('SSH setup had issues', { podId: pod.id });
         }
