@@ -298,6 +298,9 @@ export const createRunpodInstance: RegisteredTool = {
               ? `networkVolumeId: "${volume.id}"\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`
               : `volumeInGb: ${config.runpod.diskSizeGb}\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`;
 
+            // Startup command to launch Jupyter Lab automatically
+            const jupyterStartCmd = "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --ServerApp.root_dir=/workspace &";
+
             const mutation = `
               mutation {
                 podFindAndDeployOnDemand(input: {
@@ -311,6 +314,7 @@ export const createRunpodInstance: RegisteredTool = {
                   minVcpuCount: 8
                   minMemoryInGb: ${ramTier}
                   ports: "22/tcp,8888/http"
+                  dockerStartCmd: "${jupyterStartCmd}"
                 }) {
                   id
                   name
