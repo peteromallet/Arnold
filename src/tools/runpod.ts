@@ -5,6 +5,9 @@ import type { ToolResult } from '../types.js';
 
 const RUNPOD_API_URL = 'https://api.runpod.io/graphql';
 
+// RAM tiers to try in order (highest first - 72GB has lowest failure rate)
+const RAM_TIERS_GB = [72, 60, 48, 32];
+
 /**
  * Make a GraphQL request to RunPod API
  */
@@ -205,68 +208,101 @@ export const createRunpodInstance: RegisteredTool = {
 
       logger.info('Creating RunPod instance', { podName, gpuTypeId });
 
-      // Use the exact mutation format from the Python SDK
-      const mutation = `
-        mutation {
-          podFindAndDeployOnDemand(input: {
-            name: "${podName}"
-            imageName: "${config.runpod.image}"
-            gpuTypeId: "${gpuTypeId}"
-            gpuCount: 1
-            cloudType: SECURE
-            volumeInGb: ${config.runpod.diskSizeGb}
-            containerDiskInGb: ${config.runpod.containerDiskGb}
-            minVcpuCount: 8
-            minMemoryInGb: 32
-            ports: "22/tcp,8888/http"
-          }) {
-            id
-            name
-            desiredStatus
-            imageName
-            machineId
-          }
-        }
-      `;
+      // Try RAM tiers from highest to lowest (higher RAM = lower failure rate)
+      let pod: { id: string; name: string; desiredStatus: string } | null = null;
+      let lastError: string | null = null;
+      let usedRamTier: number | undefined = undefined;
 
-      const data = await runpodGraphQL(mutation) as { 
-        podFindAndDeployOnDemand: { id: string; name: string; desiredStatus: string } | null
-      };
-      
-      const pod = data.podFindAndDeployOnDemand;
+      for (const ramTier of RAM_TIERS_GB) {
+        try {
+          logger.info(`Trying RAM tier: ${ramTier}GB`, { podName, gpuTypeId });
+
+          const mutation = `
+            mutation {
+              podFindAndDeployOnDemand(input: {
+                name: "${podName}"
+                imageName: "${config.runpod.image}"
+                gpuTypeId: "${gpuTypeId}"
+                gpuCount: 1
+                cloudType: SECURE
+                volumeInGb: ${config.runpod.diskSizeGb}
+                containerDiskInGb: ${config.runpod.containerDiskGb}
+                minVcpuCount: 8
+                minMemoryInGb: ${ramTier}
+                ports: "22/tcp,8888/http"
+              }) {
+                id
+                name
+                desiredStatus
+                imageName
+                machineId
+              }
+            }
+          `;
+
+          const data = await runpodGraphQL(mutation) as { 
+            podFindAndDeployOnDemand: { id: string; name: string; desiredStatus: string } | null
+          };
+          
+          if (data.podFindAndDeployOnDemand?.id) {
+            pod = data.podFindAndDeployOnDemand;
+            usedRamTier = ramTier;
+            logger.info(`Success with ${ramTier}GB RAM tier`, { podId: pod.id });
+            break;
+          } else {
+            lastError = 'No pod ID returned';
+            logger.warn(`RAM tier ${ramTier}GB failed: no pod returned, trying next tier`);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          lastError = message;
+          
+          // Check if it's an availability error (worth trying next tier)
+          if (message.toLowerCase().includes('no longer any instances available') ||
+              message.toLowerCase().includes('insufficient capacity')) {
+            logger.warn(`RAM tier ${ramTier}GB unavailable: ${message}, trying next tier`);
+            continue;
+          }
+          
+          // Other errors might be worth retrying with lower tier too
+          logger.warn(`RAM tier ${ramTier}GB failed: ${message}, trying next tier`);
+        }
+      }
       
       if (!pod || !pod.id) {
-        logger.error('Pod creation failed - no pod returned', { data });
+        logger.error('Pod creation failed - all RAM tiers exhausted', { lastError });
         return {
           success: false,
           action: 'create_runpod_instance',
-          error: 'Pod creation failed - no pod ID returned',
+          error: `Pod creation failed after trying all RAM tiers (72/60/48/32 GB). Last error: ${lastError}`,
         };
       }
 
-      logger.info('RunPod instance created, waiting for it to start', { podId: pod.id, podName: pod.name, status: pod.desiredStatus });
+      logger.info('RunPod instance created, waiting for it to start', { podId: pod.id, podName: pod.name, status: pod.desiredStatus, ramTier: usedRamTier });
 
       // Wait for the pod to be running
       const jupyterUrl = await waitForPodReady(pod.id);
 
       if (jupyterUrl) {
-        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl });
+        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl, ramTier: usedRamTier });
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
-          message: `RunPod instance "${pod.name}" is ready!\n\n🔗 Jupyter: ${jupyterUrl}`,
+          ram_gb: usedRamTier,
+          message: `RunPod instance "${pod.name}" is ready! (${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterUrl}`,
         };
       } else {
         // Still return success since pod was created
-        logger.warn('Pod created but Jupyter URL not available yet', { podId: pod.id });
+        logger.warn('Pod created but Jupyter URL not available yet', { podId: pod.id, ramTier: usedRamTier });
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
-          message: `Created RunPod instance "${pod.name}" (ID: ${pod.id}).\n\nPod is starting - check RunPod dashboard for status.\n🔗 Jupyter (when ready): https://${pod.id}-8888.proxy.runpod.net`,
+          ram_gb: usedRamTier,
+          message: `Created RunPod instance "${pod.name}" (ID: ${pod.id}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n🔗 Jupyter (when ready): https://${pod.id}-8888.proxy.runpod.net`,
         };
       }
     } catch (error) {

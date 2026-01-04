@@ -147,6 +147,7 @@ export interface ToolResult {
   pod_id?: string;
   pod_name?: string;
   gpu_type?: string;
+  ram_gb?: number;
   instances?: Array<{
     id: string;
     name: string;
