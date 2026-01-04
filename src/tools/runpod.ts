@@ -8,9 +8,6 @@ const RUNPOD_API_URL = 'https://api.runpod.io/graphql';
 // RAM tiers to try in order (highest first - 72GB has lowest failure rate)
 const RAM_TIERS_GB = [72, 60, 48, 32];
 
-// Cloud types to try in order (SECURE first, then ALL which includes community)
-const CLOUD_TYPES = ['SECURE', 'ALL'] as const;
-
 /**
  * Make a GraphQL request to RunPod API
  */
@@ -100,6 +97,53 @@ async function findGpuTypeId(gpuName: string): Promise<string | null> {
   );
   
   return gpu?.id || null;
+}
+
+interface NetworkVolume {
+  id: string;
+  name: string;
+  size: number;
+  dataCenterId: string;
+}
+
+/**
+ * Get all network volumes for the account
+ */
+async function getNetworkVolumes(): Promise<NetworkVolume[]> {
+  const query = `
+    query {
+      myself {
+        networkVolumes {
+          id
+          name
+          size
+          dataCenterId
+        }
+      }
+    }
+  `;
+
+  const data = await runpodGraphQL(query) as { 
+    myself: { networkVolumes: NetworkVolume[] } 
+  };
+  
+  return data.myself?.networkVolumes || [];
+}
+
+/**
+ * Find a network volume ID by name
+ */
+async function findNetworkVolumeId(volumeName: string): Promise<string | null> {
+  const volumes = await getNetworkVolumes();
+  const volume = volumes.find(v => v.name === volumeName);
+  
+  if (volume) {
+    logger.debug('Found network volume', { name: volumeName, id: volume.id, size: volume.size });
+  } else {
+    logger.debug('Network volume not found', { name: volumeName, available: volumes.map(v => v.name) });
+  }
+  
+  return volume?.id || null;
 }
 
 // ============================================================================
@@ -209,20 +253,50 @@ export const createRunpodInstance: RegisteredTool = {
         };
       }
 
-      logger.info('Creating RunPod instance', { podName, gpuTypeId });
+      logger.info('Creating RunPod instance', { podName, gpuTypeId, storageVolumes: config.runpod.storageVolumes });
 
-      // Try cloud types and RAM tiers until we get a machine
+      // Build list of network volume IDs to try (in order)
+      const storageVolumesToTry: Array<{ name: string; id: string }> = [];
+      for (const volumeName of config.runpod.storageVolumes) {
+        const volumeId = await findNetworkVolumeId(volumeName);
+        if (volumeId) {
+          storageVolumesToTry.push({ name: volumeName, id: volumeId });
+        } else {
+          logger.warn(`Network volume "${volumeName}" not found, skipping`);
+        }
+      }
+
+      if (storageVolumesToTry.length === 0) {
+        logger.warn('No network volumes found, will use pod volume instead');
+      }
+
+      // Try RAM tiers from highest to lowest (72GB has lowest failure rate)
+      // Within each RAM tier, try all storage volumes before falling back to lower RAM
       let pod: { id: string; name: string; desiredStatus: string; machineId?: string } | null = null;
       let lastError: string | null = null;
       let usedRamTier: number | undefined = undefined;
-      let usedCloudType: string | undefined = undefined;
+      let usedStorageVolume: string | undefined = undefined;
       const failedPodIds: string[] = []; // Track pods created without machines (to terminate later)
 
-      // Try each cloud type, and within each, try RAM tiers from highest to lowest
-      cloudLoop: for (const cloudType of CLOUD_TYPES) {
-        for (const ramTier of RAM_TIERS_GB) {
+      // Strategy: Try each RAM tier across ALL storage volumes before falling back to next tier
+      // This prioritizes 72GB machines (lowest failure rate) over 60GB (higher failure rate)
+      ramLoop: for (const ramTier of RAM_TIERS_GB) {
+        logger.info(`Trying ${ramTier}GB RAM across all storage volumes...`);
+        
+        // If we have network volumes, try each one
+        const volumesToTry = storageVolumesToTry.length > 0 
+          ? storageVolumesToTry 
+          : [{ name: 'pod-volume', id: '' }]; // Fallback to pod volume if no network volumes
+
+        for (const volume of volumesToTry) {
           try {
-            logger.info(`Trying: ${cloudType} cloud, ${ramTier}GB RAM`, { podName, gpuTypeId });
+            const useNetworkVolume = volume.id !== '';
+            logger.info(`Trying: ${volume.name}, ${ramTier}GB RAM`, { podName, gpuTypeId, useNetworkVolume });
+
+            // Build mutation based on whether we're using network volume or pod volume
+            const volumeParams = useNetworkVolume
+              ? `networkVolumeId: "${volume.id}"\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`
+              : `volumeInGb: ${config.runpod.diskSizeGb}\n                  volumeMountPath: "${config.runpod.volumeMountPath}"`;
 
             const mutation = `
               mutation {
@@ -231,10 +305,9 @@ export const createRunpodInstance: RegisteredTool = {
                   imageName: "${config.runpod.image}"
                   gpuTypeId: "${gpuTypeId}"
                   gpuCount: 1
-                  cloudType: ${cloudType}
-                  volumeInGb: ${config.runpod.diskSizeGb}
+                  cloudType: SECURE
                   containerDiskInGb: ${config.runpod.containerDiskGb}
-                  volumeMountPath: "/workspace"
+                  ${volumeParams}
                   minVcpuCount: 8
                   minMemoryInGb: ${ramTier}
                   ports: "22/tcp,8888/http"
@@ -260,12 +333,12 @@ export const createRunpodInstance: RegisteredTool = {
                 // Success! Machine was assigned
                 pod = result;
                 usedRamTier = ramTier;
-                usedCloudType = cloudType;
-                logger.info(`Success: ${cloudType} cloud, ${ramTier}GB RAM, machine ${result.machineId}`, { podId: pod.id });
-                break cloudLoop;
+                usedStorageVolume = volume.name;
+                logger.info(`Success: ${volume.name}, ${ramTier}GB RAM, machine ${result.machineId}`, { podId: pod.id });
+                break ramLoop;
               } else {
                 // Pod created but no machine available - terminate it and try next config
-                logger.warn(`No machine available for ${cloudType}/${ramTier}GB, terminating orphan pod ${result.id}`);
+                logger.warn(`No machine available for ${volume.name}/${ramTier}GB, terminating orphan pod ${result.id}`);
                 failedPodIds.push(result.id);
                 
                 // Terminate the orphan pod
@@ -277,17 +350,21 @@ export const createRunpodInstance: RegisteredTool = {
                   logger.warn(`Failed to terminate orphan pod ${result.id}`, { error: termError });
                 }
                 
-                lastError = `No machine available for ${cloudType}/${ramTier}GB`;
+                lastError = `No machine available for ${volume.name}/${ramTier}GB`;
               }
             } else {
               lastError = 'No pod ID returned';
-              logger.warn(`${cloudType}/${ramTier}GB: no pod returned, trying next config`);
+              logger.warn(`${volume.name}/${ramTier}GB: no pod returned, trying next config`);
             }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             lastError = message;
-            logger.warn(`${cloudType}/${ramTier}GB failed: ${message}, trying next config`);
+            logger.warn(`${volume.name}/${ramTier}GB failed: ${message}, trying next config`);
           }
+        }
+        
+        if (!pod && ramTier !== RAM_TIERS_GB[RAM_TIERS_GB.length - 1]) {
+          logger.warn(`${ramTier}GB RAM not available in any storage, trying ${RAM_TIERS_GB[RAM_TIERS_GB.indexOf(ramTier) + 1]}GB...`);
         }
       }
       
@@ -296,7 +373,7 @@ export const createRunpodInstance: RegisteredTool = {
         return {
           success: false,
           action: 'create_runpod_instance',
-          error: `Pod creation failed after trying all configurations (SECURE/ALL × 72/60/48/32 GB). No 4090s available. Last error: ${lastError}`,
+          error: `Pod creation failed after trying all configurations (storages × 72/60/48/32 GB). No 4090s available. Last error: ${lastError}`,
         };
       }
 
@@ -305,7 +382,7 @@ export const createRunpodInstance: RegisteredTool = {
         podName: pod.name, 
         status: pod.desiredStatus, 
         ramTier: usedRamTier,
-        cloudType: usedCloudType,
+        storageVolume: usedStorageVolume,
         machineId: pod.machineId 
       });
 
@@ -313,25 +390,25 @@ export const createRunpodInstance: RegisteredTool = {
       const jupyterUrl = await waitForPodReady(pod.id);
 
       if (jupyterUrl) {
-        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl, ramTier: usedRamTier, cloudType: usedCloudType });
+        logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl, ramTier: usedRamTier, storage: usedStorageVolume });
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `RunPod instance "${pod.name}" is ready! (${usedCloudType}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterUrl}`,
+          message: `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterUrl}`,
         };
       } else {
         // Still return success since pod was created with a machine
-        logger.warn('Pod created but Jupyter URL not available yet', { podId: pod.id, ramTier: usedRamTier, cloudType: usedCloudType });
+        logger.warn('Pod created but Jupyter URL not available yet', { podId: pod.id, ramTier: usedRamTier, storage: usedStorageVolume });
         return {
           success: true,
           action: 'create_runpod_instance',
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `Created RunPod instance "${pod.name}" (${usedCloudType}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n🔗 Jupyter (when ready): https://${pod.id}-8888.proxy.runpod.net`,
+          message: `Created RunPod instance "${pod.name}" (${usedStorageVolume}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n🔗 Jupyter (when ready): https://${pod.id}-8888.proxy.runpod.net`,
         };
       }
     } catch (error) {

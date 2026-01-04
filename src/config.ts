@@ -93,10 +93,14 @@ export const config = {
     gpuType: optionalEnv('RUNPOD_GPU_TYPE', 'NVIDIA GeForce RTX 4090'),
     /** Default Docker image */
     image: optionalEnv('RUNPOD_IMAGE', 'runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04'),
-    /** Disk size in GB */
+    /** Disk size in GB (used when no network volume) */
     diskSizeGb: parseInt(optionalEnv('RUNPOD_DISK_SIZE_GB', '50')),
     /** Container disk size in GB */
     containerDiskGb: parseInt(optionalEnv('RUNPOD_CONTAINER_DISK_GB', '50')),
+    /** Network storage volume names to try in order (comma-separated) */
+    storageVolumes: optionalEnv('RUNPOD_STORAGE_VOLUMES', 'Peter,EU-NO-1,EU-CZ-1,EUR-IS-1').split(',').map(s => s.trim()).filter(Boolean),
+    /** Volume mount path */
+    volumeMountPath: optionalEnv('RUNPOD_VOLUME_MOUNT_PATH', '/workspace'),
   },
 } as const;
 
