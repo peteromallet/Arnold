@@ -425,6 +425,15 @@ npm install -g @anthropic-ai/claude-code
 # Set up Anthropic API key in bashrc for interactive sessions
 echo "export ANTHROPIC_API_KEY='${config.runpod.podAnthropicApiKey || ''}'" >> /root/.bashrc
 
+# Update Headless-Wan2GP if it exists
+if [ -d "/workspace/Headless-Wan2GP" ]; then
+  echo "📦 Updating Headless-Wan2GP..."
+  cd /workspace/Headless-Wan2GP
+  git pull || echo "⚠️ git pull failed, continuing anyway"
+else
+  echo "⚠️ /workspace/Headless-Wan2GP not found, skipping git pull"
+fi
+
 echo "✅ Pod setup complete!"
 `;
 
