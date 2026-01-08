@@ -1158,6 +1158,212 @@ export const listRunpodInstances: RegisteredTool = {
   },
 };
 
+// ============================================================================
+// Scheduled Termination
+// ============================================================================
+
+// Track scheduled termination (in-memory, lost on restart)
+let scheduledTerminationTimeout: ReturnType<typeof setTimeout> | null = null;
+let scheduledTerminationTime: Date | null = null;
+
+/**
+ * Schedule termination of all Arnold-managed RunPod instances
+ */
+export const scheduleTerminateRunpodInstances: RegisteredTool = {
+  name: 'schedule_terminate_runpod_instances',
+  schema: {
+    name: 'schedule_terminate_runpod_instances',
+    description: 'Schedule termination of all Arnold-managed RunPod GPU instances after a delay. Use this for "kill machines in X minutes" requests.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        minutes: {
+          type: 'number',
+          description: 'Number of minutes until termination (e.g., 30 for "in 30 minutes")',
+        },
+      },
+      required: ['minutes'],
+    },
+  },
+  handler: async (input: { minutes: number }, _context: ToolContext): Promise<ToolResult> => {
+    if (!config.runpod.apiKey) {
+      return {
+        success: false,
+        action: 'schedule_terminate_runpod_instances',
+        error: 'RunPod API key not configured. Set RUNPOD_API_KEY environment variable.',
+      };
+    }
+
+    // Tool inputs can be imperfect (e.g., minutes passed as a string). Coerce + validate.
+    const rawMinutes = (input as unknown as { minutes?: unknown })?.minutes;
+    const minutes = typeof rawMinutes === 'string' ? Number(rawMinutes) : (rawMinutes as number);
+
+    if (!Number.isFinite(minutes)) {
+      return {
+        success: false,
+        action: 'schedule_terminate_runpod_instances',
+        error: 'Minutes must be a valid number',
+      };
+    }
+
+    if (minutes <= 0) {
+      return {
+        success: false,
+        action: 'schedule_terminate_runpod_instances',
+        error: 'Minutes must be greater than 0',
+      };
+    }
+
+    // Check if there are any Arnold pods to terminate
+    const arnoldPods = await getArnoldPods();
+    if (arnoldPods.length === 0) {
+      return {
+        success: true,
+        action: 'schedule_terminate_runpod_instances',
+        message: 'No Arnold-managed RunPod instances found to schedule for termination.',
+      };
+    }
+
+    // Cancel any existing scheduled termination
+    if (scheduledTerminationTimeout) {
+      clearTimeout(scheduledTerminationTimeout);
+      logger.info('Cancelled previous scheduled termination');
+    }
+
+    const delayMs = Math.round(minutes * 60 * 1000);
+    // Node timers clamp around 2^31-1 ms (~24.8 days)
+    if (delayMs > 2_147_483_647) {
+      return {
+        success: false,
+        action: 'schedule_terminate_runpod_instances',
+        error: 'Delay is too large (must be <= ~24 days).',
+      };
+    }
+    scheduledTerminationTime = new Date(Date.now() + delayMs);
+
+    logger.info('Scheduling termination of all Arnold pods', { 
+      minutes, 
+      podCount: arnoldPods.length,
+      scheduledFor: scheduledTerminationTime.toISOString(),
+    });
+
+    scheduledTerminationTimeout = setTimeout(async () => {
+      logger.info('⏰ Executing scheduled termination...');
+      scheduledTerminationTimeout = null;
+      scheduledTerminationTime = null;
+      
+      try {
+        const pods = await getArnoldPods();
+        let terminated = 0;
+        
+        for (const pod of pods) {
+          try {
+            const mutation = `mutation { podTerminate(input: {podId: "${pod.id}"}) }`;
+            await runpodGraphQL(mutation);
+            terminated++;
+            logger.info('Terminated pod (scheduled)', { podId: pod.id, podName: pod.name });
+          } catch (error) {
+            logger.error('Failed to terminate pod (scheduled)', error instanceof Error ? error : undefined, { podId: pod.id });
+          }
+        }
+        
+        logger.info('Scheduled termination complete', { terminated, total: pods.length });
+      } catch (error) {
+        logger.error('Scheduled termination failed', error instanceof Error ? error : undefined);
+      }
+    }, delayMs);
+    // Don’t keep the process alive solely because of this timer (safe no-op in older runtimes)
+    scheduledTerminationTimeout.unref?.();
+
+    const podNames = arnoldPods.map(p => p.name).join(', ');
+    const timeStr = scheduledTerminationTime.toLocaleTimeString();
+
+    return {
+      success: true,
+      action: 'schedule_terminate_runpod_instances',
+      scheduled_for: scheduledTerminationTime.toISOString(),
+      pod_count: arnoldPods.length,
+      message: `⏰ Scheduled termination of ${arnoldPods.length} instance(s) in ${minutes} minute(s) (at ${timeStr}).\n\nPods: ${podNames}\n\n⚠️ Note: Schedule is in-memory only - will be lost if bot restarts.`,
+    };
+  },
+};
+
+/**
+ * Cancel scheduled termination of RunPod instances
+ */
+export const cancelScheduledTermination: RegisteredTool = {
+  name: 'cancel_scheduled_termination',
+  schema: {
+    name: 'cancel_scheduled_termination',
+    description: 'Cancel a previously scheduled termination of RunPod GPU instances.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  handler: async (_input: Record<string, never>, _context: ToolContext): Promise<ToolResult> => {
+    if (!scheduledTerminationTimeout || !scheduledTerminationTime) {
+      return {
+        success: true,
+        action: 'cancel_scheduled_termination',
+        message: 'No termination is currently scheduled.',
+      };
+    }
+
+    clearTimeout(scheduledTerminationTimeout);
+    const wasScheduledFor = scheduledTerminationTime.toISOString();
+    scheduledTerminationTimeout = null;
+    scheduledTerminationTime = null;
+
+    logger.info('Cancelled scheduled termination', { wasScheduledFor });
+
+    return {
+      success: true,
+      action: 'cancel_scheduled_termination',
+      cancelled_time: wasScheduledFor,
+      message: `✅ Cancelled scheduled termination (was scheduled for ${wasScheduledFor}).`,
+    };
+  },
+};
+
+/**
+ * Get status of scheduled termination
+ */
+export const getScheduledTerminationStatus: RegisteredTool = {
+  name: 'get_scheduled_termination_status',
+  schema: {
+    name: 'get_scheduled_termination_status',
+    description: 'Check if there is a scheduled termination of RunPod instances pending.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  handler: async (_input: Record<string, never>, _context: ToolContext): Promise<ToolResult> => {
+    if (!scheduledTerminationTimeout || !scheduledTerminationTime) {
+      return {
+        success: true,
+        action: 'get_scheduled_termination_status',
+        has_scheduled: false,
+        message: 'No termination is currently scheduled.',
+      };
+    }
+
+    const now = new Date();
+    const remainingMs = scheduledTerminationTime.getTime() - now.getTime();
+    const remainingMinutes = Math.max(0, Math.round(remainingMs / 60000));
+
+    return {
+      success: true,
+      action: 'get_scheduled_termination_status',
+      has_scheduled: true,
+      scheduled_for: scheduledTerminationTime.toISOString(),
+      remaining_minutes: remainingMinutes,
+      message: `⏰ Termination scheduled for ${scheduledTerminationTime.toLocaleTimeString()} (in ~${remainingMinutes} minute(s)).`,
+    };
+  },
+};
+
 /**
  * All RunPod-related tools
  */
@@ -1165,4 +1371,7 @@ export const runpodTools: RegisteredTool[] = [
   createRunpodInstance,
   terminateRunpodInstances,
   listRunpodInstances,
+  scheduleTerminateRunpodInstances,
+  cancelScheduledTermination,
+  getScheduledTerminationStatus,
 ];

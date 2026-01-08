@@ -31,7 +31,11 @@ Guidelines:
 - Stop/pause execution → stop_executor, then reply
 - Resume execution → start_executor, then reply
 - Status → get_executor_status, then reply with status
-- RunPod GPU → create_runpod_instance or terminate_runpod_instances (INCLUDE FULL DETAILS in reply!)
+- RunPod GPU → create_runpod_instance, list_runpod_instances, terminate_runpod_instances
+- RunPod GPU scheduling (e.g. "kill all machines in 30 minutes") → schedule_terminate_runpod_instances
+- Cancel scheduled shutdown → cancel_scheduled_termination
+- Check scheduled shutdown → get_scheduled_termination_status
+- For RunPod GPU tools, INCLUDE the FULL message returned by the tool in reply.
 - Chitchat → just reply
 
 Status: queued/todo=do now, upcoming/backlog=later (DEFAULT), in_progress, stuck, done, cancelled
