@@ -7,11 +7,12 @@ import { Client as SSHClient } from 'ssh2';
 const RUNPOD_API_URL = 'https://api.runpod.io/graphql';
 
 // RAM tiers to try in order (highest first - 72GB has lowest failure rate)
-const RAM_TIERS_GB = [72, 60, 48, 32];
+const RAM_TIERS_GB = [72, 60];
 
 // Retry configuration for when no instances are available
-const MAX_RETRY_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 60_000; // 60 seconds between retries
+// Exponential backoff: 1 min, 2 min, 4 min, 8 min (total ~15 min worst case)
+const MAX_RETRY_ATTEMPTS = 5;  // Initial attempt + 4 retries
+const RETRY_DELAYS_MS = [60_000, 120_000, 240_000, 480_000]; // 1, 2, 4, 8 minutes
 
 /**
  * Make a GraphQL request to RunPod API
@@ -664,11 +665,13 @@ export const createRunpodInstance: RegisteredTool = {
       let usedStorageVolume: string | undefined = undefined;
       const failedPodIds: string[] = []; // Track pods created without machines (to terminate later)
 
-      // Retry loop - if all combinations fail, wait and try again
+      // Retry loop - if all combinations fail, wait and try again with exponential backoff
       for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
         if (attempt > 1) {
-          logger.info(`⏳ Retry attempt ${attempt}/${MAX_RETRY_ATTEMPTS} - waiting ${RETRY_DELAY_MS / 1000} seconds before retrying...`);
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+          const delayMs = RETRY_DELAYS_MS[attempt - 2] || RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
+          const delayMinutes = delayMs / 60_000;
+          logger.info(`⏳ Retry attempt ${attempt}/${MAX_RETRY_ATTEMPTS} - waiting ${delayMinutes} minute(s) before retrying...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
           logger.info(`🔄 Retrying all storage/RAM combinations (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})...`);
         }
 
@@ -807,7 +810,9 @@ export const createRunpodInstance: RegisteredTool = {
 
         // Log status after this attempt
         if (attempt < MAX_RETRY_ATTEMPTS) {
-          logger.warn(`Attempt ${attempt}/${MAX_RETRY_ATTEMPTS} failed - no instances available. Will retry in ${RETRY_DELAY_MS / 1000} seconds...`);
+          const nextDelayMs = RETRY_DELAYS_MS[attempt - 1] || RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
+          const nextDelayMinutes = nextDelayMs / 60_000;
+          logger.warn(`Attempt ${attempt}/${MAX_RETRY_ATTEMPTS} failed - no instances available. Will retry in ${nextDelayMinutes} minute(s)...`);
         }
       }  // end retry loop
       
