@@ -102,8 +102,9 @@ export const config = {
     /** Network storage volume names to try in order (comma-separated) */
     storageVolumes: optionalEnv(
       'RUNPOD_STORAGE_VOLUMES',
-      // Default order: try primary, then regional fallbacks
-      'Peter,EUR-NO-1,EU-CZ-1,EUR-IS-1',
+      // Default order: Peter (2800GB, EU-RO-1), then regional fallbacks
+      // Note: volume NAMES differ from datacenter names (EU-NO-1 volume is in EUR-NO-1 datacenter)
+      'Peter,EU-NO-1,EU-CZ-1,EUR-IS-1',
     )
       .split(',')
       .map(s => s.trim())
