@@ -766,11 +766,24 @@ export const createRunpodInstance: RegisteredTool = {
       }
       
       if (!pod || !pod.id) {
-        logger.error('Pod creation failed - all configurations exhausted', { lastError, failedPodIds });
+        const storagesFound = storageVolumesToTry.map(v => v.name);
+        const storagesNotFound = config.runpod.storageVolumes.filter(name => !storagesFound.includes(name));
+        logger.error('Pod creation failed - all configurations exhausted', { 
+          lastError, 
+          failedPodIds,
+          storagesFound,
+          storagesNotFound,
+          configuredStorages: config.runpod.storageVolumes,
+        });
+        
+        const storageInfo = storagesNotFound.length > 0 
+          ? ` (Note: storages not found: ${storagesNotFound.join(', ')})`
+          : '';
+        
         return {
           success: false,
           action: 'create_runpod_instance',
-          error: `Pod creation failed after trying all configurations (storages × 72/60/48/32 GB). No 4090s available. Last error: ${lastError}`,
+          error: `Pod creation failed after trying all configurations (${storagesFound.length} storages × 72/60/48/32 GB RAM). No 4090s available right now.${storageInfo} Last error: ${lastError}`,
         };
       }
 
