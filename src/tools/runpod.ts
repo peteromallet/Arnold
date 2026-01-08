@@ -700,10 +700,9 @@ export const createRunpodInstance: RegisteredTool = {
                   ${imageOrTemplate}
                   gpuTypeId: "${gpuTypeId}"
                   gpuCount: 1
-                  cloudType: SECURE
+                  cloudType: ALL
                   containerDiskInGb: ${config.runpod.containerDiskGb}
                   ${volumeParams}
-                  minVcpuCount: 8
                   minMemoryInGb: ${ramTier}
                   ports: "22/tcp,8888/http"
                   startJupyter: true
