@@ -103,8 +103,7 @@ export const config = {
     storageVolumes: optionalEnv(
       'RUNPOD_STORAGE_VOLUMES',
       // Default order: try primary, then regional fallbacks
-      // Note: EU-NO-1 (not EUR-NO-1), EU-CZ-1, EUR-IS-1 (EUR has the R)
-      'Peter,EU-NO-1,EU-CZ-1,EUR-IS-1',
+      'Peter,EUR-NO-1,EU-CZ-1,EUR-IS-1',
     )
       .split(',')
       .map(s => s.trim())
