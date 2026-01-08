@@ -630,14 +630,23 @@ export const createRunpodInstance: RegisteredTool = {
 
       // Build list of network volume IDs to try (in order)
       const storageVolumesToTry: Array<{ name: string; id: string }> = [];
+      logger.info('Looking up storage volumes...', { configured: config.runpod.storageVolumes });
+      
       for (const volumeName of config.runpod.storageVolumes) {
         const volumeId = await findNetworkVolumeId(volumeName);
         if (volumeId) {
           storageVolumesToTry.push({ name: volumeName, id: volumeId });
+          logger.info(`✓ Found volume: ${volumeName} → ${volumeId}`);
         } else {
-          logger.warn(`Network volume "${volumeName}" not found, skipping`);
+          logger.warn(`✗ Network volume "${volumeName}" not found, skipping`);
         }
       }
+      
+      logger.info('Storage volumes resolved', { 
+        found: storageVolumesToTry.map(v => `${v.name}(${v.id})`),
+        count: storageVolumesToTry.length,
+        configured: config.runpod.storageVolumes.length 
+      });
 
       if (storageVolumesToTry.length === 0) {
         logger.warn('No network volumes found, will use pod volume instead');
@@ -664,7 +673,13 @@ export const createRunpodInstance: RegisteredTool = {
         for (const volume of volumesToTry) {
           try {
             const useNetworkVolume = volume.id !== '';
-            logger.info(`Trying: ${volume.name}, ${ramTier}GB RAM`, { podName, gpuTypeId, useNetworkVolume });
+            logger.info(`Trying: ${volume.name}, ${ramTier}GB RAM`, { 
+              podName, 
+              gpuTypeId, 
+              useNetworkVolume,
+              networkVolumeId: volume.id || '(none - using pod volume)',
+              templateId: templateId || '(none - using image)',
+            });
 
             // Build mutation based on whether we're using network volume or pod volume
             const volumeParams = useNetworkVolume
@@ -716,6 +731,15 @@ export const createRunpodInstance: RegisteredTool = {
                 }
               }
             `;
+
+            // Log the exact request parameters for debugging
+            logger.info(`API Request: ${volume.name}/${ramTier}GB`, {
+              gpuTypeId,
+              networkVolumeId: useNetworkVolume ? volume.id : null,
+              minMemoryInGb: ramTier,
+              cloudType: 'ALL',
+              templateId: templateId || null,
+            });
 
             const data = await runpodGraphQL(mutation) as { 
               podFindAndDeployOnDemand: { id: string; name: string; desiredStatus: string; machineId?: string } | null
