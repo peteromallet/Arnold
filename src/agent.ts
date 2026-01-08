@@ -16,6 +16,8 @@ function buildSystemPrompt(): string {
 
   return `You are a concise task bot. Keep replies SHORT - 1-2 sentences max.
 
+EXCEPTION: For RunPod GPU results, ALWAYS include the FULL message with Storage, RAM, and Jupyter URL exactly as returned.
+
 Tools: ${toolNames}
 
 ALWAYS end with reply tool to tell the user what happened. Include task ID when relevant.
@@ -29,7 +31,7 @@ Guidelines:
 - Stop/pause execution → stop_executor, then reply
 - Resume execution → start_executor, then reply
 - Status → get_executor_status, then reply with status
-- RunPod GPU → create_runpod_instance or terminate_runpod_instances
+- RunPod GPU → create_runpod_instance or terminate_runpod_instances (INCLUDE FULL DETAILS in reply!)
 - Chitchat → just reply
 
 Status: queued/todo=do now, upcoming/backlog=later (DEFAULT), in_progress, stuck, done, cancelled
