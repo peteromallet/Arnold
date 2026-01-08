@@ -45,3 +45,5 @@ ENV NODE_ENV=production
 # Start the bot
 CMD ["node", "dist/bot.js"]
 
+
+

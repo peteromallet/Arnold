@@ -136,14 +136,33 @@ async function getNetworkVolumes(): Promise<NetworkVolume[]> {
  */
 async function findNetworkVolumeId(volumeName: string): Promise<string | null> {
   const volumes = await getNetworkVolumes();
-  const volume = volumes.find(v => v.name === volumeName);
-  
+  const raw = volumeName.trim();
+
+  // 1) Exact match
+  let volume = volumes.find(v => v.name === raw);
+  if (!volume) {
+    // 2) Case-insensitive exact match (helps if casing differs)
+    const rawLower = raw.toLowerCase();
+    volume = volumes.find(v => v.name.toLowerCase() === rawLower);
+  }
+
+  if (!volume) {
+    // 3) If the configured value includes accidental suffixes (e.g. extra whitespace),
+    // try the first token before whitespace.
+    const firstToken = raw.split(/\s+/)[0];
+    if (firstToken && firstToken !== raw) {
+      volume =
+        volumes.find(v => v.name === firstToken) ??
+        volumes.find(v => v.name.toLowerCase() === firstToken.toLowerCase());
+    }
+  }
+
   if (volume) {
-    logger.debug('Found network volume', { name: volumeName, id: volume.id, size: volume.size });
+    logger.debug('Found network volume', { name: volumeName, resolvedName: volume.name, id: volume.id, size: volume.size });
   } else {
     logger.debug('Network volume not found', { name: volumeName, available: volumes.map(v => v.name) });
   }
-  
+
   return volume?.id || null;
 }
 

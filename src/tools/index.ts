@@ -96,3 +96,5 @@ export function registerTool(tool: RegisteredTool): void {
   logger.info('Tool registered', { toolName: tool.name });
 }
 
+
+
