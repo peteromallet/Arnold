@@ -907,7 +907,7 @@ export const createRunpodInstance: RegisteredTool = {
         
         const tokenNote = jupyterToken ? '' : '\n\n⚠️ Could not get Jupyter token - get URL from RunPod dashboard';
         
-        const message = `RunPod instance "${pod.name}" is ready! (${usedStorageVolume}, ${usedRamTier}GB RAM)\n\n🔗 Jupyter: ${jupyterProxyUrl}${setupNote}${tokenNote}`;
+        const message = `🚀 GPU is UP!\n\n📍 Storage: ${usedStorageVolume}\n💾 RAM: ${usedRamTier}GB\n\n🔗 Jupyter: ${jupyterProxyUrl}${setupNote}${tokenNote}`;
         
         return {
           success: true,
@@ -926,7 +926,7 @@ export const createRunpodInstance: RegisteredTool = {
           pod_id: pod.id,
           pod_name: pod.name,
           ram_gb: usedRamTier,
-          message: `Created RunPod instance "${pod.name}" (${usedStorageVolume}, ${usedRamTier}GB RAM).\n\nPod is starting - check RunPod dashboard for status.\n\n🔗 Jupyter URL (when ready): ${jupyterProxyUrl}`,
+          message: `🚀 GPU is UP! (still initializing)\n\n📍 Storage: ${usedStorageVolume}\n💾 RAM: ${usedRamTier}GB\n\nPod is starting - check RunPod dashboard for status.\n\n🔗 Jupyter URL (when ready): ${jupyterProxyUrl}`,
         };
       }
     } catch (error) {
