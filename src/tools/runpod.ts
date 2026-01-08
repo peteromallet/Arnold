@@ -9,6 +9,10 @@ const RUNPOD_API_URL = 'https://api.runpod.io/graphql';
 // RAM tiers to try in order (highest first - 72GB has lowest failure rate)
 const RAM_TIERS_GB = [72, 60, 48, 32];
 
+// Retry configuration for when no instances are available
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 60_000; // 60 seconds between retries
+
 /**
  * Make a GraphQL request to RunPod API
  */
@@ -660,9 +664,17 @@ export const createRunpodInstance: RegisteredTool = {
       let usedStorageVolume: string | undefined = undefined;
       const failedPodIds: string[] = []; // Track pods created without machines (to terminate later)
 
-      // Strategy: Try each RAM tier across ALL storage volumes before falling back to next tier
-      // This prioritizes 72GB machines (lowest failure rate) over 60GB (higher failure rate)
-      ramLoop: for (const ramTier of RAM_TIERS_GB) {
+      // Retry loop - if all combinations fail, wait and try again
+      for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        if (attempt > 1) {
+          logger.info(`⏳ Retry attempt ${attempt}/${MAX_RETRY_ATTEMPTS} - waiting ${RETRY_DELAY_MS / 1000} seconds before retrying...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+          logger.info(`🔄 Retrying all storage/RAM combinations (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})...`);
+        }
+
+        // Strategy: Try each RAM tier across ALL storage volumes before falling back to next tier
+        // This prioritizes 72GB machines (lowest failure rate) over 60GB (higher failure rate)
+        ramLoop: for (const ramTier of RAM_TIERS_GB) {
         logger.info(`Trying ${ramTier}GB RAM across all storage volumes...`);
         
         // If we have network volumes, try each one
@@ -786,17 +798,29 @@ export const createRunpodInstance: RegisteredTool = {
         if (!pod && ramTier !== RAM_TIERS_GB[RAM_TIERS_GB.length - 1]) {
           logger.warn(`${ramTier}GB RAM not available in any storage, trying ${RAM_TIERS_GB[RAM_TIERS_GB.indexOf(ramTier) + 1]}GB...`);
         }
-      }
+        }  // end ramLoop
+
+        // If we got a pod, break out of retry loop
+        if (pod?.id) {
+          break;
+        }
+
+        // Log status after this attempt
+        if (attempt < MAX_RETRY_ATTEMPTS) {
+          logger.warn(`Attempt ${attempt}/${MAX_RETRY_ATTEMPTS} failed - no instances available. Will retry in ${RETRY_DELAY_MS / 1000} seconds...`);
+        }
+      }  // end retry loop
       
       if (!pod || !pod.id) {
         const storagesFound = storageVolumesToTry.map(v => v.name);
         const storagesNotFound = config.runpod.storageVolumes.filter(name => !storagesFound.includes(name));
-        logger.error('Pod creation failed - all configurations exhausted', { 
+        logger.error('Pod creation failed - all retry attempts exhausted', { 
           lastError, 
           failedPodIds,
           storagesFound,
           storagesNotFound,
           configuredStorages: config.runpod.storageVolumes,
+          totalAttempts: MAX_RETRY_ATTEMPTS,
         });
         
         const storageInfo = storagesNotFound.length > 0 
@@ -806,7 +830,7 @@ export const createRunpodInstance: RegisteredTool = {
         return {
           success: false,
           action: 'create_runpod_instance',
-          error: `Pod creation failed after trying all configurations (${storagesFound.length} storages × 72/60/48/32 GB RAM). No 4090s available right now.${storageInfo} Last error: ${lastError}`,
+          error: `Pod creation failed after ${MAX_RETRY_ATTEMPTS} attempts (${storagesFound.length} storages × 72/60/48/32 GB RAM each). No 4090s available.${storageInfo} Last error: ${lastError}`,
         };
       }
 
