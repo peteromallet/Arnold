@@ -91,10 +91,19 @@ export const config = {
     podPrefix: optionalEnv('RUNPOD_POD_PREFIX', 'arnold_'),
     /** Default GPU type */
     gpuType: optionalEnv('RUNPOD_GPU_TYPE', 'NVIDIA GeForce RTX 4090'),
-    /** Default Docker image (used if no template specified) */
-    image: optionalEnv('RUNPOD_IMAGE', 'runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04'),
+    /** Default Docker image (used if no template specified) - CUDA 12.8 for best compatibility */
+    image: optionalEnv('RUNPOD_IMAGE', 'runpod/pytorch:2.8.0-py3.11-cuda12.8.1-devel-ubuntu24.04'),
     /** RunPod template ID or name to use (recommended - has Jupyter pre-configured) */
     templateId: optionalEnv('RUNPOD_TEMPLATE_ID', 'runpod-torch-v240'),
+    /** 
+     * Allowed CUDA versions (comma-separated). Prevents pod from being scheduled on 
+     * incompatible hosts (e.g., CUDA 13.0 hosts with CUDA 12.x containers).
+     * Set to match your image's CUDA version or lower.
+     */
+    allowedCudaVersions: optionalEnv('RUNPOD_ALLOWED_CUDA_VERSIONS', '12.4,12.5,12.6,12.7,12.8')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean),
     /** Disk size in GB (used when no network volume) */
     diskSizeGb: parseInt(optionalEnv('RUNPOD_DISK_SIZE_GB', '50')),
     /** Container disk size in GB */

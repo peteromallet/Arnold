@@ -732,6 +732,11 @@ export const createRunpodInstance: RegisteredTool = {
               ? `templateId: "${templateId}"`
               : `imageName: "${config.runpod.image}"`;
 
+            // CUDA version filter - prevents scheduling on incompatible hosts (e.g., CUDA 13.0 with 12.x containers)
+            const cudaVersionsParam = config.runpod.allowedCudaVersions.length > 0
+              ? `allowedCudaVersions: [${config.runpod.allowedCudaVersions.map(v => `"${v}"`).join(', ')}]`
+              : '';
+
             const mutation = `
               mutation {
                 podFindAndDeployOnDemand(input: {
@@ -746,6 +751,7 @@ export const createRunpodInstance: RegisteredTool = {
                   ports: "22/tcp,8888/http"
                   startJupyter: true
                   ${envParams}
+                  ${cudaVersionsParam}
                 }) {
                   id
                   name
@@ -763,6 +769,7 @@ export const createRunpodInstance: RegisteredTool = {
               minMemoryInGb: ramTier,
               cloudType: 'ALL',
               templateId: templateId || null,
+              allowedCudaVersions: config.runpod.allowedCudaVersions,
             });
 
             const data = await runpodGraphQL(mutation) as { 
