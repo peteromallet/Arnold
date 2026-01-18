@@ -409,7 +409,15 @@ echo "🚀 Starting pod setup..."
 # Update and install basic dependencies
 echo "📦 Installing system dependencies..."
 apt-get update
-apt-get install -y curl gnupg python3.10-venv ffmpeg
+apt-get install -y curl gnupg python3-venv ffmpeg
+
+# Install Jupyter Lab if not already installed
+if ! command -v jupyter &> /dev/null; then
+  echo "📦 Installing Jupyter Lab..."
+  pip install jupyterlab
+else
+  echo "✓ Jupyter already installed"
+fi
 
 # Remove old Node.js if present and install Node.js 20
 echo "📦 Installing Node.js 20..."
@@ -867,32 +875,15 @@ export const createRunpodInstance: RegisteredTool = {
       // Wait for the pod to be running with ports
       await waitForPodReady(pod.id);
       
-      // Get Jupyter token via SSH
-      let jupyterToken: string | null = null;
-      if (config.runpod.sshPrivateKey && config.runpod.sshPublicKey) {
-        logger.info('Getting Jupyter token via SSH...', { podId: pod.id });
-        const sshDetails = await waitForSSH(pod.id, 60000);
-        if (sshDetails) {
-          // Wait a bit for Jupyter to start
-          await new Promise(resolve => setTimeout(resolve, 10000));
-          jupyterToken = await getJupyterTokenViaSSH(sshDetails, pod.id);
-        }
-      }
-      
-      const jupyterProxyUrl = jupyterToken 
-        ? `https://${pod.id}-8888.proxy.runpod.net/?token=${jupyterToken}`
-        : `https://${pod.id}-8888.proxy.runpod.net/`;
-
-      // If using a template, Jupyter is already running/configured (and terminals work when created manually).
-      // So: do NOT install/upgrade Jupyter packages and do NOT start another Jupyter server.
-      // Only run the Node/Claude setup via SSH.
+      // Run setup script and start Jupyter via SSH
+      // For raw images (no template), we need to install Jupyter first
       let setupComplete = false;
       if (config.runpod.sshPrivateKey && config.runpod.sshPublicKey) {
         if (templateId) {
           logger.info('Running setup script via SSH (template manages Jupyter)...', { podId: pod.id });
           setupComplete = await startJupyterViaSSH(pod.id, { runSetup: true, startJupyter: false });
         } else {
-          logger.info('Starting Jupyter via SSH (no template)...', { podId: pod.id });
+          logger.info('Installing dependencies and starting Jupyter via SSH (no template)...', { podId: pod.id });
           setupComplete = await startJupyterViaSSH(pod.id, { runSetup: true, startJupyter: true });
         }
 
@@ -904,6 +895,22 @@ export const createRunpodInstance: RegisteredTool = {
       } else {
         logger.info('SSH keys not configured, skipping setup', { podId: pod.id });
       }
+      
+      // Get Jupyter token via SSH (after setup has installed and started Jupyter)
+      let jupyterToken: string | null = null;
+      if (config.runpod.sshPrivateKey && config.runpod.sshPublicKey) {
+        logger.info('Getting Jupyter token via SSH...', { podId: pod.id });
+        const sshDetails = await waitForSSH(pod.id, 60000);
+        if (sshDetails) {
+          // Wait a bit for Jupyter to be ready
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          jupyterToken = await getJupyterTokenViaSSH(sshDetails, pod.id);
+        }
+      }
+      
+      const jupyterProxyUrl = jupyterToken 
+        ? `https://${pod.id}-8888.proxy.runpod.net/?token=${jupyterToken}`
+        : `https://${pod.id}-8888.proxy.runpod.net/`;
       
       if (jupyterToken || templateId) {
         logger.info('RunPod instance ready', { podId: pod.id, jupyterUrl: jupyterProxyUrl, ramTier: usedRamTier, storage: usedStorageVolume, setupComplete, hasToken: !!jupyterToken });
