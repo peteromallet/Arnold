@@ -92,7 +92,7 @@ export const config = {
     /** Default GPU type */
     gpuType: optionalEnv('RUNPOD_GPU_TYPE', 'NVIDIA GeForce RTX 4090'),
     /** Default Docker image (used if no template specified) - CUDA 12.8 for best compatibility */
-    image: optionalEnv('RUNPOD_IMAGE', 'runpod/pytorch:2.8.0-py3.11-cuda12.8.1-devel-ubuntu24.04'),
+    image: optionalEnv('RUNPOD_IMAGE', 'runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04'),
     /** RunPod template ID or name to use (optional - raw image is used if empty) */
     templateId: optionalEnv('RUNPOD_TEMPLATE_ID', ''),
     /** 

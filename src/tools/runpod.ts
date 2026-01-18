@@ -414,7 +414,7 @@ apt-get install -y curl gnupg python3-venv ffmpeg
 # Install Jupyter Lab if not already installed
 if ! command -v jupyter &> /dev/null; then
   echo "📦 Installing Jupyter Lab..."
-  pip install jupyterlab
+  pip3 install --break-system-packages jupyterlab || pip install jupyterlab
 else
   echo "✓ Jupyter already installed"
 fi
