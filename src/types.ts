@@ -160,6 +160,12 @@ export interface ToolResult {
   total_cost_per_hour?: number;
   terminated?: string[];
   failed?: Array<{ id: string; error: string }>;
+  // Scheduled termination fields
+  scheduled_for?: string;
+  pod_count?: number;
+  cancelled_time?: string;
+  has_scheduled?: boolean;
+  remaining_minutes?: number;
 }
 
 /**
