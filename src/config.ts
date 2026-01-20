@@ -96,11 +96,10 @@ export const config = {
     /** RunPod template ID or name to use (optional - raw image is used if empty) */
     templateId: optionalEnv('RUNPOD_TEMPLATE_ID', ''),
     /** 
-     * Allowed CUDA versions (comma-separated). Prevents pod from being scheduled on 
-     * incompatible hosts (e.g., CUDA 13.0 hosts with CUDA 12.x containers).
-     * Set to match your image's CUDA version or lower.
+     * Allowed CUDA versions (comma-separated). Must match or exceed image's CUDA version.
+     * Our CUDA 12.8 image requires hosts with CUDA 12.8+.
      */
-    allowedCudaVersions: optionalEnv('RUNPOD_ALLOWED_CUDA_VERSIONS', '12.4,12.5,12.6,12.7,12.8')
+    allowedCudaVersions: optionalEnv('RUNPOD_ALLOWED_CUDA_VERSIONS', '12.8')
       .split(',')
       .map(s => s.trim())
       .filter(Boolean),
