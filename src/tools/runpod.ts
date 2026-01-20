@@ -756,7 +756,7 @@ export const createRunpodInstance: RegisteredTool = {
                   containerDiskInGb: ${config.runpod.containerDiskGb}
                   ${volumeParams}
                   minMemoryInGb: ${ramTier}
-                  ports: "22/tcp,8888/http"
+                  ports: "22/tcp,8888/http,8188/http"
                   startJupyter: true
                   ${envParams}
                   ${cudaVersionsParam}
