@@ -5,6 +5,7 @@ import { toUserMessage } from './errors.js';
 import { parseTask } from './agent.js';
 import { transcribeAudio, isTranscriptionAvailable } from './transcribe.js';
 import { executor } from './executor.js';
+import { redactSecrets } from './secrets.js';
 import type { ConversationMessage, NotifyCallback } from './types.js';
 
 // Store the last channel used for notifications
@@ -104,7 +105,9 @@ async function withTypingIndicator<T>(
 function getNotifyCallback(): NotifyCallback {
   return (msg: string) => {
     if (notifyChannel) {
-      notifyChannel.send(msg).catch((err) => logger.error('Failed to send notification', err));
+      notifyChannel
+        .send(redactSecrets(msg))
+        .catch((err) => logger.error('Failed to send notification', err));
     } else {
       logger.info('Notification (no channel)', { message: msg });
     }
@@ -178,7 +181,7 @@ async function handleMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
 
   // Check user authorization
-  if (config.discord.allowedUserId && message.author.id !== config.discord.allowedUserId) {
+  if (message.author.id !== config.discord.allowedUserId) {
     logger.debug('Ignoring unauthorized user', { userId: message.author.id });
     return;
   }
@@ -249,7 +252,12 @@ async function handleMessage(message: Message): Promise<void> {
       preview: taskDescription.substring(0, 50),
     });
 
-    const result = await parseTask(taskDescription, conversationHistory, getNotifyCallback());
+    const result = await parseTask(
+      taskDescription,
+      conversationHistory,
+      getNotifyCallback(),
+      message.author.id,
+    );
 
     logger.debug('Parse result', { actionsCount: result.actions.length, hasReply: !!result.reply });
 
@@ -269,7 +277,7 @@ async function handleMessage(message: Message): Promise<void> {
 
     // Send the combined response (typing indicator still running)
     if (replyParts.length > 0) {
-      const finalReply = replyParts.join('\n\n---\n\n');
+      const finalReply = redactSecrets(replyParts.join('\n\n---\n\n'));
       // Discord has a 2000 char limit
       if (finalReply.length > 1900) {
         await message.reply(finalReply.substring(0, 1900) + '...');
@@ -326,11 +334,7 @@ async function shutdown(signal: string): Promise<void> {
 client.once(Events.ClientReady, async (c) => {
   logger.info('Bot ready', { tag: c.user.tag });
 
-  if (config.discord.allowedUserId) {
-    logger.info('User restriction enabled', { allowedUserId: config.discord.allowedUserId });
-  } else {
-    logger.warn('No DISCORD_USER_ID set - accepting commands from anyone');
-  }
+  logger.info('User restriction enabled', { allowedUserId: config.discord.allowedUserId });
 
   // Auto-start the executor
   try {
@@ -345,15 +349,13 @@ client.once(Events.ClientReady, async (c) => {
   }
 
   // Send startup notification to allowed user
-  if (config.discord.allowedUserId) {
-    try {
-      const user = await c.users.fetch(config.discord.allowedUserId);
-      const dm = await user.createDM();
-      await dm.send('🤖 Arnold has relaunched and is ready.');
-      logger.info('Sent startup notification');
-    } catch (error) {
-      logger.error('Failed to send startup notification', error instanceof Error ? error : undefined);
-    }
+  try {
+    const user = await c.users.fetch(config.discord.allowedUserId);
+    const dm = await user.createDM();
+    await dm.send('🤖 Arnold has relaunched and is ready.');
+    logger.info('Sent startup notification');
+  } catch (error) {
+    logger.error('Failed to send startup notification', error instanceof Error ? error : undefined);
   }
 });
 

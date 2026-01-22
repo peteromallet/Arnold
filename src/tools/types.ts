@@ -7,6 +7,8 @@ import type { ToolResult, NotifyCallback } from '../types.js';
 export interface ToolContext {
   /** Callback for sending notifications (used by executor tools) */
   notifyCallback: NotifyCallback | null;
+  /** Discord user id that initiated this tool call (for authz). Null if unknown. */
+  requesterUserId: string | null;
 }
 
 /**

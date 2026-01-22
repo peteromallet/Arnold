@@ -31,8 +31,8 @@ export const config = {
   discord: {
     /** Discord bot token (required) */
     token: requireEnv('DISCORD_TOKEN'),
-    /** Restrict commands to this user ID (optional) */
-    allowedUserId: process.env.DISCORD_USER_ID || null,
+    /** Restrict ALL bot usage to this user ID (required) */
+    allowedUserId: requireEnv('DISCORD_USER_ID'),
     /** Command prefix for non-DM messages */
     prefix: '!task',
   },

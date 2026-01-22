@@ -1,9 +1,12 @@
 import { logger } from '../logger.js';
+import { config } from '../config.js';
+import { redactToolResult } from '../secrets.js';
 import { taskTools } from './tasks.js';
 import { executorTools } from './executor.js';
 import { statsTools } from './stats.js';
 import { replyTool } from './reply.js';
 import { runpodTools } from './runpod.js';
+import { codeTools } from './code.js';
 import type { RegisteredTool, ToolContext } from './types.js';
 import type { ToolResult } from '../types.js';
 
@@ -15,6 +18,7 @@ const allTools: RegisteredTool[] = [
   ...executorTools,
   ...statsTools,
   ...runpodTools,
+  ...codeTools,
   replyTool,
 ];
 
@@ -47,6 +51,19 @@ export async function executeTool(
   input: unknown,
   context: ToolContext
 ): Promise<ToolResult> {
+  // Enforce that ALL tools are only usable by the configured Discord user
+  if (!context.requesterUserId || context.requesterUserId !== config.discord.allowedUserId) {
+    logger.warn('Unauthorized tool call blocked', {
+      toolName,
+      requesterUserId: context.requesterUserId,
+    });
+    return {
+      success: false,
+      action: toolName,
+      error: 'Unauthorized: this bot can only be used by its owner.',
+    };
+  }
+
   const tool = toolRegistry.get(toolName);
 
   if (!tool) {
@@ -62,8 +79,9 @@ export async function executeTool(
 
   try {
     const result = await tool.handler(input, context);
-    logger.debug('Tool result', { tool: toolName, success: result.success });
-    return result;
+    const safe = redactToolResult(result);
+    logger.debug('Tool result', { tool: toolName, success: safe.success });
+    return safe;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error('Tool execution failed', error instanceof Error ? error : undefined, {
@@ -72,7 +90,7 @@ export async function executeTool(
     return {
       success: false,
       action: toolName,
-      error: message,
+      error: redactToolResult({ success: false, action: toolName, error: message }).error,
     };
   }
 }

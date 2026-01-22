@@ -166,6 +166,15 @@ export interface ToolResult {
   cancelled_time?: string;
   has_scheduled?: boolean;
   remaining_minutes?: number;
+
+  // Code execution / introspection fields
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number | null;
+  timed_out?: boolean;
+  duration_ms?: number;
+  keys?: string[];
+  key_status?: Record<string, boolean>;
 }
 
 /**

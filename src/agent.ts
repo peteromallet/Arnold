@@ -59,10 +59,12 @@ export async function parseTask(
   userMessage: string,
   conversationHistory: ConversationMessage[] = [],
   notifyCallback: NotifyCallback | null = null,
+  requesterUserId: string | null = null,
 ): Promise<ParseTaskResult> {
   // Build context for tool execution
   const toolContext: ToolContext = {
     notifyCallback,
+    requesterUserId,
   };
 
   // Build the user message with optional conversation history
