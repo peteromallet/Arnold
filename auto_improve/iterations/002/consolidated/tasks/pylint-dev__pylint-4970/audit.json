@@ -1,0 +1,57 @@
+{
+  "instance_id": "pylint-dev__pylint-4970",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 1229.247,
+  "patch_lines": 13,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 243437,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 275134,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 39314,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 26826,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 114928,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 447025,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 82583,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

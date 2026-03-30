@@ -29,6 +29,7 @@ def watch_and_score(
     poll_interval: int = DEFAULT_POLL_INTERVAL,
     timeout: int = DEFAULT_TIMEOUT,
     cleanup_docker: bool = True,
+    use_modal: bool = True,
 ) -> dict[str, Any]:
     """Poll for manifest-complete predictions and score them one at a time."""
     root = Path(results_root).expanduser().resolve()
@@ -56,18 +57,27 @@ def watch_and_score(
                 for pred_path in predictions_dir.glob("*.jsonl")
                 if pred_path.name != "all_predictions.jsonl"
             }
-            # Retry tasks that scored None (transient Docker failures) — up to 2 attempts
+            # Retry tasks that scored None (transient scoring failures) — up to 3 attempts
             retryable_ids = set()
+            exhausted_retry_ids = set()
             for iid, entry in scores_data.get("tasks", {}).items():
                 if isinstance(entry, dict) and entry.get("resolved") is None:
                     attempts = entry.get("attempts", 1)
-                    if attempts < 2 and iid in available_predictions:
+                    if attempts < 3 and iid in available_predictions:
                         retryable_ids.add(iid)
+                    elif attempts >= 3:
+                        exhausted_retry_ids.add(iid)
 
             scorable_ids = sorted(
                 instance_id
                 for instance_id in done_ids
-                if (instance_id not in scored_ids or instance_id in retryable_ids)
+                if (
+                    (
+                        instance_id not in scored_ids
+                        and instance_id not in exhausted_retry_ids
+                    )
+                    or instance_id in retryable_ids
+                )
                 and instance_id in available_predictions
             )
 
@@ -77,6 +87,7 @@ def watch_and_score(
                     instance_id,
                     run_id,
                     cleanup_docker,
+                    use_modal=use_modal,
                 )
                 prev_entry = scores_data.get("tasks", {}).get(instance_id, {})
                 prev_attempts = prev_entry.get("attempts", 0) if isinstance(prev_entry, dict) else 0
@@ -87,6 +98,8 @@ def watch_and_score(
                 }
                 if result.get("error"):
                     task_entry["error"] = result["error"]
+                if isinstance(result.get("error_category"), str):
+                    task_entry["error_category"] = result["error_category"]
                 if result.get("returncode") is not None:
                     task_entry["returncode"] = result["returncode"]
                 if result.get("stderr"):
@@ -140,10 +153,12 @@ def _score_single_prediction(
     instance_id: str,
     run_id: str,
     cleanup_docker: bool,
+    use_modal: bool = True,
 ) -> dict[str, Any]:
     """Score a single per-instance prediction JSONL via the SWE-bench harness."""
     prediction_path = Path(pred_path).expanduser().resolve()
     _cleanup_task_artifacts(run_id, instance_id)
+    completed_result: subprocess.CompletedProcess[str] | None = None
 
     try:
         prediction = _read_prediction_record(prediction_path)
@@ -157,7 +172,7 @@ def _score_single_prediction(
 
     model_name = prediction.get("model_name_or_path")
     try:
-        result = subprocess.run(
+        completed_result = subprocess.run(
             [
                 sys.executable,
                 "-m",
@@ -170,8 +185,9 @@ def _score_single_prediction(
                 "1",
                 "--run_id",
                 run_id,
-                "--namespace",
-                "",
+                "--dataset_name",
+                "princeton-nlp/SWE-bench_Verified",
+                *(["--modal", "true"] if use_modal else ["--namespace", ""]),
             ],
             capture_output=True,
             text=True,
@@ -198,17 +214,45 @@ def _score_single_prediction(
         outcome = {
             "instance_id": instance_id,
             "resolved": _parse_swebench_report(instance_id, run_id, model_name),
-            "returncode": result.returncode,
-            "stdout": result.stdout[-2000:] if result.stdout else "",
-            "stderr": result.stderr[-2000:] if result.stderr else "",
+            "returncode": completed_result.returncode,
+            "stdout": completed_result.stdout[-2000:] if completed_result.stdout else "",
+            "stderr": completed_result.stderr[-2000:] if completed_result.stderr else "",
         }
         if outcome["resolved"] is None:
             outcome["error"] = "missing or unparseable SWE-bench report"
+
+    if outcome["resolved"] is None:
+        outcome["error_category"] = _categorize_scoring_error(completed_result, outcome)
 
     if cleanup_docker:
         _cleanup_docker_images()
 
     return outcome
+
+
+def _categorize_scoring_error(
+    result: subprocess.CompletedProcess[str] | None,
+    outcome: dict[str, Any],
+) -> str:
+    """Classify scoring failures for retry/debug summaries."""
+    fragments = [
+        outcome.get("error"),
+        outcome.get("stderr"),
+        outcome.get("stdout"),
+    ]
+    if result is not None:
+        fragments.extend([result.stderr, result.stdout])
+    message = " ".join(str(fragment) for fragment in fragments if fragment).lower()
+
+    if "timed out" in message or "timeout" in message:
+        return "timeout"
+    if "report" in message and any(token in message for token in ("parse", "unparseable", "missing", "json")):
+        return "report_parse"
+    if "modal" in message and any(
+        token in message for token in ("sandbox", "mount", "container", "runner", "image", "volume", "app")
+    ):
+        return "modal_sandbox"
+    return "unknown"
 
 
 def _parse_swebench_report(
@@ -294,6 +338,7 @@ def _load_scores_data(scores_path: Path) -> dict[str, Any]:
         "resolved": 0,
         "failed": 0,
         "errors": 0,
+        "error_breakdown": {},
         "pass_rate": 0.0,
         "last_updated": _utc_now(),
         "tasks": {},
@@ -334,6 +379,14 @@ def _refresh_scores_summary(manifest: TaskManifest, scores_data: dict[str, Any])
     resolved = sum(1 for task in tasks.values() if task.get("resolved") is True)
     failed = sum(1 for task in tasks.values() if task.get("resolved") is False)
     errors = sum(1 for task in tasks.values() if task.get("resolved") is None)
+    error_breakdown: dict[str, int] = {}
+    for task in tasks.values():
+        if task.get("resolved") is not None:
+            continue
+        category = task.get("error_category")
+        if not isinstance(category, str) or not category.strip():
+            category = "unknown"
+        error_breakdown[category] = error_breakdown.get(category, 0) + 1
 
     refreshed.update(
         {
@@ -344,6 +397,10 @@ def _refresh_scores_summary(manifest: TaskManifest, scores_data: dict[str, Any])
             "resolved": resolved,
             "failed": failed,
             "errors": errors,
+            "error_breakdown": {
+                category: error_breakdown[category]
+                for category in sorted(error_breakdown)
+            },
             "pass_rate": round(resolved / scored, 4) if scored else 0.0,
         }
     )
@@ -445,11 +502,25 @@ def _format_stop_line(
     manifest_done = manifest_summary.get("done", 0)
     manifest_total = manifest_summary.get("total_tasks", 0)
     manifest_error = manifest_summary.get("error", 0)
+    error_breakdown = scores_data.get("error_breakdown", {})
+    error_summary = _format_error_breakdown(error_breakdown)
     return (
         f"[scored {scored} | resolved {resolved_count}/{scored} = {pass_rate:.1%}] "
         f"[manifest {manifest_done}/{manifest_total} done, {manifest_error} error] "
+        f"[errors {error_summary}] "
         f"watch: {stop_reason.upper()}"
     )
+
+
+def _format_error_breakdown(error_breakdown: Any) -> str:
+    if not isinstance(error_breakdown, dict) or not error_breakdown:
+        return "none"
+    parts = [
+        f"{category}={count}"
+        for category, count in sorted(error_breakdown.items())
+        if isinstance(category, str) and isinstance(count, int)
+    ]
+    return ", ".join(parts) if parts else "none"
 
 
 def _normalize_stream(stream: str | bytes | None) -> str:

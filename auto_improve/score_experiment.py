@@ -174,6 +174,8 @@ def _normalize_scores_payload(
         }
         if isinstance(raw_task, dict) and isinstance(raw_task.get("error"), str):
             entry["error"] = raw_task["error"]
+        if isinstance(raw_task, dict) and isinstance(raw_task.get("error_category"), str):
+            entry["error_category"] = raw_task["error_category"]
         normalized_tasks[task_id] = entry
 
     total = len(normalized_tasks)

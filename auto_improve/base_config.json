@@ -15,7 +15,7 @@
   "evals_to_run": [],
   "swebench_dataset": "princeton-nlp/SWE-bench_Verified",
   "test_timeout": 900,
-  "max_verify_attempts": 2,
+  "max_verify_attempts": 3,
   "workers": 3,
   "megaplan_bin": "megaplan",
   "robustness": "heavy",

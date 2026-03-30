@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -398,9 +399,16 @@ def _inject_verify_feedback(
     """Inject verify failure context into the plan before re-running execute."""
     output_tail = verify_result.test_output[-1500:].strip() or "(no verify output captured)"
     tests_display = ", ".join(verify_result.tests_run) if verify_result.tests_run else "(none)"
+    diagnosis = _diagnose_verify_failure(verify_result)
+    failing_tests_display = ", ".join(diagnosis["failing_tests"]) if diagnosis["failing_tests"] else "(none)"
     parts = [
         "[verify failed]",
         f"target_tests: {tests_display}",
+        f"error_type: {diagnosis['error_type']}",
+        f"failing_tests: {failing_tests_display}",
+        "traceback_summary:",
+        diagnosis["traceback_summary"],
+        "Diagnose the root cause from the traceback before making changes.",
         "Fix the implementation and do not modify test files.",
         "verify_output_tail:",
         output_tail,
@@ -418,6 +426,75 @@ def _inject_verify_feedback(
         pass
 
 
+def _diagnose_verify_failure(verify_result: "VerifyResult") -> dict[str, object]:
+    """Extract structured hints from a failed verify run."""
+    output = verify_result.test_output or ""
+    failing_tests = list(dict.fromkeys(_extract_failing_tests(output, verify_result.tests_run)))
+    return {
+        "error_type": _categorize_verify_error(output),
+        "failing_tests": failing_tests,
+        "traceback_summary": _summarize_verify_traceback(output),
+    }
+
+
+def _extract_failing_tests(output: str, tests_run: list[str]) -> list[str]:
+    failing_tests = [test_name for test_name in tests_run if isinstance(test_name, str) and test_name.strip()]
+    patterns = (
+        re.compile(r"^(?:FAILED|ERROR)\s+([^\s]+)"),
+        re.compile(r"^_{3,}\s+([^\s]+)\s+_{3,}$"),
+    )
+    for line in output.splitlines():
+        stripped = line.strip()
+        for pattern in patterns:
+            match = pattern.match(stripped)
+            if match:
+                failing_tests.append(match.group(1))
+                break
+    return failing_tests
+
+
+def _categorize_verify_error(output: str) -> str:
+    normalized = output.lower()
+    if "timed out" in normalized or "timeout" in normalized:
+        return "timeout"
+    if "syntaxerror" in normalized or "syntax error" in normalized:
+        return "syntax_error"
+    if (
+        "importerror" in normalized
+        or "modulenotfounderror" in normalized
+        or "cannot import name" in normalized
+    ):
+        return "import_error"
+    if "attributeerror" in normalized or "has no attribute" in normalized:
+        return "attribute_error"
+    if "assertionerror" in normalized or re.search(r"^e\s+assert", normalized, flags=re.MULTILINE):
+        return "assertion_error"
+    return "unknown"
+
+
+def _summarize_verify_traceback(output: str) -> str:
+    lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return "(no verify output captured)"
+
+    traceback_start = None
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("Traceback"):
+            traceback_start = index
+    if traceback_start is not None:
+        snippet = lines[traceback_start:traceback_start + 5]
+        return " | ".join(snippet)[:400]
+
+    interesting = [
+        line
+        for line in lines
+        if any(token in line for token in ("FAILED", "ERROR", "AssertionError", "AttributeError", "ImportError", "SyntaxError", "E   "))
+    ]
+    if interesting:
+        return " | ".join(interesting[-4:])[:400]
+    return " | ".join(lines[-4:])[:400]
+
+
 def run_megaplan_loop(
     prompt: str,
     workspace: str | Path,
@@ -426,7 +503,7 @@ def run_megaplan_loop(
     *,
     runner: MegaplanRunner | None = None,
     verify_fn: Callable[[], VerifyResult | None] | None = None,
-    max_verify_attempts: int = 2,
+    max_verify_attempts: int = 3,
     log_path: Path | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> MegaplanLoopResult:
@@ -511,6 +588,8 @@ def run_megaplan_loop(
         # Tell the stuck detector which session to watch
         _active_session_id[0] = _phase_session_id(pre_state, phase, config.models.get(phase), None)
 
+        phase_timeout = config.eval_timeout_seconds
+
         try:
             response, raw_output = runner(
                 _megaplan_command(
@@ -525,7 +604,7 @@ def run_megaplan_loop(
                     ],
                 ),
                 workspace_path,
-                config.eval_timeout_seconds,
+                phase_timeout,
                 _megaplan_env(extra_env),
             )
         except _StuckDetected as stuck:

@@ -1,0 +1,63 @@
+{
+  "instance_id": "sphinx-doc__sphinx-7454",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 1297.704,
+  "patch_lines": 18,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 199543,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 136985,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 36812,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 20797,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 143712,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 693270,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 60398,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "verify",
+      "cost_usd": 0.0,
+      "duration_ms": 6187,
+      "model": "swebench-harness"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "instance_id": "django__django-11099",
+  "resolved": true,
+  "cost_usd": 0.0,
+  "duration_seconds": 404.364,
+  "patch_lines": 22,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 29222,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 171434,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 38809,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 26130,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 36324,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 54499,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 47946,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}
