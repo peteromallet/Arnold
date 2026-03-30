@@ -1,0 +1,22 @@
+[
+  "astropy__astropy-12907",
+  "django__django-11099",
+  "django__django-11179",
+  "django__django-11603",
+  "django__django-11749",
+  "django__django-16139",
+  "matplotlib__matplotlib-23314",
+  "matplotlib__matplotlib-25311",
+  "pallets__flask-5014",
+  "psf__requests-2317",
+  "pydata__xarray-4094",
+  "pylint-dev__pylint-4970",
+  "pytest-dev__pytest-10051",
+  "scikit-learn__scikit-learn-12973",
+  "scikit-learn__scikit-learn-13328",
+  "sphinx-doc__sphinx-7454",
+  "sphinx-doc__sphinx-7889",
+  "sphinx-doc__sphinx-8035",
+  "sympy__sympy-18199",
+  "sympy__sympy-20590"
+]

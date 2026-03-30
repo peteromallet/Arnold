@@ -1,0 +1,25 @@
+{
+  "benchmark": "swe-bench",
+  "models": {
+    "prep": "zhipu:glm-5.1",
+    "plan": "zhipu:glm-5.1",
+    "critique": "zhipu:glm-5.1",
+    "revise": "zhipu:glm-5.1",
+    "gate": "zhipu:glm-5.1",
+    "finalize": "zhipu:glm-5.1",
+    "execute": "zhipu:glm-5.1",
+    "review": "zhipu:glm-5.1"
+  },
+  "max_gate_iterations": 3,
+  "eval_timeout_seconds": 1200,
+  "evals_to_run": [],
+  "swebench_dataset": "princeton-nlp/SWE-bench_Verified",
+  "test_timeout": 900,
+  "max_verify_attempts": 2,
+  "workers": 3,
+  "megaplan_bin": "megaplan",
+  "robustness": "heavy",
+  "workspace_dir": "__WORKSPACE_DIR__",
+  "results_dir": "__RESULTS_DIR__",
+  "run_name": "__RUN_NAME__"
+}
