@@ -1,14 +1,14 @@
 # Auto-Improve Loop
 
-Run 20 tasks. Score. Analyze failures. Fix the pipeline. Repeat.
+Run SWE-bench Verified tasks. Score. Analyze failures. Fix the pipeline. Repeat.
 
 ## Prerequisites
 
-- `ZHIPU_API_KEY` and `ZHIPU_BASE_URL` set in `~/.hermes/.env`
+- API keys in `auto_improve/api_keys.json` (see format below)
 - `megaplan` CLI installed and on PATH
 - `pip install -e .` in both hermes-agent and megaplan repos
-- Docker running (for local scoring)
-- Modal account configured (`modal token set`) — required for scoring non-Django repos
+- Docker running (for local scoring fallback)
+- Modal account configured (`modal token set`) — primary scoring method
 
 ---
 
@@ -19,10 +19,31 @@ Do these steps in order. Every time.
 ### Step 1: Run
 
 ```bash
+# Small iteration (20 tasks, 3 workers, single key):
 python -m auto_improve.loop --workers 3
+
+# Full 500-task run with multiple keys (3 workers per key):
+python -m auto_improve.loop --workers 3   # starts first 3 workers
+python -m auto_improve.add_workers --iteration NNN --keys-file auto_improve/api_keys.json --start-id 3
 ```
 
-This launches 20 SWE-bench tasks, scores them, and writes `iterations/NNN/scores.json`. It also pre-fills `analysis.md` and scaffolds `changes.md`. Takes ~1-2 hours.
+Monitor with:
+```bash
+python -m auto_improve.dashboard          # overview
+python -m auto_improve.dashboard --task django__django-12325   # inspect one task
+```
+
+The watch scorer runs automatically with auto-restart. If it dies, the dashboard shows `Scorer: NOT RUNNING ⚠` or `Scorer: DEAD ⛔`.
+
+**Gate condition at 20 scored tasks:**
+- Below 80% → kill the run, analyze failures, start improvement round
+- 80%+ → continue (scale up if rate limits allow)
+
+To add more API keys mid-run:
+```bash
+# Edit api_keys.json, then:
+python -m auto_improve.add_workers --iteration NNN --keys-file auto_improve/api_keys.json --start-id 9
+```
 
 ### Step 2: Review scores
 
@@ -30,11 +51,25 @@ Open `iterations/NNN/analysis.md`. Scores, task lists, and prior-iteration compa
 
 ### Step 3: Analyze failures
 
-For each failed task in `analysis.md`, read the audit trail:
-- `iterations/NNN/consolidated/tasks/{task_id}/audit.json`
-- `iterations/NNN/consolidated/tasks/{task_id}/patch.diff`
+For each failed task, use the dashboard inspector:
+```bash
+python -m auto_improve.dashboard --task <task_id>
+```
 
-Ask: **which phase went wrong?** Plan? Critique? Gate? Execute? Fill in the blanks next to each failed task (Phase, Pattern, Why).
+This shows: phase trail, critique flags, gate decisions, patch summary, and score. For deeper investigation, read the artifacts under the worker's result directory.
+
+**Important:** Don't trust the pipeline's "all tests pass" claim. Always check the actual SWE-bench scoring output:
+```bash
+# Find the real test results (not the executor's local run)
+find logs/run_evaluation -path "*<task_id>*" -name "report.json" | sort | tail -1
+find logs/run_evaluation -path "*<task_id>*" -name "test_output.txt" | sort | tail -1
+```
+
+The executor runs tests in a warm, partially-initialized environment. SWE-bench scores in a cold Docker. Things that pass locally can fail in Docker (circular imports, missing deps, Python version differences).
+
+For each failure, decide: is it a real code bug or an environment issue? Follow `SCORING_REVIEW_GUIDE.md` to categorize and optionally exclude environmental failures from the adjusted pass rate.
+
+Ask: **which phase went wrong?** Plan? Critique? Gate? Execute? Environment?
 
 ### Step 4: Categorize
 
@@ -43,10 +78,11 @@ Group failures by structural cause. Fill in "Failure Patterns" in `analysis.md`.
 | Pattern | Meaning |
 |---------|---------|
 | `narrow_fix` | Fixed symptom, not disease |
-| `over_defensive` | Added unnecessary fallbacks/wrappers |
-| `wrong_approach` | Rejected correct approach for worse one |
-| `under_scoped` | Limited scope to avoid breaking things |
-| `unverified` | Couldn't verify, proceeded anyway |
+| `incomplete_scope` | Fix covers reported case but misses adjacent edge cases |
+| `wrong_api` | Correct approach, wrong implementation detail |
+| `test_contamination` | Executor modified test files despite constraint |
+| `env_mismatch` | Tested against installed package instead of patched source |
+| `insufficient_verification` | Cherry-picked tests, missed regressions in full suite |
 | `infra_error` | Worker/environment/scoring failure |
 
 ### Step 5: Hypothesize
@@ -57,26 +93,24 @@ What general changes would address the top patterns? Write them in the "Hypothes
 
 Run a megaplan to implement improvements. The megaplan idea text MUST include:
 
-1. **Prior iteration context** — read `iterations/*/analysis.md` and `iterations/*/changes.md` for the last 2-3 iterations. What patterns keep recurring? What was tried and didn't work? What did work?
-2. **FINDINGS.md meta-learnings** — the accumulated wisdom about how to do this work
+1. **Prior iteration context** — read `iterations/*/analysis.md` and `iterations/*/changes.md` for the last 2-3 iterations
+2. **FINDINGS.md meta-learnings** — the accumulated wisdom
 3. **This iteration's failure patterns** from your analysis (Step 4)
-4. **Specific evidence** — which tasks failed, which phase went wrong, what the audit trail showed
-5. **Explicit constraints** — include these in the idea text so the executor follows them:
+4. **Specific evidence** — which tasks failed, which phase went wrong
+5. **Explicit constraints:**
    - "Every change must help ANY coding task, not just these specific failures"
    - "Prefer adding a sentence to a prompt over building a formal system"
    - "Simple instructions change model behavior; labels, schemas, and classification taxonomies usually don't"
-   - "Don't add new fields to schemas unless the downstream consumer actually uses them"
    - "Read the existing prompts before proposing changes — don't duplicate what's already there"
 6. **Infra fixes** — scoring reliability, process improvements. Always fair game.
 
-After the megaplan executes, review the changes critically:
+After the megaplan executes, review critically:
 - Did it build unnecessary scaffolding? Strip it back.
-- Did it add formal categories where a sentence would do? Simplify.
 - Would a new developer understand the prompt changes without context? If not, rewrite.
 
 Then:
 - Fill in `iterations/NNN/changes.md` (what, why, evidence)
-- Update `FINDINGS.md` if you learned something cross-cutting (not per-iteration details — those go in analysis.md)
+- Update `FINDINGS.md` if you learned something cross-cutting
 - Commit megaplan changes: `cd /Documents/megaplan && git add -A && git commit -m "auto-improve NNN: <description>"`
 
 ### Step 7: Save iteration to GitHub
@@ -90,62 +124,67 @@ git push -u origin auto-improve/iteration-NNN
 git switch main   # ← IMPORTANT: return to main before next run
 ```
 
-### Step 8: Rotate tasks and start next iteration
+### Step 8: Start next iteration
 
-Before going back to Step 1, update `tasks.json`:
-- Keep ~10 tasks that passed (anchors — detect regressions)
-- Keep ~5 tasks that failed (retries — test if your fix helped)
-- Add ~5 new tasks from SWE-bench Verified (generalization — does it work on unseen tasks?)
-- Maintain repo diversity (don't let it drift to all-django)
-
-Then go back to Step 1. If pass rate hits **90%+ on the 20-task sample**, run the full 500-task SWE-bench Verified to get a real benchmark score.
+Go back to Step 1 with the improvements active.
 
 ---
 
 ## Rules
 
 1. **Same model every iteration.** GLM-5.1 for all phases.
-2. **20 tasks per iteration, rotating mix.** Each batch should be:
-   - ~10 **anchors** — tasks that passed before (regression detection)
-   - ~5 **retries** — tasks that failed before (did the fix help?)
-   - ~5 **new** — unseen tasks (generalization signal)
-   Update `tasks.json` each iteration based on prior results. Keep repo diversity.
-3. **No task-specific fixes.** If it only helps one task, don't do it.
-4. **Simpler is better.** Prefer removing complexity over adding it.
-5. **Record everything.** `analysis.md`, `changes.md`, `FINDINGS.md`. Every iteration.
-6. **Branches are checkpoints.** `git checkout auto-improve/iteration-003` to jump back.
-7. **One iteration at a time.** No parallel iterations.
+2. **No task-specific fixes.** If it only helps one task, don't do it.
+3. **Simpler is better.** Prefer removing complexity over adding it.
+4. **Record everything.** `analysis.md`, `changes.md`, `FINDINGS.md`. Every iteration.
+5. **Branches are checkpoints.** `git checkout auto-improve/iteration-003` to jump back.
+6. **One iteration at a time.** No parallel iterations.
+7. **Don't change prompts mid-iteration.** Run → score → analyze → THEN change.
 
 ## Principles for Changes
 
 1. **Categorize before you fix.** Target a pattern, not an instance.
-2. **Fix everything obvious.** If the analysis reveals multiple independent improvements, make them all.
+2. **Fix everything obvious.** Multiple independent improvements = make them all.
 3. **Cheapest intervention first.** Prompt sentence > code change > architecture change.
 4. **Don't optimize for the eval.** Would this help *any* coding task? If not, don't do it.
 5. **Regressions are worse than no progress.** Fixes 3 but breaks 2 = roll back.
 6. **Information flow is usually the bottleneck.** Right info exists, wrong phase gets it.
 7. **Read the audit trail before theorizing.** Look at what actually happened.
 8. **Record the learning even if the fix doesn't work.** FINDINGS.md is the real output.
-9. **Simple instructions > formal systems.** "Estimate the scope" beats a classification taxonomy. "Read the traceback" beats a structured diagnosis framework. Direct instructions change model behavior; labels and schemas often don't.
-10. **Don't change prompts mid-iteration.** Run → score → analyze → THEN change. Mixing invalidates the experiment.
+9. **Simple instructions > formal systems.** Direct instructions change model behavior; labels and schemas often don't.
+
+## API Keys
+
+```json
+// auto_improve/api_keys.json (gitignored)
+[
+  {"key": "abc123...", "base_url": "https://api.z.ai/api/coding/paas/v4"},
+  {"key": "def456...", "base_url": "https://api.z.ai/api/coding/paas/v4"}
+]
+```
+
+Each key gets 3 workers. More keys = more parallelism without rate limiting.
 
 ## Files
 
 ```
 auto_improve/
-├── README.md                 ← you are here (the only process doc)
-├── FINDINGS.md               ← cross-cutting meta-learnings (not per-iteration details)
-├── tasks.json                ← current 20 tasks (rotated each iteration)
-├── base_config.json          ← model + robustness config (heavy = prep phase)
+├── README.md                 ← you are here (the process doc)
+├── SCORING_REVIEW_GUIDE.md   ← when/how to review and exclude scoring failures
+├── FINDINGS.md               ← cross-cutting meta-learnings
+├── tasks.json                ← current task list
+├── api_keys.json             ← API keys (gitignored)
+├── base_config.json          ← model + robustness config
 ├── loop.py                   ← orchestrator: run → score → scaffold docs
-├── dashboard.py              ← `python -m auto_improve.dashboard` for live status
+├── add_workers.py            ← add workers mid-run (multi-key support)
+├── dashboard.py              ← live status + per-task inspector
 ├── run_experiment.py         ← launches parallel workers
 ├── score_experiment.py       ← scores predictions
+├── history.py                ← cross-iteration task performance
 ├── utils.py                  ← compare_scores, load_scores helpers
 └── iterations/NNN/
     ├── config.json           ← auto: materialized config for this run
     ├── scores.json           ← auto: pass/fail per task
     ├── analysis.md           ← auto-scaffolded → you fill TODOs (steps 2-5)
     ├── changes.md            ← auto-scaffolded → you fill details (step 6)
-    └── consolidated/         ← auto: per-task patches + audit trails (step 3)
+    └── consolidated/         ← auto: per-task patches + audit trails
 ```
