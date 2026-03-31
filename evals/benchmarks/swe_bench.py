@@ -66,15 +66,21 @@ def _extract_planned_files(workspace_path: Path) -> list[str]:
     return sorted(planned)
 
 
-def _strip_test_files_from_patch(patch: str, instance_id: str) -> str:
-    """Remove test file modifications from a git diff patch.
+def _strip_test_files_from_patch(patch: str, instance_id: str, workspace_path: Path | None = None) -> str:
+    """Remove UNPLANNED test file modifications from a git diff patch.
 
     The executor sometimes modifies test files despite being told not to.
     SWE-bench injects its own test patch, so our test modifications conflict.
-    Strip them and keep only source code changes.
+    Strip them — BUT keep test files that are in the plan's files_changed
+    (some tasks legitimately require test modifications, e.g., refactoring).
     """
     if not patch or not patch.strip():
         return patch
+
+    # Get planned files — test files in the plan are intentional, keep them
+    planned_files: set[str] = set()
+    if workspace_path:
+        planned_files = set(_extract_planned_files(workspace_path))
 
     import re
     # Split into per-file chunks by "diff --git" headers
@@ -88,9 +94,15 @@ def _strip_test_files_from_patch(patch: str, instance_id: str) -> str:
         # Extract file path from "diff --git a/<path> b/<path>"
         match = re.match(r'diff --git a/(.+?) b/', chunk)
         if not match:
-            kept.append(chunk)  # Keep non-diff content (shouldn't happen)
+            kept.append(chunk)
             continue
         filepath = match.group(1)
+
+        # If this file is in the plan's files_changed, keep it regardless
+        if filepath in planned_files:
+            kept.append(chunk)
+            continue
+
         # Check if this is a test file
         parts = filepath.replace("\\", "/").split("/")
         filename = parts[-1] if parts else ""
@@ -367,7 +379,7 @@ Your plan MUST include a final task that runs these tests against your changes. 
                 model_patch += "\n"
 
         # Strip test file modifications — executor shouldn't modify tests
-        model_patch = _strip_test_files_from_patch(model_patch, instance_id)
+        model_patch = _strip_test_files_from_patch(model_patch, instance_id, workspace_path)
 
         if not model_patch:
             _log(instance_id, "No code changes made — scoring as failed")
@@ -494,7 +506,7 @@ Your plan MUST include a final task that runs these tests against your changes. 
         if model_patch and not model_patch.endswith("\n"):
             model_patch += "\n"
         # Strip test file modifications
-        model_patch = _strip_test_files_from_patch(model_patch, instance_id)
+        model_patch = _strip_test_files_from_patch(model_patch, instance_id, workspace_path)
         diff_elapsed = time.monotonic() - diff_started
         if not model_patch:
             return VerifyResult(
