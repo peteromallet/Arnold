@@ -36,6 +36,10 @@ def watch_and_score(
     manifest_path = root / "_task_manifest.json"
     predictions_dir = root / "_swebench_predictions"
     scores_path = root / "_watch_scores.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Watch scorer: missing manifest at {manifest_path}")
+    if not predictions_dir.exists():
+        raise FileNotFoundError(f"Watch scorer: missing predictions dir at {predictions_dir}")
     manifest = TaskManifest.load(manifest_path)
     run_id = f"hermes-watch-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
 
@@ -67,6 +71,17 @@ def watch_and_score(
                         retryable_ids.add(iid)
                     elif attempts >= 3:
                         exhausted_retry_ids.add(iid)
+                        # Mark exhausted tasks for manual review
+                        if not entry.get("review"):
+                            entry["review"] = {
+                                "category": "scoring_exhausted",
+                                "explanation": f"Scoring failed {attempts} times: {entry.get('error', 'unknown error')}",
+                                "excluded_from_pass_rate": False,
+                                "reviewed_by": "auto",
+                                "reviewed_at": _utc_now(),
+                                "needs_manual_review": True,
+                            }
+                            _write_incremental_results(root, scores_data)
 
             scorable_ids = sorted(
                 instance_id
@@ -81,14 +96,29 @@ def watch_and_score(
                 and instance_id in available_predictions
             )
 
-            for instance_id in scorable_ids:
-                result = _score_single_prediction(
-                    available_predictions[instance_id],
-                    instance_id,
-                    run_id,
-                    cleanup_docker,
-                    use_modal=use_modal,
-                )
+            for batch_start in range(0, len(scorable_ids), 2):
+              batch = scorable_ids[batch_start:batch_start + 2]
+              # Score up to 2 tasks in parallel: first on local Docker, second on Modal
+              import concurrent.futures
+              futures: dict[concurrent.futures.Future, str] = {}
+              with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                  for i, instance_id in enumerate(batch):
+                      use_local = (i == 0)  # first task goes local, second goes Modal
+                      futures[pool.submit(
+                          _score_single_prediction,
+                          available_predictions[instance_id],
+                          instance_id,
+                          run_id,
+                          cleanup_docker if use_local else False,  # only local cleans Docker
+                          use_modal=not use_local,
+                      )] = instance_id
+
+              for future in concurrent.futures.as_completed(futures):
+                instance_id = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = {"resolved": None, "error": str(exc), "returncode": None}
                 prev_entry = scores_data.get("tasks", {}).get(instance_id, {})
                 prev_attempts = prev_entry.get("attempts", 0) if isinstance(prev_entry, dict) else 0
                 task_entry = {
@@ -594,5 +624,75 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _write_scorer_status(results_root: str | Path | None, status: str, detail: str = "") -> None:
+    """Write scorer health status to a file the dashboard can read."""
+    if results_root is None:
+        return
+    status_path = Path(results_root) / "_scorer_status.json"
+    try:
+        payload = {
+            "status": status,
+            "detail": detail[:500],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        status_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def main_with_restart(argv: list[str] | None = None, max_restarts: int = 10) -> int:
+    """Run main() with auto-restart on crash. Gives up after max_restarts."""
+    import traceback
+
+    # Parse args early so we can write status files to results_root
+    parsed_argv = argv if argv is not None else sys.argv[1:]
+    results_root = None
+    for i, arg in enumerate(parsed_argv):
+        if arg == "--results-root" and i + 1 < len(parsed_argv):
+            results_root = parsed_argv[i + 1]
+
+    restarts = 0
+    while restarts <= max_restarts:
+        try:
+            _write_scorer_status(results_root, "running")
+            return main(argv)
+        except SystemExit as e:
+            if e.code == 0:
+                _write_scorer_status(results_root, "completed")
+                return 0
+            restarts += 1
+            detail = f"Exit code {e.code}"
+            print(
+                f"\n{'='*60}\n"
+                f"⚠ SCORER CRASHED (restart {restarts}/{max_restarts})\n"
+                f"  Reason: {detail}\n"
+                f"{'='*60}\n",
+                file=sys.stderr,
+            )
+            _write_scorer_status(results_root, f"restarting ({restarts}/{max_restarts})", detail)
+        except KeyboardInterrupt:
+            _write_scorer_status(results_root, "interrupted")
+            return 130
+        except Exception as exc:
+            restarts += 1
+            tb = traceback.format_exc()
+            detail = f"{exc!r}\n{tb}"
+            print(
+                f"\n{'='*60}\n"
+                f"⚠ SCORER CRASHED (restart {restarts}/{max_restarts})\n"
+                f"  Exception: {exc!r}\n"
+                f"  Traceback:\n{tb}\n"
+                f"{'='*60}\n",
+                file=sys.stderr,
+            )
+            _write_scorer_status(results_root, f"restarting ({restarts}/{max_restarts})", detail)
+        time.sleep(5)  # Brief pause before restart
+
+    msg = f"Scorer gave up after {max_restarts} restarts"
+    print(f"\n{'='*60}\n⛔ {msg}\n{'='*60}\n", file=sys.stderr)
+    _write_scorer_status(results_root, "dead", msg)
+    return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main_with_restart())
