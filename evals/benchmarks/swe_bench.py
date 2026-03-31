@@ -66,6 +66,57 @@ def _extract_planned_files(workspace_path: Path) -> list[str]:
     return sorted(planned)
 
 
+def _strip_test_files_from_patch(patch: str, instance_id: str) -> str:
+    """Remove test file modifications from a git diff patch.
+
+    The executor sometimes modifies test files despite being told not to.
+    SWE-bench injects its own test patch, so our test modifications conflict.
+    Strip them and keep only source code changes.
+    """
+    if not patch or not patch.strip():
+        return patch
+
+    import re
+    # Split into per-file chunks by "diff --git" headers
+    chunks = re.split(r'(?=^diff --git )', patch, flags=re.MULTILINE)
+    kept: list[str] = []
+    stripped_files: list[str] = []
+
+    for chunk in chunks:
+        if not chunk.strip():
+            continue
+        # Extract file path from "diff --git a/<path> b/<path>"
+        match = re.match(r'diff --git a/(.+?) b/', chunk)
+        if not match:
+            kept.append(chunk)  # Keep non-diff content (shouldn't happen)
+            continue
+        filepath = match.group(1)
+        # Check if this is a test file
+        parts = filepath.replace("\\", "/").split("/")
+        filename = parts[-1] if parts else ""
+        is_test = (
+            "tests" in parts
+            or "test" in parts
+            or filename.startswith("test_")
+            or filename.endswith("_test.py")
+            or filename.endswith("_tests.py")
+            or filename == "conftest.py"
+        )
+        if is_test:
+            stripped_files.append(filepath)
+        else:
+            kept.append(chunk)
+
+    if stripped_files:
+        _log(instance_id, f"Stripped test files from patch: {', '.join(stripped_files)}")
+
+    result = "".join(kept)
+    # Ensure trailing newline
+    if result and not result.endswith("\n"):
+        result += "\n"
+    return result
+
+
 class SWEBenchBackend:
     """Adapter for SWE-bench evaluation."""
 
@@ -166,15 +217,23 @@ class SWEBenchBackend:
         cache_dir = workspace_root.parent / "_repo_cache" / repo_cache_name
         cache_dir.parent.mkdir(parents=True, exist_ok=True)
 
-        if not (cache_dir / ".git").exists() and not (cache_dir / "HEAD").exists():
-            _log(task_name, f"Cloning {repo} (first time, will be cached)...")
-            runner(["git", "clone", "--bare", repo_url, str(cache_dir)], workspace_root, timeout_seconds)
-        else:
-            # Fetch latest (in case new commits needed)
+        # File lock prevents race when multiple workers clone the same repo
+        lock_path = cache_dir.parent / f"{repo_cache_name}.lock"
+        import fcntl
+        with open(lock_path, "w") as lock_fh:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
             try:
-                runner(["git", "fetch", "--all"], cache_dir, timeout_seconds)
-            except Exception:
-                pass  # Best effort — cached repo might be enough
+                if not (cache_dir / ".git").exists() and not (cache_dir / "HEAD").exists():
+                    _log(task_name, f"Cloning {repo} (first time, will be cached)...")
+                    runner(["git", "clone", "--bare", repo_url, str(cache_dir)], workspace_root, timeout_seconds)
+                else:
+                    # Fetch latest (in case new commits needed)
+                    try:
+                        runner(["git", "fetch", "--all"], cache_dir, timeout_seconds)
+                    except Exception:
+                        pass  # Best effort — cached repo might be enough
+            finally:
+                fcntl.flock(lock_fh, fcntl.LOCK_UN)
 
         # Create worktree at the specific commit
         _log(task_name, f"Creating worktree at {base_commit[:8]}...")
@@ -307,6 +366,9 @@ Your plan MUST include a final task that runs these tests against your changes. 
             if model_patch and not model_patch.endswith("\n"):
                 model_patch += "\n"
 
+        # Strip test file modifications — executor shouldn't modify tests
+        model_patch = _strip_test_files_from_patch(model_patch, instance_id)
+
         if not model_patch:
             _log(instance_id, "No code changes made — scoring as failed")
             return ScoringResult(
@@ -431,6 +493,8 @@ Your plan MUST include a final task that runs these tests against your changes. 
         model_patch = diff_result.stdout.strip()
         if model_patch and not model_patch.endswith("\n"):
             model_patch += "\n"
+        # Strip test file modifications
+        model_patch = _strip_test_files_from_patch(model_patch, instance_id)
         diff_elapsed = time.monotonic() - diff_started
         if not model_patch:
             return VerifyResult(

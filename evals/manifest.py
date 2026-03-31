@@ -88,8 +88,82 @@ class TaskManifest:
             task["worker"] = worker_id
             task["error"] = error
             task["done_at"] = done_at
+            task["error_count"] = task.get("error_count", 0) + 1
             self._write_unlocked(payload)
             self._data = payload
+
+    def requeue_errors(self, max_retries: int = 1) -> list[str]:
+        """Reset errored tasks back to pending if they haven't exceeded max_retries."""
+        requeued: list[str] = []
+        with self._lock():
+            payload = self._read_unlocked()
+            for instance_id, task in payload["tasks"].items():
+                if task.get("status") != "error":
+                    continue
+                if task.get("error_count", 1) > max_retries:
+                    continue
+                task["status"] = "pending"
+                task.pop("worker", None)
+                task.pop("done_at", None)
+                task.pop("error", None)
+                requeued.append(instance_id)
+            if requeued:
+                self._write_unlocked(payload)
+            self._data = payload
+        return requeued
+
+    def requeue_stale_claimed(self, dead_workers: set[str]) -> list[str]:
+        """Reset tasks claimed by dead workers back to pending."""
+        requeued: list[str] = []
+        with self._lock():
+            payload = self._read_unlocked()
+            for instance_id, task in payload["tasks"].items():
+                if task.get("status") != "claimed":
+                    continue
+                if task.get("worker") not in dead_workers:
+                    continue
+                task["status"] = "pending"
+                task.pop("worker", None)
+                task.pop("claimed_at", None)
+                requeued.append(instance_id)
+            if requeued:
+                self._write_unlocked(payload)
+            self._data = payload
+        return requeued
+
+    def requeue_escalated(self, predictions_dir: Path) -> list[str]:
+        """Reset 'done' tasks that have no prediction file back to pending."""
+        requeued: list[str] = []
+        with self._lock():
+            payload = self._read_unlocked()
+            for instance_id, task in payload["tasks"].items():
+                if task.get("status") != "done":
+                    continue
+                pred_path = predictions_dir / f"{instance_id}.jsonl"
+                if not pred_path.exists():
+                    task["status"] = "pending"
+                    task.pop("worker", None)
+                    task.pop("done_at", None)
+                    requeued.append(instance_id)
+            if requeued:
+                self._write_unlocked(payload)
+            self._data = payload
+        return requeued
+
+    def add_tasks(self, task_ids: list[str]) -> int:
+        """Add new pending tasks to an existing manifest. Returns count added."""
+        added = 0
+        with self._lock():
+            payload = self._read_unlocked()
+            for task_id in task_ids:
+                if task_id not in payload["tasks"]:
+                    payload["tasks"][task_id] = {"status": "pending"}
+                    added += 1
+            if added:
+                payload["total_tasks"] = len(payload["tasks"])
+                self._write_unlocked(payload)
+            self._data = payload
+        return added
 
     def unclaimed_count(self) -> int:
         payload = self._read_current()

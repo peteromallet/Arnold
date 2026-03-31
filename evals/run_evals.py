@@ -648,6 +648,13 @@ def run_megaplan_loop(
                 _log(eval_name, f"Phase {phase} returned non-JSON — retrying phase ({phase_retries[phase]}/2)", phase=phase)
                 audit.notes.append(f"{phase} non-JSON, retrying")
                 continue
+            if "429" in exc_str or "rate limit" in exc_str or "overloaded" in exc_str:
+                phase_retries[phase] = phase_retries.get(phase, 0) + 1
+                if phase_retries[phase] >= 2:
+                    raise
+                _log(eval_name, f"Phase {phase} hit rate limit — retrying phase ({phase_retries[phase]}/2)", phase=phase)
+                audit.notes.append(f"{phase} rate limited, retrying")
+                continue
             raise
         except _StuckDetected as stuck:
             _log(eval_name, f"Model stuck {stuck.seconds_stuck:.0f}s after {stuck.message_count} msgs — retrying", phase=phase)
@@ -874,6 +881,21 @@ def run_all_evals(
                 for name in batch:
                     eval_index += 1
                     yield name
+            # No more pending tasks — requeue errored and escalated tasks
+            requeued = manifest.requeue_errors(max_retries=1)
+            if requeued:
+                _log("manifest", f"Re-queued {len(requeued)} errored tasks: {', '.join(requeued)}")
+            # Requeue escalated tasks (done but no prediction)
+            if config.predictions_dir:
+                from pathlib import Path
+                escalated = manifest.requeue_escalated(Path(config.predictions_dir))
+                if escalated:
+                    _log("manifest", f"Re-queued {len(escalated)} escalated tasks: {', '.join(escalated)}")
+            if requeued or (config.predictions_dir and escalated):
+                while batch := manifest.claim_batch(config.worker_id, config.claim_batch_size):
+                    for name in batch:
+                        eval_index += 1
+                        yield name
             return
 
         for name in selected_eval_names:
