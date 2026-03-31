@@ -1,0 +1,26 @@
+{
+  "benchmark": "swe-bench",
+  "models": {
+    "prep": "qwen/qwen3.5-27b",
+    "plan": "qwen/qwen3.5-27b",
+    "research": "qwen/qwen3.5-27b",
+    "critique": "z-ai/glm-5",
+    "revise": "z-ai/glm-5",
+    "gate": "qwen/qwen3.5-27b",
+    "finalize": "qwen/qwen3.5-27b",
+    "execute": "z-ai/glm-5",
+    "review": "qwen/qwen3.5-27b"
+  },
+  "max_gate_iterations": 3,
+  "eval_timeout_seconds": 1200,
+  "evals_to_run": [],
+  "swebench_dataset": "princeton-nlp/SWE-bench_Verified",
+  "test_timeout": 900,
+  "max_verify_attempts": 2,
+  "robustness": "heavy",
+  "megaplan_bin": "megaplan",
+  "workspace_dir": "evals/workspaces-qwen-glm",
+  "results_dir": "results",
+  "run_name": "swebench-verified-qwen-glm",
+  "workers": 3
+}

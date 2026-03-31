@@ -273,6 +273,44 @@ def join_parallel_run(
     }
 
 
+def _clean_editable_installs() -> None:
+    """Remove editable .pth files leaked by executor pip install -e commands.
+
+    The executor's terminal tool runs in the system Python. When the model
+    runs `pip install -e .` to set up a workspace for testing, the editable
+    install goes to the global site-packages and can break dependencies
+    (e.g., anyio downgrade from a dev sphinx/pytest install).
+    """
+    import site
+    site_packages = Path(site.getsitepackages()[0])
+    removed = []
+    for pth in site_packages.glob("__editable__*.pth"):
+        pth.unlink()
+        removed.append(pth.name)
+    if removed:
+        print(f"[parallel] Cleaned {len(removed)} editable installs: {', '.join(removed)}", file=sys.stderr)
+    # Also force-reinstall anyio to ensure it's not broken
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "anyio>=4.0", "--force-reinstall", "--quiet"],
+        capture_output=True, check=False,
+    )
+
+
+def _preflight_check_megaplan() -> None:
+    """Verify megaplan imports correctly before spawning workers."""
+    result = subprocess.run(
+        [sys.executable, "-c", "from megaplan.cli import cli_entry; print('ok')"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Megaplan pre-flight check failed — fix before running:\n{result.stderr}"
+        )
+    print("[parallel] Megaplan pre-flight check passed", file=sys.stderr)
+
+
 def _launch_worker_processes(
     original_config_path: str | Path,
     workspace_dir: str,
@@ -281,6 +319,8 @@ def _launch_worker_processes(
     manifest_path: Path,
     results_root: Path,
 ) -> tuple[list[tuple[str, subprocess.Popen, Path]], list[Path], Path]:
+    _clean_editable_installs()
+    _preflight_check_megaplan()
     worker_procs: list[tuple[str, subprocess.Popen, Path]] = []
     temp_configs: list[Path] = []
     worker_log_dir = results_root / "_worker_logs"
@@ -315,6 +355,13 @@ def _launch_worker_processes(
 
             shutil.copy2(real_env_file, worker_hermes_home / ".env")
         worker_env["HERMES_HOME"] = str(worker_hermes_home)
+
+        # Guard against executor pip installs polluting global site-packages.
+        # The model sometimes runs `pip install -e .` which creates __editable__
+        # .pth files that break dependencies (anyio/openai). Tell pip to install
+        # into the workspace, not the global Python.
+        worker_env["PIP_USER"] = "1"
+        worker_env["PYTHONUSERBASE"] = str(worker_workspace / "_pip_user")
 
         worker_stdout = open(worker_log_dir / f"{worker_id}.stdout.log", "w")
         worker_stderr = open(worker_log_dir / f"{worker_id}.stderr.log", "w")

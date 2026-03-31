@@ -363,15 +363,36 @@ def _inject_feedback(
     response: dict[str, object],
 ) -> None:
     """Inject failure context into the megaplan plan so the next attempt knows what went wrong."""
+    def _truncate_text(value: object, limit: int = 200) -> str:
+        return str(value)[:limit] if value is not None else ""
+
     parts = [f"[{phase} failed]"]
     for key in ("summary", "message", "error"):
         val = response.get(key)
         if isinstance(val, str) and val:
             parts.append(f"{key}: {val[:200]}")
-    for key in ("deviations", "issues"):
+    for key in ("deviations",):
         val = response.get(key)
         if isinstance(val, list) and val:
             parts.append(f"{key}: {'; '.join(str(v)[:60] for v in val[:3])}")
+    rework_items = response.get("rework_items")
+    if isinstance(rework_items, list) and rework_items:
+        for item in rework_items:
+            if not isinstance(item, dict):
+                continue
+            parts.append(
+                "\n".join([
+                    f"[rework] task: {_truncate_text(item.get('task_id'))}",
+                    f"  issue: {_truncate_text(item.get('issue'))}",
+                    f"  expected: {_truncate_text(item.get('expected'))}",
+                    f"  actual: {_truncate_text(item.get('actual'))}",
+                    f"  evidence: {_truncate_text(item.get('evidence_file'))}",
+                ])
+            )
+    else:
+        issues = response.get("issues")
+        if isinstance(issues, list) and issues:
+            parts.append(f"issues: {'; '.join(str(v)[:60] for v in issues[:3])}")
     if phase == "execute":
         parts.append(
             "You MUST modify source code files (write_file/patch). "
@@ -607,6 +628,27 @@ def run_megaplan_loop(
                 phase_timeout,
                 _megaplan_env(extra_env),
             )
+        except RuntimeError as exc:
+            exc_str = str(exc).lower()
+            # Infra errors (broken imports, missing modules) — don't retry, they'll fail the same way
+            if any(p in exc_str for p in ("importerror", "modulenotfounderror", "cannot import name", "no module named")):
+                _log(eval_name, f"Phase {phase} hit infra error — not retrying: {str(exc)[:100]}", phase=phase)
+                raise
+            if "timed out" in exc_str:
+                phase_retries[phase] = phase_retries.get(phase, 0) + 1
+                if phase_retries[phase] >= 2:
+                    raise
+                _log(eval_name, f"Phase {phase} timed out — retrying phase ({phase_retries[phase]}/2)", phase=phase)
+                audit.notes.append(f"{phase} timed out, retrying")
+                continue
+            if "non-json" in exc_str:
+                phase_retries[phase] = phase_retries.get(phase, 0) + 1
+                if phase_retries[phase] >= 2:
+                    raise
+                _log(eval_name, f"Phase {phase} returned non-JSON — retrying phase ({phase_retries[phase]}/2)", phase=phase)
+                audit.notes.append(f"{phase} non-JSON, retrying")
+                continue
+            raise
         except _StuckDetected as stuck:
             _log(eval_name, f"Model stuck {stuck.seconds_stuck:.0f}s after {stuck.message_count} msgs — retrying", phase=phase)
             audit.notes.append(f"{phase} stuck: {stuck}")
@@ -965,6 +1007,12 @@ def run_all_evals(
                 # Clean up workspace to save disk
                 try:
                     benchmark.cleanup_workspace(prepared)
+                except Exception:
+                    pass
+                # Clean editable installs that the executor may have leaked
+                try:
+                    from evals.parallel import _clean_editable_installs
+                    _clean_editable_installs()
                 except Exception:
                     pass
 
