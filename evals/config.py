@@ -51,6 +51,7 @@ class EvalConfig:
     max_verify_attempts: int = 3
     swebench_dataset: str = "princeton-nlp/SWE-bench_Lite"
     swebench_patch_only: bool = False
+    swebench_docker_execute: bool = False
     workers: int = 1
     openrouter_params: dict[str, Any] = field(default_factory=dict)
     megaplan_bin: str = "megaplan"

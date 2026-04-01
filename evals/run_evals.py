@@ -930,6 +930,8 @@ def run_all_evals(
                 config,
                 timeout_seconds=config.eval_timeout_seconds,
             )
+            if hasattr(benchmark, "prebuild_docker_image"):
+                benchmark.prebuild_docker_image(prepared, config)
             prompt_text = benchmark.read_prompt(eval_name, source_root)
             audit = EvalAudit(
                 eval_name=eval_name,

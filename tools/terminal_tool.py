@@ -501,6 +501,9 @@ def _get_env_config() -> Dict[str, Any]:
         "env_type": env_type,
         "docker_image": os.getenv("TERMINAL_DOCKER_IMAGE", default_image),
         "docker_forward_env": _parse_env_var("TERMINAL_DOCKER_FORWARD_ENV", "[]", json.loads, "valid JSON"),
+        "docker_skip_home_overlay": os.getenv("TERMINAL_DOCKER_SKIP_HOME_OVERLAY", "false").lower() in ("true", "1", "yes"),
+        "docker_skip_security_args": os.getenv("TERMINAL_DOCKER_SKIP_SECURITY_ARGS", "false").lower() in ("true", "1", "yes"),
+        "docker_extra_args": _parse_env_var("TERMINAL_DOCKER_EXTRA_ARGS", "[]", json.loads, "valid JSON"),
         "singularity_image": os.getenv("TERMINAL_SINGULARITY_IMAGE", f"docker://{default_image}"),
         "modal_image": os.getenv("TERMINAL_MODAL_IMAGE", default_image),
         "daytona_image": os.getenv("TERMINAL_DAYTONA_IMAGE", default_image),
@@ -574,6 +577,9 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
             host_cwd=host_cwd,
             auto_mount_cwd=cc.get("docker_mount_cwd_to_workspace", False),
             forward_env=docker_forward_env,
+            skip_home_overlay=cc.get("docker_skip_home_overlay", False),
+            skip_security_args=cc.get("docker_skip_security_args", False),
+            extra_run_args=cc.get("docker_extra_args", None),
         )
     
     elif env_type == "singularity":
@@ -964,6 +970,9 @@ def terminal_tool(
                                 "container_persistent": config.get("container_persistent", True),
                                 "docker_volumes": config.get("docker_volumes", []),
                                 "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
+                                "docker_skip_home_overlay": config.get("docker_skip_home_overlay", False),
+                                "docker_skip_security_args": config.get("docker_skip_security_args", False),
+                                "docker_extra_args": config.get("docker_extra_args", []),
                             }
 
                         local_config = None

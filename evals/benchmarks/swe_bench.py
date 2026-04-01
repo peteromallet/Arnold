@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -77,6 +78,8 @@ def _strip_test_files_from_patch(patch: str, instance_id: str, workspace_path: P
     if not patch or not patch.strip():
         return patch
 
+    from evals.run_evals import _log
+
     # Get planned files — test files in the plan are intentional, keep them
     planned_files: set[str] = set()
     if workspace_path:
@@ -129,12 +132,79 @@ def _strip_test_files_from_patch(patch: str, instance_id: str, workspace_path: P
     return result
 
 
+def _get_provider_env_var_names() -> list[str]:
+    names = {
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_TOKEN",
+        "OPENAI_BASE_URL",
+        "HERMES_MODEL",
+    }
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+
+        for pconfig in PROVIDER_REGISTRY.values():
+            if pconfig.auth_type == "api_key":
+                names.update(pconfig.api_key_env_vars)
+    except ImportError:
+        pass
+    return sorted(names)
+
+
+def _load_model_patch(
+    prepared,
+    workspace_path: Path,
+    instance_id: str,
+    base_commit: str,
+) -> str:
+    docker_patch_file = workspace_path / "model_patch.diff"
+    metadata = getattr(prepared, "metadata", {}) or {}
+    if metadata.get("docker_image") and docker_patch_file.exists():
+        model_patch = docker_patch_file.read_text(encoding="utf-8", errors="replace").strip()
+        if model_patch and not model_patch.endswith("\n"):
+            model_patch += "\n"
+        return _strip_test_files_from_patch(model_patch, instance_id, workspace_path)
+
+    planned_files = _extract_planned_files(workspace_path)
+    diff_cmd = ["git", "diff", "--text", base_commit]
+    if planned_files:
+        diff_cmd.append("--")
+        diff_cmd.extend(planned_files)
+    diff_result = subprocess.run(
+        diff_cmd,
+        cwd=workspace_path,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+    )
+    model_patch = diff_result.stdout.strip()
+    if model_patch and not model_patch.endswith("\n"):
+        model_patch += "\n"
+    if not model_patch and planned_files:
+        diff_result = subprocess.run(
+            ["git", "diff", "--text", base_commit],
+            cwd=workspace_path,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+        model_patch = diff_result.stdout.strip()
+        if model_patch and not model_patch.endswith("\n"):
+            model_patch += "\n"
+
+    return _strip_test_files_from_patch(model_patch, instance_id, workspace_path)
+
+
 class SWEBenchBackend:
     """Adapter for SWE-bench evaluation."""
 
     def __init__(self):
         self._dataset: list[dict[str, Any]] | None = None
         self._instances: dict[str, dict[str, Any]] = {}
+        self._docker_execute_image: str | None = None
 
     def _load_dataset(self, dataset_name: str = "princeton-nlp/SWE-bench_Lite") -> list[dict[str, Any]]:
         if self._dataset is not None:
@@ -272,6 +342,127 @@ class SWEBenchBackend:
             },
         )
 
+    def _get_swebench_docker_image(self, instance: dict[str, Any]) -> str | None:
+        script = """
+import json
+import sys
+
+payload = json.load(sys.stdin)
+
+from swebench.harness.test_spec.test_spec import get_test_specs_from_dataset
+
+specs = get_test_specs_from_dataset([payload], namespace="")
+image_name = specs[0].env_image_key if specs else None
+
+try:
+    import docker
+    from swebench.harness.docker_build import get_env_configs_to_build
+
+    client = docker.from_env()
+    configs = get_env_configs_to_build(client, [payload], namespace="")
+    if configs:
+        image_name = next(iter(configs))
+except Exception:
+    pass
+
+print(json.dumps({"image_name": image_name}))
+"""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                input=json.dumps(instance),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        output = (result.stdout or "").strip()
+        if not output:
+            return None
+
+        try:
+            payload = json.loads(output.splitlines()[-1])
+        except json.JSONDecodeError:
+            return None
+
+        image_name = payload.get("image_name")
+        return image_name if isinstance(image_name, str) and image_name.strip() else None
+
+    def prebuild_docker_image(self, prepared, config) -> str | None:
+        from evals.run_evals import _log
+
+        self._docker_execute_image = None
+        if not getattr(config, "swebench_docker_execute", False):
+            return None
+        if getattr(config, "swebench_patch_only", False):
+            return None
+
+        instance = self._instances.get(prepared.eval_name)
+        if not instance:
+            self._load_dataset(getattr(config, "swebench_dataset", "princeton-nlp/SWE-bench_Lite"))
+            instance = self._instances.get(prepared.eval_name)
+        if not instance:
+            return None
+
+        image_name = self._get_swebench_docker_image(instance)
+        if not image_name:
+            _log(prepared.eval_name, "SWE-bench Docker image lookup unavailable; using local execute environment", dim=True)
+            return None
+
+        image_check = subprocess.run(
+            ["docker", "images", "-q", image_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        image_exists = bool((image_check.stdout or "").strip())
+
+        if not image_exists:
+            _log(prepared.eval_name, f"Prebuilding SWE-bench Docker image {image_name}...", dim=True)
+            with tempfile.TemporaryDirectory(prefix="swebench-prebuild-") as tmpdir:
+                predictions_path = Path(tmpdir) / f"{prepared.eval_name}.jsonl"
+                prediction = {
+                    "instance_id": prepared.eval_name,
+                    "model_name_or_path": config.models.get("execute", "hermes"),
+                    "model_patch": "",
+                }
+                predictions_path.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
+
+                prebuild_result = subprocess.run(
+                    [
+                        "python", "-m", "swebench.harness.run_evaluation",
+                        "--predictions_path", str(predictions_path),
+                        "--instance_ids", prepared.eval_name,
+                        "--max_workers", "1",
+                        "--run_id", f"hermes-prebuild-{prepared.eval_name}",
+                        "--namespace", "",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=getattr(config, "docker_timeout", 300),
+                    check=False,
+                )
+            image_check = subprocess.run(
+                ["docker", "images", "-q", image_name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            image_exists = bool((image_check.stdout or "").strip())
+            if prebuild_result.returncode != 0 and not image_exists:
+                _log(prepared.eval_name, "SWE-bench Docker prebuild failed; using local execute environment", dim=True)
+                return None
+
+        prepared.metadata["docker_image"] = image_name
+        self._docker_execute_image = image_name
+        return image_name
+
     def read_prompt(self, task_name: str, source_root: str | Path) -> str:
         instance = self._instances.get(task_name)
         if not instance:
@@ -325,6 +516,14 @@ These existing tests must pass after your fix:
 
 Your plan MUST include a final task that runs these tests against your changes. Run the repo's existing test suite — do NOT create new test files. If any test fails, read the error, fix your code, and re-run until they pass. Do not consider the task complete until these tests pass.
 """
+        if getattr(self, "_docker_execute_image", None):
+            prompt += """
+After verifying all tests pass, save your patch for scoring:
+```bash
+cd /testbed && git diff > /hermes_output/model_patch.diff
+```
+This step is REQUIRED — without it your changes cannot be scored.
+"""
         return prompt
 
     def score(
@@ -344,42 +543,7 @@ Your plan MUST include a final task that runs these tests against your changes. 
         base_commit = prepared.metadata.get("base_commit", prepared.initial_commit_sha)
         patch_only = getattr(config, "swebench_patch_only", False)
 
-        # Capture the patch (git diff from base_commit)
-        # Filter to only planned files — executor may fix unrelated infra issues
-        # (e.g., cloudpickle Python 3.11 compat) that contaminate the patch
-        planned_files = _extract_planned_files(workspace_path)
-        diff_cmd = ["git", "diff", "--text", base_commit]
-        if planned_files:
-            diff_cmd.append("--")
-            diff_cmd.extend(planned_files)
-        diff_result = subprocess.run(
-            diff_cmd,
-            cwd=workspace_path,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            check=False,
-        )
-        model_patch = diff_result.stdout.strip()
-        # Ensure patch ends with newline — SWE-bench rejects "malformed" patches without one
-        if model_patch and not model_patch.endswith("\n"):
-            model_patch += "\n"
-        if not model_patch and planned_files:
-            # Fallback to full diff if filtered diff is empty (files_changed might be wrong)
-            diff_result = subprocess.run(
-                ["git", "diff", "--text", base_commit],
-                cwd=workspace_path,
-                capture_output=True,
-                text=True,
-                errors="replace",
-                check=False,
-            )
-            model_patch = diff_result.stdout.strip()
-            if model_patch and not model_patch.endswith("\n"):
-                model_patch += "\n"
-
-        # Strip test file modifications — executor shouldn't modify tests
-        model_patch = _strip_test_files_from_patch(model_patch, instance_id, workspace_path)
+        model_patch = _load_model_patch(prepared, workspace_path, instance_id, base_commit)
 
         if not model_patch:
             _log(instance_id, "No code changes made — scoring as failed")
@@ -494,19 +658,7 @@ Your plan MUST include a final task that runs these tests against your changes. 
             return None
 
         diff_started = time.monotonic()
-        diff_result = subprocess.run(
-            ["git", "diff", "--text", base_commit],
-            cwd=workspace_path,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            check=False,
-        )
-        model_patch = diff_result.stdout.strip()
-        if model_patch and not model_patch.endswith("\n"):
-            model_patch += "\n"
-        # Strip test file modifications
-        model_patch = _strip_test_files_from_patch(model_patch, instance_id, workspace_path)
+        model_patch = _load_model_patch(prepared, workspace_path, instance_id, base_commit)
         diff_elapsed = time.monotonic() - diff_started
         if not model_patch:
             return VerifyResult(
@@ -586,7 +738,26 @@ Your plan MUST include a final task that runs these tests against your changes. 
         return env
 
     def megaplan_env_overrides(self, prepared) -> dict[str, str]:
-        return {}
+        image = prepared.metadata.get("docker_image", "")
+        if not image:
+            return {}
+        return {
+            "TERMINAL_ENV": "docker",
+            "TERMINAL_DOCKER_IMAGE": image,
+            "TERMINAL_CWD": "/testbed",
+            "TERMINAL_DOCKER_SKIP_HOME_OVERLAY": "true",
+            "TERMINAL_DOCKER_SKIP_SECURITY_ARGS": "true",
+            "TERMINAL_DOCKER_FORWARD_ENV": json.dumps(_get_provider_env_var_names()),
+            "TERMINAL_CONTAINER_PERSISTENT": "false",
+            "TERMINAL_CONTAINER_MEMORY": "16384",
+            "TERMINAL_DOCKER_EXTRA_ARGS": json.dumps([
+                "--pids-limit", "4096",
+                "--tmpfs", "/tmp:rw,nosuid,size=4g",
+                "--tmpfs", "/var/tmp:rw,noexec,nosuid,size=1g",
+                "--tmpfs", "/run:rw,noexec,nosuid,size=256m",
+            ]),
+            "TERMINAL_DOCKER_VOLUMES": json.dumps([f"{prepared.path}:/hermes_output"]),
+        }
 
     def cleanup_workspace(self, prepared) -> None:
         workspace = Path(prepared.path)
