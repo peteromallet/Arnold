@@ -821,6 +821,12 @@ def resolve_provider_client(
     if provider == "main":
         provider = "custom"
 
+    # Strip provider prefix from model if it matches (e.g. "openrouter:qwen/..." → "qwen/...")
+    if model and ":" in model:
+        prefix, _, rest = model.partition(":")
+        if prefix.lower() == provider and rest:
+            model = rest
+
     # ── Auto: try all providers in priority order ────────────────────
     if provider == "auto":
         client, resolved = _resolve_auto()
