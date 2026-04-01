@@ -18,7 +18,7 @@ from evals.manifest import TaskManifest
 
 
 DEFAULT_POLL_INTERVAL = 15
-DEFAULT_TIMEOUT = 4 * 60 * 60
+DEFAULT_TIMEOUT = 7 * 24 * 60 * 60  # 7 days — long enough for any run
 SCORE_TIMEOUT = 30 * 60
 KEEP_IMAGE_PREFIXES = ("sweb.base.", "sweb.env.")
 
