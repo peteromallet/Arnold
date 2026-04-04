@@ -459,7 +459,7 @@ def _render_html(data: dict) -> str:
         # GitHub link
         gh_link = ""
         if t["github_url"]:
-            gh_link = f'<a href="{t["github_url"]}" target="_blank" class="gh-link" onclick="event.stopPropagation()">View on GitHub →</a>'
+            gh_link = f'<a href="{t["github_url"]}" target="_blank" class="gh-link" onclick="event.stopPropagation()">View original issue →</a>'
 
         # Explanation
         expl = ""
@@ -627,7 +627,7 @@ def _render_html(data: dict) -> str:
 
 <div class="hero">
     <div class="hero-label">SWE-bench Verified — Live Experiment</div>
-    <div class="hero-title">Can <strong>open-source models</strong> beat the best closed-source<br>using a generalised harness?</div>
+    <div class="hero-title">Can <strong>open-source models</strong> beat Opus on SWE-bench<br>using a generalised planning/execution harness?</div>
     <div class="hero-sub">
         <a href="https://github.com/peteromallet/megaplan">Megaplan</a> is a general-purpose harness that helps LLMs
         execute complex tasks through structured phases. It boosts the practical performance of models significantly
@@ -656,11 +656,7 @@ def _render_html(data: dict) -> str:
         </div>
     </div>
 
-    <div class="vs-badge">
-        <span class="vs-text {'vs-winning' if winning else 'vs-losing'}">
-            {'▲' if winning else '▼'} {delta_str}% {'ahead' if winning else 'behind'}
-        </span>
-    </div>
+    <!-- vs-badge removed for cleaner layout -->
 </div>
 
 <div class="chart-section">

@@ -1,0 +1,93 @@
+diff --git a/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py b/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
+index bf92569c1e..06cfe575da 100644
+--- a/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
++++ b/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
+@@ -144,6 +144,47 @@ def _make_cell_set_template_code():
+             co.co_cellvars,  # this is the trickery
+             (),
+         )
++    elif hasattr(types.CodeType, 'co_exceptiontable'):
++        # Python 3.11+
++        return types.CodeType(
++            co.co_argcount,
++            co.co_posonlyargcount,
++            co.co_kwonlyargcount,
++            co.co_nlocals,
++            co.co_stacksize,
++            co.co_flags,
++            co.co_code,
++            co.co_consts,
++            co.co_names,
++            co.co_varnames,
++            co.co_filename,
++            co.co_name,
++            co.co_qualname,
++            co.co_firstlineno,
++            co.co_linetable,
++            co.co_exceptiontable,
++            co.co_cellvars,  # this is the trickery
++            (),
++        )
++    elif hasattr(types.CodeType, 'co_posonlyargcount'):
++        return types.CodeType(
++            co.co_argcount,
++            co.co_posonlyargcount,
++            co.co_kwonlyargcount,
++            co.co_nlocals,
++            co.co_stacksize,
++            co.co_flags,
++            co.co_code,
++            co.co_consts,
++            co.co_names,
++            co.co_varnames,
++            co.co_filename,
++            co.co_name,
++            co.co_firstlineno,
++            co.co_lnotab,
++            co.co_cellvars,  # this is the trickery
++            (),
++        )
+     else:
+         return types.CodeType(
+             co.co_argcount,
+@@ -317,7 +358,25 @@ class CloudPickler(Pickler):
+         """
+         Save a code object
+         """
+-        if PY3:
++        if hasattr(types.CodeType, 'co_exceptiontable'):
++            # Python 3.11+
++            args = (
++                obj.co_argcount, obj.co_posonlyargcount, obj.co_kwonlyargcount,
++                obj.co_nlocals, obj.co_stacksize, obj.co_flags, obj.co_code,
++                obj.co_consts, obj.co_names, obj.co_varnames, obj.co_filename,
++                obj.co_name, obj.co_qualname, obj.co_firstlineno,
++                obj.co_linetable, obj.co_exceptiontable, obj.co_freevars,
++                obj.co_cellvars
++            )
++        elif PY3 and hasattr(types.CodeType, 'co_posonlyargcount'):
++            args = (
++                obj.co_argcount, obj.co_posonlyargcount, obj.co_kwonlyargcount,
++                obj.co_nlocals, obj.co_stacksize, obj.co_flags, obj.co_code,
++                obj.co_consts, obj.co_names, obj.co_varnames, obj.co_filename,
++                obj.co_name, obj.co_firstlineno, obj.co_lnotab, obj.co_freevars,
++                obj.co_cellvars
++            )
++        elif PY3:
+             args = (
+                 obj.co_argcount, obj.co_kwonlyargcount, obj.co_nlocals, obj.co_stacksize,
+                 obj.co_flags, obj.co_code, obj.co_consts, obj.co_names, obj.co_varnames,
+diff --git a/sklearn/linear_model/huber.py b/sklearn/linear_model/huber.py
+index 65c6864007..6c95666931 100644
+--- a/sklearn/linear_model/huber.py
++++ b/sklearn/linear_model/huber.py
+@@ -251,7 +251,8 @@ class HuberRegressor(LinearModel, RegressorMixin, BaseEstimator):
+         self : object
+         """
+         X, y = check_X_y(
+-            X, y, copy=False, accept_sparse=['csr'], y_numeric=True)
++            X, y, copy=False, accept_sparse=['csr'], y_numeric=True,
++            dtype=np.float64)
+         if sample_weight is not None:
+             sample_weight = np.array(sample_weight)
+             check_consistent_length(y, sample_weight)

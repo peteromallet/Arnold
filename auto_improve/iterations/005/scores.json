@@ -1,0 +1,91 @@
+{
+  "iteration": 5,
+  "timestamp": "2026-03-31T18:03:50.302330+00:00",
+  "total": 20,
+  "resolved": 13,
+  "failed": 7,
+  "errors": 0,
+  "pass_rate": 0.65,
+  "tasks": {
+    "django__django-11820": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "django__django-12125": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-13821": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-15252": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "django__django-16631": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "matplotlib__matplotlib-25960": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "mwaskom__seaborn-3069": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "pydata__xarray-4094": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "pydata__xarray-4695": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "pydata__xarray-7233": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "pytest-dev__pytest-10356": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "pytest-dev__pytest-7432": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "scikit-learn__scikit-learn-13124": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "sphinx-doc__sphinx-8265": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "sympy__sympy-12096": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "sympy__sympy-13031": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "sympy__sympy-18199": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sympy__sympy-20154": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "sympy__sympy-22456": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "sympy__sympy-23824": {
+      "resolved": false,
+      "status": "failed"
+    }
+  }
+}

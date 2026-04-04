@@ -1,0 +1,218 @@
+[
+  {
+    "role": "user",
+    "content": "Prepare a concise engineering brief for the task below. This brief will be the primary context for all subsequent planning and execution.\n\n        Task:\n        You are fixing a bug in the django/django repository.\n\n## Issue Description\n\ninspect.signature() returns incorrect signature on manager methods.\nDescription\n\n\t\t(last modified by Shiva Kumar)\n\ninspect.signature returns incorrect signature information when used on queryset methods\nimport inspect\nfrom django.db import models\nclass Person(models.Model):\n\tname = models.CharField(max_length=100)\nprint(inspect.signature(Person.objects.bulk_create))\n# actual: (*args, **kwargs)\n# expected: (objs, batch_size=None, ignore_conflicts=False)\nipython and jupyter seem to internally use inspect.signature to show documentation when using the <obj>? command and they too show incorrect signature information:\n\nThe issue is due to the code at ​https://github.com/django/django/blob/fe2e1478464846638082219c933a4302e5cf3037/django/db/models/manager.py#L84\nAlthough we are ensuring the decorated method has the right name and docstring on lines 87 and 88, complete metadata is not copied.\nThe fix is to use functools.wraps instead of manually assigning name and docstring. wraps will take care of all the metadata and inspect.signature will return the expected output.\nIf the bug is acknowledged please assign the ticket to me, I would like to raise a PR for this.\n\n\n## Hints\n\nTentatively accepted.\nPR: ​https://github.com/django/django/pull/15731\n\n## Instructions\n\n1. Read the issue carefully and understand the problem.\n2. Find the relevant source files in the repository.\n3. Make the minimal code changes needed to fix the issue.\n4. Do NOT modify or add test files — only edit source code.\n5. After making changes, run the verification tests listed below to confirm your fix works.\n\n## Required Verification (MUST be the final task in your plan)\n\nThese existing tests must pass after your fix:\n  - `test_manager_method_signature (basic.tests.ManagerTest)`\n\nYour plan MUST include a final task that runs these tests against your changes. Run the repo's existing test suite — do NOT create new test files. If any test fails, read the error, fix your code, and re-run until they pass. Do not consider the task complete until these tests pass.\n\n\n        Project: /Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731\n\n        First, assess: does this task need codebase investigation?\n\n        Set \"skip\": true if ALL of these are true:\n        - The task names the exact file(s) to change\n        - The required change is clearly described\n        - No ambiguity about the approach\n\n        Set \"skip\": false if ANY of these are true:\n        - The task doesn't say which files to change\n        - Multiple approaches seem possible\n        - The task references concepts, APIs, or patterns you'd need to look up in the codebase\n        - The task involves more than 2-3 files\n        - There are hints or references that need investigation\n\n        If skipping, leave everything else empty. The original task description will be used directly.\n        If not skipping, fill in the brief:\n        1. Search the codebase (Glob, Grep, Read) for relevant files and functions.\n        2. If tests exist for the affected code, read them — they reveal what the fix must actually do, which may differ from what the task description suggests.\n        3. Extract evidence from the task description — hints, references, error messages.\n        4. Challenge the obvious path: if the task or hints point to a specific location, verify it's actually the right place. Trace the call chain — where does data flow? Where does it go wrong? The obvious file may be a symptom, not the root cause.\n        5. If the task describes a bug or incorrect behavior, seriously consider whether it is a symptom of a larger issue. Before proposing a fix, trace the root cause. Ask: why does this happen? Could the same root cause produce other failures? Is the fix a patch on one case, or does it need to address an underlying gap? If the codebase has related functionality that is also incomplete or broken, note it — a narrow fix may not be enough.\n        6. If you find that a suggested fix already exists in the code, say so explicitly — this means the root cause is elsewhere.\n        7. Once you identify the function, parameter, or pattern that needs fixing, grep for ALL other usages of it in the codebase. If the same parameter is passed in 3 places, all 3 may need the fix. List every call site in relevant_code — do not stop at the first one.\n        8. If the code has a `NotImplementedError`, `raise`, `TODO`, or explicit skip for certain inputs, and the bug involves those inputs, the fix likely needs to implement the missing functionality — not just patch around it. Flag this in the brief so the plan knows a larger change is needed.\n        9. Look for existing helper functions, utilities, or patterns in the codebase that handle similar cases. If there is existing machinery (e.g., a merge function, a validation helper, a base class method), the fix should use it rather than reinventing.\n        10. Before finalizing, ask: if I change this function, are there other callers that rely on its current behavior? A function called from multiple code paths may need different fixes for different callers — or a new method instead of modifying the existing one.\n        11. List all usages as a numbered list (1. file:line — description, 2. file:line — description, etc.) so none are missed.\n        12. Distill into a brief that adds value beyond the raw task description.\n\n        Brief fields:\n        - skip: true if no investigation needed, false if brief has useful content.\n        - task_summary: What needs to be done, in 2-3 sentences.\n        - key_evidence: Facts from the task and codebase not obvious from reading the task alone.\n        - relevant_code: File paths and key functions found by searching.\n        - test_expectations: Tests that verify the affected behavior.\n        - constraints: What must not break.\n        - suggested_approach: A concrete approach grounded in what you found.\n        - estimated_scope: How big is this change? (e.g., \"1-line fix in one file\", \"changes needed in 3 files\", \"new function/class required\", \"refactor of existing subsystem\"). Be honest — if this needs significant new code, say so.\n\n        IMPORTANT: After you finish searching and reading files, you MUST output the prep.json as your final message. Do not end with a tool call — end with the JSON object as plain text.\n\nIMPORTANT: Your final response MUST be a single valid JSON object. Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON matching this template:\n\n{\n  \"skip\": true,\n  \"task_summary\": \"...\",\n  \"key_evidence\": [],\n  \"relevant_code\": [],\n  \"test_expectations\": [],\n  \"constraints\": [\n    \"...\"\n  ],\n  \"suggested_approach\": \"...\"\n}"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": "Let me investigate the codebase to understand the issue and prepare a comprehensive brief.",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762554909597100722",
+        "call_id": "call_-7762554909597100722",
+        "response_item_id": "fc_-7762554909597100722",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/django/db/models/manager.py\",\"offset\":75,\"limit\":30}"
+        }
+      },
+      {
+        "id": "call_-7762554909597100721",
+        "call_id": "call_-7762554909597100721",
+        "response_item_id": "fc_-7762554909597100721",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"pattern\":\"test_manager_method_signature\",\"target\":\"content\",\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"content\": \"    75|                self._constructor_args[1],  # kwargs\\n    76|            )\\n    77|\\n    78|    def check(self, **kwargs):\\n    79|        return []\\n    80|\\n    81|    @classmethod\\n    82|    def _get_queryset_methods(cls, queryset_class):\\n    83|        def create_method(name, method):\\n    84|            def manager_method(self, *args, **kwargs):\\n    85|                return getattr(self.get_queryset(), name)(*args, **kwargs)\\n    86|\\n    87|            manager_method.__name__ = method.__name__\\n    88|            manager_method.__doc__ = method.__doc__\\n    89|            return manager_method\\n    90|\\n    91|        new_methods = {}\\n    92|        for name, method in inspect.getmembers(\\n    93|            queryset_class, predicate=inspect.isfunction\\n    94|        ):\\n    95|            # Only copy missing methods.\\n    96|            if hasattr(cls, name):\\n    97|                continue\\n    98|            # Only copy public methods or methods with the attribute\\n    99|            # queryset_only=False.\\n   100|            queryset_only = getattr(method, \\\"queryset_only\\\", None)\\n   101|            if queryset_only or (queryset_only is None and name.startswith(\\\"_\\\")):\\n   102|                continue\\n   103|            # Copy the method onto the manager.\\n   104|            new_methods[name] = create_method(name, method)\\n   105|\", \"total_lines\": 213, \"file_size\": 6917, \"truncated\": true, \"hint\": \"Use offset=105 to continue reading (showing 75-104 of 213 lines)\", \"is_binary\": false, \"is_image\": false}",
+    "tool_call_id": "call_-7762554909597100722"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762554909597100721"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762559891759164175",
+        "call_id": "call_-7762559891759164175",
+        "response_item_id": "fc_-7762559891759164175",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731\",\"pattern\":\"ManagerTest\",\"target\":\"content\"}"
+        }
+      },
+      {
+        "id": "call_-7762559891759164174",
+        "call_id": "call_-7762559891759164174",
+        "response_item_id": "fc_-7762559891759164174",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731\",\"pattern\":\"test_manager_method_signature\",\"target\":\"files\",\"file_glob\":\"*.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 8, \"matches\": [{\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/auth_tests/test_models.py\", \"line\": 108, \"content\": \"class UserManagerTestCase(TransactionTestCase):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/test_utils/tests.py\", \"line\": 386, \"content\": \"class CaptureQueriesContextManagerTests(TestCase):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/test_utils/tests.py\", \"line\": 440, \"content\": \"class AssertNumQueriesContextManagerTests(TestCase):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/test_utils/tests.py\", \"line\": 477, \"content\": \"class AssertTemplateUsedContextManagerTests(SimpleTestCase):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/basic/tests.py\", \"line\": 659, \"content\": \"class ManagerTest(SimpleTestCase):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/basic/tests.py\", \"line\": 732, \"content\": \"        `Manager` will need to be added to `ManagerTest.QUERYSET_PROXY_METHODS`.\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/prefetch_related/tests.py\", \"line\": 1043, \"content\": \"class DefaultManagerTests(TestCase):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/custom_managers/tests.py\", \"line\": 24, \"content\": \"class CustomManagerTests(TestCase):\"}]}",
+    "tool_call_id": "call_-7762559891759164175"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762559891759164174"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762567347822389013",
+        "call_id": "call_-7762567347822389013",
+        "response_item_id": "fc_-7762567347822389013",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/basic/tests.py\",\"offset\":659,\"limit\":100}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"content\": \"   659|class ManagerTest(SimpleTestCase):\\n   660|    QUERYSET_PROXY_METHODS = [\\n   661|        \\\"none\\\",\\n   662|        \\\"count\\\",\\n   663|        \\\"dates\\\",\\n   664|        \\\"datetimes\\\",\\n   665|        \\\"distinct\\\",\\n   666|        \\\"extra\\\",\\n   667|        \\\"get\\\",\\n   668|        \\\"get_or_create\\\",\\n   669|        \\\"update_or_create\\\",\\n   670|        \\\"create\\\",\\n   671|        \\\"bulk_create\\\",\\n   672|        \\\"bulk_update\\\",\\n   673|        \\\"filter\\\",\\n   674|        \\\"aggregate\\\",\\n   675|        \\\"annotate\\\",\\n   676|        \\\"alias\\\",\\n   677|        \\\"complex_filter\\\",\\n   678|        \\\"exclude\\\",\\n   679|        \\\"in_bulk\\\",\\n   680|        \\\"iterator\\\",\\n   681|        \\\"earliest\\\",\\n   682|        \\\"latest\\\",\\n   683|        \\\"first\\\",\\n   684|        \\\"last\\\",\\n   685|        \\\"order_by\\\",\\n   686|        \\\"select_for_update\\\",\\n   687|        \\\"select_related\\\",\\n   688|        \\\"prefetch_related\\\",\\n   689|        \\\"values\\\",\\n   690|        \\\"values_list\\\",\\n   691|        \\\"update\\\",\\n   692|        \\\"reverse\\\",\\n   693|        \\\"defer\\\",\\n   694|        \\\"only\\\",\\n   695|        \\\"using\\\",\\n   696|        \\\"exists\\\",\\n   697|        \\\"contains\\\",\\n   698|        \\\"explain\\\",\\n   699|        \\\"_insert\\\",\\n   700|        \\\"_update\\\",\\n   701|        \\\"raw\\\",\\n   702|        \\\"union\\\",\\n   703|        \\\"intersection\\\",\\n   704|        \\\"difference\\\",\\n   705|        \\\"aaggregate\\\",\\n   706|        \\\"abulk_create\\\",\\n   707|        \\\"abulk_update\\\",\\n   708|        \\\"acontains\\\",\\n   709|        \\\"acount\\\",\\n   710|        \\\"acreate\\\",\\n   711|        \\\"aearliest\\\",\\n   712|        \\\"aexists\\\",\\n   713|        \\\"aexplain\\\",\\n   714|        \\\"afirst\\\",\\n   715|        \\\"aget\\\",\\n   716|        \\\"aget_or_create\\\",\\n   717|        \\\"ain_bulk\\\",\\n   718|        \\\"aiterator\\\",\\n   719|        \\\"alast\\\",\\n   720|        \\\"alatest\\\",\\n   721|        \\\"aupdate\\\",\\n   722|        \\\"aupdate_or_create\\\",\\n   723|    ]\\n   724|\\n   725|    def test_manager_methods(self):\\n   726|        \\\"\\\"\\\"\\n   727|        This test ensures that the correct set of methods from `QuerySet`\\n   728|        are copied onto `Manager`.\\n   729|\\n   730|        It's particularly useful to prevent accidentally leaking new methods\\n   731|        into `Manager`. New `QuerySet` methods that should also be copied onto\\n   732|        `Manager` will need to be added to `ManagerTest.QUERYSET_PROXY_METHODS`.\\n   733|        \\\"\\\"\\\"\\n   734|        self.assertEqual(\\n   735|            sorted(BaseManager._get_queryset_methods(models.QuerySet)),\\n   736|            sorted(self.QUERYSET_PROXY_METHODS),\\n   737|        )\\n   738|\\n   739|\\n   740|class SelectOnSaveTests(TestCase):\\n   741|    def test_select_on_save(self):\\n   742|        a1 = Article.objects.create(pub_date=datetime.now())\\n   743|        with self.assertNumQueries(1):\\n   744|            a1.save()\\n   745|        asos = ArticleSelectOnSave.objects.create(pub_date=datetime.now())\\n   746|        with self.assertNumQueries(2):\\n   747|            asos.save()\\n   748|        with self.assertNumQueries(1):\\n   749|            asos.save(force_update=True)\\n   750|        Article.objects.all().delete()\\n   751|        with self.assertRaisesMessage(\\n   752|            DatabaseError, \\\"Forced update did not affect any rows.\\\"\\n   753|        ):\\n   754|            with self.assertNumQueries(1):\\n   755|                asos.save(force_update=True)\\n   756|\\n   757|    def test_select_on_save_lying_update(self):\\n   758|        \\\"\\\"\\\"\\n   759|\", \"total_lines\": 931, \"file_size\": 34617, \"truncated\": true, \"hint\": \"Use offset=759 to continue reading (showing 659-758 of 931 lines)\", \"is_binary\": false, \"is_image\": false}",
+    "tool_call_id": "call_-7762567347822389013"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762564908280965813",
+        "call_id": "call_-7762564908280965813",
+        "response_item_id": "fc_-7762564908280965813",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/tests/basic\",\"pattern\":\"test_manager_method_signature\",\"target\":\"content\"}"
+        }
+      },
+      {
+        "id": "call_-7762564908280965812",
+        "call_id": "call_-7762564908280965812",
+        "response_item_id": "fc_-7762564908280965812",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731\",\"pattern\":\"test_manager_method_signature\",\"target\":\"content\",\"file_glob\":\"*.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762564908280965813"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762564908280965812"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": "The test `test_manager_method_signature` doesn't exist yet in the codebase. This test is likely part of the PR that needs to be added, but the instructions say \"Do NOT modify or add test files.\" So the test must already exist or will be added as part of the PR. Let me check the PR link to understand.\n\nWait, the instructions say: \"These existing tests must pass after your fix: test_manager_method_signature (basic.tests.ManagerTest)\". But this test doesn't exist in the codebase. Let me look more carefully at the test file.\n\nActually, re-reading: \"Do NOT modify or add test files — only edit source code.\" and \"Run the repo's existing test suite\". But the test doesn't exist. Maybe I need to check if there's a test file that was added as part of the PR workspace setup.\n\nLet me check the git status or look for any recently added test.",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762570474558579531",
+        "call_id": "call_-7762570474558579531",
+        "response_item_id": "fc_-7762570474558579531",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731\",\"pattern\":\"method_signature\",\"target\":\"content\",\"file_glob\":\"*.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762570474558579531"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762558551729372591",
+        "call_id": "call_-7762558551729372591",
+        "response_item_id": "fc_-7762558551729372591",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/django/db/models/manager.py\",\"limit\":30,\"offset\":1}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"content\": \"     1|import copy\\n     2|import inspect\\n     3|from importlib import import_module\\n     4|\\n     5|from django.db import router\\n     6|from django.db.models.query import QuerySet\\n     7|\\n     8|\\n     9|class BaseManager:\\n    10|    # To retain order, track each time a Manager instance is created.\\n    11|    creation_counter = 0\\n    12|\\n    13|    # Set to True for the 'objects' managers that are automatically created.\\n    14|    auto_created = False\\n    15|\\n    16|    #: If set to True the manager will be serialized into migrations and will\\n    17|    #: thus be available in e.g. RunPython operations.\\n    18|    use_in_migrations = False\\n    19|\\n    20|    def __new__(cls, *args, **kwargs):\\n    21|        # Capture the arguments to make returning them trivial.\\n    22|        obj = super().__new__(cls)\\n    23|        obj._constructor_args = (args, kwargs)\\n    24|        return obj\\n    25|\\n    26|    def __init__(self):\\n    27|        super().__init__()\\n    28|        self._set_creation_counter()\\n    29|        self.model = None\\n    30|        self.name = None\\n    31|\", \"total_lines\": 213, \"file_size\": 6917, \"truncated\": true, \"hint\": \"Use offset=31 to continue reading (showing 1-30 of 213 lines)\", \"is_binary\": false, \"is_image\": false}",
+    "tool_call_id": "call_-7762558551729372591"
+  },
+  {
+    "role": "assistant",
+    "content": "Now I have a clear picture. The fix is straightforward: replace the manual `__name__` and `__doc__` assignments in `create_method` with `functools.wraps`. Let me verify there's no existing `functools` import.",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762570268400152383",
+        "call_id": "call_-7762570268400152383",
+        "response_item_id": "fc_-7762570268400152383",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-004/worker-0/django__django-15731/django/db/models/manager.py\",\"pattern\":\"import functools\",\"target\":\"content\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762570268400152383"
+  },
+  {
+    "role": "assistant",
+    "content": "No `functools` import yet. The fix requires:\n1. Add `import functools` \n2. Replace manual `__name__`/`__doc__` assignments with `@functools.wraps(method)` decorator on `manager_method`\n\nThe test `test_manager_method_signature` doesn't exist yet in the codebase — it may be expected to be added as part of the PR but the instructions say not to add test files. I'll note this.\n\n{\"skip\": false, \"task_summary\": \"Fix `inspect.signature()` returning `(*args, **kwargs)` instead of the actual signature for manager methods proxying queryset methods. The issue is in `django/db/models/manager.py` in the `create_method` inner function of `BaseManager._get_queryset_methods()`, which manually copies only `__name__` and `__doc__` instead of using `functools.wraps` to copy all metadata including the `__wrapped__` attribute that `inspect.signature` relies on.\", \"key_evidence\": [\"Lines 83-89 in manager.py define `create_method` which manually sets `manager_method.__name__` and `manager_method.__doc__` but doesn't set `__wrapped__`, which `inspect.signature` needs to see through the wrapper.\", \"The test `test_manager_method_signature (basic.tests.ManagerTest)` does NOT currently exist in the codebase — it may need to be verified differently or may be expected to be added separately.\", \"No `import functools` exists in manager.py currently.\"], \"relevant_code\": [\"1. django/db/models/manager.py:1-5 — imports section (need to add `import functools`)\", \"2. django/db/models/manager.py:81-104 — `BaseManager._get_queryset_methods()` classmethod, specifically the `create_method` inner function at lines 83-89\", \"3. tests/basic/tests.py:659-737 — `ManagerTest` class with existing `test_manager_methods` test\"], \"test_expectations\": [\"`test_manager_method_signature (basic.tests.ManagerTest)` — this test is referenced but does NOT currently exist in the codebase. The existing test is `test_manager_methods` which verifies the list of proxied methods, not their signatures.\"], \"constraints\": [\"Must not break existing `test_manager_methods` test which verifies the complete set of proxied methods\", \"The `manager_method` wrapper must still correctly proxy calls to `self.get_queryset()` with `*args, **kwargs`\", \"Must not affect any other behavior of manager methods beyond metadata/signature introspection\"], \"suggested_approach\": \"1. Add `import functools` to the imports at the top of `django/db/models/manager.py`.\\n2. In `BaseManager._get_queryset_methods()`, in the `create_method` inner function, add `@functools.wraps(method)` decorator to `manager_method` and remove the manual `manager_method.__name__ = method.__name__` and `manager_method.__doc__ = method.__doc__` lines.\\n3. Run existing tests to verify nothing breaks. The referenced test `test_manager_method_signature` may not exist yet; if so, verify the fix manually or by running the full ManagerTest class.\", \"estimated_scope\": \"3-line change in one file (add import, add decorator, remove 2 manual assignments)\"}",
+    "reasoning": null,
+    "finish_reason": "stop"
+  }
+]

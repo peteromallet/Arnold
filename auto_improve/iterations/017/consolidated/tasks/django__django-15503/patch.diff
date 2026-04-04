@@ -1,0 +1,83 @@
+diff --git a/django/db/models/fields/json.py b/django/db/models/fields/json.py
+index fdca700c9d..7be06a3148 100644
+--- a/django/db/models/fields/json.py
++++ b/django/db/models/fields/json.py
+@@ -126,7 +126,7 @@ class JSONField(CheckFieldDefaultMixin, Field):
+         )
+ 
+ 
+-def compile_json_path(key_transforms, include_root=True):
++def compile_json_path(key_transforms, include_root=True, as_array_paths=True):
+     path = ["$"] if include_root else []
+     for key_transform in key_transforms:
+         try:
+@@ -135,7 +135,11 @@ def compile_json_path(key_transforms, include_root=True):
+             path.append(".")
+             path.append(json.dumps(key_transform))
+         else:
+-            path.append("[%s]" % num)
++            if as_array_paths:
++                path.append("[%s]" % num)
++            else:
++                path.append(".")
++                path.append(json.dumps(key_transform))
+     return "".join(path)
+ 
+ 
+@@ -197,7 +201,11 @@ class HasKeyLookup(PostgresOperatorLookup):
+                 "%s%s"
+                 % (
+                     lhs_json_path,
+-                    compile_json_path(rhs_key_transforms, include_root=False),
++                    compile_json_path(
++                        rhs_key_transforms,
++                        include_root=False,
++                        as_array_paths=isinstance(key, KeyTransform),
++                    ),
+                 )
+             )
+         # Add condition for each key.
+@@ -387,24 +395,31 @@ class KeyTransformTextLookupMixin:
+ class KeyTransformIsNull(lookups.IsNull):
+     # key__isnull=False is the same as has_key='key'
+     def as_oracle(self, compiler, connection):
+-        sql, params = HasKey(
+-            self.lhs.lhs,
+-            self.lhs.key_name,
+-        ).as_oracle(compiler, connection)
++        lhs, lhs_params, lhs_key_transforms = self.lhs.preprocess_lhs(
++            compiler, connection
++        )
++        json_path = compile_json_path(lhs_key_transforms)
+         if not self.rhs:
+-            return sql, params
+-        # Column doesn't have a key or IS NULL.
+-        lhs, lhs_params, _ = self.lhs.preprocess_lhs(compiler, connection)
+-        return "(NOT %s OR %s IS NULL)" % (sql, lhs), tuple(params) + tuple(lhs_params)
++            return "JSON_EXISTS(%s, '%s')" % (lhs, json_path), []
++        return (
++            "(NOT JSON_EXISTS(%s, '%s') OR %s IS NULL)"
++            % (lhs, json_path, lhs),
++            tuple(lhs_params),
++        )
+ 
+     def as_sqlite(self, compiler, connection):
+-        template = "JSON_TYPE(%s, %%s) IS NULL"
++        lhs, lhs_params, lhs_key_transforms = self.lhs.preprocess_lhs(
++            compiler, connection
++        )
++        json_path = compile_json_path(lhs_key_transforms)
+         if not self.rhs:
+-            template = "JSON_TYPE(%s, %%s) IS NOT NULL"
+-        return HasKey(self.lhs.lhs, self.lhs.key_name).as_sql(
+-            compiler,
+-            connection,
+-            template=template,
++            return (
++                "JSON_TYPE(%s, %%s) IS NOT NULL" % lhs,
++                tuple(lhs_params) + (json_path,),
++            )
++        return (
++            "JSON_TYPE(%s, %%s) IS NULL" % lhs,
++            tuple(lhs_params) + (json_path,),
+         )

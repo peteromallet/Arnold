@@ -1,0 +1,39 @@
+{
+  "instance_id": "django__django-16032",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 1352.552,
+  "patch_lines": 0,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 321393,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 400571,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 630588,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "MiniMax-M2.7"
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+diff --git a/astropy/extern/configobj/configobj.py b/astropy/extern/configobj/configobj.py
+index 0c02b9b7ad..aa9e63f56b 100755
+--- a/astropy/extern/configobj/configobj.py
++++ b/astropy/extern/configobj/configobj.py
+@@ -17,6 +17,7 @@ import os
+ import re
+ import sys
+ import collections
++import collections.abc
+ 
+ from codecs import BOM_UTF8, BOM_UTF16, BOM_UTF16_BE, BOM_UTF16_LE
+ 
+@@ -594,7 +595,7 @@ class Section(dict):
+             if key not in self:
+                 self.sections.append(key)
+             dict.__setitem__(self, key, value)
+-        elif isinstance(value, collections.Mapping) and not unrepr:
++        elif isinstance(value, collections.abc.Mapping) and not unrepr:
+             # First create the new depth level,
+             # then create the section
+             if key not in self:
+@@ -801,8 +802,8 @@ class Section(dict):
+         ConfigObj({'section1': {'option1': 'False', 'subsection': {'more_options': 'False'}}})
+         """
+         for key, val in list(indict.items()):
+-            if (key in self and isinstance(self[key], collections.Mapping) and
+-                                isinstance(val, collections.Mapping)):
++            if (key in self and isinstance(self[key], collections.abc.Mapping) and
++                                isinstance(val, collections.abc.Mapping)):
+                 self[key].merge(val)
+             else:
+                 self[key] = val
+@@ -2434,7 +2435,7 @@ def flatten_errors(cfg, res, levels=None, results=None):
+     for (key, val) in list(res.items()):
+         if val == True:
+             continue
+-        if isinstance(cfg.get(key), collections.Mapping):
++        if isinstance(cfg.get(key), collections.abc.Mapping):
+             # Go down one level
+             levels.append(key)
+             flatten_errors(cfg[key], val, levels, results)
+diff --git a/astropy/io/fits/header.py b/astropy/io/fits/header.py
+index aa65c5c224..8f0b4e6336 100644
+--- a/astropy/io/fits/header.py
++++ b/astropy/io/fits/header.py
+@@ -1904,8 +1904,8 @@ class Header:
+             self[key] = value
+ 
+ 
+-collections.MutableSequence.register(Header)
+-collections.MutableMapping.register(Header)
++collections.abc.MutableSequence.register(Header)
++collections.abc.MutableMapping.register(Header)
+ 
+ 
+ class _CardAccessor:
+@@ -1976,8 +1976,8 @@ class _CardAccessor:
+         return False
+ 
+ 
+-collections.Mapping.register(_CardAccessor)
+-collections.Sequence.register(_CardAccessor)
++collections.abc.Mapping.register(_CardAccessor)
++collections.abc.Sequence.register(_CardAccessor)
+ 
+ 
+ class _HeaderComments(_CardAccessor):
+diff --git a/astropy/utils/misc.py b/astropy/utils/misc.py
+index de3fb01d18..049b6de1e1 100644
+--- a/astropy/utils/misc.py
++++ b/astropy/utils/misc.py
+@@ -528,9 +528,9 @@ class InheritDocstrings(type):
+                 not key.startswith('_'))
+ 
+         for key, val in dct.items():
+-            if (inspect.isfunction(val) and
+-                is_public_member(key) and
+-                val.__doc__ is None):
++            if ((inspect.isfunction(val) or isinstance(val, property))
++                    and is_public_member(key)
++                    and val.__doc__ is None):
+                 for base in cls.__mro__[1:]:
+                     super_method = getattr(base, key, None)
+                     if super_method is not None:
