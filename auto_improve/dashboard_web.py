@@ -432,6 +432,18 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(_gather_data(), indent=2).encode())
             return
+        elif path.startswith("/traces/") and path.endswith(".json"):
+            # Serve trace files from the swe-bench-challenge repo
+            trace_file = STATIC_HTML_PATH.parent / path.lstrip("/")
+            if trace_file.exists():
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(trace_file.read_bytes())
+            else:
+                self.send_error(404, f"Trace not found: {trace_file}")
+            return
         elif path.startswith("/log/"):
             html_content = _render_log(path[5:])
             self.send_response(200)

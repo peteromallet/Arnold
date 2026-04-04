@@ -38,8 +38,14 @@ def main():
     out.write_text(json.dumps(data, indent=2))
     print(f"Exported {len(data.get('tasks', []))} tasks to {out}")
 
+    # Export execution traces
+    from auto_improve.export_traces import export_traces
+    iteration = args[0] if args else "021"
+    trace_count = export_traces(iteration)
+    print(f"Exported {trace_count} execution traces")
+
     if push:
-        subprocess.run(["git", "add", "data.json"], cwd=repo_path, check=True)
+        subprocess.run(["git", "add", "data.json", "traces/"], cwd=repo_path, check=True)
         result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_path)
         if result.returncode != 0:
             subprocess.run(["git", "commit", "-m", f"update scores: {data['passed']}/{data['total_scored']} ({data['pass_rate']}%)"], cwd=repo_path, check=True)
