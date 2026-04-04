@@ -1,6 +1,6 @@
-# Megaplan Autoimprover
+# Hermes-Megaplan
 
-Fork of [Hermes Agent](https://github.com/NousResearch/hermes-agent) focused on automated SWE-bench evaluation using the [Megaplan](https://github.com/peteromallet/megaplan) planning harness.
+Fork of [Hermes Agent](https://github.com/NousResearch/hermes-agent) with [Megaplan](https://github.com/peteromallet/megaplan) integration for automated SWE-bench evaluation. We intend to merge improvements back upstream.
 
 Two open-weight models work together through Megaplan's structured phases (prep, plan, critique, gate, execute, review) to solve real GitHub issues from SWE-bench Verified. The goal: beat the best closed-source models on this benchmark.
 
