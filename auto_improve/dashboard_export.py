@@ -44,6 +44,28 @@ def main():
     trace_count = export_traces(iteration)
     print(f"Exported {trace_count} execution traces")
 
+    # Export full traces and update GitHub Release
+    try:
+        from auto_improve.export_full_traces import export_full_traces
+        full_count = export_full_traces(iteration)
+        if full_count and push:
+            # Gzip new traces and upload to release
+            import glob
+            full_dir = Path("/tmp/full-traces")
+            for f in full_dir.glob("*.json"):
+                subprocess.run(["gzip", "-kf", str(f)], check=False)
+            # Upload any new .json.gz files (gh release upload skips existing)
+            gz_files = list(full_dir.glob("*.json.gz"))
+            if gz_files:
+                subprocess.run(
+                    ["gh", "release", "upload", "v0.1-traces", "--repo", "peteromallet/swe-bench-challenge", "--clobber"]
+                    + [str(f) for f in gz_files],
+                    check=False, capture_output=True,
+                )
+                print(f"Uploaded {len(gz_files)} full traces to GitHub Release")
+    except Exception as e:
+        print(f"Full trace export skipped: {e}")
+
     if push:
         subprocess.run(["git", "add", "data.json", "traces/"], cwd=repo_path, check=True)
         result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_path)
