@@ -53,3 +53,20 @@ environments/benchmarks/evals/
 
 # Release script temp files
 .release_notes.md
+auto_improve/api_keys.json
+
+# Temp/scoring artifacts
+.DS_Store
+.claude/
+.megaplan/
+$tmpdir/
+results/
+evals/workspaces-*/
+evals/_repo_cache/
+evals/benchmark/
+auto_improve/*.bak
+auto_improve/*.glm
+auto_improve/*.glm-*
+auto_improve/*.qwen
+*.hermes-*.json
+MEGALOOP.md
