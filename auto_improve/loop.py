@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
-from auto_improve.run_experiment import run_iteration
-from auto_improve.score_experiment import score_iteration
+from auto_improve.run_experiment import WORKSPACES_BASE_DIR, clean_iteration, run_iteration
+from auto_improve.score_experiment import results_root_for_iteration, score_iteration
 from auto_improve.utils import AUTO_IMPROVE_ROOT, ITERATIONS_ROOT, compare_scores, get_iteration_dir, load_scores, next_iteration
 
 
@@ -25,14 +26,81 @@ def resolve_iteration(*, requested: int | None, skip_run: bool) -> int:
     return next_iteration()
 
 
-def run_loop(*, iteration: int, workers: int, skip_run: bool, skip_score: bool) -> dict[str, object]:
+def run_loop(
+    *,
+    iteration: int,
+    workers: int,
+    skip_run: bool,
+    skip_score: bool,
+    skip_scoring: bool,
+    clean: bool,
+    force: bool,
+    task_count: int | None = None,
+    seed: int | None = None,
+) -> dict[str, object]:
     run_result = None
+    clean_result = None
     if not skip_run:
-        run_result = run_iteration(iteration=iteration, workers=workers, dry_run=False)
+        if clean:
+            clean_result = clean_iteration(iteration, dry_run=not force)
+            if not force:
+                return {
+                    "iteration": iteration,
+                    "run_result": None,
+                    "score_result": None,
+                    "scores": None,
+                    "summary_table": "",
+                    "instructions": "",
+                    "clean_result": clean_result,
+                    "aborted": True,
+                }
+        elif _iteration_has_stale_artifacts(iteration):
+            clean_result = clean_iteration(iteration, dry_run=True)
+            if force:
+                clean_result = clean_iteration(iteration, dry_run=False)
+            else:
+                print(
+                    "Iteration already has stale run artifacts. Re-run with --force to clean before launching.",
+                    file=sys.stderr,
+                )
+                return {
+                    "iteration": iteration,
+                    "run_result": None,
+                    "score_result": None,
+                    "scores": None,
+                    "summary_table": "",
+                    "instructions": "",
+                    "clean_result": clean_result,
+                    "aborted": True,
+                }
+        run_result = run_iteration(
+            iteration=iteration,
+            workers=workers,
+            dry_run=False,
+            skip_scoring=skip_scoring,
+            task_count=task_count,
+            seed=seed,
+        )
 
     score_result = None
-    if not skip_score:
+    if not skip_score and not skip_scoring:
         score_result = score_iteration(iteration=iteration)
+
+    if skip_scoring:
+        return {
+            "iteration": iteration,
+            "run_result": run_result,
+            "score_result": None,
+            "clean_result": clean_result,
+            "scores": None,
+            "summary_table": "",
+            "instructions": "\n".join(
+                [
+                    "Scoring skipped for this run.",
+                    "Start the external scorer with `python -m auto_improve.score --watch` when ready.",
+                ]
+            ),
+        }
 
     scores = load_scores(iteration)
     scaffold_iteration_docs(iteration, scores)
@@ -40,6 +108,7 @@ def run_loop(*, iteration: int, workers: int, skip_run: bool, skip_score: bool) 
         "iteration": iteration,
         "run_result": run_result,
         "score_result": score_result,
+        "clean_result": clean_result,
         "scores": scores,
         "summary_table": format_scores_table(scores),
         "instructions": analysis_instructions(iteration),
@@ -155,12 +224,34 @@ def _existing_iterations() -> list[int]:
     return sorted(iteration_numbers)
 
 
+def _iteration_has_stale_artifacts(iteration: int) -> bool:
+    results_root = results_root_for_iteration(iteration).resolve()
+    workspace_root = (WORKSPACES_BASE_DIR / f"iteration-{iteration:03d}").resolve()
+    stale_results = [
+        results_root / "_task_manifest.json",
+        results_root / "_watch_scores.json",
+        results_root / "_swebench_predictions",
+        results_root / "_scoring_logs",
+        results_root / "consolidated",
+    ]
+    if any(path.exists() for path in stale_results):
+        return True
+    if workspace_root.exists() and any(workspace_root.iterdir()):
+        return True
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the auto-improve experiment loop.")
     parser.add_argument("--iteration", type=int, help="Iteration number to use. Defaults to next iteration unless --skip-run is set.")
     parser.add_argument("--workers", type=int, default=3, help="Parallel worker count for experiment runs (default: 3).")
+    parser.add_argument("--tasks", type=int, help="Randomly sample N tasks for the run without editing tasks.json.")
+    parser.add_argument("--seed", type=int, help="Optional RNG seed for deterministic --tasks sampling.")
     parser.add_argument("--skip-run", action="store_true", help="Skip the experiment run step and reuse the existing iteration results.")
     parser.add_argument("--skip-score", action="store_true", help="Skip score normalization and only print the existing scores summary.")
+    parser.add_argument("--skip-scoring", action="store_true", help="Run workers without scoring and skip all score artifact processing.")
+    parser.add_argument("--clean", action="store_true", help="Preview stale iteration artifacts before launching. Combine with --force to delete them.")
+    parser.add_argument("--force", action="store_true", help="Delete stale iteration artifacts before relaunching.")
     args = parser.parse_args(argv)
 
     iteration = resolve_iteration(requested=args.iteration, skip_run=args.skip_run)
@@ -169,7 +260,14 @@ def main(argv: list[str] | None = None) -> int:
         workers=args.workers,
         skip_run=args.skip_run,
         skip_score=args.skip_score,
+        skip_scoring=args.skip_scoring,
+        clean=args.clean,
+        force=args.force,
+        task_count=args.tasks,
+        seed=args.seed,
     )
+    if result.get("aborted"):
+        return 1
 
     print(result["summary_table"])
     print()

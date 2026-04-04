@@ -53,6 +53,7 @@ class EvalConfig:
     swebench_patch_only: bool = False
     swebench_docker_execute: bool = False
     workers: int = 1
+    phase_timeouts: dict[str, int] = field(default_factory=dict)
     openrouter_params: dict[str, Any] = field(default_factory=dict)
     megaplan_bin: str = "megaplan"
     robustness: str = "heavy"

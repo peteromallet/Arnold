@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,143 @@ MANIFEST_WAIT_TIMEOUT_SECONDS = 4 * 60 * 60
 MANIFEST_POLL_INTERVAL_SECONDS = 30
 DEFAULT_CLAIM_BATCH_SIZE = 10
 WATCH_JOIN_TIMEOUT_SECONDS = 60
+PIDFILE_NAME = "_pidfile.json"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _pidfile_path(results_root: Path) -> Path:
+    return results_root / PIDFILE_NAME
+
+
+def _default_pidfile_payload(iteration: str) -> dict[str, Any]:
+    return {
+        "loop_pid": None,
+        "workers": [],
+        "scorer_pid": None,
+        "started_at": _utc_now(),
+        "iteration": iteration,
+    }
+
+
+def _load_pidfile(path: Path, *, iteration: str) -> dict[str, Any]:
+    if not path.exists():
+        return _default_pidfile_payload(iteration)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected {path} to contain a JSON object")
+
+    workers = payload.get("workers")
+    if not isinstance(workers, list):
+        workers = []
+
+    loop_pid = payload.get("loop_pid")
+    scorer_pid = payload.get("scorer_pid")
+    started_at = payload.get("started_at")
+    payload_iteration = payload.get("iteration")
+    return {
+        "loop_pid": loop_pid if isinstance(loop_pid, int) else None,
+        "workers": [entry for entry in workers if isinstance(entry, dict)],
+        "scorer_pid": scorer_pid if isinstance(scorer_pid, int) else None,
+        "started_at": started_at if isinstance(started_at, str) and started_at.strip() else _utc_now(),
+        "iteration": payload_iteration if isinstance(payload_iteration, str) and payload_iteration.strip() else iteration,
+    }
+
+
+def _write_pidfile(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix="_pidfile.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+        temp_path = Path(handle.name)
+    os.replace(temp_path, path)
+
+
+def _worker_pid_entry(worker_id: str, proc: subprocess.Popen[Any]) -> dict[str, int | str]:
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, PermissionError):
+        pgid = proc.pid
+    return {
+        "worker_id": worker_id,
+        "pid": proc.pid,
+        "pgid": pgid,
+    }
+
+
+def _record_pidfile_workers(
+    results_root: Path,
+    worker_procs: list[tuple[str, subprocess.Popen[Any], Path]],
+    *,
+    loop_pid: int | None,
+    replace_workers: bool,
+) -> None:
+    path = _pidfile_path(results_root)
+    iteration = results_root.name
+    payload = _load_pidfile(path, iteration=iteration)
+    payload["iteration"] = iteration
+    if loop_pid is not None:
+        payload["loop_pid"] = loop_pid
+        payload["started_at"] = _utc_now()
+
+    new_entries = [_worker_pid_entry(worker_id, proc) for worker_id, proc, _ in worker_procs]
+    if replace_workers:
+        payload["workers"] = new_entries
+    else:
+        new_worker_ids = {entry["worker_id"] for entry in new_entries}
+        existing_entries = [
+            entry
+            for entry in payload["workers"]
+            if isinstance(entry, dict) and entry.get("worker_id") not in new_worker_ids
+        ]
+        payload["workers"] = [*existing_entries, *new_entries]
+
+    _write_pidfile(path, payload)
+
+
+def _remove_pidfile_workers(results_root: Path, worker_ids: list[str]) -> None:
+    path = _pidfile_path(results_root)
+    if not path.exists():
+        return
+
+    payload = _load_pidfile(path, iteration=results_root.name)
+    worker_id_set = set(worker_ids)
+    payload["workers"] = [
+        entry
+        for entry in payload["workers"]
+        if isinstance(entry, dict) and entry.get("worker_id") not in worker_id_set
+    ]
+    _write_pidfile(path, payload)
+
+
+def _set_pidfile_scorer_pid(results_root: Path, scorer_pid: int | None) -> None:
+    path = _pidfile_path(results_root)
+    payload = _load_pidfile(path, iteration=results_root.name)
+    payload["scorer_pid"] = scorer_pid
+    _write_pidfile(path, payload)
+
+
+def _clear_pidfile_runtime_state(results_root: Path, *, clear_scorer: bool = False) -> None:
+    path = _pidfile_path(results_root)
+    if not path.exists():
+        return
+
+    payload = _load_pidfile(path, iteration=results_root.name)
+    payload["loop_pid"] = None
+    payload["workers"] = []
+    if clear_scorer:
+        payload["scorer_pid"] = None
+    _write_pidfile(path, payload)
 
 
 def run_parallel_workers(
@@ -35,7 +173,7 @@ def run_parallel_workers(
     from evals.manifest import TaskManifest
     from evals.run_evals import _resolve_benchmark
 
-    if scoring_mode not in {"batch", "watch"}:
+    if scoring_mode not in {"batch", "watch", "none"}:
         raise ValueError(f"Unsupported scoring_mode: {scoring_mode}")
 
     config = load_config(config_path)
@@ -52,7 +190,8 @@ def run_parallel_workers(
     canonical_config_path = results_root / "_run_config.json"
     predictions_dir = results_root / "_swebench_predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
-    manifest = TaskManifest.create(manifest_path, all_tasks)
+    manifest = TaskManifest.load_or_create(manifest_path, all_tasks)
+    requeued_claims = manifest.requeue_dead_claimed(results_root / "_pidfile.json")
     canonical_config = json.loads(Path(config_path).read_text(encoding="utf-8"))
     canonical_config_path.write_text(json.dumps(canonical_config, indent=2), encoding="utf-8")
     worker_ids = [f"worker-{i}" for i in range(workers)]
@@ -63,6 +202,12 @@ def run_parallel_workers(
     print(f"Manifest: {manifest_path}", file=sys.stderr)
     print(f"Canonical config: {canonical_config_path}", file=sys.stderr)
     print(f"Predictions dir: {predictions_dir}", file=sys.stderr)
+    if requeued_claims:
+        print(
+            f"Re-queued {len(requeued_claims)} previously claimed tasks on startup: "
+            f"{', '.join(requeued_claims)}",
+            file=sys.stderr,
+        )
 
     worker_procs, temp_configs, worker_log_dir = _launch_worker_processes(
         canonical_config_path,
@@ -71,122 +216,148 @@ def run_parallel_workers(
         predictions_dir,
         manifest_path,
         results_root,
+        replace_pidfile_workers=True,
     )
 
     # Ensure all worker process trees get killed on exit/crash
     import atexit
-    atexit.register(_kill_workers, worker_procs)
+    atexit.register(_kill_workers, worker_procs, results_root)
+    try:
+        watch_thread = None
+        watch_result_holder: dict[str, Any] = {}
+        watch_error_holder: dict[str, BaseException] = {}
+        if scoring_mode == "watch":
+            import threading
+            from evals.watch_scoring import watch_and_score
 
-    watch_thread = None
-    watch_result_holder: dict[str, Any] = {}
-    watch_error_holder: dict[str, BaseException] = {}
-    if scoring_mode == "watch":
-        import threading
-        from evals.watch_scoring import watch_and_score
+            def _run_watch_scoring() -> None:
+                try:
+                    watch_result_holder["result"] = watch_and_score(results_root)
+                except BaseException as exc:  # pragma: no cover - surfaced in main thread
+                    watch_error_holder["error"] = exc
 
-        def _run_watch_scoring() -> None:
-            try:
-                watch_result_holder["result"] = watch_and_score(results_root)
-            except BaseException as exc:  # pragma: no cover - surfaced in main thread
-                watch_error_holder["error"] = exc
-
-        print("\n=== Watch Scoring ===", file=sys.stderr)
-        watch_thread = threading.Thread(
-            target=_run_watch_scoring,
-            name=f"watch-score-{results_root.name}",
-            daemon=True,
-        )
-        watch_thread.start()
-
-    _wait_for_workers(worker_procs, worker_log_dir)
-
-    if scoring_mode == "watch":
-        for tc in temp_configs:
-            tc.unlink(missing_ok=True)
-        watch_join_timeout = WATCH_JOIN_TIMEOUT_SECONDS
-        if watch_thread is not None:
-            watch_thread.join(timeout=watch_join_timeout)
-        if watch_thread is not None and watch_thread.is_alive():
-            print(
-                "Watch scoring did not finish within the post-worker join window; "
-                "using the latest partial _watch_scores.json snapshot.",
-                file=sys.stderr,
+            print("\n=== Watch Scoring ===", file=sys.stderr)
+            watch_thread = threading.Thread(
+                target=_run_watch_scoring,
+                name=f"watch-score-{results_root.name}",
+                daemon=True,
             )
-        if "error" in watch_error_holder:
-            raise watch_error_holder["error"]
+            watch_thread.start()
 
-        watch_scores_path = results_root / "_watch_scores.json"
-        if "result" in watch_result_holder:
-            score_result = watch_result_holder["result"]
-        elif watch_scores_path.exists():
-            score_result = json.loads(watch_scores_path.read_text(encoding="utf-8"))
-        else:
-            score_result = {
-                "manifest_total": len(all_tasks),
-                "scored": 0,
-                "resolved": 0,
-                "failed": 0,
-                "errors": 0,
-                "pass_rate": 0.0,
-                "stop_reason": "missing_watch_scores",
-                "tasks": {},
-            }
+        worker_exit_codes = _wait_for_workers(worker_procs, worker_log_dir, manifest_path)
 
-        summary = _merge_summaries(results_root, config, all_tasks, score_result)
-        summary_path = results_root / "summary_parallel.json"
-        summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-        print(f"\nSummary: {summary_path}", file=sys.stderr)
-        return summary
-
-    manifest_wait_timeout = int(
-        os.environ.get("HERMES_SWEBENCH_MANIFEST_WAIT_SECONDS", str(MANIFEST_WAIT_TIMEOUT_SECONDS))
-    )
-    manifest_deadline = time.monotonic() + manifest_wait_timeout
-    while not manifest.all_done():
-        if time.monotonic() >= manifest_deadline:
-            stranded_ids = _stranded_task_ids(manifest_path)
-            print(
-                "Manifest wait timed out after "
-                f"{manifest_wait_timeout}s; proceeding with completed predictions only.",
-                file=sys.stderr,
-            )
-            if stranded_ids:
+        if scoring_mode == "watch":
+            for tc in temp_configs:
+                tc.unlink(missing_ok=True)
+            watch_join_timeout = WATCH_JOIN_TIMEOUT_SECONDS
+            if watch_thread is not None:
+                watch_thread.join(timeout=watch_join_timeout)
+            if watch_thread is not None and watch_thread.is_alive():
                 print(
-                    f"  Stranded task IDs ({len(stranded_ids)}): {', '.join(stranded_ids)}",
+                    "Watch scoring did not finish within the post-worker join window; "
+                    "using the latest partial _watch_scores.json snapshot.",
                     file=sys.stderr,
                 )
-            break
-        time.sleep(MANIFEST_POLL_INTERVAL_SECONDS)
+            if "error" in watch_error_holder:
+                raise watch_error_holder["error"]
 
-    # Combine predictions
-    combined_path = predictions_dir / "all_predictions.jsonl"
-    prediction_count = _combine_predictions(
-        predictions_dir,
-        combined_path,
-        valid_ids=manifest.done_task_ids(),
-    )
-    print(f"\nCombined {prediction_count} predictions into {combined_path}", file=sys.stderr)
+            watch_scores_path = results_root / "_watch_scores.json"
+            if "result" in watch_result_holder:
+                score_result = watch_result_holder["result"]
+            elif watch_scores_path.exists():
+                score_result = json.loads(watch_scores_path.read_text(encoding="utf-8"))
+            else:
+                score_result = {
+                    "manifest_total": len(all_tasks),
+                    "scored": 0,
+                    "resolved": 0,
+                    "failed": 0,
+                    "errors": 0,
+                    "pass_rate": 0.0,
+                    "stop_reason": "missing_watch_scores",
+                    "tasks": {},
+                }
 
-    # Clean up temp configs once worker startup is no longer needed.
-    for tc in temp_configs:
-        tc.unlink(missing_ok=True)
+            summary = _merge_summaries(results_root, config, all_tasks, score_result)
+            summary_path = results_root / "summary_parallel.json"
+            summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+            print(f"\nSummary: {summary_path}", file=sys.stderr)
+            return summary
 
-    if prediction_count == 0:
-        print("No predictions generated — skipping scoring", file=sys.stderr)
-        return {"predictions": 0, "workers": workers, "tasks": len(all_tasks)}
+        # Clean up temp configs once worker startup is no longer needed.
+        for tc in temp_configs:
+            tc.unlink(missing_ok=True)
 
-    # Batch score with SWE-bench
-    print(f"\n=== Batch Scoring ({prediction_count} predictions) ===", file=sys.stderr)
-    scoring_workers = min(workers, 4)  # Don't overload Docker
-    score_result = _run_batch_scoring(combined_path, scoring_workers, results_root)
+        if scoring_mode == "none":
+            combined_path = predictions_dir / "all_predictions.jsonl"
+            done_ids = manifest.done_task_ids()
+            prediction_count = _combine_predictions(
+                predictions_dir,
+                combined_path,
+                valid_ids=done_ids or None,
+            )
+            print(f"\nCombined {prediction_count} predictions into {combined_path}", file=sys.stderr)
+            summary = {
+                "mode": "parallel",
+                "workers": workers,
+                "total_tasks": len(all_tasks),
+                "prediction_count": prediction_count,
+                "worker_exit_codes": worker_exit_codes,
+                "scoring": {"mode": "none", "skipped": True},
+            }
+            summary_path = results_root / "summary_parallel.json"
+            summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+            print(f"\nSummary: {summary_path}", file=sys.stderr)
+            return summary
 
-    # Merge worker summaries
-    summary = _merge_summaries(results_root, config, all_tasks, score_result)
-    summary_path = results_root / f"summary_parallel.json"
-    summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-    print(f"\nSummary: {summary_path}", file=sys.stderr)
+        manifest_wait_timeout = int(
+            os.environ.get("HERMES_SWEBENCH_MANIFEST_WAIT_SECONDS", str(MANIFEST_WAIT_TIMEOUT_SECONDS))
+        )
+        manifest_deadline = time.monotonic() + manifest_wait_timeout
+        while not manifest.all_done():
+            if time.monotonic() >= manifest_deadline:
+                stranded_ids = _stranded_task_ids(manifest_path)
+                print(
+                    "Manifest wait timed out after "
+                    f"{manifest_wait_timeout}s; proceeding with completed predictions only.",
+                    file=sys.stderr,
+                )
+                if stranded_ids:
+                    print(
+                        f"  Stranded task IDs ({len(stranded_ids)}): {', '.join(stranded_ids)}",
+                        file=sys.stderr,
+                    )
+                break
+            time.sleep(MANIFEST_POLL_INTERVAL_SECONDS)
 
-    return summary
+        # Combine predictions
+        combined_path = predictions_dir / "all_predictions.jsonl"
+        prediction_count = _combine_predictions(
+            predictions_dir,
+            combined_path,
+            valid_ids=manifest.done_task_ids(),
+        )
+        print(f"\nCombined {prediction_count} predictions into {combined_path}", file=sys.stderr)
+
+        if prediction_count == 0:
+            print("No predictions generated — skipping scoring", file=sys.stderr)
+            return {"predictions": 0, "workers": workers, "tasks": len(all_tasks)}
+
+        # Batch score with SWE-bench
+        print(f"\n=== Batch Scoring ({prediction_count} predictions) ===", file=sys.stderr)
+        scoring_workers = min(workers, 4)  # Don't overload Docker
+        score_result = _run_batch_scoring(combined_path, scoring_workers, results_root)
+
+        # Merge worker summaries
+        summary = _merge_summaries(results_root, config, all_tasks, score_result)
+        summary_path = results_root / f"summary_parallel.json"
+        summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+        print(f"\nSummary: {summary_path}", file=sys.stderr)
+
+        return summary
+    finally:
+        atexit.unregister(_kill_workers)
+        _clear_pidfile_runtime_state(results_root)
 
 
 def join_parallel_run(
@@ -256,8 +427,10 @@ def join_parallel_run(
         predictions_dir,
         manifest_path,
         results_root,
+        replace_pidfile_workers=False,
     )
     completed = _wait_for_workers(worker_procs, worker_log_dir)
+    _remove_pidfile_workers(results_root, worker_ids)
 
     for tc in temp_configs:
         tc.unlink(missing_ok=True)
@@ -287,6 +460,13 @@ def _clean_editable_installs() -> None:
     for pth in site_packages.glob("__editable__*.pth"):
         pth.unlink()
         removed.append(pth.name)
+    # Also clean editable finder modules and nspkg.pth files leaked by eval repos
+    for pth in site_packages.glob("__editable__*_finder.py"):
+        pth.unlink()
+        removed.append(pth.name)
+    for pth in site_packages.glob("*nspkg.pth"):
+        pth.unlink()
+        removed.append(pth.name)
     if removed:
         print(f"[parallel] Cleaned {len(removed)} editable installs: {', '.join(removed)}", file=sys.stderr)
     # Also force-reinstall anyio to ensure it's not broken
@@ -311,6 +491,19 @@ def _preflight_check_megaplan() -> None:
     print("[parallel] Megaplan pre-flight check passed", file=sys.stderr)
 
 
+def _load_api_keys() -> list[dict[str, str]]:
+    """Load API keys from auto_improve/api_keys.json for round-robin distribution."""
+    keys_path = Path(__file__).resolve().parent.parent / "auto_improve" / "api_keys.json"
+    if keys_path.exists():
+        try:
+            keys = json.loads(keys_path.read_text(encoding="utf-8"))
+            if isinstance(keys, list) and keys:
+                return keys
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
 def _launch_worker_processes(
     original_config_path: str | Path,
     workspace_dir: str,
@@ -318,6 +511,8 @@ def _launch_worker_processes(
     predictions_dir: Path,
     manifest_path: Path,
     results_root: Path,
+    *,
+    replace_pidfile_workers: bool,
 ) -> tuple[list[tuple[str, subprocess.Popen, Path]], list[Path], Path]:
     _clean_editable_installs()
     _preflight_check_megaplan()
@@ -326,7 +521,12 @@ def _launch_worker_processes(
     worker_log_dir = results_root / "_worker_logs"
     worker_log_dir.mkdir(parents=True, exist_ok=True)
 
-    for worker_id in worker_ids:
+    # Load API keys for round-robin distribution across workers
+    api_keys = _load_api_keys()
+    if api_keys:
+        print(f"[parallel] Distributing {len(api_keys)} API keys across {len(worker_ids)} workers", file=sys.stderr)
+
+    for idx, worker_id in enumerate(worker_ids):
         temp_config = _write_worker_config(
             original_config_path,
             worker_id,
@@ -354,6 +554,30 @@ def _launch_worker_processes(
             import shutil
 
             shutil.copy2(real_env_file, worker_hermes_home / ".env")
+
+        # Assign API key round-robin from api_keys.json
+        if api_keys:
+            key_entry = api_keys[idx % len(api_keys)]
+            api_key = key_entry["key"] if isinstance(key_entry, dict) else key_entry
+            base_url = key_entry.get("base_url", "") if isinstance(key_entry, dict) else ""
+            worker_env["ZHIPU_API_KEY"] = api_key
+            if base_url:
+                worker_env["ZHIPU_BASE_URL"] = base_url
+            # Also patch the worker's hermes .env so megaplan's _load_hermes_env picks it up
+            worker_env_file = worker_hermes_home / ".env"
+            if worker_env_file.exists():
+                import re
+                env_text = worker_env_file.read_text(encoding="utf-8")
+                env_text = re.sub(r'ZHIPU_API_KEY=.*', f'ZHIPU_API_KEY={api_key}', env_text)
+                if base_url:
+                    if 'ZHIPU_BASE_URL=' in env_text:
+                        env_text = re.sub(r'ZHIPU_BASE_URL=.*', f'ZHIPU_BASE_URL={base_url}', env_text)
+                    else:
+                        env_text += f'\nZHIPU_BASE_URL={base_url}\n'
+                worker_env_file.write_text(env_text, encoding="utf-8")
+            key_prefix = api_key[:8] + "..."
+            print(f"  {worker_id}: key={key_prefix} base_url={base_url or 'default'}", file=sys.stderr)
+
         worker_env["HERMES_HOME"] = str(worker_hermes_home)
 
         # Guard against executor pip installs polluting global site-packages.
@@ -376,10 +600,20 @@ def _launch_worker_processes(
         worker_procs.append((worker_id, proc, temp_config))
         print(f"  {worker_id} started (PID {proc.pid})", file=sys.stderr)
 
+    _record_pidfile_workers(
+        results_root,
+        worker_procs,
+        loop_pid=os.getpid() if replace_pidfile_workers else None,
+        replace_workers=replace_pidfile_workers,
+    )
+
     return worker_procs, temp_configs, worker_log_dir
 
 
-def _kill_workers(worker_procs: list[tuple[str, subprocess.Popen, Path]]) -> None:
+def _kill_workers(
+    worker_procs: list[tuple[str, subprocess.Popen, Path]],
+    results_root: Path | None = None,
+) -> None:
     """Kill all worker processes and their entire process trees."""
     import signal
     for worker_id, proc, _ in worker_procs:
@@ -399,11 +633,14 @@ def _kill_workers(worker_procs: list[tuple[str, subprocess.Popen, Path]]) -> Non
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
+    if results_root is not None:
+        _clear_pidfile_runtime_state(results_root)
 
 
 def _wait_for_workers(
     worker_procs: list[tuple[str, subprocess.Popen, Path]],
     worker_log_dir: Path,
+    manifest_path: Path | None = None,
 ) -> dict[str, int]:
     print(f"\nWaiting for {len(worker_procs)} workers...", file=sys.stderr)
     completed: dict[str, int] = {}
@@ -421,6 +658,20 @@ def _wait_for_workers(
                     if log_path.exists():
                         tail = log_path.read_text(encoding="utf-8", errors="replace")[-200:]
                         print(f"    {tail}", file=sys.stderr)
+                    # Requeue tasks claimed by this crashed worker
+                    if manifest_path is not None:
+                        try:
+                            from evals.manifest import TaskManifest
+                            manifest = TaskManifest.load(manifest_path)
+                            requeued = manifest.requeue_stale_claimed({worker_id})
+                            if requeued:
+                                print(
+                                    f"  Re-queued {len(requeued)} tasks from crashed {worker_id}: "
+                                    f"{', '.join(requeued)}",
+                                    file=sys.stderr,
+                                )
+                        except Exception as exc:
+                            print(f"  Warning: failed to requeue tasks from {worker_id}: {exc}", file=sys.stderr)
         if len(completed) < len(worker_procs):
             time.sleep(10)
     return completed

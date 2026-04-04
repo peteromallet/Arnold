@@ -1,104 +1,149 @@
 # Scoring Review Guide
 
-When a task scores `resolved: false`, review it before accepting the result or excluding it from pass rate.
+When a task scores `resolved: false` or `resolved: null` (SKIP), review it before accepting the result.
+
+## CLI Tool
+
+```bash
+# Review a failed task — adds a review entry to _watch_scores.json:
+python -m auto_improve.review --iteration 021 --task django__django-14011 \
+    --category partial_fix \
+    --explanation "Fix covers 3/4 test cases but misses samesite+secure interaction" \
+    --exclude false
+
+# Review a SKIP task as a virtual pass (patch matches golden):
+python -m auto_improve.review --iteration 021 --task sympy__sympy-20590 \
+    --category golden_match \
+    --explanation "Our patch is identical to golden — adds __slots__ = () to Printable" \
+    --exclude true
+
+# View all reviews for an iteration:
+python -m auto_improve.review --iteration 021 --list
+```
 
 ## Principle
 
-The raw SWE-bench score (`resolved: true/false`) is the ground truth. Exclusions are exceptions that must be justified with evidence. When in doubt, keep the failure.
+The raw SWE-bench score (`resolved: true/false/null`) is the ground truth. Reviews add context but never silently change the raw result. Exclusions adjust the pass rate denominator and must be justified with evidence. When in doubt, keep the failure.
 
-## When to Exclude
+## Decision Framework
 
-Only exclude when ALL of these are true:
+For every failed or skipped task, answer these questions in order:
 
-1. **The source code fix is correct** — verified by reading the patch against the issue
-2. **The failure is not caused by our code** — it's an environment, Docker, or SWE-bench harness issue
-3. **The same fix would pass in a different scoring environment** — or the upstream/gold patch has the same behavior
+### Question 1: Did we produce a patch?
+- **No patch (escalated)** → Category: `escalated`. Not excludable. This is a pipeline failure.
+- **Yes** → Continue to Q2.
 
-## When NOT to Exclude
+### Question 2: Was the patch applied successfully?
+- **No (patch doesn't apply)** → Category: `bad_patch`. Not excludable.
+- **Yes** → Continue to Q3.
 
-- "The fix is close but one test case fails" → NOT excludable. The fix is wrong.
-- "The fix passes locally but fails in Docker" → Investigate first. Usually means the fix has an env-dependent bug (circular import, Python version difference). That's a real bug.
-- "The SWE-bench test expects different behavior" → NOT excludable. Our fix doesn't match what's expected.
-- "The executor modified test files" → NOT excludable. That's our pipeline's fault.
+### Question 3: Did the tests actually run?
+- **No (Modal sandbox failure, missing dep, harness crash)** → Compare against golden patch (Q3a).
+  - **Q3a: Is our patch essentially the same as golden?** → Category: `golden_match`. Excludable (virtual pass).
+  - **Q3a: Different from golden** → Category: `scoring_infra`. Excludable only if golden would also fail in this env.
+- **Yes, tests ran** → Continue to Q4.
 
-## How to Investigate Before Deciding
+### Question 4: Which tests failed?
+- **FAIL_TO_PASS tests failed (our fix didn't work)** → Continue to Q5.
+- **Only PASS_TO_PASS regressions (our fix broke existing tests)** → Category: `regression`. Not excludable.
+- **Both** → Category: `partial_fix` or `regression`. Not excludable.
 
-1. **Check the scoring report** (not just pipeline artifacts):
-   ```bash
-   # Find the test report
-   find logs/run_evaluation -path "*<task_id>*" -name "report.json" | sort | tail -1
+### Question 5: Compare our patch to golden patch.
+- **Same files, same approach, minor difference** → Category: `close_miss`. Not excludable, but note for improvement.
+- **Same files, different approach, ours is plausibly correct** → Category: `alternative_approach`. Investigate deeper — the SWE-bench test may be too narrow.
+- **Wrong files or wrong approach** → Category: `wrong_approach`. Not excludable.
+- **Right approach but wrong implementation detail** → Category: `wrong_detail`. Not excludable.
 
-   # Read FAIL_TO_PASS and PASS_TO_PASS results
-   python3 -c "import json; r=json.load(open('<path>')); ..."
-   ```
+### Question 6: Could the pipeline have caught this?
+Always answer this regardless of excludability:
+- **Critique flagged it but gate let through** → Note: gate enforcement issue.
+- **Critique missed it** → Note: critique prompt gap.
+- **Execute didn't test the bug scenario** → Note: bug reproduction step missed.
+- **Review rubber-stamped** → Note: review quality issue.
 
-2. **Check the test output**:
-   ```bash
-   find logs/run_evaluation -path "*<task_id>*" -name "test_output.txt" | sort | tail -1
-   ```
+## Categories
 
-3. **Compare with SWE-bench gold patch**:
-   ```python
-   from datasets import load_dataset
-   ds = load_dataset('princeton-nlp/SWE-bench_Verified', split='test')
-   for row in ds:
-       if row['instance_id'] == '<task_id>':
-           print(row['patch'])  # the known-correct fix
-   ```
+| Category | Meaning | Excludable? | Required Evidence |
+|----------|---------|-------------|-------------------|
+| `golden_match` | Our patch matches the golden patch but scoring infra failed | YES | Show patch comparison |
+| `env_regression` | Fix correct, unrelated test regresses in Docker | YES | Show golden has same behavior |
+| `env_missing_dep` | Docker env missing a package | YES | Show the import error, verify golden would also fail |
+| `harness_error` | SWE-bench harness crash (not our code) | YES | Show harness error log |
+| `scoring_infra` | Modal/Docker couldn't run tests, patch differs from golden | MAYBE | Compare patches, explain why ours might work |
+| `partial_fix` | Fix covers most cases but misses one test | NO | Show which test failed and why |
+| `close_miss` | Same approach as golden, minor detail wrong | NO | Show the diff between our patch and golden |
+| `wrong_detail` | Right approach, wrong implementation | NO | Explain the implementation error |
+| `wrong_approach` | Fundamentally different from golden | NO | Explain why our approach fails |
+| `regression` | Fix works but breaks existing tests | NO | Show PASS_TO_PASS failures |
+| `test_contamination` | Executor modified test files | NO | Show test file modifications |
+| `escalated` | Pipeline gave up, no patch produced | NO | Note which phase failed |
+| `scoring_exhausted` | Scoring failed N times (auto-tagged) | INVESTIGATE | Check stderr for root cause |
 
-4. **Ask**: Would the gold patch also fail in this environment? If yes → env issue. If no → our fix is wrong.
+## Review Entry Format
 
-## How to Write the Review
-
-Edit `_watch_scores.json`, add a `review` field to the task entry:
+Each review is stored in `_watch_scores.json` on the task entry:
 
 ```json
 {
   "resolved": false,
   "review": {
-    "category": "<category>",
-    "explanation": "<detailed explanation with evidence>",
+    "category": "<category from table above>",
+    "explanation": "<detailed explanation — MUST include evidence, not just a claim>",
     "excluded_from_pass_rate": true,
-    "reviewed_by": "<who>",
+    "golden_comparison": "<same/similar/different/not_checked>",
+    "pipeline_gap": "<critique_missed/gate_bypass/execute_no_test/review_rubber_stamp/none>",
+    "reviewed_by": "<human or auto>",
     "reviewed_at": "<ISO timestamp>"
   }
 }
 ```
 
-### Categories
+### Required fields for every review:
+- **category**: From the table above.
+- **explanation**: What happened and why. Must cite specific evidence (file names, test names, error messages). "Fix is wrong" is not enough — say WHY it's wrong.
+- **excluded_from_pass_rate**: true/false. Only true for categories marked YES above.
+- **golden_comparison**: Did you compare against the golden patch? What did you find?
+- **pipeline_gap**: Which pipeline phase could have prevented this? This is the most important field for improvement — it feeds back into the next iteration's changes.
 
-| Category | Meaning | Excludable? |
-|----------|---------|-------------|
-| `env_regression` | Fix is correct but an unrelated test regresses due to Docker/Python version difference | YES — if gold patch has same behavior |
-| `env_missing_dep` | Docker environment missing a package (e.g., `roman`) | YES — not our bug |
-| `harness_error` | SWE-bench harness can't find prediction ID or crashes | YES — infra, not code |
-| `partial_fix` | Fix covers most cases but misses one test | NO — fix is incomplete |
-| `test_contamination` | Executor modified test files, conflicting with SWE-bench test patch | NO — pipeline fault |
-| `wrong_detail` | Right approach but wrong implementation detail | NO — code is wrong |
-| `circular_import` | Works locally but circular import in Docker | NO — real bug |
-| `scoring_exhausted` | Scoring failed 3 times (auto-tagged) | INVESTIGATE — could be either |
-
-### Example: Legitimate Exclusion
+### Example: SKIP task that matches golden (virtual pass)
 
 ```json
 "review": {
-    "category": "env_missing_dep",
-    "explanation": "All tests fail with 'No module named roman'. Docker env missing the roman package. Every test in test_build_linkcheck.py fails identically. Our patch (2-line fix adding TooManyRedirects to except clause) is correct — verified against upstream PR #8476. Gold patch would also fail in this env.",
+    "category": "golden_match",
+    "explanation": "Our patch adds __slots__ = () to Printable class in sympy/core/_print_helpers.py — identical to golden patch. Modal sandbox build fails on sympy (setup_repo.sh exit 2). Cannot score but fix is correct.",
     "excluded_from_pass_rate": true,
+    "golden_comparison": "same",
+    "pipeline_gap": "none",
     "reviewed_by": "human",
-    "reviewed_at": "2026-04-01T10:00:00Z"
+    "reviewed_at": "2026-04-03T01:00:00Z"
 }
 ```
 
-### Example: NOT Excludable
+### Example: Real failure, critique should have caught it
 
 ```json
 "review": {
-    "category": "circular_import",
-    "explanation": "Patch adds itrs_observed_transforms.py and imports it in __init__.py. Works locally but creates circular import in SWE-bench Docker (Python 3.9). This is a real bug in our patch — the import ordering is wrong. 68 PASS_TO_PASS tests also fail.",
+    "category": "partial_fix",
+    "explanation": "Fix handles lazy+string concatenation but not lazy+lazy. test_lazy_add fails with TypeError. Golden patch uses a different approach (force_str on both operands). Critique flagged 'overly broad TypeError catch' but gate resolved it as accept_tradeoff.",
     "excluded_from_pass_rate": false,
+    "golden_comparison": "different",
+    "pipeline_gap": "gate_bypass",
     "reviewed_by": "human",
-    "reviewed_at": "2026-04-01T10:00:00Z"
+    "reviewed_at": "2026-04-03T01:00:00Z"
+}
+```
+
+### Example: Real failure, not excludable
+
+```json
+"review": {
+    "category": "wrong_detail",
+    "explanation": "Patch quotes table_name with quote_name() but not column_name. SQL keyword 'order' causes syntax error in SELECT. Golden patch quotes all 3 identifiers. Critique should have verified ALL identifiers are quoted.",
+    "excluded_from_pass_rate": false,
+    "golden_comparison": "similar",
+    "pipeline_gap": "critique_missed",
+    "reviewed_by": "human",
+    "reviewed_at": "2026-04-03T01:00:00Z"
 }
 ```
 
@@ -106,7 +151,21 @@ Edit `_watch_scores.json`, add a `review` field to the task entry:
 
 - Raw score always shown: `Scored: 10/13 = 77%`
 - If exclusions exist: `| Adjusted: 11/12 = 92% (1 excluded)`
-- Per-task: `→ FAIL [EXCLUDED: env_missing_dep]`
+- Per-task: `→ FAIL [EXCLUDED: golden_match]` or `→ SKIP [EXCLUDED: golden_match]`
 - Exclusions section at top with reasons
 
 Both numbers are always public. The raw result is never modified.
+
+## Integration with Cron Runbook
+
+The hourly cron job (see `CRON_RUNBOOK.md`) includes failure analysis at step 5. When new FAILs appear:
+
+1. Compare against golden patch
+2. Classify using the decision framework above
+3. Write a review entry (via CLI or manual JSON edit)
+4. Note the `pipeline_gap` — this feeds into the next improvement round
+
+When SKIP tasks appear:
+1. Compare our patch against golden
+2. If identical/essentially same → review as `golden_match`, exclude from pass rate
+3. If different → review as `scoring_infra`, investigate further

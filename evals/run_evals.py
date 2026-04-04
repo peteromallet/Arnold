@@ -609,7 +609,15 @@ def run_megaplan_loop(
         # Tell the stuck detector which session to watch
         _active_session_id[0] = _phase_session_id(pre_state, phase, config.models.get(phase), None)
 
-        phase_timeout = config.eval_timeout_seconds
+        # Per-phase timeout: check explicit overrides first, then use a
+        # generous default for prep (2x the base timeout, since it explores
+        # the whole codebase), otherwise fall back to eval_timeout_seconds.
+        _default_phase_timeouts = {"prep": config.eval_timeout_seconds * 2}
+        phase_timeout = (
+            config.phase_timeouts.get(phase)
+            or _default_phase_timeouts.get(phase)
+            or config.eval_timeout_seconds
+        )
 
         try:
             response, raw_output = runner(
@@ -636,24 +644,29 @@ def run_megaplan_loop(
                 raise
             if "timed out" in exc_str:
                 phase_retries[phase] = phase_retries.get(phase, 0) + 1
-                if phase_retries[phase] >= 2:
+                if phase_retries[phase] >= 3:
                     raise
-                _log(eval_name, f"Phase {phase} timed out — retrying phase ({phase_retries[phase]}/2)", phase=phase)
+                _log(eval_name, f"Phase {phase} timed out — retrying phase ({phase_retries[phase]}/3)", phase=phase)
                 audit.notes.append(f"{phase} timed out, retrying")
                 continue
             if "non-json" in exc_str:
                 phase_retries[phase] = phase_retries.get(phase, 0) + 1
-                if phase_retries[phase] >= 2:
+                if phase_retries[phase] >= 3:
                     raise
-                _log(eval_name, f"Phase {phase} returned non-JSON — retrying phase ({phase_retries[phase]}/2)", phase=phase)
-                audit.notes.append(f"{phase} non-JSON, retrying")
+                delay = 15 * phase_retries[phase]
+                _log(eval_name, f"Phase {phase} returned non-JSON — waiting {delay}s then retrying ({phase_retries[phase]}/3)", phase=phase)
+                audit.notes.append(f"{phase} non-JSON, retrying after {delay}s")
+                time.sleep(delay)
                 continue
             if "429" in exc_str or "rate limit" in exc_str or "overloaded" in exc_str:
                 phase_retries[phase] = phase_retries.get(phase, 0) + 1
-                if phase_retries[phase] >= 2:
+                if phase_retries[phase] >= 4:
                     raise
-                _log(eval_name, f"Phase {phase} hit rate limit — retrying phase ({phase_retries[phase]}/2)", phase=phase)
-                audit.notes.append(f"{phase} rate limited, retrying")
+                # Exponential backoff: 30s, 60s, 120s, 240s
+                delay = 30 * (2 ** (phase_retries[phase] - 1))
+                _log(eval_name, f"Phase {phase} hit rate limit — waiting {delay}s then retrying ({phase_retries[phase]}/4)", phase=phase)
+                audit.notes.append(f"{phase} rate limited, waiting {delay}s")
+                time.sleep(delay)
                 continue
             raise
         except _StuckDetected as stuck:
@@ -791,7 +804,14 @@ def run_megaplan_loop(
         )
 
         if action == "retry":
-            _log(eval_name, f"{target} — re-running ({phase_retries[phase]}/3)", phase=phase)
+            # Brief delay before retry — prevents hammering API on transient errors
+            retry_count = phase_retries.get(phase, 0)
+            if retry_count > 0:
+                delay = min(15 * retry_count, 60)
+                _log(eval_name, f"{target} — waiting {delay}s then re-running ({retry_count}/3)", phase=phase)
+                time.sleep(delay)
+            else:
+                _log(eval_name, f"{target} — re-running ({retry_count}/3)", phase=phase)
             _inject_feedback(config, plan_name, workspace_path, phase, response)
             continue
 

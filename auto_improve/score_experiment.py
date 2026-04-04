@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from evals.consolidate import consolidate
+from evals.watch_scoring import load_scores_data
 
 from auto_improve.utils import AUTO_IMPROVE_ROOT, get_iteration_dir
 
@@ -61,7 +62,7 @@ def build_normalized_scores(
     resolved_results_root = Path(results_root).expanduser().resolve()
     raw_watch_scores = _load_watch_scores(resolved_results_root)
     manifest_payload = _load_manifest_payload(resolved_results_root)
-    ordered_task_ids = _ordered_task_ids(manifest_payload)
+    ordered_task_ids = _ordered_task_ids(manifest_payload, resolved_results_root)
 
     if raw_watch_scores is not None:
         return _normalize_scores_payload(
@@ -214,13 +215,14 @@ def _derive_task_status(raw_task: Any, manifest_entry: Any) -> str:
     return "failed"
 
 
-def _ordered_task_ids(manifest_payload: dict[str, Any]) -> list[str]:
-    default_task_ids = _load_default_task_ids()
+def _ordered_task_ids(manifest_payload: dict[str, Any], results_root: Path) -> list[str]:
+    default_task_ids = _load_config_task_ids(results_root) or _load_default_task_ids()
     manifest_tasks = manifest_payload.get("tasks", {})
     manifest_task_ids = manifest_tasks.keys() if isinstance(manifest_tasks, dict) else []
 
-    ordered = [task_id for task_id in default_task_ids]
-    extras = sorted(task_id for task_id in manifest_task_ids if task_id not in set(default_task_ids))
+    ordered = list(default_task_ids)
+    configured_task_ids = set(default_task_ids)
+    extras = sorted(task_id for task_id in manifest_task_ids if task_id not in configured_task_ids)
     ordered.extend(extras)
     return ordered
 
@@ -230,6 +232,20 @@ def _load_default_task_ids() -> list[str]:
     if not isinstance(payload, list) or not all(isinstance(item, str) for item in payload):
         raise ValueError(f"Expected {TASKS_PATH} to contain a JSON list of task IDs")
     return payload
+
+
+def _load_config_task_ids(results_root: Path) -> list[str] | None:
+    config_path = results_root / "_run_config.json"
+    if not config_path.exists():
+        return None
+
+    payload = _load_json_object(config_path)
+    task_ids = payload.get("evals_to_run")
+    if task_ids is None:
+        return None
+    if not isinstance(task_ids, list) or not all(isinstance(item, str) for item in task_ids):
+        raise ValueError(f"Expected {config_path} to define evals_to_run as a JSON list of task IDs")
+    return task_ids
 
 
 def _load_manifest_payload(results_root: Path) -> dict[str, Any]:
@@ -243,7 +259,7 @@ def _load_watch_scores(results_root: Path) -> dict[str, Any] | None:
     watch_scores_path = results_root / "_watch_scores.json"
     if not watch_scores_path.exists():
         return None
-    return _load_json_object(watch_scores_path)
+    return load_scores_data(watch_scores_path)
 
 
 def _load_consolidated_scores(consolidated_dir: Path) -> dict[str, dict[str, Any]]:

@@ -347,7 +347,7 @@ def test_watch_scoring_integration_smoke(
     assert sorted(scores["tasks"]) == ["task-1", "task-2"]
 
 
-def test_watch_scoring_retries_missing_report_three_times(
+def test_watch_scoring_retries_missing_report_five_times(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     watch_test_env,
@@ -367,10 +367,10 @@ def test_watch_scoring_retries_missing_report_three_times(
     )
 
     scores = json.loads((results_root / "_watch_scores.json").read_text(encoding="utf-8"))
-    assert watch_test_env["harness_ids"] == ["task-1", "task-1", "task-1"]
+    assert watch_test_env["harness_ids"] == ["task-1", "task-1", "task-1", "task-1", "task-1"]
     assert result["errors"] == 1
     assert result["error_breakdown"] == {"report_parse": 1}
-    assert scores["tasks"]["task-1"]["attempts"] == 3
+    assert scores["tasks"]["task-1"]["attempts"] == 5
     assert scores["tasks"]["task-1"]["error_category"] == "report_parse"
 
 
@@ -401,3 +401,38 @@ def test_format_stop_line_includes_error_breakdown() -> None:
     )
 
     assert "[errors modal_sandbox=2, timeout=1]" in line
+
+
+def test_find_retryable_tasks_exhausts_modal_sandbox_after_two_attempts() -> None:
+    scores_data = {
+        "tasks": {
+            "modal-task": {
+                "resolved": None,
+                "attempts": 2,
+                "error": "Error creating sandbox",
+                "error_category": "modal_sandbox",
+            },
+            "non-modal-task": {
+                "resolved": None,
+                "attempts": 2,
+                "error": "timed out",
+                "error_category": "timeout",
+            },
+        }
+    }
+    predictions = {
+        "modal-task": Path("modal-task.jsonl"),
+        "non-modal-task": Path("non-modal-task.jsonl"),
+    }
+
+    retryable_ids, exhausted_ids, scores_changed = watch_scoring.find_retryable_tasks(
+        scores_data,
+        predictions,
+    )
+
+    assert "modal-task" in exhausted_ids
+    assert "modal-task" not in retryable_ids
+    assert "non-modal-task" in retryable_ids
+    assert "non-modal-task" not in exhausted_ids
+    assert scores_changed is True
+    assert scores_data["tasks"]["modal-task"]["review"]["category"] == "scoring_exhausted"

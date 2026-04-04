@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+from errno import ESRCH
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,7 @@ class TaskManifest:
             return []
 
         claimed_at = _utc_now()
+        worker_pid = os.getpid()
         with self._lock():
             payload = self._read_unlocked()
             claimed: list[str] = []
@@ -59,6 +61,7 @@ class TaskManifest:
                     continue
                 task["status"] = "claimed"
                 task["worker"] = worker_id
+                task["worker_pid"] = worker_pid
                 task["claimed_at"] = claimed_at
                 claimed.append(instance_id)
                 if len(claimed) >= batch_size:
@@ -89,23 +92,40 @@ class TaskManifest:
             task["error"] = error
             task["done_at"] = done_at
             task["error_count"] = task.get("error_count", 0) + 1
+            # Append to history
+            _append_history(task, {
+                "event": "error",
+                "worker": worker_id,
+                "error": error[:200],
+                "at": done_at,
+            })
             self._write_unlocked(payload)
             self._data = payload
 
     def requeue_errors(self, max_retries: int = 1) -> list[str]:
         """Reset errored tasks back to pending if they haven't exceeded max_retries."""
         requeued: list[str] = []
+        now = _utc_now()
         with self._lock():
             payload = self._read_unlocked()
             for instance_id, task in payload["tasks"].items():
                 if task.get("status") != "error":
                     continue
-                if task.get("error_count", 1) > max_retries:
+                requeue_count = task.get("requeue_count", 0)
+                if requeue_count >= max_retries:
                     continue
+                _append_history(task, {
+                    "event": "requeued",
+                    "reason": "error_retry",
+                    "previous_error": task.get("error", "")[:200],
+                    "previous_worker": task.get("worker"),
+                    "requeue_count": requeue_count + 1,
+                    "at": now,
+                })
                 task["status"] = "pending"
+                task["requeue_count"] = requeue_count + 1
                 task.pop("worker", None)
-                task.pop("done_at", None)
-                task.pop("error", None)
+                task.pop("worker_pid", None)
                 requeued.append(instance_id)
             if requeued:
                 self._write_unlocked(payload)
@@ -115,6 +135,7 @@ class TaskManifest:
     def requeue_stale_claimed(self, dead_workers: set[str]) -> list[str]:
         """Reset tasks claimed by dead workers back to pending."""
         requeued: list[str] = []
+        now = _utc_now()
         with self._lock():
             payload = self._read_unlocked()
             for instance_id, task in payload["tasks"].items():
@@ -122,10 +143,63 @@ class TaskManifest:
                     continue
                 if task.get("worker") not in dead_workers:
                     continue
+                requeue_count = task.get("requeue_count", 0)
+                _append_history(task, {
+                    "event": "requeued",
+                    "reason": "dead_worker",
+                    "previous_worker": task.get("worker"),
+                    "claimed_at": task.get("claimed_at"),
+                    "requeue_count": requeue_count + 1,
+                    "at": now,
+                })
                 task["status"] = "pending"
+                task["requeue_count"] = requeue_count + 1
                 task.pop("worker", None)
+                task.pop("worker_pid", None)
                 task.pop("claimed_at", None)
                 requeued.append(instance_id)
+            if requeued:
+                self._write_unlocked(payload)
+            self._data = payload
+        return requeued
+
+    def requeue_dead_claimed(self, pidfile_path: str | Path) -> list[str]:
+        """Reset claimed tasks whose worker PID is no longer alive.
+
+        When the pidfile is missing, assume this is a pre-pidfile restart and
+        requeue every claimed task to avoid permanently stranded claims.
+        """
+        pidfile = Path(pidfile_path)
+        requeued: list[str] = []
+        with self._lock():
+            payload = self._read_unlocked()
+            requeue_all_claimed = not pidfile.exists()
+            now = _utc_now()
+            for instance_id, task in payload["tasks"].items():
+                if task.get("status") != "claimed":
+                    continue
+
+                worker_pid = task.get("worker_pid")
+                if not requeue_all_claimed:
+                    if not isinstance(worker_pid, int) or _pid_alive(worker_pid):
+                        continue
+
+                requeue_count = task.get("requeue_count", 0)
+                _append_history(task, {
+                    "event": "requeued",
+                    "reason": "dead_pid",
+                    "previous_worker": task.get("worker"),
+                    "previous_pid": worker_pid,
+                    "requeue_count": requeue_count + 1,
+                    "at": now,
+                })
+                task["status"] = "pending"
+                task["requeue_count"] = requeue_count + 1
+                task.pop("worker", None)
+                task.pop("worker_pid", None)
+                task.pop("claimed_at", None)
+                requeued.append(instance_id)
+
             if requeued:
                 self._write_unlocked(payload)
             self._data = payload
@@ -134,6 +208,7 @@ class TaskManifest:
     def requeue_escalated(self, predictions_dir: Path) -> list[str]:
         """Reset 'done' tasks that have no prediction file back to pending."""
         requeued: list[str] = []
+        now = _utc_now()
         with self._lock():
             payload = self._read_unlocked()
             for instance_id, task in payload["tasks"].items():
@@ -141,8 +216,18 @@ class TaskManifest:
                     continue
                 pred_path = predictions_dir / f"{instance_id}.jsonl"
                 if not pred_path.exists():
+                    requeue_count = task.get("requeue_count", 0)
+                    _append_history(task, {
+                        "event": "requeued",
+                        "reason": "escalated_no_patch",
+                        "previous_worker": task.get("worker"),
+                        "requeue_count": requeue_count + 1,
+                        "at": now,
+                    })
                     task["status"] = "pending"
+                    task["requeue_count"] = requeue_count + 1
                     task.pop("worker", None)
+                    task.pop("worker_pid", None)
                     task.pop("done_at", None)
                     requeued.append(instance_id)
             if requeued:
@@ -311,5 +396,26 @@ def _require_task(payload: dict[str, Any], instance_id: str) -> dict[str, Any]:
     return task
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError as exc:
+        return exc.errno != ESRCH
+    return True
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _append_history(task: dict[str, Any], entry: dict[str, Any]) -> None:
+    """Append an event to a task's history log. Never loses data."""
+    history = task.setdefault("history", [])
+    history.append(entry)
+    # Cap at 50 entries to prevent unbounded growth
+    if len(history) > 50:
+        task["history"] = history[-50:]

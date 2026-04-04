@@ -5,7 +5,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from evals.manifest import TaskManifest
-from evals.watch_scoring import DEFAULT_POLL_INTERVAL, DEFAULT_TIMEOUT, _load_scores_data, _refresh_scores_summary, _score_single_prediction, _utc_now, _write_incremental_results
+from evals.watch_scoring import (
+    DEFAULT_POLL_INTERVAL,
+    DEFAULT_TIMEOUT,
+    _score_single_prediction,
+    _utc_now,
+    _write_incremental_results,
+    find_retryable_tasks,
+    load_scores_data,
+    refresh_scores_summary,
+)
 
 def discover_active_iterations(base_dir: str | Path) -> list[Path]:
     active: list[Path] = []
@@ -20,22 +29,12 @@ def discover_active_iterations(base_dir: str | Path) -> list[Path]:
 def find_scorable(results_root: str | Path) -> tuple[dict[str, Any], list[str], dict[str, int], dict[str, Path]]:
     root = Path(results_root).expanduser().resolve()
     manifest = TaskManifest.load(root / "_task_manifest.json")
-    scores_data = _load_scores_data(root / "_watch_scores.json")
+    scores_data = load_scores_data(root / "_watch_scores.json")
     predictions = {path.stem: path for path in (root / "_swebench_predictions").glob("*.jsonl") if path.name != "all_predictions.jsonl"}
-    retryable, exhausted, changed = set(), set(), False
-    for instance_id, entry in scores_data.get("tasks", {}).items():
-        if not isinstance(entry, dict) or entry.get("resolved") is not None:
-            continue
-        attempts = entry.get("attempts", 1)
-        if attempts < 3 and instance_id in predictions:
-            retryable.add(instance_id)
-        elif attempts >= 3:
-            exhausted.add(instance_id)
-            if not entry.get("review"):
-                entry["review"] = {"category": "scoring_exhausted", "explanation": f"Scoring failed {attempts} times: {entry.get('error', 'unknown error')}", "excluded_from_pass_rate": False, "reviewed_by": "auto", "reviewed_at": _utc_now(), "needs_manual_review": True}
-                changed = True
-    scores_data = _refresh_scores_summary(manifest, scores_data)
-    if changed: _write_incremental_results(root, scores_data)
+    retryable, exhausted, changed = find_retryable_tasks(scores_data, predictions)
+    scores_data = refresh_scores_summary(manifest, scores_data)
+    if changed:
+        _write_incremental_results(root, scores_data)
     scorable = sorted(
         instance_id
         for instance_id in manifest.done_task_ids()
@@ -62,6 +61,8 @@ def watch_all(base_dir: str | Path, *, poll_interval: int = DEFAULT_POLL_INTERVA
                 instance_id = scorable[0]
                 run_id = run_ids.setdefault(root, f"hermes-watch-{root.name}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}")
                 result = _score_single_prediction(predictions[instance_id], instance_id, run_id, False, use_modal=True)
+                # Re-read scores from disk to avoid overwriting results written by concurrent processes
+                scores_data = load_scores_data(root / "_watch_scores.json")
                 previous = scores_data.get("tasks", {}).get(instance_id, {})
                 task_entry = {"resolved": result["resolved"], "scored_at": _utc_now(), "attempts": previous.get("attempts", 0) + 1}
                 for key in ("error", "error_category", "returncode"):
@@ -72,7 +73,7 @@ def watch_all(base_dir: str | Path, *, poll_interval: int = DEFAULT_POLL_INTERVA
                         task_entry[key] = result[key][-1000:]
                 scores_data["run_id"] = run_id
                 scores_data.setdefault("tasks", {})[instance_id] = task_entry
-                scores_data = _refresh_scores_summary(TaskManifest.load(root / "_task_manifest.json"), scores_data)
+                scores_data = refresh_scores_summary(TaskManifest.load(root / "_task_manifest.json"), scores_data)
                 _write_incremental_results(root, scores_data)
                 status = "RESOLVED" if result["resolved"] is True else "FAILED" if result["resolved"] is False else "ERROR"
                 print(f"[{root.name}] {instance_id}: {status}", file=sys.stderr)

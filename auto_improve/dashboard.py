@@ -17,6 +17,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from evals.watch_scoring import classify_task, load_scores_data
+
 
 def main(argv: list[str] | None = None) -> int:
     args = argv or sys.argv[1:]
@@ -101,16 +103,22 @@ def _show_dashboard(results_root: Path, iteration: int) -> int:
     # Scores — show both raw and adjusted (if exclusions exist)
     watch_scores_path = results_root / "_watch_scores.json"
     if watch_scores_path.exists():
-        ws = json.loads(watch_scores_path.read_text())
+        ws = load_scores_data(watch_scores_path)
         ws_tasks = ws.get("tasks", {})
-        resolved = sum(1 for t in ws_tasks.values() if isinstance(t, dict) and t.get("resolved") is True)
-        failed = sum(1 for t in ws_tasks.values() if isinstance(t, dict) and t.get("resolved") is False)
+        states = {
+            tid: classify_task(info)
+            for tid, info in ws_tasks.items()
+            if isinstance(info, dict)
+        }
+        resolved = sum(1 for state in states.values() if state == "pass")
+        failed = sum(1 for state in states.values() if state == "fail")
         excluded = sum(
             1 for t in ws_tasks.values()
-            if isinstance(t, dict) and isinstance(t.get("review"), dict)
+            if isinstance(t, dict)
+            and isinstance(t.get("review"), dict)
             and t["review"].get("excluded_from_pass_rate")
         )
-        pending_score = sum(1 for t in ws_tasks.values() if isinstance(t, dict) and t.get("resolved") is None)
+        pending_score = sum(1 for state in states.values() if state in {"pending", "error"})
         scored = resolved + failed
         rate = f"{resolved}/{scored} = {resolved/scored:.0%}" if scored else "n/a"
         parts = [f"  Scored: {rate}"]
@@ -119,9 +127,12 @@ def _show_dashboard(results_root: Path, iteration: int) -> int:
             adj_resolved = resolved
             # Excluded tasks might be fails we're excluding
             excluded_fails = sum(
-                1 for t in ws_tasks.values()
-                if isinstance(t, dict) and t.get("resolved") is False
-                and isinstance(t.get("review"), dict) and t["review"].get("excluded_from_pass_rate")
+                1
+                for tid, t in ws_tasks.items()
+                if isinstance(t, dict)
+                and states.get(tid) == "fail"
+                and isinstance(t.get("review"), dict)
+                and t["review"].get("excluded_from_pass_rate")
             )
             adj_failed = failed - excluded_fails
             adj_rate = f"{adj_resolved}/{adj_scored} = {adj_resolved/adj_scored:.0%}" if adj_scored else "n/a"
@@ -151,7 +162,7 @@ def _show_dashboard(results_root: Path, iteration: int) -> int:
             elif "restarting" in status:
                 scorer_label = f"RESTARTING ⚠ ({status})"
             elif status == "running":
-                ps_check = subprocess.run(["pgrep", "-f", "watch_scoring"], capture_output=True, text=True)
+                ps_check = subprocess.run(["pgrep", "-f", "watch_scoring|auto_improve.score"], capture_output=True, text=True)
                 scorer_label = "alive" if ps_check.stdout.strip() else "NOT RUNNING ⚠ (stale status)"
             elif status == "completed":
                 scorer_label = "completed"
@@ -161,7 +172,7 @@ def _show_dashboard(results_root: Path, iteration: int) -> int:
             pass
     if scorer_label is None:
         try:
-            ps_scorer = subprocess.run(["pgrep", "-f", "watch_scoring"], capture_output=True, text=True)
+            ps_scorer = subprocess.run(["pgrep", "-f", "watch_scoring|auto_improve.score"], capture_output=True, text=True)
             scorer_label = "alive" if ps_scorer.stdout.strip() else "NOT RUNNING ⚠"
         except Exception:
             scorer_label = "unknown"
@@ -245,6 +256,57 @@ def _show_dashboard(results_root: Path, iteration: int) -> int:
                     marker = "⊘"
 
             print(f"  {marker} {task_id}: {status}{worker_str}{extra}")
+
+    # Quick health alerts — flag issues, point to healthcheck for details
+    alerts = []
+    # Scorer dead?
+    try:
+        ps_scorer = subprocess.run(["pgrep", "-f", "watch_scoring|auto_improve.score"], capture_output=True, text=True)
+        if not ps_scorer.stdout.strip():
+            alerts.append("⛔ Scorer not running — predictions won't be scored")
+    except Exception:
+        pass
+    # Rate limit pressure?
+    total_429s = 0
+    for log in worker_logs:
+        try:
+            total_429s += sum(1 for l in log.read_text(errors="replace").splitlines() if "429" in l)
+        except Exception:
+            pass
+    if total_429s > 500:
+        alerts.append(f"⛔ Heavy rate limiting ({total_429s} total 429s)")
+    elif total_429s > 100:
+        alerts.append(f"⚠️  Rate limiting active ({total_429s} total 429s)")
+    # Disk?
+    if free_gb < 5:
+        alerts.append(f"⛔ Disk critically low ({free_gb:.0f}GB)")
+    elif free_gb < 10:
+        alerts.append(f"⚠️  Disk space low ({free_gb:.0f}GB)")
+    # Stalled workers?
+    for log in worker_logs:
+        try:
+            lines = log.read_text(errors="replace").splitlines()
+            for line in reversed(lines):
+                m = re.search(r"waiting \((\d+)s\)", line)
+                if m and int(m.group(1)) > 1200:
+                    w = log.stem.replace(".stderr", "")
+                    alerts.append(f"⚠️  {w} stalled ({m.group(1)}s waiting)")
+                break
+        except Exception:
+            pass
+    # Unscored predictions?
+    if watch_scores_path.exists():
+        unscored = pred_count - sum(1 for s in states.values() if s in ("pass", "fail", "exhausted"))
+        if unscored > 3:
+            alerts.append(f"⚠️  {unscored} predictions waiting to be scored")
+
+    if alerts:
+        print(f"\n{'─' * term_width}")
+        print("  ALERTS")
+        print(f"{'─' * term_width}")
+        for a in alerts:
+            print(f"  {a}")
+        print(f"\n  Run `python -m auto_improve.healthcheck` for deep diagnosis")
 
     print(f"\n{'=' * term_width}")
     return 0

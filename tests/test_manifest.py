@@ -2,6 +2,9 @@ import json
 import multiprocessing
 from pathlib import Path
 
+import pytest
+
+import evals.manifest as manifest_module
 from evals.manifest import TaskManifest
 
 
@@ -122,3 +125,47 @@ def test_next_worker_id_advances_from_existing_manifest_workers(tmp_path: Path) 
     assert manifest.claim_batch("worker-2", 1) == ["task-b"]
 
     assert manifest.next_worker_id() == "worker-3"
+
+
+def test_requeue_dead_claimed_only_requeues_dead_worker_pids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = TaskManifest.create(tmp_path / "manifest.json", ["task-a", "task-b", "task-c"])
+    payload = json.loads(manifest.path.read_text(encoding="utf-8"))
+    payload["tasks"]["task-a"] = {"status": "claimed", "worker": "worker-0", "worker_pid": 111}
+    payload["tasks"]["task-b"] = {"status": "claimed", "worker": "worker-1", "worker_pid": 222}
+    payload["tasks"]["task-c"] = {"status": "done", "worker": "worker-2"}
+    manifest.path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    pidfile_path = tmp_path / "_pidfile.json"
+    pidfile_path.write_text('{"workers": []}\n', encoding="utf-8")
+    monkeypatch.setattr(manifest_module, "_pid_alive", lambda pid: pid == 111)
+
+    requeued = manifest.requeue_dead_claimed(pidfile_path)
+    updated = json.loads(manifest.path.read_text(encoding="utf-8"))
+
+    assert requeued == ["task-b"]
+    assert updated["tasks"]["task-a"]["status"] == "claimed"
+    assert updated["tasks"]["task-a"]["worker_pid"] == 111
+    assert updated["tasks"]["task-b"]["status"] == "pending"
+    assert "worker" not in updated["tasks"]["task-b"]
+    assert "worker_pid" not in updated["tasks"]["task-b"]
+    assert updated["tasks"]["task-c"]["status"] == "done"
+
+
+def test_requeue_dead_claimed_requeues_all_claimed_without_pidfile(tmp_path: Path) -> None:
+    manifest = TaskManifest.create(tmp_path / "manifest.json", ["task-a", "task-b", "task-c"])
+    payload = json.loads(manifest.path.read_text(encoding="utf-8"))
+    payload["tasks"]["task-a"] = {"status": "claimed", "worker": "worker-0", "worker_pid": 111}
+    payload["tasks"]["task-b"] = {"status": "claimed", "worker": "worker-1", "worker_pid": 222}
+    payload["tasks"]["task-c"] = {"status": "done", "worker": "worker-2"}
+    manifest.path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    requeued = manifest.requeue_dead_claimed(tmp_path / "_missing_pidfile.json")
+    updated = json.loads(manifest.path.read_text(encoding="utf-8"))
+
+    assert requeued == ["task-a", "task-b"]
+    assert updated["tasks"]["task-a"]["status"] == "pending"
+    assert updated["tasks"]["task-b"]["status"] == "pending"
+    assert updated["tasks"]["task-c"]["status"] == "done"

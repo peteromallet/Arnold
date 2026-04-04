@@ -3,12 +3,12 @@
   "models": {
     "prep": "zhipu:glm-5.1",
     "plan": "zhipu:glm-5.1",
-    "critique": "zhipu:glm-5.1",
+    "critique": "minimax:MiniMax-M2.7-highspeed",
     "revise": "zhipu:glm-5.1",
     "gate": "zhipu:glm-5.1",
     "finalize": "zhipu:glm-5.1",
     "execute": "zhipu:glm-5.1",
-    "review": "zhipu:glm-5.1"
+    "review": "minimax:MiniMax-M2.7-highspeed"
   },
   "max_gate_iterations": 3,
   "eval_timeout_seconds": 1200,

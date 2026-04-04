@@ -43,12 +43,12 @@ def watch_and_score(
     manifest = TaskManifest.load(manifest_path)
     run_id = f"hermes-watch-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
 
-    scores_data = _load_scores_data(scores_path)
+    scores_data = load_scores_data(scores_path)
     scored_ids = set(scores_data.get("tasks", {}))
     started_at = time.monotonic()
     scores_data["run_id"] = run_id
 
-    scores_data = _refresh_scores_summary(manifest, scores_data)
+    scores_data = refresh_scores_summary(manifest, scores_data)
     _write_incremental_results(root, scores_data)
 
     stop_reason = "completed"
@@ -61,27 +61,13 @@ def watch_and_score(
                 for pred_path in predictions_dir.glob("*.jsonl")
                 if pred_path.name != "all_predictions.jsonl"
             }
-            # Retry tasks that scored None (transient scoring failures) — up to 3 attempts
-            retryable_ids = set()
-            exhausted_retry_ids = set()
-            for iid, entry in scores_data.get("tasks", {}).items():
-                if isinstance(entry, dict) and entry.get("resolved") is None:
-                    attempts = entry.get("attempts", 1)
-                    if attempts < 3 and iid in available_predictions:
-                        retryable_ids.add(iid)
-                    elif attempts >= 3:
-                        exhausted_retry_ids.add(iid)
-                        # Mark exhausted tasks for manual review
-                        if not entry.get("review"):
-                            entry["review"] = {
-                                "category": "scoring_exhausted",
-                                "explanation": f"Scoring failed {attempts} times: {entry.get('error', 'unknown error')}",
-                                "excluded_from_pass_rate": False,
-                                "reviewed_by": "auto",
-                                "reviewed_at": _utc_now(),
-                                "needs_manual_review": True,
-                            }
-                            _write_incremental_results(root, scores_data)
+            retryable_ids, exhausted_retry_ids, scores_changed = find_retryable_tasks(
+                scores_data,
+                available_predictions,
+            )
+            if scores_changed:
+                scores_data = refresh_scores_summary(manifest, scores_data)
+                _write_incremental_results(root, scores_data)
 
             scorable_ids = sorted(
                 instance_id
@@ -98,19 +84,18 @@ def watch_and_score(
 
             for batch_start in range(0, len(scorable_ids), 2):
               batch = scorable_ids[batch_start:batch_start + 2]
-              # Score up to 2 tasks in parallel: first on local Docker, second on Modal
+              # Score tasks via Modal (Docker may not be available)
               import concurrent.futures
               futures: dict[concurrent.futures.Future, str] = {}
               with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                   for i, instance_id in enumerate(batch):
-                      use_local = (i == 0)  # first task goes local, second goes Modal
                       futures[pool.submit(
                           _score_single_prediction,
                           available_predictions[instance_id],
                           instance_id,
                           run_id,
-                          cleanup_docker if use_local else False,  # only local cleans Docker
-                          use_modal=not use_local,
+                          False,
+                          use_modal=use_modal,
                       )] = instance_id
 
               for future in concurrent.futures.as_completed(futures):
@@ -119,6 +104,8 @@ def watch_and_score(
                     result = future.result()
                 except Exception as exc:
                     result = {"resolved": None, "error": str(exc), "returncode": None}
+                # Re-read scores from disk to avoid overwriting results written by concurrent processes/threads
+                scores_data = load_scores_data(scores_path)
                 prev_entry = scores_data.get("tasks", {}).get(instance_id, {})
                 prev_attempts = prev_entry.get("attempts", 0) if isinstance(prev_entry, dict) else 0
                 task_entry = {
@@ -139,9 +126,14 @@ def watch_and_score(
                 scores_data.setdefault("tasks", {})[instance_id] = task_entry
                 if result["resolved"] is not None:
                     scored_ids.add(instance_id)
+                elif result.get("error"):
+                    # Delay before retry — exponential backoff (30s, 60s, 120s, ...)
+                    delay = min(30 * (2 ** prev_attempts), 300)
+                    print(f"  Scoring failed for {instance_id} (attempt {prev_attempts + 1}), retrying in {delay}s", file=sys.stderr)
+                    time.sleep(delay)
 
                 manifest_summary = manifest.summary()
-                scores_data = _refresh_scores_summary(manifest, scores_data)
+                scores_data = refresh_scores_summary(manifest, scores_data)
                 _write_incremental_results(root, scores_data)
                 print(
                     _format_progress_line(
@@ -154,7 +146,7 @@ def watch_and_score(
                 )
 
             manifest_summary = manifest.summary()
-            scores_data = _refresh_scores_summary(manifest, scores_data)
+            scores_data = refresh_scores_summary(manifest, scores_data)
             _write_incremental_results(root, scores_data)
 
             if manifest.all_done() and not scorable_ids:
@@ -168,7 +160,7 @@ def watch_and_score(
         stop_reason = "interrupted"
 
     manifest_summary = manifest.summary()
-    scores_data = _refresh_scores_summary(manifest, scores_data)
+    scores_data = refresh_scores_summary(manifest, scores_data)
     scores_data["stop_reason"] = stop_reason
     _write_incremental_results(root, scores_data)
     print(
@@ -361,7 +353,7 @@ def _write_incremental_results(results_root: str | Path, scores_data: dict[str, 
     os.replace(temp_path, output_path)
 
 
-def _load_scores_data(scores_path: Path) -> dict[str, Any]:
+def load_scores_data(scores_path: Path) -> dict[str, Any]:
     base = {
         "manifest_total": 0,
         "manifest_done": 0,
@@ -398,7 +390,81 @@ def _load_scores_data(scores_path: Path) -> dict[str, Any]:
     return base
 
 
-def _refresh_scores_summary(manifest: TaskManifest, scores_data: dict[str, Any]) -> dict[str, Any]:
+def classify_task(entry: dict[str, Any]) -> str:
+    """Return the semantic scoring state for a task entry."""
+    if not isinstance(entry, dict):
+        return "error"
+
+    resolved = entry.get("resolved")
+    if resolved is True:
+        return "pass"
+    if resolved is False:
+        return "fail"
+
+    review = entry.get("review")
+    if isinstance(review, dict):
+        # Human reviews with exclusion are treated as "exhausted" (processed, not pending)
+        if review.get("reviewed_by") == "human":
+            return "exhausted"
+        if review.get("category") == "scoring_exhausted":
+            return "exhausted"
+
+    if resolved is None:
+        if any(
+            entry.get(field)
+            for field in ("error", "error_category", "stderr", "stdout")
+        ) or entry.get("returncode") is not None:
+            return "error"
+        return "pending"
+
+    return "error"
+
+
+def find_retryable_tasks(
+    scores_data: dict[str, Any],
+    predictions: dict[str, Path],
+) -> tuple[set[str], set[str], bool]:
+    retryable_ids: set[str] = set()
+    exhausted_ids: set[str] = set()
+    scores_changed = False
+
+    for instance_id, entry in scores_data.get("tasks", {}).items():
+        if not isinstance(entry, dict) or entry.get("resolved") is not None:
+            continue
+
+        # Never retry tasks with a human review — those are final decisions
+        review = entry.get("review")
+        if isinstance(review, dict) and review.get("reviewed_by") == "human":
+            exhausted_ids.add(instance_id)
+            continue
+
+        attempts = entry.get("attempts", 1)
+        max_attempts = 2 if entry.get("error_category") == "modal_sandbox" else 5
+        if attempts < max_attempts and instance_id in predictions:
+            retryable_ids.add(instance_id)
+            continue
+
+        if attempts < max_attempts:
+            continue
+
+        exhausted_ids.add(instance_id)
+        if entry.get("review"):
+            continue
+
+        entry["review"] = {
+            "category": "scoring_exhausted",
+            "explanation": f"Scoring failed {attempts} times: {entry.get('error', 'unknown error')}",
+            "excluded_from_pass_rate": False,
+            "reviewed_by": "auto",
+            "reviewed_at": _utc_now(),
+            "needs_manual_review": True,
+        }
+        scores_changed = True
+
+    return retryable_ids, exhausted_ids, scores_changed
+
+
+def refresh_scores_summary(manifest: TaskManifest, scores_data: dict[str, Any]) -> dict[str, Any]:
     refreshed = dict(scores_data)
     tasks = dict(scores_data.get("tasks", {}))
     refreshed["tasks"] = tasks
@@ -437,6 +503,10 @@ def _refresh_scores_summary(manifest: TaskManifest, scores_data: dict[str, Any])
         }
     )
     return refreshed
+
+
+_load_scores_data = load_scores_data
+_refresh_scores_summary = refresh_scores_summary
 
 
 def _cleanup_task_artifacts(run_id: str, instance_id: str) -> None:
@@ -603,7 +673,7 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = TaskManifest.load(manifest_path)
     manifest_summary = manifest.summary()
-    existing_scores = _load_scores_data(results_root / "_watch_scores.json")
+    existing_scores = load_scores_data(results_root / "_watch_scores.json")
     already_scored = len(existing_scores.get("tasks", {}))
     print(
         "Initial manifest status: "
@@ -624,7 +694,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _write_scorer_status(results_root: str | Path | None, status: str, detail: str = "") -> None:
+def write_scorer_status(results_root: str | Path | None, status: str, detail: str = "") -> None:
     """Write scorer health status to a file the dashboard can read."""
     if results_root is None:
         return
@@ -638,6 +708,9 @@ def _write_scorer_status(results_root: str | Path | None, status: str, detail: s
         status_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception:
         pass
+
+
+_write_scorer_status = write_scorer_status
 
 
 def main_with_restart(argv: list[str] | None = None, max_restarts: int = 10) -> int:
@@ -654,11 +727,11 @@ def main_with_restart(argv: list[str] | None = None, max_restarts: int = 10) -> 
     restarts = 0
     while restarts <= max_restarts:
         try:
-            _write_scorer_status(results_root, "running")
+            write_scorer_status(results_root, "running")
             return main(argv)
         except SystemExit as e:
             if e.code == 0:
-                _write_scorer_status(results_root, "completed")
+                write_scorer_status(results_root, "completed")
                 return 0
             restarts += 1
             detail = f"Exit code {e.code}"
@@ -669,9 +742,9 @@ def main_with_restart(argv: list[str] | None = None, max_restarts: int = 10) -> 
                 f"{'='*60}\n",
                 file=sys.stderr,
             )
-            _write_scorer_status(results_root, f"restarting ({restarts}/{max_restarts})", detail)
+            write_scorer_status(results_root, f"restarting ({restarts}/{max_restarts})", detail)
         except KeyboardInterrupt:
-            _write_scorer_status(results_root, "interrupted")
+            write_scorer_status(results_root, "interrupted")
             return 130
         except Exception as exc:
             restarts += 1
@@ -685,12 +758,12 @@ def main_with_restart(argv: list[str] | None = None, max_restarts: int = 10) -> 
                 f"{'='*60}\n",
                 file=sys.stderr,
             )
-            _write_scorer_status(results_root, f"restarting ({restarts}/{max_restarts})", detail)
+            write_scorer_status(results_root, f"restarting ({restarts}/{max_restarts})", detail)
         time.sleep(5)  # Brief pause before restart
 
     msg = f"Scorer gave up after {max_restarts} restarts"
     print(f"\n{'='*60}\n⛔ {msg}\n{'='*60}\n", file=sys.stderr)
-    _write_scorer_status(results_root, "dead", msg)
+    write_scorer_status(results_root, "dead", msg)
     return 1
 
 
