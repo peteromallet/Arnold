@@ -11,6 +11,7 @@ Usage:
 import html as html_mod
 import json
 import sys
+import urllib.request
 from datetime import datetime, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -27,6 +28,31 @@ CLOSED_SOURCE_LEADER = {
     "cost_per_task": "$0.75",
     "source": "swebench.com",
 }
+
+OPUS_CACHE_PATH = Path("/tmp/opus_per_instance.json")
+
+
+def _load_opus_per_instance() -> dict[str, bool]:
+    """Load Opus per-instance results (download once and cache locally)."""
+    if OPUS_CACHE_PATH.exists():
+        raw = json.loads(OPUS_CACHE_PATH.read_text())
+        return {k: v.get("resolved", False) if isinstance(v, dict) else bool(v) for k, v in raw.items()}
+
+    try:
+        url = "https://raw.githubusercontent.com/SWE-bench/swe-bench.github.io/master/data/leaderboards.json"
+        data = json.loads(urllib.request.urlopen(url, timeout=30).read())
+        opus_results = {}
+        for lb in data["leaderboards"]:
+            if lb["name"] == "bash-only":
+                for r in lb["results"]:
+                    if "Claude 4.5 Opus" in r["name"] and "high" in r["name"].lower():
+                        opus_results = r.get("per_instance_details", {})
+                        break
+        OPUS_CACHE_PATH.write_text(json.dumps(opus_results, indent=2))
+        return {k: v.get("resolved", False) if isinstance(v, dict) else bool(v) for k, v in opus_results.items()}
+    except Exception as e:
+        print(f"Warning: could not load Opus per-instance data: {e}")
+        return {}
 
 
 def _iter_dir() -> Path:
@@ -269,6 +295,37 @@ def _gather_data() -> dict:
         for lf in sorted(logs_dir.glob("*.stderr.log")):
             worker_logs[lf.stem.replace(".stderr", "")] = lf.name
 
+    # Opus per-task comparison
+    opus_per_instance = _load_opus_per_instance()
+    our_only = []
+    opus_only = []
+    both_solved = []
+    both_failed = []
+    opus_results_map: dict[str, bool] = {}
+    for t in tasks_data:
+        if t["status"] not in ("pass", "fail"):
+            continue
+        tid = t["id"]
+        we_passed = t["status"] == "pass"
+        opus_passed = opus_per_instance.get(tid, False)
+        opus_results_map[tid] = opus_passed
+        if we_passed and not opus_passed:
+            our_only.append(tid)
+        elif not we_passed and opus_passed:
+            opus_only.append(tid)
+        elif we_passed and opus_passed:
+            both_solved.append(tid)
+        else:
+            both_failed.append(tid)
+
+    opus_comparison = {
+        "our_only": our_only,
+        "opus_only": opus_only,
+        "both_solved": both_solved,
+        "both_failed": both_failed,
+        "opus_results": opus_results_map,
+    }
+
     return {
         "iteration": iter_dir.name,
         "robustness": robustness,
@@ -292,6 +349,7 @@ def _gather_data() -> dict:
         "manifest_total": manifest_total,
         "worker_logs": worker_logs,
         "closed_source": CLOSED_SOURCE_LEADER,
+        "opus_comparison": opus_comparison,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "probability": _compute_probability(passed, total, 500, CLOSED_SOURCE_LEADER["score"]),
     }
