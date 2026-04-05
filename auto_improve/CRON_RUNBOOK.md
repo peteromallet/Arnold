@@ -10,13 +10,30 @@ Be proactive — fix problems immediately, don't just report them.
 python -m auto_improve.check_scores iteration-021
 ```
 
-Then check everything is alive:
+Then check everything is alive **and making progress**:
 - Workers: `ps aux | grep run_evals | grep -v grep | wc -l` (expect 6-7)
 - Scorer: `ps aux | grep 'auto_improve.score' | grep -v grep` (expect 1)
 - Dashboard: `ps aux | grep dashboard_web | grep -v grep` (expect 1)
 - Disk: `df -h /` (alert if < 5GB)
 
 Check worker phases are progressing (not stuck on same task for 30+ min).
+
+**Scorer progress check** — don't just check if alive, check if it's actually scoring:
+```bash
+# When was the last score? Are there unscored predictions?
+python3 -c "
+import json
+from pathlib import Path
+s = json.load(open('results/auto-improve/iteration-021/_watch_scores.json'))
+preds = len(list(Path('results/auto-improve/iteration-021/_swebench_predictions').glob('*.jsonl')))
+scored = sum(1 for t in s['tasks'].values() if t.get('resolved') is not None)
+times = [t.get('scored_at','') for t in s['tasks'].values() if t.get('scored_at')]
+last = max(times) if times else 'never'
+print(f'Scored: {scored}, Preds: {preds}, Unscored: {preds - scored}, Last score: {last[:19]}')
+if preds - scored > 3: print('WARNING: scorer may be stuck')
+"
+```
+If unscored > 3 and last score was 30+ min ago: `tail -10 /tmp/scorer-021.log` — if same error looping, kill and restart scorer.
 
 **If anything is dead, restart it immediately** — see [Restart Commands](#restart-commands) below.
 
