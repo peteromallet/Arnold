@@ -318,12 +318,15 @@ def _gather_data() -> dict:
         else:
             both_failed.append(tid)
 
+    # Include ALL Opus results (full 500) for chart overlay
+    all_opus_results = {tid: bool(v) for tid, v in opus_per_instance.items()}
+
     opus_comparison = {
         "our_only": our_only,
         "opus_only": opus_only,
         "both_solved": both_solved,
         "both_failed": both_failed,
-        "opus_results": opus_results_map,
+        "opus_results": all_opus_results,
     }
 
     return {
