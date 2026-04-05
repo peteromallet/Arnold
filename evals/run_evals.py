@@ -983,10 +983,20 @@ def run_all_evals(
             )
 
             if loop_result.escalated:
-                final_status = "escalated"
-                _log(eval_name, "ESCALATED — skipping scoring")
-                notes.append("Megaplan gate escalated; scoring skipped.")
-            else:
+                # Check if a patch exists despite escalation (e.g. review failed but execute succeeded)
+                _has_patch = hasattr(prepared, 'patch_path') and prepared.patch_path and prepared.patch_path.exists() and prepared.patch_path.stat().st_size > 0
+                if not _has_patch and hasattr(prepared, 'workspace_path'):
+                    import subprocess as _sp
+                    _diff = _sp.run(["git", "diff"], cwd=prepared.workspace_path, capture_output=True, text=True).stdout.strip()
+                    _has_patch = bool(_diff)
+                if _has_patch:
+                    _log(eval_name, "ESCALATED but patch exists — scoring anyway")
+                    notes.append("Megaplan escalated but patch was available; scoring attempted.")
+                else:
+                    final_status = "escalated"
+                    _log(eval_name, "ESCALATED — no patch, skipping scoring")
+                    notes.append("Megaplan gate escalated; no patch produced.")
+            if final_status != "escalated":
                 _log(eval_name, "Scoring...")
                 scoring_result = benchmark.score(
                     prepared,
