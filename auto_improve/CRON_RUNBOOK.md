@@ -2,125 +2,80 @@
 
 **Active iteration: 021** (GLM-5.1 + MiniMax-M2.7, heavy robustness, 500 tasks)
 
-## 1. Scores
+Be proactive — fix problems immediately, don't just report them.
+
+## 1. Scores & Health
 
 ```bash
 python -m auto_improve.check_scores iteration-021
 ```
 
-Note pass rate, new scores since last check, predictions pending scoring.
+Then check everything is alive:
+- Workers: `ps aux | grep run_evals | grep -v grep | wc -l` (expect 6-7)
+- Scorer: `ps aux | grep 'auto_improve.score' | grep -v grep` (expect 1)
+- Dashboard: `ps aux | grep dashboard_web | grep -v grep` (expect 1)
+- Disk: `df -h /` (alert if < 5GB)
 
-**If no new scores in 2+ hours**: something is wrong. Check scorer logs (`tail -20 /tmp/scorer-021.log`), check if predictions exist but aren't being scored (`ls -lt results/auto-improve/iteration-021/_swebench_predictions/ | head -5`). Restart scorer if needed.
+Check worker phases are progressing (not stuck on same task for 30+ min).
 
-## 2. Health
+**If anything is dead, restart it immediately** — see [Restart Commands](#restart-commands) below.
 
-Check everything is alive and progressing. Fix anything broken immediately.
+## 2. Diagnose Issues
 
-```bash
-# Workers alive?
-ps aux | grep run_evals | grep -v grep | wc -l
+Check for known failure patterns:
+- **Review bug**: `grep -ac 'incomplete review coverage' results/auto-improve/iteration-021/_worker_logs/worker-*.stderr.log` — should be 0
+- **Quota spinners**: check for `Weekly.*Limit` in recent worker logs — kill the worker if spinning
+- **High-retry tasks** (5+ requeues, still unresolved): `python -m auto_improve.resolve_stuck` — check if infra or model quality
+- **Limbo tasks** (escalated/errored, not retried): requeue as pending
+- **Scorer stuck** on one task: `tail -10 /tmp/scorer-021.log` — if same error looping, kill and restart
 
-# Scorer alive?
-ps aux | grep 'auto_improve.score' | grep -v grep
-
-# Dashboard alive?
-ps aux | grep dashboard_web | grep -v grep
-
-# Worker phases — are they progressing?
-for w in 0 1 2 3 4 5; do
-  grep -a '\] [A-Z].*running\|ESCALATED\|PASSED\|FAILED' results/auto-improve/iteration-021/_worker_logs/worker-$w.stderr.log 2>/dev/null | grep -v resource_tracker | tail -1
-done
-
-# Review bug?
-grep -ac 'incomplete review coverage' results/auto-improve/iteration-021/_worker_logs/worker-*.stderr.log
-
-# Quota spinners?
-for w in 0 1 2 3 4 5; do
-  tail -50 results/auto-improve/iteration-021/_worker_logs/worker-$w.stderr.log 2>/dev/null | grep -c 'Weekly.*Limit'
-done
-
-# Disk
-df -h /
-```
-
-**Restart commands:**
-- Scorer: `nohup python -m auto_improve.score --watch --iterations 021 > /tmp/scorer-021.log 2>&1 &`
-- Dashboard: `nohup python -m auto_improve.dashboard_web 021 --port 8080 > /dev/null 2>&1 &`
-- Workers: `nohup python -m evals.run_evals --config results/auto-improve/iteration-021/_run_config.json -v > /dev/null 2>&1 &`
-- Kill quota spinner: find worker-N PID and `kill` it (main loop restarts it)
-
-**If no new predictions in 2+ hours**: check worker logs for what phase they're stuck on. Common causes:
-- All workers in CRITIQUE loops (MiniMax slow) — wait, they'll resolve
-- Workers hitting quota errors — kill the spinner, check key pool
-- Review bug returned — alert immediately
-- All workers escalating — check if it's a systemic issue vs hard tasks
-
-**Scorer alive but stuck**: check if last few scorer log lines are the same error repeating (e.g. `tail -10 /tmp/scorer-021.log`). If the same task is erroring in a loop, kill the scorer, then restart. The stuck task will be retried with exponential backoff on the next cycle.
-
-**Workers alive but all escalating**: check the last 10 completed tasks in worker logs — if >5 consecutive escalations, it's likely systemic, not just hard tasks. Diagnose:
-```bash
-# Count recent escalations vs completions
-grep -a 'ESCALATED\|PASSED\|FAILED' results/auto-improve/iteration-021/_worker_logs/worker-*.stderr.log | tail -20
-```
-Common systemic causes we've hit:
-- Review template bug (all escalate at review phase) → check for "incomplete review coverage"
-- Gate override bug (all escalate at gate phase, PROCEED overridden) → check for "Overriding to ITERATE"
-- API down (all fail at prep) → check for 429/5xx errors
-If systemic: fix the root cause, requeue the escalated tasks, restart workers.
-
-**Limbo tasks**: Check for tasks stuck in non-terminal states that aren't being retried:
-```bash
-python3 -c "
-import json
-from pathlib import Path
-m = json.load(open('results/auto-improve/iteration-021/_task_manifest.json'))
-s = json.load(open('results/auto-improve/iteration-021/_watch_scores.json'))
-preds = set(p.stem for p in Path('results/auto-improve/iteration-021/_swebench_predictions').glob('*.jsonl'))
-escalated = sum(1 for tid, t in m['tasks'].items() if t.get('status') == 'done' and tid not in preds)
-errors = sum(1 for t in m['tasks'].values() if t.get('status') == 'error')
-exhausted = sum(1 for t in s['tasks'].values() if isinstance(t.get('review',{}), dict) and t.get('review',{}).get('category') == 'scoring_exhausted')
-print(f'Escalated (no patch): {escalated}, Errors: {errors}, Scoring exhausted: {exhausted}')
-if escalated + errors + exhausted > 0: print('ACTION: requeue these tasks')
-"
-```
-- **Escalated**: done but no prediction → requeue as pending
-- **Errors**: failed with < 5 errors → requeue as pending
-- **Scoring exhausted**: has prediction but scorer gave up → reset scoring attempts to 0
-
-**Note on retry caps**: Data shows ~60% of high-retry tasks eventually pass. Retrying is productive — most failures are infrastructure, not model quality. Don't cap retries. Just keep requeuing. Only force-resolve a task if it's clear the model fundamentally can't solve it (check the traces).
-
-## 3. Failures
+## 3. Failures & Reviews
 
 ```bash
 python -m auto_improve.check_false_negatives
 ```
 
-If any >90% match to golden found: these are likely correct patches failed by scoring infra. Verify and resolve as PASS with documented reasoning.
+If any >90% match to golden: verify and resolve as PASS with documented reasoning.
 
-For new FAILs: compare against golden patch to classify (close miss, wrong approach, incomplete, infra failure).
+For new FAILs: compare against golden to classify (close miss, wrong approach, incomplete, infra failure).
 
-## 4. Push
+## 4. Push & Report
 
 ```bash
 python -m auto_improve.dashboard_export 021 --push
-cd /path/to/hermes-agent && git add -A auto_improve/ evals/ tests/ && git diff --cached --quiet || git commit -m "auto: update from cron" && git push fork main
+cd /Users/peteromalley/Documents/hermes-agent && git add -A auto_improve/ evals/ tests/ && git diff --cached --quiet || git commit -m "auto: update from cron" && git push fork main
 ```
 
-## 5. Report
+Report concisely: scores, what changed, what you fixed, anything needing user attention.
 
-Concise summary: scores, worker status, any issues found and fixed.
+---
 
-**High-retry alert** (5+ requeues): Check these tasks each hour:
+## Restart Commands
+
 ```bash
-python3 -c "
-import json
-m = json.load(open('results/auto-improve/iteration-021/_task_manifest.json'))
-s = json.load(open('results/auto-improve/iteration-021/_watch_scores.json'))
-for tid, t in m['tasks'].items():
-    rq = sum(1 for h in t.get('history',[]) if h.get('event')=='requeued')
-    if rq >= 5 and (tid not in s['tasks'] or s['tasks'][tid].get('resolved') is None):
-        reasons = [h.get('reason','') for h in t.get('history',[]) if h.get('event')=='requeued'][-3:]
-        print(f'{tid}: {rq}x — {reasons}')
-"
+# Scorer
+nohup python -m auto_improve.score --watch --iterations 021 > /tmp/scorer-021.log 2>&1 &
+
+# Dashboard
+nohup python -m auto_improve.dashboard_web 021 --port 8080 > /dev/null 2>&1 &
+
+# Workers (kills all and relaunches)
+ps aux | grep 'run_evals' | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
+sleep 2
+nohup python -m evals.run_evals --config results/auto-improve/iteration-021/_run_config.json -v > /dev/null 2>&1 &
+
+# Dashboard repo wiped (/tmp cleaned by OS)
+cd /tmp && git clone https://github.com/peteromallet/swe-bench-challenge.git
 ```
-If all recent reasons are infra (quota, dead_worker) → the task just needs a healthy worker. If reasons include `escalated_no_patch` from model quality → check traces to decide if it's worth continuing.
+
+## Known Issues We've Hit
+
+| Issue | Symptom | Fix |
+|-------|---------|-----|
+| Review template bug | "incomplete review coverage" on all tasks | Fixed in megaplan — restart workers |
+| Gate override bug | Infinite critique→revise loops, PROCEED overridden | Fixed in megaplan — restart workers |
+| Z.AI quota exhaustion | 429 "Weekly/Monthly Limit Exhausted" | Key pool now cools down key for 1h; other keys used |
+| MiniMax 429 | Rate limit on critique/review | Key pool cools down key 60s; OpenRouter fallback |
+| Scorer stuck on one task | Same ERROR repeating in scorer log | Kill scorer, restart — stuck task retries with backoff |
+| /tmp wiped by OS | Dashboard 404, data.json missing | Re-clone swe-bench-challenge repo |
+| Mass escalation | >5 consecutive escalations | Check which phase — usually a systemic bug |
