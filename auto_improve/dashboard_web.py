@@ -110,6 +110,50 @@ def _task_issue_description(iter_dir: Path, tid: str) -> str:
     return ""
 
 
+# Pricing per token (GLM-5-Code equivalent rates)
+_COST_PER_TOKEN = {
+    "glm": {"input": 1.20 / 1_000_000, "output": 5.00 / 1_000_000},
+    "minimax": {"input": 0.60 / 1_000_000, "output": 2.40 / 1_000_000},
+}
+
+
+def _estimate_task_cost(iter_dir, tid: str) -> float:
+    """Estimate cost for a task from trace message character counts."""
+    total_cost = 0.0
+    for worker_dir in sorted(iter_dir.glob("worker-*")):
+        task_dir = worker_dir / tid
+        if not task_dir.exists():
+            continue
+        for run_dir in sorted(task_dir.iterdir()):
+            pd = run_dir / "phases"
+            if not pd or not pd.exists():
+                continue
+            for pf in pd.glob("*.json"):
+                try:
+                    d = json.loads(pf.read_text())
+                    model = d.get("model", "")
+                    msgs = d.get("trace_messages", [])
+                    if not msgs:
+                        continue
+                    input_chars = sum(len(m.get("content", "") or "") for m in msgs if m.get("role") != "assistant")
+                    output_chars = sum(len(m.get("content", "") or "") for m in msgs if m.get("role") == "assistant")
+                    for m in msgs:
+                        for tc in m.get("tool_calls", []):
+                            output_chars += len(str(tc.get("function", {}).get("arguments", "")))
+                    input_tokens = input_chars // 4
+                    output_tokens = output_chars // 4
+                    if "glm" in model.lower() or "zhipu" in model.lower():
+                        pricing = _COST_PER_TOKEN["glm"]
+                    elif "minimax" in model.lower():
+                        pricing = _COST_PER_TOKEN["minimax"]
+                    else:
+                        pricing = _COST_PER_TOKEN["glm"]
+                    total_cost += input_tokens * pricing["input"] + output_tokens * pricing["output"]
+                except Exception:
+                    pass
+    return round(total_cost, 4)
+
+
 def _gather_data() -> dict:
     iter_dir = _iter_dir()
     config_path = iter_dir / "_run_config.json"
@@ -173,6 +217,9 @@ def _gather_data() -> dict:
         total_time = sum(p["duration_s"] for p in phases)
         gate_iterations = sum(1 for p in phases if p["name"] == "gate")
 
+        # Estimate cost from trace messages
+        task_cost = _estimate_task_cost(iter_dir, tid)
+
         issue_desc = _task_issue_description(iter_dir, tid)
         github_url = _task_github_url(tid)
         repo_name = _task_repo_name(tid)
@@ -187,6 +234,7 @@ def _gather_data() -> dict:
             "phases": phases,
             "total_time_s": total_time,
             "gate_iterations": gate_iterations,
+            "cost_usd": task_cost,
             "worker": worker,
             "run_path": run_path,
             "scored_at": scored_at,
@@ -325,6 +373,10 @@ def _gather_data() -> dict:
     timed_tasks = [t for t in tasks_data if t["total_time_s"] > 0 and t["status"] in ("pass", "fail")]
     avg_time_s = round(sum(t["total_time_s"] for t in timed_tasks) / len(timed_tasks)) if timed_tasks else 0
 
+    costed_tasks = [t for t in tasks_data if t.get("cost_usd", 0) > 0]
+    avg_cost = round(sum(t["cost_usd"] for t in costed_tasks) / len(costed_tasks), 3) if costed_tasks else 0
+    total_cost = round(sum(t["cost_usd"] for t in costed_tasks), 2)
+
     manifest_path = _iter_dir() / "_task_manifest.json"
     manifest_pending = 0
     manifest_claimed = 0
@@ -402,6 +454,8 @@ def _gather_data() -> dict:
         "recent_pace_hours": round(recent_pace_hours, 2),
         "repo_stats": repo_stats,
         "avg_time_s": avg_time_s,
+        "avg_cost_usd": avg_cost,
+        "total_cost_usd": total_cost,
         "manifest_pending": manifest_pending,
         "manifest_claimed": manifest_claimed,
         "manifest_done": manifest_done,
@@ -449,7 +503,12 @@ def _compute_probability(passes: int, total: int, target: int, opus_score: float
 def _compute_task_aware_probability(
     tasks_data: list, opus_per_instance: dict, manifest_path, target: int, opus_score: float,
 ) -> dict:
-    """Task-aware probability using conditional pass rates based on Opus results."""
+    """Task-aware probability using conditional pass rates based on Opus results.
+
+    Uses our observed pass rate conditional on Opus's result for the same task.
+    Opus failing a task is a difficulty signal — regardless of whether we've
+    attempted it yet.
+    """
     import numpy as np
     scored = [t for t in tasks_data if t["status"] in ("pass", "fail")]
     if len(scored) < 10:
