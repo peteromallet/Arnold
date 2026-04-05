@@ -68,6 +68,25 @@ Common systemic causes we've hit:
 - API down (all fail at prep) → check for 429/5xx errors
 If systemic: fix the root cause, requeue the escalated tasks, restart workers.
 
+**Limbo tasks**: Check for tasks stuck in non-terminal states that aren't being retried:
+```bash
+python3 -c "
+import json
+from pathlib import Path
+m = json.load(open('results/auto-improve/iteration-021/_task_manifest.json'))
+s = json.load(open('results/auto-improve/iteration-021/_watch_scores.json'))
+preds = set(p.stem for p in Path('results/auto-improve/iteration-021/_swebench_predictions').glob('*.jsonl'))
+escalated = sum(1 for tid, t in m['tasks'].items() if t.get('status') == 'done' and tid not in preds)
+errors = sum(1 for t in m['tasks'].values() if t.get('status') == 'error')
+exhausted = sum(1 for t in s['tasks'].values() if isinstance(t.get('review',{}), dict) and t.get('review',{}).get('category') == 'scoring_exhausted')
+print(f'Escalated (no patch): {escalated}, Errors: {errors}, Scoring exhausted: {exhausted}')
+if escalated + errors + exhausted > 0: print('ACTION: requeue these tasks')
+"
+```
+- **Escalated**: done but no prediction → requeue as pending
+- **Errors**: failed with < 5 errors → requeue as pending
+- **Scoring exhausted**: has prediction but scorer gave up → reset scoring attempts to 0
+
 ## 3. Failures
 
 ```bash
