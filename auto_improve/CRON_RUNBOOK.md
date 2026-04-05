@@ -1,98 +1,53 @@
-# Hourly Cron Runbook
+# Cron Runbook
 
 **Active iteration: 021** (GLM-5.1 + MiniMax-M2.7, heavy robustness, 500 tasks)
 
-Be proactive — fix problems immediately, don't just report them.
-
-## 1. Scores & Health
+## Automated checks
 
 ```bash
-python -m auto_improve.check_scores iteration-021
+python -m auto_improve.cron --fix --push
 ```
 
-Then check everything is alive **and making progress**:
-- Workers: `ps aux | grep run_evals | grep -v grep | wc -l` (expect 6-7)
-- Scorer: `ps aux | grep 'auto_improve.score' | grep -v grep` (expect 1)
-- Dashboard: `ps aux | grep dashboard_web | grep -v grep` (expect 1)
-- Disk: `df -h /` (alert if < 5GB)
+This handles: score check, process health, scorer stuck detection, quota spinners, review bug, limbo tasks, false negatives, dashboard export, and git push. See `auto_improve/cron.py` for details.
 
-Check worker phases are progressing (not stuck on same task for 30+ min).
+## When the script can't fix it
 
-**Scorer progress check** — don't just check if alive, check if it's actually scoring:
-```bash
-# When was the last score? Are there unscored predictions?
-python3 -c "
-import json
-from pathlib import Path
-s = json.load(open('results/auto-improve/iteration-021/_watch_scores.json'))
-preds = len(list(Path('results/auto-improve/iteration-021/_swebench_predictions').glob('*.jsonl')))
-scored = sum(1 for t in s['tasks'].values() if t.get('resolved') is not None)
-times = [t.get('scored_at','') for t in s['tasks'].values() if t.get('scored_at')]
-last = max(times) if times else 'never'
-print(f'Scored: {scored}, Preds: {preds}, Unscored: {preds - scored}, Last score: {last[:19]}')
-if preds - scored > 3: print('WARNING: scorer may be stuck')
-"
-```
-If unscored > 3 and last score was 30+ min ago: `tail -10 /tmp/scorer-021.log` — if same error looping, kill and restart scorer.
-
-**If anything is dead, restart it immediately** — see [Restart Commands](#restart-commands) below.
-
-## 2. Diagnose Issues
-
-Check for known failure patterns:
-- **Review bug**: `grep -ac 'incomplete review coverage' results/auto-improve/iteration-021/_worker_logs/worker-*.stderr.log` — should be 0
-- **Quota spinners**: check for `Weekly.*Limit` in recent worker logs — kill the worker if spinning
-- **High-retry tasks** (5+ requeues, still unresolved): `python -m auto_improve.resolve_stuck` — check if infra or model quality
-- **Limbo tasks** (escalated/errored, not retried): requeue as pending
-- **Scorer stuck** on one task: `tail -10 /tmp/scorer-021.log` — if same error looping, kill and restart
-
-## 3. Failures & Reviews
+### Mass escalation (>5 consecutive)
 
 ```bash
-python -m auto_improve.check_false_negatives
+grep -a 'ESCALATED\|PASSED\|FAILED' results/auto-improve/iteration-021/_worker_logs/worker-*.stderr.log | tail -20
 ```
 
-If any >90% match to golden: verify and resolve as PASS with documented reasoning.
+Check which phase they're dying at:
+- All at review → review template bug returned
+- All at gate → gate override bug returned
+- All at prep → API down / all keys exhausted
 
-For new FAILs: compare against golden to classify (close miss, wrong approach, incomplete, infra failure).
+Fix the root cause, requeue escalated tasks, restart workers.
 
-## 4. Push & Report
+### Systemic scoring failures
 
+If scorer keeps erroring on the same task, that task may have a Modal sandbox issue. Check `tail -20 /tmp/scorer-021.log`. Kill scorer, restart — the stuck task gets exponential backoff.
+
+### Dashboard repo wiped
+
+OS cleans `/tmp` periodically. If dashboard 404s:
 ```bash
-python -m auto_improve.dashboard_export 021 --push
-cd /Users/peteromalley/Documents/hermes-agent && git add -A auto_improve/ evals/ tests/ && git diff --cached --quiet || git commit -m "auto: update from cron" && git push fork main
-```
-
-Report concisely: scores, what changed, what you fixed, anything needing user attention.
-
----
-
-## Restart Commands
-
-```bash
-# Scorer
-nohup python -m auto_improve.score --watch --iterations 021 > /tmp/scorer-021.log 2>&1 &
-
-# Dashboard
-nohup python -m auto_improve.dashboard_web 021 --port 8080 > /dev/null 2>&1 &
-
-# Workers (kills all and relaunches)
-ps aux | grep 'run_evals' | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
-sleep 2
-nohup python -m evals.run_evals --config results/auto-improve/iteration-021/_run_config.json -v > /dev/null 2>&1 &
-
-# Dashboard repo wiped (/tmp cleaned by OS)
 cd /tmp && git clone https://github.com/peteromallet/swe-bench-challenge.git
 ```
 
-## Known Issues We've Hit
+## Known issues
 
 | Issue | Symptom | Fix |
 |-------|---------|-----|
-| Review template bug | "incomplete review coverage" on all tasks | Fixed in megaplan — restart workers |
-| Gate override bug | Infinite critique→revise loops, PROCEED overridden | Fixed in megaplan — restart workers |
-| Z.AI quota exhaustion | 429 "Weekly/Monthly Limit Exhausted" | Key pool now cools down key for 1h; other keys used |
-| MiniMax 429 | Rate limit on critique/review | Key pool cools down key 60s; OpenRouter fallback |
-| Scorer stuck on one task | Same ERROR repeating in scorer log | Kill scorer, restart — stuck task retries with backoff |
-| /tmp wiped by OS | Dashboard 404, data.json missing | Re-clone swe-bench-challenge repo |
-| Mass escalation | >5 consecutive escalations | Check which phase — usually a systemic bug |
+| Review template bug | "incomplete review coverage" | Fixed in megaplan — restart workers |
+| Gate override bug | Infinite critique→revise loops | Fixed in megaplan — restart workers |
+| Z.AI quota exhaustion | 429 "Weekly/Monthly Limit Exhausted" | Key pool cools key 1h; other keys used |
+| MiniMax 429 | Rate limit on critique/review | Key pool cools key 60s; OpenRouter fallback |
+| Scorer stuck | Same ERROR repeating in log | Kill and restart scorer |
+| /tmp wiped | Dashboard 404 | Re-clone swe-bench-challenge repo |
+| Mass escalation | >5 consecutive escalations | Diagnose phase — usually systemic bug |
+
+## Retry policy
+
+Data shows ~60% of high-retry tasks eventually pass. Most failures are infrastructure, not model quality. Don't cap retries — keep requeuing. The cron script handles this automatically.
