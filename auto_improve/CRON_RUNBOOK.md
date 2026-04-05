@@ -109,3 +109,18 @@ cd /path/to/hermes-agent && git add -A auto_improve/ evals/ tests/ && git diff -
 ## 5. Report
 
 Concise summary: scores, worker status, any issues found and fixed.
+
+**High-retry alert** (5+ requeues): Check these tasks each hour:
+```bash
+python3 -c "
+import json
+m = json.load(open('results/auto-improve/iteration-021/_task_manifest.json'))
+s = json.load(open('results/auto-improve/iteration-021/_watch_scores.json'))
+for tid, t in m['tasks'].items():
+    rq = sum(1 for h in t.get('history',[]) if h.get('event')=='requeued')
+    if rq >= 5 and (tid not in s['tasks'] or s['tasks'][tid].get('resolved') is None):
+        reasons = [h.get('reason','') for h in t.get('history',[]) if h.get('event')=='requeued'][-3:]
+        print(f'{tid}: {rq}x — {reasons}')
+"
+```
+If all recent reasons are infra (quota, dead_worker) → the task just needs a healthy worker. If reasons include `escalated_no_patch` from model quality → check traces to decide if it's worth continuing.
