@@ -55,6 +55,19 @@ df -h /
 - Review bug returned — alert immediately
 - All workers escalating — check if it's a systemic issue vs hard tasks
 
+**Scorer alive but stuck**: check if last few scorer log lines are the same error repeating (e.g. `tail -10 /tmp/scorer-021.log`). If the same task is erroring in a loop, kill the scorer, then restart. The stuck task will be retried with exponential backoff on the next cycle.
+
+**Workers alive but all escalating**: check the last 10 completed tasks in worker logs — if >5 consecutive escalations, it's likely systemic, not just hard tasks. Diagnose:
+```bash
+# Count recent escalations vs completions
+grep -a 'ESCALATED\|PASSED\|FAILED' results/auto-improve/iteration-021/_worker_logs/worker-*.stderr.log | tail -20
+```
+Common systemic causes we've hit:
+- Review template bug (all escalate at review phase) → check for "incomplete review coverage"
+- Gate override bug (all escalate at gate phase, PROCEED overridden) → check for "Overriding to ITERATE"
+- API down (all fail at prep) → check for 429/5xx errors
+If systemic: fix the root cause, requeue the escalated tasks, restart workers.
+
 ## 3. Failures
 
 ```bash
