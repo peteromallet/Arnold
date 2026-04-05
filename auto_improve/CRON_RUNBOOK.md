@@ -1,7 +1,5 @@
 # Hourly Cron Runbook
 
-This is the checklist that runs every hour. Go top to bottom, every time.
-
 **Active iteration: 021** (GLM-5.1 + MiniMax-M2.7, heavy robustness, 500 tasks)
 
 ## 1. Scores
@@ -10,90 +8,70 @@ This is the checklist that runs every hour. Go top to bottom, every time.
 python -m auto_improve.check_scores iteration-021
 ```
 
-Record: pass rate, new scores since last check, predictions pending scoring.
+Note pass rate, new scores since last check, predictions pending scoring.
 
-## 2. Health Check
+**If no new scores in 2+ hours**: something is wrong. Check scorer logs (`tail -20 /tmp/scorer-021.log`), check if predictions exist but aren't being scored (`ls -lt results/auto-improve/iteration-021/_swebench_predictions/ | head -5`). Restart scorer if needed.
 
-```bash
-python -m auto_improve.healthcheck
-```
+## 2. Health
 
-Fix anything it flags:
-- **Scorer dead** → `nohup python -m auto_improve.score --watch --iterations 021 > /tmp/scorer-021.log 2>&1 &`
-- **Dashboard dead** → `nohup python -m auto_improve.dashboard_web 021 --port 8080 > /dev/null 2>&1 &`
-- **Worker stalled >20 min** → check if rate limited or actually stuck. If stuck, kill and let manifest requeue.
-- **Worker quota spinning** (Z.AI weekly limit) → kill that worker, it'll restart with a different key.
-- **Disk <10GB** → `rm -rf evals/workspaces-auto-improve/iteration-0{old iterations}/`
-
-## 3. Rate Limits
-
-Check 429 counts per worker. Goal: **some 429s but not excessive**.
-
-| 429s/worker | Action |
-|-------------|--------|
-| 0 | Healthy |
-| 1-50 | Healthy |
-| 50-200 | Moderate — monitor |
-| 200+ | Kill that worker or check key pool |
-
-Also check for Z.AI quota errors (`Weekly/Monthly Limit Exhausted`). These need the worker killed — retrying is futile until quota resets.
-
-## 4. Review Bug Check
+Check everything is alive and progressing. Fix anything broken immediately.
 
 ```bash
+# Workers alive?
+ps aux | grep run_evals | grep -v grep | wc -l
+
+# Scorer alive?
+ps aux | grep 'auto_improve.score' | grep -v grep
+
+# Dashboard alive?
+ps aux | grep dashboard_web | grep -v grep
+
+# Worker phases — are they progressing?
+for w in 0 1 2 3 4 5; do
+  grep -a '\] [A-Z].*running\|ESCALATED\|PASSED\|FAILED' results/auto-improve/iteration-021/_worker_logs/worker-$w.stderr.log 2>/dev/null | grep -v resource_tracker | tail -1
+done
+
+# Review bug?
 grep -ac 'incomplete review coverage' results/auto-improve/iteration-021/_worker_logs/worker-*.stderr.log
+
+# Quota spinners?
+for w in 0 1 2 3 4 5; do
+  tail -50 results/auto-improve/iteration-021/_worker_logs/worker-$w.stderr.log 2>/dev/null | grep -c 'Weekly.*Limit'
+done
+
+# Disk
+df -h /
 ```
 
-If any recent review failures, the review template bug may have regressed. Alert immediately.
+**Restart commands:**
+- Scorer: `nohup python -m auto_improve.score --watch --iterations 021 > /tmp/scorer-021.log 2>&1 &`
+- Dashboard: `nohup python -m auto_improve.dashboard_web 021 --port 8080 > /dev/null 2>&1 &`
+- Workers: `nohup python -m evals.run_evals --config results/auto-improve/iteration-021/_run_config.json -v > /dev/null 2>&1 &`
+- Kill quota spinner: find worker-N PID and `kill` it (main loop restarts it)
 
-## 5. False Negative Check
+**If no new predictions in 2+ hours**: check worker logs for what phase they're stuck on. Common causes:
+- All workers in CRITIQUE loops (MiniMax slow) — wait, they'll resolve
+- Workers hitting quota errors — kill the spinner, check key pool
+- Review bug returned — alert immediately
+- All workers escalating — check if it's a systemic issue vs hard tasks
+
+## 3. Failures
 
 ```bash
 python -m auto_improve.check_false_negatives
 ```
 
-Compares failed patches against golden reference. If a failed task has >90% identical changes to golden, it's likely a scoring infrastructure failure.
+If any >90% match to golden found: these are likely correct patches failed by scoring infra. Verify and resolve as PASS with documented reasoning.
 
-- **100% match** → resolve as PASS via review CLI with `category=scoring_infra, golden=identical`
-- **>90% match** → inspect manually, resolve if functionally equivalent
-- **<90%** → real failure, leave as is
+For new FAILs: compare against golden patch to classify (close miss, wrong approach, incomplete, infra failure).
 
-All manual reviews must be documented with reasoning and visible on the dashboard via the "Manually reviewed" filter.
-
-## 6. Failure Analysis
-
-For new FAIL tasks, compare against golden patch:
-
-```python
-from datasets import load_dataset
-ds = load_dataset('princeton-nlp/SWE-bench_Verified', split='test')
-golden = {inst['instance_id']: inst for inst in ds}
-```
-
-Classify each failure:
-- **Same approach as golden, minor difference** → close miss
-- **Different approach, ours is wrong** → model misunderstood
-- **Incomplete** → right approach, missed a file or change
-- **Scoring infra** → correct patch, scoring failed
-
-## 7. Export & Push
+## 4. Push
 
 ```bash
 python -m auto_improve.dashboard_export 021 --push
-```
-
-Updates GitHub Pages dashboard with latest scores, traces, probability estimates, and full trace uploads to the GitHub Release.
-
-Also push code changes:
-```bash
 cd /path/to/hermes-agent && git add -A auto_improve/ evals/ tests/ && git diff --cached --quiet || git commit -m "auto: update from cron" && git push fork main
 ```
 
-## 8. Report
+## 5. Report
 
-Summarize:
-- Pass rate and change since last check
-- Worker status (phases, any stuck/dead)
-- Any issues found and fixed
-- Any false negatives found and resolved
-- Rate limit / quota status
+Concise summary: scores, worker status, any issues found and fixed.
