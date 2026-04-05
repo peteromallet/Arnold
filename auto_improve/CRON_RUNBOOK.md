@@ -101,13 +101,35 @@ Classify each failure:
 - **Critique missed it** → critique prompt issue
 - **Execute didn't test properly** → execute prompt issue
 
-## 6. SKIP Task Check
+## 6. False Negative Check
+
+```bash
+python -m auto_improve.check_false_negatives
+```
+
+Compares failed patches against golden reference. If a failed task has >90% identical changes to golden, it's likely a scoring infrastructure failure, not a real failure.
+
+- **100% match** → resolve as PASS via `python -m auto_improve.review --iteration 021 --task TASK_ID --resolve pass --category scoring_infra --golden identical`
+- **>90% match** → inspect manually, resolve if functionally equivalent
+- **<90%** → real failure, leave as is
+
+All manual reviews must be documented with reasoning and are visible on the dashboard via the "Manually reviewed" filter.
+
+## 7. SKIP Task Check
 
 For SKIP tasks (Modal sandbox failures), compare our patch to golden:
 - If patches are essentially identical → count as virtual PASS
 - If different → note but don't count either way
 
-## 7. Report
+## 8. Export & Push
+
+```bash
+python -m auto_improve.dashboard_export 021 --push
+```
+
+Updates the GitHub Pages dashboard with latest scores, traces, and probability estimates.
+
+## 9. Report
 
 Summarize for the user:
 - Pass rates for each iteration
