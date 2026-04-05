@@ -8,7 +8,14 @@
 python -m auto_improve.cron --fix --push
 ```
 
-This handles: score check, process health, scorer stuck detection, quota spinners, review bug, limbo tasks, false negatives, dashboard export, and git push. See `auto_improve/cron.py` for details.
+This handles: score check, process health, scorer stuck detection, quota spinners, review bug, limbo tasks, false negatives, dashboard export, and git push.
+
+The script outputs three types of lines:
+- `✓ FIXED: ...` — handled automatically, just report to user
+- `⚠ ...` — needs manual investigation, use the sections below to diagnose and fix
+- `⚠ ALERT: ...` — urgent, fix immediately (e.g. review bug returned)
+
+**Act on every `⚠` line.** Don't just report it — investigate using the sections below and fix it before reporting to the user.
 
 ## When the script can't fix it
 

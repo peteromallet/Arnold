@@ -173,7 +173,7 @@ def check_false_negatives() -> list[str]:
         from auto_improve.check_false_negatives import check_false_negatives
         candidates = check_false_negatives(ITERATION)
         if candidates:
-            return [f"FALSE NEGATIVE: {c['task_id']} ({c['similarity']:.0%} match to golden)" for c in candidates]
+            return [f"ALERT: False negative — {c['task_id']} ({c['similarity']:.0%} match to golden). Verify and resolve as PASS." for c in candidates]
     except Exception:
         pass
     return []
