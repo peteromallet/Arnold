@@ -87,6 +87,13 @@ if escalated + errors + exhausted > 0: print('ACTION: requeue these tasks')
 - **Errors**: failed with < 5 errors → requeue as pending
 - **Scoring exhausted**: has prediction but scorer gave up → reset scoring attempts to 0
 
+**Retry-exhausted tasks** (3+ requeues without a score): force-resolve them:
+```bash
+python -m auto_improve.resolve_stuck          # dry run — see what would be resolved
+python -m auto_improve.resolve_stuck --apply  # apply resolutions
+```
+Compares patch to golden if one exists. Identical → PASS. No patch or different → FAIL. Stops the retry loop and gives a definitive score. All resolutions documented with `reviewed_by: auto_resolve_stuck`.
+
 ## 3. Failures
 
 ```bash
