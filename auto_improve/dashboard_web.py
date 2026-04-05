@@ -195,6 +195,62 @@ def _gather_data() -> dict:
             "repo": repo_name,
         })
 
+    # Add unscored tasks from manifest (pending, claimed, escalated, error)
+    scored_ids = {t["id"] for t in tasks_data}
+    manifest_path = _iter_dir() / "_task_manifest.json"
+    preds_dir = _iter_dir() / "_swebench_predictions"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+        preds = {p.stem for p in preds_dir.glob("*.jsonl")} if preds_dir.exists() else set()
+        for tid, mt in manifest.get("tasks", {}).items():
+            if tid in scored_ids:
+                continue
+            mstatus = mt.get("status", "pending")
+            # Determine display status
+            if mstatus == "done" and tid not in preds:
+                display_status = "retrying"  # was escalated, now requeued
+            elif mstatus == "claimed":
+                display_status = "running"
+            elif mstatus == "error":
+                display_status = "error"
+            else:
+                display_status = "queued"
+            # Check if it was previously escalated and build requeue reason
+            hist = mt.get("history", [])
+            requeue_reasons = []
+            for h in hist:
+                reason = h.get("reason", "")
+                if reason.startswith("retry_escalated"):
+                    requeue_reasons.append("Previously escalated (review/gate bug fix)")
+                elif reason == "dead_worker" or reason == "dead_pid":
+                    requeue_reasons.append("Worker died")
+                elif reason == "error_retry":
+                    requeue_reasons.append("Error retry")
+                elif reason == "escalated_no_patch":
+                    requeue_reasons.append("Escalated (no patch)")
+            was_escalated = bool(requeue_reasons)
+            if was_escalated and display_status == "queued":
+                display_status = "retrying"
+            requeue_note = requeue_reasons[-1] if requeue_reasons else ""
+
+            tasks_data.append({
+                "id": tid,
+                "status": display_status,
+                "category": requeue_note,
+                "explanation": "",
+                "pipeline_gap": "",
+                "golden_comparison": "",
+                "phases": [],
+                "total_time_s": 0,
+                "gate_iterations": 0,
+                "worker": mt.get("worker_id", ""),
+                "run_path": "",
+                "scored_at": "",
+                "github_url": _task_github_url(tid),
+                "issue_description": "",
+                "repo": _task_repo_name(tid),
+            })
+
     passed = sum(1 for t in tasks_data if t["status"] == "pass")
     failed = sum(1 for t in tasks_data if t["status"] == "fail")
     total = passed + failed
@@ -355,6 +411,9 @@ def _gather_data() -> dict:
         "opus_comparison": opus_comparison,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "probability": _compute_probability(passed, total, 500, CLOSED_SOURCE_LEADER["score"]),
+        "probability_task_aware": _compute_task_aware_probability(
+            tasks_data, opus_per_instance, manifest_path, 500, CLOSED_SOURCE_LEADER["score"],
+        ),
     }
 
 
@@ -382,6 +441,59 @@ def _compute_probability(passes: int, total: int, target: int, opus_score: float
     # Histogram for distribution plot
     bins = 50
     hist, edges = np.histogram(final_rates, bins=bins, range=(0.5, 1.0))
+    hist_data = [int(x) for x in hist]
+
+    return {"beat_prob": beat_prob, "p10": p10, "p50": p50, "p90": p90, "hist": hist_data}
+
+
+def _compute_task_aware_probability(
+    tasks_data: list, opus_per_instance: dict, manifest_path, target: int, opus_score: float,
+) -> dict:
+    """Task-aware probability using conditional pass rates based on Opus results."""
+    import numpy as np
+    scored = [t for t in tasks_data if t["status"] in ("pass", "fail")]
+    if len(scored) < 10:
+        return {"beat_prob": 0, "p10": 0, "p50": 0, "p90": 0, "hist": []}
+
+    # Split our results by whether Opus passed the same task
+    we_pass_opus_pass = sum(1 for t in scored if t["status"] == "pass" and opus_per_instance.get(t["id"], False))
+    we_total_opus_pass = sum(1 for t in scored if opus_per_instance.get(t["id"], False))
+    we_pass_opus_fail = sum(1 for t in scored if t["status"] == "pass" and not opus_per_instance.get(t["id"], False))
+    we_total_opus_fail = sum(1 for t in scored if not opus_per_instance.get(t["id"], False))
+
+    # Count remaining tasks by Opus result
+    scored_ids = {t["id"] for t in scored}
+    try:
+        import json as _json
+        manifest = _json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+        all_task_ids = set(manifest.get("tasks", {}).keys())
+    except Exception:
+        all_task_ids = scored_ids
+    remaining_ids = all_task_ids - scored_ids
+    remaining_opus_pass = sum(1 for tid in remaining_ids if opus_per_instance.get(tid, False))
+    remaining_opus_fail = len(remaining_ids) - remaining_opus_pass
+
+    current_passes = sum(1 for t in scored if t["status"] == "pass")
+    opus_frac = opus_score / 100
+    N = 20000
+
+    rng = np.random.default_rng(42)
+    # Beta posteriors for conditional rates
+    a1, b1 = we_pass_opus_pass + 1, (we_total_opus_pass - we_pass_opus_pass) + 1
+    a2, b2 = we_pass_opus_fail + 1, (we_total_opus_fail - we_pass_opus_fail) + 1
+
+    p_when_opus_pass = rng.beta(a1, b1, N)
+    p_when_opus_fail = rng.beta(a2, b2, N)
+    future_passes = rng.binomial(remaining_opus_pass, p_when_opus_pass) + rng.binomial(remaining_opus_fail, p_when_opus_fail)
+    final_rates = (current_passes + future_passes) / target
+
+    beat_prob = int(np.mean(final_rates > opus_frac) * 100)
+    p10 = round(float(np.percentile(final_rates, 10)) * 100, 1)
+    p50 = round(float(np.percentile(final_rates, 50)) * 100, 1)
+    p90 = round(float(np.percentile(final_rates, 90)) * 100, 1)
+
+    bins = 50
+    hist, _ = np.histogram(final_rates, bins=bins, range=(0.5, 1.0))
     hist_data = [int(x) for x in hist]
 
     return {"beat_prob": beat_prob, "p10": p10, "p50": p50, "p90": p90, "hist": hist_data}
