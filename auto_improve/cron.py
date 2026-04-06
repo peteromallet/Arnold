@@ -89,7 +89,8 @@ def check_scores() -> dict:
     failed = sum(1 for t in s["tasks"].values() if t.get("resolved") is False)
     preds = len(list(PREDS_DIR.glob("*.jsonl"))) if PREDS_DIR.exists() else 0
     scored = passed + failed
-    times = [t.get("scored_at", "") for t in s["tasks"].values() if t.get("scored_at")]
+    # Only count successful scores (resolved=True/False), not error attempts (resolved=None)
+    times = [t.get("scored_at", "") for t in s["tasks"].values() if t.get("scored_at") and t.get("resolved") is not None]
     last_score = max(times) if times else ""
     return {
         "passed": passed,
