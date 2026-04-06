@@ -305,6 +305,17 @@ def check_unreviewed_infra_failures() -> list[str]:
     return []
 
 
+def _expected_workers() -> int:
+    """Get expected worker count from run config."""
+    config_path = ITER_DIR / "_run_config.json"
+    if config_path.exists():
+        try:
+            return json.loads(config_path.read_text()).get("workers", 0)
+        except Exception:
+            pass
+    return 0
+
+
 def restart_dead(procs: dict, fix: bool = False) -> list[str]:
     """Restart any dead processes."""
     issues = []
@@ -328,6 +339,7 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
             )
             issues[-1] = "FIXED: Dashboard dead — restarted"
 
+    expected = _expected_workers()
     if procs["workers"] == 0:
         issues.append("All workers dead")
         if fix:
@@ -338,6 +350,8 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
                 stderr=subprocess.DEVNULL,
             )
             issues[-1] = "FIXED: All workers dead — restarted"
+    elif expected > 0 and procs["workers"] < expected:
+        issues.append(f"Only {procs['workers']}/{expected} workers alive — some workers have died")
 
     return issues
 
