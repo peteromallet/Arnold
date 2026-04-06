@@ -268,14 +268,16 @@ def _categorize_scoring_error(
         fragments.extend([result.stderr, result.stdout])
     message = " ".join(str(fragment) for fragment in fragments if fragment).lower()
 
-    if "timed out" in message or "timeout" in message:
-        return "timeout"
-    if "report" in message and any(token in message for token in ("parse", "unparseable", "missing", "json")):
-        return "report_parse"
+    # Check modal_sandbox before timeout — Modal sandbox errors often contain
+    # "RetryError" or "timeout" in the traceback but the root cause is sandbox creation
     if "modal" in message and any(
         token in message for token in ("sandbox", "mount", "container", "runner", "image", "volume", "app")
     ):
         return "modal_sandbox"
+    if "timed out" in message or "timeout" in message:
+        return "timeout"
+    if "report" in message and any(token in message for token in ("parse", "unparseable", "missing", "json")):
+        return "report_parse"
     return "unknown"
 
 

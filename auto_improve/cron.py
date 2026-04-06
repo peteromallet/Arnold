@@ -112,6 +112,26 @@ def check_processes() -> dict:
     }
 
 
+def _modal_apps_active() -> bool:
+    """Check if there are active (non-stopped) Modal scoring apps."""
+    try:
+        out = subprocess.run(
+            ["modal", "app", "list", "--json"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if out.returncode != 0:
+            return False
+        apps = json.loads(out.stdout)
+        return any(
+            a.get("State", "").lower() in ("running", "ephemeral")
+            and "swebench" in a.get("Description", "").lower()
+            and a.get("Tasks", 0) > 0
+            for a in apps
+        )
+    except Exception:
+        return False
+
+
 def check_scorer_stuck(scores: dict, fix: bool = False) -> str | None:
     """Check if scorer is alive but not making progress."""
     if scores["unscored"] <= 3:
@@ -128,6 +148,10 @@ def check_scorer_stuck(scores: dict, fix: bool = False) -> str | None:
             issue = f"Scorer stuck: {scores['unscored']} unscored, last score {int(age_min)}m ago"
         except Exception:
             issue = f"Scorer may be stuck: {scores['unscored']} unscored"
+
+    # Don't restart if Modal is actively processing — scorer is waiting, not stuck
+    if _modal_apps_active():
+        return f"{issue} (but Modal is active — not restarting)"
 
     if fix:
         for pid in _pgrep(f"auto_improve.score.*{ITERATION}"):
@@ -255,6 +279,29 @@ def check_false_negatives() -> list[str]:
             return [f"ALERT: False negative — {c['task_id']} ({c['similarity']:.0%} match to golden). Verify and resolve as PASS." for c in candidates]
     except Exception:
         pass
+    return []
+
+
+def check_unreviewed_infra_failures() -> list[str]:
+    """Flag scoring-exhausted tasks with patches that need manual review."""
+    if not SCORES_PATH.exists():
+        return []
+    try:
+        s = json.loads(SCORES_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    preds = {p.stem for p in PREDS_DIR.glob("*.jsonl")} if PREDS_DIR.exists() else set()
+    unreviewed = []
+    for tid, t in s.get("tasks", {}).items():
+        if not isinstance(t, dict) or t.get("resolved") is not None:
+            continue
+        review = t.get("review", {})
+        if isinstance(review, dict) and review.get("reviewed_by") == "human":
+            continue
+        if tid in preds:
+            unreviewed.append(tid)
+    if unreviewed:
+        return [f"{len(unreviewed)} scoring-exhausted tasks with patches need manual review: {', '.join(unreviewed[:5])}"]
     return []
 
 
@@ -431,6 +478,9 @@ def main():
 
     # False negatives
     all_issues.extend(check_false_negatives())
+
+    # Scoring-exhausted tasks needing manual review
+    all_issues.extend(check_unreviewed_infra_failures())
 
     # Stall detection (zero progress across runs)
     stall = _detect_stall(scores, prev_state)
