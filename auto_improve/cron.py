@@ -361,7 +361,7 @@ def push_to_github() -> str:
     try:
         result = subprocess.run(
             ["python", "-m", "auto_improve.dashboard_export", ITERATION, "--push"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=600,
         )
         if result.returncode != 0:
             return f"Dashboard export failed (rc={result.returncode}): {result.stderr[:200]}"
