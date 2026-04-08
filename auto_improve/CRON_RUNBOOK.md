@@ -27,6 +27,16 @@ The script outputs three types of lines:
 
 **Act on every `⚠` line.** Don't just report it — investigate using the sections below and fix it before reporting to the user.
 
+## How self-healing works
+
+Workers no longer own specific API keys. Launch-time sizing probes the shared candidate pool via `load_candidate_keys()` and then starts `min(configured_workers, alive_keys)` workers, but each worker resolves credentials from the normal megaplan key pool at runtime. That means an exhausted key can cool down inside a subprocess without permanently binding one worker to a dead credential.
+
+The parent `run_parallel_workers()` process now exits with a failure summary when every worker has exited and the manifest still has `pending + claimed > 0`. `evals/run_evals.py` converts that condition into exit code `2`, which makes it distinct from generic crashes.
+
+On the next cron tick, `restart_dead()` reads the iteration pidfile, sends `SIGTERM` to the orphaned `loop_pid`, escalates to `SIGKILL` if needed, and only then relaunches the parent. The new launch re-probes the key pool and naturally resizes worker count to current capacity.
+
+Limitation: the cached probe hits only the default Z.AI endpoint. Entries in `auto_improve/api_keys.json` with non-default `base_url` values are not independently probed and will not appear in the capacity advisory. Treat the advisory as a lower bound if you run non-default endpoints.
+
 ## Pointing the cron at a different iteration
 
 1. Edit `auto_improve/cron.py` and set `ITERATION` to the target iteration suffix — either pure digits (`"021"`) or a qualifier-bearing name (`"022-robust"`, `"023-baseline"`).
@@ -76,6 +86,7 @@ If the script reports zero progress for 2+ runs:
 3. Check whether all API keys are exhausted: look for 429s and quota-reset dates in recent worker logs
 4. Check whether all remaining tasks are stuck in claimed-but-idle state in the manifest
 5. If quota is the bottleneck and reset is hours away, **don't restart workers** — they'll just spin on the same exhausted keys
+6. If cron reports `Over-provisioned`, it is safe to kill `N-M` excess workers to reduce contention. If all workers die afterward, the next cron relaunch will resize to the currently alive-key count.
 
 ### Scoring-exhausted tasks need manual review
 
@@ -94,6 +105,13 @@ The heavy-mode review runs multiple parallel LLM checks. If it exceeds the per-p
 
 ## Known issues
 
+The cron now prints a key-capacity diagnostic block:
+- `Keys: N/M alive`
+- One line per non-alive key with masked key, status, detail, and optional reset time
+- Advisory issues such as `Over-provisioned: ...` and `Under-provisioned: ...`
+
+Use that block to distinguish true worker failures from plain pool-capacity drift.
+
 | Issue | Symptom | Fix |
 |-------|---------|-----|
 | Review template bug | "incomplete review coverage" | Fixed in megaplan — restart workers |
@@ -107,6 +125,8 @@ The heavy-mode review runs multiple parallel LLM checks. If it exceeds the per-p
 | Mass escalation | >5 consecutive escalations | Diagnose phase — usually systemic bug |
 | Worker stale | Alive but log not updating for 30m+ | Kill and restart the stale worker |
 | Requeue loop | Same task IDs cycling 3+ times | Check task history, fix root cause or mark failed |
+| Over-provisioned worker pool | More live workers than alive keys | Safely kill excess workers; next relaunch resizes to alive-key capacity |
+| Under-provisioned worker pool | Fewer live workers than alive keys and configured target | Optional manual scale-up or wait for the next relaunch |
 | Heavy review timeout | Review phase hits 1200s cap | Check MiniMax health; may need phase_timeout bump |
 | Modal sandbox failure | "Error creating sandbox" in scorer log | Categorized as `modal_sandbox`, capped at 2 retries, flagged for manual review |
 

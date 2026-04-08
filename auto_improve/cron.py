@@ -15,8 +15,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+from auto_improve.probe_keys import KeyStatus, alive_keys, probe_all_keys
 
 # The iteration this cron is monitoring. The suffix can be purely numeric
 # ("021") or contain a qualifier ("022-robust", "023-baseline", etc.).
@@ -67,6 +70,29 @@ def _atomic_json_write(path: Path, data: dict) -> None:
         except OSError:
             pass
         raise
+
+
+def run_key_probe_cached(max_age_s: int = 300) -> list[KeyStatus]:
+    state = _load_state()
+    cached = state.get("key_probe")
+    if isinstance(cached, dict):
+        try:
+            age_s = (datetime.now(timezone.utc) - datetime.fromisoformat(cached["timestamp"])).total_seconds()
+            if age_s < max_age_s:
+                return [KeyStatus(**result) for result in cached.get("results", [])]
+        except Exception:
+            pass
+    try:
+        results = probe_all_keys()
+    except Exception as exc:
+        print(f"WARNING: key probe failed: {exc}")
+        return []
+    state["key_probe"] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "results": [asdict(result) for result in results],
+    }
+    _save_state(state)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -410,17 +436,45 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
     if procs["workers"] == 0:
         issues.append("All workers dead")
         if fix:
+            pidfile = _read_iteration_pidfile()
+            loop_pid = pidfile.get("loop_pid")
+            if loop_pid and _pid_alive(loop_pid):
+                os.kill(loop_pid, signal.SIGTERM)
+                for _ in range(50):
+                    if not _pid_alive(loop_pid):
+                        break
+                    time.sleep(0.1)
+                if _pid_alive(loop_pid):
+                    os.kill(loop_pid, signal.SIGKILL)
+                killed_msg = f"killed orphan parent PID {loop_pid}"
+            else:
+                killed_msg = "no orphan parent to clean up"
             subprocess.Popen(
                 ["python", "-m", "evals.run_evals", "--config",
                  str(ITER_DIR / "_run_config.json"), "-v"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            issues[-1] = "FIXED: All workers dead — restarted"
+            issues[-1] = f"FIXED: All workers dead — restarted ({killed_msg})"
     elif expected > 0 and procs["workers"] < expected:
         issues.append(f"Only {procs['workers']}/{expected} workers alive — some workers have died")
 
     return issues
+
+
+def check_key_capacity(procs: dict, key_probe: list[KeyStatus]) -> list[str]:
+    if not key_probe:
+        return []
+    n_alive = sum(1 for key in key_probe if key.status == "alive")
+    workers = procs.get("workers", 0)
+    if n_alive < workers:
+        return [
+            f"Over-provisioned: {workers} workers running but only {n_alive} alive keys. "
+            f"Consider killing {workers - n_alive} workers or waiting for recovery."
+        ]
+    if n_alive > workers and workers < _expected_workers():
+        return [f"Under-provisioned: {n_alive} alive keys but only {workers} workers running. Could scale up."]
+    return []
 
 
 def push_to_github() -> str:
@@ -517,12 +571,20 @@ def main():
     now = datetime.now(timezone.utc).isoformat()
 
     prev_state = _load_state()
+    key_probe = run_key_probe_cached()
     scores = check_scores()
     procs = check_processes()
+    alive_count = len(alive_keys(key_probe))
 
     print(f"=== Iteration {ITERATION} — {now} ===")
     print(f"Scores: {scores['passed']}/{scores['scored']} = {scores.get('pass_rate', 0)}% | preds={scores['preds']} | unscored={scores['unscored']}")
     print(f"Processes: workers={procs['workers']}, scorers={procs['scorers']}, dashboard={procs['dashboard']}")
+    print(f"Keys: {alive_count}/{len(key_probe)} alive")
+    for result in key_probe:
+        if result.status == "alive":
+            continue
+        reset_suffix = f" | reset_at={result.reset_at}" if result.reset_at else ""
+        print(f"  {result.masked_key}: {result.status} | {result.detail}{reset_suffix}")
 
     # Deltas from previous run
     deltas = _compute_deltas(scores, prev_state)
@@ -539,6 +601,7 @@ def main():
 
     # Dead processes
     all_issues.extend(restart_dead(procs, fix))
+    all_issues.extend(check_key_capacity(procs, key_probe))
 
     # Scorer stuck
     stuck = check_scorer_stuck(scores, fix)
@@ -577,10 +640,12 @@ def main():
 
     # Update state for next run
     d_preds = scores.get("preds", 0) - prev_state.get("scores", {}).get("preds", 0)
+    cached_state = _load_state()
     new_state = {
         "timestamp": now,
         "scores": scores,
         "procs": procs,
+        "key_probe": cached_state.get("key_probe"),
         "stall_count": (prev_state.get("stall_count", 0) + 1) if d_preds == 0 else 0,
         "last_requeued_ids": [
             tid for tid, t in (json.loads(MANIFEST_PATH.read_text()) if MANIFEST_PATH.exists() else {"tasks": {}}).get("tasks", {}).items()

@@ -1786,6 +1786,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         summary = run_all_evals(args.config, args.evals or None)
     print(json.dumps(summary, indent=2))
+    if summary.get("all_workers_failed"):
+        return 2
     return 0
 
 

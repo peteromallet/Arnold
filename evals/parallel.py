@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from auto_improve.probe_keys import alive_keys, format_status_table, probe_keys
+from auto_improve.probe_keys import alive_keys, format_status_table, load_candidate_keys, probe_keys
 
 
 MANIFEST_WAIT_TIMEOUT_SECONDS = 4 * 60 * 60
@@ -199,6 +199,21 @@ def run_parallel_workers(
     canonical_config_path.write_text(json.dumps(canonical_config, indent=2), encoding="utf-8")
     api_keys = _load_api_keys()
     api_keys, workers = _probe_and_filter_keys(api_keys, workers)
+    if workers == 0:
+        print("No alive keys — aborting parent", file=sys.stderr)
+        summary = {
+            "mode": "parallel",
+            "workers": 0,
+            "total_tasks": len(all_tasks),
+            "prediction_count": 0,
+            "worker_exit_codes": {},
+            "all_workers_failed": True,
+            "reason": "no_alive_keys",
+        }
+        summary_path = results_root / "summary_parallel.json"
+        summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+        print(f"\nSummary: {summary_path}", file=sys.stderr)
+        return summary
     worker_ids = [f"worker-{i}" for i in range(workers)]
     manifest.reserve_specific_worker_ids(worker_ids)
 
@@ -251,6 +266,29 @@ def run_parallel_workers(
             watch_thread.start()
 
         worker_exit_codes = _wait_for_workers(worker_procs, worker_log_dir, manifest_path)
+        m_summary = TaskManifest.load(manifest_path).summary()
+        pending = m_summary.get("pending", 0)
+        claimed = m_summary.get("claimed", 0)
+        manifest_done = (pending + claimed) == 0
+        all_workers_failed = not manifest_done
+
+        if all_workers_failed:
+            for tc in temp_configs:
+                tc.unlink(missing_ok=True)
+            summary = {
+                "mode": "parallel",
+                "workers": workers,
+                "total_tasks": len(all_tasks),
+                "prediction_count": 0,
+                "worker_exit_codes": worker_exit_codes,
+                "manifest": m_summary,
+                "all_workers_failed": True,
+                "reason": f"workers exited with manifest pending={pending} claimed={claimed}",
+            }
+            summary_path = results_root / "summary_parallel.json"
+            summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+            print(f"\nSummary: {summary_path}", file=sys.stderr)
+            return summary
 
         if scoring_mode == "watch":
             for tc in temp_configs:
@@ -417,6 +455,19 @@ def join_parallel_run(
 
     api_keys = _load_api_keys()
     api_keys, new_workers = _probe_and_filter_keys(api_keys, new_workers)
+    if new_workers == 0:
+        print("No alive keys — aborting join", file=sys.stderr)
+        return {
+            "mode": "parallel-join",
+            "run_name": run_name,
+            "results_root": str(results_root),
+            "added_workers": 0,
+            "worker_ids": [],
+            "manifest": manifest.summary(),
+            "worker_exit_codes": {},
+            "all_workers_failed": True,
+            "reason": "no_alive_keys",
+        }
     worker_ids = manifest.reserve_worker_ids(new_workers)
     print(f"Allocated workers: {', '.join(worker_ids)}", file=sys.stderr)
 
@@ -500,44 +551,34 @@ def _preflight_check_megaplan() -> None:
     print("[parallel] Megaplan pre-flight check passed", file=sys.stderr)
 
 
-def _load_api_keys() -> list[dict[str, str]]:
-    """Load API keys from auto_improve/api_keys.json for round-robin distribution."""
-    keys_path = Path(__file__).resolve().parent.parent / "auto_improve" / "api_keys.json"
-    if keys_path.exists():
-        try:
-            keys = json.loads(keys_path.read_text(encoding="utf-8"))
-            if isinstance(keys, list) and keys:
-                return keys
-        except (json.JSONDecodeError, OSError):
-            pass
-    return []
+def _load_api_keys() -> list[str]:
+    """Load candidate keys for launch-time probing and worker-count sizing."""
+    # Probe and launcher share load_candidate_keys() so capacity decisions are
+    # based on the same pool. Non-default base_url entries in api_keys.json are
+    # not independently probed here; that limitation is explicitly out of scope.
+    try:
+        return load_candidate_keys(provider="zhipu")
+    except Exception:
+        return []
 
 
 def _probe_and_filter_keys(
-    api_keys: list[dict[str, str]],
+    api_keys: list[str],
     requested_workers: int,
-) -> tuple[list[dict[str, str]], int]:
+) -> tuple[list[str], int]:
     if not api_keys:
         return api_keys, requested_workers
 
-    raw_keys = [
-        entry["key"] if isinstance(entry, dict) else str(entry)
-        for entry in api_keys
-        if (isinstance(entry, dict) and entry.get("key")) or entry
-    ]
-    results = probe_keys(raw_keys, provider="zhipu")
+    results = probe_keys(api_keys, provider="zhipu")
     for result in results:
         reset_suffix = f" reset {result.reset_at}" if result.reset_at else ""
         print(f"  [{result.status}] {result.masked_key}{reset_suffix}", file=sys.stderr)
 
     alive_key_set = set(alive_keys(results))
-    alive_entries = [
-        entry
-        for entry in api_keys
-        if ((entry["key"] if isinstance(entry, dict) else str(entry)) in alive_key_set)
-    ]
+    alive_entries = [entry for entry in api_keys if entry in alive_key_set]
     if not alive_entries:
-        raise RuntimeError("No alive API keys — refusing to launch workers.\n" + format_status_table(results))
+        print(f"[parallel] No alive API keys.\n{format_status_table(results)}", file=sys.stderr)
+        return [], 0
 
     if len(alive_entries) < requested_workers:
         dead_counts = Counter(result.status for result in results if result.status != "alive")
@@ -565,7 +606,7 @@ def _launch_worker_processes(
     manifest_path: Path,
     results_root: Path,
     *,
-    api_keys: list[dict[str, str]] | None = None,
+    api_keys: list[str] | None = None,
     replace_pidfile_workers: bool = False,
 ) -> tuple[list[tuple[str, subprocess.Popen, Path]], list[Path], Path]:
     _clean_editable_installs()
@@ -575,12 +616,16 @@ def _launch_worker_processes(
     worker_log_dir = results_root / "_worker_logs"
     worker_log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load API keys for round-robin distribution across workers
+    # API keys are still probed at launch time for worker-count sizing, but
+    # workers now resolve keys from the shared megaplan pool at runtime.
     api_keys = api_keys if api_keys is not None else _load_api_keys()
     if api_keys:
-        print(f"[parallel] Distributing {len(api_keys)} API keys across {len(worker_ids)} workers", file=sys.stderr)
+        print(
+            f"[parallel] {len(api_keys)} alive keys available; workers draw from shared pool",
+            file=sys.stderr,
+        )
 
-    for idx, worker_id in enumerate(worker_ids):
+    for worker_id in worker_ids:
         temp_config = _write_worker_config(
             original_config_path,
             worker_id,
@@ -608,29 +653,6 @@ def _launch_worker_processes(
             import shutil
 
             shutil.copy2(real_env_file, worker_hermes_home / ".env")
-
-        # Assign API key round-robin from api_keys.json
-        if api_keys:
-            key_entry = api_keys[idx % len(api_keys)]
-            api_key = key_entry["key"] if isinstance(key_entry, dict) else key_entry
-            base_url = key_entry.get("base_url", "") if isinstance(key_entry, dict) else ""
-            worker_env["ZHIPU_API_KEY"] = api_key
-            if base_url:
-                worker_env["ZHIPU_BASE_URL"] = base_url
-            # Also patch the worker's hermes .env so megaplan's _load_hermes_env picks it up
-            worker_env_file = worker_hermes_home / ".env"
-            if worker_env_file.exists():
-                import re
-                env_text = worker_env_file.read_text(encoding="utf-8")
-                env_text = re.sub(r'ZHIPU_API_KEY=.*', f'ZHIPU_API_KEY={api_key}', env_text)
-                if base_url:
-                    if 'ZHIPU_BASE_URL=' in env_text:
-                        env_text = re.sub(r'ZHIPU_BASE_URL=.*', f'ZHIPU_BASE_URL={base_url}', env_text)
-                    else:
-                        env_text += f'\nZHIPU_BASE_URL={base_url}\n'
-                worker_env_file.write_text(env_text, encoding="utf-8")
-            key_prefix = api_key[:8] + "..."
-            print(f"  {worker_id}: key={key_prefix} base_url={base_url or 'default'}", file=sys.stderr)
 
         worker_env["HERMES_HOME"] = str(worker_hermes_home)
 
@@ -727,7 +749,7 @@ def _wait_for_workers(
                         except Exception as exc:
                             print(f"  Warning: failed to requeue tasks from {worker_id}: {exc}", file=sys.stderr)
         if len(completed) < len(worker_procs):
-            time.sleep(10)
+            time.sleep(2)
     return completed
 
 
