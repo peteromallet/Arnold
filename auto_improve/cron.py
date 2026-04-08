@@ -18,7 +18,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-ITERATION = "021"
+# The iteration this cron is monitoring. The suffix can be purely numeric
+# ("021") or contain a qualifier ("022-robust", "023-baseline", etc.).
+# Directory is always `results/auto-improve/iteration-<ITERATION>`.
+ITERATION = "022-robust"
+# Full directory-name form expected by `auto_improve.score._normalize_iteration_name`,
+# which accepts either a pure-digit id ("021") or an already-prefixed name
+# ("iteration-022-robust"). We normalize to the prefixed form so both styles
+# work on any scorer invocation.
+ITERATION_FULL = ITERATION if ITERATION.startswith("iteration-") else f"iteration-{ITERATION}"
 ITER_DIR = Path(f"results/auto-improve/iteration-{ITERATION}")
 SCORES_PATH = ITER_DIR / "_watch_scores.json"
 MANIFEST_PATH = ITER_DIR / "_task_manifest.json"
@@ -103,11 +111,44 @@ def check_scores() -> dict:
     }
 
 
+def _pid_alive(pid: int) -> bool:
+    """Return True if the PID is alive (uses kill -0)."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+    except Exception:
+        return False
+
+
+def _read_iteration_pidfile() -> dict:
+    """Read the iteration's pidfile, returning {} on any failure."""
+    pidfile = ITER_DIR / "_pidfile.json"
+    if not pidfile.exists():
+        return {}
+    try:
+        return json.loads(pidfile.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def check_processes() -> dict:
-    """Check which processes are alive."""
+    """Check which processes are alive — scoped to THIS iteration via the pidfile.
+
+    Uses `_pidfile.json` (written by evals/parallel.py and auto_improve/score.py)
+    instead of pgrep, so the count is accurate even when multiple iterations
+    are running side-by-side. Dashboard has no pidfile entry, so it still uses
+    pgrep — the dashboard is a single global process per host.
+    """
+    pf = _read_iteration_pidfile()
+    worker_pids = [w.get("pid") for w in pf.get("workers", []) if isinstance(w, dict)]
+    workers_alive = sum(1 for pid in worker_pids if pid and _pid_alive(pid))
+    scorer_pid = pf.get("scorer_pid")
+    scorer_alive = 1 if (scorer_pid and _pid_alive(scorer_pid)) else 0
     return {
-        "workers": len(_pgrep("run_evals")),
-        "scorers": len(_pgrep("auto_improve.score")),
+        "workers": workers_alive,
+        "scorers": scorer_alive,
         "dashboard": len(_pgrep("dashboard_web")),
     }
 
@@ -158,7 +199,7 @@ def check_scorer_stuck(scores: dict, fix: bool = False) -> str | None:
             os.kill(pid, signal.SIGTERM)
         time.sleep(1)
         subprocess.Popen(
-            ["python", "-m", "auto_improve.score", "--watch", "--iterations", ITERATION],
+            ["python", "-m", "auto_improve.score", "--watch", "--iterations", ITERATION_FULL],
             stdout=open(f"/tmp/scorer-{ITERATION}.log", "w"),
             stderr=subprocess.STDOUT,
         )
@@ -166,13 +207,25 @@ def check_scorer_stuck(scores: dict, fix: bool = False) -> str | None:
     return issue
 
 
+def _iter_worker_logs() -> list[tuple[int, Path]]:
+    """Yield (worker_index, log_path) for every worker-*.stderr.log in the iteration."""
+    if not WORKER_LOGS.exists():
+        return []
+    out: list[tuple[int, Path]] = []
+    for log in sorted(WORKER_LOGS.glob("worker-*.stderr.log")):
+        stem = log.stem.replace(".stderr", "")
+        try:
+            idx = int(stem.split("-")[-1])
+        except ValueError:
+            continue
+        out.append((idx, log))
+    return out
+
+
 def check_worker_quota(fix: bool = False) -> list[str]:
     """Check for workers spinning on quota errors."""
     issues = []
-    for w in range(7):
-        log = WORKER_LOGS / f"worker-{w}.stderr.log"
-        if not log.exists():
-            continue
+    for w, log in _iter_worker_logs():
         try:
             tail = log.read_bytes()[-5000:].decode("utf-8", errors="replace")
             quota_hits = tail.count("Weekly") + tail.count("Monthly Limit")
@@ -191,10 +244,7 @@ def check_worker_quota(fix: bool = False) -> list[str]:
 def check_review_bug() -> list[str]:
     """Check for the review template bug returning."""
     issues = []
-    for w in range(7):
-        log = WORKER_LOGS / f"worker-{w}.stderr.log"
-        if not log.exists():
-            continue
+    for w, log in _iter_worker_logs():
         try:
             tail = log.read_bytes()[-3000:].decode("utf-8", errors="replace")
             hits = tail.count("incomplete review coverage")
@@ -206,18 +256,35 @@ def check_review_bug() -> list[str]:
 
 
 def check_worker_staleness() -> list[str]:
-    """Check for workers that are alive but not making progress (logs not updating)."""
+    """Check for workers that are alive but not making progress (logs not updating).
+
+    Uses the pidfile to determine which workers are actually alive, so this
+    can't false-fire on dead workers whose log files exist but process is gone.
+    """
     issues = []
     now = time.time()
-    for w in range(7):
-        log = WORKER_LOGS / f"worker-{w}.stderr.log"
-        if not log.exists():
+    pf = _read_iteration_pidfile()
+    live_worker_indexes: set[int] = set()
+    for entry in pf.get("workers", []):
+        if not isinstance(entry, dict):
+            continue
+        pid = entry.get("pid")
+        worker_id = entry.get("worker_id", "")
+        if not pid or not _pid_alive(pid):
+            continue
+        try:
+            idx = int(worker_id.split("-")[-1])
+            live_worker_indexes.add(idx)
+        except ValueError:
+            continue
+
+    for w, log in _iter_worker_logs():
+        if w not in live_worker_indexes:
             continue
         try:
             mtime = log.stat().st_mtime
             age_min = (now - mtime) / 60
-            # If log hasn't been written to in 30 minutes but worker process exists
-            if age_min > 30 and _pgrep(f"worker-{w}.json"):
+            if age_min > 30:
                 issues.append(f"w{w}: alive but log stale ({int(age_min)}m since last write)")
         except Exception:
             pass
@@ -323,7 +390,7 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
         issues.append("Scorer dead")
         if fix:
             subprocess.Popen(
-                ["python", "-m", "auto_improve.score", "--watch", "--iterations", ITERATION],
+                ["python", "-m", "auto_improve.score", "--watch", "--iterations", ITERATION_FULL],
                 stdout=open(f"/tmp/scorer-{ITERATION}.log", "w"),
                 stderr=subprocess.STDOUT,
             )
