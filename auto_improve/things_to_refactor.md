@@ -145,6 +145,18 @@ The cron finds processes by `pgrep -f "run_evals"` etc. Fragile — a renamed sc
 
 ---
 
+## Found during robust review validation (iteration-022-robust)
+
+### `diff_size_sanity` pre-check reports workspace noise as patch size
+
+The new `megaplan/review_mechanical.py::diff_size_sanity` uses `collect_git_diff_patch()` which runs `git add -N . && git diff HEAD`. In a SWE-bench workspace this picks up build artifacts, generated files, and other workspace noise — reporting e.g. 2912 lines across 37 files for a patch that's actually 16 lines in 1 file.
+
+**Fix:** The mechanical check should use the same patch-extraction logic as `swe_bench.py` (which produces the submitted prediction) — not a raw workspace diff. Or at minimum, intersect with the set of files the executor claims to have changed.
+
+### `placement` check didn't fire on a clear wrong-layer case
+
+On `matplotlib-25479`, our patch fixes `set_cmap()` but the bug is in `ColormapRegistry`. The `placement` check was designed to catch this but judged `set_cmap` to be a reasonable source. The guidance text may need strengthening to be more aggressive about "is this actually where the bug originates or just a downstream touchpoint?" — possibly by forcing the check to explicitly trace back to where the bad state is first introduced.
+
 ## Already fixed during this session
 
 - **Error categorisation priority**: `modal_sandbox` now checked before `timeout` in `_categorize_scoring_error()`
