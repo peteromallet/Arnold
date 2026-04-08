@@ -434,6 +434,22 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
 
     expected = _expected_workers()
     if procs["workers"] == 0:
+        # If the iteration has no pending/claimed work, the experiment is
+        # complete and we must NOT respawn workers — otherwise cron spams a
+        # "launch, find nothing to do, exit" loop every hour forever.
+        manifest_has_work = False
+        if MANIFEST_PATH.exists():
+            try:
+                m = json.loads(MANIFEST_PATH.read_text())
+                manifest_has_work = any(
+                    t.get("status") in ("pending", "claimed")
+                    for t in m.get("tasks", {}).values()
+                )
+            except (json.JSONDecodeError, OSError):
+                manifest_has_work = True  # fail-safe: if unsure, allow restart
+        if not manifest_has_work:
+            issues.append(f"Iteration complete — all workers exited, nothing to restart")
+            return issues
         issues.append("All workers dead")
         if fix:
             pidfile = _read_iteration_pidfile()
