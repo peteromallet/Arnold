@@ -8,6 +8,7 @@ same SWE-bench task list at the same time.
 
 from __future__ import annotations
 
+from collections import Counter
 import json
 import os
 import subprocess
@@ -17,6 +18,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from auto_improve.probe_keys import alive_keys, format_status_table, probe_keys
 
 
 MANIFEST_WAIT_TIMEOUT_SECONDS = 4 * 60 * 60
@@ -194,6 +197,8 @@ def run_parallel_workers(
     requeued_claims = manifest.requeue_dead_claimed(results_root / "_pidfile.json")
     canonical_config = json.loads(Path(config_path).read_text(encoding="utf-8"))
     canonical_config_path.write_text(json.dumps(canonical_config, indent=2), encoding="utf-8")
+    api_keys = _load_api_keys()
+    api_keys, workers = _probe_and_filter_keys(api_keys, workers)
     worker_ids = [f"worker-{i}" for i in range(workers)]
     manifest.reserve_specific_worker_ids(worker_ids)
 
@@ -216,6 +221,7 @@ def run_parallel_workers(
         predictions_dir,
         manifest_path,
         results_root,
+        api_keys=api_keys,
         replace_pidfile_workers=True,
     )
 
@@ -409,6 +415,8 @@ def join_parallel_run(
         file=sys.stderr,
     )
 
+    api_keys = _load_api_keys()
+    api_keys, new_workers = _probe_and_filter_keys(api_keys, new_workers)
     worker_ids = manifest.reserve_worker_ids(new_workers)
     print(f"Allocated workers: {', '.join(worker_ids)}", file=sys.stderr)
 
@@ -427,6 +435,7 @@ def join_parallel_run(
         predictions_dir,
         manifest_path,
         results_root,
+        api_keys=api_keys,
         replace_pidfile_workers=False,
     )
     completed = _wait_for_workers(worker_procs, worker_log_dir)
@@ -504,6 +513,50 @@ def _load_api_keys() -> list[dict[str, str]]:
     return []
 
 
+def _probe_and_filter_keys(
+    api_keys: list[dict[str, str]],
+    requested_workers: int,
+) -> tuple[list[dict[str, str]], int]:
+    if not api_keys:
+        return api_keys, requested_workers
+
+    raw_keys = [
+        entry["key"] if isinstance(entry, dict) else str(entry)
+        for entry in api_keys
+        if (isinstance(entry, dict) and entry.get("key")) or entry
+    ]
+    results = probe_keys(raw_keys, provider="zhipu")
+    for result in results:
+        reset_suffix = f" reset {result.reset_at}" if result.reset_at else ""
+        print(f"  [{result.status}] {result.masked_key}{reset_suffix}", file=sys.stderr)
+
+    alive_key_set = set(alive_keys(results))
+    alive_entries = [
+        entry
+        for entry in api_keys
+        if ((entry["key"] if isinstance(entry, dict) else str(entry)) in alive_key_set)
+    ]
+    if not alive_entries:
+        raise RuntimeError("No alive API keys — refusing to launch workers.\n" + format_status_table(results))
+
+    if len(alive_entries) < requested_workers:
+        dead_counts = Counter(result.status for result in results if result.status != "alive")
+        category_summary = ", ".join(
+            f"{dead_counts[status]} {status}"
+            for status in ("exhausted", "invalid", "unreachable")
+            if dead_counts[status]
+        )
+        dead_total = len(results) - len(alive_entries)
+        print(
+            f"[parallel] WARNING: {dead_total}/{len(results)} keys dead ({category_summary}). "
+            f"Scaling workers {requested_workers} -> {len(alive_entries)}.",
+            file=sys.stderr,
+        )
+        return alive_entries, len(alive_entries)
+
+    return alive_entries, requested_workers
+
+
 def _launch_worker_processes(
     original_config_path: str | Path,
     workspace_dir: str,
@@ -512,7 +565,8 @@ def _launch_worker_processes(
     manifest_path: Path,
     results_root: Path,
     *,
-    replace_pidfile_workers: bool,
+    api_keys: list[dict[str, str]] | None = None,
+    replace_pidfile_workers: bool = False,
 ) -> tuple[list[tuple[str, subprocess.Popen, Path]], list[Path], Path]:
     _clean_editable_installs()
     _preflight_check_megaplan()
@@ -522,7 +576,7 @@ def _launch_worker_processes(
     worker_log_dir.mkdir(parents=True, exist_ok=True)
 
     # Load API keys for round-robin distribution across workers
-    api_keys = _load_api_keys()
+    api_keys = api_keys if api_keys is not None else _load_api_keys()
     if api_keys:
         print(f"[parallel] Distributing {len(api_keys)} API keys across {len(worker_ids)} workers", file=sys.stderr)
 

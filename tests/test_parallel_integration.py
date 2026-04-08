@@ -111,6 +111,9 @@ def parallel_test_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(parallel.Path, "home", classmethod(lambda cls: temp_home))
     monkeypatch.setattr(parallel.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(parallel.time, "sleep", lambda _: original_sleep(0.01))
+    monkeypatch.setattr(parallel, "_load_api_keys", lambda: [])
+    monkeypatch.setattr(parallel, "_preflight_check_megaplan", lambda: None)
+    monkeypatch.setattr(parallel, "_clean_editable_installs", lambda: None)
     return tmp_path
 
 

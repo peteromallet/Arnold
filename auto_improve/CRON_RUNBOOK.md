@@ -71,10 +71,11 @@ If the script reports tasks in a requeue loop:
 ### Zero-progress stall
 
 If the script reports zero progress for 2+ runs:
-1. Check if workers are alive via the pidfile: `cat results/auto-improve/iteration-<ITER>/_pidfile.json`
-2. Check whether all API keys are exhausted: look for 429s and quota-reset dates in recent worker logs
-3. Check whether all remaining tasks are stuck in claimed-but-idle state in the manifest
-4. If quota is the bottleneck and reset is hours away, **don't restart workers** — they'll just spin on the same exhausted keys
+1. Run `python -m auto_improve.probe_keys`. If the table shows <50% keys alive, do not restart workers — quota is the bottleneck and restarts will just burn cycles on dead keys. Wait for the latest reset time.
+2. Check if workers are alive via the pidfile: `cat results/auto-improve/iteration-<ITER>/_pidfile.json`
+3. Check whether all API keys are exhausted: look for 429s and quota-reset dates in recent worker logs
+4. Check whether all remaining tasks are stuck in claimed-but-idle state in the manifest
+5. If quota is the bottleneck and reset is hours away, **don't restart workers** — they'll just spin on the same exhausted keys
 
 ### Scoring-exhausted tasks need manual review
 
@@ -98,6 +99,7 @@ The heavy-mode review runs multiple parallel LLM checks. If it exceeds the per-p
 | Review template bug | "incomplete review coverage" | Fixed in megaplan — restart workers |
 | Gate override bug | Infinite critique→revise loops | Fixed in megaplan — restart workers |
 | Z.AI quota exhaustion | 429 "Weekly/Monthly Limit Exhausted" | Key pool cools key 1h; other keys used |
+| Dead API key in pool | Workers spin on 429s, launch silently scales down | Run probe_keys; check api_keys.json against its backup |
 | MiniMax 429 | Rate limit on critique/review | Key pool cools key 60s; OpenRouter fallback |
 | MiniMax bad content | Worker falls back to OpenRouter mid-phase | Automatic; expect occasional slow phases |
 | Scorer stuck | Same ERROR repeating in log | Kill and restart scorer |
