@@ -225,7 +225,7 @@ def check_scorer_stuck(scores: dict, fix: bool = False) -> str | None:
             os.kill(pid, signal.SIGTERM)
         time.sleep(1)
         subprocess.Popen(
-            ["python", "-m", "auto_improve.score", "--watch", "--iterations", ITERATION_FULL],
+            [sys.executable, "-m", "auto_improve.score", "--watch", "--iterations", ITERATION_FULL],
             stdout=open(f"/tmp/scorer-{ITERATION}.log", "w"),
             stderr=subprocess.STDOUT,
         )
@@ -416,7 +416,7 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
         issues.append("Scorer dead")
         if fix:
             subprocess.Popen(
-                ["python", "-m", "auto_improve.score", "--watch", "--iterations", ITERATION_FULL],
+                [sys.executable, "-m", "auto_improve.score", "--watch", "--iterations", ITERATION_FULL],
                 stdout=open(f"/tmp/scorer-{ITERATION}.log", "w"),
                 stderr=subprocess.STDOUT,
             )
@@ -426,7 +426,7 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
         issues.append("Dashboard dead")
         if fix:
             subprocess.Popen(
-                ["python", "-m", "auto_improve.dashboard_web", ITERATION, "--port", "8080"],
+                [sys.executable, "-m", "auto_improve.dashboard_web", ITERATION, "--port", "8080"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -450,7 +450,7 @@ def restart_dead(procs: dict, fix: bool = False) -> list[str]:
             else:
                 killed_msg = "no orphan parent to clean up"
             subprocess.Popen(
-                ["python", "-m", "evals.run_evals", "--config",
+                [sys.executable, "-m", "evals.run_evals", "--config",
                  str(ITER_DIR / "_run_config.json"), "-v"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -481,7 +481,7 @@ def push_to_github() -> str:
     """Export dashboard data and push."""
     try:
         result = subprocess.run(
-            ["python", "-m", "auto_improve.dashboard_export", ITERATION, "--push"],
+            [sys.executable, "-m", "auto_improve.dashboard_export", ITERATION, "--push"],
             capture_output=True, text=True, timeout=600,
         )
         if result.returncode != 0:
