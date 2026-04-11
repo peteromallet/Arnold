@@ -56,7 +56,7 @@ class EvalConfig:
     phase_timeouts: dict[str, int] = field(default_factory=dict)
     openrouter_params: dict[str, Any] = field(default_factory=dict)
     megaplan_bin: str = "megaplan"
-    robustness: str = "heavy"
+    robustness: str = "superrobust"
     workspace_dir: str = str(DEFAULT_WORKSPACE_DIR)
     results_dir: str = str(DEFAULT_RESULTS_DIR)
     run_name: str = ""

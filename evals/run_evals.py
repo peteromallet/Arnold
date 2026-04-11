@@ -269,7 +269,7 @@ def prepare_workspace(
 
 def _phase_transitions(robustness: str) -> dict[str, str | None]:
     """Phase transitions based on robustness level."""
-    if robustness == "heavy":
+    if robustness in ("heavy", "superrobust"):
         return {
             "prep": "plan",
             "plan": "critique",
@@ -589,7 +589,7 @@ def run_megaplan_loop(
     execute_loop_count = 0  # track execute attempts independently (history may not update)
     verify_attempts = 0
     escalated = False
-    phase = "prep" if config.robustness == "heavy" else "plan"
+    phase = "prep" if config.robustness in ("heavy", "superrobust") else "plan"
     cumulative_cost = 0.0
     while phase is not None:
         if phase == "execute":
