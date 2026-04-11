@@ -24,7 +24,7 @@ from auto_improve.probe_keys import KeyStatus, alive_keys, probe_all_keys
 # The iteration this cron is monitoring. The suffix can be purely numeric
 # ("021") or contain a qualifier ("022-robust", "023-baseline", etc.).
 # Directory is always `results/auto-improve/iteration-<ITERATION>`.
-ITERATION = "022-robust"
+ITERATION = "021"
 # Full directory-name form expected by `auto_improve.score._normalize_iteration_name`,
 # which accepts either a pure-digit id ("021") or an already-prefixed name
 # ("iteration-022-robust"). We normalize to the prefixed form so both styles
