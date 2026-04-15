@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.16.0 — 2026-04-15
+
+### Chain driver (`megaplan chain`)
+
+New first-class subcommand that drives an ordered pipeline of milestone plans described by a YAML spec. Replaces ad-hoc bash orchestration (`chain.sh`) so plan-state logic lives in megaplan instead of fragile shell polling.
+
+- **Spec-driven**: `megaplan chain --spec path/to/chain.yaml` reads milestones, optional seed plan, and failure/escalate policies from YAML.
+- **Resumable**: progress is persisted to `chain_state.json` next to the spec (`current_milestone_index`, `current_plan_name`, `last_state`, `completed`). A relaunched process reads this file and picks up where the previous run stopped.
+- **State-aware in the right layer**: each milestone is driven via the existing `megaplan.auto.drive` entry point, so phase selection (`plan → prep → critique → ... → review`) stays in megaplan. Shell wrappers no longer need to classify `next_step`.
+- **`megaplan chain status --spec PATH`**: prints current chain progress without driving.
+- **Failure/escalate policies**: `stop_chain` (default), `skip_milestone`, `retry_milestone`.
+- **Seed handling**: if a seed plan is specified and not already in a terminal state, it is driven first under the same auto loop — fixing the gap where seed plans had no state-aware driver.
+- **Validation**: up front, the chain driver checks every idea file exists and the seed plan (if set) resolves under the project root. Structured `invalid_spec` / `missing_idea_file` / `missing_seed_plan` errors.
+- **PyYAML** added as a runtime dependency.
+
+### Tests
+
+- `tests/test_chain.py` covers spec parsing, `chain status`, idea-file validation, seed-plan validation, happy-path execution (with `auto.drive` mocked), resume-from-`chain_state.json`, and on-failure `stop_chain`.
+
 ## v0.14.0 — 2026-04-15
 
 ### Strict gate flag resolution
