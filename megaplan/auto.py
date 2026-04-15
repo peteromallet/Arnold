@@ -40,7 +40,7 @@ PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "stalled" | "escalated" | "failed" | "aborted" | "cap"
+    status: str  # "done" | "stalled" | "escalated" | "failed" | "aborted" | "cap" | "blocked"
     plan: str
     final_state: str
     iterations: int
@@ -199,6 +199,31 @@ def drive(
         if state == last_state:
             stall_count += 1
             if stall_count >= stall_threshold:
+                # Distinguish an all-blocked outcome from a generic stall.
+                # When execute reports every pending task as `blocked`, the
+                # problem is a poisoned session or genuinely broken env —
+                # supervisors should react differently (e.g. retry with a
+                # fresh session) rather than just restart and loop.
+                progress = status.get("progress") or {}
+                tasks_blocked = int(progress.get("tasks_blocked", 0) or 0)
+                tasks_pending = int(progress.get("tasks_pending", 0) or 0)
+                if tasks_blocked > 0 and tasks_pending == 0:
+                    log(
+                        f"all pending tasks reported status=blocked "
+                        f"({tasks_blocked} blocked) — treating as poisoned outcome"
+                    )
+                    return DriverOutcome(
+                        status="blocked",
+                        plan=plan,
+                        final_state=state,
+                        iterations=iteration,
+                        reason=(
+                            "all tasks reported blocked — workers may be poisoned "
+                            "or the environment may genuinely be broken"
+                        ),
+                        last_phase=last_phase,
+                        events=events,
+                    )
                 log(f"stalled at state={state} for {stall_count} iterations")
                 return DriverOutcome(
                     status="stalled",
@@ -401,4 +426,9 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         return 3
     if outcome.status == "cap":
         return 4
+    # rc=3 is already claimed by 'escalated'; use rc=5 for all-blocked so the
+    # supervisor can distinguish "workers said every task is blocked" from a
+    # generic stall or escalation.
+    if outcome.status == "blocked":
+        return 5
     return 1

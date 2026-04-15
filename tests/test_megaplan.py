@@ -3311,7 +3311,7 @@ def test_validate_merge_inputs_filters_malformed_entries() -> None:
             "bad-entry",
         ],
         required_fields=("task_id", "status", "executor_notes", "files_changed", "commands_run"),
-        enum_fields={"status": {"done", "skipped"}},
+        enum_fields={"status": {"done", "skipped", "blocked"}},
         array_fields=("files_changed", "commands_run"),
         label="task_updates",
     )
@@ -3342,7 +3342,7 @@ def test_validate_merge_inputs_rejects_empty_required_content() -> None:
             {"task_id": "T3", "status": "skipped", "executor_notes": "Investigated and skipped."},
         ],
         required_fields=("task_id", "status", "executor_notes"),
-        enum_fields={"status": {"done", "skipped"}},
+        enum_fields={"status": {"done", "skipped", "blocked"}},
         nonempty_fields={"executor_notes"},
         deviations=deviations,
         label="task_updates",
@@ -3375,7 +3375,7 @@ def test_validate_merge_inputs_accepts_array_fields() -> None:
             },
         ],
         required_fields=("task_id", "status", "executor_notes", "files_changed", "commands_run"),
-        enum_fields={"status": {"done", "skipped"}},
+        enum_fields={"status": {"done", "skipped", "blocked"}},
         nonempty_fields={"executor_notes"},
         array_fields=("files_changed", "commands_run"),
         deviations=deviations,
@@ -3726,7 +3726,7 @@ def test_validate_merge_inputs_tracks_deviations() -> None:
             {"task_id": "T2", "status": "invalid_enum", "executor_notes": "x"},  # bad enum
         ],
         required_fields=("task_id", "status", "executor_notes"),
-        enum_fields={"status": {"done", "skipped"}},
+        enum_fields={"status": {"done", "skipped", "blocked"}},
         deviations=deviations,
         label="task_updates",
     )
@@ -5228,3 +5228,47 @@ def test_review_works_after_batch_by_batch_execution(
         make_args(plan=plan_fixture.plan_name),
     )
     assert review["state"] == megaplan.STATE_DONE
+
+
+# ---------------------------------------------------------------------------
+# Task-update status=blocked acceptance (v0.14.6)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_merge_inputs_accepts_blocked_status() -> None:
+    """`status=blocked` must be accepted (not silently discarded) so workers
+    can signal a poisoned/broken environment without megaplan dropping it."""
+    deviations: list[str] = []
+    valid = megaplan.merge._validate_merge_inputs(
+        [
+            {
+                "task_id": "T1",
+                "status": "blocked",
+                "executor_notes": "bwrap: Creating new namespace failed — env broken.",
+                "files_changed": [],
+                "commands_run": [],
+            }
+        ],
+        required_fields=("task_id", "status", "executor_notes", "files_changed", "commands_run"),
+        enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
+        nonempty_fields={"executor_notes"},
+        array_fields=("files_changed", "commands_run"),
+        deviations=deviations,
+        label="task_updates",
+    )
+    assert len(valid) == 1
+    assert valid[0]["status"] == "blocked"
+    assert deviations == []
+
+
+def test_execution_merge_config_includes_blocked_status() -> None:
+    """The enum_fields passed to the execute merge path must include blocked."""
+    # Import source to sanity-check the constant survives future edits.
+    import inspect
+    import megaplan.execution as execution_module
+
+    source = inspect.getsource(execution_module._merge_batch_results)
+    assert '"blocked"' in source, (
+        "execution._merge_batch_results must include 'blocked' in the task_updates "
+        "status enum so workers can report poisoned-environment outcomes."
+    )

@@ -12,6 +12,18 @@ Fix: when megaplan invoked its `claude` / `codex` subprocess workers, it was pas
 - **Divergence warning**: emits a one-time warning at startup when CWD differs from the plan's stored `project_dir`, so operators notice when a plan created in checkout A is being executed from worktree B.
 - **`--work-dir PATH` flag**: every worker-invoking subcommand (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `review`, `auto`, `loop-init`, `loop-run`) accepts `--work-dir` to explicitly override the detected CWD.
 
+## v0.14.6 — 2026-04-15
+
+### Poisoned-session recovery
+
+Fixes a class of infinite-loop failure where a persistent Codex/Claude session retained an obsolete "sandbox is broken" belief (e.g. an old `bwrap: Creating new namespace failed: Permission denied` line from before `MEGAPLAN_TRUSTED_CONTAINER=1` was wired up). On subsequent runs the model would read the stale history, refuse to execute, and return `status=blocked` — which megaplan then silently dropped as malformed, preventing any state progress and triggering supervisor restart loops.
+
+- **Accept `status=blocked`**: `execution.py`, `execution_timeout.py`, and the execute/finalize JSON schemas now accept `blocked` as a valid task status. Blocked updates are merged and recorded instead of being silently discarded as malformed `task_updates`.
+- **Detect poisoned sessions**: new `_is_poisoned_environmental_failure(raw)` helper matches known-stale sandbox error signatures. When it fires in `run_codex_step`/`run_claude_step` on a *resumed* session in *trusted-container* mode, megaplan drops the session id and recursively retries with `fresh=True`, mirroring the existing rollout-missing recovery from v0.14.3.
+- **Surface blocked tasks**: the execute summary now lists blocked task IDs and emits a warning (`"N task(s) reported status=blocked by the worker — investigate executor_notes before continuing"`) so supervisors and humans see the real reason a batch did not advance instead of just `state=finalized`.
+- **Status reports `tasks_blocked`**: CLI `status` output exposes `tasks_blocked` alongside `tasks_done` / `tasks_skipped` / `tasks_pending`.
+- **Auto driver exits rc=5 on all-blocked stalls**: when `megaplan auto` detects a state-stall and every remaining task is `blocked` (no pending), it exits with status `blocked` / exit code 5 and a specific reason, distinct from generic `stalled=2` and `escalated=3`. Supervisors can treat this as a poisoned-worker signal and retry with `--fresh`.
+
 ## v0.14.0 — 2026-04-15
 
 ### Strict gate flag resolution
