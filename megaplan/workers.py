@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan.checks import build_empty_template, checks_for_robustness
-from megaplan.schemas import SCHEMAS
+from megaplan.schemas import SCHEMAS, get_execution_schema_key
 from megaplan.types import (
     CliError,
     DEFAULT_AGENT_ROUTING,
@@ -1203,7 +1203,8 @@ def run_claude_step(
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
     work_dir = resolve_work_dir(state)
-    schema_name = STEP_SCHEMA_FILENAMES[step]
+    plan_mode = state["config"].get("mode", "code")
+    schema_name = get_execution_schema_key(plan_mode) if step == "execute" else STEP_SCHEMA_FILENAMES[step]
     schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
     session_key = session_key_for(step, "claude")
     session = state["sessions"].get(session_key, {})
@@ -1307,7 +1308,9 @@ def run_codex_step(
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
     work_dir = resolve_work_dir(state)
-    schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
+    plan_mode = state["config"].get("mode", "code")
+    codex_schema_name = get_execution_schema_key(plan_mode) if step == "execute" else STEP_SCHEMA_FILENAMES[step]
+    schema_file = schemas_root(root) / codex_schema_name
     session_key = session_key_for(step, "codex")
     session = state["sessions"].get(session_key, {})
     out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)

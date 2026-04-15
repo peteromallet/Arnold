@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 
@@ -208,6 +209,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                 "completeness",
                                 "performance",
                                 "maintainability",
+                                "doc-quality",
                                 "other",
                             ],
                         },
@@ -498,6 +500,31 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         ],
     },
 }
+
+
+def _build_execution_doc_schema() -> dict[str, Any]:
+    schema = deepcopy(SCHEMAS["execution.json"])
+    schema["properties"]["sections_written"] = schema["properties"].pop("files_changed")
+    task_update_schema = schema["properties"]["task_updates"]["items"]
+    task_update_schema["properties"]["sections_written"] = task_update_schema["properties"].pop("files_changed")
+    task_update_schema["properties"].pop("commands_run", None)
+    task_update_schema["required"] = ["task_id", "status", "executor_notes", "sections_written"]
+    schema["required"] = [
+        "output",
+        "sections_written",
+        "commands_run",
+        "deviations",
+        "task_updates",
+        "sense_check_acknowledgments",
+    ]
+    return schema
+
+
+SCHEMAS["execution_doc.json"] = _build_execution_doc_schema()
+
+
+def get_execution_schema_key(mode: str) -> str:
+    return "execution_doc.json" if mode == "doc" else "execution.json"
 
 
 def _preserve_explicit_required(path: tuple[str, ...]) -> bool:

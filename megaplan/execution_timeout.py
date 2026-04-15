@@ -43,23 +43,38 @@ def _reset_timeout_invalid_tasks(
     *,
     execution_audit: dict[str, Any],
     issues: list[str],
+    mode: str = "code",
 ) -> list[str]:
     reset_reasons: dict[str, list[str]] = {}
-    missing_task_ids = _check_done_task_evidence(
-        finalize_data.get("tasks", []),
-        issues=issues,
-        should_classify=lambda task: True,
-        has_evidence=lambda task: bool(task.get("files_changed")),
-        has_advisory_evidence=lambda task: bool(task.get("commands_run")),
-        missing_message="Done tasks missing both files_changed and commands_run during timeout recovery: ",
-        advisory_message="Advisory: done tasks rely on commands_run without files_changed during timeout recovery: ",
-    )
-    for task_id in missing_task_ids:
-        reset_reasons.setdefault(task_id, []).append(
-            "missing both files_changed and commands_run"
+    if mode == "doc":
+        missing_task_ids = _check_done_task_evidence(
+            finalize_data.get("tasks", []),
+            issues=issues,
+            should_classify=lambda task: True,
+            has_evidence=lambda task: bool(task.get("sections_written")),
+            has_advisory_evidence=lambda task: True,
+            missing_message="Done tasks missing sections_written during timeout recovery: ",
+            advisory_message="",
         )
+    else:
+        missing_task_ids = _check_done_task_evidence(
+            finalize_data.get("tasks", []),
+            issues=issues,
+            should_classify=lambda task: True,
+            has_evidence=lambda task: bool(task.get("files_changed")),
+            has_advisory_evidence=lambda task: bool(task.get("commands_run")),
+            missing_message="Done tasks missing both files_changed and commands_run during timeout recovery: ",
+            advisory_message="Advisory: done tasks rely on commands_run without files_changed during timeout recovery: ",
+        )
+    for task_id in missing_task_ids:
+        if mode == "doc":
+            reset_reasons.setdefault(task_id, []).append("missing sections_written")
+        else:
+            reset_reasons.setdefault(task_id, []).append(
+                "missing both files_changed and commands_run"
+            )
 
-    if not execution_audit.get("skipped"):
+    if mode != "doc" and not execution_audit.get("skipped"):
         files_in_diff = {
             _normalize_execute_claimed_path(path)
             for path in execution_audit.get("files_in_diff", [])
@@ -113,30 +128,33 @@ def _merge_timeout_checkpoint(
     checkpoint_data: dict[str, Any],
     checkpoint_name: str,
     issues: list[str],
+    mode: str = "code",
 ) -> None:
     tasks_by_id = {
         task["id"]: task
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     }
+    if mode == "doc":
+        required_fields = ("task_id", "status", "executor_notes", "sections_written")
+        merge_fields = ("status", "executor_notes", "sections_written")
+        array_fields = ("sections_written",)
+    else:
+        required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
+        merge_fields = ("status", "executor_notes", "files_changed", "commands_run")
+        array_fields = ("files_changed", "commands_run")
     merged_tasks, _ = _validate_and_merge_batch(
         checkpoint_data.get("task_updates"),
-        required_fields=(
-            "task_id",
-            "status",
-            "executor_notes",
-            "files_changed",
-            "commands_run",
-        ),
+        required_fields=required_fields,
         targets_by_id=tasks_by_id,
         id_field="task_id",
-        merge_fields=("status", "executor_notes", "files_changed", "commands_run"),
+        merge_fields=merge_fields,
         issues=issues,
         validation_label=f"{checkpoint_name}.task_updates",
         merge_label="checkpoint task_update",
         enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
         nonempty_fields={"executor_notes"},
-        array_fields=("files_changed", "commands_run"),
+        array_fields=array_fields,
     )
     sense_checks_by_id = {
         sense_check["id"]: sense_check
@@ -175,6 +193,8 @@ def _recover_execute_timeout(
 ) -> StepResponse:
     deviations = [f"Execute timed out: {error.message}"]
     finalize_data = read_json(plan_dir / "finalize.json")
+    project_dir = Path(state["config"]["project_dir"])
+    plan_mode = state["config"].get("mode", "code")
     checkpoint_path = _timeout_checkpoint_path(plan_dir, batch_number=batch_number)
     try:
         checkpoint_data = read_json(checkpoint_path)
@@ -193,14 +213,15 @@ def _recover_execute_timeout(
                 checkpoint_data=checkpoint_data,
                 checkpoint_name=checkpoint_path.name,
                 issues=deviations,
+                mode=plan_mode,
             )
         else:
             deviations.append(
                 f"Advisory: timeout checkpoint {checkpoint_path.name} did not contain an object."
             )
 
-    project_dir = Path(state["config"]["project_dir"])
-    initial_audit = validate_execution_evidence(finalize_data, project_dir)
+    initial_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode)
+
     if initial_audit["skipped"]:
         deviations.append(
             f"Advisory audit skip during timeout recovery: {initial_audit['reason']}"
@@ -212,8 +233,9 @@ def _recover_execute_timeout(
         finalize_data,
         execution_audit=initial_audit,
         issues=deviations,
+        mode=plan_mode,
     )
-    execution_audit = validate_execution_evidence(finalize_data, project_dir)
+    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     atomic_write_json(plan_dir / "finalize.json", finalize_data)
     atomic_write_text(
@@ -272,14 +294,24 @@ def _recover_execute_timeout(
     completed_tasks = [
         task for task in tasks if task.get("status") in {"done", "skipped"}
     ]
-    files_changed = sorted(
-        {
-            path
-            for task in completed_tasks
-            for path in task.get("files_changed", [])
-            if isinstance(path, str) and path.strip()
-        }
-    )
+    if plan_mode == "doc":
+        files_changed = sorted(
+            {
+                section
+                for task in completed_tasks
+                for section in task.get("sections_written", [])
+                if isinstance(section, str) and section.strip()
+            }
+        )
+    else:
+        files_changed = sorted(
+            {
+                path
+                for task in completed_tasks
+                for path in task.get("files_changed", [])
+                if isinstance(path, str) and path.strip()
+            }
+        )
     summary = (
         "Execute timed out after partial progress. "
         f"{len(completed_tasks)}/{len(tasks)} tasks remain marked done or skipped on disk. "

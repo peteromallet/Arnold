@@ -29,6 +29,8 @@ class PlanConfig(TypedDict, total=False):
     project_dir: str
     auto_approve: bool
     robustness: str
+    mode: str
+    output_path: str
     agents: dict[str, str]
 
 
