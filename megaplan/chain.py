@@ -1,0 +1,597 @@
+"""Chain driver — run a pipeline of milestone plans with state kept in megaplan.
+
+This replaces ad-hoc bash orchestration (`chain.sh`). A YAML spec declares an
+optional seed plan and an ordered list of milestones; each milestone is
+initialized from an idea file, then driven to `done` via the same auto-loop
+entry point used by `megaplan auto`.
+
+Plan state stays in megaplan. Bash is no longer responsible for polling or
+deciding the next step — only for process/container liveness.
+
+Spec format (YAML)::
+
+    seed:
+      plan: milestone-m0-from-docs-state-20260415-0217
+    milestones:
+      - label: m1
+        idea: /workspace/ideas/M1-foundation-store.txt
+        branch: megaplan/m1-foundation-store   # optional, currently informational
+      - label: m1a
+        idea: /workspace/ideas/M1a-settings-store.txt
+    on_failure:
+      abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
+    on_escalate:
+      abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
+
+Progress is persisted to ``chain_state.json`` beside the spec so a relaunched
+process can resume where the previous run left off.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError as exc:  # pragma: no cover - import guard
+    raise RuntimeError(
+        "megaplan chain requires PyYAML. Install with `pip install pyyaml`."
+    ) from exc
+
+from megaplan.auto import (
+    DEFAULT_MAX_ITERATIONS,
+    DEFAULT_PHASE_TIMEOUT_SECONDS,
+    DEFAULT_POLL_SLEEP_SECONDS,
+    DEFAULT_STALL_THRESHOLD,
+    DEFAULT_STATUS_TIMEOUT_SECONDS,
+    DriverOutcome,
+    ESCALATE_ACTIONS,
+    drive as auto_drive,
+)
+from megaplan._core import resolve_plan_dir
+from megaplan.types import CliError
+
+
+VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
+TERMINAL_SKIP_STATES = ("done", "aborted", "failed")
+
+
+@dataclass
+class MilestoneSpec:
+    label: str
+    idea: str
+    branch: str | None = None
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any], index: int) -> "MilestoneSpec":
+        if not isinstance(raw, dict):
+            raise CliError("invalid_spec", f"milestones[{index}] must be a mapping")
+        label = raw.get("label")
+        idea = raw.get("idea")
+        if not isinstance(label, str) or not label.strip():
+            raise CliError("invalid_spec", f"milestones[{index}].label is required")
+        if not isinstance(idea, str) or not idea.strip():
+            raise CliError("invalid_spec", f"milestones[{index}].idea is required")
+        branch = raw.get("branch")
+        if branch is not None and not isinstance(branch, str):
+            raise CliError("invalid_spec", f"milestones[{index}].branch must be a string")
+        return cls(label=label, idea=idea, branch=branch)
+
+
+@dataclass
+class ChainSpec:
+    milestones: list[MilestoneSpec]
+    seed_plan: str | None = None
+    on_failure: str = "stop_chain"
+    on_escalate: str = "stop_chain"
+    # Driver knobs propagated into auto.drive for each plan.
+    stall_threshold: int = DEFAULT_STALL_THRESHOLD
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
+    poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS
+    phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS
+    status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS
+    escalate_action: str = "force-proceed"  # passed to auto.drive on_escalate
+    robustness: str = "standard"
+    auto_approve: bool = True
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
+        if not isinstance(raw, dict):
+            raise CliError("invalid_spec", "chain spec must be a YAML mapping")
+        milestones_raw = raw.get("milestones") or []
+        if not isinstance(milestones_raw, list):
+            raise CliError("invalid_spec", "`milestones` must be a list")
+        milestones = [MilestoneSpec.from_dict(m, i) for i, m in enumerate(milestones_raw)]
+        seed_raw = raw.get("seed") or {}
+        seed_plan: str | None = None
+        if seed_raw:
+            if not isinstance(seed_raw, dict):
+                raise CliError("invalid_spec", "`seed` must be a mapping")
+            seed_plan = seed_raw.get("plan")
+            if seed_plan is not None and not isinstance(seed_plan, str):
+                raise CliError("invalid_spec", "`seed.plan` must be a string")
+            if isinstance(seed_plan, str) and not seed_plan.strip():
+                seed_plan = None
+
+        def _action(section: str, default: str) -> str:
+            block = raw.get(section) or {}
+            if not isinstance(block, dict):
+                raise CliError("invalid_spec", f"`{section}` must be a mapping")
+            value = block.get("abort", default)
+            if value not in VALID_FAILURE_ACTIONS:
+                raise CliError(
+                    "invalid_spec",
+                    f"{section}.abort must be one of {VALID_FAILURE_ACTIONS}; got {value!r}",
+                )
+            return value
+
+        on_failure = _action("on_failure", "stop_chain")
+        on_escalate = _action("on_escalate", "stop_chain")
+
+        driver_raw = raw.get("driver") or {}
+        if not isinstance(driver_raw, dict):
+            raise CliError("invalid_spec", "`driver` must be a mapping")
+        stall = int(driver_raw.get("stall_threshold", DEFAULT_STALL_THRESHOLD))
+        max_iter = int(driver_raw.get("max_iterations", DEFAULT_MAX_ITERATIONS))
+        poll = float(driver_raw.get("poll_sleep", DEFAULT_POLL_SLEEP_SECONDS))
+        phase_to = float(driver_raw.get("phase_timeout", DEFAULT_PHASE_TIMEOUT_SECONDS))
+        status_to = float(driver_raw.get("status_timeout", DEFAULT_STATUS_TIMEOUT_SECONDS))
+        esc = driver_raw.get("on_escalate", "force-proceed")
+        if esc not in ESCALATE_ACTIONS:
+            raise CliError(
+                "invalid_spec",
+                f"driver.on_escalate must be one of {ESCALATE_ACTIONS}; got {esc!r}",
+            )
+        robustness = driver_raw.get("robustness", "standard")
+        if not isinstance(robustness, str):
+            raise CliError("invalid_spec", "driver.robustness must be a string")
+        auto_approve = bool(driver_raw.get("auto_approve", True))
+
+        return cls(
+            milestones=milestones,
+            seed_plan=seed_plan,
+            on_failure=on_failure,
+            on_escalate=on_escalate,
+            stall_threshold=stall,
+            max_iterations=max_iter,
+            poll_sleep=poll,
+            phase_timeout=phase_to,
+            status_timeout=status_to,
+            escalate_action=esc,
+            robustness=robustness,
+            auto_approve=auto_approve,
+        )
+
+
+@dataclass
+class ChainState:
+    """Persisted progress for a chain run.
+
+    ``current_milestone_index`` is -1 before any milestone starts (seed phase),
+    0 for the first milestone, etc. ``current_plan_name`` is the plan currently
+    being driven. ``last_state`` is the terminal driver status string from the
+    most recently completed plan.
+    """
+
+    current_milestone_index: int = -1
+    current_plan_name: str | None = None
+    last_state: str | None = None
+    completed: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "current_milestone_index": self.current_milestone_index,
+            "current_plan_name": self.current_plan_name,
+            "last_state": self.last_state,
+            "completed": list(self.completed),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "ChainState":
+        return cls(
+            current_milestone_index=int(raw.get("current_milestone_index", -1)),
+            current_plan_name=raw.get("current_plan_name"),
+            last_state=raw.get("last_state"),
+            completed=list(raw.get("completed") or []),
+        )
+
+
+def _state_path_for(spec_path: Path) -> Path:
+    return spec_path.with_name("chain_state.json")
+
+
+def load_spec(spec_path: Path) -> ChainSpec:
+    if not spec_path.exists():
+        raise CliError("invalid_spec", f"spec file not found: {spec_path}")
+    try:
+        raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise CliError("invalid_spec", f"YAML parse error: {exc}") from exc
+    return ChainSpec.from_dict(raw or {})
+
+
+def load_chain_state(spec_path: Path) -> ChainState:
+    state_path = _state_path_for(spec_path)
+    if not state_path.exists():
+        return ChainState()
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError("invalid_chain_state", f"chain_state.json is invalid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise CliError("invalid_chain_state", "chain_state.json must be an object")
+    return ChainState.from_dict(raw)
+
+
+def save_chain_state(spec_path: Path, state: ChainState) -> None:
+    state_path = _state_path_for(spec_path)
+    tmp = state_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
+    tmp.replace(state_path)
+
+
+def validate_paths(spec: ChainSpec, root: Path) -> None:
+    """Check that all idea files exist and the seed plan (if any) is on disk."""
+    for m in spec.milestones:
+        idea_path = Path(m.idea)
+        if not idea_path.exists():
+            raise CliError(
+                "missing_idea_file",
+                f"milestone {m.label!r} idea file not found: {m.idea}",
+            )
+    if spec.seed_plan:
+        try:
+            resolve_plan_dir(root, spec.seed_plan)
+        except CliError as exc:
+            raise CliError(
+                "missing_seed_plan",
+                f"seed plan {spec.seed_plan!r} not found under {root}: {exc.message}",
+            ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Driving
+# ---------------------------------------------------------------------------
+
+
+def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
+    """Read just the `state` field of a plan via `megaplan status`.
+
+    Returns "missing" if the plan is not found. Used to decide whether to skip
+    driving (plan already terminal) vs. run the full auto loop.
+    """
+    try:
+        proc = subprocess.run(
+            ["megaplan", "status", "--plan", plan],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return "unknown"
+    if proc.returncode != 0:
+        return "missing"
+    try:
+        return json.loads(proc.stdout).get("state", "unknown")
+    except json.JSONDecodeError:
+        return "unknown"
+
+
+def _refresh_main(root: Path, *, writer, no_git_refresh: bool = False) -> None:
+    """Best-effort `git fetch + checkout main + pull`. Never raises; logs only.
+
+    When ``no_git_refresh`` is True, this is a no-op (still logs that it was
+    skipped). This guard exists so developer checkouts running ``megaplan
+    chain`` do not get their currently checked-out branch stomped by an
+    automatic ``git checkout main``.
+    """
+    if no_git_refresh:
+        writer("[chain] skipping git refresh (--no-git-refresh)\n")
+        return
+    for cmd in (
+        ["git", "fetch", "origin", "main"],
+        ["git", "checkout", "main"],
+        ["git", "pull", "--ff-only", "origin", "main"],
+    ):
+        try:
+            proc = subprocess.run(
+                cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+            )
+            writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+
+
+def _init_plan(
+    root: Path,
+    idea_path: str,
+    *,
+    robustness: str,
+    auto_approve: bool,
+    writer,
+) -> str:
+    """Run `megaplan init` with the idea file's contents, return the plan name."""
+    idea_text = Path(idea_path).read_text(encoding="utf-8")
+    args = ["megaplan", "init", "--project-dir", str(root)]
+    if auto_approve:
+        args.append("--auto-approve")
+    args.extend(["--robustness", robustness, idea_text])
+    writer(f"[chain] initializing plan from {idea_path}\n")
+    proc = subprocess.run(
+        args, cwd=str(root), capture_output=True, text=True, check=False, timeout=300
+    )
+    if proc.returncode != 0:
+        raise CliError(
+            "init_failed",
+            f"megaplan init failed (rc={proc.returncode}): "
+            f"{proc.stderr.strip() or proc.stdout.strip()[-400:]}",
+        )
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise CliError("init_failed", f"megaplan init produced non-JSON output: {exc}") from exc
+    plan = payload.get("plan")
+    if not isinstance(plan, str) or not plan:
+        raise CliError("init_failed", "megaplan init did not return a plan name")
+    writer(f"[chain] launched plan={plan}\n")
+    return plan
+
+
+def _drive_plan(
+    root: Path,
+    plan: str,
+    spec: ChainSpec,
+    *,
+    writer,
+) -> DriverOutcome:
+    """Run the auto driver for a single plan."""
+    return auto_drive(
+        plan,
+        cwd=root,
+        stall_threshold=spec.stall_threshold,
+        max_iterations=spec.max_iterations,
+        on_escalate=spec.escalate_action,
+        poll_sleep=spec.poll_sleep,
+        phase_timeout=spec.phase_timeout,
+        status_timeout=spec.status_timeout,
+        writer=writer,
+    )
+
+
+def _handle_outcome(
+    outcome: DriverOutcome,
+    *,
+    spec: ChainSpec,
+    writer,
+) -> str:
+    """Decide the next action given a DriverOutcome.
+
+    Returns one of: "advance" (move to next milestone), "stop" (chain halts),
+    "retry" (re-run the same milestone), "skip" (advance without waiting).
+    """
+    status = outcome.status
+    if status == "done":
+        return "advance"
+    if status == "aborted":
+        # auto.drive returns aborted both for user aborts and on-escalate=abort.
+        # Treat according to on_escalate policy so the chain can skip if asked.
+        writer(f"[chain] plan {outcome.plan} ended aborted\n")
+        policy = spec.on_escalate
+    elif status == "escalated":
+        writer(f"[chain] plan {outcome.plan} escalated — applying on_escalate policy\n")
+        policy = spec.on_escalate
+    else:
+        # failed, stalled, cap → treat as failure
+        writer(f"[chain] plan {outcome.plan} ended {status}: {outcome.reason}\n")
+        policy = spec.on_failure
+    if policy == "stop_chain":
+        return "stop"
+    if policy == "skip_milestone":
+        return "skip"
+    if policy == "retry_milestone":
+        return "retry"
+    return "stop"
+
+
+def run_chain(
+    spec_path: Path,
+    root: Path,
+    *,
+    writer=sys.stdout.write,
+    no_git_refresh: bool = False,
+) -> dict[str, Any]:
+    """Drive the full chain. Returns a structured JSON-serializable result."""
+    spec = load_spec(spec_path)
+    validate_paths(spec, root)
+    state = load_chain_state(spec_path)
+
+    events: list[dict[str, Any]] = []
+
+    def log(msg: str, **fields: Any) -> None:
+        events.append({"msg": msg, **fields})
+        writer(f"[chain] {msg}\n")
+
+    # ---- Seed phase ----
+    if spec.seed_plan and state.current_milestone_index < 0:
+        seed_state = _plan_state(root, spec.seed_plan, timeout=spec.status_timeout)
+        log(f"seed plan {spec.seed_plan} state={seed_state}")
+        if seed_state not in TERMINAL_SKIP_STATES:
+            state.current_plan_name = spec.seed_plan
+            save_chain_state(spec_path, state)
+            outcome = _drive_plan(root, spec.seed_plan, spec, writer=writer)
+            state.last_state = outcome.status
+            save_chain_state(spec_path, state)
+            decision = _handle_outcome(outcome, spec=spec, writer=writer)
+            if decision == "stop":
+                return _result("stopped", state, events, reason=f"seed plan {outcome.status}")
+            if decision == "retry":
+                # Recursive retry kept simple: re-drive seed once.
+                outcome = _drive_plan(root, spec.seed_plan, spec, writer=writer)
+                state.last_state = outcome.status
+                save_chain_state(spec_path, state)
+                if outcome.status != "done":
+                    return _result("stopped", state, events, reason="seed retry failed")
+            # skip / advance both proceed to milestones
+        state.completed.append(
+            {"label": "seed", "plan": spec.seed_plan, "status": state.last_state or seed_state}
+        )
+        state.current_milestone_index = 0
+        state.current_plan_name = None
+        save_chain_state(spec_path, state)
+
+    elif state.current_milestone_index < 0:
+        state.current_milestone_index = 0
+        save_chain_state(spec_path, state)
+
+    # ---- Milestones ----
+    idx = max(state.current_milestone_index, 0)
+    while idx < len(spec.milestones):
+        milestone = spec.milestones[idx]
+        log(f"milestone {milestone.label} starting")
+
+        # Resume mid-milestone if we already have a plan name recorded.
+        if (
+            state.current_plan_name
+            and state.current_milestone_index == idx
+            and _plan_state(root, state.current_plan_name, timeout=spec.status_timeout)
+            not in ("missing",)
+        ):
+            plan_name = state.current_plan_name
+            log(f"resuming existing plan {plan_name} for {milestone.label}")
+        else:
+            _refresh_main(root, writer=writer, no_git_refresh=no_git_refresh)
+            plan_name = _init_plan(
+                root,
+                milestone.idea,
+                robustness=spec.robustness,
+                auto_approve=spec.auto_approve,
+                writer=writer,
+            )
+            state.current_milestone_index = idx
+            state.current_plan_name = plan_name
+            save_chain_state(spec_path, state)
+
+        outcome = _drive_plan(root, plan_name, spec, writer=writer)
+        state.last_state = outcome.status
+        save_chain_state(spec_path, state)
+        decision = _handle_outcome(outcome, spec=spec, writer=writer)
+
+        if decision == "stop":
+            return _result(
+                "stopped",
+                state,
+                events,
+                reason=f"milestone {milestone.label} ended {outcome.status}",
+            )
+        if decision == "retry":
+            log(f"retrying milestone {milestone.label}")
+            state.current_plan_name = None  # force re-init next loop
+            save_chain_state(spec_path, state)
+            continue
+        # advance or skip
+        state.completed.append(
+            {"label": milestone.label, "plan": plan_name, "status": outcome.status}
+        )
+        idx += 1
+        state.current_milestone_index = idx
+        state.current_plan_name = None
+        save_chain_state(spec_path, state)
+
+    log("all milestones complete")
+    return _result("done", state, events)
+
+
+def _result(
+    status: str, state: ChainState, events: list[dict[str, Any]], *, reason: str = ""
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "reason": reason,
+        "chain_state": state.to_dict(),
+        "events": events,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI plumbing
+# ---------------------------------------------------------------------------
+
+
+def build_chain_parser(subparsers: Any) -> None:
+    chain_parser = subparsers.add_parser(
+        "chain",
+        help="Drive a pipeline of milestone plans described by a YAML spec",
+    )
+    chain_sub = chain_parser.add_subparsers(dest="chain_action")
+    # No action == run. `status` is the explicit subcommand.
+    chain_parser.add_argument(
+        "--spec",
+        required=False,
+        help="Path to the chain spec YAML (required at top-level or on subcommands)",
+    )
+    chain_parser.add_argument(
+        "--no-git-refresh",
+        action="store_true",
+        help=(
+            "Skip the automatic `git checkout main && git pull` that runs "
+            "before each milestone. Use this on developer checkouts where "
+            "you do not want chain to stomp on the currently checked-out "
+            "branch. Default: refresh enabled (preserves CI/orchestrator "
+            "behavior)."
+        ),
+    )
+
+    status_parser = chain_sub.add_parser(
+        "status", help="Show persisted chain progress without driving"
+    )
+    status_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+
+
+def run_chain_cli(root: Path, args: argparse.Namespace) -> int:
+    action = getattr(args, "chain_action", None)
+    spec_arg = getattr(args, "spec", None)
+    if not spec_arg:
+        sys.stderr.write("megaplan chain: --spec is required\n")
+        return 64
+    spec_path = Path(spec_arg).expanduser().resolve()
+
+    if action == "status":
+        try:
+            spec = load_spec(spec_path)
+        except CliError as exc:
+            return _emit_error(exc)
+        chain_state = load_chain_state(spec_path)
+        payload = {
+            "success": True,
+            "spec": str(spec_path),
+            "milestone_count": len(spec.milestones),
+            "seed_plan": spec.seed_plan,
+            "chain_state": chain_state.to_dict(),
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 0
+
+    # Default action: run.
+    no_git_refresh = bool(getattr(args, "no_git_refresh", False))
+    try:
+        result = run_chain(spec_path, root, no_git_refresh=no_git_refresh)
+    except CliError as exc:
+        return _emit_error(exc)
+    sys.stdout.write(json.dumps(result, indent=2) + "\n")
+    if result["status"] == "done":
+        return 0
+    return 1
+
+
+def _emit_error(error: CliError) -> int:
+    payload = {"success": False, "error": error.code, "message": error.message}
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return error.exit_code or 1
