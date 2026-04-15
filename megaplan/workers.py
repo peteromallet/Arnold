@@ -1310,11 +1310,10 @@ def run_codex_step(
         and result.returncode != 0
         and _is_rollout_missing(raw)
     ):
-        log.info(
-            "Codex session %s has no rollout (container restart or session wipe); "
-            "retrying %s with a fresh session",
-            session["id"],
-            step,
+        print(
+            f"[megaplan] Codex session {session['id']} has no rollout "
+            f"(container restart or session wipe); retrying {step} with a fresh session",
+            flush=True,
         )
         state["sessions"].pop(session_key, None)
         return run_codex_step(
