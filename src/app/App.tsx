@@ -22,6 +22,7 @@ import { AppProviders } from '@/app/providers/AppProviders';
 import { useAppDndOverlay } from '@/app/hooks/useAppDndOverlay';
 import { useAppExternalDrop } from '@/app/hooks/useAppExternalDrop';
 import { AgentChat } from '@/tools/video-editor/components/AgentChat';
+import { RenderTelemetryOverlay } from '@/shared/dev/RenderTelemetryOverlay';
 
 const AppInternalContent: React.FC = () => {
   const { selectedProjectId } = useProjectSelectionContext();
@@ -66,6 +67,7 @@ const AppInternalContent: React.FC = () => {
       >
         <AppRoutes />
         <AgentChat />
+        {import.meta.env.DEV ? <RenderTelemetryOverlay /> : null}
         <DragOverlay zIndex={10000} style={{ pointerEvents: 'none' }}>{overlayContent}</DragOverlay>
         <Sonner />
       </DndContext>

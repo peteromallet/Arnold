@@ -22,6 +22,7 @@ import { useDuplicateShot, useDeleteShot } from '@/shared/hooks/shots/useShotsCr
 import { useUpdateShotName } from '@/shared/hooks/shots/useShotUpdates';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import type { Shot } from '@/domains/generation/types';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 interface ShotsPanelContentProps {
   projectId: string;
@@ -222,6 +223,7 @@ function ShotCard({
 }
 
 export function ShotsPanelContent({ projectId }: ShotsPanelContentProps) {
+  useRenderBudget('ShotsPanelContent', 5);
   const { shots, isLoading, refetchShots } = useShots();
   const { finalVideoMap } = useShotFinalVideos(projectId);
   const { selectedProjectId } = useProjectSelectionContext();

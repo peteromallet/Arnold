@@ -22,6 +22,7 @@ import { useLightboxViewportLock } from '@/domains/media-lightbox/hooks/useLight
 import { useLightboxPaneLayout } from '@/domains/media-lightbox/hooks/useLightboxPaneLayout';
 import type { OverlayViewportConstraints } from '@/shared/lib/layout/overlayViewportConstraints';
 import { UI_Z_LAYERS } from '@/shared/lib/uiLayers';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 interface LightboxShellProps {
   children: React.ReactNode;
@@ -62,6 +63,7 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
   accessibilityTitle,
   accessibilityDescription,
 }) => {
+  useRenderBudget('LightboxShell', 5);
   const isActuallyModal = isMobile && !isTabletOrLarger;
   useLightboxViewportLock({ isActuallyModal });
 

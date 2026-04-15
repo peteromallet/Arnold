@@ -50,6 +50,7 @@ import type { LightboxLayoutProps } from './components/layouts/types';
 import { handleLightboxDownload } from './utils/lightboxDownload';
 import { invokeLightboxDelete } from './utils/lightboxDelete';
 import { useAddToVideoEditor } from './hooks/useAddToVideoEditor';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 // Re-export grouped sub-interfaces for consumers that import from ImageLightbox
 export type {
@@ -319,6 +320,7 @@ function useImageLightboxRenderModel(
 }
 
 export const ImageLightbox: React.FC<ImageLightboxProps> = (props) => {
+  useRenderBudget('ImageLightbox', 5);
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
   const instanceRef = useRef<string>();

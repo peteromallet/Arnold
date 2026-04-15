@@ -12,6 +12,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/shared/components/ui/contracts/cn';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 import { TrackLabelContent } from '@/tools/video-editor/components/TimelineEditor/TrackLabel';
 import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils';
 import type { TrackDefinition } from '@/tools/video-editor/types';
@@ -74,6 +75,7 @@ const SortableRow = React.memo(function SortableRow({
   onTrackChange,
   onRemoveTrack,
 }: SortableRowProps) {
+  useRenderBudget('SortableRow', 2);
   const sortable = useSortable({ id: `track-${track.id}` });
   const actionHeight = Math.max(12, rowHeight - ACTION_VERTICAL_MARGIN * 2);
   const style = {

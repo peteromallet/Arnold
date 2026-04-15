@@ -39,6 +39,7 @@ import { deriveGalleryInputImages } from "./MediaGallery/utils";
 import { isImageEditTaskType } from "@/shared/lib/taskParamsUtils";
 import { useMarkVariantViewed } from "@/shared/hooks/variants/useMarkVariantViewed";
 import { getGenerationId, getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 const MIN_PADDING = 60;
 const MAX_PADDING = 200;
@@ -119,6 +120,7 @@ export const MediaGalleryItem: React.FC<MediaGalleryItemProps> = ({
   projectAspectRatio,
   dataTour,
 }) => {
+  useRenderBudget('MediaGalleryItem', 3);
   const {
     selectedShotIdLocal,
     simplifiedShotOptions,

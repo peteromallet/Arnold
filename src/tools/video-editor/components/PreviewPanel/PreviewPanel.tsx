@@ -7,12 +7,14 @@ import {
 import { useTimelinePlaybackContext } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { isTouchTimelineInput } from '@/tools/video-editor/lib/mobile-interaction-model';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 interface PreviewPanelProps {
   previewSlotRef: RefObject<HTMLDivElement>;
 }
 
 function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
+  useRenderBudget('PreviewPanel', 5);
   useRenderDiagnostic('PreviewPanel');
   const {
     data,

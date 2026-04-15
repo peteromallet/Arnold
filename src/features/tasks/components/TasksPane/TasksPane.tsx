@@ -28,12 +28,14 @@ import { useTasksLightbox } from './hooks/useTasksLightbox';
 import { useShotActions } from './hooks/useShotActions';
 import { useTasksPaneController } from './hooks/useTasksPaneController';
 import { useTasksPaneSlidingPane } from './hooks/useTasksPaneSlidingPane';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 interface TasksPaneProps {
   onOpenSettings: () => void;
 }
 
 const TasksPaneComponent: React.FC<TasksPaneProps> = ({ onOpenSettings }) => {
+  useRenderBudget('TasksPane', 5);
   const {
     isTasksPaneLocked,
     setIsTasksPaneLocked,

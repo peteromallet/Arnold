@@ -11,6 +11,7 @@ import { TextEditPanel } from './editModes/TextEditPanel';
 import { UpscalePanel } from './editModes/UpscalePanel';
 import type { EditModePanelProps } from './types';
 import { useEditModePanelState } from '../hooks/useEditModePanelState';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 export const EditModePanel: React.FC<EditModePanelProps> = ({
   variant,
@@ -27,6 +28,7 @@ export const EditModePanel: React.FC<EditModePanelProps> = ({
   imageEditState,
   variantsState,
 }) => {
+  useRenderBudget('EditModePanel', 3);
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
   const instanceRef = useRef<string>();

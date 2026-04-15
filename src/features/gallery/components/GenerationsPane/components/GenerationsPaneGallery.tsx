@@ -10,6 +10,7 @@ import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { VideoGenerationModal } from '@/tools/travel-between-images/components/VideoGenerationModal';
 import { useLassoSelection } from '../hooks/useLassoSelection';
 import { useModifierKeys } from '../hooks/useModifierKeys';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 type MediaGalleryProps = React.ComponentProps<typeof MediaGallery>;
 
@@ -66,6 +67,7 @@ export function GenerationsPaneGallery({
   error,
   gallery,
 }: GenerationsPaneGalleryProps): React.ReactElement {
+  useRenderBudget('GenerationsPaneGallery', 5);
   const gallerySurfaceRef = React.useRef<HTMLDivElement | null>(null);
   const [contextMenuPosition, setContextMenuPosition] = React.useState<{ x: number; y: number } | null>(null);
   const [videoModalShot, setVideoModalShot] = React.useState<Shot | null>(null);

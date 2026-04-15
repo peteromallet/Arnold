@@ -44,6 +44,7 @@ import {
 } from '@/tools/video-editor/lib/resize-math';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 import type { TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag';
@@ -173,6 +174,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   onClearUnusedTracks,
   newTrackDropLabel,
 }: TimelineCanvasProps, ref) {
+  useRenderBudget('TimelineCanvas', 3);
   const { dataRef } = useTimelineEditorData();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);
