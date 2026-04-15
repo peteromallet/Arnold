@@ -24,7 +24,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import TERMINAL_STATES
+from megaplan.types import (
+    AUTOMATION_TERMINAL_STATES,
+    STATE_AWAITING_HUMAN,
+    STATE_TIEBREAKER_PENDING,
+    STATE_TIEBREAKER_READY,
+    TERMINAL_STATES,
+)
 
 
 DEFAULT_STALL_THRESHOLD = 5
@@ -182,8 +188,41 @@ def drive(
             valid_next=valid_next,
         )
 
-        # Terminal: plan reached a final state.
-        if state in TERMINAL_STATES:
+        # Terminal: plan reached a final state (or automation-terminal).
+        if state in AUTOMATION_TERMINAL_STATES:
+            if state == STATE_AWAITING_HUMAN:
+                log("plan awaiting human verification — automation stopping")
+                return DriverOutcome(
+                    status="awaiting_human",
+                    plan=plan,
+                    final_state=state,
+                    iterations=iteration,
+                    reason="plan has criteria requiring human verification",
+                    last_phase=last_phase,
+                    events=events,
+                )
+            if state == STATE_TIEBREAKER_PENDING:
+                log("tiebreaker pending — run 'megaplan tiebreaker-run --plan <name>' to execute")
+                return DriverOutcome(
+                    status="tiebreaker_pending",
+                    plan=plan,
+                    final_state=state,
+                    iterations=iteration,
+                    reason="gate recommended tiebreaker — researcher/challenger run needed",
+                    last_phase=last_phase,
+                    events=events,
+                )
+            if state == STATE_TIEBREAKER_READY:
+                log("tiebreaker ready — run 'megaplan tiebreaker decide --plan <name>' to resolve")
+                return DriverOutcome(
+                    status="tiebreaker_ready",
+                    plan=plan,
+                    final_state=state,
+                    iterations=iteration,
+                    reason="tiebreaker synthesis complete — awaiting human decision",
+                    last_phase=last_phase,
+                    events=events,
+                )
             log(f"terminal state reached: {state}")
             return DriverOutcome(
                 status="done" if state == "done" else "aborted",

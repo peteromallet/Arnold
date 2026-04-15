@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.18.0 — 2026-04-15
+
+### Automated tiebreaker triggering
+
+Gate-driven automatic tiebreaker routing with budgeted, audited guardrails. Builds on the advisory `megaplan tiebreaker` subcommand from v0.17.1 — the harness now detects recurring constraint tensions and routes to tiebreaker automatically.
+
+- **Iteration-pressure analysis**: `megaplan/iteration_pressure.py` computes flag recurrence history — fuzzy-groups flags by Jaccard word similarity, tracks `addressed_then_reopened_count`, and renders a pressure table into the gate prompt context.
+- **Mechanical recurrence validation**: harness validates TIEBREAKER recommendations against actual flag history via `_validate_tiebreaker`. Re-prompts the gate once if no mechanical signal exists; force-demotes to ITERATE on second failure.
+- **`tiebreaker-run` top-level command**: auto-driver-callable command that invokes `_run_tiebreaker` inside a plan-locked context and transitions the plan state.
+- **Gate integration**: `handle_gate` detects `TIEBREAKER` recommendations, runs the validator, transitions to `tiebreaker_pending` on approval.
+- **Budget guardrails**: `max_tiebreakers_per_plan` (default 2). Exceeded budgets force-demote to ESCALATE.
+- **Domain blocklist**: `tiebreaker_blocklist` config field skips tiebreaker for specified concern categories.
+- **Spec-level opt-out**: `allow_tiebreaker: false` in config disables the mechanism entirely.
+- **Audit tracking**: `megaplan/audit.py` records tiebreaker usage, timing, and token costs. `megaplan tiebreaker audit` CLI for per-plan and global stats. `handle_tiebreaker_decide` writes an audit record on every decision.
+- **Auto driver**: `drive()` returns `status="awaiting_human"`, `"tiebreaker_pending"`, or `"tiebreaker_ready"` for the matching automation-terminal states and stops cleanly.
+- **Gate prompt**: now includes the Iteration Pressure Analysis block; TIEBREAKER bullet explicitly cites `addressed_then_reopened_count` thresholds.
+
 ## v0.17.1 — 2026-04-15
 
 ### Tiebreaker subcommand (`megaplan tiebreaker`)
