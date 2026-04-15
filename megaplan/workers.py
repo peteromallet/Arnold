@@ -91,6 +91,72 @@ class WorkerResult:
     total_tokens: int = 0
 
 
+# ---------------------------------------------------------------------------
+# Worker working directory resolution (git-worktree isolation)
+#
+# When megaplan is invoked from a git worktree, the plan's stored project_dir
+# may point at a *different* checkout (usually the main repo). To avoid
+# subprocess workers writing source code into the wrong working tree, resolve
+# the "working directory" at CLI entry (CWD, or an explicit --work-dir
+# override) and pass *that* through to the worker's --add-dir / -C flags.
+#
+# Plan state files (.megaplan/plans/...) still live under project_dir; only
+# the source-code working tree tracked by the subprocess changes.
+# ---------------------------------------------------------------------------
+
+_WORK_DIR_OVERRIDE: Path | None = None
+_WORK_DIR_WARNED: bool = False
+
+
+def set_work_dir_override(path: Path | str | None) -> None:
+    """Set an explicit working directory for subprocess workers.
+
+    Typically called once from the CLI entry point with either an explicit
+    --work-dir value or ``Path.cwd()``. Pass ``None`` to clear the override
+    (primarily useful in tests).
+    """
+    global _WORK_DIR_OVERRIDE, _WORK_DIR_WARNED
+    _WORK_DIR_OVERRIDE = Path(path) if path is not None else None
+    _WORK_DIR_WARNED = False
+
+
+def resolve_work_dir(state: PlanState) -> Path:
+    """Return the source-code working directory for worker subprocesses.
+
+    Precedence:
+    1. Explicit override set via :func:`set_work_dir_override`.
+    2. Current working directory (``Path.cwd()``).
+
+    If the resolved path differs from the plan's stored ``project_dir``, a
+    one-time warning is printed so operators notice worktree divergence.
+    """
+    global _WORK_DIR_WARNED
+    if _WORK_DIR_OVERRIDE is not None:
+        work_dir = _WORK_DIR_OVERRIDE
+    else:
+        work_dir = Path.cwd()
+    try:
+        project_dir = Path(state["config"]["project_dir"]).resolve()
+    except Exception:
+        project_dir = None
+    try:
+        resolved_work = work_dir.resolve()
+    except Exception:
+        resolved_work = work_dir
+    if (
+        not _WORK_DIR_WARNED
+        and project_dir is not None
+        and resolved_work != project_dir
+    ):
+        print(
+            f"[megaplan] Plan was created in {project_dir}; current run is in "
+            f"{resolved_work}. Using current CWD for subprocess --add-dir.",
+            flush=True,
+        )
+        _WORK_DIR_WARNED = True
+    return work_dir
+
+
 def run_command(
     command: list[str],
     *,
@@ -1098,12 +1164,13 @@ def run_claude_step(
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
+    work_dir = resolve_work_dir(state)
     schema_name = STEP_SCHEMA_FILENAMES[step]
     schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
     session_key = session_key_for(step, "claude")
     session = state["sessions"].get(session_key, {})
     session_id = session.get("id")
-    command = ["claude", "-p", "--output-format", "json", "--json-schema", schema_text, "--add-dir", str(project_dir)]
+    command = ["claude", "-p", "--output-format", "json", "--json-schema", schema_text, "--add-dir", str(work_dir)]
     if step in _EXECUTE_STEPS:
         command.extend(["--permission-mode", "bypassPermissions"])
     if session_id and not fresh:
@@ -1119,7 +1186,7 @@ def run_claude_step(
         **(prompt_kwargs or {}),
     )
     try:
-        result = run_command(command, cwd=project_dir, stdin_text=prompt)
+        result = run_command(command, cwd=work_dir, stdin_text=prompt)
     except CliError as error:
         if error.code == "worker_timeout":
             error.extra["session_id"] = session_id
@@ -1154,6 +1221,7 @@ def run_codex_step(
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
+    work_dir = resolve_work_dir(state)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
     session_key = session_key_for(step, "codex")
     session = state["sessions"].get(session_key, {})
@@ -1189,7 +1257,7 @@ def run_codex_step(
             "exec",
             "--skip-git-repo-check",
             "-C",
-            str(project_dir),
+            str(work_dir),
             "--add-dir",
             str(plan_dir),
         ]
@@ -1202,7 +1270,7 @@ def run_codex_step(
         else:
             command.extend([
                 "-c",
-                f"sandbox_workspace_write.writable_roots=[\"{project_dir}\"]",
+                f"sandbox_workspace_write.writable_roots=[\"{work_dir}\"]",
             ])
         command.extend([
             "-o",

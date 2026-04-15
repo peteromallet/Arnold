@@ -359,6 +359,14 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
+        "--work-dir",
+        default=None,
+        help=(
+            "Override the source-code working directory for subprocess workers "
+            "(--add-dir / -C). Defaults to the current working directory."
+        ),
+    )
+    auto_parser.add_argument(
         "--status-timeout",
         type=float,
         default=DEFAULT_STATUS_TIMEOUT_SECONDS,

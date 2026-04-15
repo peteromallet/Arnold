@@ -938,10 +938,14 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
 
 def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from megaplan.workers import CommandResult, run_codex_step, set_work_dir_override
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
+    # Pin the work dir to the plan's project_dir so this test continues to
+    # exercise the "grant plan_dir via --add-dir" path without also triggering
+    # the worktree warning.
+    set_work_dir_override(Path(state["config"]["project_dir"]))
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
@@ -966,8 +970,11 @@ def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path)
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
-        result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+    try:
+        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+            result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+    finally:
+        set_work_dir_override(None)
 
     assert result.payload == plan_payload
 
@@ -1738,3 +1745,166 @@ def test_run_codex_step_sanitizes_codex_child_env(tmp_path: Path, monkeypatch: p
         result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == plan_payload
+
+
+# ---------------------------------------------------------------------------
+# Worktree isolation: subprocess workers should receive the CWD (or an
+# explicit --work-dir override) for --add-dir / -C, not the plan's stored
+# project_dir. This preserves git-worktree isolation across parallel runs.
+# ---------------------------------------------------------------------------
+
+
+def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import (
+        CommandResult,
+        run_claude_step,
+        set_work_dir_override,
+    )
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    # Simulate a worktree: project_dir is /tmp/.../project but the current
+    # "checkout" is /tmp/.../worktree.
+    worktree_dir = tmp_path / "worktree"
+    worktree_dir.mkdir()
+    set_work_dir_override(worktree_dir)
+
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["cwd"] = kwargs.get("cwd")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps({"result": json.dumps(plan_payload), "total_cost_usd": 0.0}),
+            stderr="",
+            duration_ms=1,
+        )
+
+    try:
+        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+            run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+    finally:
+        set_work_dir_override(None)
+
+    command = captured["command"]
+    add_dir_idx = command.index("--add-dir") + 1
+    assert Path(command[add_dir_idx]) == worktree_dir
+    assert Path(command[add_dir_idx]) != Path(state["config"]["project_dir"])
+    assert Path(captured["cwd"]) == worktree_dir
+
+
+def test_run_claude_step_honors_explicit_work_dir_override(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import (
+        CommandResult,
+        run_claude_step,
+        set_work_dir_override,
+    )
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    # project_dir lives at tmp_path/project; --work-dir explicitly forces a
+    # different path (simulating the operator passing --work-dir on the CLI).
+    forced_dir = tmp_path / "forced"
+    forced_dir.mkdir()
+    set_work_dir_override(forced_dir)
+
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps({"result": json.dumps(plan_payload), "total_cost_usd": 0.0}),
+            stderr="",
+            duration_ms=1,
+        )
+
+    try:
+        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+            run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+    finally:
+        set_work_dir_override(None)
+
+    command = captured["command"]
+    add_dir_idx = command.index("--add-dir") + 1
+    assert Path(command[add_dir_idx]) == forced_dir
+
+
+def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import (
+        CommandResult,
+        run_codex_step,
+        set_work_dir_override,
+    )
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    worktree_dir = tmp_path / "worktree"
+    worktree_dir.mkdir()
+    set_work_dir_override(worktree_dir)
+
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=1,
+        )
+
+    try:
+        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+            run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+    finally:
+        set_work_dir_override(None)
+
+    command = captured["command"]
+    cd_idx = command.index("-C") + 1
+    add_dir_idx = command.index("--add-dir") + 1
+    # -C (source-code cwd) should follow the worktree, NOT project_dir.
+    assert Path(command[cd_idx]) == worktree_dir
+    assert Path(command[cd_idx]) != Path(state["config"]["project_dir"])
+    # --add-dir still grants access to the plan's artifacts directory
+    # (unchanged by the worktree fix).
+    assert Path(command[add_dir_idx]) == plan_dir

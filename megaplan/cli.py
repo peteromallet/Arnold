@@ -846,6 +846,10 @@ def build_parser() -> argparse.ArgumentParser:
         step_parser.add_argument("--fresh", action="store_true")
         step_parser.add_argument("--persist", action="store_true")
         step_parser.add_argument("--ephemeral", action="store_true")
+        step_parser.add_argument("--work-dir", default=None,
+                                 help="Override the source-code working directory passed to subprocess workers "
+                                      "(--add-dir / -C). Defaults to the current working directory. Use this to "
+                                      "force a specific path (e.g. a git worktree) regardless of where the plan was created.")
         if name == "execute":
             step_parser.add_argument("--confirm-destructive", action="store_true")
             step_parser.add_argument("--user-approved", action="store_true")
@@ -918,6 +922,8 @@ def build_parser() -> argparse.ArgumentParser:
     loop_init_parser.add_argument("--fresh", action="store_true")
     loop_init_parser.add_argument("--persist", action="store_true")
     loop_init_parser.add_argument("--ephemeral", action="store_true")
+    loop_init_parser.add_argument("--work-dir", default=None,
+                                  help="Override the source-code working directory for subprocess workers (default: CWD)")
     loop_init_parser.add_argument("goal", nargs="?")
 
     loop_run_parser = subparsers.add_parser("loop-run", help="Run an existing MegaLoop workflow")
@@ -933,6 +939,8 @@ def build_parser() -> argparse.ArgumentParser:
     loop_run_parser.add_argument("--fresh", action="store_true")
     loop_run_parser.add_argument("--persist", action="store_true")
     loop_run_parser.add_argument("--ephemeral", action="store_true")
+    loop_run_parser.add_argument("--work-dir", default=None,
+                                 help="Override the source-code working directory for subprocess workers (default: CWD)")
 
     loop_status_parser = subparsers.add_parser("loop-status", help="Show MegaLoop state")
     loop_status_parser.add_argument("name")
@@ -1027,6 +1035,14 @@ def main(argv: list[str] | None = None) -> int:
             return render_response(handle_config(args))
     except CliError as error:
         return error_response(error)
+
+    # Capture the working directory for subprocess workers (--add-dir / -C).
+    # This preserves git-worktree isolation: workers edit source code under
+    # the CWD (or an explicit --work-dir override), not the plan's stored
+    # project_dir (which may be a sibling checkout).
+    from megaplan.workers import set_work_dir_override
+    work_dir_override = getattr(args, "work_dir", None)
+    set_work_dir_override(work_dir_override if work_dir_override else Path.cwd())
 
     root = _find_megaplan_root(Path.cwd())
     ensure_runtime_layout(root)
