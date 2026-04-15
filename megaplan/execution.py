@@ -138,20 +138,29 @@ def _build_aggregate_execution_payload(
     *,
     completed_batches: int,
     total_batches: int,
+    mode: str = "code",
 ) -> dict[str, Any]:
     outputs = [
         f"Batch {index + 1}: {payload.get('output', '')}".strip()
         for index, payload in enumerate(batch_payloads)
     ]
-    files_changed: list[str] = []
-    commands_run: list[str] = []
     deviations: list[str] = []
     task_updates: list[dict[str, Any]] = []
     sense_check_acknowledgments: list[dict[str, Any]] = []
+    if mode == "doc":
+        sections_written: list[str] = []
+    else:
+        files_changed: list[str] = []
+    commands_run: list[str] = []
     for payload in batch_payloads:
-        files_changed.extend(
-            [path for path in payload.get("files_changed", []) if isinstance(path, str)]
-        )
+        if mode == "doc":
+            sections_written.extend(
+                [s for s in payload.get("sections_written", []) if isinstance(s, str)]
+            )
+        else:
+            files_changed.extend(
+                [path for path in payload.get("files_changed", []) if isinstance(path, str)]
+            )
         commands_run.extend(
             [
                 command
@@ -177,14 +186,18 @@ def _build_aggregate_execution_payload(
     )
     if outputs:
         output = output + "\n" + "\n".join(outputs)
-    return {
+    result: dict[str, Any] = {
         "output": output,
-        "files_changed": _stable_unique_strings(files_changed),
         "commands_run": _stable_unique_strings(commands_run),
         "deviations": deviations,
         "task_updates": task_updates,
         "sense_check_acknowledgments": sense_check_acknowledgments,
     }
+    if mode == "doc":
+        result["sections_written"] = _stable_unique_strings(sections_written)
+    else:
+        result["files_changed"] = _stable_unique_strings(files_changed)
+    return result
 
 
 def _active_sense_check_ids(
@@ -260,6 +273,7 @@ def _merge_batch_results(
     batch_task_ids: list[str],
     batch_sense_check_ids: list[str],
     issues: list[str],
+    mode: str = "code",
 ) -> tuple[int, int, int, int]:
     batch_task_id_set = set(batch_task_ids)
     batch_sense_check_id_set = set(batch_sense_check_ids)
@@ -278,18 +292,20 @@ def _merge_batch_results(
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     }
+    if mode == "doc":
+        required_fields = ("task_id", "status", "executor_notes", "sections_written")
+        merge_fields = ("status", "executor_notes", "sections_written")
+        array_fields = ("sections_written",)
+    else:
+        required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
+        merge_fields = ("status", "executor_notes", "files_changed", "commands_run")
+        array_fields = ("files_changed", "commands_run")
     merged_count, _ = _validate_and_merge_batch(
         payload.get("task_updates"),
-        required_fields=(
-            "task_id",
-            "status",
-            "executor_notes",
-            "files_changed",
-            "commands_run",
-        ),
+        required_fields=required_fields,
         targets_by_id=all_tasks_by_id,
         id_field="task_id",
-        merge_fields=("status", "executor_notes", "files_changed", "commands_run"),
+        merge_fields=merge_fields,
         issues=issues,
         validation_label="task_updates",
         merge_label="task_update",
@@ -297,7 +313,7 @@ def _merge_batch_results(
         incomplete_message=None,
         enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
         nonempty_fields={"executor_notes"},
-        array_fields=("files_changed", "commands_run"),
+        array_fields=array_fields,
     )
     # Check batch-specific coverage: how many of THIS batch's tasks got updates?
     total_batch_tasks = len(batch_task_id_set)
@@ -368,8 +384,14 @@ def _run_and_merge_batch(
     ] = _capture_git_status_snapshot,
 ) -> BatchResult:
     project_dir = Path(state["config"]["project_dir"])
-    before_snapshot, before_error = capture_git_status_snapshot_fn(project_dir)
-    before_line_counts = capture_before_line_counts(project_dir, before_snapshot.keys())
+    plan_mode = state["config"].get("mode", "code")
+    if plan_mode == "doc":
+        before_snapshot: dict[str, str] = {}
+        before_error: str | None = None
+        before_line_counts: dict[str, int] = {}
+    else:
+        before_snapshot, before_error = capture_git_status_snapshot_fn(project_dir)
+        before_line_counts = capture_before_line_counts(project_dir, before_snapshot.keys())
     worker, agent, mode, refreshed = worker_module.run_step_with_worker(
         "execute",
         state,
@@ -382,26 +404,27 @@ def _run_and_merge_batch(
     payload = dict(worker.payload)
     deviations = list(payload.get("deviations", []))
     batch_task_id_set = set(batch_task_ids)
-    deviations.extend(
-        _observe_git_changes(
-            project_dir=project_dir,
-            payload=payload,
-            before_snapshot=before_snapshot,
-            before_error=before_error,
-            batch_number=batch_number,
-            batches_total=batches_total,
-            capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
+    if plan_mode != "doc":
+        deviations.extend(
+            _observe_git_changes(
+                project_dir=project_dir,
+                payload=payload,
+                before_snapshot=before_snapshot,
+                before_error=before_error,
+                batch_number=batch_number,
+                batches_total=batches_total,
+                capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
+            )
         )
-    )
-    deviations.extend(
-        _collect_quality_deviations(
-            project_dir=project_dir,
-            before_snapshot=before_snapshot,
-            before_line_counts=before_line_counts,
-            quality_config=quality_config,
-            capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
+        deviations.extend(
+            _collect_quality_deviations(
+                project_dir=project_dir,
+                before_snapshot=before_snapshot,
+                before_line_counts=before_line_counts,
+                quality_config=quality_config,
+                capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
+            )
         )
-    )
     merged_count, total_batch_tasks, acknowledged_count, total_batch_checks = (
         _merge_batch_results(
             finalize_data=finalize_data,
@@ -409,18 +432,30 @@ def _run_and_merge_batch(
             batch_task_ids=batch_task_ids,
             batch_sense_check_ids=batch_sense_check_ids,
             issues=deviations,
+            mode=plan_mode,
         )
     )
-    missing_task_evidence = _check_done_task_evidence(
-        finalize_data.get("tasks", []),
-        issues=deviations,
-        should_classify=lambda task: task.get("id") in batch_task_id_set,
-        has_evidence=lambda task: bool(task.get("files_changed")),
-        has_advisory_evidence=lambda task: bool(task.get("commands_run")),
-        missing_message="Done tasks missing both files_changed and commands_run: ",
-        advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
-    )
-    execution_audit = validate_execution_evidence(finalize_data, project_dir)
+    if plan_mode == "doc":
+        missing_task_evidence = _check_done_task_evidence(
+            finalize_data.get("tasks", []),
+            issues=deviations,
+            should_classify=lambda task: task.get("id") in batch_task_id_set,
+            has_evidence=lambda task: bool(task.get("sections_written")),
+            has_advisory_evidence=lambda task: True,
+            missing_message="Done tasks missing sections_written: ",
+            advisory_message="",
+        )
+    else:
+        missing_task_evidence = _check_done_task_evidence(
+            finalize_data.get("tasks", []),
+            issues=deviations,
+            should_classify=lambda task: task.get("id") in batch_task_id_set,
+            has_evidence=lambda task: bool(task.get("files_changed")),
+            has_advisory_evidence=lambda task: bool(task.get("commands_run")),
+            missing_message="Done tasks missing both files_changed and commands_run: ",
+            advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
+        )
+    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode)
     if execution_audit["skipped"]:
         deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
     for finding in execution_audit["findings"]:
@@ -574,11 +609,13 @@ def handle_execute_one_batch(
     )
 
     if is_final_batch and all_tracked and not blocked:
+        plan_mode = state["config"].get("mode", "code")
         batch_payloads = [read_json(path) for path in list_batch_artifacts(plan_dir)]
         aggregate_payload = _build_aggregate_execution_payload(
             batch_payloads,
             completed_batches=len(batch_payloads),
             total_batches=batches_total,
+            mode=plan_mode,
         )
         atomic_write_json(plan_dir / "execution.json", aggregate_payload)
         state["current_state"] = STATE_EXECUTED
@@ -872,10 +909,12 @@ def handle_execute_auto_loop(
         mode = result.mode
         refreshed = result.refreshed
 
+    plan_mode = state["config"].get("mode", "code")
     aggregate_payload = _build_aggregate_execution_payload(
         batch_payloads,
         completed_batches=len(batch_payloads),
         total_batches=total_batches,
+        mode=plan_mode,
     )
     if timeout_error is not None:
         aggregate_payload["deviations"] = list(aggregate_payload.get("deviations", []))
@@ -886,7 +925,7 @@ def handle_execute_auto_loop(
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
     finalize_data = read_json(plan_dir / "finalize.json")
-    execution_audit = validate_execution_evidence(finalize_data, project_dir)
+    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=state["config"].get("mode", "code"))
     deviations = list(aggregate_payload.get("deviations", []))
     if timeout_recovery is not None:
         deviations.extend(
@@ -914,15 +953,26 @@ def handle_execute_auto_loop(
             active_sense_check_ids=active_sense_check_ids,
         )
     )
-    missing_task_evidence = _check_done_task_evidence(
-        finalize_data.get("tasks", []),
-        issues=deviations,
-        should_classify=lambda task: task.get("id") in active_task_ids,
-        has_evidence=lambda task: bool(task.get("files_changed")),
-        has_advisory_evidence=lambda task: bool(task.get("commands_run")),
-        missing_message="Done tasks missing both files_changed and commands_run: ",
-        advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
-    )
+    if plan_mode == "doc":
+        missing_task_evidence = _check_done_task_evidence(
+            finalize_data.get("tasks", []),
+            issues=deviations,
+            should_classify=lambda task: task.get("id") in active_task_ids,
+            has_evidence=lambda task: bool(task.get("sections_written")),
+            has_advisory_evidence=lambda task: True,
+            missing_message="Done tasks missing sections_written: ",
+            advisory_message="",
+        )
+    else:
+        missing_task_evidence = _check_done_task_evidence(
+            finalize_data.get("tasks", []),
+            issues=deviations,
+            should_classify=lambda task: task.get("id") in active_task_ids,
+            has_evidence=lambda task: bool(task.get("files_changed")),
+            has_advisory_evidence=lambda task: bool(task.get("commands_run")),
+            missing_message="Done tasks missing both files_changed and commands_run: ",
+            advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
+        )
     blocking_reasons = build_blocking_reasons(
         tracked_tasks=tracked_tasks,
         total_tasks=total_tasks,
