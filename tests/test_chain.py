@@ -283,3 +283,59 @@ def test_run_chain_with_seed_drives_seed_first(tmp_path: Path) -> None:
     # Seed must be driven first, then the milestone plan.
     assert drive_calls[0] == seed_name
     assert drive_calls[1].startswith("plan-m1")
+
+
+# ---------------------------------------------------------------------------
+# --no-git-refresh flag
+# ---------------------------------------------------------------------------
+
+
+def test_no_git_refresh_suppresses_subprocess_calls(tmp_path: Path) -> None:
+    """With no_git_refresh=True, _refresh_main must not invoke any subprocess."""
+    from megaplan.chain import _refresh_main
+
+    msgs: list[str] = []
+    with patch("megaplan.chain.subprocess.run") as mock_run:
+        _refresh_main(tmp_path, writer=msgs.append, no_git_refresh=True)
+    assert mock_run.call_count == 0
+    assert any("skipping git refresh" in m for m in msgs)
+
+
+def test_refresh_main_default_invokes_git(tmp_path: Path) -> None:
+    """Default behavior (no_git_refresh=False) still issues the git commands."""
+    from megaplan.chain import _refresh_main
+
+    class _Proc:
+        returncode = 0
+
+    with patch("megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
+        _refresh_main(tmp_path, writer=lambda _m: None)
+    # fetch + checkout + pull
+    assert mock_run.call_count == 3
+    cmds = [call.args[0] for call in mock_run.call_args_list]
+    assert cmds[0][:2] == ["git", "fetch"]
+    assert cmds[1] == ["git", "checkout", "main"]
+    assert cmds[2][:2] == ["git", "pull"]
+
+
+def test_run_chain_no_git_refresh_skips_refresh(tmp_path: Path) -> None:
+    """End-to-end: run_chain(..., no_git_refresh=True) propagates the flag."""
+    spec_path = _setup_two_milestones(tmp_path)
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    refresh_calls: list[bool] = []
+
+    def fake_refresh(root, *, writer, no_git_refresh=False):
+        refresh_calls.append(no_git_refresh)
+
+    def fake_drive(plan, **_kwargs):
+        return _fake_outcome(plan, "done")
+
+    with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
+         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("megaplan.chain._refresh_main", side_effect=fake_refresh):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, no_git_refresh=True)
+
+    assert result["status"] == "done"
+    assert len(refresh_calls) == 2
+    assert all(call is True for call in refresh_calls)

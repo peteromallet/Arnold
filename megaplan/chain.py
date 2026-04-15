@@ -285,8 +285,17 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
         return "unknown"
 
 
-def _refresh_main(root: Path, *, writer) -> None:
-    """Best-effort `git fetch + checkout main + pull`. Never raises; logs only."""
+def _refresh_main(root: Path, *, writer, no_git_refresh: bool = False) -> None:
+    """Best-effort `git fetch + checkout main + pull`. Never raises; logs only.
+
+    When ``no_git_refresh`` is True, this is a no-op (still logs that it was
+    skipped). This guard exists so developer checkouts running ``megaplan
+    chain`` do not get their currently checked-out branch stomped by an
+    automatic ``git checkout main``.
+    """
+    if no_git_refresh:
+        writer("[chain] skipping git refresh (--no-git-refresh)\n")
+        return
     for cmd in (
         ["git", "fetch", "origin", "main"],
         ["git", "checkout", "main"],
@@ -397,6 +406,7 @@ def run_chain(
     root: Path,
     *,
     writer=sys.stdout.write,
+    no_git_refresh: bool = False,
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
     spec = load_spec(spec_path)
@@ -457,7 +467,7 @@ def run_chain(
             plan_name = state.current_plan_name
             log(f"resuming existing plan {plan_name} for {milestone.label}")
         else:
-            _refresh_main(root, writer=writer)
+            _refresh_main(root, writer=writer, no_git_refresh=no_git_refresh)
             plan_name = _init_plan(
                 root,
                 milestone.idea,
@@ -527,6 +537,17 @@ def build_chain_parser(subparsers: Any) -> None:
         required=False,
         help="Path to the chain spec YAML (required at top-level or on subcommands)",
     )
+    chain_parser.add_argument(
+        "--no-git-refresh",
+        action="store_true",
+        help=(
+            "Skip the automatic `git checkout main && git pull` that runs "
+            "before each milestone. Use this on developer checkouts where "
+            "you do not want chain to stomp on the currently checked-out "
+            "branch. Default: refresh enabled (preserves CI/orchestrator "
+            "behavior)."
+        ),
+    )
 
     status_parser = chain_sub.add_parser(
         "status", help="Show persisted chain progress without driving"
@@ -559,8 +580,9 @@ def run_chain_cli(root: Path, args: argparse.Namespace) -> int:
         return 0
 
     # Default action: run.
+    no_git_refresh = bool(getattr(args, "no_git_refresh", False))
     try:
-        result = run_chain(spec_path, root)
+        result = run_chain(spec_path, root, no_git_refresh=no_git_refresh)
     except CliError as exc:
         return _emit_error(exc)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
