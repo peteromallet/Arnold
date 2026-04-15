@@ -1234,11 +1234,10 @@ def run_codex_step(
         if not fresh and persistent and session.get("id") and _is_rollout_missing(
             str(error.extra.get("raw_output", ""))
         ):
-            log.info(
-                "Codex session %s has no rollout (container restart or session wipe); "
-                "retrying %s with a fresh session",
-                session["id"],
-                step,
+            print(
+                f"[megaplan] Codex session {session['id']} has no rollout "
+                f"(container restart or session wipe); retrying {step} with a fresh session",
+                flush=True,
             )
             # Drop the stale session id so later phases don't also try to resume it.
             state["sessions"].pop(session_key, None)
