@@ -290,7 +290,11 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     lock_held = plan_lock_is_held(plan_dir)
     active_step = _build_active_step(state.get("active_step"), plan_dir=plan_dir)
     last_step = _build_last_step(state)
+    plan_mode = state.get("config", {}).get("mode", "code")
+    plan_output_path = state.get("config", {}).get("output_path")
     summary = f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
+    if plan_mode == "doc":
+        summary += f" Mode: doc. Output: {plan_output_path}."
     if active_step:
         summary = (
             summary
@@ -320,6 +324,8 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
         "active_step": active_step,
         "last_step": last_step,
         "total_cost_usd": state.get("meta", {}).get("total_cost_usd", 0.0),
+        "mode": plan_mode,
+        "output_path": plan_output_path,
         "notes_count": len(notes) if isinstance(notes, list) else 0,
         "notes": notes if isinstance(notes, list) else [],
         "session_summaries": [
@@ -816,6 +822,8 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
+    init_parser.add_argument("--mode", choices=["code", "doc"], default="code")
+    init_parser.add_argument("--output")
     init_parser.add_argument("--hermes", nargs="?", const="", default=None,
                              help="Use Hermes agent for all phases. Optional: specify default model")
     init_parser.add_argument("--phase-model", action="append", default=[],

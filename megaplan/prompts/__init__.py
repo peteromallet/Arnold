@@ -33,13 +33,16 @@ from .execute import (
 )
 from .finalize import _finalize_prompt
 from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt
+from .execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
 from .planning import PLAN_TEMPLATE, _plan_prompt, _prep_prompt
+from .prep_doc import _prep_doc_prompt
 from .review import (
     _review_prompt,
     _settled_decisions_block,
     _settled_decisions_instruction,
     _write_review_template,
 )
+from .review_doc import _review_doc_prompt
 
 _PromptBuilder = Callable[..., str]
 
@@ -107,12 +110,33 @@ def _prepend_harness_guard(prompt: str) -> str:
     return f"{_NESTED_HARNESS_GUARD}\n\n{prompt}"
 
 
+def _resolve_builder(
+    builders: dict[str, _PromptBuilder], step: str, state: PlanState, agent_label: str
+) -> _PromptBuilder:
+    mode = state.get("config", {}).get("mode", "code")
+    if mode == "doc":
+        if step == "prep":
+            return _prep_doc_prompt
+        if step == "execute":
+            return _execute_doc_prompt
+        if step == "review":
+            return partial(
+                _review_doc_prompt,
+                review_intro="Review the document critically against user intent and observable success criteria.",
+                criteria_guidance="Judge against the success criteria, not plan elegance.",
+                task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output document.",
+                sense_check_guidance="Review every sense check explicitly. Confirm concise executor acknowledgments when they are specific; dig deeper only when they are perfunctory or contradicted by the document.",
+            )
+    builder = builders.get(step)
+    if builder is None:
+        raise CliError("unsupported_step", f"Unsupported {agent_label} step '{step}'")
+    return builder
+
+
 def create_claude_prompt(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> str:
-    builder = _CLAUDE_PROMPT_BUILDERS.get(step)
-    if builder is None:
-        raise CliError("unsupported_step", f"Unsupported Claude step '{step}'")
+    builder = _resolve_builder(_CLAUDE_PROMPT_BUILDERS, step, state, "Claude")
     if step == "review":
         return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
     if step in {"prep", "critique", "gate", "finalize", "execute"}:
@@ -123,9 +147,7 @@ def create_claude_prompt(
 def create_codex_prompt(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> str:
-    builder = _CODEX_PROMPT_BUILDERS.get(step)
-    if builder is None:
-        raise CliError("unsupported_step", f"Unsupported Codex step '{step}'")
+    builder = _resolve_builder(_CODEX_PROMPT_BUILDERS, step, state, "Codex")
     if step == "review":
         return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
     if step in {"prep", "critique", "gate", "finalize", "execute"}:
@@ -136,9 +158,7 @@ def create_codex_prompt(
 def create_hermes_prompt(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> str:
-    builder = _HERMES_PROMPT_BUILDERS.get(step)
-    if builder is None:
-        raise CliError("unsupported_step", f"Unsupported Hermes step '{step}'")
+    builder = _resolve_builder(_HERMES_PROMPT_BUILDERS, step, state, "Hermes")
     if step == "review":
         return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
     if step in {"prep", "critique", "gate", "finalize", "execute"}:
@@ -157,6 +177,8 @@ __all__ = [
     "_escalated_debt_for_prompt",
     "_execute_approval_note",
     "_execute_batch_prompt",
+    "_execute_doc_batch_prompt",
+    "_execute_doc_prompt",
     "_execute_nudges",
     "_execute_prompt",
     "_execute_rerun_guidance",
@@ -169,7 +191,9 @@ __all__ = [
     "_grouped_debt_for_prompt",
     "_plan_prompt",
     "_planning_debt_block",
+    "_prep_doc_prompt",
     "_prep_prompt",
+    "_review_doc_prompt",
     "_write_critique_template",
     "_render_prep_block",
     "_resolve_prompt_root",
