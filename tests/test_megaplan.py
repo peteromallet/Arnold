@@ -158,6 +158,80 @@ def first_open_significant_flag(plan_dir: Path) -> dict:
     )
 
 
+def open_blocking_flags(plan_dir: Path) -> list[dict]:
+    registry = read_json(plan_dir / "faults.json")
+    return [
+        flag
+        for flag in registry["flags"]
+        if flag["status"] in {"open", "disputed"}
+        and flag.get("severity") in {"significant", "likely-significant"}
+    ]
+
+
+def ensure_blocking_flags(plan_dir: Path, count: int) -> list[dict]:
+    registry = read_json(plan_dir / "faults.json")
+    flags = [
+        flag
+        for flag in registry["flags"]
+        if flag["status"] in {"open", "disputed"}
+        and flag.get("severity") in {"significant", "likely-significant"}
+    ]
+    if not flags:
+        raise AssertionError("expected at least one blocking flag in the fixture")
+    template = flags[0]
+    next_index = 1
+    while len(flags) < count:
+        clone = dict(template)
+        clone["id"] = f"{template['id']}-extra-{next_index}"
+        clone["concern"] = f"{template['concern']} (extra {next_index})"
+        registry["flags"].append(clone)
+        flags.append(clone)
+        next_index += 1
+    for extra in flags[count:]:
+        extra["severity"] = "minor"
+    (plan_dir / "faults.json").write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+    return open_blocking_flags(plan_dir)
+
+
+def make_gate_worker_result(
+    *,
+    recommendation: str,
+    rationale: str,
+    signals_assessment: str,
+    flag_resolutions: list[dict] | None = None,
+    accepted_tradeoffs: list[dict] | None = None,
+    session_id: str,
+) -> WorkerResult:
+    return WorkerResult(
+        payload={
+            "recommendation": recommendation,
+            "rationale": rationale,
+            "signals_assessment": signals_assessment,
+            "warnings": [],
+            "settled_decisions": [],
+            "flag_resolutions": flag_resolutions or [],
+            "accepted_tradeoffs": accepted_tradeoffs or [],
+        },
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id=session_id,
+    )
+
+
+def make_worker_sequence(
+    results: list[tuple[WorkerResult, str, str, bool]],
+    call_counter: dict[str, int],
+) -> Callable[..., tuple[WorkerResult, str, str, bool]]:
+    iterator = iter(results)
+
+    def _run_step_with_worker(*args, **kwargs):
+        call_counter["count"] += 1
+        return next(iterator)
+
+    return _run_step_with_worker
+
+
 def test_init_sets_last_gate_and_next_step_plan(plan_fixture: PlanFixture) -> None:
     state = load_state(plan_fixture.plan_dir)
     assert state["current_state"] == megaplan.STATE_INITIALIZED
@@ -1293,27 +1367,20 @@ def test_gate_proceed_with_accepted_tradeoffs_creates_debt(
 ) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    flag = first_open_significant_flag(plan_fixture.plan_dir)
-    worker = WorkerResult(
-        payload={
-            "recommendation": "PROCEED",
-            "rationale": "Known tradeoff accepted.",
-            "signals_assessment": "Proceeding with one accepted limitation.",
-            "warnings": [],
-            "settled_decisions": [],
-            "flag_resolutions": [],
-            "accepted_tradeoffs": [
-                {
-                    "flag_id": flag["id"],
-                    "subsystem": "timeout-recovery",
-                    "concern": flag["concern"],
-                    "rationale": "Tracked as debt for a later redesign.",
-                }
-            ],
-        },
-        raw_output="{}",
-        duration_ms=1,
-        cost_usd=0.0,
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
+    worker = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Known tradeoff accepted.",
+        signals_assessment="Proceeding with one accepted limitation.",
+        flag_resolutions=[
+            {
+                "flag_id": flag["id"],
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "The timeout-recovery gap is contained to a low-traffic path and is tracked for a later redesign.",
+            }
+        ],
+        accepted_tradeoffs=[],
         session_id="gate-debt-1",
     )
     monkeypatch.setattr(
@@ -1325,6 +1392,8 @@ def test_gate_proceed_with_accepted_tradeoffs_creates_debt(
     response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     registry = read_json(debt_registry_path(plan_fixture.root))
 
+    assert response["recommendation"] == "PROCEED"
+    assert response["reprompted"] is False
     assert response["debt_entries_added"] == 1
     assert len(registry["entries"]) == 1
     assert registry["entries"][0]["flag_ids"] == [flag["id"]]
@@ -1363,40 +1432,89 @@ def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
     assert not debt_registry_path(plan_fixture.root).exists()
 
 
-def test_gate_proceed_without_accepted_tradeoffs_registers_fallback_debt(
+def test_gate_proceed_partial_resolutions_still_missing_after_reprompt_downgrades_to_iterate(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    flag = first_open_significant_flag(plan_fixture.plan_dir)
-    worker = WorkerResult(
-        payload={
-            "recommendation": "PROCEED",
-            "rationale": "Proceed despite the remaining planning-level debt.",
-            "signals_assessment": "Proceeding with unresolved flags recorded as debt.",
-            "warnings": [],
-            "settled_decisions": [],
-            "flag_resolutions": [],
-            "accepted_tradeoffs": [],
-        },
-        raw_output="{}",
-        duration_ms=1,
-        cost_usd=0.0,
-        session_id="gate-debt-3",
+    flags = ensure_blocking_flags(plan_fixture.plan_dir, 5)
+    first_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Three blockers are resolved; the rest can be revisited.",
+        signals_assessment="Proceeding after addressing the most important blockers.",
+        flag_resolutions=[
+            {
+                "flag_id": flags[0]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:1 already documents this constraint.",
+                "rationale": "",
+            },
+            {
+                "flag_id": flags[1]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:2 already covers this path.",
+                "rationale": "",
+            },
+            {
+                "flag_id": flags[2]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:3 already covers the edge case.",
+                "rationale": "",
+            },
+        ],
+        session_id="gate-partial-1",
     )
+    second_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Still comfortable proceeding.",
+        signals_assessment="The remaining blockers are unchanged.",
+        flag_resolutions=[
+            {
+                "flag_id": flags[0]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:1 already documents this constraint.",
+                "rationale": "",
+            },
+            {
+                "flag_id": flags[1]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:2 already covers this path.",
+                "rationale": "",
+            },
+            {
+                "flag_id": flags[2]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:3 already covers the edge case.",
+                "rationale": "",
+            },
+        ],
+        session_id="gate-partial-2",
+    )
+    call_counter = {"count": 0}
     monkeypatch.setattr(
         megaplan.workers,
         "run_step_with_worker",
-        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+        make_worker_sequence(
+            [
+                (first_attempt, "claude", "persistent", False),
+                (second_attempt, "claude", "persistent", False),
+            ],
+            call_counter,
+        ),
     )
 
     response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    registry = read_json(debt_registry_path(plan_fixture.root))
+    state = load_state(plan_fixture.plan_dir)
 
-    assert response["debt_entries_added"] >= 1
-    assert len(registry["entries"]) == response["debt_entries_added"]
-    assert any(entry["flag_ids"] == [flag["id"]] for entry in registry["entries"])
+    assert response["recommendation"] == "ITERATE"
+    assert response["reprompted"] is True
+    assert response["next_step"] == "revise"
+    assert "[Auto-downgraded from PROCEED:" in response["rationale"]
+    assert state["last_gate"]["recommendation"] == "ITERATE"
+    assert state["last_gate"]["reprompted"] is True
+    assert call_counter["count"] == 2
+    assert not debt_registry_path(plan_fixture.root).exists()
 
 
 def test_step_add(plan_fixture: PlanFixture) -> None:
@@ -1619,6 +1737,7 @@ time.sleep(30)
 def test_gate_retry_does_not_duplicate_weighted_scores(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
 
     results = iter(
         [
@@ -1650,7 +1769,14 @@ def test_gate_retry_does_not_duplicate_weighted_scores(plan_fixture: PlanFixture
                         "signals_assessment": "same score, but judgment changed",
                         "warnings": [],
                         "settled_decisions": [],
-                        "flag_resolutions": [],
+                        "flag_resolutions": [
+                            {
+                                "flag_id": flag["id"],
+                                "action": "accept_tradeoff",
+                                "evidence": "",
+                                "rationale": "The remaining issue is narrow and intentionally deferred while the clarified note unblocks the rest of the work.",
+                            }
+                        ],
                         "accepted_tradeoffs": [],
                     },
                     raw_output="{}",
@@ -1676,6 +1802,293 @@ def test_gate_retry_does_not_duplicate_weighted_scores(plan_fixture: PlanFixture
     state = load_state(plan_fixture.plan_dir)
 
     assert len(state["meta"]["weighted_scores"]) == 1
+
+
+def test_gate_proceed_partial_resolutions_triggers_reprompt(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flags = ensure_blocking_flags(plan_fixture.plan_dir, 2)
+    first_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="One blocker is resolved; the second needs one more look.",
+        signals_assessment="Proceeding after the first blocker was addressed.",
+        flag_resolutions=[
+            {
+                "flag_id": flags[0]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:1 already covers this constraint.",
+                "rationale": "",
+            }
+        ],
+        session_id="gate-reprompt-success-1",
+    )
+    second_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Both blockers are now explicitly resolved.",
+        signals_assessment="Proceeding after the retry resolved the remaining blocker.",
+        flag_resolutions=[
+            {
+                "flag_id": flags[0]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:1 already covers this constraint.",
+                "rationale": "",
+            },
+            {
+                "flag_id": flags[1]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:2 already covers the remaining blocker.",
+                "rationale": "",
+            },
+        ],
+        session_id="gate-reprompt-success-2",
+    )
+    call_counter = {"count": 0}
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        make_worker_sequence(
+            [
+                (first_attempt, "claude", "persistent", False),
+                (second_attempt, "claude", "persistent", False),
+            ],
+            call_counter,
+        ),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    gate = read_json(plan_fixture.plan_dir / "gate.json")
+
+    assert response["recommendation"] == "PROCEED"
+    assert response["reprompted"] is True
+    assert gate["reprompted"] is True
+    assert call_counter["count"] == 2
+
+
+def test_gate_proceed_still_missing_after_reprompt_downgrades_to_iterate(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flags = ensure_blocking_flags(plan_fixture.plan_dir, 2)
+    first_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Proceeding without explicit blocker coverage.",
+        signals_assessment="Proceeding despite unresolved blockers.",
+        flag_resolutions=[],
+        session_id="gate-downgrade-1",
+    )
+    second_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Still proceeding without explicit blocker coverage.",
+        signals_assessment="Retry still leaves blockers unresolved.",
+        flag_resolutions=[],
+        session_id="gate-downgrade-2",
+    )
+    call_counter = {"count": 0}
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        make_worker_sequence(
+            [
+                (first_attempt, "claude", "persistent", False),
+                (second_attempt, "claude", "persistent", False),
+            ],
+            call_counter,
+        ),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    gate = read_json(plan_fixture.plan_dir / "gate.json")
+
+    assert response["recommendation"] == "ITERATE"
+    assert response["reprompted"] is True
+    assert "[Auto-downgraded from PROCEED:" in response["rationale"]
+    assert gate["recommendation"] == "ITERATE"
+    assert gate["reprompted"] is True
+    assert call_counter["count"] == 2
+
+
+def test_gate_accept_tradeoff_rubber_stamp_rejected(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
+    state = load_state(plan_fixture.plan_dir)
+
+    result, next_step, _, blocking_unresolved_ids = megaplan.handlers._apply_gate_outcome(
+        state,
+        {
+            "recommendation": "PROCEED",
+            "rationale": "Proceed.",
+            "passed": True,
+            "unresolved_flags": [flag],
+            "flag_resolutions": [
+                {
+                    "flag_id": flag["id"],
+                    "action": "accept_tradeoff",
+                    "evidence": "",
+                    "rationale": "acceptable",
+                }
+            ],
+        },
+        robustness="standard",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert result == "unresolved_flags"
+    assert next_step == "gate"
+    assert blocking_unresolved_ids == [flag["id"]]
+    assert state["current_state"] == megaplan.STATE_CRITIQUED
+
+
+def test_gate_accept_tradeoff_concrete_rationale_accepted(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
+    state = load_state(plan_fixture.plan_dir)
+
+    result, next_step, _, blocking_unresolved_ids = megaplan.handlers._apply_gate_outcome(
+        state,
+        {
+            "recommendation": "PROCEED",
+            "rationale": "Proceed.",
+            "passed": True,
+            "unresolved_flags": [flag],
+            "flag_resolutions": [
+                {
+                    "flag_id": flag["id"],
+                    "action": "accept_tradeoff",
+                    "evidence": "",
+                    "rationale": "The remaining limitation is isolated to a non-blocking retry path and is accepted for this iteration.",
+                }
+            ],
+        },
+        robustness="standard",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert result == "success"
+    assert next_step == "finalize"
+    assert blocking_unresolved_ids == []
+    assert state["current_state"] == megaplan.STATE_GATED
+
+
+def test_gate_proceed_all_flags_resolved_no_reprompt(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
+    worker = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="All blockers are explicitly resolved.",
+        signals_assessment="Proceeding with explicit coverage for the blocker.",
+        flag_resolutions=[
+            {
+                "flag_id": flag["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:1 already implements the required guard.",
+                "rationale": "",
+            }
+        ],
+        session_id="gate-no-reprompt",
+    )
+    call_counter = {"count": 0}
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        make_worker_sequence([(worker, "claude", "persistent", False)], call_counter),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert response["recommendation"] == "PROCEED"
+    assert response["reprompted"] is False
+    assert call_counter["count"] == 1
+
+
+def test_gate_debt_not_recorded_on_downgrade(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flags = ensure_blocking_flags(plan_fixture.plan_dir, 2)
+    first_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Proceeding without explicit blocker coverage.",
+        signals_assessment="Proceeding despite unresolved blockers.",
+        flag_resolutions=[],
+        session_id="gate-no-debt-1",
+    )
+    second_attempt = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="Still proceeding without explicit blocker coverage.",
+        signals_assessment="Retry still leaves blockers unresolved.",
+        flag_resolutions=[],
+        session_id="gate-no-debt-2",
+    )
+    call_counter = {"count": 0}
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        make_worker_sequence(
+            [
+                (first_attempt, "claude", "persistent", False),
+                (second_attempt, "claude", "persistent", False),
+            ],
+            call_counter,
+        ),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert len(flags) == 2
+    assert response["recommendation"] == "ITERATE"
+    assert response["debt_entries_added"] == 0
+    assert call_counter["count"] == 2
+    assert not debt_registry_path(plan_fixture.root).exists()
+
+
+def test_gate_debt_derived_from_flag_resolutions(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
+    worker = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="The remaining limitation is accepted explicitly.",
+        signals_assessment="Proceeding with one explicit accepted tradeoff.",
+        flag_resolutions=[
+            {
+                "flag_id": flag["id"],
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "This limitation only affects a rare retry path and is intentionally deferred to the next planning cycle.",
+            }
+        ],
+        accepted_tradeoffs=[],
+        session_id="gate-derived-debt",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    registry = read_json(debt_registry_path(plan_fixture.root))
+
+    assert response["recommendation"] == "PROCEED"
+    assert response["debt_entries_added"] == 1
+    assert len(registry["entries"]) == 1
+    assert registry["entries"][0]["flag_ids"] == [flag["id"]]
 
 
 # ---------------------------------------------------------------------------

@@ -99,16 +99,16 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         - `signals_assessment`: one paragraph summarizing score trajectory, flag status, and preflight posture.
 
         Flags come in two tiers:
-        - **Blocking** (severity = significant/likely-significant): These are serious concerns. If you PROCEED, any blocking flags you don't explicitly resolve will be implicitly accepted as tradeoffs.
+        - **Blocking** (severity = significant/likely-significant): These are serious concerns. If you recommend PROCEED, you MUST provide a `flag_resolutions` entry for every blocking flag. There is no implicit acceptance.
         - **Noted** (everything else): Acknowledge in your rationale but they don't block PROCEED.
 
-        If there are blocking flags and you want to PROCEED, you may provide `flag_resolutions` — one entry per flag you are explicitly resolving. Two actions are allowed:
-        - **dispute**: The critique was factually wrong. You MUST cite specific evidence (file path, line, API doc, etc.) proving the concern is invalid.
-        - **accept_tradeoff**: The concern is real but intentionally accepted as a known limitation. Always allowed; the flag is recorded as tech debt.
-        - Schema requirement: every `flag_resolutions` entry must include both `evidence` and `rationale`. Use `""` for the field that does not apply to that action.
+        If there are blocking flags and you want to PROCEED, provide `flag_resolutions` with one entry per blocking flag. If you cannot resolve every blocking flag, choose ITERATE (send back for revision) or ESCALATE (human intervention needed).
+        Structurally unresolvable flags (for example, infrastructure outside the repo or product decisions that require a human) are ESCALATE, not PROCEED with a non-answer.
 
-        You may resolve at most 3 flags explicitly per gate call. Any remaining blocking flags are implicitly accepted as tradeoffs if you recommend PROCEED.
-        If a flag is structurally unresolvable (e.g., references infrastructure outside the repo), you should still PROCEED — do not loop indefinitely on flags that cannot be addressed.
+        For each blocking flag:
+        - **dispute**: The critique is factually wrong. Evidence must cite something specific (file path, line, API doc, etc.). Generic statements like "handled correctly" are invalid.
+        - **accept_tradeoff**: The concern is real but intentionally accepted as a known limitation. Rationale must be specific to this flag. Boilerplate like "acceptable within scope" is invalid.
+        - Schema requirement: every `flag_resolutions` entry must include both `evidence` and `rationale`. Use `""` for the field that does not apply to that action.
 
         If there are no blocking flags, return `flag_resolutions: []`.
         Always return `accepted_tradeoffs`; use `[]` when none apply.
@@ -124,7 +124,8 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
           "warnings": ["Verify edge case with composite moduli during execution."],
           "flag_resolutions": [
             {{"flag_id": "correctness-1", "action": "dispute", "evidence": "allow_migrate and allow_migrate_model produce identical behavior for this use case (verified at django/db/utils.py:286).", "rationale": ""}},
-            {{"flag_id": "conventions-1", "action": "accept_tradeoff", "evidence": "", "rationale": "Minor naming inconsistency; tracked as debt for later cleanup."}}
+            {{"flag_id": "performance-1", "action": "accept_tradeoff", "evidence": "", "rationale": "Cold-start latency remains 40ms above target because the cache warmup job is owned by platform and outside this repo; rollout is still approved for the limited internal beta."}},
+            {{"flag_id": "conventions-1", "action": "accept_tradeoff", "evidence": "", "rationale": "Minor naming inconsistency is confined to this helper and would create churn across generated fixtures; track it as follow-up cleanup instead of blocking this fix."}}
           ],
           "accepted_tradeoffs": [],
           "settled_decisions": []

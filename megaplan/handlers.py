@@ -228,6 +228,32 @@ def _build_review_prompt_override(
     return create_codex_prompt("review", state, plan_dir, root=root, pre_check_flags=pre_check_flags)
 
 
+def _build_gate_prompt_override(
+    agent_type: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    missing_flag_ids: list[str],
+) -> str:
+    if agent_type == "claude":
+        base_prompt = create_claude_prompt("gate", state, plan_dir, root=root)
+    elif agent_type == "hermes":
+        base_prompt = create_hermes_prompt("gate", state, plan_dir, root=root)
+    else:
+        base_prompt = create_codex_prompt("gate", state, plan_dir, root=root)
+    missing_flags = ", ".join(missing_flag_ids)
+    addendum = (
+        "Gate retry for the same iteration.\n"
+        "Your previous response recommended PROCEED but left blocking flags unresolved.\n"
+        f"Missing blocking flag IDs: {missing_flags}.\n"
+        "Return a complete gate response. If you recommend PROCEED, you MUST include "
+        "`flag_resolutions` entries for every blocking flag. If you cannot resolve every "
+        "blocking flag, return ITERATE or ESCALATE instead."
+    )
+    return f"{base_prompt}\n\n{addendum}"
+
+
 def _finish_step(
     plan_dir: Path,
     state: PlanState,
@@ -448,6 +474,9 @@ def _record_gate_debt_entries(
         and isinstance(item.get("flag_id"), str)
         and isinstance(item.get("concern"), str)
     ] if isinstance(raw_tradeoffs, list) else []
+    has_explicit_resolutions = any(
+        isinstance(item, dict) for item in gate_summary.get("flag_resolutions", [])
+    )
     debt_registry = load_debt_registry(root)
     debt_entries_added = 0
     if accepted_tradeoffs:
@@ -466,7 +495,7 @@ def _record_gate_debt_entries(
                 plan_id=state["name"],
             )
             debt_entries_added += 1
-    else:
+    elif not has_explicit_resolutions:
         for flag in gate_summary["unresolved_flags"]:
             if not isinstance(flag, dict):
                 continue
@@ -515,6 +544,7 @@ def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_e
         "auto_approve": bool(state["config"].get("auto_approve", False)),
         "robustness": configured_robustness(state),
         "recommendation": gate_summary["recommendation"],
+        "reprompted": bool(gate_summary.get("reprompted", False)),
         "rationale": gate_summary["rationale"],
         "signals_assessment": gate_summary["signals_assessment"],
         "warnings": gate_summary["warnings"],
@@ -561,6 +591,7 @@ def _store_last_gate(state: PlanState, gate_summary: dict[str, Any]) -> None:
     state["last_gate"] = {
         "recommendation": gate_summary["recommendation"],
         "rationale": gate_summary["rationale"],
+        "reprompted": bool(gate_summary.get("reprompted", False)),
         "signals_assessment": gate_summary["signals_assessment"],
         "warnings": gate_summary["warnings"],
         "settled_decisions": gate_summary.get("settled_decisions", []),
@@ -570,27 +601,20 @@ def _store_last_gate(state: PlanState, gate_summary: dict[str, Any]) -> None:
     }
 
 
-def _apply_gate_outcome(state: PlanState, gate_summary: dict[str, Any], *, robustness: str, plan_dir: Path) -> tuple[str, str, str]:
+def _apply_gate_outcome(
+    state: PlanState,
+    gate_summary: dict[str, Any],
+    *,
+    robustness: str,
+    plan_dir: Path,
+) -> tuple[str, str, str, list[str]]:
     result = "success"
     summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
 
-    # Process flag resolutions when the gate recommends PROCEED.
-    # The gate LLM sees all blocking flags and makes an informed decision.
-    # We respect its PROCEED recommendation: explicit resolutions are persisted
-    # as-is, and any remaining blocking flags are implicitly accepted as
-    # tradeoffs (the gate reviewed them and still chose PROCEED).
+    # Process explicit flag resolutions when the gate recommends PROCEED.
     if gate_summary["recommendation"] == "PROCEED":
         unresolved = gate_summary.get("unresolved_flags", [])
         resolutions = gate_summary.get("flag_resolutions", [])
-
-        # Cap: if more than 3 explicit resolutions, truncate to 3 and warn
-        # (but don't override — the gate's PROCEED decision still stands).
-        if len(resolutions) > 3:
-            log.warning(
-                "Gate provided %d flag resolutions (max 3); truncating to first 3.",
-                len(resolutions),
-            )
-            resolutions = resolutions[:3]
 
         # Validate each explicit resolution
         valid_resolved_ids: set[str] = set()
@@ -602,7 +626,9 @@ def _apply_gate_outcome(state: PlanState, gate_summary: dict[str, Any], *, robus
                 if not evidence or is_rubber_stamp(evidence, strict=True):
                     continue  # invalid dispute — skip
             elif action == "accept_tradeoff":
-                pass  # always allowed
+                rationale = res.get("rationale", "").strip()
+                if not rationale or is_rubber_stamp(rationale, strict=True):
+                    continue  # invalid tradeoff acceptance — skip
             else:
                 continue  # unknown action — skip
             valid_resolved_ids.add(flag_id)
@@ -613,43 +639,79 @@ def _apply_gate_outcome(state: PlanState, gate_summary: dict[str, Any], *, robus
             and f.get("status") in FLAG_BLOCKING_STATUSES
             and f.get("id") not in valid_resolved_ids
         ]
+        blocking_unresolved_ids = [f.get("id", "") for f in blocking_unresolved if f.get("id")]
 
         # Persist explicit resolutions
         if valid_resolved_ids:
             update_flags_after_gate(plan_dir, resolutions)
 
-        # Implicitly accept remaining blocking flags as tradeoffs — the gate
-        # saw them, assessed them, and still recommended PROCEED.
-        if blocking_unresolved:
-            implicit_resolutions = [
-                {"flag_id": f["id"], "action": "accept_tradeoff"}
-                for f in blocking_unresolved
-            ]
-            update_flags_after_gate(plan_dir, implicit_resolutions)
-            flag_ids = [f.get("id", "?") for f in blocking_unresolved]
-            log.info(
-                "Gate recommended PROCEED with %d unresolved blocking flag(s); "
-                "implicitly accepting as tradeoffs: %s",
-                len(blocking_unresolved),
-                ", ".join(flag_ids),
-            )
+        if blocking_unresolved_ids:
+            return "unresolved_flags", "gate", summary, blocking_unresolved_ids
 
     if gate_summary["recommendation"] == "PROCEED" and gate_summary["passed"]:
         state["current_state"] = STATE_GATED
         state["meta"].pop("user_approved_gate", None)
-        return result, "finalize", summary
+        return result, "finalize", summary, []
     state["current_state"] = STATE_CRITIQUED
     if gate_summary["recommendation"] == "PROCEED":
         result = "blocked"
         summary = "Gate recommended PROCEED, but preflight checks are still blocking execution."
-        return result, "revise", summary
+        return result, "revise", summary, []
     if gate_summary["recommendation"] == "ITERATE":
-        return result, "revise", summary
+        return result, "revise", summary, []
     if gate_summary["recommendation"] == "ESCALATE":
-        return result, "override add-note", summary
+        return result, "override add-note", summary, []
     result = "unknown_recommendation"
     summary = f"Gate returned unknown recommendation '{gate_summary['recommendation']}'; treating as escalation."
-    return result, "override add-note", summary
+    return result, "override add-note", summary, []
+
+
+def _merge_gate_worker_attempt(base: WorkerResult, retry: WorkerResult) -> WorkerResult:
+    base.payload = retry.payload
+    base.raw_output = "\n\n".join(part for part in [base.raw_output, retry.raw_output] if part)
+    if base.trace_output or retry.trace_output:
+        base.trace_output = "\n\n".join(part for part in [base.trace_output, retry.trace_output] if part)
+    base.duration_ms += retry.duration_ms
+    base.cost_usd += retry.cost_usd
+    base.session_id = retry.session_id or base.session_id
+    base.prompt_tokens += retry.prompt_tokens
+    base.completion_tokens += retry.completion_tokens
+    base.total_tokens += retry.total_tokens
+    return base
+
+
+def _merge_resolution_tradeoffs_into_payload(gate_summary: dict[str, Any], worker_payload: dict[str, Any]) -> None:
+    raw_tradeoffs = worker_payload.get("accepted_tradeoffs", [])
+    merged_tradeoffs = list(raw_tradeoffs) if isinstance(raw_tradeoffs, list) else []
+    existing_ids = {
+        item.get("flag_id")
+        for item in merged_tradeoffs
+        if isinstance(item, dict) and isinstance(item.get("flag_id"), str)
+    }
+    unresolved_by_id = {
+        flag.get("id"): flag
+        for flag in gate_summary.get("unresolved_flags", [])
+        if isinstance(flag, dict) and isinstance(flag.get("id"), str)
+    }
+    for resolution in gate_summary.get("flag_resolutions", []):
+        if not isinstance(resolution, dict) or resolution.get("action") != "accept_tradeoff":
+            continue
+        flag_id = resolution.get("flag_id")
+        if not isinstance(flag_id, str) or flag_id in existing_ids:
+            continue
+        flag = unresolved_by_id.get(flag_id)
+        if not isinstance(flag, dict):
+            continue
+        concern = flag.get("concern")
+        if not isinstance(concern, str):
+            continue
+        tradeoff = {"flag_id": flag_id, "concern": concern}
+        subsystem = flag.get("subsystem")
+        if isinstance(subsystem, str) and subsystem.strip():
+            tradeoff["subsystem"] = subsystem
+        merged_tradeoffs.append(tradeoff)
+        existing_ids.add(flag_id)
+    worker_payload["accepted_tradeoffs"] = merged_tradeoffs
 
 
 def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -989,9 +1051,18 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         require_state(state, "gate", {STATE_CRITIQUED})
         iteration = state["iteration"]
         gate_signals, signals_filename, signals_artifact = _build_gate_signals_artifact(plan_dir, state, iteration=iteration, root=root)
-        worker, agent, mode, refreshed = _run_worker("gate", state, plan_dir, args, root=root)
+        resolved = resolve_agent_mode("gate", args)
+        worker, agent, mode, refreshed = _run_worker(
+            "gate",
+            state,
+            plan_dir,
+            args,
+            root=root,
+            resolved=resolved,
+        )
+        gate_payload = worker.payload
         guidance = build_orchestrator_guidance(
-            gate_payload=worker.payload,
+            gate_payload=gate_payload,
             signals=signals_artifact["signals"],
             preflight_passed=all(signals_artifact["preflight_results"].values()),
             preflight_results=signals_artifact["preflight_results"],
@@ -1000,20 +1071,79 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         )
         gate_summary = build_gate_artifact(
             signals_artifact,
-            worker.payload,
+            gate_payload,
             override_forced=False,
             orchestrator_guidance=guidance,
         )
-        gate_hash = _write_json_artifact(plan_dir, "gate.json", gate_summary)
-        debt_entries_added = _record_gate_debt_entries(root, state, gate_summary, worker.payload)
+        gate_summary["reprompted"] = False
         if len(state["meta"].get("weighted_scores", [])) < iteration:
             _append_to_meta(state, "weighted_scores", gate_signals["signals"]["weighted_score"])
-        result, next_step, summary = _apply_gate_outcome(
+        result, next_step, summary, blocking_unresolved_ids = _apply_gate_outcome(
             state,
             gate_summary,
             robustness=gate_signals["robustness"],
             plan_dir=plan_dir,
         )
+        if blocking_unresolved_ids:
+            reprompt_prompt = _build_gate_prompt_override(
+                agent,
+                state,
+                plan_dir,
+                root=root,
+                missing_flag_ids=blocking_unresolved_ids,
+            )
+            retry_worker, _, _, _ = _run_worker(
+                "gate",
+                state,
+                plan_dir,
+                args,
+                root=root,
+                resolved=resolved,
+                prompt_override=reprompt_prompt,
+            )
+            worker = _merge_gate_worker_attempt(worker, retry_worker)
+            gate_payload = worker.payload
+            guidance = build_orchestrator_guidance(
+                gate_payload=gate_payload,
+                signals=signals_artifact["signals"],
+                preflight_passed=all(signals_artifact["preflight_results"].values()),
+                preflight_results=signals_artifact["preflight_results"],
+                robustness=signals_artifact.get("robustness", "standard"),
+                plan_name=state["name"],
+            )
+            gate_summary = build_gate_artifact(
+                signals_artifact,
+                gate_payload,
+                override_forced=False,
+                orchestrator_guidance=guidance,
+            )
+            gate_summary["reprompted"] = True
+            result, next_step, summary, blocking_unresolved_ids = _apply_gate_outcome(
+                state,
+                gate_summary,
+                robustness=gate_signals["robustness"],
+                plan_dir=plan_dir,
+            )
+            if blocking_unresolved_ids:
+                gate_summary["recommendation"] = "ITERATE"
+                gate_summary["passed"] = False
+                gate_summary["rationale"] = (
+                    f"{gate_summary['rationale']} "
+                    f"[Auto-downgraded from PROCEED: {len(blocking_unresolved_ids)} "
+                    "blocking flag(s) not resolved after reprompt]"
+                )
+                gate_summary["orchestrator_guidance"] = (
+                    "Gate auto-downgraded to ITERATE because blocking flags remained "
+                    "unresolved after reprompt. Revise the plan."
+                )
+                result = "blocked"
+                next_step = "revise"
+                summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
+        _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
+        gate_hash = _write_json_artifact(plan_dir, "gate.json", gate_summary)
+        debt_entries_added = 0
+        if gate_summary["recommendation"] == "PROCEED":
+            debt_entries_added = _record_gate_debt_entries(root, state, gate_summary, worker.payload)
         # Store last_gate AFTER _apply_gate_outcome — the outcome may override
         # the recommendation (e.g. PROCEED → ITERATE when flags are unresolved).
         _store_last_gate(state, gate_summary)
