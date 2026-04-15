@@ -195,7 +195,7 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
         "evidence_files",
         "reviewer_verdict",
     }
-    assert task_schema["properties"]["status"]["enum"] == ["pending", "done", "skipped"]
+    assert task_schema["properties"]["status"]["enum"] == ["pending", "done", "skipped", "blocked"]
     assert "executor_note" in finalize["properties"]["sense_checks"]["items"]["properties"]
     # Validation sub-schema
     validation_schema = finalize["properties"]["validation"]
@@ -216,7 +216,7 @@ def test_execution_schema_requires_task_updates() -> None:
     assert "sense_check_acknowledgments" in execution["properties"]
     assert "sense_check_acknowledgments" in execution["required"]
     item_schema = execution["properties"]["task_updates"]["items"]
-    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped"]
+    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "blocked"]
     assert "files_changed" in item_schema["properties"]
     assert "commands_run" in item_schema["properties"]
 

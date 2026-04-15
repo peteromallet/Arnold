@@ -147,6 +147,7 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
             "tasks_done": 0,
             "tasks_skipped": 0,
             "tasks_pending": 0,
+            "tasks_blocked": 0,
             "batches_total": 0,
             "batches_completed": 0,
             "tasks": [],
@@ -161,6 +162,7 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
     tasks_done = sum(1 for t in tasks if t.get("status") == "done")
     tasks_skipped = sum(1 for t in tasks if t.get("status") == "skipped")
     tasks_pending = sum(1 for t in tasks if t.get("status") == "pending")
+    tasks_blocked = sum(1 for t in tasks if t.get("status") == "blocked")
     tasks_total = len(tasks)
     completed_ids = {
         t["id"] for t in tasks if t.get("status") in {"done", "skipped"} and isinstance(t.get("id"), str)
@@ -188,6 +190,7 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         "tasks_done": tasks_done,
         "tasks_skipped": tasks_skipped,
         "tasks_pending": tasks_pending,
+        "tasks_blocked": tasks_blocked,
         "batches_total": len(global_batches),
         "batches_completed": batches_completed,
         "tasks": task_status_list,

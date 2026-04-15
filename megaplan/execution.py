@@ -295,7 +295,7 @@ def _merge_batch_results(
         merge_label="task_update",
         # Don't flag incomplete based on all tasks — check batch coverage below
         incomplete_message=None,
-        enum_fields={"status": {"done", "skipped", "completed"}},
+        enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
         nonempty_fields={"executor_notes"},
         array_fields=("files_changed", "commands_run"),
     )
@@ -648,6 +648,25 @@ def handle_execute_one_batch(
         next_step = "execute"
         response_state = STATE_FINALIZED
 
+    # Surface worker-reported `status=blocked` tasks prominently. Merged
+    # task_updates have already been written into finalize_data; count tasks
+    # in this batch that ended in 'blocked' so supervisors see the real
+    # reason a batch did not advance instead of just "state=finalized".
+    batch_blocked_ids = [
+        task.get("id")
+        for task in finalize_data.get("tasks", [])
+        if task.get("id") in set(batch_task_ids)
+        and task.get("status") == "blocked"
+    ]
+    warnings: list[str] = []
+    if blocked:
+        warnings.append(summary)
+    if batch_blocked_ids:
+        warnings.append(
+            f"{len(batch_blocked_ids)} task(s) reported status=blocked by the worker "
+            "— investigate executor_notes before continuing"
+        )
+
     response: StepResponse = {
         "success": not blocked,
         "step": "execute",
@@ -661,9 +680,10 @@ def handle_execute_one_batch(
         "batches_remaining": batches_remaining,
         "files_changed": result.payload.get("files_changed", []),
         "deviations": result.payload.get("deviations", []),
-        "warnings": [summary] if blocked else [],
+        "warnings": warnings,
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
+        "blocked_task_ids": batch_blocked_ids,
     }
     if next_step == "execute" and not blocked:
         response["guidance"] = f"Run --batch {batch_number + 1}"
