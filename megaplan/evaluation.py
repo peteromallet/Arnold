@@ -68,8 +68,17 @@ class PlanSection:
     end_line: int
 
 
-def _normalize_repo_path(path: str) -> str:
-    return Path(path.strip()).as_posix()
+def _normalize_repo_path(path: str, project_dir: Path | None = None) -> str:
+    p = Path(path.strip())
+    if project_dir is not None and p.is_absolute():
+        try:
+            project_abs = project_dir.resolve()
+            resolved = p.resolve()
+            rel = resolved.relative_to(project_abs)
+            return rel.as_posix()
+        except (ValueError, OSError):
+            pass
+    return p.as_posix()
 
 
 def _parse_git_status_paths(stdout: str) -> set[str]:
@@ -110,7 +119,7 @@ def validate_execution_evidence(finalize_data: dict[str, Any], project_dir: Path
     findings: list[str] = []
     files_claimed = sorted(
         {
-            _normalize_repo_path(path)
+            _normalize_repo_path(path, project_dir)
             for task in finalize_data.get("tasks", [])
             for path in task.get("files_changed", [])
             if isinstance(path, str) and path.strip()
@@ -164,14 +173,33 @@ def validate_execution_evidence(finalize_data: dict[str, Any], project_dir: Path
     claimed_set = set(files_claimed)
     diff_set = set(files_in_diff)
 
-    phantom_claims = sorted(claimed_set - diff_set)
+    # Git status reports untracked directories as `dir/` (trailing slash).
+    # A claimed file beneath such a directory should be considered present.
+    dir_prefixes = [p for p in diff_set if p.endswith("/")]
+
+    def _covered_by_diff(claimed: str) -> bool:
+        if claimed in diff_set:
+            return True
+        return any(claimed.startswith(prefix) or claimed == prefix.rstrip("/") for prefix in dir_prefixes)
+
+    phantom_claims = sorted(c for c in claimed_set if not _covered_by_diff(c))
     if phantom_claims:
         findings.append(
             "Executor claimed changed files not present in git status: "
             + ", ".join(phantom_claims)
         )
 
-    unclaimed_changes = sorted(diff_set - claimed_set)
+    # For the reverse check, treat a directory as "claimed" when any claimed
+    # path is under it.
+    def _dir_is_claimed(diff_path: str) -> bool:
+        if not diff_path.endswith("/"):
+            return False
+        return any(c.startswith(diff_path) for c in claimed_set)
+
+    unclaimed_changes = sorted(
+        d for d in diff_set
+        if d not in claimed_set and not _dir_is_claimed(d)
+    )
     if unclaimed_changes:
         findings.append(
             "Git status shows changed files not claimed by any task: "
