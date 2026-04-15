@@ -60,6 +60,7 @@ from megaplan.handlers import (
     handle_prep,
     handle_review,
     handle_revise,
+    handle_tiebreaker_run,
     handle_verify_human,
 )
 from megaplan.loop.handlers import (
@@ -996,6 +997,23 @@ def build_parser() -> argparse.ArgumentParser:
     from megaplan.chain import build_chain_parser
     build_chain_parser(subparsers)
 
+    from megaplan.tiebreaker import build_tiebreaker_parser
+    build_tiebreaker_parser(subparsers)
+
+    # tiebreaker-run is a top-level command because auto.py:_phase_command
+    # translates next_step directly to CLI args.
+    tb_run_parser = subparsers.add_parser(
+        "tiebreaker-run",
+        help="Run tiebreaker researcher+challenger (used by auto driver)",
+    )
+    tb_run_parser.add_argument("--plan", required=True, help="Plan name")
+    tb_run_parser.add_argument("--agent", choices=["claude", "codex", "hermes"], default=None)
+    tb_run_parser.add_argument("--hermes", nargs="?", const="", default=None)
+    tb_run_parser.add_argument("--phase-model", action="append", default=[])
+    tb_run_parser.add_argument("--fresh", action="store_true")
+    tb_run_parser.add_argument("--persist", action="store_true")
+    tb_run_parser.add_argument("--ephemeral", action="store_true")
+
     return parser
 
 
@@ -1023,6 +1041,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "override": handle_override,
     "verify-human": handle_verify_human,
     "audit-verifiability": handle_audit_verifiability,
+    "tiebreaker-run": handle_tiebreaker_run,
 }
 
 
@@ -1102,6 +1121,13 @@ def main(argv: list[str] | None = None) -> int:
         from megaplan.chain import run_chain_cli
         try:
             return run_chain_cli(root, args)
+        except CliError as error:
+            return error_response(error, root=root)
+
+    if args.command == "tiebreaker":
+        from megaplan.tiebreaker import run_tiebreaker_cli
+        try:
+            return run_tiebreaker_cli(root, args)
         except CliError as error:
             return error_response(error, root=root)
 

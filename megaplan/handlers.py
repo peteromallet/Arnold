@@ -48,6 +48,8 @@ from megaplan.types import (
     STATE_INITIALIZED,
     STATE_PREPPED,
     STATE_PLANNED,
+    STATE_TIEBREAKER_PENDING,
+    STATE_TIEBREAKER_READY,
     StepResponse,
 )
 from megaplan._core import (
@@ -668,6 +670,8 @@ def _apply_gate_outcome(
         return result, "revise", summary, []
     if gate_summary["recommendation"] == "ESCALATE":
         return result, "override add-note", summary, []
+    if gate_summary["recommendation"] == "TIEBREAKER":
+        return "tiebreaker_recommended", "tiebreaker", summary, []
     result = "unknown_recommendation"
     summary = f"Gate returned unknown recommendation '{gate_summary['recommendation']}'; treating as escalation."
     return result, "override add-note", summary, []
@@ -1137,6 +1141,103 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         )
 
 
+def _validate_tiebreaker(
+    state: PlanState,
+    gate_summary: dict[str, Any],
+    plan_dir: Path,
+    worker: WorkerResult,
+    args: argparse.Namespace,
+    agent: str,
+    resolved: tuple,
+    signals_artifact: dict[str, Any],
+    gate_signals: dict[str, Any],
+    root: Path,
+) -> tuple[str, str, str]:
+    """Validate a TIEBREAKER gate recommendation. Returns (result, next_step, summary)."""
+    from megaplan.iteration_pressure import compute_iteration_pressure, has_mechanical_recurrence
+
+    config = state.get("config", {})
+    summary_base = f"Gate recommendation TIEBREAKER: {gate_summary['rationale']}"
+
+    if not config.get("allow_tiebreaker", True):
+        gate_summary["recommendation"] = "ITERATE"
+        gate_summary["rationale"] += " [Auto-downgraded: tiebreaker disabled for this plan]"
+        state["current_state"] = STATE_CRITIQUED
+        return "tiebreaker_rejected_disabled", "revise", summary_base
+
+    tiebreaker_count = state["meta"].get("tiebreaker_count", 0)
+    max_tiebreakers = config.get("max_tiebreakers_per_plan", 2)
+    if tiebreaker_count >= max_tiebreakers:
+        gate_summary["recommendation"] = "ESCALATE"
+        gate_summary["rationale"] += " [Auto-downgraded to ESCALATE: tiebreaker budget exhausted]"
+        state["current_state"] = STATE_CRITIQUED
+        return "tiebreaker_rejected_budget", "override add-note", summary_base
+
+    blocklist = config.get("tiebreaker_blocklist", [])
+    tiebreaker_flag_ids = gate_summary.get("tiebreaker_flag_ids", [])
+    if blocklist and tiebreaker_flag_ids:
+        from megaplan._core import load_flag_registry as _load_flag_registry
+        registry = _load_flag_registry(plan_dir)
+        flag_by_id = {f["id"]: f for f in registry.get("flags", [])}
+        for fid in tiebreaker_flag_ids:
+            flag = flag_by_id.get(fid, {})
+            if flag.get("category", "") in blocklist:
+                gate_summary["recommendation"] = "ITERATE"
+                gate_summary["rationale"] += f" [Auto-downgraded: flag {fid} category in tiebreaker blocklist]"
+                state["current_state"] = STATE_CRITIQUED
+                return "tiebreaker_rejected_blocklist", "revise", summary_base
+
+    required_fields = ("tiebreaker_question", "tiebreaker_flag_ids", "tiebreaker_fuzzy_group_id")
+    missing = [f for f in required_fields if not gate_summary.get(f)]
+    if missing:
+        gate_summary["recommendation"] = "ITERATE"
+        gate_summary["rationale"] += f" [Auto-downgraded: missing required fields {missing}]"
+        state["current_state"] = STATE_CRITIQUED
+        return "tiebreaker_rejected_missing_fields", "revise", summary_base
+
+    entries = compute_iteration_pressure(plan_dir, state)
+    if not has_mechanical_recurrence(entries):
+        reprompt_prompt = _build_tiebreaker_reprompt(agent, state, plan_dir, root=root)
+        retry_worker, _, _, _ = _run_worker(
+            "gate", state, plan_dir, args, root=root,
+            resolved=resolved, prompt_override=reprompt_prompt,
+        )
+        worker = _merge_gate_worker_attempt(worker, retry_worker)
+        retry_payload = worker.payload
+        if retry_payload.get("recommendation") == "TIEBREAKER":
+            entries_retry = compute_iteration_pressure(plan_dir, state)
+            if not has_mechanical_recurrence(entries_retry):
+                gate_summary["recommendation"] = "ITERATE"
+                gate_summary["rationale"] += " [Auto-downgraded: no mechanical recurrence signal after reprompt]"
+                state["current_state"] = STATE_CRITIQUED
+                return "tiebreaker_rejected_no_signal", "revise", summary_base
+        else:
+            gate_summary["recommendation"] = retry_payload.get("recommendation", "ITERATE")
+            gate_summary["rationale"] = retry_payload.get("rationale", gate_summary["rationale"])
+            guidance = build_orchestrator_guidance(
+                gate_payload=retry_payload,
+                signals=signals_artifact["signals"],
+                preflight_passed=all(signals_artifact["preflight_results"].values()),
+                preflight_results=signals_artifact["preflight_results"],
+                robustness=signals_artifact.get("robustness", "standard"),
+                plan_name=state["name"],
+            )
+            new_summary = build_gate_artifact(
+                signals_artifact, retry_payload,
+                override_forced=False, orchestrator_guidance=guidance,
+            )
+            gate_summary.update(new_summary)
+            state["current_state"] = STATE_CRITIQUED
+            if gate_summary["recommendation"] == "PROCEED" and gate_summary.get("passed"):
+                state["current_state"] = STATE_GATED
+                return "success", "finalize", f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
+            return "success", "revise", f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
+
+    state["current_state"] = STATE_TIEBREAKER_PENDING
+    state["meta"]["tiebreaker_count"] = tiebreaker_count + 1
+    return "tiebreaker_approved", "tiebreaker-run", summary_base
+
+
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="gate") as (plan_dir, state):
         require_state(state, "gate", {STATE_CRITIQUED})
@@ -1175,6 +1276,11 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             robustness=gate_signals["robustness"],
             plan_dir=plan_dir,
         )
+        if result == "tiebreaker_recommended":
+            result, next_step, summary = _validate_tiebreaker(
+                state, gate_summary, plan_dir, worker, args, agent,
+                resolved, signals_artifact, gate_signals, root,
+            )
         if blocking_unresolved_ids:
             reprompt_prompt = _build_gate_prompt_override(
                 agent,
@@ -2272,3 +2378,142 @@ def handle_audit_verifiability(root: Path, args: argparse.Namespace) -> StepResp
         "audits": audit_results,
         "validation_issues": issues,
     }
+
+
+def _build_tiebreaker_reprompt(
+    agent_type: str, state: PlanState, plan_dir: Path, *, root: Path,
+) -> str:
+    if agent_type == "claude":
+        base_prompt = create_claude_prompt("gate", state, plan_dir, root=root)
+    elif agent_type == "hermes":
+        base_prompt = create_hermes_prompt("gate", state, plan_dir, root=root)
+    else:
+        base_prompt = create_codex_prompt("gate", state, plan_dir, root=root)
+    addendum = (
+        "You recommended TIEBREAKER but no flag shows mechanical recurrence signal "
+        "(addressed_then_reopened_count >= 2, or >=2 flags across >=2 iterations). "
+        "Either identify specific flag(s) with iteration history or pick ITERATE."
+    )
+    return f"{base_prompt}\n\n{addendum}"
+
+
+def handle_tiebreaker_run(root: Path, args: argparse.Namespace) -> StepResponse:
+    from megaplan._core import workflow_transition
+    with load_plan_locked(root, args.plan, step="tiebreaker-run") as (plan_dir, state):
+        require_state(state, "tiebreaker-run", {STATE_TIEBREAKER_PENDING})
+        gate_data = read_json(plan_dir / "gate.json")
+        question = gate_data.get("tiebreaker_question", "")
+        flag_ids = gate_data.get("tiebreaker_flag_ids", [])
+        fuzzy_group_id = gate_data.get("tiebreaker_fuzzy_group_id", "")
+        if not question:
+            raise CliError("missing_tiebreaker_question", "Gate artifact missing tiebreaker_question")
+
+        tb_args = argparse.Namespace(
+            plan=args.plan, question=question, question_file=None,
+            output=None, agent=getattr(args, "agent", None),
+            hermes=getattr(args, "hermes", None),
+            phase_model=getattr(args, "phase_model", []),
+            fresh=getattr(args, "fresh", False),
+            persist=getattr(args, "persist", False),
+            ephemeral=getattr(args, "ephemeral", False),
+        )
+        from megaplan.tiebreaker import _run_tiebreaker
+        exit_code = _run_tiebreaker(root, plan_dir, state, tb_args)
+        transition = workflow_transition(state, "tiebreaker-run")
+        state["current_state"] = transition.next_state
+        return {
+            "success": exit_code == 0,
+            "step": "tiebreaker-run",
+            "summary": f"Tiebreaker run {'completed' if exit_code == 0 else 'failed'} for question: {question[:80]}",
+            "state": state["current_state"],
+            "plan": state["name"],
+            "next_step": "tiebreaker decide",
+            "details": {
+                "question": question,
+                "flag_ids": flag_ids,
+                "fuzzy_group_id": fuzzy_group_id,
+            },
+        }
+
+
+def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepResponse:
+    from megaplan._core import workflow_transition
+    with load_plan_locked(root, args.plan, step="tiebreaker-decide") as (plan_dir, state):
+        require_state(state, "tiebreaker-decide", {STATE_TIEBREAKER_READY})
+        action = getattr(args, "tiebreaker_decide_action", "pick")
+        pick = getattr(args, "pick", None)
+        escalate = getattr(args, "escalate", False)
+        replan = getattr(args, "replan", False)
+        rationale = getattr(args, "rationale", "")
+        if escalate:
+            action = "escalate"
+        elif replan:
+            action = "replan"
+        else:
+            action = "pick"
+
+        gate_data = read_json(plan_dir / "gate.json")
+        flag_ids = gate_data.get("tiebreaker_flag_ids", [])
+        fuzzy_group_id = gate_data.get("tiebreaker_fuzzy_group_id", "")
+        question = gate_data.get("tiebreaker_question", "")
+
+        researcher_files = sorted(plan_dir.glob("tiebreaker_researcher*.json"))
+        challenger_files = sorted(plan_dir.glob("tiebreaker_challenger*.json"))
+        researcher_data = read_json(researcher_files[-1]) if researcher_files else {}
+        challenger_data = read_json(challenger_files[-1]) if challenger_files else {}
+
+        from megaplan.types import TiebreakerDecision
+        decision: TiebreakerDecision = {
+            "fuzzy_group_id": fuzzy_group_id,
+            "flag_ids": flag_ids,
+            "question": question,
+            "researcher_pick": researcher_data.get("recommendation", ""),
+            "challenger_pick": challenger_data.get("recommendation", ""),
+            "human_pick": pick or "",
+            "action": action,
+            "rationale": rationale,
+            "timestamp": now_utc(),
+        }
+
+        decisions_path = plan_dir / "tiebreaker_decisions.json"
+        existing = read_json(decisions_path) if decisions_path.exists() else []
+        if not isinstance(existing, list):
+            existing = []
+        existing.append(decision)
+        atomic_write_json(decisions_path, existing)
+
+        from megaplan.audit import record_tiebreaker_audit
+        record_tiebreaker_audit(plan_dir, decision, researcher_data, challenger_data)
+
+        if action == "pick" and flag_ids:
+            registry = load_flag_registry(plan_dir)
+            for flag in registry.get("flags", []):
+                if flag["id"] in flag_ids:
+                    flag["settled_by_tiebreaker"] = fuzzy_group_id
+            save_flag_registry(plan_dir, registry)
+
+        if action == "escalate":
+            state["current_state"] = STATE_AWAITING_HUMAN
+            next_step_val = "override add-note"
+        elif action == "replan":
+            state["current_state"] = STATE_PLANNED
+            next_step_val = "critique"
+        else:
+            transition = workflow_transition(state, "tiebreaker-decide")
+            state["current_state"] = transition.next_state
+            next_step_val = "revise"
+
+        return {
+            "success": True,
+            "step": "tiebreaker-decide",
+            "summary": f"Tiebreaker decided: {action} — {rationale[:80]}",
+            "state": state["current_state"],
+            "plan": state["name"],
+            "next_step": next_step_val,
+            "details": {
+                "action": action,
+                "pick": pick,
+                "fuzzy_group_id": fuzzy_group_id,
+                "flag_ids": flag_ids,
+            },
+        }
