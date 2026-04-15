@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.14.5 — 2026-04-15
+
+### Git-worktree isolation for subprocess workers
+
+Fix: when megaplan invoked its `claude` / `codex` subprocess workers, it was passing the plan's stored `project_dir` as the `--add-dir` / `-C` target. Runs started from a git worktree would silently write source-code changes back into the main checkout, colliding with other concurrent runs.
+
+- **CWD drives `--add-dir`**: `run_claude_step` now passes the CWD (or an explicit override) as `--add-dir` and subprocess cwd, instead of the plan's stored `project_dir`.
+- **CWD drives Codex `-C`**: `run_codex_step` now passes the CWD as Codex's `-C` and as the `sandbox_workspace_write.writable_roots` entry. The `--add-dir` for Codex still points at the plan's artifacts directory (`plan_dir`), which is unchanged.
+- **Plan state still lives at `project_dir`**: `.megaplan/plans/<name>/` artifacts remain co-located with the plan as before. Only the source-code working tree the worker sees has changed.
+- **Divergence warning**: emits a one-time warning at startup when CWD differs from the plan's stored `project_dir`, so operators notice when a plan created in checkout A is being executed from worktree B.
+- **`--work-dir PATH` flag**: every worker-invoking subcommand (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `review`, `auto`, `loop-init`, `loop-run`) accepts `--work-dir` to explicitly override the detected CWD.
+
 ## v0.14.0 — 2026-04-15
 
 ### Strict gate flag resolution
