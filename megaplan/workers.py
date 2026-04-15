@@ -207,6 +207,13 @@ def _codex_timeout_for_step(step: str) -> int:
 
 def _codex_exec_mode_flags(step: str) -> list[str]:
     if step in _EXECUTE_STEPS or step in _CODEX_TEMPLATE_WRITE_STEPS:
+        # In trusted-container mode we pass --dangerously-bypass-approvals-and-sandbox
+        # elsewhere in the invocation, and Codex rejects the combination of
+        # --full-auto + --dangerously-bypass-approvals-and-sandbox (they both
+        # configure approval/sandbox and conflict). Skip --full-auto here;
+        # the bypass flag already grants the auto-approval behavior needed.
+        if _trusted_container():
+            return []
         return ["--full-auto"]
     return []
 
