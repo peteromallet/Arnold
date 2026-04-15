@@ -218,6 +218,30 @@ def _codex_exec_mode_flags(step: str) -> list[str]:
     return []
 
 
+_ROLLOUT_MISSING_PATTERNS = (
+    "no rollout found for thread id",
+    "thread/resume failed",
+)
+
+
+def _is_rollout_missing(raw: str) -> bool:
+    """Detect Codex's signal that a session/thread id has no rollout.
+
+    Happens when: container was restarted between phases and codex's session
+    store (usually ``$HOME/.codex/sessions``) was wiped, but megaplan's plan
+    state still has the session id and tries to ``codex exec resume <id>``.
+
+    Match is case-insensitive on known substrings so minor wording changes
+    upstream don't break recovery. Fall back to failing loudly if Codex
+    introduces a new error string — false positives here would mask real
+    session crashes.
+    """
+    if not raw:
+        return False
+    lowered = raw.lower()
+    return any(pat in lowered for pat in _ROLLOUT_MISSING_PATTERNS)
+
+
 def _trusted_container() -> bool:
     """Return True when MEGAPLAN_TRUSTED_CONTAINER is set to a truthy value.
 
@@ -1204,6 +1228,31 @@ def run_codex_step(
             str(error.extra.get("raw_output", "")),
             output_path,
         )
+        # Recover from a lost session: container restarted since the session was
+        # created, codex's rollout store is gone, but megaplan still has the id.
+        # Clear the stale session and retry once with fresh=True.
+        if not fresh and persistent and session.get("id") and _is_rollout_missing(
+            str(error.extra.get("raw_output", ""))
+        ):
+            log.info(
+                "Codex session %s has no rollout (container restart or session wipe); "
+                "retrying %s with a fresh session",
+                session["id"],
+                step,
+            )
+            # Drop the stale session id so later phases don't also try to resume it.
+            state["sessions"].pop(session_key, None)
+            return run_codex_step(
+                step,
+                state,
+                plan_dir,
+                root=root,
+                persistent=persistent,
+                fresh=True,
+                json_trace=json_trace,
+                prompt_override=prompt_override,
+                prompt_kwargs=prompt_kwargs,
+            )
         if error.code == "worker_timeout":
             recovered_payload = _recover_codex_payload(
                 step,
@@ -1252,6 +1301,33 @@ def run_codex_step(
             ) from error
         raise
     raw = result.stdout + result.stderr
+    # Same rollout-missing recovery for the non-exception path (non-zero exit
+    # without CliError being raised). See _is_rollout_missing for context.
+    if (
+        not fresh
+        and persistent
+        and session.get("id")
+        and result.returncode != 0
+        and _is_rollout_missing(raw)
+    ):
+        log.info(
+            "Codex session %s has no rollout (container restart or session wipe); "
+            "retrying %s with a fresh session",
+            session["id"],
+            step,
+        )
+        state["sessions"].pop(session_key, None)
+        return run_codex_step(
+            step,
+            state,
+            plan_dir,
+            root=root,
+            persistent=persistent,
+            fresh=True,
+            json_trace=json_trace,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+        )
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
         raise CliError(error_code, error_message, extra={"raw_output": raw})
