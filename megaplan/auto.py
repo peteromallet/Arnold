@@ -30,7 +30,10 @@ from megaplan.types import TERMINAL_STATES
 DEFAULT_STALL_THRESHOLD = 5
 DEFAULT_MAX_ITERATIONS = 200
 DEFAULT_POLL_SLEEP_SECONDS = 1.0
+DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
+DEFAULT_STATUS_TIMEOUT_SECONDS = 60
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
+PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 
 
 @dataclass
@@ -60,25 +63,48 @@ class DriverOutcome:
         )
 
 
-def _run_megaplan(args: list[str], *, cwd: Path | None = None) -> tuple[int, str, str]:
+def _run_megaplan(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float | None = None,
+) -> tuple[int, str, str]:
     """Run a megaplan sub-command in its own process.
 
     We shell out rather than importing the handlers directly so each phase gets
     a fresh argparse/handler lifecycle. This matches how external orchestrators
     drive the CLI and avoids subtle state leakage between phases.
+
+    ``timeout`` is seconds to wait before killing the subprocess. On timeout we
+    return exit code ``PHASE_TIMEOUT_EXIT_CODE`` and append a marker to stderr
+    so the driver can surface it as a phase failure without crashing the loop.
+    The subprocess is killed; any grandchildren it spawned (e.g. codex) may
+    need a moment to settle but will exit when their parent's pipes close.
     """
-    proc = subprocess.run(
-        ["megaplan", *args],
-        cwd=str(cwd) if cwd else None,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
+    try:
+        proc = subprocess.run(
+            ["megaplan", *args],
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired as expired:
+        stdout = expired.stdout if isinstance(expired.stdout, str) else ""
+        stderr = expired.stderr if isinstance(expired.stderr, str) else ""
+        marker = f"\n[megaplan auto] subprocess timed out after {timeout}s"
+        return PHASE_TIMEOUT_EXIT_CODE, stdout, (stderr + marker).strip()
 
 
-def _status(plan: str, cwd: Path | None = None) -> dict[str, Any]:
-    code, out, err = _run_megaplan(["status", "--plan", plan], cwd=cwd)
+def _status(
+    plan: str,
+    cwd: Path | None = None,
+    *,
+    timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    code, out, err = _run_megaplan(["status", "--plan", plan], cwd=cwd, timeout=timeout)
     if code != 0:
         raise RuntimeError(f"megaplan status failed (exit {code}): {err.strip() or out.strip()}")
     return json.loads(out)
@@ -107,6 +133,8 @@ def drive(
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
+    phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
+    status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
     writer=sys.stdout.write,
 ) -> DriverOutcome:
     """Drive ``plan`` to completion.
@@ -129,7 +157,7 @@ def drive(
 
     for iteration in range(1, max_iterations + 1):
         try:
-            status = _status(plan, cwd=cwd)
+            status = _status(plan, cwd=cwd, timeout=status_timeout)
         except (RuntimeError, json.JSONDecodeError) as error:
             log(f"status lookup failed: {error}")
             return DriverOutcome(
@@ -203,6 +231,7 @@ def drive(
                             "megaplan auto: escalate → force-proceed",
                         ],
                         cwd=cwd,
+                        timeout=status_timeout,
                     )
                     if code != 0:
                         log(f"force-proceed failed (exit {code}): {err.strip() or out.strip()}")
@@ -228,6 +257,7 @@ def drive(
                             "megaplan auto: escalate → abort",
                         ],
                         cwd=cwd,
+                        timeout=status_timeout,
                     )
                     return DriverOutcome(
                         status="aborted",
@@ -262,10 +292,12 @@ def drive(
 
         # Run the next phase.
         cmd = _phase_command(next_step) + ["--plan", plan]
-        log(f"running: megaplan {' '.join(cmd)}", phase=next_step)
+        log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         last_phase = next_step
-        code, out, err = _run_megaplan(cmd, cwd=cwd)
-        if code != 0:
+        code, out, err = _run_megaplan(cmd, cwd=cwd, timeout=phase_timeout)
+        if code == PHASE_TIMEOUT_EXIT_CODE:
+            log(f"phase '{next_step}' timed out after {phase_timeout}s — stall detection will enforce the cap")
+        elif code != 0:
             # Don't bail immediately — megaplan often records a partial failure
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
@@ -316,6 +348,26 @@ def build_auto_parser(subparsers: Any) -> None:
         default=DEFAULT_POLL_SLEEP_SECONDS,
         help=f"Seconds to sleep between phase transitions (default {DEFAULT_POLL_SLEEP_SECONDS})",
     )
+    auto_parser.add_argument(
+        "--phase-timeout",
+        type=float,
+        default=DEFAULT_PHASE_TIMEOUT_SECONDS,
+        help=(
+            f"Seconds before a single phase subprocess (plan/prep/critique/gate/finalize/execute/review) "
+            f"is killed and treated as a failure (default {DEFAULT_PHASE_TIMEOUT_SECONDS}s). "
+            "Stall detection still applies on top."
+        ),
+    )
+    auto_parser.add_argument(
+        "--status-timeout",
+        type=float,
+        default=DEFAULT_STATUS_TIMEOUT_SECONDS,
+        help=(
+            f"Seconds before `megaplan status` / override subprocesses are killed "
+            f"(default {DEFAULT_STATUS_TIMEOUT_SECONDS}s). These should always be quick; "
+            "hitting this indicates serious trouble."
+        ),
+    )
 
 
 def run_auto(root: Path, args: argparse.Namespace) -> int:
@@ -327,6 +379,8 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         max_iterations=args.max_iterations,
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
+        phase_timeout=args.phase_timeout,
+        status_timeout=args.status_timeout,
     )
     sys.stdout.write(outcome.to_json() + "\n")
     if outcome.status == "done":
