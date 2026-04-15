@@ -18,7 +18,15 @@ STATE_FINALIZED = "finalized"
 STATE_EXECUTED = "executed"
 STATE_DONE = "done"
 STATE_ABORTED = "aborted"
+STATE_AWAITING_HUMAN = "awaiting_human_verify"
+STATE_TIEBREAKER_PENDING = "tiebreaker_pending"
+STATE_TIEBREAKER_READY = "tiebreaker_ready"
 TERMINAL_STATES = {STATE_DONE, STATE_ABORTED}
+AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {
+    STATE_AWAITING_HUMAN,
+    STATE_TIEBREAKER_PENDING,
+    STATE_TIEBREAKER_READY,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +38,12 @@ class PlanConfig(TypedDict, total=False):
     auto_approve: bool
     robustness: str
     agents: dict[str, str]
+    workers: NotRequired[dict[str, Any]]
+    max_tiebreakers_per_plan: int
+    tiebreaker_blocklist: list[str]
+    allow_tiebreaker: bool
+    tiebreaker_token_budget: int
+    tiebreaker_time_budget_minutes: int
 
 
 class PlanMeta(TypedDict, total=False):
@@ -137,6 +151,7 @@ class FlagRecord(_FlagRecordRequired, total=False):
     verified: bool
     verified_in: str
     addressed_in: str
+    settled_by_tiebreaker: str
 
 
 class FlagRegistry(TypedDict):
@@ -154,6 +169,18 @@ class SettledDecision(TypedDict, total=False):
     id: str
     decision: str
     rationale: str
+
+
+class TiebreakerDecision(TypedDict, total=False):
+    fuzzy_group_id: str
+    flag_ids: list[str]
+    question: str
+    researcher_pick: str
+    challenger_pick: str
+    human_pick: str
+    action: str
+    rationale: str
+    timestamp: str
 
 
 class GatePayload(TypedDict):
@@ -275,6 +302,8 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "loop_plan": "claude",
     "loop_execute": "codex",
     "review": "codex",
+    "tiebreaker_researcher": "codex",
+    "tiebreaker_challenger": "codex",
 }
 KNOWN_AGENTS = ["claude", "codex", "hermes"]
 ROBUSTNESS_LEVELS = ("tiny", "light", "standard", "robust", "superrobust")

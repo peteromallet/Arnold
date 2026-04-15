@@ -1,0 +1,166 @@
+v0.15.0 — doc mode (metaplan): plan-as-output instead of code-as-output
+
+## Goal
+Introduce a `--mode doc` (a.k.a. metaplan mode) where the executor produces a
+structured plan document instead of code changes. Same harness, same phases,
+same flag/gate machinery — only the executor's tool surface and output schema
+change. Use case: plan-of-plans, design docs, RFCs, milestone breakdowns,
+research write-ups. Anything where the deliverable is words on disk, not a diff.
+
+## Motivation
+Today megaplan only knows how to ship code — execute writes files in the repo,
+audit compares claimed paths against `git status`, review measures success
+against criteria like "tsc clean" and "tests pass." When the artifact we want
+is a plan document (e.g. the `state_management_refactor_plan.md` we just wrote
+by hand, or the per-milestone idea files I'm seeding into `~/Documents/reigh-megaplan-dev/ideas/`),
+megaplan can't help — its critique/gate/review loop is tuned for code.
+
+If we add doc mode, the whole prep → plan → critique → gate → revise loop
+applies to thinking work too: the gate forces resolution of every blocking
+critique flag against the document; review checks the doc against success
+criteria. The model gets the same anti-rubber-stamp pressure on its writing
+that it gets on its code.
+
+## What stays the same
+- All phases (prep, plan, critique, gate, revise, finalize, execute, review).
+- Robustness levels (light/standard/heavy).
+- Flag taxonomy, dispute/accept_tradeoff resolution, rubber-stamp checks.
+- Override commands (force-proceed, abort, replan, add-note).
+- Session/rollout management, trusted-container env, batch execution.
+- Critique prompts at the plan level — critiquing a plan is the same activity
+  whether the plan ships code or ships a doc.
+
+## What varies per phase
+
+### init
+- New flag: `--mode {code,doc}` (default `code`).
+- Mode persists in plan meta (`plan.json` → `mode: "doc"`). All later phases
+  read it from there.
+- New flag: `--output <path>` for doc mode. Required. Path is relative to
+  project_dir. Single output file — multi-file docs are out of scope for v0.15.
+
+### prep
+- Unchanged for code mode.
+- For doc mode: prep gathers research instead of repo orientation. The prep
+  prompt is repointed to ask "what sources, prior art, related docs should
+  inform this document?" — sense-check items become "did you read X?" rather
+  than "did you find the relevant module?"
+
+### plan
+- Plan output schema is unchanged at the top level (steps, tasks, success
+  criteria, sense checks).
+- Tasks in doc mode have a different shape under the hood: instead of
+  `files_changed: [paths]`, they have `sections_written: [section_ids]`.
+  The plan-step prompt enumerates the sections of the target document
+  (introduction, problem statement, proposed solution, milestones, …) and
+  the executor's job is to write each section.
+
+### critique
+- Same machinery. Critique flags target plan structure, success-criteria
+  calibration, scope creep — identical to code mode.
+- Add a category `doc-quality` (alongside `code-quality`, `security`, etc.)
+  for flags about clarity, audience-fit, missing rationale, undefended
+  claims. Doc-mode critiques skew this way; code-mode critiques rarely use it.
+
+### gate
+- Identical. The gate doesn't care what the executor will produce; it judges
+  the plan's readiness.
+
+### revise → finalize
+- Identical.
+
+### execute
+- This is the biggest change.
+- Tool surface: codex/claude is told it's authoring a document. Its only
+  filesystem tool is "write to the configured output path." File creation
+  outside that path is rejected upstream.
+- Output schema: `task_updates[].files_changed` is replaced with
+  `task_updates[].sections_written: [section_id]`. Tasks have status
+  done/skipped/blocked as today.
+- The executor returns the rendered section text, not a diff. The harness
+  assembles sections in plan-order into the output file at the end of the
+  batch. (This is how we avoid concurrent writers fighting over the same
+  file across batches.)
+- Per-batch behavior unchanged: each batch covers some tasks, writes its
+  evidence JSON, transitions to the next.
+
+### audit (post-execute)
+- For code mode: today's `validate_execution_evidence` (git status diff,
+  path normalization, sense-check acks).
+- For doc mode: replace the git-status comparison with:
+  - "all sections in the plan are present in the output file"
+  - "no sections in the output file are unclaimed by any task"
+  - "output file exists and is non-empty"
+  - "executor's claimed `sections_written` match what the harness assembled"
+- Sense-check acknowledgment validation is unchanged.
+
+### review
+- Code mode: today's review (tests pass, types clean, success criteria met).
+- Doc mode: review reads the output file and judges it against the success
+  criteria. `must` criteria become statements like "the doc names every
+  blocking risk" rather than "tsc clean." Review's prompt is reworded to
+  treat the deliverable as text, not a working system.
+- Same priority machinery (must/should/info), same `needs_rework` loop.
+
+## Wiring details
+
+### Mode plumbing
+- `plan.json` gains `mode: "code" | "doc"` and (for doc mode) `output_path`.
+- Workers receive mode in their context dict.
+- Prompt files split by mode: `prompts/prep_doc.py`, `prompts/execute_doc.py`,
+  `prompts/review_doc.py`. Other prompts stay shared.
+- `evaluation.validate_execution_evidence` branches on mode at the top.
+
+### Output schema
+- New `schemas/execution_doc.json` mirrors `schemas/execution.json` but with
+  `sections_written` instead of `files_changed`.
+- `merge.py` validation accepts the doc schema when mode is doc.
+
+### Section assembly
+- New `megaplan/doc_assembly.py`: takes the per-batch executor outputs,
+  orders sections by plan position, writes the assembled file at finalize-end.
+- Idempotent: running execute twice on the same plan replaces the file.
+  No partial writes — assemble in a temp file, then atomic rename.
+
+## CLI shape
+
+```
+megaplan init --project-dir . --mode doc \
+              --output docs/state_management_refactor_plan.md \
+              "Plan a 6-week refactor of state management..."
+```
+
+Everything else is unchanged. `megaplan status` shows `mode: doc` and
+`output_path` in the summary.
+
+## Out of scope (v0.15.0)
+- Multi-file doc output (one plan → one file in v0.15).
+- Mixed-mode plans (a plan that ships both code and a doc).
+- Doc-mode-aware loop-init / loop-execute. Loop mode stays code-only for now.
+- Migrating existing code-mode prompts to use the new schema branching —
+  add the branch, don't rewrite working prompts.
+
+## Migration / compatibility
+- Existing plans with no `mode` field default to `code`. No retroactive change.
+- Existing tests pass unchanged (they all hit code mode).
+- New tests cover: doc-mode plan init, doc execute writes the file, audit
+  catches missing sections, audit catches sections not in plan, review
+  judges doc against criteria.
+
+## Success criteria (verifiable)
+- `megaplan init --mode doc --output X "..."` produces a plan with `mode: doc`.
+- Running the full loop on a doc-mode plan produces a non-empty file at the
+  configured output path.
+- Audit rejects an executor that claims a section not in the plan.
+- Audit rejects an executor that skips a section without marking the task
+  blocked/skipped.
+- Review with a `must` criterion phrased about the doc's content can fail
+  the doc and trigger needs_rework.
+- All existing code-mode tests pass.
+- pyproject.toml version is "0.15.0", CHANGELOG has the v0.15.0 entry.
+
+## Branch
+`doc-mode-metaplan` off main.
+
+## Working directory
+/Users/peteromalley/Documents/megaplan

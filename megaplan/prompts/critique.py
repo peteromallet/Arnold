@@ -24,6 +24,24 @@ from ._shared import _planning_debt_block, _render_prep_block
 from .planning import PLAN_TEMPLATE
 
 
+def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
+    if not decisions:
+        return ""
+    lines = ["Settled tiebreaker decisions (DO NOT re-raise these concerns under a new surface):"]
+    for d in decisions:
+        gid = d.get("fuzzy_group_id", "?")
+        question = d.get("question", "")
+        pick = d.get("human_pick", d.get("action", ""))
+        rationale = d.get("rationale", "")
+        lines.append(f"- {gid}: {question} -> Decision: {pick}. Rationale: {rationale}")
+    lines.append(
+        "\nOnly raise a new concern about these topics if new evidence *materially* "
+        "changes the settled premise — and if so, explicitly cite which settled "
+        "decision you are challenging and why."
+    )
+    return "\n".join(lines)
+
+
 def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     prep_block, prep_instruction = _render_prep_block(plan_dir)
@@ -41,6 +59,15 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         }
         for flag in unresolved
     ]
+    settled_decisions: list[dict[str, Any]] = []
+    decisions_path = plan_dir / "tiebreaker_decisions.json"
+    if decisions_path.exists():
+        decisions_data = read_json(decisions_path)
+        if isinstance(decisions_data, list):
+            settled_decisions = decisions_data
+        elif isinstance(decisions_data, dict):
+            settled_decisions = decisions_data.get("decisions", [])
+    settled_block = _settled_decisions_block(settled_decisions)
     return textwrap.dedent(
         f"""
         You are revising an implementation plan after critique and gate feedback.
@@ -65,6 +92,8 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         Open significant flags:
         {json_dump(open_flags).strip()}
 
+        {settled_block}
+
         Requirements:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
         - Update the plan to address the significant issues.
@@ -72,6 +101,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         - Return flags_addressed with the exact flag IDs you addressed.
         - Include `changes_summary` as a short plain-English summary of what changed in the revision. If there were no concrete flags, say that explicitly (for example: `No critique flags were raised; refined wording and kept the plan aligned for execution.`).
         - Preserve or improve success criteria quality. Each criterion must have a `priority` of `must`, `should`, or `info`. Promote or demote priorities if critique feedback reveals a criterion was over- or under-weighted.
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}}`.
         - Verify that the plan remains aligned with the user's original intent, not just internal plan quality.
         - Remove unjustified scope growth. If critique raised scope creep, narrow the plan back to the original idea unless the broader work is strictly required.
         - Maintain the structural template: H1 title, ## Overview, phase sections with numbered step sections, ## Execution Order or ## Validation Order.
@@ -100,6 +130,15 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
         for flag in flag_registry["flags"]
         if flag["status"] in {"addressed", "open", "disputed"}
     ]
+    settled_decisions: list[dict[str, Any]] = []
+    decisions_path = plan_dir / "tiebreaker_decisions.json"
+    if decisions_path.exists():
+        decisions_data = read_json(decisions_path)
+        if isinstance(decisions_data, list):
+            settled_decisions = decisions_data
+        elif isinstance(decisions_data, dict):
+            settled_decisions = decisions_data.get("decisions", [])
+
     return {
         "project_dir": project_dir,
         "prep_block": prep_block,
@@ -110,6 +149,7 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
         "unresolved": unresolved,
         "debt_block": _planning_debt_block(plan_dir, root),
         "robustness": configured_robustness(state),
+        "settled_tiebreaker_decisions": settled_decisions,
     }
 
 
@@ -194,6 +234,8 @@ def _build_critique_prompt(
         {json_dump(context["unresolved"]).strip()}
 
         {context["debt_block"]}
+
+        {_settled_decisions_block(context.get("settled_tiebreaker_decisions", []))}
 
         {critique_review_block}
 

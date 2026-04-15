@@ -18,6 +18,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "properties": {
                         "criterion": {"type": "string"},
                         "priority": {"type": "string", "enum": ["must", "should", "info"]},
+                        "requires": {"type": "array", "items": {"type": "string"}, "default": []},
                     },
                     "required": ["criterion", "priority"],
                 },
@@ -94,6 +95,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "properties": {
                         "criterion": {"type": "string"},
                         "priority": {"type": "string", "enum": ["must", "should", "info"]},
+                        "requires": {"type": "array", "items": {"type": "string"}, "default": []},
                     },
                     "required": ["criterion", "priority"],
                 },
@@ -114,7 +116,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "recommendation": {
                 "type": "string",
-                "enum": ["PROCEED", "ITERATE", "ESCALATE"],
+                "enum": ["PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER"],
             },
             "rationale": {"type": "string"},
             "signals_assessment": {"type": "string"},
@@ -157,6 +159,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "required": ["flag_id", "concern", "subsystem", "rationale"],
                 },
             },
+            "tiebreaker_question": {"type": "string"},
+            "tiebreaker_flag_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "tiebreaker_fuzzy_group_id": {"type": "string"},
         },
         "required": [
             "recommendation",
@@ -209,6 +217,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                 "performance",
                                 "maintainability",
                                 "other",
+                                "verifiability",
                             ],
                         },
                         "severity_hint": {
@@ -359,6 +368,100 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["spec_updates", "next_action", "reasoning"],
     },
+    "tiebreaker_researcher.json": {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string"},
+            "evidence": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "claim": {"type": "string"},
+                        "evidence_type": {
+                            "type": "string",
+                            "enum": ["code", "measurement", "pattern", "doc"],
+                        },
+                        "file_paths": {"type": "array", "items": {"type": "string"}},
+                        "quote": {"type": "string"},
+                    },
+                    "required": ["claim", "evidence_type", "file_paths", "quote"],
+                },
+            },
+            "options": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "assumptions": {"type": "array", "items": {"type": "string"}},
+                        "costs": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["name", "description", "assumptions", "costs"],
+                },
+            },
+            "preliminary_pick": {
+                "type": "object",
+                "properties": {
+                    "option_name": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "what_im_least_sure_about": {"type": "string"},
+                },
+                "required": ["option_name", "rationale", "what_im_least_sure_about"],
+            },
+        },
+        "required": ["question", "evidence", "options", "preliminary_pick"],
+    },
+    "tiebreaker_challenger.json": {
+        "type": "object",
+        "properties": {
+            "measurements_vs_assumptions": {"type": "string"},
+            "missing_options": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "why_missed": {"type": "string"},
+                    },
+                    "required": ["name", "description", "why_missed"],
+                },
+            },
+            "hard_cases": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "scenario": {"type": "string"},
+                        "which_option_breaks": {"type": "string"},
+                        "severity": {"type": "string"},
+                    },
+                    "required": ["scenario", "which_option_breaks", "severity"],
+                },
+            },
+            "reframings": {"type": "array", "items": {"type": "string"}},
+            "aging_analysis": {"type": "string"},
+            "counter_recommendation": {
+                "type": "object",
+                "properties": {
+                    "option_name": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "agrees_with_researcher": {"type": "boolean"},
+                },
+                "required": ["option_name", "rationale", "agrees_with_researcher"],
+            },
+        },
+        "required": [
+            "measurements_vs_assumptions",
+            "missing_options",
+            "hard_cases",
+            "reframings",
+            "aging_analysis",
+            "counter_recommendation",
+        ],
+    },
     "loop_execute.json": {
         "type": "object",
         "properties": {
@@ -435,7 +538,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "properties": {
                         "name": {"type": "string"},
                         "priority": {"type": "string", "enum": ["must", "should", "info"]},
-                        "pass": {"type": "string", "enum": ["pass", "fail", "waived"]},
+                        "pass": {"type": "string", "enum": ["pass", "fail", "waived", "deferred_human"]},
                         "evidence": {"type": "string"},
                     },
                     "required": ["name", "priority", "pass", "evidence"],

@@ -363,8 +363,13 @@ def test_gate_schema_is_strict_and_requires_core_fields() -> None:
         "settled_decisions",
         "flag_resolutions",
         "accepted_tradeoffs",
+        "tiebreaker_question",
+        "tiebreaker_flag_ids",
+        "tiebreaker_fuzzy_group_id",
     ]
-    assert schema["properties"]["recommendation"]["enum"] == ["PROCEED", "ITERATE", "ESCALATE"]
+    assert schema["properties"]["recommendation"]["enum"] == [
+        "PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER",
+    ]
 
 
 def test_plan_schema_has_core_fields_only() -> None:
@@ -475,3 +480,60 @@ def test_strict_schema_new_tracking_objects_are_strict() -> None:
     }
     assert sense_check_schema["additionalProperties"] is False
     assert set(sense_check_schema["required"]) == {"id", "task_id", "question", "executor_note", "verdict"}
+
+
+def test_plan_schema_requires_field_round_trip() -> None:
+    from jsonschema import Draft7Validator
+
+    schema = SCHEMAS["plan.json"]
+    payload_with_requires = {
+        "plan": "Test plan",
+        "questions": [],
+        "success_criteria": [
+            {"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]},
+            {"criterion": "Code is clean", "priority": "should", "requires": ["run_linter", "read_files"]},
+            {"criterion": "Looks good", "priority": "info"},
+        ],
+        "assumptions": [],
+    }
+    assert list(Draft7Validator(schema).iter_errors(payload_with_requires)) == []
+
+    payload_without_requires = {
+        "plan": "Test plan",
+        "questions": [],
+        "success_criteria": [
+            {"criterion": "All tests pass", "priority": "must"},
+        ],
+        "assumptions": [],
+    }
+    assert list(Draft7Validator(schema).iter_errors(payload_without_requires)) == []
+
+
+def test_review_schema_accepts_deferred_human_verdict() -> None:
+    from jsonschema import Draft7Validator
+
+    payload = _minimal_review_payload()
+    payload["criteria"] = [
+        {"name": "UI check", "priority": "must", "pass": "deferred_human", "evidence": "Needs human."},
+    ]
+    assert list(Draft7Validator(SCHEMAS["review.json"]).iter_errors(payload)) == []
+
+
+def test_tiebreaker_schemas_registered() -> None:
+    assert "tiebreaker_researcher.json" in SCHEMAS
+    assert "tiebreaker_challenger.json" in SCHEMAS
+    researcher = SCHEMAS["tiebreaker_researcher.json"]
+    challenger = SCHEMAS["tiebreaker_challenger.json"]
+    assert researcher["type"] == "object"
+    assert challenger["type"] == "object"
+    assert "evidence" in researcher["properties"]
+    assert "options" in researcher["properties"]
+    assert "preliminary_pick" in researcher["properties"]
+    assert "counter_recommendation" in challenger["properties"]
+    assert "missing_options" in challenger["properties"]
+
+
+def test_critique_schema_accepts_verifiability_category() -> None:
+    critique = SCHEMAS["critique.json"]
+    category_enum = critique["properties"]["flags"]["items"]["properties"]["category"]["enum"]
+    assert "verifiability" in category_enum

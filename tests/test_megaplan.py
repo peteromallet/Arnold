@@ -5228,3 +5228,126 @@ def test_review_works_after_batch_by_batch_execution(
         make_args(plan=plan_fixture.plan_name),
     )
     assert review["state"] == megaplan.STATE_DONE
+
+
+# ---------------------------------------------------------------------------
+# Verifiability: deferred_human → awaiting_human_verify → verify-human → done
+# ---------------------------------------------------------------------------
+
+
+def _drive_light_to_finalized(plan_fixture: PlanFixture) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_revise(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+
+def _inject_human_criteria(plan_fixture: PlanFixture) -> None:
+    """Replace plan meta success_criteria with one machine + one human-only criterion."""
+    state = load_state(plan_fixture.plan_dir)
+    meta_name = state["plan_versions"][-1]["file"].replace(".md", ".meta.json")
+    meta_path = plan_fixture.plan_dir / meta_name
+    meta = read_json(meta_path)
+    meta["success_criteria"] = [
+        {"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]},
+        {"criterion": "UI looks correct", "priority": "must", "requires": ["drive_browser"]},
+    ]
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+
+def test_light_review_stub_deferred_human_sets_awaiting_human(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="light")
+    _drive_light_to_finalized(plan_fixture)
+    _inject_human_criteria(plan_fixture)
+
+    make_args = plan_fixture.make_args
+    execute = megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    assert execute["state"] == "awaiting_human_verify"
+    stored_review = read_json(plan_fixture.plan_dir / "review.json")
+    criteria = stored_review["criteria"]
+    passes = {c["name"]: c["pass"] for c in criteria}
+    assert passes["All tests pass"] == "pass"
+    assert passes["UI looks correct"] == "deferred_human"
+
+
+def test_verify_human_transitions_to_done(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="light")
+    _drive_light_to_finalized(plan_fixture)
+    _inject_human_criteria(plan_fixture)
+
+    make_args = plan_fixture.make_args
+    megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    from megaplan.handlers import handle_verify_human
+
+    result = handle_verify_human(
+        plan_fixture.root,
+        Namespace(
+            plan=plan_fixture.plan_name,
+            criterion="1",
+            pass_flag=True,
+            fail_flag=False,
+            evidence="Verified manually in browser",
+        ),
+    )
+
+    assert result["state"] == megaplan.STATE_DONE
+    assert result["success"] is True
+    verifications = read_json(plan_fixture.plan_dir / "human_verifications.json")
+    assert len(verifications) == 1
+    assert verifications[0]["verdict"] == "pass"
+
+
+def test_verify_human_rejects_wrong_state(
+    plan_fixture: PlanFixture,
+) -> None:
+    from megaplan.handlers import handle_verify_human
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="awaiting_human_verify"):
+        handle_verify_human(
+            plan_fixture.root,
+            Namespace(
+                plan=plan_fixture.plan_name,
+                criterion="0",
+                pass_flag=True,
+                fail_flag=False,
+                evidence="test",
+            ),
+        )
+
+
+def test_auto_driver_stops_at_awaiting_human(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="light")
+    _drive_light_to_finalized(plan_fixture)
+    _inject_human_criteria(plan_fixture)
+
+    make_args = plan_fixture.make_args
+    megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    assert state["current_state"] == "awaiting_human_verify"
+
+    from megaplan.types import AUTOMATION_TERMINAL_STATES, STATE_AWAITING_HUMAN
+
+    assert STATE_AWAITING_HUMAN in AUTOMATION_TERMINAL_STATES

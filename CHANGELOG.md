@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.18.0 — 2026-04-15
+
+### Automated tiebreaker triggering
+
+Gate-driven automatic tiebreaker routing with budgeted, audited guardrails. Builds on the advisory `megaplan tiebreaker` subcommand from v0.17.0 — the harness now detects recurring constraint tensions and routes to tiebreaker automatically.
+
+- **`TIEBREAKER` gate recommendation**: gate schema extended with `TIEBREAKER` as a fourth recommendation. Requires `tiebreaker_question`, `tiebreaker_flag_ids`, and `tiebreaker_fuzzy_group_id` fields.
+- **Iteration-pressure analysis**: `megaplan/iteration_pressure.py` computes flag recurrence history — fuzzy-groups flags by Jaccard word similarity, tracks `addressed_then_reopened_count`, and renders a pressure table into the gate prompt context.
+- **Mechanical recurrence validation**: harness validates TIEBREAKER recommendations against actual flag history. Re-prompts the gate once if no mechanical signal exists; force-demotes to ITERATE on second failure.
+- **`tiebreaker_pending` / `tiebreaker_ready` states**: new plan states for the tiebreaker lifecycle. Both are automation-terminal — the auto/chain drivers stop cleanly.
+- **`megaplan tiebreaker decide`**: CLI command to record human decisions (`--pick`, `--escalate`, `--replan`) with rationale. Writes to `tiebreaker_decisions.json` and transitions back to `critiqued`.
+- **Settled-decision immunity**: critique prompt includes settled tiebreaker decisions. Critique is instructed not to re-raise settled concerns unless new evidence materially changes the premise.
+- **Budget guardrails**: `max_tiebreakers_per_plan` (default 2), token budget (default 150k), time budget (default 30m). Exceeded budgets force-demote to ESCALATE.
+- **Domain blocklist**: `tiebreaker_blocklist` config field skips tiebreaker for specified concern categories.
+- **Spec-level opt-out**: `allow_tiebreaker: false` in idea front-matter or plan config disables the mechanism entirely.
+- **Audit tracking**: `megaplan/audit.py` records tiebreaker usage, timing, and token costs. `megaplan tiebreaker audit` CLI for per-plan and global stats.
+
+## v0.17.0 — 2026-04-15
+
+### Verifiability contracts
+
+Success criteria now declare which capabilities are needed to verify them, enabling pre-critique auditing and human-deferred verification.
+
+- **Capability registry**: closed set of 11 mechanism-shaped strings in `megaplan/capabilities.py` — 6 container (`run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter`) and 5 human (`drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device`).
+- **`requires` field on success criteria**: optional `requires: [cap1, cap2]` on each criterion in plan/revise schemas. Defaults to `[]` for backward compatibility.
+- **Pre-critique audit**: `megaplan/verifiability.py` validates that `requires` entries are known capabilities and that the union of worker capabilities can satisfy them. Synthetic `verifiability` flags are injected into the critique phase.
+- **`deferred_human` verdict**: review criteria that require human-only capabilities are marked `deferred_human` instead of `fail` or `waived`.
+- **`awaiting_human_verify` state**: plans with deferred human criteria enter this automation-terminal state instead of `done`. The auto and chain drivers stop cleanly.
+- **`megaplan verify-human`**: CLI command to record human verification evidence and transition from `awaiting_human_verify` to `done`.
+- **`megaplan audit-verifiability`**: CLI command to inspect capability coverage of a plan's criteria without changing state.
+- **`megaplan status --pending-human`**: lists plans in `awaiting_human_verify` state.
+- **Auto/chain driver**: `drive()` returns `status="awaiting_human"` for plans in this state. Chain driver handles via its `on_failure` policy.
+- **Migration**: `requires` defaults to `[]` via schema default. Existing plans work unchanged. `must` criteria with empty `requires` receive a deprecation advisory during critique.
+
+### Tiebreaker subcommand (`megaplan tiebreaker`)
+
+New advisory subcommand that produces structured decision context for architectural questions (e.g. when `gate` returns ESCALATE).
+
+- **Two-agent pipeline**: a researcher agent gathers evidence and options, then a challenger agent stress-tests the findings — each in an independent ephemeral session.
+- **CLI**: `megaplan tiebreaker --plan <name> --question "..."` (or `--question-file`), `megaplan tiebreaker status --plan <name>`.
+- **Structured artifacts**: `tiebreaker_researcher.json`, `tiebreaker_challenger.json`, and a synthesized `tiebreaker.md` with decision-ready sections (options table, evidence summary, agreement/disagreement, fallback plan).
+- **Idempotent**: re-runs produce versioned artifacts (`_v2`, `_v3`, …).
+- **Advisory only**: does not modify plan state. Reuses existing worker dispatch (`run_step_with_worker`) and `SessionDB`.
+- **Configurable agents**: `agents.tiebreaker_researcher` and `agents.tiebreaker_challenger` in config, defaulting to codex.
+
 ## v0.16.0 — 2026-04-15
 
 ### Chain driver (`megaplan chain`)

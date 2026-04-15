@@ -99,6 +99,20 @@ PHASE_RUNTIME_POLICY: dict[str, PhaseRuntimePolicy] = {
         escalation_threshold_seconds=None,
         timeout_cap_seconds=None,
     ),
+    "tiebreaker_researcher": PhaseRuntimePolicy(
+        expected_min_seconds=60,
+        expected_max_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+        recommended_next_check_seconds=120,
+        escalation_threshold_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+        timeout_cap_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+    ),
+    "tiebreaker_challenger": PhaseRuntimePolicy(
+        expected_min_seconds=60,
+        expected_max_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+        recommended_next_check_seconds=120,
+        escalation_threshold_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+        timeout_cap_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+    ),
 }
 
 

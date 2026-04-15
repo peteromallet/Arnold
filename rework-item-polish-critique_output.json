@@ -1,0 +1,21 @@
+{
+  "checks": [],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Test coverage: The plan misses an existing assertion that will fail as soon as `task_id` changes from \"REVIEW\" to \"REVIEW-<check_id>\".",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`tests/test_handle_review_robustness.py:364` currently asserts `item[\"task_id\"] == \"REVIEW\"` for the heavy review integration path, while `_synthesize_review_rework_items()` hard-codes that value at `megaplan/handlers.py:1247`. The plan only budgets the four status tests plus new cases, so without updating this existing integration assertion the requested full pytest command will fail."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Forward compatibility: The proposed unknown-check fallback test does not exercise the real unknown-id path, because `_synthesize_review_rework_items()` drops checks before `expected` is computed when `review_checks.get_check_by_id(check_id)` returns nothing.",
+      "category": "correctness",
+      "severity_hint": "uncertain",
+      "evidence": "At `megaplan/handlers.py:1223-1225`, any check id missing from `review_checks` is filtered out by the `default_severity` gate before the code reaches `expected` on `megaplan/handlers.py:1249`. Monkeypatching `_EXPECTED_BY_CHECK_ID` with a known check id would only test a missing template entry, not the brief's requested `future_check` fallback behavior."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}
