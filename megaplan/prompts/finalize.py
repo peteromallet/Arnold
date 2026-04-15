@@ -28,6 +28,23 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     flag_registry = load_flag_registry(plan_dir)
     critique_history = _collect_critique_summaries(plan_dir, state["iteration"])
     debt_block = _finalize_debt_block(plan_dir, root)
+    plan_mode = state.get("config", {}).get("mode", "code")
+    if plan_mode == "doc":
+        task_field_guidance = textwrap.dedent(
+            """
+            - Each task represents a document section or group of sections to author.
+            - Task objects use `sections_written` (array of section IDs) instead of `files_changed`/`commands_run`.
+            - Do NOT include `files_changed` or `commands_run` in task descriptions — the executor writes to a single output file.
+            - Do NOT include `baseline_test_failures` or `baseline_test_command` — there are no tests for doc mode.
+            - The FINAL task should be a review/polish pass over the assembled document, not a test run.
+            """
+        ).strip()
+    else:
+        task_field_guidance = textwrap.dedent(
+            """
+            - The FINAL task MUST always be to run tests and verify the changes work. If specific test IDs or commands are mentioned in the original task, include them. Otherwise, the executor should find and run the tests most relevant to the files changed. If any test fails, read the error, fix the code, and re-run until they pass. Do NOT create new test files — run the project's existing test suite. Additionally, the executor should write a short throwaway script that reproduces the specific bug described in the task, run it to confirm the fix works, then delete the script.
+            """
+        ).strip()
     return textwrap.dedent(
         f"""
         You are preparing an execution-ready briefing document from the approved plan.
@@ -94,6 +111,6 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
         - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
         - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
-        - The FINAL task MUST always be to run tests and verify the changes work. If specific test IDs or commands are mentioned in the original task, include them. Otherwise, the executor should find and run the tests most relevant to the files changed. If any test fails, read the error, fix the code, and re-run until they pass. Do NOT create new test files — run the project's existing test suite. Additionally, the executor should write a short throwaway script that reproduces the specific bug described in the task, run it to confirm the fix works, then delete the script.
+        - {task_field_guidance}
         """
     ).strip()

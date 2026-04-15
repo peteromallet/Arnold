@@ -20,17 +20,16 @@ New first-class subcommand that drives an ordered pipeline of milestone plans de
 
 - `tests/test_chain.py` covers spec parsing, `chain status`, idea-file validation, seed-plan validation, happy-path execution (with `auto.drive` mocked), resume-from-`chain_state.json`, on-failure `stop_chain`, and `--no-git-refresh` suppression.
 
-## v0.14.5 — 2026-04-15
+## v0.15.0 — 2026-04-15
 
-### Git-worktree isolation for subprocess workers
+### Doc mode
 
-Fix: when megaplan invoked its `claude` / `codex` subprocess workers, it was passing the plan's stored `project_dir` as the `--add-dir` / `-C` target. Runs started from a git worktree would silently write source-code changes back into the main checkout, colliding with other concurrent runs.
+Megaplan can now run in `--mode doc`, letting execution produce a single document artifact instead of a code diff.
 
-- **CWD drives `--add-dir`**: `run_claude_step` now passes the CWD (or an explicit override) as `--add-dir` and subprocess cwd, instead of the plan's stored `project_dir`.
-- **CWD drives Codex `-C`**: `run_codex_step` now passes the CWD as Codex's `-C` and as the `sandbox_workspace_write.writable_roots` entry. The `--add-dir` for Codex still points at the plan's artifacts directory (`plan_dir`), which is unchanged.
-- **Plan state still lives at `project_dir`**: `.megaplan/plans/<name>/` artifacts remain co-located with the plan as before. Only the source-code working tree the worker sees has changed.
-- **Divergence warning**: emits a one-time warning at startup when CWD differs from the plan's stored `project_dir`, so operators notice when a plan created in checkout A is being executed from worktree B.
-- **`--work-dir PATH` flag**: every worker-invoking subcommand (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `review`, `auto`, `loop-init`, `loop-run`) accepts `--work-dir` to explicitly override the detected CWD.
+- `megaplan init` adds `--mode doc` and `--output <relative/path>` for document-targeted plans.
+- Execute workers now support a doc-mode schema with `sections_written` instead of per-task file changes.
+- Doc-mode prompt tracks reframe prep, execute, and review around authoring and document quality.
+- Execution auditing can now reason about section-based delivery instead of only file-based changes.
 
 ## v0.14.6 — 2026-04-15
 
@@ -43,6 +42,18 @@ Fixes a class of infinite-loop failure where a persistent Codex/Claude session r
 - **Surface blocked tasks**: the execute summary now lists blocked task IDs and emits a warning (`"N task(s) reported status=blocked by the worker — investigate executor_notes before continuing"`) so supervisors and humans see the real reason a batch did not advance instead of just `state=finalized`.
 - **Status reports `tasks_blocked`**: CLI `status` output exposes `tasks_blocked` alongside `tasks_done` / `tasks_skipped` / `tasks_pending`.
 - **Auto driver exits rc=5 on all-blocked stalls**: when `megaplan auto` detects a state-stall and every remaining task is `blocked` (no pending), it exits with status `blocked` / exit code 5 and a specific reason, distinct from generic `stalled=2` and `escalated=3`. Supervisors can treat this as a poisoned-worker signal and retry with `--fresh`.
+
+## v0.14.5 — 2026-04-15
+
+### Git-worktree isolation for subprocess workers
+
+Fix: when megaplan invoked its `claude` / `codex` subprocess workers, it was passing the plan's stored `project_dir` as the `--add-dir` / `-C` target. Runs started from a git worktree would silently write source-code changes back into the main checkout, colliding with other concurrent runs.
+
+- **CWD drives `--add-dir`**: `run_claude_step` now passes the CWD (or an explicit override) as `--add-dir` and subprocess cwd, instead of the plan's stored `project_dir`.
+- **CWD drives Codex `-C`**: `run_codex_step` now passes the CWD as Codex's `-C` and as the `sandbox_workspace_write.writable_roots` entry. The `--add-dir` for Codex still points at the plan's artifacts directory (`plan_dir`), which is unchanged.
+- **Plan state still lives at `project_dir`**: `.megaplan/plans/<name>/` artifacts remain co-located with the plan as before. Only the source-code working tree the worker sees has changed.
+- **Divergence warning**: emits a one-time warning at startup when CWD differs from the plan's stored `project_dir`, so operators notice when a plan created in checkout A is being executed from worktree B.
+- **`--work-dir PATH` flag**: every worker-invoking subcommand (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `review`, `auto`, `loop-init`, `loop-run`) accepts `--work-dir` to explicitly override the detected CWD.
 
 ## v0.14.0 — 2026-04-15
 

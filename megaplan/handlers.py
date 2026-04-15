@@ -374,9 +374,14 @@ def _write_plan_version(
 
 
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
-    baseline = _capture_test_baseline(Path(state["config"]["project_dir"]), state.get("config", {}))
-    payload.update(baseline)
-    _ensure_verification_task(payload, state)
+    if state["config"].get("mode") == "doc":
+        payload["baseline_test_failures"] = None
+        payload["baseline_test_command"] = None
+        payload["baseline_test_note"] = "Test baseline not applicable in doc mode."
+    else:
+        baseline = _capture_test_baseline(Path(state["config"]["project_dir"]), state.get("config", {}))
+        payload.update(baseline)
+        _ensure_verification_task(payload, state)
     _reconcile_validation_after_mutation(payload)
     atomic_write_json(plan_dir / "finalize.json", payload)
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
@@ -719,6 +724,22 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists() or not project_dir.is_dir():
         raise CliError("invalid_project_dir", f"Project directory does not exist: {project_dir}")
+    mode = getattr(args, "mode", "code") or "code"
+    raw_output_path = getattr(args, "output", None)
+    normalized_output_path: str | None = None
+    if mode == "doc" and not raw_output_path:
+        raise CliError("invalid_args", "--output is required when --mode doc is selected")
+    if raw_output_path:
+        output_candidate = Path(raw_output_path)
+        if output_candidate.is_absolute():
+            raise CliError("invalid_args", "--output must be a relative path inside the project directory")
+        if any(part == ".." for part in output_candidate.parts):
+            raise CliError("invalid_args", "--output must not contain '..' path traversal")
+        resolved_output_path = (project_dir / output_candidate).resolve()
+        try:
+            normalized_output_path = resolved_output_path.relative_to(project_dir).as_posix()
+        except ValueError as exc:
+            raise CliError("invalid_args", "--output must stay within the project directory") from exc
     robustness = getattr(args, "robustness", None)
     if robustness is None:
         robustness = get_effective("execution", "robustness")
@@ -745,6 +766,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
             "project_dir": str(project_dir),
             "auto_approve": auto_approve,
             "robustness": robustness,
+            "mode": mode,
             "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
         },
         "sessions": {},
@@ -761,6 +783,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         },
         "last_gate": {},
     }
+    if normalized_output_path is not None:
+        state["config"]["output_path"] = normalized_output_path
     append_history(
         state,
         make_history_entry(
@@ -1337,7 +1361,8 @@ def _is_rework_reexecution(state: PlanState) -> bool:
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         require_state(state, "execute", {STATE_FINALIZED})
-        if not args.confirm_destructive:
+        plan_mode = state["config"].get("mode", "code")
+        if plan_mode != "doc" and not args.confirm_destructive:
             raise CliError("missing_confirmation", "Execute requires --confirm-destructive")
         auto_approve = bool(state["config"].get("auto_approve", False))
         if getattr(args, "user_approved", False):
@@ -1386,6 +1411,11 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             save_state(plan_dir, state)
             raise
         clear_active_step(state, run_id=run_id)
+        if plan_mode == "doc" and response.get("state") == STATE_EXECUTED:
+            from megaplan.doc_assembly import assemble_doc
+            output_path = Path(state["config"]["project_dir"]) / state["config"]["output_path"]
+            finalize_data = read_json(plan_dir / "finalize.json")
+            assemble_doc(plan_dir, output_path, finalize_data)
         robustness = configured_robustness(state)
         if not workflow_includes_step(robustness, "review") and response.get("state") == STATE_EXECUTED:
             # Preserve the data-parity invariant even when review is skipped by robustness.
@@ -1577,8 +1607,9 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="review") as (plan_dir, state):
         require_state(state, "review", {STATE_EXECUTED})
         robustness = configured_robustness(state)
+        plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []
-        if robustness in {"standard", "robust", "superrobust"}:
+        if robustness in {"standard", "robust", "superrobust"} and plan_mode != "doc":
             pre_check_flags = run_pre_checks(plan_dir, state, Path(state["config"]["project_dir"]))
         if robustness in {"standard", "light", "robust"}:
             resolved = None

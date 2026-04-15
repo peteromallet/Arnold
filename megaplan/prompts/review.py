@@ -81,10 +81,21 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
     settled_decisions = gate.get("settled_decisions", [])
     if not isinstance(settled_decisions, list):
         settled_decisions = []
+    plan_mode = state["config"].get("mode", "code")
+    if plan_mode == "doc":
+        output_path = Path(state["config"]["output_path"])
+        if not output_path.is_absolute():
+            output_path = project_dir / output_path
+        try:
+            git_diff = output_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            git_diff = ""
+    else:
+        git_diff = collect_git_diff_patch(project_dir)
     return {
         "project_dir": project_dir,
         "intent_block": intent_and_notes_block(state),
-        "git_diff": collect_git_diff_patch(project_dir),
+        "git_diff": git_diff,
         "finalize_data": read_json(plan_dir / "finalize.json"),
         "settled_decisions": settled_decisions,
     }

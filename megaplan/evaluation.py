@@ -120,7 +120,86 @@ def _is_perfunctory_ack(note: str) -> bool:
     return is_rubber_stamp(note, strict=False)
 
 
-def validate_execution_evidence(finalize_data: dict[str, Any], project_dir: Path) -> dict[str, Any]:
+def validate_execution_evidence(finalize_data: dict[str, Any], project_dir: Path, *, mode: str = "code") -> dict[str, Any]:
+    if mode == "doc":
+        return _validate_execution_evidence_doc(finalize_data, project_dir)
+    return _validate_execution_evidence_code(finalize_data, project_dir)
+
+
+def _validate_execution_evidence_doc(finalize_data: dict[str, Any], project_dir: Path) -> dict[str, Any]:
+    findings: list[str] = []
+    tasks = finalize_data.get("tasks", [])
+
+    planned_sections: set[str] = set()
+    claimed_sections: set[str] = set()
+    for task in tasks:
+        if task.get("status") != "done":
+            continue
+        for section_id in task.get("sections_written", []):
+            if isinstance(section_id, str) and section_id.strip():
+                claimed_sections.add(section_id)
+
+    for task in tasks:
+        for section_id in task.get("sections_written", []):
+            if isinstance(section_id, str) and section_id.strip():
+                planned_sections.add(section_id)
+
+    missing_sections = sorted(planned_sections - claimed_sections)
+    if missing_sections:
+        findings.append(
+            "Planned sections not claimed by any done task: "
+            + ", ".join(missing_sections)
+        )
+
+    unclaimed = sorted(claimed_sections - planned_sections)
+    if unclaimed:
+        findings.append(
+            "Sections claimed by done tasks but not in any task plan: "
+            + ", ".join(unclaimed)
+        )
+
+    output_path_str = ""
+    config = finalize_data.get("config", {})
+    if isinstance(config, dict):
+        output_path_str = config.get("output_path", "")
+    if not output_path_str:
+        for task in tasks:
+            if task.get("sections_written"):
+                break
+
+    for sense_check in finalize_data.get("sense_checks", []):
+        sense_check_id = sense_check.get("id", "?")
+        note = sense_check.get("executor_note", "")
+        if not isinstance(note, str) or not note.strip():
+            findings.append(f"Sense check {sense_check_id} is missing an executor acknowledgment.")
+            continue
+        if _is_perfunctory_ack(note):
+            findings.append(
+                f"Sense check {sense_check_id} acknowledgment is perfunctory: {note.strip()!r}."
+            )
+
+    for task in tasks:
+        if task.get("status") != "done":
+            continue
+        task_id = task.get("id", "?")
+        notes = task.get("executor_notes", "")
+        if not isinstance(notes, str) or not notes.strip():
+            continue
+        if is_rubber_stamp(notes, strict=True):
+            findings.append(
+                f"Task {task_id} executor_notes are perfunctory: {notes.strip()!r}."
+            )
+
+    return {
+        "findings": findings,
+        "files_in_diff": [],
+        "files_claimed": [],
+        "skipped": False,
+        "reason": "",
+    }
+
+
+def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir: Path) -> dict[str, Any]:
     findings: list[str] = []
     files_claimed = sorted(
         {

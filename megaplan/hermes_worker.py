@@ -191,7 +191,7 @@ def parse_agent_output(
 
     # Fallback: for execute phase, reconstruct from tool calls + git diff
     if payload is None and step == "execute":
-        payload = _reconstruct_execute_payload(messages, project_dir, plan_dir)
+        payload = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
         if payload is not None:
             print(f"[hermes-worker] Reconstructed execute payload from tool calls", file=sys.stderr)
 
@@ -291,7 +291,9 @@ def run_hermes_step(
     from hermes_state import SessionDB
 
     project_dir = Path(state["config"]["project_dir"])
-    schema_name = STEP_SCHEMA_FILENAMES[step]
+    plan_mode = state["config"].get("mode", "code")
+    from megaplan.schemas import get_execution_schema_key
+    schema_name = get_execution_schema_key(plan_mode) if step == "execute" else STEP_SCHEMA_FILENAMES[step]
     schema = read_json(schemas_root(root) / schema_name)
     output_path: Path | None = None
 
@@ -481,7 +483,7 @@ def run_hermes_step(
         except CliError as error:
             # For execute, try reconstructed payload if validation fails
             if step == "execute":
-                reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir)
+                reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
                 if reconstructed is not None:
                     try:
                         validate_payload(step, reconstructed)
@@ -621,6 +623,8 @@ def _reconstruct_execute_payload(
     messages: list,
     project_dir: Path,
     plan_dir: Path,
+    *,
+    mode: str = "code",
 ) -> dict | None:
     """Reconstruct an execute phase response from tool calls and git state.
 
@@ -655,7 +659,6 @@ def _reconstruct_execute_payload(
             if name in ("write_file", "patch", "edit_file", "apply_patch"):
                 path = args.get("path", "")
                 if isinstance(path, str) and path:
-                    # Make relative to project dir
                     try:
                         rel = str(Path(path).relative_to(project_dir))
                     except ValueError:
@@ -666,38 +669,37 @@ def _reconstruct_execute_payload(
                 if isinstance(cmd, str) and cmd:
                     commands_run.append(cmd)
 
-    # Also check git diff for files changed
-    try:
-        diff_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=project_dir,
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-        if diff_result.returncode == 0:
-            for line in diff_result.stdout.splitlines():
-                if line.strip():
-                    files_changed.add(line.strip())
-    except Exception:
-        pass
+    if mode != "doc":
+        try:
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD"],
+                cwd=project_dir,
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if diff_result.returncode == 0:
+                for line in diff_result.stdout.splitlines():
+                    if line.strip():
+                        files_changed.add(line.strip())
+        except Exception:
+            pass
 
-    # Check for untracked files too
-    try:
-        status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=project_dir,
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-        if status_result.returncode == 0:
-            for line in status_result.stdout.splitlines():
-                if line.startswith("?? ") or line.startswith("A  ") or line.startswith("M  "):
-                    fname = line[3:].strip()
-                    if fname and not fname.startswith(".megaplan/"):
-                        files_changed.add(fname)
-    except Exception:
-        pass
+        try:
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=project_dir,
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if status_result.returncode == 0:
+                for line in status_result.stdout.splitlines():
+                    if line.startswith("?? ") or line.startswith("A  ") or line.startswith("M  "):
+                        fname = line[3:].strip()
+                        if fname and not fname.startswith(".megaplan/"):
+                            files_changed.add(fname)
+        except Exception:
+            pass
 
     if not tool_calls and not files_changed:
-        return None  # Nothing happened, can't reconstruct
+        return None
 
     # Try to read checkpoint file for task updates
     task_updates = []
@@ -710,6 +712,24 @@ def _reconstruct_execute_payload(
                 task_updates.extend(updates)
         except Exception:
             pass
+
+    if mode == "doc":
+        sections_written = sorted(
+            {
+                section
+                for tu in task_updates
+                for section in tu.get("sections_written", [])
+                if isinstance(section, str) and section.strip()
+            }
+        )
+        return {
+            "output": f"[Reconstructed from tool calls] Made {len(tool_calls)} tool calls, wrote {len(sections_written)} sections.",
+            "sections_written": sections_written,
+            "commands_run": [],
+            "deviations": ["Execute response reconstructed from tool calls — model failed to produce JSON report."],
+            "task_updates": task_updates,
+            "sense_check_acknowledgments": [],
+        }
 
     files_list = sorted(files_changed)
     return {
