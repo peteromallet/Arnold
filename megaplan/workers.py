@@ -211,6 +211,27 @@ def _codex_exec_mode_flags(step: str) -> list[str]:
     return []
 
 
+def _trusted_container() -> bool:
+    """Return True when MEGAPLAN_TRUSTED_CONTAINER is set to a truthy value.
+
+    In a locked-down container (Docker/Railway/Kubernetes without
+    user-namespace capabilities), bubblewrap's default sandbox fails with
+    ``bwrap: Creating new namespace failed: Permission denied`` because
+    ``kernel.unprivileged_userns_clone`` is not settable by an unprivileged
+    user. Per the official guidance at
+    https://docs.docker.com/ai/sandboxes/agents/codex/ the operator is
+    expected to rely on container-level isolation and bypass the Codex
+    sandbox entirely. Setting ``MEGAPLAN_TRUSTED_CONTAINER=1`` on the
+    worker environment activates that path.
+    """
+    return os.environ.get("MEGAPLAN_TRUSTED_CONTAINER", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _codex_child_env() -> dict[str, str]:
     env = os.environ.copy()
     # Nested Codex workers should not inherit the parent Codex session state.
@@ -1140,11 +1161,22 @@ def run_codex_step(
             str(project_dir),
             "--add-dir",
             str(plan_dir),
-            "-c",
-            f"sandbox_workspace_write.writable_roots=[\"{project_dir}\"]",
+        ]
+        if _trusted_container():
+            # In a trusted container the surrounding runtime is the sandbox.
+            # Skip the workspace-write sandbox (which requires user namespaces
+            # that most container runtimes don't grant) and let Codex run
+            # unsandboxed. The outer container boundary still contains writes.
+            command.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            command.extend([
+                "-c",
+                f"sandbox_workspace_write.writable_roots=[\"{project_dir}\"]",
+            ])
+        command.extend([
             "-o",
             str(output_path),
-        ]
+        ])
         if not persistent:
             command.append("--ephemeral")
         command.extend(_codex_exec_mode_flags(step))
