@@ -72,16 +72,7 @@ def _run_tiebreaker(
         resolved=resolved,
         prompt_override=r_prompt,
     )
-    if not researcher_result.success:
-        payload = {
-            "success": False,
-            "error": "researcher_failed",
-            "message": researcher_result.error or "Researcher step failed",
-        }
-        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
-        return 1
-
-    researcher_data = researcher_result.parsed or {}
+    researcher_data = researcher_result.payload or {}
     atomic_write_json(plan_dir / researcher_file, researcher_data)
     sys.stderr.write(f"[tiebreaker] researcher done → {researcher_file}\n")
 
@@ -100,17 +91,7 @@ def _run_tiebreaker(
         resolved=resolved_c,
         prompt_override=c_prompt,
     )
-    if not challenger_result.success:
-        payload = {
-            "success": False,
-            "error": "challenger_failed",
-            "message": challenger_result.error or "Challenger step failed",
-            "researcher_artifact": researcher_file,
-        }
-        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
-        return 1
-
-    challenger_data = challenger_result.parsed or {}
+    challenger_data = challenger_result.payload or {}
     atomic_write_json(plan_dir / challenger_file, challenger_data)
     sys.stderr.write(f"[tiebreaker] challenger done → {challenger_file}\n")
 
@@ -250,10 +231,28 @@ def build_tiebreaker_parser(subparsers: Any) -> None:
     status_parser = tb_sub.add_parser("status", help="Show tiebreaker run status")
     status_parser.add_argument("--plan", default=None, help="Plan name")
 
+    # Decide subcommand
+    decide_parser = tb_sub.add_parser("decide", help="Record human tiebreaker decision")
+    decide_parser.add_argument("--plan", default=None, help="Plan name")
+    decide_group = decide_parser.add_mutually_exclusive_group(required=True)
+    decide_group.add_argument("--pick", help="Option name to pick")
+    decide_group.add_argument("--escalate", action="store_true", help="Escalate to human outside tool")
+    decide_group.add_argument("--replan", action="store_true", help="Question itself is wrong; replan")
+    decide_parser.add_argument("--rationale", required=True, help="Rationale for the decision")
+
+    # Audit subcommand
+    audit_parser = tb_sub.add_parser("audit", help="Show tiebreaker usage stats")
+    audit_group = audit_parser.add_mutually_exclusive_group()
+    audit_group.add_argument("--plan", default=None, help="Plan name")
+    audit_group.add_argument("--global", dest="global_audit", action="store_true", help="Aggregate across all plans")
+
 
 def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
     action = getattr(args, "tiebreaker_action", None)
     plan_name = getattr(args, "plan", None)
+
+    if action == "audit":
+        return _run_tiebreaker_audit(root, plan_name)
 
     plan_dir = resolve_plan_dir(root, plan_name)
     state: PlanState = read_json(plan_dir / "state.json")
@@ -261,4 +260,32 @@ def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
     if action == "status":
         return _run_tiebreaker_status(root, plan_dir, state)
 
+    if action == "decide":
+        from megaplan.handlers import handle_tiebreaker_decide
+        response = handle_tiebreaker_decide(root, args)
+        sys.stdout.write(json.dumps(response, indent=2) + "\n")
+        return 0 if response.get("success") else 1
+
     return _run_tiebreaker(root, plan_dir, state, args)
+
+
+def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
+    from megaplan.audit import (
+        aggregate_tiebreaker_audit,
+        load_tiebreaker_audit,
+        render_audit_report,
+    )
+    if plan_name:
+        plan_dir = resolve_plan_dir(root, plan_name)
+        records = load_tiebreaker_audit(plan_dir)
+        from megaplan.audit import _compute_totals
+        data = {"plans": [{"plan_dir": plan_dir.name, "tiebreaker_count": len(records),
+                           "tokens_spent": sum(r.get("tokens_spent", 0) for r in records),
+                           "time_seconds": sum(r.get("time_seconds", 0) for r in records),
+                           "matched_researcher": sum(1 for r in records if r.get("matched_researcher")),
+                           "matched_challenger": sum(1 for r in records if r.get("matched_challenger"))}],
+                "totals": _compute_totals(records)}
+    else:
+        data = aggregate_tiebreaker_audit(root)
+    sys.stdout.write(render_audit_report(data) + "\n")
+    return 0
