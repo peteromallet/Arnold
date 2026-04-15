@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.17.1 — 2026-04-15
+
+### Tiebreaker subcommand (`megaplan tiebreaker`)
+
+New advisory subcommand that produces structured decision context for architectural questions (e.g. when `gate` returns ESCALATE).
+
+- **Two-agent pipeline**: a researcher agent gathers evidence and options, then a challenger agent stress-tests the findings — each in an independent ephemeral session.
+- **CLI**: `megaplan tiebreaker --plan <name> --question "..."` (or `--question-file`), `megaplan tiebreaker status`, `megaplan tiebreaker decide --pick/--escalate/--replan --rationale`.
+- **Structured artifacts**: `tiebreaker_researcher.json`, `tiebreaker_challenger.json`, and a synthesized `tiebreaker.md` with decision-ready sections (options table, evidence summary, agreement/disagreement, fallback plan).
+- **Idempotent**: re-runs produce versioned artifacts (`_v2`, `_v3`, …).
+- **Configurable agents**: `agents.tiebreaker_researcher` and `agents.tiebreaker_challenger` in config, defaulting to codex.
+- **Gate schema**: `TIEBREAKER` added as fourth recommendation, with `tiebreaker_question`, `tiebreaker_flag_ids`, `tiebreaker_fuzzy_group_id` optional fields. Gate prompt documents the new option.
+- **Plan lifecycle**: `tiebreaker_pending` / `tiebreaker_ready` states added with workflow transitions; both are automation-terminal.
+- **Settled-decision immunity**: critique and revise prompts read `tiebreaker_decisions.json` and instruct agents not to re-raise settled concerns without materially new evidence.
+- **Hot-fix**: `_run_tiebreaker` uses `WorkerResult.payload` instead of the nonexistent `.success`/`.parsed`/`.error` attributes — caught by live-cloud smoke run.
+
+Automatic gate-driven tiebreaker routing (pressure analysis, budgeting, audit tracking) lands in v0.18.0.
+
 ## v0.17.0 — 2026-04-15
 
 ### Verifiability contracts

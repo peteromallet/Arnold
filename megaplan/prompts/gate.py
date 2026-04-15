@@ -91,11 +91,12 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         {robustness}
 
         Requirements:
-        - Decide exactly one of: PROCEED, ITERATE, ESCALATE.
+        - Decide exactly one of: PROCEED, ITERATE, ESCALATE, TIEBREAKER.
         - Use the weighted score, flag details (including `evidence`), plan delta, recurring critiques, and preflight results as judgment context.
         - PROCEED when execution should move forward now.
         - ITERATE when revising the plan is the best next move.
         - ESCALATE when the loop is stuck, churn is recurring, or user intervention is needed.
+        - TIEBREAKER when a flag group reflects an *unresolvable constraint tension* (architectural or philosophical — requires a human call) rather than a plan-quality issue. If the concern is simply that the plan writer hasn't tried hard enough, use ITERATE instead. When recommending TIEBREAKER you MUST provide `tiebreaker_question` (the decision question for human resolution), `tiebreaker_flag_ids` (which flags this resolves), and `tiebreaker_fuzzy_group_id` (which group this resolves). Cite specific flag IDs in your rationale.
         - `signals_assessment`: one paragraph summarizing score trajectory, flag status, and preflight posture.
 
         Flags come in two tiers:

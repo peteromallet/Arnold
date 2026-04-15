@@ -19,6 +19,8 @@ from megaplan.types import (
     STATE_INITIALIZED,
     STATE_PLANNED,
     STATE_PREPPED,
+    STATE_TIEBREAKER_PENDING,
+    STATE_TIEBREAKER_READY,
 )
 
 
@@ -43,6 +45,7 @@ WORKFLOW: dict[str, list[Transition]] = {
     STATE_CRITIQUED: [
         Transition("gate", STATE_GATED, "gate_unset"),
         Transition("revise", STATE_PLANNED, "gate_iterate"),
+        Transition("tiebreaker", STATE_TIEBREAKER_PENDING, "gate_tiebreaker"),
         Transition("override add-note", STATE_CRITIQUED, "gate_escalate"),
         Transition("override force-proceed", STATE_GATED, "gate_escalate"),
         Transition("override abort", STATE_ABORTED, "gate_escalate"),
@@ -67,6 +70,12 @@ WORKFLOW: dict[str, list[Transition]] = {
     ],
     STATE_AWAITING_HUMAN: [
         Transition("verify-human", STATE_DONE),
+    ],
+    STATE_TIEBREAKER_PENDING: [
+        Transition("tiebreaker-run", STATE_TIEBREAKER_READY),
+    ],
+    STATE_TIEBREAKER_READY: [
+        Transition("tiebreaker-decide", STATE_CRITIQUED),
     ],
 }
 
@@ -185,6 +194,8 @@ def _transition_matches(state: PlanState, condition: str) -> bool:
         return recommendation == "ITERATE"
     if condition == "gate_escalate":
         return recommendation == "ESCALATE"
+    if condition == "gate_tiebreaker":
+        return recommendation == "TIEBREAKER"
     if condition == "gate_proceed_blocked":
         return recommendation == "PROCEED" and not gate.get("passed", False)
     if condition == "gate_proceed":
