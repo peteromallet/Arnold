@@ -236,7 +236,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "id": {"type": "string"},
                         "description": {"type": "string"},
                         "depends_on": {"type": "array", "items": {"type": "string"}},
-                        "status": {"type": "string", "enum": ["pending", "done", "skipped"]},
+                        "status": {"type": "string", "enum": ["pending", "done", "skipped", "blocked"]},
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},
@@ -325,7 +325,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},
-                        "status": {"type": "string", "enum": ["done", "skipped"]},
+                        "status": {"type": "string", "enum": ["done", "skipped", "blocked"]},
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},

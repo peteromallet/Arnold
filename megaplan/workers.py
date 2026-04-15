@@ -290,6 +290,22 @@ _ROLLOUT_MISSING_PATTERNS = (
 )
 
 
+# Patterns that indicate the worker's *session history* has absorbed an
+# obsolete environmental failure (e.g. from an earlier invocation before the
+# container was configured for trusted-mode). On a later invocation the model
+# reads this history, believes the environment is still broken, and returns
+# "blocked" without attempting commands — causing infinite retry loops.
+# Detecting these in the raw output and invalidating the session forces a
+# fresh start so the belief can't survive.
+_POISONED_SESSION_PATTERNS: tuple[tuple[str, ...], ...] = (
+    # Single-substring match (any one of these is enough).
+    ("bwrap: creating new namespace failed",),
+    # Multi-substring match (all substrings must be present).
+    ("permission denied", "cannot start sandbox"),
+    ("repository command execution", "unavailable", "sandbox"),
+)
+
+
 def _is_rollout_missing(raw: str) -> bool:
     """Detect Codex's signal that a session/thread id has no rollout.
 
@@ -306,6 +322,28 @@ def _is_rollout_missing(raw: str) -> bool:
         return False
     lowered = raw.lower()
     return any(pat in lowered for pat in _ROLLOUT_MISSING_PATTERNS)
+
+
+def _is_poisoned_environmental_failure(raw: str) -> bool:
+    """Detect obsolete sandbox/environment failure beliefs in worker output.
+
+    Returns True when the raw output contains known-stale environment errors
+    that a persistent session may have absorbed from a prior invocation
+    (before trusted-container mode was enabled). See the comment on
+    ``_POISONED_SESSION_PATTERNS`` above for motivation.
+
+    The check is intentionally conservative: every pattern is a conjunction
+    of substrings all of which must be present (case-insensitive). A single
+    sandbox error combined with a generic "Permission denied" elsewhere in a
+    long trace should not trigger unless the full phrase appears.
+    """
+    if not raw:
+        return False
+    lowered = raw.lower()
+    for group in _POISONED_SESSION_PATTERNS:
+        if all(sub in lowered for sub in group):
+            return True
+    return False
 
 
 def _trusted_container() -> bool:
@@ -1190,8 +1228,55 @@ def run_claude_step(
     except CliError as error:
         if error.code == "worker_timeout":
             error.extra["session_id"] = session_id
+        # Mirror run_codex_step's poisoned-session recovery for Claude.
+        resumed = bool(session.get("id")) and not fresh
+        if (
+            resumed
+            and _trusted_container()
+            and _is_poisoned_environmental_failure(
+                str(error.extra.get("raw_output", ""))
+            )
+        ):
+            print(
+                "[megaplan] Detected poisoned session (obsolete sandbox failure belief); "
+                "invalidating session and retrying with --fresh",
+                flush=True,
+            )
+            state["sessions"].pop(session_key, None)
+            return run_claude_step(
+                step,
+                state,
+                plan_dir,
+                root=root,
+                fresh=True,
+                prompt_override=prompt_override,
+                prompt_kwargs=prompt_kwargs,
+            )
         raise
     raw = result.stdout or result.stderr
+    # Non-exception poisoned-session recovery. Only trigger when we resumed
+    # (fresh sessions can't carry stale history).
+    if (
+        session.get("id")
+        and not fresh
+        and _trusted_container()
+        and _is_poisoned_environmental_failure(raw)
+    ):
+        print(
+            "[megaplan] Detected poisoned session (obsolete sandbox failure belief); "
+            "invalidating session and retrying with --fresh",
+            flush=True,
+        )
+        state["sessions"].pop(session_key, None)
+        return run_claude_step(
+            step,
+            state,
+            plan_dir,
+            root=root,
+            fresh=True,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+        )
     envelope, payload = parse_claude_envelope(raw)
     try:
         validate_payload(step, payload)
@@ -1320,6 +1405,37 @@ def run_codex_step(
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
             )
+        # Recover from a poisoned session: the history carries an obsolete
+        # "sandbox is broken" belief from a pre-trusted-container run. Only
+        # act when we're in trusted-container mode (so we know the belief is
+        # stale) and we were resuming a session (fresh sessions can't carry
+        # the poisoned history). See _is_poisoned_environmental_failure.
+        if (
+            not fresh
+            and persistent
+            and session.get("id")
+            and _trusted_container()
+            and _is_poisoned_environmental_failure(
+                str(error.extra.get("raw_output", ""))
+            )
+        ):
+            print(
+                "[megaplan] Detected poisoned session (obsolete sandbox failure belief); "
+                "invalidating session and retrying with --fresh",
+                flush=True,
+            )
+            state["sessions"].pop(session_key, None)
+            return run_codex_step(
+                step,
+                state,
+                plan_dir,
+                root=root,
+                persistent=persistent,
+                fresh=True,
+                json_trace=json_trace,
+                prompt_override=prompt_override,
+                prompt_kwargs=prompt_kwargs,
+            )
         if error.code == "worker_timeout":
             recovered_payload = _recover_codex_payload(
                 step,
@@ -1380,6 +1496,33 @@ def run_codex_step(
         print(
             f"[megaplan] Codex session {session['id']} has no rollout "
             f"(container restart or session wipe); retrying {step} with a fresh session",
+            flush=True,
+        )
+        state["sessions"].pop(session_key, None)
+        return run_codex_step(
+            step,
+            state,
+            plan_dir,
+            root=root,
+            persistent=persistent,
+            fresh=True,
+            json_trace=json_trace,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+        )
+    # Poisoned-session recovery on non-exception path: the worker exited 0 or
+    # non-zero but produced output that still echoes an obsolete sandbox
+    # failure belief. Same guard conditions as the CliError branch above.
+    if (
+        not fresh
+        and persistent
+        and session.get("id")
+        and _trusted_container()
+        and _is_poisoned_environmental_failure(raw)
+    ):
+        print(
+            "[megaplan] Detected poisoned session (obsolete sandbox failure belief); "
+            "invalidating session and retrying with --fresh",
             flush=True,
         )
         state["sessions"].pop(session_key, None)

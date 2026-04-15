@@ -1908,3 +1908,156 @@ def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
     # --add-dir still grants access to the plan's artifacts directory
     # (unchanged by the worktree fix).
     assert Path(command[add_dir_idx]) == plan_dir
+
+
+# ---------------------------------------------------------------------------
+# Poisoned-session detection + recovery (v0.14.6)
+# ---------------------------------------------------------------------------
+
+
+def test_is_poisoned_environmental_failure_matches_bwrap_namespace_error() -> None:
+    from megaplan.workers import _is_poisoned_environmental_failure
+
+    raw = "something happened\nbwrap: Creating new namespace failed: Permission denied\nmore"
+    assert _is_poisoned_environmental_failure(raw) is True
+
+
+def test_is_poisoned_environmental_failure_matches_permission_denied_sandbox() -> None:
+    from megaplan.workers import _is_poisoned_environmental_failure
+
+    raw = "error: Permission denied while trying to start the sandbox. cannot start sandbox."
+    assert _is_poisoned_environmental_failure(raw) is True
+
+
+def test_is_poisoned_environmental_failure_matches_repo_cmd_unavailable_sandbox() -> None:
+    from megaplan.workers import _is_poisoned_environmental_failure
+
+    raw = (
+        "Repository command execution is currently unavailable because the sandbox "
+        "could not be initialized."
+    )
+    assert _is_poisoned_environmental_failure(raw) is True
+
+
+def test_is_poisoned_environmental_failure_ignores_unrelated_errors() -> None:
+    from megaplan.workers import _is_poisoned_environmental_failure
+
+    assert _is_poisoned_environmental_failure("") is False
+    assert _is_poisoned_environmental_failure("TypeError: foo is not callable") is False
+    # A lone "Permission denied" without sandbox context must not trip patterns.
+    assert _is_poisoned_environmental_failure("Permission denied: /root/.cache") is False
+
+
+def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resumed Codex session whose output contains a stale bwrap failure line
+    should cause run_codex_step to drop the session id and recursively
+    re-invoke itself with fresh=True."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"] = {
+        "codex_executor": {
+            "id": "sess-poisoned",
+            "mode": "persistent",
+            "created_at": "2026-04-15T00:00:00Z",
+            "last_used_at": "2026-04-15T00:00:00Z",
+            "refreshed": False,
+        }
+    }
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+
+    poisoned_raw = (
+        "bwrap: Creating new namespace failed: Permission denied\n"
+        "cannot continue\n"
+    )
+    call_counter = {"n": 0}
+
+    def fake_run_command(command, **kwargs):
+        call_counter["n"] += 1
+        if call_counter["n"] == 1:
+            return CommandResult(
+                command=command,
+                cwd=tmp_path,
+                returncode=1,
+                stdout="",
+                stderr=poisoned_raw,
+                duration_ms=5,
+            )
+        out_idx = command.index("-o") + 1
+        output_path = Path(command[out_idx])
+        payload = {
+            "output": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "deviations": [],
+            "task_updates": [],
+            "sense_check_acknowledgments": [],
+        }
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps({"type": "thread.started", "thread_id": "sess-fresh"}) + "\n",
+            stderr="",
+            duration_ms=5,
+        )
+
+    with patch("megaplan.workers.create_codex_prompt", return_value="prompt"):
+        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+            result = run_codex_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                persistent=True,
+                fresh=False,
+            )
+
+    assert call_counter["n"] == 2
+    assert result.payload.get("output") == "done"
+    assert result.session_id == "sess-fresh"
+    # Stale session id must have been dropped from state before the recursive
+    # call; the new session id is installed by the caller (apply_session_update).
+    assert state["sessions"].get("codex_executor", {}).get("id") != "sess-poisoned"
+
+
+def test_run_codex_step_skips_poison_retry_when_fresh_already(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With fresh=True the poisoned-session branch must not engage."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+
+    poisoned_raw = "bwrap: Creating new namespace failed: Permission denied\n"
+
+    def fake_run_command(command, **kwargs):
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=1,
+            stdout="",
+            stderr=poisoned_raw,
+            duration_ms=1,
+        )
+
+    with patch("megaplan.workers.create_codex_prompt", return_value="prompt"):
+        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+            with pytest.raises(CliError):
+                run_codex_step(
+                    "execute",
+                    state,
+                    plan_dir,
+                    root=tmp_path,
+                    persistent=False,
+                    fresh=True,
+                )
+

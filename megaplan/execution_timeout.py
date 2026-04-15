@@ -134,7 +134,7 @@ def _merge_timeout_checkpoint(
         issues=issues,
         validation_label=f"{checkpoint_name}.task_updates",
         merge_label="checkpoint task_update",
-        enum_fields={"status": {"done", "skipped", "completed"}},
+        enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
         nonempty_fields={"executor_notes"},
         array_fields=("files_changed", "commands_run"),
     )
