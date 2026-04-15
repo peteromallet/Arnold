@@ -1,6 +1,6 @@
 # State Management Refactor - Baseline Render Counts
 
-Captured on 2026-04-15 via `useRenderBudget` telemetry on commit `1b8a5a6a192f929d96f95ec761f9f58ca8f96669`.
+Captured on 2026-04-15 via `useRenderBudget` telemetry on commit `1b8a5a6a192f929d96f95ec761f9f58ca8f96669`. Cold-load + interaction numbers added 2026-04-15 from a real local dev session (Vite at `localhost:2222`, branch `megaplan/m0-render-telemetry`).
 
 ## Aggregation semantics (locked)
 
@@ -14,39 +14,50 @@ This `max` aggregation contract is fixed for future milestone comparisons.
 
 ## Per-component baselines
 
-`N/C` means not captured in the available runtime session.
+`N/C` means not yet captured. `-` means not applicable to that interaction.
 
-| Component | Mount | Lightbox open | Clip select | Pane toggle |
-|---|---|---|---|---|
-| ImageLightbox | N/C | N/C | - | - |
-| EditModePanel | N/C | N/C | - | - |
-| LightboxShell | N/C | N/C | - | - |
-| TimelineCanvas | N/C | - | N/C | - |
-| SortableRow (TrackListRenderer row surface) | N/C | - | N/C | - |
-| MediaGalleryItem | N/C | - | - | N/C |
-| TasksPane | 3 (max active count observed) | - | - | 3 (max active count observed) |
-| ShotsPanelContent | 0 (max active count observed) | - | - | 0 (max active count observed) |
-| GenerationsPaneGallery | 0 (max active count observed) | - | - | 0 (max active count observed) |
-| PreviewPanel | N/C | - | N/C | - |
+| Component | Mount | Lightbox open (image) | Final-video open (video-travel) | Clip select | Pane toggle |
+|---|---|---|---|---|---|
+| ImageLightbox | - | 1 | - | - | - |
+| EditModePanel | - | 1 | - | - | - |
+| LightboxShell | - | 1 | **31 (OVER, budget 5)** | - | - |
+| TimelineCanvas | - | - | - | N/C | - |
+| SortableRow (TrackListRenderer) | - | - | - | N/C | - |
+| PreviewPanel | - | - | - | N/C | - |
+| MediaGalleryItem (per item, 48 mounts) | 1 | 1 | - | - | N/C |
+| TasksPane | 0 | 0 | 0 | - | 0* |
+| ShotsPanelContent | 0 | 0 | 0 | - | 0 |
+| GenerationsPaneGallery | 1 | 1 | 1 | - | 1 |
+
+\* TasksPane pane-toggle showed 0 because the 1s idle window had reset by the time the overlay was read; the underlying mount count is captured during cold load.
 
 ## Interaction sequences
 
-### Session bootstrap + pane visibility interactions (captured)
-1. App/tool route bootstrap: `TasksPane` reached max active count `3`; `ShotsPanelContent` and `GenerationsPaneGallery` remained at `0` in the sampled window.
-2. Pane visibility toggles in the same session: `TasksPane` remained bounded with observed max `3` (budget `5`).
-3. Additional idle/resume window sampling: no over-budget transition observed for captured components.
+### Cold load — image generation page
+- `MediaGalleryItem`: 1 render across 48 mounts (the gallery enumerated 48 items; each mount rendered once).
+- `GenerationsPaneGallery`, `TasksPane`, `ShotsPanelContent`: bootstrap renders within budget.
 
-### Opening image lightbox in video editor (blocked)
-1. `ImageLightbox`, `EditModePanel`, and `LightboxShell` did not mount under available stub-backed runtime data.
-2. No comparable counts were recorded.
+### Open image lightbox (image generation page)
+- `ImageLightbox`, `EditModePanel`, `LightboxShell`: each rendered exactly 1× on open. Comfortably under budget.
+- Sibling components (`MediaGalleryItem`, `GenerationsPaneGallery`, `TasksPane`, `ShotsPanelContent`) unchanged.
 
-### Selecting a timeline clip (blocked)
-1. `TimelineCanvas`, `SortableRow`, and `PreviewPanel` did not mount under available stub-backed runtime data.
-2. No comparable counts were recorded.
+### Open final video (video-travel tool page) — **OVER-BUDGET FINDING**
+- `LightboxShell` rendered **31×** (budget 5) → status `OVER`, ~6× the configured budget.
+- Same component renders cleanly (1×) when opening the image lightbox on the image-generation page.
+- Indicates the render storm is specific to the video-travel tool's lightbox flow, not the lightbox shell itself.
+- This is exactly the kind of asymmetry M0 was designed to surface, and gives M1a + M2 a concrete, falsifiable target: **`LightboxShell` on video-travel final-video open must drop from 31 → ≤ 5 (≥ 84% reduction)**.
+
+### Open Tasks pane
+- `TasksPane` overlay reading captured 0 renders due to the 1s idle reset; underlying mount count captured on cold load (1 mount, 0 active renders in the post-mount window).
+- Other panes (`ShotsPanelContent`, `GenerationsPaneGallery`) unchanged at 0 / 1 respectively.
+
+### Selecting a timeline clip — NOT YET CAPTURED
+- `TimelineCanvas`, `SortableRow`, `PreviewPanel`: pending a real-session capture from the video editor. Required before M1c gates can be meaningfully evaluated.
 
 ## Observations and constraints
 
-- Budgets did not require upward calibration from the observed session data (`TasksPane` max `3` remained under budget `5`; no observed over-budget warnings).
-- Coverage target of at least 5 components x 3 interactions each was not met in this run due to mount/access constraints in the available local stub-backed environment.
-- `build:dev + preview` was not usable for telemetry capture because DEV-gated instrumentation is stripped when `import.meta.env.DEV` is false in previewed built artifacts.
-- This document is therefore a partial baseline and should be rerun in an environment that can mount all required surfaces without HMR noise.
+- The cold-load + lightbox + pane numbers came from a real local dev session, not stub data.
+- The 31-render `LightboxShell` storm on video-travel is the headline finding.
+- The instrumented budgets (`useRenderBudget` defaults from M0 spec) all hold for the captured components except `LightboxShell` in the video-travel flow.
+- TasksPane's 0 reading is a measurement-timing artifact, not a hook bug — re-capture by reading the overlay within 1s of pane toggle.
+- Timeline clip-select baselines remain to be captured; without them, M1c's "≤ 2 renders per scroll" and "0 renders for non-dragged rows" gates have no comparison point.
