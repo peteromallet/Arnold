@@ -19,6 +19,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "properties": {
                         "criterion": {"type": "string"},
                         "priority": {"type": "string", "enum": ["must", "should", "info"]},
+                        "requires": {"type": "array", "items": {"type": "string"}, "default": []},
                     },
                     "required": ["criterion", "priority"],
                 },
@@ -95,6 +96,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "properties": {
                         "criterion": {"type": "string"},
                         "priority": {"type": "string", "enum": ["must", "should", "info"]},
+                        "requires": {"type": "array", "items": {"type": "string"}, "default": []},
                     },
                     "required": ["criterion", "priority"],
                 },
@@ -211,6 +213,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                 "maintainability",
                                 "doc-quality",
                                 "other",
+                                "verifiability",
                             ],
                         },
                         "severity_hint": {
@@ -437,7 +440,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "properties": {
                         "name": {"type": "string"},
                         "priority": {"type": "string", "enum": ["must", "should", "info"]},
-                        "pass": {"type": "string", "enum": ["pass", "fail", "waived"]},
+                        "pass": {"type": "string", "enum": ["pass", "fail", "waived", "deferred_human"]},
                         "evidence": {"type": "string"},
                     },
                     "required": ["name", "priority", "pass", "evidence"],

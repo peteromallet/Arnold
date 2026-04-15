@@ -69,16 +69,21 @@ def test_tiny_robustness_matches_light_artifacts_and_stub_payloads(
     validate_payload("critique", critique)
     validate_payload("review", review)
 
-    assert critique == {
-        "checks": [],
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
-    assert faults == {"flags": []}
+    assert critique["checks"] == []
+    assert critique["verified_flag_ids"] == []
+    assert critique["disputed_flag_ids"] == []
+    for flag in critique["flags"]:
+        assert flag["category"] == "verifiability"
+        assert flag["status"] == "open"
+    assert faults["flags"] == critique["flags"]
     assert gate["recommendation"] == "ITERATE"
     assert review["review_verdict"] == "approved"
-    assert review["criteria"] == []
+    assert isinstance(review["criteria"], list)
+    assert len(review["criteria"]) > 0
+    for c in review["criteria"]:
+        assert c["pass"] in ("pass", "deferred_human")
+        assert "name" in c
+        assert "priority" in c
     assert review["issues"] == []
     assert review["rework_items"] == []
     assert review["task_verdicts"] == []

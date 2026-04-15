@@ -39,6 +39,7 @@ from megaplan.types import (
     CliError,
     PlanState,
     STATE_ABORTED,
+    STATE_AWAITING_HUMAN,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -61,6 +62,7 @@ from megaplan._core import (
     ensure_runtime_layout,
     extract_subsystem_tag,
     latest_plan_path,
+    latest_plan_meta_path,
     load_debt_registry,
     load_flag_registry,
     load_plan,
@@ -882,6 +884,47 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
         )
 
 
+def _build_verifiability_flags(
+    success_criteria: list[dict[str, Any]],
+    worker_caps: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    from megaplan.capabilities import ALL_CAPABILITIES
+    from megaplan.verifiability import audit_criteria, validate_requires
+
+    flags: list[dict[str, Any]] = []
+    issues = validate_requires(success_criteria)
+    for issue_str in issues:
+        is_unknown_cap = "unknown capability" in issue_str
+        flags.append({
+            "id": f"verifiability-{len(flags)}",
+            "concern": issue_str,
+            "category": "verifiability",
+            "severity_hint": "likely-significant" if is_unknown_cap else "likely-minor",
+            "status": "open",
+        })
+
+    audits = audit_criteria(success_criteria, worker_caps)
+    for audit in audits:
+        if audit.verdict == "unverifiable_no_worker":
+            flags.append({
+                "id": f"verifiability-{len(flags)}",
+                "concern": f"Criterion {audit.criterion_idx}: {audit.rationale} Missing: {', '.join(audit.missing_caps)}",
+                "category": "verifiability",
+                "severity_hint": "likely-significant",
+                "status": "open",
+            })
+        elif audit.verdict == "human_only":
+            flags.append({
+                "id": f"verifiability-{len(flags)}",
+                "concern": f"Criterion {audit.criterion_idx}: requires human verification ({', '.join(audit.missing_caps)}).",
+                "category": "verifiability",
+                "severity_hint": "likely-minor",
+                "status": "open",
+            })
+
+    return flags
+
+
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="critique") as (plan_dir, state):
         require_state(state, "critique", {STATE_PLANNED})
@@ -890,15 +933,24 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         state["last_gate"] = {}
         critique_filename = f"critique_v{iteration}.json"
         if robustness == "tiny":
+            from megaplan.capabilities import get_worker_capabilities
+            from megaplan.verifiability import audit_criteria, validate_requires
+
+            plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
+            success_criteria = plan_meta.get("success_criteria", [])
+            worker_caps = get_worker_capabilities(state)
+
+            verifiability_flags = _build_verifiability_flags(success_criteria, worker_caps)
+
             stub_critique = {
                 "checks": [],
-                "flags": [],
+                "flags": verifiability_flags,
                 "verified_flag_ids": [],
                 "disputed_flag_ids": [],
             }
             validate_payload("critique", stub_critique)
             atomic_write_json(plan_dir / critique_filename, stub_critique)
-            save_flag_registry(plan_dir, {"flags": []})
+            save_flag_registry(plan_dir, {"flags": verifiability_flags})
             minimal_gate: dict[str, Any] = {
                 "recommendation": "ITERATE",
                 "rationale": "Tiny robustness: critique stubbed; advancing directly to gated.",
@@ -920,6 +972,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 total_tokens=0,
             )
             agent, _mode, _refreshed, _model = resolve_agent_mode("critique", args)
+            open_flags_detail = [
+                {"id": f["id"], "concern": f["concern"], "category": f["category"], "severity": f.get("severity", "unknown")}
+                for f in verifiability_flags
+            ]
             return _finish_step(
                 plan_dir, state, args,
                 step="critique",
@@ -927,7 +983,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 agent=agent,
                 mode="stub",
                 refreshed=False,
-                summary="Tiny robustness: critique stubbed; advancing directly to gated.",
+                summary=f"Tiny robustness: critique stubbed with {len(verifiability_flags)} verifiability flag(s).",
                 artifacts=[critique_filename, "faults.json", "gate.json"],
                 output_file=critique_filename,
                 artifact_hash=sha256_file(plan_dir / critique_filename),
@@ -935,10 +991,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     "iteration": iteration,
                     "checks": [],
                     "verified_flags": [],
-                    "open_flags": [],
+                    "open_flags": open_flags_detail,
                     "scope_creep_flags": [],
                 },
-                history_fields={"flags_count": 0},
+                history_fields={"flags_count": len(verifiability_flags)},
             )
         active_checks = checks_for_robustness(robustness)
         expected_ids = [check["id"] for check in active_checks]
@@ -969,6 +1025,17 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         invalid_checks = validate_critique_checks(worker.payload, expected_ids=expected_ids)
         if invalid_checks:
             _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
+
+        from megaplan.capabilities import get_worker_capabilities
+        from megaplan.verifiability import audit_criteria, validate_requires
+
+        plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
+        success_criteria = plan_meta.get("success_criteria", [])
+        v_worker_caps = get_worker_capabilities(state)
+        v_flags = _build_verifiability_flags(success_criteria, v_worker_caps)
+        if v_flags:
+            worker.payload.setdefault("flags", []).extend(v_flags)
+
         atomic_write_json(plan_dir / critique_filename, worker.payload)
         registry = update_flags_after_critique(plan_dir, worker.payload, iteration=iteration)
         significant = len([flag for flag in registry["flags"] if flag.get("severity") == "significant" and flag["status"] in FLAG_BLOCKING_STATUSES])
@@ -1418,14 +1485,40 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             assemble_doc(plan_dir, output_path, finalize_data)
         robustness = configured_robustness(state)
         if not workflow_includes_step(robustness, "review") and response.get("state") == STATE_EXECUTED:
-            # Preserve the data-parity invariant even when review is skipped by robustness.
+            from megaplan.capabilities import get_worker_capabilities
+            from megaplan.verifiability import classify_criteria
+
+            plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
+            success_criteria = plan_meta.get("success_criteria", [])
+            worker_caps = get_worker_capabilities(state)
+            _, human_deferred = classify_criteria(success_criteria, worker_caps)
+
+            stub_criteria = []
+            has_deferred_must = False
+            for sc in success_criteria:
+                entry: dict[str, Any] = {
+                    "name": sc.get("criterion", ""),
+                    "priority": sc.get("priority", "info"),
+                }
+                if sc in human_deferred:
+                    entry["pass"] = "deferred_human"
+                    entry["evidence"] = "Requires human verification capabilities."
+                    if sc.get("priority") == "must":
+                        has_deferred_must = True
+                else:
+                    entry["pass"] = "pass"
+                    entry["evidence"] = f"{robustness.title()} robustness: auto-approved."
+                stub_criteria.append(entry)
+
+            next_state = STATE_AWAITING_HUMAN if has_deferred_must else STATE_DONE
+
             stub_review = {
                 "review_verdict": "approved",
                 "checks": [],
                 "pre_check_flags": [],
                 "verified_flag_ids": [],
                 "disputed_flag_ids": [],
-                "criteria": [],
+                "criteria": stub_criteria,
                 "issues": [],
                 "rework_items": [],
                 "summary": f"{robustness.title()} robustness: review skipped; stub written for artifact parity.",
@@ -1437,9 +1530,9 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             artifacts = response.get("artifacts")
             if isinstance(artifacts, list) and "review.json" not in artifacts:
                 artifacts.append("review.json")
-            state["current_state"] = STATE_DONE
+            state["current_state"] = next_state
             save_state(plan_dir, state)
-            response["state"] = STATE_DONE
+            response["state"] = next_state
             response["next_step"] = None
             response.pop("next_step_runtime", None)
         else:
@@ -1506,6 +1599,7 @@ def _resolve_review_outcome(
     robustness: str,
     state: PlanState,
     issues: list[str],
+    criteria: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, str | None]:
     """Determine review result, next state, and next step.
 
@@ -1538,6 +1632,14 @@ def _resolve_review_outcome(
             )
         else:
             return "needs_rework", STATE_FINALIZED, "execute"
+
+    if criteria:
+        has_deferred_must = any(
+            c.get("pass") == "deferred_human" and c.get("priority") == "must"
+            for c in criteria
+        )
+        if has_deferred_must:
+            return "success", STATE_AWAITING_HUMAN, None
 
     return "success", STATE_DONE, None
 
@@ -1673,6 +1775,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     check_count, total_checks, missing_evidence,
                     robustness,
                     state, issues,
+                    criteria=worker.payload.get("criteria", []),
                 )
                 state["current_state"] = next_state
 
@@ -1802,6 +1905,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             check_count, total_checks, missing_evidence,
             robustness,
             state, issues,
+            criteria=worker.payload.get("criteria", []),
         )
         state["current_state"] = next_state
 
@@ -2051,3 +2155,120 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     if handler is None:
         raise CliError("invalid_override", f"Unknown override action: {action}")
     return handler(root, plan_dir, state, args)
+
+
+def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
+    from megaplan._core import plans_root, resolve_plan_dir
+    plan_dir, state = load_plan(root, args.plan)
+
+    if state["current_state"] != STATE_AWAITING_HUMAN:
+        raise CliError(
+            "wrong_state",
+            f"verify-human requires state 'awaiting_human_verify', got '{state['current_state']}'.",
+        )
+
+    criterion_ref = args.criterion
+    passed = getattr(args, "pass_flag", False)
+    failed = getattr(args, "fail_flag", False)
+    evidence = args.evidence
+
+    plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
+    success_criteria = plan_meta.get("success_criteria", [])
+
+    target_idx: int | None = None
+    try:
+        idx = int(criterion_ref)
+        if 0 <= idx < len(success_criteria):
+            target_idx = idx
+    except (ValueError, TypeError):
+        for i, sc in enumerate(success_criteria):
+            if sc.get("criterion", "") == criterion_ref:
+                target_idx = i
+                break
+
+    if target_idx is None:
+        raise CliError("invalid_criterion", f"Criterion not found: {criterion_ref!r}")
+
+    verifications_path = plan_dir / "human_verifications.json"
+    verifications: list[dict[str, Any]] = []
+    if verifications_path.exists():
+        verifications = read_json(verifications_path)
+        if not isinstance(verifications, list):
+            verifications = []
+
+    verifications.append({
+        "criterion_idx": target_idx,
+        "criterion": success_criteria[target_idx].get("criterion", ""),
+        "verdict": "pass" if passed else "fail",
+        "evidence": evidence,
+        "timestamp": now_utc(),
+    })
+    atomic_write_json(verifications_path, verifications)
+
+    verified_idxs = {
+        v["criterion_idx"] for v in verifications if v.get("verdict") == "pass"
+    }
+
+    from megaplan.capabilities import get_worker_capabilities
+    from megaplan.verifiability import classify_criteria
+
+    worker_caps = get_worker_capabilities(state)
+    _, human_deferred = classify_criteria(success_criteria, worker_caps)
+    deferred_must_idxs = {
+        i for i, sc in enumerate(success_criteria)
+        if sc in human_deferred and sc.get("priority") == "must"
+    }
+
+    all_verified = deferred_must_idxs <= verified_idxs
+    if all_verified:
+        state["current_state"] = STATE_DONE
+        save_state(plan_dir, state)
+        summary = "All deferred must criteria verified. Plan transitioned to done."
+    else:
+        remaining = deferred_must_idxs - verified_idxs
+        summary = f"Verification recorded. {len(remaining)} deferred must criteria remaining."
+
+    return {
+        "success": True,
+        "step": "verify-human",
+        "plan": state["name"],
+        "state": state["current_state"],
+        "summary": summary,
+        "criterion_idx": target_idx,
+        "verdict": "pass" if passed else "fail",
+    }
+
+
+def handle_audit_verifiability(root: Path, args: argparse.Namespace) -> StepResponse:
+    plan_dir, state = load_plan(root, args.plan)
+
+    plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
+    success_criteria = plan_meta.get("success_criteria", [])
+
+    from megaplan.capabilities import get_worker_capabilities
+    from megaplan.verifiability import audit_criteria, validate_requires
+
+    worker_caps = get_worker_capabilities(state)
+    audits = audit_criteria(success_criteria, worker_caps)
+    issues = validate_requires(success_criteria)
+
+    audit_results = []
+    for audit in audits:
+        sc = success_criteria[audit.criterion_idx] if audit.criterion_idx < len(success_criteria) else {}
+        audit_results.append({
+            "criterion_idx": audit.criterion_idx,
+            "criterion": sc.get("criterion", ""),
+            "priority": sc.get("priority", ""),
+            "verdict": audit.verdict,
+            "rationale": audit.rationale,
+            "missing_caps": audit.missing_caps,
+        })
+
+    return {
+        "success": True,
+        "step": "audit-verifiability",
+        "plan": state["name"],
+        "summary": f"Audited {len(success_criteria)} criteria: {sum(1 for a in audits if a.verdict == 'machine_verifiable')} machine-verifiable, {sum(1 for a in audits if a.verdict == 'human_only')} human-only, {sum(1 for a in audits if a.verdict == 'unverifiable_no_worker')} unverifiable.",
+        "audits": audit_results,
+        "validation_issues": issues,
+    }
