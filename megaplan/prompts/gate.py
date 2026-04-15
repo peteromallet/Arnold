@@ -16,9 +16,17 @@ from megaplan._core import (
     read_json,
     unresolved_significant_flags,
 )
+from megaplan.iteration_pressure import compute_iteration_pressure, render_pressure_table
 from megaplan.types import FlagRegistry, PlanState
 
 from ._shared import _gate_debt_block
+
+
+def _iteration_pressure_block(state: PlanState, plan_dir: Path) -> str:
+    entries = compute_iteration_pressure(plan_dir, state)
+    if not entries:
+        return ""
+    return render_pressure_table(entries)
 
 
 def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
@@ -87,15 +95,18 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
 
         {debt_block}
 
+        {_iteration_pressure_block(state, plan_dir)}
+
         Robustness level:
         {robustness}
 
         Requirements:
-        - Decide exactly one of: PROCEED, ITERATE, ESCALATE.
+        - Decide exactly one of: PROCEED, ITERATE, ESCALATE, TIEBREAKER.
         - Use the weighted score, flag details (including `evidence`), plan delta, recurring critiques, and preflight results as judgment context.
         - PROCEED when execution should move forward now.
         - ITERATE when revising the plan is the best next move.
         - ESCALATE when the loop is stuck, churn is recurring, or user intervention is needed.
+        - TIEBREAKER when a flag group reflects an *unresolvable constraint tension* (architectural or philosophical — requires a human call) rather than a plan-quality issue. Use TIEBREAKER only when the Iteration Pressure Analysis shows `addressed_then_reopened_count >= 2` for a fuzzy group OR the group has >=2 member flags across >=2 iterations. If the concern is simply that the plan writer hasn't tried hard enough, use ITERATE instead. When recommending TIEBREAKER you MUST provide `tiebreaker_question` (the decision question for human resolution), `tiebreaker_flag_ids` (which flags this resolves), and `tiebreaker_fuzzy_group_id` (which group this resolves). Cite specific flag IDs and iterations in your rationale.
         - `signals_assessment`: one paragraph summarizing score trajectory, flag status, and preflight posture.
 
         Flags come in two tiers:

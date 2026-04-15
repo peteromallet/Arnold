@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.18.0 — 2026-04-15
+
+### Automated tiebreaker triggering
+
+Gate-driven automatic tiebreaker routing with budgeted, audited guardrails. Builds on the advisory `megaplan tiebreaker` subcommand from v0.17.1 — the harness now detects recurring constraint tensions and routes to tiebreaker automatically.
+
+- **Iteration-pressure analysis**: `megaplan/iteration_pressure.py` computes flag recurrence history — fuzzy-groups flags by Jaccard word similarity, tracks `addressed_then_reopened_count`, and renders a pressure table into the gate prompt context.
+- **Mechanical recurrence validation**: harness validates TIEBREAKER recommendations against actual flag history via `_validate_tiebreaker`. Re-prompts the gate once if no mechanical signal exists; force-demotes to ITERATE on second failure.
+- **`tiebreaker-run` top-level command**: auto-driver-callable command that invokes `_run_tiebreaker` inside a plan-locked context and transitions the plan state.
+- **Gate integration**: `handle_gate` detects `TIEBREAKER` recommendations, runs the validator, transitions to `tiebreaker_pending` on approval.
+- **Budget guardrails**: `max_tiebreakers_per_plan` (default 2). Exceeded budgets force-demote to ESCALATE.
+- **Domain blocklist**: `tiebreaker_blocklist` config field skips tiebreaker for specified concern categories.
+- **Spec-level opt-out**: `allow_tiebreaker: false` in config disables the mechanism entirely.
+- **Audit tracking**: `megaplan/audit.py` records tiebreaker usage, timing, and token costs. `megaplan tiebreaker audit` CLI for per-plan and global stats. `handle_tiebreaker_decide` writes an audit record on every decision.
+- **Auto driver**: `drive()` returns `status="awaiting_human"`, `"tiebreaker_pending"`, or `"tiebreaker_ready"` for the matching automation-terminal states and stops cleanly.
+- **Gate prompt**: now includes the Iteration Pressure Analysis block; TIEBREAKER bullet explicitly cites `addressed_then_reopened_count` thresholds.
+
+## v0.17.1 — 2026-04-15
+
+### Tiebreaker subcommand (`megaplan tiebreaker`)
+
+New advisory subcommand that produces structured decision context for architectural questions (e.g. when `gate` returns ESCALATE).
+
+- **Two-agent pipeline**: a researcher agent gathers evidence and options, then a challenger agent stress-tests the findings — each in an independent ephemeral session.
+- **CLI**: `megaplan tiebreaker --plan <name> --question "..."` (or `--question-file`), `megaplan tiebreaker status`, `megaplan tiebreaker decide --pick/--escalate/--replan --rationale`.
+- **Structured artifacts**: `tiebreaker_researcher.json`, `tiebreaker_challenger.json`, and a synthesized `tiebreaker.md` with decision-ready sections (options table, evidence summary, agreement/disagreement, fallback plan).
+- **Idempotent**: re-runs produce versioned artifacts (`_v2`, `_v3`, …).
+- **Configurable agents**: `agents.tiebreaker_researcher` and `agents.tiebreaker_challenger` in config, defaulting to codex.
+- **Gate schema**: `TIEBREAKER` added as fourth recommendation, with `tiebreaker_question`, `tiebreaker_flag_ids`, `tiebreaker_fuzzy_group_id` optional fields. Gate prompt documents the new option.
+- **Plan lifecycle**: `tiebreaker_pending` / `tiebreaker_ready` states added with workflow transitions; both are automation-terminal.
+- **Settled-decision immunity**: critique and revise prompts read `tiebreaker_decisions.json` and instruct agents not to re-raise settled concerns without materially new evidence.
+- **Hot-fix**: `_run_tiebreaker` uses `WorkerResult.payload` instead of the nonexistent `.success`/`.parsed`/`.error` attributes — caught by live-cloud smoke run.
+
+Automatic gate-driven tiebreaker routing (pressure analysis, budgeting, audit tracking) lands in v0.18.0.
+
 ## v0.17.0 — 2026-04-15
 
 ### Verifiability contracts

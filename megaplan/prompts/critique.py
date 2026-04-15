@@ -24,6 +24,24 @@ from ._shared import _planning_debt_block, _render_prep_block
 from .planning import PLAN_TEMPLATE
 
 
+def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
+    if not decisions:
+        return ""
+    lines = ["Settled tiebreaker decisions (DO NOT re-raise these concerns under a new surface):"]
+    for d in decisions:
+        gid = d.get("fuzzy_group_id", "?")
+        question = d.get("question", "")
+        pick = d.get("human_pick", d.get("action", ""))
+        rationale = d.get("rationale", "")
+        lines.append(f"- {gid}: {question} -> Decision: {pick}. Rationale: {rationale}")
+    lines.append(
+        "\nOnly raise a new concern about these topics if new evidence *materially* "
+        "changes the settled premise — and if so, explicitly cite which settled "
+        "decision you are challenging and why."
+    )
+    return "\n".join(lines)
+
+
 def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     prep_block, prep_instruction = _render_prep_block(plan_dir)
@@ -41,6 +59,15 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         }
         for flag in unresolved
     ]
+    settled_decisions: list[dict[str, Any]] = []
+    decisions_path = plan_dir / "tiebreaker_decisions.json"
+    if decisions_path.exists():
+        decisions_data = read_json(decisions_path)
+        if isinstance(decisions_data, list):
+            settled_decisions = decisions_data
+        elif isinstance(decisions_data, dict):
+            settled_decisions = decisions_data.get("decisions", [])
+    settled_block = _settled_decisions_block(settled_decisions)
     return textwrap.dedent(
         f"""
         You are revising an implementation plan after critique and gate feedback.
@@ -64,6 +91,8 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
 
         Open significant flags:
         {json_dump(open_flags).strip()}
+
+        {settled_block}
 
         Requirements:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
@@ -100,6 +129,15 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
         for flag in flag_registry["flags"]
         if flag["status"] in {"addressed", "open", "disputed"}
     ]
+    settled_decisions: list[dict[str, Any]] = []
+    decisions_path = plan_dir / "tiebreaker_decisions.json"
+    if decisions_path.exists():
+        decisions_data = read_json(decisions_path)
+        if isinstance(decisions_data, list):
+            settled_decisions = decisions_data
+        elif isinstance(decisions_data, dict):
+            settled_decisions = decisions_data.get("decisions", [])
+
     return {
         "project_dir": project_dir,
         "prep_block": prep_block,
@@ -110,6 +148,7 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
         "unresolved": unresolved,
         "debt_block": _planning_debt_block(plan_dir, root),
         "robustness": configured_robustness(state),
+        "settled_tiebreaker_decisions": settled_decisions,
     }
 
 
@@ -194,6 +233,8 @@ def _build_critique_prompt(
         {json_dump(context["unresolved"]).strip()}
 
         {context["debt_block"]}
+
+        {_settled_decisions_block(context.get("settled_tiebreaker_decisions", []))}
 
         {critique_review_block}
 

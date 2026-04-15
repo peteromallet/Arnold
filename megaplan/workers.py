@@ -59,6 +59,8 @@ STEP_SCHEMA_FILENAMES: dict[str, str] = {
     "loop_plan": "loop_plan.json",
     "loop_execute": "loop_execute.json",
     "review": "review.json",
+    "tiebreaker_researcher": "tiebreaker_researcher.json",
+    "tiebreaker_challenger": "tiebreaker_challenger.json",
 }
 
 # Derive required keys per step from SCHEMAS so they aren't duplicated.
