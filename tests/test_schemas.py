@@ -363,8 +363,13 @@ def test_gate_schema_is_strict_and_requires_core_fields() -> None:
         "settled_decisions",
         "flag_resolutions",
         "accepted_tradeoffs",
+        "tiebreaker_question",
+        "tiebreaker_flag_ids",
+        "tiebreaker_fuzzy_group_id",
     ]
-    assert schema["properties"]["recommendation"]["enum"] == ["PROCEED", "ITERATE", "ESCALATE"]
+    assert schema["properties"]["recommendation"]["enum"] == [
+        "PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER",
+    ]
 
 
 def test_plan_schema_has_core_fields_only() -> None:
@@ -518,3 +523,26 @@ def test_critique_schema_accepts_verifiability_category() -> None:
     critique = SCHEMAS["critique.json"]
     category_enum = critique["properties"]["flags"]["items"]["properties"]["category"]["enum"]
     assert "verifiability" in category_enum
+
+
+def test_gate_schema_accepts_tiebreaker_recommendation() -> None:
+    schema = SCHEMAS["gate.json"]
+    assert "TIEBREAKER" in schema["properties"]["recommendation"]["enum"]
+    props = schema["properties"]
+    assert "tiebreaker_question" in props
+    assert "tiebreaker_flag_ids" in props
+    assert "tiebreaker_fuzzy_group_id" in props
+
+
+def test_tiebreaker_schemas_registered() -> None:
+    assert "tiebreaker_researcher.json" in SCHEMAS
+    assert "tiebreaker_challenger.json" in SCHEMAS
+    researcher = SCHEMAS["tiebreaker_researcher.json"]
+    challenger = SCHEMAS["tiebreaker_challenger.json"]
+    assert researcher["type"] == "object"
+    assert challenger["type"] == "object"
+    assert "evidence" in researcher["properties"]
+    assert "options" in researcher["properties"]
+    assert "preliminary_pick" in researcher["properties"]
+    assert "counter_recommendation" in challenger["properties"]
+    assert "missing_options" in challenger["properties"]

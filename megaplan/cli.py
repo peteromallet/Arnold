@@ -996,6 +996,9 @@ def build_parser() -> argparse.ArgumentParser:
     from megaplan.chain import build_chain_parser
     build_chain_parser(subparsers)
 
+    from megaplan.tiebreaker import build_tiebreaker_parser
+    build_tiebreaker_parser(subparsers)
+
     return parser
 
 
@@ -1102,6 +1105,13 @@ def main(argv: list[str] | None = None) -> int:
         from megaplan.chain import run_chain_cli
         try:
             return run_chain_cli(root, args)
+        except CliError as error:
+            return error_response(error, root=root)
+
+    if args.command == "tiebreaker":
+        from megaplan.tiebreaker import run_tiebreaker_cli
+        try:
+            return run_tiebreaker_cli(root, args)
         except CliError as error:
             return error_response(error, root=root)
 
