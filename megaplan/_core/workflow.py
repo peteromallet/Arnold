@@ -10,6 +10,7 @@ from megaplan.types import (
     PlanState,
     ROBUSTNESS_LEVELS,
     STATE_ABORTED,
+    STATE_AWAITING_HUMAN,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -63,6 +64,9 @@ WORKFLOW: dict[str, list[Transition]] = {
         # than gate_* conditions, so it lives in the handler instead of here
         # because `_transition_matches()` only understands gate-based branches.
         Transition("review", STATE_DONE),
+    ],
+    STATE_AWAITING_HUMAN: [
+        Transition("verify-human", STATE_DONE),
     ],
 }
 

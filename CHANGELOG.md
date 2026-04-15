@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.17.0 — 2026-04-15
+
+### Verifiability contracts
+
+Success criteria now declare which capabilities are needed to verify them, enabling pre-critique auditing and human-deferred verification.
+
+- **Capability registry**: closed set of 11 mechanism-shaped strings in `megaplan/capabilities.py` — 6 container (`run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter`) and 5 human (`drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device`).
+- **`requires` field on success criteria**: optional `requires: [cap1, cap2]` on each criterion in plan/revise schemas. Defaults to `[]` for backward compatibility.
+- **Pre-critique audit**: `megaplan/verifiability.py` validates that `requires` entries are known capabilities and that the union of worker capabilities can satisfy them. Synthetic `verifiability` flags are injected into the critique phase.
+- **`deferred_human` verdict**: review criteria that require human-only capabilities are marked `deferred_human` instead of `fail` or `waived`.
+- **`awaiting_human_verify` state**: plans with deferred human criteria enter this automation-terminal state instead of `done`.
+- **`megaplan verify-human`**: CLI command to record human verification evidence and transition from `awaiting_human_verify` to `done`.
+- **`megaplan audit-verifiability`**: CLI command to inspect capability coverage of a plan's criteria without changing state.
+- **`megaplan status --pending-human`**: lists plans in `awaiting_human_verify` state.
+- **Migration**: `requires` defaults to `[]` via schema default. Existing plans work unchanged.
+
 ## v0.16.0 — 2026-04-15
 
 ### Chain driver (`megaplan chain`)
