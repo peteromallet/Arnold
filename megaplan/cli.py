@@ -49,6 +49,7 @@ from megaplan._core import (
 )
 from megaplan.execution import build_monitor_hint
 from megaplan.handlers import (
+    handle_audit_verifiability,
     handle_critique,
     handle_execute,
     handle_finalize,
@@ -59,6 +60,7 @@ from megaplan.handlers import (
     handle_prep,
     handle_review,
     handle_revise,
+    handle_verify_human,
 )
 from megaplan.loop.handlers import (
     handle_loop_init,
@@ -348,6 +350,18 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
 
 
 def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
+    if getattr(args, "pending_human", False):
+        items = []
+        for pd in active_plan_dirs(root):
+            st = read_json(pd / "state.json")
+            if st.get("current_state") == "awaiting_human_verify":
+                items.append({"name": st["name"], "state": st["current_state"]})
+        return {
+            "success": True,
+            "step": "status",
+            "summary": f"Found {len(items)} plan(s) awaiting human verification.",
+            "plans": items,
+        }
     plan_dir, state = load_plan(root, args.plan)
     return _build_status_payload(plan_dir, state)
 
@@ -845,6 +859,9 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ["status", "audit", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
         step_parser.add_argument("--plan")
+        if name == "status":
+            step_parser.add_argument("--pending-human", action="store_true",
+                                     help="List plans awaiting human verification")
 
     for name in ["plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"]:
         step_parser = subparsers.add_parser(name)
@@ -899,6 +916,17 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--reason", default="")
     override_parser.add_argument("--note")
     override_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
+
+    verify_human_parser = subparsers.add_parser("verify-human", help="Record human verification for a criterion")
+    verify_human_parser.add_argument("--plan")
+    verify_human_parser.add_argument("--criterion", required=True, help="Criterion name or index")
+    vh_group = verify_human_parser.add_mutually_exclusive_group(required=True)
+    vh_group.add_argument("--pass", dest="pass_flag", action="store_true")
+    vh_group.add_argument("--fail", dest="fail_flag", action="store_true")
+    verify_human_parser.add_argument("--evidence", required=True, help="Evidence supporting the verdict")
+
+    audit_verifiability_parser = subparsers.add_parser("audit-verifiability", help="Audit criteria verifiability")
+    audit_verifiability_parser.add_argument("--plan")
 
     debt_parser = subparsers.add_parser("debt", help="Inspect or manage persistent tech debt entries")
     debt_subparsers = debt_parser.add_subparsers(dest="debt_action", required=True)
@@ -993,6 +1021,8 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "debt": handle_debt,
     "step": handle_step,
     "override": handle_override,
+    "verify-human": handle_verify_human,
+    "audit-verifiability": handle_audit_verifiability,
 }
 
 

@@ -18,7 +18,9 @@ STATE_FINALIZED = "finalized"
 STATE_EXECUTED = "executed"
 STATE_DONE = "done"
 STATE_ABORTED = "aborted"
+STATE_AWAITING_HUMAN = "awaiting_human_verify"
 TERMINAL_STATES = {STATE_DONE, STATE_ABORTED}
+AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {STATE_AWAITING_HUMAN}
 
 
 # ---------------------------------------------------------------------------
