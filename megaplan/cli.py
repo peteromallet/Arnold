@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timezone
 from importlib import resources
@@ -15,6 +16,7 @@ from megaplan.types import (
     KNOWN_AGENTS,
     ROBUSTNESS_LEVELS,
     StepResponse,
+    TERMINAL_STATES,
     _SETTABLE_BOOL,
     _SETTABLE_ENUM,
     _SETTABLE_NUMERIC,
@@ -369,27 +371,124 @@ def handle_watch(root: Path, args: argparse.Namespace) -> StepResponse:
     return response
 
 
+def _collect_megaplan_roots(root: Path, *, tree: bool = False, all_system: bool = False) -> list[Path]:
+    """Collect .megaplan root directories based on search mode."""
+    roots: list[Path] = [root]
+
+    if all_system:
+        # Search from home directory downward for all .megaplan directories
+        home = Path.home()
+        for megaplan_dir in sorted(home.rglob(".megaplan")):
+            if megaplan_dir.is_dir() and (megaplan_dir / "plans").is_dir():
+                candidate = megaplan_dir.parent
+                if candidate.resolve() != root.resolve():
+                    roots.append(candidate)
+    elif tree:
+        # Walk up to find parent .megaplan directories
+        current = root.resolve().parent
+        while True:
+            if (current / ".megaplan" / "plans").is_dir() and current.resolve() != root.resolve():
+                roots.append(current)
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        # Walk down to find child .megaplan directories
+        for megaplan_dir in sorted(root.rglob(".megaplan")):
+            if megaplan_dir.is_dir() and (megaplan_dir / "plans").is_dir():
+                candidate = megaplan_dir.parent
+                if candidate.resolve() != root.resolve():
+                    roots.append(candidate)
+
+    return roots
+
+
 def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
     ensure_runtime_layout(root)
+    filter_status = getattr(args, "filter_status", None)
+    no_tree = getattr(args, "no_tree", False)
+    include_done = getattr(args, "include_done", False)
+    show_summary = getattr(args, "summary", False)
+    search_all = getattr(args, "all", False)
+    # Default: tree=True (parent+child), active-only (exclude done/aborted)
+    # --status overrides the active filter (explicit filter = show exactly that)
+    search_tree = not no_tree and not search_all
+    filter_active = not include_done and not filter_status
+
+    roots = _collect_megaplan_roots(root, tree=search_tree, all_system=search_all)
+    total_scanned = 0
+    allowed_states: set[str] | None = None
+    if filter_status:
+        allowed_states = {s.strip() for s in filter_status.split(",")}
+
     items = []
-    for plan_dir in active_plan_dirs(root):
-        state = read_json(plan_dir / "state.json")
-        next_steps = infer_next_steps(state)
-        items.append(
-            {
+    state_counts: dict[str, int] = {}
+    resolved_root = root.resolve()
+    for search_root in roots:
+        resolved_search = search_root.resolve()
+        is_local = resolved_search == resolved_root
+        for plan_dir in active_plan_dirs(search_root):
+            state = read_json(plan_dir / "state.json")
+            current_state = state["current_state"]
+            state_counts[current_state] = state_counts.get(current_state, 0) + 1
+            total_scanned += 1
+
+            if filter_active and current_state in TERMINAL_STATES:
+                continue
+            if allowed_states and current_state not in allowed_states:
+                continue
+
+            next_steps = infer_next_steps(state)
+            entry = {
                 "name": state["name"],
                 "idea": state["idea"],
-                "state": state["current_state"],
+                "state": current_state,
                 "iteration": state["iteration"],
                 "next_step": next_steps[0] if next_steps else None,
             }
-        )
-    return {
+            if not is_local:
+                try:
+                    rel = resolved_search.relative_to(resolved_root)
+                    entry["location"] = f"./{rel}"
+                    entry["direction"] = "child"
+                except ValueError:
+                    try:
+                        resolved_root.relative_to(resolved_search)
+                        entry["location"] = os.path.relpath(resolved_search, resolved_root)
+                        entry["direction"] = "parent"
+                    except ValueError:
+                        entry["location"] = str(resolved_search)
+                        entry["direction"] = "external"
+            items.append(entry)
+
+    summary_parts = [f"Found {len(items)} plans"]
+    if len(roots) > 1:
+        summary_parts.append(f"across {len(roots)} directories")
+    if allowed_states:
+        summary_parts.append(f"matching {','.join(sorted(allowed_states))}")
+    if filter_active:
+        summary_parts.append("(active only)")
+
+    result: StepResponse = {
         "success": True,
         "step": "list",
-        "summary": f"Found {len(items)} plans.",
+        "summary": f"{'. '.join(summary_parts)}.",
         "plans": items,
     }
+    if show_summary:
+        result["state_summary"] = dict(sorted(state_counts.items()))
+
+    # Hints for discovering more plans
+    hidden_done = total_scanned - len(items) if filter_active else 0
+    hints: list[str] = []
+    if hidden_done > 0:
+        hints.append(f"{hidden_done} completed plans hidden (use --include-done to show)")
+    if not search_all:
+        hints.append("Use --all to search all plans system-wide")
+    if hints:
+        result["hints"] = hints
+
+    return result
 
 
 def handle_debt(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -720,7 +819,17 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
     init_parser.add_argument("idea")
 
-    subparsers.add_parser("list")
+    list_parser = subparsers.add_parser("list")
+    list_parser.add_argument("--all", action="store_true",
+                             help="Search all .megaplan directories system-wide (~)")
+    list_parser.add_argument("--no-tree", action="store_true",
+                             help="Only show plans from the current directory (default includes parent + child)")
+    list_parser.add_argument("--include-done", action="store_true",
+                             help="Include terminal plans (done/aborted); excluded by default")
+    list_parser.add_argument("--status", dest="filter_status",
+                             help="Filter by state (e.g. 'done', 'finalized', 'executed', or comma-separated 'planned,critiqued')")
+    list_parser.add_argument("--summary", action="store_true",
+                             help="Show count breakdown by state")
 
     for name in ["status", "audit", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
@@ -834,6 +943,9 @@ def build_parser() -> argparse.ArgumentParser:
     loop_pause_parser.add_argument("--project-dir")
     loop_pause_parser.add_argument("--reason", default="")
 
+    from megaplan.auto import build_auto_parser
+    build_auto_parser(subparsers)
+
     return parser
 
 
@@ -866,6 +978,45 @@ def cli_entry() -> None:
     sys.exit(main())
 
 
+def _find_megaplan_root(start: Path) -> Path:
+    """Walk up from *start* to find the git-root directory containing ``.megaplan/``.
+
+    Strategy: find the git root first (like ``git rev-parse --show-toplevel``),
+    then check if it has a ``.megaplan/`` directory.  This avoids ambiguity when
+    nested subdirectories also have their own ``.megaplan/``.  Falls back to the
+    nearest ancestor with ``.megaplan/`` if not in a git repo, and finally to
+    *start* if nothing is found.
+    """
+    resolved = start.resolve()
+
+    # Try git root first — the canonical project root.
+    git_root = _find_git_root(resolved)
+    if git_root and (git_root / ".megaplan").is_dir():
+        return git_root
+
+    # Fallback: walk up to find nearest .megaplan
+    current = resolved
+    while True:
+        if (current / ".megaplan").is_dir():
+            return current
+        parent = current.parent
+        if parent == current:
+            return start
+        current = parent
+
+
+def _find_git_root(start: Path) -> Path | None:
+    """Walk up to find the directory containing ``.git``."""
+    current = start
+    while True:
+        if (current / ".git").exists():
+            return current
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
@@ -877,8 +1028,16 @@ def main(argv: list[str] | None = None) -> int:
     except CliError as error:
         return error_response(error)
 
-    root = Path.cwd()
+    root = _find_megaplan_root(Path.cwd())
     ensure_runtime_layout(root)
+
+    if args.command == "auto":
+        from megaplan.auto import run_auto
+        try:
+            return run_auto(root, args)
+        except CliError as error:
+            return error_response(error, root=root)
+
     try:
         handler = COMMAND_HANDLERS.get(args.command)
         if handler is None:

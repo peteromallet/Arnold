@@ -54,9 +54,25 @@ def resolve_plan_dir(root: Path, requested_name: str | None) -> Path:
     plan_dirs = active_plan_dirs(root)
     if requested_name:
         plan_dir = plans_root(root) / requested_name
-        if not (plan_dir / "state.json").exists():
-            raise CliError("missing_plan", f"Plan '{requested_name}' does not exist")
-        return plan_dir
+        if (plan_dir / "state.json").exists():
+            return plan_dir
+        # Walk up parent directories — plan may live in an ancestor's .megaplan/
+        current = root.resolve().parent
+        while True:
+            candidate = plans_root(current) / requested_name
+            if (candidate / "state.json").exists():
+                return candidate
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        # Walk down child directories — plan may live in a subdirectory's .megaplan/
+        for megaplan_dir in sorted(root.resolve().rglob(".megaplan")):
+            if megaplan_dir.is_dir():
+                candidate = megaplan_dir / "plans" / requested_name
+                if (candidate / "state.json").exists():
+                    return candidate
+        raise CliError("missing_plan", f"Plan '{requested_name}' does not exist")
     if not plan_dirs:
         raise CliError("missing_plan", "No plans found. Run init first.")
     active = []

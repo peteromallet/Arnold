@@ -1140,6 +1140,8 @@ def run_codex_step(
             str(project_dir),
             "--add-dir",
             str(plan_dir),
+            "-c",
+            f"sandbox_workspace_write.writable_roots=[\"{project_dir}\"]",
             "-o",
             str(output_path),
         ]

@@ -170,9 +170,9 @@ def test_init_includes_next_step_runtime(plan_fixture: PlanFixture) -> None:
         plan_fixture.make_args(name="runtime-test"),
     )
 
-    assert response["next_step"] == "prep"
-    assert response["next_step_runtime"]["expected_duration_seconds"]["min"] == 30
-    assert response["next_step_runtime"]["recommended_next_check_seconds"] == 60
+    assert response["next_step"] == "plan"
+    assert response["next_step_runtime"]["expected_duration_seconds"]["min"] == 60
+    assert response["next_step_runtime"]["recommended_next_check_seconds"] == 120
     assert "Expected duration:" in response["next_step_runtime"]["duration_hint"]
 
 
@@ -190,13 +190,13 @@ def test_init_response_points_to_next_step_by_robustness(tmp_path: Path, monkeyp
     standard = megaplan.handle_init(root, make_args(name="standard-plan", robustness="standard"))
     light = megaplan.handle_init(root, make_args(name="light-plan", robustness="light"))
     robust = megaplan.handle_init(root, make_args(name="robust-plan", robustness="robust"))
-    assert standard["next_step"] == "prep"
+    assert standard["next_step"] == "plan"
     assert light["next_step"] == "plan"
     assert robust["next_step"] == "prep"
 
 
 _LEGACY_STATE_MACHINE_CASES = [
-    ({"current_state": megaplan.STATE_INITIALIZED, "last_gate": {}}, ["prep"]),
+    ({"current_state": megaplan.STATE_INITIALIZED, "last_gate": {}}, ["plan"]),
     ({"current_state": STATE_PREPPED, "last_gate": {}}, ["plan"]),
     ({"current_state": megaplan.STATE_PLANNED, "last_gate": {}}, ["critique", "plan", "step"]),
     ({"current_state": megaplan.STATE_CRITIQUED, "last_gate": {}}, ["gate", "step"]),
@@ -273,8 +273,7 @@ def test_workflow_definition_is_complete_for_standard_flow() -> None:
 
 def test_workflow_walk_matches_documented_standard_flow() -> None:
     walk = [
-        ({"current_state": megaplan.STATE_INITIALIZED, "last_gate": {}}, "prep"),
-        ({"current_state": STATE_PREPPED, "last_gate": {}}, "plan"),
+        ({"current_state": megaplan.STATE_INITIALIZED, "last_gate": {}}, "plan"),
         ({"current_state": megaplan.STATE_PLANNED, "last_gate": {}}, "critique"),
         ({"current_state": megaplan.STATE_CRITIQUED, "last_gate": {}}, "gate"),
         (
@@ -300,7 +299,6 @@ def test_workflow_walk_matches_documented_standard_flow() -> None:
         actual_steps.append(expected_step)
 
     assert actual_steps == [
-        "prep",
         "plan",
         "critique",
         "gate",
@@ -567,7 +565,7 @@ def test_handle_status_reports_observability_fields(plan_fixture: PlanFixture) -
     assert response["active_step"]["orphaned"] is True
     assert "critique stale" in response["active_step"]["phase_progress_summary"]
     assert "rerun the same step" in response["active_step"]["recovery_hint"].lower()
-    assert response["next_step_runtime"]["expected_duration_seconds"]["min"] == 30
+    assert response["next_step_runtime"]["expected_duration_seconds"]["min"] == 60
     assert response["session_summaries"][0]["key"] == "claude_critic"
     assert response["lock_file_present"] is False
     assert response["lock_held"] is False
@@ -691,8 +689,8 @@ def test_override_add_note_includes_next_step_runtime(plan_fixture: PlanFixture)
         ),
     )
 
-    assert response["next_step"] == "prep"
-    assert response["next_step_runtime"]["recommended_next_check_seconds"] == 60
+    assert response["next_step"] == "plan"
+    assert response["next_step_runtime"]["recommended_next_check_seconds"] == 120
 
 
 def test_handle_plan_includes_next_step_runtime(plan_fixture: PlanFixture) -> None:

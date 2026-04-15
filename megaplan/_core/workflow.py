@@ -74,7 +74,11 @@ WORKFLOW: dict[str, list[Transition]] = {
 _ROBUSTNESS_OVERRIDES: dict[str, dict[str, list[Transition]]] = {
     "superrobust": {},
     "robust": {},
-    "standard": {},
+    "standard": {
+        STATE_INITIALIZED: [
+            Transition("plan", STATE_PLANNED),
+        ],
+    },
     "light": {
         STATE_INITIALIZED: [
             Transition("plan", STATE_PLANNED),
