@@ -90,8 +90,13 @@ def _parse_git_status_paths(stdout: str) -> set[str]:
         if " -> " in path_text:
             path_text = path_text.split(" -> ", 1)[1]
         cleaned = path_text.strip().strip('"')
-        if cleaned:
-            paths.add(_normalize_repo_path(cleaned))
+        if not cleaned:
+            continue
+        is_dir = cleaned.endswith("/")
+        normalized = _normalize_repo_path(cleaned)
+        if is_dir and not normalized.endswith("/"):
+            normalized += "/"
+        paths.add(normalized)
     return paths
 
 
