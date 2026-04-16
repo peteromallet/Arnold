@@ -21,6 +21,11 @@ import {
   updateResize,
   type ResizePreviewStore,
 } from '@/tools/video-editor/hooks/useClipResizeGesture.helpers';
+import {
+  useTimelineDataSliceSafe,
+  useTimelineMutableAdaptersSafe,
+  useTimelineOpsSliceSafe,
+} from '@/tools/video-editor/hooks/timelineStore';
 
 export interface InternalResizeSession extends ClipEdgeResizeSession {
   startClientX: number;
@@ -88,6 +93,14 @@ export const useClipResizeGesture = ({
   pixelsPerSecond,
   minDuration,
 }: UseClipResizeGestureArgs): UseClipResizeGestureResult => {
+  const storeData = useTimelineDataSliceSafe();
+  const storeOps = useTimelineOpsSliceSafe();
+  const storeAdapters = useTimelineMutableAdaptersSafe();
+  const effectiveDataRef = storeAdapters?.dataRef ?? dataRef;
+  const effectiveInteractionStateRef = storeAdapters?.interactionStateRef ?? interactionStateRef;
+  const effectiveGestureOwner = storeData?.gestureOwner ?? gestureOwner;
+  const effectiveSetGestureOwner = storeOps?.setGestureOwner ?? setGestureOwner;
+  const effectiveSetInputModalityFromPointerType = storeOps?.setInputModalityFromPointerType ?? setInputModalityFromPointerType;
   const resizeSessionRef = useRef<ClipEdgeResizeSession | null>(null);
   const stateRef = useRef<ResizeMachineState>({ phase: 'idle' });
   const resizePreviewStoreRef = useRef<ResizePreviewStore>();
@@ -103,30 +116,30 @@ export const useClipResizeGesture = ({
   const [resizeClampedActionId, setResizeClampedActionId] = useState<string | null>(null);
 
   const latestRef = useRef<UseClipResizeGestureLatest>({
-    gestureOwner,
-    setGestureOwner,
+    gestureOwner: effectiveGestureOwner,
+    setGestureOwner: effectiveSetGestureOwner,
     rows,
     shotGroups,
     onActionResizeStart,
     onActionResizing,
     onClipEdgeResizeEnd,
-    interactionStateRef,
-    setInputModalityFromPointerType,
+    interactionStateRef: effectiveInteractionStateRef,
+    setInputModalityFromPointerType: effectiveSetInputModalityFromPointerType,
     timeToPixel,
     pixelToTime,
     pixelsPerSecond,
     minDuration,
   });
   latestRef.current = {
-    gestureOwner,
-    setGestureOwner,
+    gestureOwner: effectiveGestureOwner,
+    setGestureOwner: effectiveSetGestureOwner,
     rows,
     shotGroups,
     onActionResizeStart,
     onActionResizing,
     onClipEdgeResizeEnd,
-    interactionStateRef,
-    setInputModalityFromPointerType,
+    interactionStateRef: effectiveInteractionStateRef,
+    setInputModalityFromPointerType: effectiveSetInputModalityFromPointerType,
     timeToPixel,
     pixelToTime,
     pixelsPerSecond,
@@ -224,7 +237,7 @@ export const useClipResizeGesture = ({
         rowId,
         clipId,
         edge,
-        dataRef,
+        effectiveDataRef,
       );
       if (!resolved) {
         return;
@@ -332,7 +345,7 @@ export const useClipResizeGesture = ({
       endSession({ cancelled: true });
       effectController.abort();
     };
-  }, [dataRef, timelineWrapperRef]);
+  }, [effectiveDataRef, timelineWrapperRef]);
 
   return {
     resizePreviewSnapshot,

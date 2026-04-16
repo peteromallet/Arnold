@@ -32,14 +32,25 @@ interface SortableRowProps {
   rowHeight: number;
   startLeft: number;
   pixelsPerSecond: number;
-  selectedTrackId: string | null;
-  resizeClampedActionId: string | null;
+  isSelected: boolean;
+  clampedActionId: string | null;
   resizePreviewSnapshot: Readonly<Record<string, ResizeOverride>>;
   resizeHandleWidth: number;
   getActionRender?: (action: TimelineAction, row: TimelineRow, width: number) => ReactNode;
   onSelectTrack: (trackId: string) => void;
   onTrackChange: (trackId: string, patch: Partial<TrackDefinition>) => void;
   onRemoveTrack: (trackId: string) => void;
+}
+
+interface RowActionLayerProps {
+  row: TimelineRow;
+  rowHeight: number;
+  startLeft: number;
+  pixelsPerSecond: number;
+  clampedActionId: string | null;
+  resizePreviewSnapshot: Readonly<Record<string, ResizeOverride>>;
+  resizeHandleWidth: number;
+  getActionRender?: (action: TimelineAction, row: TimelineRow, width: number) => ReactNode;
 }
 
 interface TrackListRendererProps {
@@ -60,14 +71,14 @@ interface TrackListRendererProps {
   trackSensors: ReturnType<typeof useSensors>;
 }
 
-const SortableRow = React.memo(function SortableRow({
+function SortableRow({
   row,
   track,
   rowHeight,
   startLeft,
   pixelsPerSecond,
-  selectedTrackId,
-  resizeClampedActionId,
+  isSelected,
+  clampedActionId,
   resizePreviewSnapshot,
   resizeHandleWidth,
   getActionRender,
@@ -77,7 +88,6 @@ const SortableRow = React.memo(function SortableRow({
 }: SortableRowProps) {
   useRenderBudget('SortableRow', 4);
   const sortable = useSortable({ id: `track-${track.id}` });
-  const actionHeight = Math.max(12, rowHeight - ACTION_VERTICAL_MARGIN * 2);
   const style = {
     height: rowHeight,
     transform: CSS.Transform.toString(sortable.transform),
@@ -100,7 +110,7 @@ const SortableRow = React.memo(function SortableRow({
       >
         <TrackLabelContent
           track={track}
-          isSelected={selectedTrackId === track.id}
+          isSelected={isSelected}
           hasClips={row.actions.length > 0}
           onSelect={onSelectTrack}
           onChange={onTrackChange}
@@ -109,54 +119,113 @@ const SortableRow = React.memo(function SortableRow({
           dragAttributes={sortable.attributes}
         />
       </div>
-      {row.actions.map((action) => {
-        // Render both handles on every clip — including grouped children.
-        // The document-level resize gesture hook resolves whether a handle
-        // starts a free or group resize session.
-        const override = resizePreviewSnapshot[action.id];
-        const renderedAction = override ? { ...action, ...override } : action;
-        const left = startLeft + renderedAction.start * pixelsPerSecond;
-        const width = Math.max((renderedAction.end - renderedAction.start) * pixelsPerSecond, resizeHandleWidth * 2);
-
-        return (
-          <div
-            key={action.id}
-            className={cn(
-              'group absolute',
-              resizeClampedActionId === action.id && 'rounded-md ring-2 ring-amber-400/80 ring-offset-1 ring-offset-background',
-            )}
-            data-action-id={action.id}
-            data-row-id={row.id}
-            style={{
-              left,
-              top: ACTION_VERTICAL_MARGIN,
-              width,
-              height: actionHeight,
-            }}
-          >
-            {getActionRender?.(renderedAction, row, width)}
-            <div
-              className="absolute inset-y-0 left-0 z-10 cursor-ew-resize rounded-l-sm border-l border-sky-300/10 bg-sky-300/0 transition-colors group-hover:bg-sky-300/10"
-              style={{ width: resizeHandleWidth }}
-              data-resize-edge="left"
-              data-clip-id={action.id}
-              data-row-id={row.id}
-            />
-            <div
-              className="absolute inset-y-0 right-0 z-10 cursor-ew-resize rounded-r-sm border-r border-sky-300/10 bg-sky-300/0 transition-colors group-hover:bg-sky-300/10"
-              style={{ width: resizeHandleWidth }}
-              data-resize-edge="right"
-              data-clip-id={action.id}
-              data-row-id={row.id}
-            />
-          </div>
-        );
-      })}
+      <MemoizedRowActionLayer
+        row={row}
+        rowHeight={rowHeight}
+        startLeft={startLeft}
+        pixelsPerSecond={pixelsPerSecond}
+        clampedActionId={clampedActionId}
+        resizePreviewSnapshot={resizePreviewSnapshot}
+        resizeHandleWidth={resizeHandleWidth}
+        getActionRender={getActionRender}
+      />
     </div>
   );
-});
+}
 
-SortableRow.displayName = 'SortableRow';
+function RowActionLayer({
+  row,
+  rowHeight,
+  startLeft,
+  pixelsPerSecond,
+  clampedActionId,
+  resizePreviewSnapshot,
+  resizeHandleWidth,
+  getActionRender,
+}: RowActionLayerProps) {
+  const actionHeight = Math.max(12, rowHeight - ACTION_VERTICAL_MARGIN * 2);
+
+  return row.actions.map((action) => {
+    // Render both handles on every clip — including grouped children.
+    // The document-level resize gesture hook resolves whether a handle
+    // starts a free or group resize session.
+    const override = resizePreviewSnapshot[action.id];
+    const renderedAction = override ? { ...action, ...override } : action;
+    const left = startLeft + renderedAction.start * pixelsPerSecond;
+    const width = Math.max((renderedAction.end - renderedAction.start) * pixelsPerSecond, resizeHandleWidth * 2);
+
+    return (
+      <div
+        key={action.id}
+        className={cn(
+          'group absolute',
+          clampedActionId === action.id && 'rounded-md ring-2 ring-amber-400/80 ring-offset-1 ring-offset-background',
+        )}
+        data-action-id={action.id}
+        data-row-id={row.id}
+        style={{
+          left,
+          top: ACTION_VERTICAL_MARGIN,
+          width,
+          height: actionHeight,
+        }}
+      >
+        {getActionRender?.(renderedAction, row, width)}
+        <div
+          className="absolute inset-y-0 left-0 z-10 cursor-ew-resize rounded-l-sm border-l border-sky-300/10 bg-sky-300/0 transition-colors group-hover:bg-sky-300/10"
+          style={{ width: resizeHandleWidth }}
+          data-resize-edge="left"
+          data-clip-id={action.id}
+          data-row-id={row.id}
+        />
+        <div
+          className="absolute inset-y-0 right-0 z-10 cursor-ew-resize rounded-r-sm border-r border-sky-300/10 bg-sky-300/0 transition-colors group-hover:bg-sky-300/10"
+          style={{ width: resizeHandleWidth }}
+          data-resize-edge="right"
+          data-clip-id={action.id}
+          data-row-id={row.id}
+        />
+      </div>
+    );
+  });
+}
+
+function areRowActionLayerPropsEqual(left: RowActionLayerProps, right: RowActionLayerProps) {
+  return (
+    left.row === right.row
+    && left.rowHeight === right.rowHeight
+    && left.startLeft === right.startLeft
+    && left.pixelsPerSecond === right.pixelsPerSecond
+    && left.clampedActionId === right.clampedActionId
+    && left.resizePreviewSnapshot === right.resizePreviewSnapshot
+    && left.resizeHandleWidth === right.resizeHandleWidth
+    && left.getActionRender === right.getActionRender
+  );
+}
+
+const MemoizedRowActionLayer = React.memo(RowActionLayer, areRowActionLayerPropsEqual);
+
+function areSortableRowPropsEqual(left: SortableRowProps, right: SortableRowProps) {
+  return (
+    left.row === right.row
+    && left.track === right.track
+    && left.rowHeight === right.rowHeight
+    && left.startLeft === right.startLeft
+    && left.pixelsPerSecond === right.pixelsPerSecond
+    && left.isSelected === right.isSelected
+    && left.clampedActionId === right.clampedActionId
+    && left.resizePreviewSnapshot === right.resizePreviewSnapshot
+    && left.resizeHandleWidth === right.resizeHandleWidth
+    && left.getActionRender === right.getActionRender
+    && left.onSelectTrack === right.onSelectTrack
+    && left.onTrackChange === right.onTrackChange
+    && left.onRemoveTrack === right.onRemoveTrack
+  );
+}
+
+const MemoizedSortableRow = React.memo(SortableRow, areSortableRowPropsEqual);
+
+MemoizedSortableRow.displayName = 'SortableRow';
 
 export function TrackListRenderer({
   rows,
@@ -175,6 +244,11 @@ export function TrackListRenderer({
   onTrackDragEnd,
   trackSensors,
 }: TrackListRendererProps) {
+  const sortableTrackItems = React.useMemo(
+    () => tracks.map((track) => `track-${track.id}`),
+    [tracks],
+  );
+
   return (
     <DndContext
       sensors={trackSensors}
@@ -182,7 +256,7 @@ export function TrackListRenderer({
       onDragEnd={onTrackDragEnd}
     >
       <SortableContext
-        items={tracks.map((track) => `track-${track.id}`)}
+        items={sortableTrackItems}
         strategy={verticalListSortingStrategy}
       >
         {tracks.map((track, index) => {
@@ -191,16 +265,20 @@ export function TrackListRenderer({
             return null;
           }
 
+          const rowClampedActionId = row.actions.some((action) => action.id === resizeClampedActionId)
+            ? resizeClampedActionId
+            : null;
+
           return (
-            <SortableRow
+            <MemoizedSortableRow
               key={track.id}
               row={row}
               track={track}
               rowHeight={rowHeight}
               startLeft={startLeft}
               pixelsPerSecond={pixelsPerSecond}
-              selectedTrackId={selectedTrackId}
-              resizeClampedActionId={resizeClampedActionId}
+              isSelected={selectedTrackId === track.id}
+              clampedActionId={rowClampedActionId}
               resizePreviewSnapshot={rowResizePreview[index] ?? EMPTY_RESIZE_PREVIEW_SNAPSHOT}
               resizeHandleWidth={resizeHandleWidth}
               getActionRender={getActionRender}

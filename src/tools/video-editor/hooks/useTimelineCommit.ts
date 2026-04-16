@@ -7,6 +7,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
+import { useTimelineSelectionStore, useSelectionStoreApi } from '@/shared/state/selectionStore';
 import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus';
 import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
 import { migrateToFlatTracks } from '@/tools/video-editor/lib/migrate';
@@ -107,10 +108,21 @@ export function useTimelineCommit({
   const dataRef = useRef<TimelineData | null>(null);
   const selectedClipIdRef = useRef<string | null>(null);
   const selectedTrackIdRef = useRef<string | null>(null);
-
   const [data, setData] = useState<TimelineData | null>(null);
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const selectionStore = useSelectionStoreApi();
+  const {
+    selectedClipId,
+    selectedTrackId,
+  } = useTimelineSelectionStore();
+  const setSelectedClipId = useCallback<Dispatch<SetStateAction<string | null>>>((updater) => {
+    selectionStore.getState().setTimelineSelectedClipId(updater, { clearGallery: false });
+  }, [selectionStore]);
+  const setSelectedTrackId = useCallback<Dispatch<SetStateAction<string | null>>>((updater) => {
+    const nextTrackId = typeof updater === 'function'
+      ? updater(selectionStore.getState().timeline.selectedTrackId)
+      : updater;
+    selectionStore.getState().setTimelineSelectedTrackId(nextTrackId);
+  }, [selectionStore]);
 
   useLayoutEffect(() => {
     dataRef.current = data;
@@ -172,24 +184,24 @@ export function useTimelineCommit({
 
     if (options?.selectedClipId !== undefined) {
       selectedClipIdRef.current = options.selectedClipId;
-      setSelectedClipId(options.selectedClipId);
+      selectionStore.getState().setTimelineSelectedClipId(options.selectedClipId, { clearGallery: false });
     } else if (selectedClipIdRef.current && !nextData.meta[selectedClipIdRef.current]) {
       selectedClipIdRef.current = null;
-      setSelectedClipId(null);
+      selectionStore.getState().setTimelineSelectedClipId(null, { clearGallery: false });
     }
 
     eventBus.emit('pruneSelection', new Set(Object.keys(nextData.meta)));
 
     if (options?.selectedTrackId !== undefined) {
       selectedTrackIdRef.current = options.selectedTrackId;
-      setSelectedTrackId(options.selectedTrackId);
+      selectionStore.getState().setTimelineSelectedTrackId(options.selectedTrackId);
     } else {
       const fallbackTrackId = selectedTrackIdRef.current
         && nextData.tracks.some((track) => track.id === selectedTrackIdRef.current)
         ? selectedTrackIdRef.current
         : nextData.tracks[0]?.id ?? null;
       selectedTrackIdRef.current = fallbackTrackId;
-      setSelectedTrackId(fallbackTrackId);
+      selectionStore.getState().setTimelineSelectedTrackId(fallbackTrackId);
     }
 
     if (options?.updateLastSavedSignature) {
@@ -200,7 +212,7 @@ export function useTimelineCommit({
       editSeqRef.current += 1;
       eventBus.emit('scheduleSave', nextData);
     }
-  }, [eventBus, lastSavedSignatureRef]);
+  }, [eventBus, lastSavedSignatureRef, selectionStore]);
 
   const applyEdit = useCallback((
     mutation: TimelineEditMutation,

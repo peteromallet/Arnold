@@ -23,7 +23,8 @@
             "enum": [
               "pending",
               "done",
-              "skipped"
+              "skipped",
+              "blocked"
             ]
           },
           "executor_notes": {

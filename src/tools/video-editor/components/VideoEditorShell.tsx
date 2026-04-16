@@ -17,12 +17,12 @@ import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/Previ
 import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
 import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel';
 import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor';
-import { useTimelineChromeContext } from '@/tools/video-editor/contexts/TimelineChromeContext';
 import {
+  useTimelineChromeContext,
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { useTimelinePlaybackContext } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
+  useTimelinePlaybackContext,
+} from '@/tools/video-editor/hooks/timelineStore';
 import { useKeyboardShortcuts } from '@/tools/video-editor/hooks/useKeyboardShortcuts';
 import { useTimelineRealtime } from '@/tools/video-editor/hooks/useTimelineRealtime';
 import { getTimelineDurationInFrames, parseResolution } from '@/tools/video-editor/lib/config-utils';

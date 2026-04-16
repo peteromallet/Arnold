@@ -30,7 +30,7 @@ import {
 import { TrackListRenderer } from '@/tools/video-editor/components/TimelineEditor/TrackListRenderer';
 import { useClipResizeGesture } from '@/tools/video-editor/hooks/useClipResizeGesture';
 import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups';
-import { useTimelineEditorData } from '@/tools/video-editor/contexts/TimelineEditorContext';
+import { useTimelineMutableAdapters } from '@/tools/video-editor/hooks/timelineStore';
 import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils';
 import {
   shouldExpandTouchTrimHandles,
@@ -175,7 +175,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   newTrackDropLabel,
 }: TimelineCanvasProps, ref) {
   useRenderBudget('TimelineCanvas', 3);
-  const { dataRef } = useTimelineEditorData();
+  const { dataRef } = useTimelineMutableAdapters();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef(0);

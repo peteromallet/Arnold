@@ -7,7 +7,6 @@ import { MediaGallery } from "@/shared/components/MediaGallery";
 import type { GeneratedImageWithMetadata } from "@/shared/components/MediaGallery/types";
 import { Button } from "@/shared/components/ui/button";
 import { useProject } from "@/shared/contexts/ProjectContext";
-import { useGallerySelection } from "@/shared/contexts/GallerySelectionContext";
 import { usePublicLoras, usePublicStyleReferences, useMyStyleReferences } from '@/features/resources/hooks/useResources';
 import { PageFadeIn } from '@/shared/components/transitions/PageFadeIn';
 import { useIsMobile, useIsTablet } from "@/shared/hooks/mobile";
@@ -21,6 +20,7 @@ import { useModifierKeys } from '@/features/gallery/components/GenerationsPane/h
 import { useImageGenGallery } from "../hooks/useImageGenGallery";
 import { useImageGenActions } from "../hooks/useImageGenActions";
 import { useImageGenSubmit } from "../hooks/useImageGenSubmit";
+import { useGallerySelection } from '@/shared/state/selectionStore';
 
 const ImageGenerationToolPage: React.FC = React.memo(() => {
   const [formAssociatedShotId, setFormAssociatedShotId] = useState<string | null>(null);

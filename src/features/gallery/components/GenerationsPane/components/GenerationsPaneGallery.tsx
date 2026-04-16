@@ -1,7 +1,6 @@
 import React from 'react';
 import type { Shot } from '@/domains/generation/types';
 import { MediaGallery, type GalleryFilterState } from '@/shared/components/MediaGallery';
-import { useGallerySelection } from '@/shared/contexts/GallerySelectionContext';
 import { useShots } from '@/shared/contexts/ShotsContext';
 import { SelectionContextMenu } from '@/shared/components/SelectionContextMenu';
 import { SkeletonGallery } from '@/shared/components/ui/composed/skeleton-gallery';
@@ -11,6 +10,7 @@ import { VideoGenerationModal } from '@/tools/travel-between-images/components/V
 import { useLassoSelection } from '../hooks/useLassoSelection';
 import { useModifierKeys } from '../hooks/useModifierKeys';
 import { useRenderBudget } from '@/shared/dev/useRenderBudget';
+import { useGallerySelection } from '@/shared/state/selectionStore';
 
 type MediaGalleryProps = React.ComponentProps<typeof MediaGallery>;
 

@@ -47,6 +47,7 @@ temp/
 !docs/structure_detail/*.md
 !docs/blog/*.md
 !docs/quality/*.md
+!docs/state_management_refactor_baselines.md
 !tasks/*.md
 !CLAUDE.md
 

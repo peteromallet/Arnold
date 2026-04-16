@@ -16,37 +16,21 @@ let editorDataValue: any;
 let editorOpsValue: any;
 let overlayEditorProps: any;
 
-vi.mock('@/tools/video-editor/contexts/TimelineEditorContext', async () => {
-  const actual = await vi.importActual<typeof import('@/tools/video-editor/contexts/TimelineEditorContext')>(
-    '@/tools/video-editor/contexts/TimelineEditorContext',
+vi.mock('@/tools/video-editor/hooks/timelineStore', async () => {
+  const actual = await vi.importActual<typeof import('@/tools/video-editor/hooks/timelineStore')>(
+    '@/tools/video-editor/hooks/timelineStore',
   );
 
   return {
     ...actual,
     useTimelineEditorData: () => useTimelineEditorDataMock(),
     useTimelineEditorOps: () => useTimelineEditorOpsMock(),
-  };
-});
-
-vi.mock('@/tools/video-editor/contexts/TimelinePlaybackContext', async () => {
-  const actual = await vi.importActual<typeof import('@/tools/video-editor/contexts/TimelinePlaybackContext')>(
-    '@/tools/video-editor/contexts/TimelinePlaybackContext',
-  );
-
-  return {
-    ...actual,
     useTimelinePlaybackContext: () => useTimelinePlaybackContextMock(),
-  };
-});
-
-vi.mock('@/tools/video-editor/contexts/TimelineChromeContext', async () => {
-  const actual = await vi.importActual<typeof import('@/tools/video-editor/contexts/TimelineChromeContext')>(
-    '@/tools/video-editor/contexts/TimelineChromeContext',
-  );
-
-  return {
-    ...actual,
     useTimelineChromeContext: () => useTimelineChromeContextMock(),
+    useTimelineDataSelector: (selector: (value: any) => unknown) => selector(useTimelineEditorDataMock()),
+    useTimelineOpsSelector: (selector: (value: any) => unknown) => selector(useTimelineEditorOpsMock()),
+    useTimelinePlaybackSelector: (selector: (value: any) => unknown) => selector(useTimelinePlaybackContextMock()),
+    useTimelineChromeSelector: (selector: (value: any) => unknown) => selector(useTimelineChromeContextMock()),
   };
 });
 

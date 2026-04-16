@@ -46,7 +46,7 @@ vi.mock('@/shared/components/ui/composed/skeleton-gallery', () => ({
   SkeletonGallery: (props: unknown) => mocks.SkeletonGallery(props),
 }));
 
-vi.mock('@/shared/contexts/GallerySelectionContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useGallerySelection: () => mocks.useGallerySelection(),
 }));
 

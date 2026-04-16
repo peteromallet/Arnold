@@ -1,7 +1,7 @@
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import { useProject } from '@/shared/contexts/ProjectContext';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useVideoTravelData } from '../hooks/workflow/useVideoTravelData';
 import { useHashDeepLink } from '../hooks/navigation/useHashDeepLink';
 import { useUrlSync } from '../hooks/navigation/useUrlSync';

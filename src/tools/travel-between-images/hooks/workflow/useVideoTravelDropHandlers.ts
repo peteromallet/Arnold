@@ -14,12 +14,12 @@
  * @see useShotCreation.ts - Unified shot creation hook
  */
 
-import { useCallback, useContext } from 'react';
+import { useCallback } from 'react';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { Shot } from '@/domains/generation/types';
-import { LastAffectedShotContext } from '@/shared/contexts/LastAffectedShotContext';
 import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation';
+import { useLastAffectedShot } from '@/shared/state/selectionStore';
 
 export interface GenerationDropData {
   generationId: string;
@@ -105,8 +105,7 @@ export const useVideoTravelDropHandlers = ({
   const { createShot } = useShotCreation();
   
   // Get setLastAffectedShotId to update the default shot in GenerationsPane
-  const lastAffectedShotContext = useContext(LastAffectedShotContext);
-  const setLastAffectedShotId = lastAffectedShotContext?.setLastAffectedShotId;
+  const { setLastAffectedShotId } = useLastAffectedShot();
   
   // Handle dropping a generation onto an existing shot
   const handleGenerationDropOnShot = useCallback(async (

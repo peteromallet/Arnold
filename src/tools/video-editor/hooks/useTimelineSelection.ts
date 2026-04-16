@@ -1,16 +1,14 @@
 import {
   useCallback,
-  useEffect,
-  useLayoutEffect,
   type Dispatch,
   type SetStateAction,
 } from 'react';
 import { useDerivedTimeline } from '@/tools/video-editor/hooks/useDerivedTimeline';
 import {
-  useMultiSelect,
+  useTimelineMultiSelect,
   type SelectClipOptions,
-  type UseMultiSelectResult,
-} from '@/tools/video-editor/hooks/useMultiSelect';
+  type UseTimelineMultiSelectResult,
+} from '@/shared/state/selectionStore';
 import type {
   TimelineResolvedConfig,
   TimelineSelectedClip,
@@ -21,29 +19,26 @@ import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
 
 export interface UseTimelineSelectionArgs {
   data: TimelineData | null;
-  selectedClipId: string | null;
   selectedTrackId: string | null;
   setSelectedClipId: TimelineSetSelectedClipId;
-  clearGallerySelection: () => void;
-  registerPeerClear: (clearPeerSelection: (() => void) | null) => void;
 }
 
 export interface UseTimelineSelectionResult {
-  selectedClipIds: UseMultiSelectResult['selectedClipIds'];
-  selectedClipIdsRef: UseMultiSelectResult['selectedClipIdsRef'];
-  additiveSelectionRef: UseMultiSelectResult['additiveSelectionRef'];
-  primaryClipId: UseMultiSelectResult['primaryClipId'];
+  selectedClipIds: UseTimelineMultiSelectResult['selectedClipIds'];
+  selectedClipIdsRef: UseTimelineMultiSelectResult['selectedClipIdsRef'];
+  additiveSelectionRef: UseTimelineMultiSelectResult['additiveSelectionRef'];
+  primaryClipId: UseTimelineMultiSelectResult['primaryClipId'];
   selectedClip: TimelineSelectedClip;
   selectedTrack: TimelineSelectedTrack;
   selectedClipHasPredecessor: boolean;
   resolvedConfig: TimelineResolvedConfig;
-  addToSelection: UseMultiSelectResult['addToSelection'];
-  clearSelection: UseMultiSelectResult['clearSelection'];
-  replaceTimelineSelection: UseMultiSelectResult['selectClips'];
-  isClipSelected: UseMultiSelectResult['isClipSelected'];
-  pruneSelection: UseMultiSelectResult['pruneSelection'];
-  selectClip: UseMultiSelectResult['selectClip'];
-  selectClips: UseMultiSelectResult['selectClips'];
+  addToSelection: UseTimelineMultiSelectResult['addToSelection'];
+  clearSelection: UseTimelineMultiSelectResult['clearSelection'];
+  replaceTimelineSelection: UseTimelineMultiSelectResult['selectClips'];
+  isClipSelected: UseTimelineMultiSelectResult['isClipSelected'];
+  pruneSelection: UseTimelineMultiSelectResult['pruneSelection'];
+  selectClip: UseTimelineMultiSelectResult['selectClip'];
+  selectClips: UseTimelineMultiSelectResult['selectClips'];
   setSelectedClipId: Dispatch<SetStateAction<string | null>>;
 }
 
@@ -68,13 +63,10 @@ const getPrimaryClipId = (
 
 export function useTimelineSelection({
   data,
-  selectedClipId,
   selectedTrackId,
   setSelectedClipId: setSelectionState,
-  clearGallerySelection,
-  registerPeerClear,
 }: UseTimelineSelectionArgs): UseTimelineSelectionResult {
-  const multiSelect = useMultiSelect();
+  const multiSelect = useTimelineMultiSelect();
   const {
     addToSelection: addToSelectionState,
     clearSelection: clearSelectionState,
@@ -95,10 +87,6 @@ export function useTimelineSelection({
       return;
     }
 
-    if (!opts?.toggle) {
-      clearGallerySelection();
-    }
-
     let nextPrimaryClipId: string | null = clipId;
 
     if (opts?.toggle) {
@@ -114,11 +102,9 @@ export function useTimelineSelection({
 
     selectClipState(clipId, opts);
     setSelectionState(nextPrimaryClipId);
-  }, [clearGallerySelection, primaryClipId, selectClipState, selectedClipIdsRef, setSelectionState]);
+  }, [primaryClipId, selectClipState, selectedClipIdsRef, setSelectionState]);
 
   const selectClips = useCallback((clipIds: Iterable<string>) => {
-    clearGallerySelection();
-
     const nextSelection = new Set<string>();
     for (const clipId of clipIds) {
       nextSelection.add(clipId);
@@ -126,7 +112,7 @@ export function useTimelineSelection({
 
     selectClipsState(nextSelection);
     setSelectionState(getPrimaryClipId(nextSelection, null));
-  }, [clearGallerySelection, selectClipsState, setSelectionState]);
+  }, [selectClipsState, setSelectionState]);
 
   const addToSelection = useCallback((clipIds: Iterable<string>) => {
     const nextSelection = new Set(selectedClipIdsRef.current);
@@ -141,10 +127,9 @@ export function useTimelineSelection({
   }, [addToSelectionState, primaryClipId, selectedClipIdsRef, setSelectionState]);
 
   const clearSelection = useCallback(() => {
-    clearGallerySelection();
     clearSelectionState();
     setSelectionState(null);
-  }, [clearGallerySelection, clearSelectionState, setSelectionState]);
+  }, [clearSelectionState, setSelectionState]);
 
   const replaceTimelineSelection = useCallback((clipIds: Iterable<string>) => {
     const nextSelection = new Set<string>();
@@ -155,18 +140,6 @@ export function useTimelineSelection({
     selectClipsState(nextSelection);
     setSelectionState(getPrimaryClipId(nextSelection, null));
   }, [selectClipsState, setSelectionState]);
-
-  const clearTimelineOnly = useCallback(() => {
-    clearSelectionState();
-    setSelectionState(null);
-  }, [clearSelectionState, setSelectionState]);
-
-  useEffect(() => {
-    registerPeerClear(clearTimelineOnly);
-    return () => {
-      registerPeerClear(null);
-    };
-  }, [clearTimelineOnly, registerPeerClear]);
 
   const setSelectedClipId = useCallback<Dispatch<SetStateAction<string | null>>>((updater) => {
     const nextClipId = typeof updater === 'function'
@@ -180,15 +153,6 @@ export function useTimelineSelection({
 
     selectClip(nextClipId);
   }, [clearSelection, primaryClipId, selectClip]);
-
-  useLayoutEffect(() => {
-    if (!selectedClipId || selectedClipId === primaryClipId) {
-      return;
-    }
-
-    clearGallerySelection();
-    selectClipState(selectedClipId);
-  }, [clearGallerySelection, primaryClipId, selectClipState, selectedClipId]);
 
   return {
     selectedClipIds,

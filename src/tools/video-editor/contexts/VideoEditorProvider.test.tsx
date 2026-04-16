@@ -2,14 +2,22 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { useAddToVideoEditor } from '@/domains/media-lightbox/hooks/useAddToVideoEditor';
+import {
+  ADD_GENERATION_QUERY_PARAM,
+  readPendingAdds,
+} from '@/domains/media-lightbox/hooks/addToVideoEditorConstants';
 import { AgentChatProvider, useAgentChatBridge } from '@/shared/contexts/AgentChatContext';
 import { buildVideoEditorLightboxMedia, VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
-import { useTimelineChromeContext } from '@/tools/video-editor/contexts/TimelineChromeContext';
 import {
+  createTimelineStore,
+  TimelineStoreProvider,
+  useTimelineAvailabilityState,
+  useTimelineChromeContext,
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { useTimelinePlaybackContext } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
+  useTimelinePlaybackContext,
+} from '@/tools/video-editor/hooks/timelineStore';
 import {
   shouldAllowTouchClipDrag,
   shouldAllowTouchMarquee,
@@ -18,6 +26,16 @@ import {
   shouldToggleTouchSelection,
 } from '@/tools/video-editor/lib/mobile-interaction-model';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+
+const navigateMock = vi.fn();
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
 
 const mocks = {
   setInputModality: vi.fn(),
@@ -71,9 +89,17 @@ vi.mock('@/shared/contexts/ShotsContext', () => ({
   }),
 }));
 
+vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
+  useToolSettings: () => ({
+    settings: {
+      lastTimelineId: 'timeline-staged',
+    },
+  }),
+}));
+
 vi.mock('@/tools/video-editor/hooks/useTimelineState', () => ({
-  useTimelineState: () => ({
-    editor: {
+  useTimelineState: () => {
+    const editor = {
       data: null,
       resolvedConfig: { registry: {} },
       deviceClass: 'tablet',
@@ -168,11 +194,56 @@ vi.mock('@/tools/video-editor/hooks/useTimelineState', () => ({
       uploadFiles: vi.fn(),
       applyEdit: vi.fn(),
       patchRegistry: vi.fn(),
+      unpatchRegistry: vi.fn(),
       registerAsset: vi.fn(),
-    },
-    chrome: { saveStatus: 'saved' },
-    playback: { currentTime: 12.5 },
-  }),
+    };
+    const chrome = {
+      timelineName: 'Timeline',
+      saveStatus: 'saved' as const,
+      isConflictExhausted: false,
+      renderStatus: 'idle' as const,
+      renderLog: '',
+      renderDirty: false,
+      renderProgress: null,
+      renderResultUrl: null,
+      renderResultFilename: null,
+      undo: vi.fn(),
+      redo: vi.fn(),
+      canUndo: false,
+      canRedo: false,
+      checkpoints: [],
+      jumpToCheckpoint: vi.fn(),
+      createManualCheckpoint: vi.fn(),
+      setScaleWidth: vi.fn(),
+      handleAddTrack: vi.fn(),
+      handleClearUnusedTracks: vi.fn(),
+      unusedTrackCount: 0,
+      handleAddText: vi.fn(),
+      handleAddTextAt: vi.fn(),
+      reloadFromServer: vi.fn(),
+      retrySaveAfterConflict: vi.fn(),
+      startRender: vi.fn(),
+    };
+    const playback = {
+      currentTime: 12.5,
+      previewRef: { current: null },
+      playerContainerRef: { current: null },
+      onPreviewTimeUpdate: vi.fn(),
+      formatTime: vi.fn(() => '0:12'),
+    };
+
+    return {
+      store: createTimelineStore({
+        data: editor,
+        ops: editor,
+        chrome,
+        playback,
+      }),
+      editor,
+      chrome,
+      playback,
+    };
+  },
 }));
 
 function Consumer() {
@@ -235,9 +306,35 @@ function Consumer() {
   );
 }
 
+const media = {
+  id: 'generation-1',
+  generation_id: 'generation-1',
+  location: 'https://example.com/image.png',
+  imageUrl: 'https://example.com/image.png',
+  thumbUrl: 'https://example.com/image-thumb.png',
+  type: 'image',
+} as const;
+
+function AddToVideoEditorConsumer() {
+  const { onClick, phase } = useAddToVideoEditor(media);
+  const availability = useTimelineAvailabilityState();
+
+  return (
+    <div>
+      <span data-testid="add-phase">{phase}</span>
+      <span data-testid="timeline-mounted">{String(availability.mounted)}</span>
+      <button type="button" onClick={onClick}>
+        add to video editor
+      </button>
+    </div>
+  );
+}
+
 describe('VideoEditorProvider', () => {
   beforeEach(() => {
     hasReplaceTimelineSelection = true;
+    navigateMock.mockReset();
+    localStorage.clear();
     Object.values(mocks).forEach((mock) => mock.mockClear());
   });
 
@@ -378,5 +475,110 @@ describe('VideoEditorProvider', () => {
       tabletTouchPreserveSelectionInMove: true,
       tabletMousePreserveSelectionInMove: false,
     });
+  });
+
+  it('keeps the mounted-vs-staged add boundary when a store provider exists but the editor is not mounted', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <TimelineStoreProvider store={createTimelineStore()}>
+            <AddToVideoEditorConsumer />
+          </TimelineStoreProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('timeline-mounted')).toHaveTextContent('false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+
+    expect(screen.getByTestId('add-phase')).toHaveTextContent('staged');
+    expect(readPendingAdds()).toEqual(['generation-1']);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('drops immediately when the mounted timeline store is available', () => {
+    const registerGenerationAsset = vi.fn(() => 'asset-1');
+    const handleAssetDrop = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    const store = createTimelineStore({
+      data: {
+        ...createTimelineStore().getState().data,
+        resolvedConfig: {
+          clips: [
+            { id: 'clip-1', at: 3, from: 0, to: 2 },
+          ],
+        } as never,
+      },
+      ops: {
+        ...createTimelineStore().getState().ops,
+        registerGenerationAsset,
+        handleAssetDrop,
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <TimelineStoreProvider store={store}>
+            <AddToVideoEditorConsumer />
+          </TimelineStoreProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('timeline-mounted')).toHaveTextContent('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+
+    expect(registerGenerationAsset).toHaveBeenCalledWith({
+      generationId: 'generation-1',
+      variantType: 'image',
+      imageUrl: 'https://example.com/image.png',
+      thumbUrl: 'https://example.com/image-thumb.png',
+    });
+    expect(handleAssetDrop).toHaveBeenCalledWith('asset-1', undefined, 5, false, false);
+    expect(readPendingAdds()).toEqual([]);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('navigates on the second staged click when the editor is not mounted', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AddToVideoEditorConsumer />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+
+    expect(readPendingAdds()).toEqual(['generation-1']);
+    expect(navigateMock).toHaveBeenCalledWith(
+      `/tools/video-editor?timeline=timeline-staged&${ADD_GENERATION_QUERY_PARAM}=generation-1`,
+    );
   });
 });

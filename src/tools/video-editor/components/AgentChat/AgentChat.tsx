@@ -7,8 +7,8 @@ import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
 import { Button } from '@/shared/components/ui/button';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { useAgentChatBridge } from '@/shared/contexts/AgentChatContext';
-import { useGallerySelection } from '@/shared/contexts/GallerySelectionContext';
 import { usePanes } from '@/shared/contexts/PanesContext';
+import { useGallerySelection } from '@/shared/state/selectionStore';
 import { useAgentSession, useAgentSessions, useCancelSession, useCreateSession, useSendMessage } from '@/tools/video-editor/hooks/useAgentSession';
 import {
   buildSummary,

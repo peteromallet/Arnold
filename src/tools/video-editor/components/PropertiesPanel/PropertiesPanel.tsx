@@ -7,7 +7,7 @@ import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/c
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
+} from '@/tools/video-editor/hooks/timelineStore';
 import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { getBulkVisibleTabs, getSharedNestedValue, getSharedValue } from '@/tools/video-editor/lib/bulk-utils';

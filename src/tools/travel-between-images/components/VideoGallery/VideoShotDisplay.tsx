@@ -14,9 +14,9 @@ import { usePanes } from '@/shared/contexts/PanesContext';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
 import type { ShotFinalVideo } from '../../hooks/video/useShotFinalVideos';
-import { useShotAdditionSelectionOptional } from '@/shared/contexts/ShotAdditionSelectionContext';
 import { useVideoShotDisplayState } from '../hooks/useVideoShotDisplayState';
 import { ShotMetadata, ShotControls, ShotPreview } from './VideoShotDisplayParts';
+import { useShotAdditionSelectionOptional } from '@/shared/state/selectionStore';
 
 interface VideoShotDisplayProps {
   shot: Shot;

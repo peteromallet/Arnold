@@ -29,7 +29,7 @@ vi.mock('@/tools/video-editor/hooks/useAgentSession', () => ({
   useCancelSession: (...args: unknown[]) => mocks.useCancelSession(...args),
 }));
 
-vi.mock('@/shared/contexts/GallerySelectionContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useGallerySelection: (...args: unknown[]) => mocks.useGallerySelection(...args),
 }));
 

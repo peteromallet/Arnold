@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { Shot } from '@/domains/generation/types';
 import { TOOL_ROUTES, travelShotUrl } from '@/shared/lib/tooling/toolRoutes';
@@ -44,7 +44,12 @@ const DEFAULT_OPTIONS: Required<ShotNavigationOptions> = {
 function performScroll(options: Required<ShotNavigationOptions>) {
   if (options.scrollToTop) {
     const scrollFn = () => {
-      requestAnimationFrame(() => {
+      const scheduleScroll =
+        typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame.bind(window)
+          : (callback: FrameRequestCallback) => window.setTimeout(callback, 0);
+
+      scheduleScroll(() => {
         window.scrollTo({ top: 0, behavior: options.scrollBehavior });
         dispatchAppEvent('app:scrollToTop', { behavior: options.scrollBehavior });
       });

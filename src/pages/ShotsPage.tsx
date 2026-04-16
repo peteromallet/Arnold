@@ -6,7 +6,7 @@ import {
 import { ShotListDisplay } from '@/tools/travel-between-images/components/VideoGallery/ShotListDisplay';
 import { ShotImageManagerContainer as ShotImageManager } from '@/shared/components/ShotImageManager/ShotImageManagerContainer';
 import { Button } from '@/shared/components/ui/button';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useShotSelection } from '@/pages/shots/hooks/useShotSelection';
 import { useShotImageMutations } from '@/pages/shots/hooks/useShotImageMutations';
 

@@ -45,7 +45,7 @@ vi.mock('@/shared/hooks/mobile', () => ({
   useIsMobile: () => false,
 }));
 
-vi.mock('@/shared/contexts/ShotAdditionSelectionContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useShotAdditionSelectionOptional: () => null,
 }));
 

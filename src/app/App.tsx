@@ -1,4 +1,4 @@
-import React, { Suspense, useContext } from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import { TooltipProvider } from '@/shared/components/ui/tooltip';
 import { Toaster as Sonner } from '@/shared/components/ui/runtime/sonner';
@@ -15,7 +15,6 @@ import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useHandleExternalImageDrop, useAddImageToShot } from '@/shared/hooks/shots';
 import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation';
 import { useShots } from '@/shared/contexts/ShotsContext';
-import { LastAffectedShotContext } from '@/shared/contexts/LastAffectedShotContext';
 import { AppRoutes } from '@/app/routes';
 import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { AppProviders } from '@/app/providers/AppProviders';
@@ -23,6 +22,7 @@ import { useAppDndOverlay } from '@/app/hooks/useAppDndOverlay';
 import { useAppExternalDrop } from '@/app/hooks/useAppExternalDrop';
 import { AgentChat } from '@/tools/video-editor/components/AgentChat';
 import { isRenderBudgetRuntimeEnabled } from '@/shared/dev/useRenderBudget';
+import { useLastAffectedShot } from '@/shared/state/selectionStore';
 
 const LazyRenderTelemetryOverlay = React.lazy(async () => {
   const module = await import('@/shared/dev/RenderTelemetryOverlay');
@@ -31,11 +31,7 @@ const LazyRenderTelemetryOverlay = React.lazy(async () => {
 
 const AppInternalContent: React.FC = () => {
   const { selectedProjectId } = useProjectSelectionContext();
-  const context = useContext(LastAffectedShotContext);
-  if (!context) {
-    throw new Error('useLastAffectedShot must be used within a LastAffectedShotProvider');
-  }
-  const { setLastAffectedShotId } = context;
+  const { setLastAffectedShotId } = useLastAffectedShot();
   const { shots: shotsFromHook } = useShots();
   const { createShot } = useShotCreation();
   const addImageToShotMutation = useAddImageToShot();

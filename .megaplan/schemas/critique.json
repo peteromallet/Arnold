@@ -59,7 +59,9 @@
               "completeness",
               "performance",
               "maintainability",
-              "other"
+              "doc-quality",
+              "other",
+              "verifiability"
             ]
           },
           "severity_hint": {

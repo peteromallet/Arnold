@@ -9,7 +9,7 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Shot } from '@/domains/generation/types';
 import { Button } from '@/shared/components/ui/button';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { usePanes } from '@/shared/contexts/PanesContext';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';

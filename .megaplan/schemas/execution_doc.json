@@ -4,12 +4,6 @@
     "output": {
       "type": "string"
     },
-    "files_changed": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
     "commands_run": {
       "type": "array",
       "items": {
@@ -41,13 +35,7 @@
           "executor_notes": {
             "type": "string"
           },
-          "files_changed": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "commands_run": {
+          "sections_written": {
             "type": "array",
             "items": {
               "type": "string"
@@ -58,8 +46,7 @@
           "task_id",
           "status",
           "executor_notes",
-          "files_changed",
-          "commands_run"
+          "sections_written"
         ],
         "additionalProperties": false
       }
@@ -82,15 +69,21 @@
         ],
         "additionalProperties": false
       }
+    },
+    "sections_written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
     "output",
-    "files_changed",
     "commands_run",
     "deviations",
     "task_updates",
-    "sense_check_acknowledgments"
+    "sense_check_acknowledgments",
+    "sections_written"
   ],
   "additionalProperties": false
 }

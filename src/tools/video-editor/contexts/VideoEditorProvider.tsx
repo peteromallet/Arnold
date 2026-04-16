@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from '@/shared/components/ui/runtime/sonner';
@@ -11,13 +11,6 @@ import {
   DataProviderWrapper,
   useVideoEditorRuntime,
 } from '@/tools/video-editor/contexts/DataProviderContext';
-import { TimelineChromeContextProvider } from '@/tools/video-editor/contexts/TimelineChromeContext';
-import {
-  TimelineEditorDataContextProvider,
-  TimelineEditorOpsContextProvider,
-  useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { TimelinePlaybackContextProvider } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
 import {
   useAgentChatRegistry,
   type AgentChatContextValue,
@@ -27,10 +20,13 @@ import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry'
 import { useEffectResources } from '@/tools/video-editor/hooks/useEffectResources';
 import { useSelectedMediaClips } from '@/tools/video-editor/hooks/useSelectedMediaClips';
 import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
+import {
+  TimelineStoreProvider,
+  useTimelineEditorOps,
+} from '@/tools/video-editor/hooks/timelineStore';
 import type {
   TimelineActionResizeStart,
   TimelineClipEdgeResizeEnd,
-  TimelineEditorDataContextValue,
   TimelineEditorOpsContextValue,
 } from '@/tools/video-editor/hooks/useTimelineState.types';
 import { useVideoEditorLightboxNavigation } from '@/tools/video-editor/hooks/useVideoEditorLightboxNavigation';
@@ -132,7 +128,7 @@ function InnerProvider({
     })),
     effectResources.effects,
   );
-  const { editor, chrome, playback } = useTimelineState();
+  const { store, editor, chrome, playback } = useTimelineState();
   const { shots } = useShots();
   const [searchParams, setSearchParams] = useSearchParams();
   const pendingAddGenerationId = searchParams.get(ADD_GENERATION_QUERY_PARAM);
@@ -292,42 +288,6 @@ function InnerProvider({
     });
   }, [lightboxAssetKey, lightboxClipId, lightboxFallbackMedia, lightboxGenerationId, lightboxQuery.data, lightboxQuery.isLoading]);
 
-  const editorData = useMemo<TimelineEditorDataContextValue>(() => ({
-    data: editor.data,
-    resolvedConfig: editor.resolvedConfig,
-    deviceClass: editor.deviceClass,
-    inputModality: editor.inputModality,
-    interactionMode: editor.interactionMode,
-    gestureOwner: editor.gestureOwner,
-    precisionEnabled: editor.precisionEnabled,
-    contextTarget: editor.contextTarget,
-    inspectorTarget: editor.inspectorTarget,
-    interactionPolicy: editor.interactionPolicy,
-    selectedClipId: editor.selectedClipId,
-    selectedClipIds: editor.selectedClipIds,
-    selectedClipIdsRef: editor.selectedClipIdsRef,
-    additiveSelectionRef: editor.additiveSelectionRef,
-    selectedTrackId: editor.selectedTrackId,
-    primaryClipId: editor.primaryClipId,
-    selectedClip: editor.selectedClip,
-    selectedTrack: editor.selectedTrack,
-    selectedClipHasPredecessor: editor.selectedClipHasPredecessor,
-    compositionSize: editor.compositionSize,
-    trackScaleMap: editor.trackScaleMap,
-    scale: editor.scale,
-    scaleWidth: editor.scaleWidth,
-    isLoading: editor.isLoading,
-    dataRef: editor.dataRef,
-    pendingOpsRef: editor.pendingOpsRef,
-    interactionStateRef: editor.interactionStateRef,
-    coordinator: editor.coordinator,
-    indicatorRef: editor.indicatorRef,
-    editAreaRef: editor.editAreaRef,
-    preferences: editor.preferences,
-    timelineRef: editor.timelineRef,
-    timelineWrapperRef: editor.timelineWrapperRef,
-  }), [editor]);
-
   const onActionResizeStart: TimelineActionResizeStart = editor.onActionResizeStart;
   const onClipEdgeResizeEnd: TimelineClipEdgeResizeEnd = editor.onClipEdgeResizeEnd;
 
@@ -388,6 +348,10 @@ function InnerProvider({
     setLightboxAssetKey,
   }), [editor, onActionResizeStart, onClipEdgeResizeEnd, onDoubleClickAsset, setLightboxAssetKey]);
 
+  useLayoutEffect(() => {
+    store.getState().syncOpsSlice(editorOps);
+  }, [editorOps, store]);
+
   const resolvedLightboxMedia = lightboxQuery.data ?? lightboxFallbackMedia;
   const lightboxOnClose = useCallback(() => {
     setLightboxAssetKey(null);
@@ -401,28 +365,22 @@ function InnerProvider({
   );
 
   return (
-    <TimelineEditorDataContextProvider value={editorData}>
-      <TimelineEditorOpsContextProvider value={editorOps}>
-        <AgentChatBridgeRegistration />
-        <TimelineChromeContextProvider value={chrome}>
-          <TimelinePlaybackContextProvider value={playback}>
-            {children}
-            {lightboxAssetKey && resolvedLightboxMedia && (
-              <>
-                <MediaLightbox
-                  media={resolvedLightboxMedia}
-                  navigation={navResult.navigation}
-                  initialVariantId={lightboxInitialVariantId}
-                  onClose={lightboxOnClose}
-                  features={lightboxFeatures}
-                />
-                {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
-              </>
-            )}
-          </TimelinePlaybackContextProvider>
-        </TimelineChromeContextProvider>
-      </TimelineEditorOpsContextProvider>
-    </TimelineEditorDataContextProvider>
+    <TimelineStoreProvider store={store}>
+      <AgentChatBridgeRegistration />
+      {children}
+      {lightboxAssetKey && resolvedLightboxMedia && (
+        <>
+          <MediaLightbox
+            media={resolvedLightboxMedia}
+            navigation={navResult.navigation}
+            initialVariantId={lightboxInitialVariantId}
+            onClose={lightboxOnClose}
+            features={lightboxFeatures}
+          />
+          {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
+        </>
+      )}
+    </TimelineStoreProvider>
   );
 }
 

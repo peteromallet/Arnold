@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProject } from '@/shared/contexts/ProjectContext';
 import { usePanes } from '@/shared/contexts/PanesContext';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { parseTaskParams } from '@/shared/lib/taskTypeUtils';

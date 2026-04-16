@@ -38,7 +38,7 @@ vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
   }),
 }));
 
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useCurrentShot: () => ({ setCurrentShotId: vi.fn() }),
 }));
 

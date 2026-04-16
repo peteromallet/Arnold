@@ -68,7 +68,7 @@ vi.mock('@/shared/hooks/mobile', () => ({
   useIsMobile: (...args: unknown[]) => mocks.useIsMobile(...args),
 }));
 
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useCurrentShot: (...args: unknown[]) => mocks.useCurrentShot(...args),
 }));
 

@@ -3,12 +3,14 @@ import { ExternalLink, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/shared/components/ui/button';
 import { Slider } from '@/shared/components/ui/slider';
-import { useTimelineChromeContext } from '@/tools/video-editor/contexts/TimelineChromeContext';
-import { useTimelineEditorData } from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { useTimelinePlaybackContext } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
 import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
 import { getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
+import {
+  useTimelineChromeContext,
+  useTimelineEditorData,
+  useTimelinePlaybackContext,
+} from '@/tools/video-editor/hooks/timelineStore';
 
 interface CompactPreviewProps {
   timelineId?: string | null;

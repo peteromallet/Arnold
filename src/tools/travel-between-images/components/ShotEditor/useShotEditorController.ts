@@ -5,7 +5,7 @@ import { useIsMobile } from "@/shared/hooks/mobile";
 import { Shot } from '@/domains/generation/types';
 import { usePanes } from '@/shared/contexts/PanesContext';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { useQueryClient } from '@tanstack/react-query';
 

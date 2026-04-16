@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useAgentChatBridge } from '@/shared/contexts/AgentChatContext';
-import { useGallerySelectionOptional } from '@/shared/contexts/GallerySelectionContext';
+import { useGallerySelectionOptional } from '@/shared/state/selectionStore';
 import { AppProviders } from './AppProviders';
 
 function passthroughProvider(testId: string) {
@@ -32,15 +32,15 @@ vi.mock('@/shared/contexts/UserSettingsContext', () => ({
 
 vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
   useToolSettings: () => ({
-    settings: { lastTimelineId: 'timeline-from-settings' },
-    updateSettings: vi.fn(),
-    resetSettings: vi.fn(),
+    settings: { lastAffectedShotId: 'shot-from-settings', lastTimelineId: 'timeline-from-settings' },
+    update: vi.fn(),
     isLoading: false,
   }),
 }));
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   ProjectProvider: passthroughProvider('ProjectProvider'),
+  useProject: () => ({ selectedProjectId: 'project-1' }),
 }));
 
 vi.mock('@/shared/providers/RealtimeProvider', () => ({
@@ -63,25 +63,24 @@ vi.mock('@/shared/contexts/PanesContext', () => ({
   PanesProvider: passthroughProvider('PanesProvider'),
 }));
 
-vi.mock('@/shared/contexts/LastAffectedShotContext', () => ({
-  LastAffectedShotProvider: passthroughProvider('LastAffectedShotProvider'),
-}));
-
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
-  CurrentShotProvider: passthroughProvider('CurrentShotProvider'),
-}));
-
 vi.mock('@/shared/contexts/ToolPageHeaderContext', () => ({
   ToolPageHeaderProvider: passthroughProvider('ToolPageHeaderProvider'),
-}));
-
-vi.mock('@/shared/contexts/ShotAdditionSelectionContext', () => ({
-  ShotAdditionSelectionProvider: passthroughProvider('ShotAdditionSelectionProvider'),
 }));
 
 vi.mock('@/shared/components/TaskTypeConfigInitializer', () => ({
   TaskTypeConfigInitializer: passthroughProvider('TaskTypeConfigInitializer'),
 }));
+
+vi.mock('@/shared/state/selectionStore', async () => {
+  const actual = await vi.importActual<typeof import('@/shared/state/selectionStore')>('@/shared/state/selectionStore');
+  return {
+    ...actual,
+    useLastAffectedShot: () => ({
+      lastAffectedShotId: 'shot-from-settings',
+      setLastAffectedShotId: vi.fn(),
+    }),
+  };
+});
 
 function GallerySelectionConsumer() {
   const context = useGallerySelectionOptional();
@@ -99,7 +98,7 @@ function AgentChatBridgeConsumer() {
 }
 
 describe('AppProviders', () => {
-  it('mounts GallerySelectionProvider and the default AgentChat bridge inside the provider tree', () => {
+  it('mounts the selection-store boundary and the default AgentChat bridge inside the provider tree', () => {
     render(
       <AppProviders>
         <GallerySelectionConsumer />
@@ -110,8 +109,6 @@ describe('AppProviders', () => {
     expect(screen.getByTestId('gallery-selection-context')).toHaveTextContent('available');
     expect(screen.getByTestId('agent-chat-timeline-id')).toHaveTextContent('timeline-from-settings');
     expect(screen.getByTestId('agent-chat-timeline-clips')).toHaveTextContent('0');
-    expect(screen.getByTestId('PanesProvider')).toContainElement(
-      screen.getByTestId('ShotAdditionSelectionProvider'),
-    );
+    expect(screen.getByTestId('PanesProvider')).toBeInTheDocument();
   });
 });

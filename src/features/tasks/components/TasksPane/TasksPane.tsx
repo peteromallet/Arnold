@@ -15,7 +15,7 @@ import { useBottomOffset } from '@/shared/hooks/layout/useBottomOffset';
 import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
 import { useListShots } from '@/shared/hooks/shots';
 import { useLastAffectedShot } from '@/shared/hooks/shots/useLastAffectedShot';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { usePaneInteractionLifecycle } from '@/shared/components/panes/usePaneInteractionLifecycle';
 import { PaneBackdrop } from '@/shared/components/panes/PaneBackdrop';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '@/shared/components/ui/select';

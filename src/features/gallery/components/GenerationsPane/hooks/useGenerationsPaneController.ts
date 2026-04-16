@@ -20,7 +20,7 @@ import { calculateGalleryLayout } from '@/shared/components/MediaGallery/utils';
 import { usePanes } from '@/shared/contexts/PanesContext';
 import { useGalleryPageState } from '@/features/gallery/hooks/useGalleryPageState';
 import { useIsMobile } from '@/shared/hooks/mobile';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useShots } from '@/shared/contexts/ShotsContext';
 import {
   useProjectCrudContext,

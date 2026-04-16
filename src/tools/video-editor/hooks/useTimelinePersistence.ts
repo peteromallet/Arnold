@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { useMutation } from '@tanstack/react-query';
 import { isInteractionActive, onInteractionEnd, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
 import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 import {
   isTimelineNotFoundError,
   isTimelineVersionConflictError,
@@ -19,6 +20,7 @@ const TIMELINE_SYNC_LOG_TAG = '[TimelineSync]';
 type ConfigVersionUpdateSource = 'save' | 'reload' | 'conflict-retry';
 
 interface UseTimelinePersistenceOptions {
+  store?: TimelineStoreApi;
   provider: DataProvider;
   timelineId: string;
   eventBus: TimelineEventBus;
@@ -43,6 +45,7 @@ export interface UseTimelinePersistenceResult {
 }
 
 export function useTimelinePersistence({
+  store,
   provider,
   timelineId,
   eventBus,
@@ -66,6 +69,14 @@ export function useTimelinePersistence({
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   const [isConflictExhausted, setIsConflictExhausted] = useState(false);
+  const getDataRef = useCallback(() => {
+    const storeDataRef = store?.getState().data.dataRef;
+    return storeDataRef && storeDataRef.current !== null ? storeDataRef : dataRef;
+  }, [dataRef, store]);
+  const getInteractionStateRef = useCallback(() => {
+    const storeInteractionStateRef = store?.getState().data.interactionStateRef;
+    return storeInteractionStateRef ? storeInteractionStateRef : interactionStateRef;
+  }, [interactionStateRef, store]);
 
   const logConfigVersionUpdate = useCallback((source: ConfigVersionUpdateSource, nextVersion: number) => {
     if (!import.meta.env.DEV) {
@@ -112,11 +123,12 @@ export function useTimelinePersistence({
     ]);
     logConfigVersionUpdate('conflict-retry', loaded.configVersion);
     configVersionRef.current = loaded.configVersion;
-    if (dataRef.current) {
-      dataRef.current = { ...dataRef.current, registry };
+    const latestDataRef = getDataRef();
+    if (latestDataRef.current) {
+      latestDataRef.current = { ...latestDataRef.current, registry };
     }
     return loaded.configVersion;
-  }, [configVersionRef, dataRef, logConfigVersionUpdate, provider, timelineId]);
+  }, [configVersionRef, getDataRef, logConfigVersionUpdate, provider, timelineId]);
 
   const doSave = useCallback(async (
     nextData: TimelineData,
@@ -162,9 +174,10 @@ export function useTimelinePersistence({
             conflictRetryRef.current = 0;
             setIsConflictExhausted(false);
 
-            if (dataRef.current?.signature === nextData.signature) {
+            const latestDataRef = getDataRef();
+            if (latestDataRef.current?.signature === nextData.signature) {
               commitData({
-                ...dataRef.current,
+                ...latestDataRef.current,
                 configVersion: nextVersion,
               }, {
                 save: false,
@@ -196,7 +209,7 @@ export function useTimelinePersistence({
       }
 
       if (isTimelineVersionConflictError(error)) {
-        const expectedVersion = configVersionRef.current;
+      const expectedVersion = configVersionRef.current;
         let actualVersion: number | undefined;
 
         try {
@@ -214,7 +227,8 @@ export function useTimelinePersistence({
           return;
         }
 
-        if (!dataRef.current) {
+        const latestDataRef = getDataRef();
+        if (!latestDataRef.current) {
           handleConflictExhausted({
             expectedVersion,
             actualVersion,
@@ -254,7 +268,7 @@ export function useTimelinePersistence({
           expectedVersion,
           actualVersion,
         });
-        return await doSave(dataRef.current, editSeqRef.current, {
+        return await doSave(latestDataRef.current, editSeqRef.current, {
           bypassQueue: true,
           completedSeqRef,
         });
@@ -280,8 +294,8 @@ export function useTimelinePersistence({
   }, [
     commitData,
     configVersionRef,
-    dataRef,
     editSeqRef,
+    getDataRef,
     handleConflictExhausted,
     lastSavedSignatureRef,
     loadConflictRetryVersion,
@@ -302,7 +316,7 @@ export function useTimelinePersistence({
     // flight, stash the newest payload and defer scheduling the save timer
     // until the gesture ends. This prevents mid-gesture save round-trips from
     // triggering re-renders that drop pointer capture.
-    if (isInteractionActive(interactionStateRef)) {
+    if (isInteractionActive(getInteractionStateRef())) {
       deferredSaveRef.current = { data: nextData, preserveStatus: options?.preserveStatus };
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
@@ -325,12 +339,12 @@ export function useTimelinePersistence({
       conflictRetryRef.current = 0;
       void doSave(nextData, editSeqRef.current);
     }, 500);
-  }, [doSave, editSeqRef, interactionStateRef]);
+  }, [doSave, editSeqRef, getInteractionStateRef]);
 
   // When a gesture ends, flush the latest deferred payload (if any) through
   // the normal scheduleSave path, which will now proceed past the gate.
   useEffect(() => {
-    return onInteractionEnd(interactionStateRef, () => {
+    return onInteractionEnd(getInteractionStateRef(), () => {
       const deferred = deferredSaveRef.current;
       if (!deferred) {
         return;
@@ -338,7 +352,7 @@ export function useTimelinePersistence({
       deferredSaveRef.current = null;
       scheduleSave(deferred.data, { preserveStatus: deferred.preserveStatus });
     });
-  }, [interactionStateRef, scheduleSave]);
+  }, [getInteractionStateRef, scheduleSave]);
 
   const reloadFromServer = useCallback(async () => {
     const [loadedTimeline, registry] = await Promise.all([
@@ -382,7 +396,8 @@ export function useTimelinePersistence({
   ]);
 
   const retrySaveAfterConflict = useCallback(async () => {
-    if (!dataRef.current) {
+    const latestDataRef = getDataRef();
+    if (!latestDataRef.current) {
       return;
     }
 
@@ -392,8 +407,8 @@ export function useTimelinePersistence({
 
     try {
       await loadConflictRetryVersion();
-      if (dataRef.current) {
-        void doSave(dataRef.current, editSeqRef.current);
+      if (latestDataRef.current) {
+        void doSave(latestDataRef.current, editSeqRef.current);
       }
     } catch {
       handleConflictExhausted({
@@ -402,7 +417,7 @@ export function useTimelinePersistence({
         reason: 'load_failed',
       });
     }
-  }, [configVersionRef, dataRef, doSave, editSeqRef, handleConflictExhausted, loadConflictRetryVersion]);
+  }, [configVersionRef, doSave, editSeqRef, getDataRef, handleConflictExhausted, loadConflictRetryVersion]);
 
   useEffect(() => {
     return () => {

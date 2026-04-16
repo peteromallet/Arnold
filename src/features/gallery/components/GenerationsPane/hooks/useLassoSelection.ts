@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { GallerySelectionItem } from '@/shared/contexts/GallerySelectionContext';
 import type { GeneratedImageWithMetadata } from '@/shared/components/MediaGallery/types';
+import type { GallerySelectionItem } from '@/shared/state/selectionStore';
 
 type SelectionRect = {
   left: number;

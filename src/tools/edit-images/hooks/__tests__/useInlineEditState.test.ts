@@ -218,7 +218,7 @@ vi.mock('@/shared/hooks/variants/useVariants', () => ({
   }),
 }));
 
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useCurrentShot: () => ({ currentShotId: null, setCurrentShotId: vi.fn() }),
 }));
 

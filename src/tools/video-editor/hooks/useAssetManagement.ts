@@ -28,6 +28,7 @@ import type {
 } from '@/tools/video-editor/hooks/timeline-state-types';
 import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
 import type { AssetRegistryEntry, ClipType } from '@/tools/video-editor/types';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 
 function estimateAssetDuration(
   assetEntry: AssetRegistryEntry | undefined,
@@ -43,6 +44,7 @@ type UploadedGenerationData = GenerationDropData & {
 };
 
 export interface UseAssetManagementArgs {
+  store?: TimelineStoreApi;
   dataRef: MutableRefObject<TimelineData | null>;
   selectedTrackId: string | null;
   selectedProjectId: string | null;
@@ -263,6 +265,7 @@ export function buildAssetDropEdit({
 }
 
 export function useAssetManagement({
+  store,
   dataRef,
   selectedTrackId,
   selectedProjectId,
@@ -273,6 +276,32 @@ export function useAssetManagement({
   unpatchRegistry,
   registerAsset,
 }: UseAssetManagementArgs): UseAssetManagementResult {
+  const getDataRef = useCallback(() => {
+    const storeDataRef = store?.getState().data.dataRef;
+    return storeDataRef && storeDataRef.current !== null ? storeDataRef : dataRef;
+  }, [dataRef, store]);
+  const getSelectedTrackId = useCallback(() => {
+    return store?.getState().data.selectedTrackId ?? selectedTrackId;
+  }, [selectedTrackId, store]);
+  const getPatchRegistry = useCallback(() => {
+    return store?.getState().ops.patchRegistry ?? patchRegistry;
+  }, [patchRegistry, store]);
+  const getUnpatchRegistry = useCallback(() => {
+    return store?.getState().ops.unpatchRegistry ?? unpatchRegistry;
+  }, [store, unpatchRegistry]);
+  const getRegisterAsset = useCallback(() => {
+    return store?.getState().ops.registerAsset ?? registerAsset;
+  }, [registerAsset, store]);
+  const getApplyEdit = useCallback(() => {
+    return store?.getState().ops.applyEdit ?? applyEdit;
+  }, [applyEdit, store]);
+  const getSetSelectedClipId = useCallback(() => {
+    return store?.getState().ops.setSelectedClipId ?? setSelectedClipId;
+  }, [setSelectedClipId, store]);
+  const getSetSelectedTrackId = useCallback(() => {
+    return store?.getState().ops.setSelectedTrackId ?? setSelectedTrackId;
+  }, [setSelectedTrackId, store]);
+
   const registerGenerationAsset = useCallback((generationData: UploadedGenerationData | null) => {
     if (!generationData) {
       return null;
@@ -319,15 +348,15 @@ export function useAssetManagement({
         : {}),
     };
 
-    patchRegistry(assetId, entry, imageUrl);
-    void registerAsset(assetId, entry).catch((error) => {
+    getPatchRegistry()(assetId, entry, imageUrl);
+    void getRegisterAsset()(assetId, entry).catch((error) => {
       console.error('[video-editor] Failed to persist generation asset:', error);
-      unpatchRegistry(assetId);
+      getUnpatchRegistry()(assetId);
       toast.error('Failed to save asset');
     });
 
     return assetId;
-  }, [patchRegistry, registerAsset, unpatchRegistry]);
+  }, [getPatchRegistry, getRegisterAsset, getUnpatchRegistry]);
 
   const uploadImageGeneration = useCallback(async (file: File) => {
     if (!selectedProjectId) {
@@ -429,13 +458,15 @@ export function useAssetManagement({
   }, [selectedProjectId]);
 
   const handleAssetDrop = useCallback((assetKey: string, trackId: string | undefined, time: number, forceNewTrack = false, insertAtTop = false) => {
-    const assetKind = inferTrackType(dataRef.current?.registry.assets[assetKey]?.file ?? assetKey);
-    const duration = estimateAssetDuration(dataRef.current?.registry.assets[assetKey], assetKind);
+    const latestDataRef = getDataRef();
+    const current = latestDataRef.current;
+    const assetKind = inferTrackType(current?.registry.assets[assetKey]?.file ?? assetKey);
+    const duration = estimateAssetDuration(current?.registry.assets[assetKey], assetKind);
     const resolvedTarget = resolveAssetDropTarget({
-      dataRef,
+      dataRef: latestDataRef,
       assetKind,
       trackId,
-      selectedTrackId,
+      selectedTrackId: getSelectedTrackId(),
       forceNewTrack,
       insertAtTop,
       time,
@@ -453,15 +484,15 @@ export function useAssetManagement({
     if (!nextEdit) {
       return;
     }
-    applyEdit({
+    getApplyEdit()({
       type: 'rows',
       rows: nextEdit.rows,
       metaUpdates: nextEdit.metaUpdates,
       clipOrderOverride: nextEdit.clipOrderOverride,
     });
-    setSelectedClipId(nextEdit.clipId);
-    setSelectedTrackId(resolvedTarget.trackId);
-  }, [applyEdit, dataRef, selectedTrackId, setSelectedClipId, setSelectedTrackId]);
+    getSetSelectedClipId()(nextEdit.clipId);
+    getSetSelectedTrackId()(resolvedTarget.trackId);
+  }, [getApplyEdit, getDataRef, getSelectedTrackId, getSetSelectedClipId, getSetSelectedTrackId]);
 
   return {
     registerGenerationAsset,

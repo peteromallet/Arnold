@@ -3,7 +3,7 @@ import { GenerationRow } from '@/domains/generation/types';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { createTask } from '@/shared/lib/taskCreation';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useShotGenerationMetadata } from '@/shared/hooks/shots/useShotGenerationMetadata';
 import type { EditAdvancedSettings, QwenEditModel } from './useGenerationEditSettings';
 import type { LoraMode } from '../model/editSettingsTypes';
