@@ -134,7 +134,13 @@ export function createEntityStore<T extends object>(
     return placeholder;
   };
 
-  const getSeed = ({ db, lastUsed }: Omit<EntityBootstrapInput<T>, 'entityId'>): T => db ?? lastUsed ?? config.defaults;
+  const getSeed = ({ db, lastUsed }: Omit<EntityBootstrapInput<T>, 'entityId'>): T => {
+    const source = db ?? lastUsed;
+    if (!source) return cloneValue(config.defaults);
+    // Backfill any missing keys from defaults so partial DB rows (saved before a field was added)
+    // don't surface `undefined` to consumers that read the field directly.
+    return { ...cloneValue(config.defaults), ...source } as T;
+  };
 
   const store = createStore<EntityStoreState<T>>((set, get) => {
     const clearPendingTimer = (entityId: string): void => {
