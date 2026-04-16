@@ -38,6 +38,11 @@ DEFAULT_MAX_ITERATIONS = 200
 DEFAULT_POLL_SLEEP_SECONDS = 1.0
 DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
 DEFAULT_STATUS_TIMEOUT_SECONDS = 60
+# Cap on review→rework cycles before the driver bails. This mirrors the
+# `execution.max_review_rework_cycles` config the review handler enforces
+# internally (default 3); the auto-driver applies its own cap so that an
+# unexpected-config or mis-routed rework loop cannot spin indefinitely.
+DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 
@@ -131,12 +136,51 @@ def _phase_command(next_step: str) -> list[str]:
     return [next_step]
 
 
+def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
+    """Best-effort resolution of ``.megaplan/plans/<plan>`` near ``cwd``.
+
+    Walks up parents of ``cwd`` looking for a ``.megaplan/plans/<plan>``
+    directory, matching how ``megaplan status`` resolves plans. Returns
+    ``None`` if the plan dir can't be located — callers should treat that
+    as "no review marker available" and fall back to the plain stall-count.
+    """
+    base = (cwd or Path.cwd()).resolve()
+    for candidate in (base, *base.parents):
+        plan_dir = candidate / ".megaplan" / "plans" / plan
+        if (plan_dir / "state.json").exists():
+            return plan_dir
+    return None
+
+
+def _get_review_marker(plan_dir: Path | None) -> float | None:
+    """Return a monotonically-advancing marker for the current review cycle.
+
+    Uses ``review.json`` mtime — each completed review phase rewrites the
+    file, so the mtime bumps once per review cycle. This is race-free
+    enough for stall detection: the driver only checks the marker between
+    iterations, and mtime granularity (~1s on APFS/ext4) is finer than the
+    minimum review runtime.
+
+    Returns ``None`` when no marker is available (plan dir missing, review
+    not yet run, or stat failed) — the caller must treat ``None == None``
+    as "no progress observed" and fall through to plain stall detection.
+    """
+    if plan_dir is None:
+        return None
+    review_path = plan_dir / "review.json"
+    try:
+        return review_path.stat().st_mtime
+    except (OSError, FileNotFoundError):
+        return None
+
+
 def drive(
     plan: str,
     *,
     cwd: Path | None = None,
     stall_threshold: int = DEFAULT_STALL_THRESHOLD,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    max_review_rework_cycles: int = DEFAULT_MAX_REVIEW_REWORK_CYCLES,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
@@ -156,6 +200,16 @@ def drive(
     last_state: str | None = None
     stall_count = 0
     last_phase: str | None = None
+
+    # Rework-cycle tracking. When review returns `needs_rework`, the plan
+    # ping-pongs `finalized ↔ executed ↔ finalized` while execute re-runs
+    # batches. From the driver's naive view that looks like a stall, but
+    # every completed review rewrites `review.json`, so its mtime is a
+    # reliable "forward progress" marker — each advance means a real
+    # review cycle finished since we last observed the state.
+    plan_dir = _resolve_plan_dir(plan, cwd)
+    last_review_marker = _get_review_marker(plan_dir)
+    rework_cycles_observed = 0
 
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
@@ -233,6 +287,51 @@ def drive(
                 last_phase=last_phase,
                 events=events,
             )
+
+        # Review-cycle progress: a fresh review.json means a real review
+        # pass completed since the last iteration. This counts as forward
+        # progress even when `state` looks unchanged (finalized→executed→
+        # finalized during a needs_rework loop) — reset the stall counter
+        # so execute has a full rework pass before tripping stall detection.
+        current_review_marker = _get_review_marker(plan_dir)
+        if (
+            current_review_marker is not None
+            and current_review_marker != last_review_marker
+        ):
+            if last_review_marker is not None:
+                rework_cycles_observed += 1
+                log(
+                    f"review.json updated — rework cycle {rework_cycles_observed} "
+                    f"observed, resetting stall counter",
+                    rework_cycles_observed=rework_cycles_observed,
+                )
+                stall_count = 0
+            last_review_marker = current_review_marker
+
+            if rework_cycles_observed > max_review_rework_cycles:
+                # Review handler has its own internal cap (see
+                # handlers.py::handle_review — force-proceeds to done when
+                # prior_rework_count hits max_review_rework_cycles). This
+                # driver cap is a belt-and-braces guard against config drift
+                # or unexpected loops the handler didn't catch.
+                log(
+                    f"observed {rework_cycles_observed} rework cycles "
+                    f"(cap={max_review_rework_cycles}) — bailing"
+                )
+                return DriverOutcome(
+                    status="stalled",
+                    plan=plan,
+                    final_state=state,
+                    iterations=iteration,
+                    reason=(
+                        f"exceeded review rework cap "
+                        f"({rework_cycles_observed} cycles > "
+                        f"{max_review_rework_cycles}) — review keeps "
+                        "returning needs_rework without resolving"
+                    ),
+                    last_phase=last_phase,
+                    events=events,
+                )
 
         # Stall detection: same state for stall_threshold+ iterations.
         if state == last_state:
@@ -392,13 +491,30 @@ def build_auto_parser(subparsers: Any) -> None:
         "--stall-threshold",
         type=int,
         default=DEFAULT_STALL_THRESHOLD,
-        help=f"Exit if the plan state doesn't change for this many iterations (default {DEFAULT_STALL_THRESHOLD})",
+        help=(
+            f"Exit if the plan state doesn't change for this many iterations "
+            f"AND no new review.json has been written (default "
+            f"{DEFAULT_STALL_THRESHOLD}). Use --max-review-rework-cycles for "
+            "the rework-loop limit — execute rework can span many iterations "
+            "with state pinned at 'finalized', which is not a real stall."
+        ),
     )
     auto_parser.add_argument(
         "--max-iterations",
         type=int,
         default=DEFAULT_MAX_ITERATIONS,
         help=f"Hard cap on loop iterations (default {DEFAULT_MAX_ITERATIONS})",
+    )
+    auto_parser.add_argument(
+        "--max-review-rework-cycles",
+        type=int,
+        default=DEFAULT_MAX_REVIEW_REWORK_CYCLES,
+        help=(
+            f"Cap on observed review→rework cycles before the driver bails "
+            f"(default {DEFAULT_MAX_REVIEW_REWORK_CYCLES}). A rework cycle is "
+            "counted each time review.json is rewritten while state appears "
+            "stuck at 'finalized'. Mirrors execution.max_review_rework_cycles."
+        ),
     )
     auto_parser.add_argument(
         "--on-escalate",
@@ -449,6 +565,7 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         cwd=root,
         stall_threshold=args.stall_threshold,
         max_iterations=args.max_iterations,
+        max_review_rework_cycles=args.max_review_rework_cycles,
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
