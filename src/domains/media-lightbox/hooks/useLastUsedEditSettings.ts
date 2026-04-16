@@ -1,22 +1,22 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
+import { deepEqual } from '@/shared/lib/utils/deepEqual';
+import { createEntityStore, type EntityStoreApi } from '@/shared/state/createEntityStore';
 
-// Import canonical types from single source of truth
 import {
   type LastUsedEditSettings,
   type VideoEditSubMode,
   type PanelMode,
   DEFAULT_LAST_USED,
-  SYNCED_SETTING_KEYS
 } from '../model/editSettingsTypes';
 
-// Re-export types for backwards compatibility
 export type { LastUsedEditSettings, VideoEditSubMode, PanelMode };
 
-// localStorage keys for instant access (no loading delay)
 const STORAGE_KEY_PROJECT = (projectId: string) => `lightbox-edit-last-used-${projectId}`;
 const STORAGE_KEY_GLOBAL = 'lightbox-edit-last-used-global';
+const DISABLED_ENTITY_ID = '__lightbox-last-used-disabled__';
+const LAST_USED_DOMAIN_KEY = 'lightbox-last-used-edit-settings';
 
 interface UseLastUsedEditSettingsReturn {
   lastUsed: LastUsedEditSettings;
@@ -29,50 +29,99 @@ interface UseLastUsedEditSettingsProps {
   enabled?: boolean;
 }
 
-/**
- * Compares two LastUsedEditSettings objects to detect changes.
- * Uses SYNCED_SETTING_KEYS for synced fields, plus user-preference fields.
- */
-function hasSettingsChanged(prev: LastUsedEditSettings, next: LastUsedEditSettings): boolean {
-  // Check synced settings (using the canonical list)
-  for (const key of SYNCED_SETTING_KEYS) {
-    if (key === 'advancedSettings') {
-      // Deep compare for objects
-      if (JSON.stringify(prev.advancedSettings) !== JSON.stringify(next.advancedSettings)) {
-        return true;
-      }
-    } else {
-      // Shallow compare for primitives
-      if (prev[key as keyof LastUsedEditSettings] !== next[key as keyof LastUsedEditSettings]) {
-        return true;
-      }
-    }
-  }
-
-  // Check user-preference settings
-  if (prev.editMode !== next.editMode) return true;
-  if (prev.videoEditSubMode !== next.videoEditSubMode) return true;
-  if (prev.panelMode !== next.panelMode) return true;
-
-  return false;
+interface LastUsedStoreRuntime {
+  updateDbSettingsRef: {
+    current: ((scope: 'user' | 'project' | 'shot', settings: Partial<LastUsedEditSettings>) => Promise<void>) | null;
+  };
 }
 
-/**
- * Hook for managing "last used" edit settings
- *
- * Storage strategy (following shotSettingsInheritance pattern):
- * 1. localStorage (project-specific) - instant access
- * 2. localStorage (global) - fallback for new projects
- * 3. useToolSettings (user → project) - cross-device sync
- *
- * On update: saves to all locations
- * On load: localStorage first (instant), then syncs from DB
- */
+function hasSettingsChanged(prev: LastUsedEditSettings, next: LastUsedEditSettings): boolean {
+  return !deepEqual(prev, next);
+}
+
+function readLocalStorageSettings(projectId: string | null): LastUsedEditSettings {
+  if (!projectId) {
+    return DEFAULT_LAST_USED;
+  }
+
+  try {
+    const projectStored = localStorage.getItem(STORAGE_KEY_PROJECT(projectId));
+    if (projectStored) {
+      return { ...DEFAULT_LAST_USED, ...JSON.parse(projectStored) };
+    }
+
+    const globalStored = localStorage.getItem(STORAGE_KEY_GLOBAL);
+    if (globalStored) {
+      return { ...DEFAULT_LAST_USED, ...JSON.parse(globalStored) };
+    }
+  } catch {
+    // Ignore storage corruption and fall back to defaults.
+  }
+
+  return DEFAULT_LAST_USED;
+}
+
+function writeLocalStorageSettings(projectId: string, settings: LastUsedEditSettings): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_PROJECT(projectId), JSON.stringify(settings));
+    localStorage.setItem(STORAGE_KEY_GLOBAL, JSON.stringify(settings));
+  } catch {
+    // Ignore storage write failures; DB sync remains best effort.
+  }
+}
+
+let lastUsedStoreCache:
+  | {
+      store: EntityStoreApi<LastUsedEditSettings>;
+      runtime: LastUsedStoreRuntime;
+    }
+  | null = null;
+
+function getLastUsedStore(): {
+  store: EntityStoreApi<LastUsedEditSettings>;
+  runtime: LastUsedStoreRuntime;
+} {
+  if (lastUsedStoreCache) {
+    return lastUsedStoreCache;
+  }
+
+  const runtime: LastUsedStoreRuntime = {
+    updateDbSettingsRef: { current: null },
+  };
+
+  const store = createEntityStore<LastUsedEditSettings>({
+    toolId: LAST_USED_DOMAIN_KEY,
+    defaults: DEFAULT_LAST_USED,
+    load: async (entityId) => ({
+      db: null,
+      lastUsed: entityId === DISABLED_ENTITY_ID ? null : readLocalStorageSettings(entityId),
+    }),
+    save: async (entityId, data) => {
+      if (entityId === DISABLED_ENTITY_ID) {
+        return;
+      }
+
+      writeLocalStorageSettings(entityId, data);
+      try {
+        await runtime.updateDbSettingsRef.current?.('user', data);
+      } catch {
+        // Preserve local writes even if cross-device sync fails.
+      }
+    },
+  });
+
+  lastUsedStoreCache = { store, runtime };
+  return lastUsedStoreCache;
+}
+
 export function useLastUsedEditSettings({
   projectId,
   enabled = true,
 }: UseLastUsedEditSettingsProps): UseLastUsedEditSettingsReturn {
-  // Database storage via useToolSettings (cascades: user → project)
+  const entityId = enabled && projectId ? projectId : null;
+  const activeEntityId = entityId ?? DISABLED_ENTITY_ID;
+  const { store, runtime } = useMemo(() => getLastUsedStore(), []);
+
   const {
     settings: dbSettings,
     isLoading: isDbLoading,
@@ -82,102 +131,76 @@ export function useLastUsedEditSettings({
     enabled: enabled && !!projectId,
   });
 
-  // Track if we've synced from DB yet
-  const hasSyncedFromDbRef = useRef(false);
-  const lastProjectIdRef = useRef<string | null>(null);
+  runtime.updateDbSettingsRef.current = updateDbSettings;
 
-  // Get instant localStorage value (for zero-delay loading)
-  const getLocalStorageValue = useCallback((): LastUsedEditSettings => {
-    if (!projectId) return DEFAULT_LAST_USED;
+  const entity = store.useEntity(activeEntityId);
+  const storeState = store.getState();
+  const bootstrapEntity = storeState.bootstrapEntity;
+  const updateStoredFields = storeState.updateFields;
+  const saveStoredEntityImmediately = storeState.saveImmediate;
+  const reloadStoredEntity = storeState.reloadEntity;
+  const fallbackLastUsed = useMemo(
+    () => (entityId ? readLocalStorageSettings(entityId) : DEFAULT_LAST_USED),
+    [entityId]
+  );
 
-    try {
-      // Try project-specific first
-      const projectStored = localStorage.getItem(STORAGE_KEY_PROJECT(projectId));
-      if (projectStored) {
-        const parsed = JSON.parse(projectStored);
-        const merged = { ...DEFAULT_LAST_USED, ...parsed };
-        return merged;
-      }
-
-      // Fall back to global (for new projects)
-      const globalStored = localStorage.getItem(STORAGE_KEY_GLOBAL);
-      if (globalStored) {
-        const parsed = JSON.parse(globalStored);
-        const merged = { ...DEFAULT_LAST_USED, ...parsed };
-        return merged;
-      }
-    } catch {
-      // Failed to read localStorage — fall through to defaults
-    }
-
-    return DEFAULT_LAST_USED;
-  }, [projectId]);
-
-  // Use ref for current value to avoid re-render on every access
-  // Lazy initialization to prevent getLocalStorageValue from running every render
-  const currentValueRef = useRef<LastUsedEditSettings | null>(null);
-  if (currentValueRef.current === null) {
-    currentValueRef.current = getLocalStorageValue();
-  }
-
-  // Reset on project change
   useEffect(() => {
-    if (projectId !== lastProjectIdRef.current) {
-      lastProjectIdRef.current = projectId;
-      hasSyncedFromDbRef.current = false;
-      currentValueRef.current = getLocalStorageValue();
-    }
-  }, [projectId, getLocalStorageValue]);
-
-  // Sync from DB when loaded (DB is source of truth for cross-device)
-  useEffect(() => {
-    if (!isDbLoading && dbSettings && !hasSyncedFromDbRef.current && projectId) {
-      hasSyncedFromDbRef.current = true;
-
-      // Merge DB settings (may have newer values from other device)
-      const merged = { ...currentValueRef.current, ...dbSettings };
-      currentValueRef.current = merged;
-
-      // Update localStorage with DB values
-      try {
-        localStorage.setItem(STORAGE_KEY_PROJECT(projectId), JSON.stringify(merged));
-        localStorage.setItem(STORAGE_KEY_GLOBAL, JSON.stringify(merged));
-      } catch { /* localStorage write failed — not critical */ }
-    }
-  }, [isDbLoading, dbSettings, projectId]);
-
-  // Update all storage locations
-  const updateLastUsed = useCallback((updates: Partial<LastUsedEditSettings>) => {
-    const prev = currentValueRef.current!;
-    const merged = { ...prev, ...updates };
-
-    // Check if anything actually changed
-    if (!hasSettingsChanged(prev, merged)) {
+    if (!entityId) {
       return;
     }
 
-    currentValueRef.current = merged;
+    void reloadStoredEntity(entityId).catch(() => {});
+  }, [entityId, reloadStoredEntity]);
 
-    // Only log panelMode changes for PanelRestore debugging
+  useEffect(() => {
+    if (!entityId) {
+      return;
+    }
 
-    // 1. Update localStorage (instant for next time)
-    try {
-      if (projectId) {
-        localStorage.setItem(STORAGE_KEY_PROJECT(projectId), JSON.stringify(merged));
-      }
-      localStorage.setItem(STORAGE_KEY_GLOBAL, JSON.stringify(merged));
-    } catch { /* localStorage write failed — not critical */ }
+    const localSettings = readLocalStorageSettings(entityId);
+    const dbSnapshot = dbSettings ? { ...localSettings, ...dbSettings } : null;
+    const currentEntity = store.getState().entities[entityId];
+    const nextSeed = dbSnapshot ?? localSettings;
 
-    // 2. Update database (cross-device sync)
-    // Save at user level only - "last used" is a personal preference, not project-specific
-    void updateDbSettings('user', merged).catch(() => {
-      // Swallow — useToolSettings handles errors internally
+    if (
+      currentEntity
+      && currentEntity.loaded
+      && currentEntity.hasPersistedData === (dbSnapshot !== null)
+      && deepEqual(currentEntity.cleanSnapshot, nextSeed)
+    ) {
+      return;
+    }
+
+    bootstrapEntity({
+      entityId,
+      db: dbSnapshot,
+      lastUsed: localSettings,
     });
-  }, [projectId, updateDbSettings]);
+  }, [bootstrapEntity, dbSettings, entityId, store]);
 
-  return {
-    lastUsed: currentValueRef.current!,
+  const updateLastUsed = useCallback((updates: Partial<LastUsedEditSettings>) => {
+    if (!entityId) {
+      return;
+    }
+
+    const currentSettings = store.getState().entities[entityId]?.settings ?? readLocalStorageSettings(entityId);
+    const nextSettings = { ...currentSettings, ...updates };
+    if (!hasSettingsChanged(currentSettings, nextSettings)) {
+      return;
+    }
+
+    updateStoredFields(entityId, updates);
+    void saveStoredEntityImmediately(entityId).catch(() => {});
+  }, [entityId, saveStoredEntityImmediately, store, updateStoredFields]);
+
+  const currentEntity = entityId ? store.getState().entities[entityId] : undefined;
+  const lastUsed = entityId
+    ? (currentEntity?.loaded ? entity.settings : fallbackLastUsed)
+    : DEFAULT_LAST_USED;
+
+  return useMemo(() => ({
+    lastUsed,
     updateLastUsed,
-    isLoading: isDbLoading && !hasSyncedFromDbRef.current,
-  };
+    isLoading: !!entityId && isDbLoading,
+  }), [entityId, isDbLoading, lastUsed, updateLastUsed]);
 }

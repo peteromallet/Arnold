@@ -13,7 +13,7 @@ import type { EditModePanelProps } from './types';
 import { useEditModePanelState } from '../hooks/useEditModePanelState';
 import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
-export const EditModePanel: React.FC<EditModePanelProps> = ({
+function EditModePanelComponent({
   variant,
   hideInfoEditToggle = false,
   simplifiedHeader = false,
@@ -27,7 +27,7 @@ export const EditModePanel: React.FC<EditModePanelProps> = ({
   coreState,
   imageEditState,
   variantsState,
-}) => {
+}: EditModePanelProps) {
   useRenderBudget('EditModePanel', 3);
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
@@ -137,4 +137,6 @@ export const EditModePanel: React.FC<EditModePanelProps> = ({
       )}
     </>
   );
-};
+}
+
+export const EditModePanel = React.memo(EditModePanelComponent);

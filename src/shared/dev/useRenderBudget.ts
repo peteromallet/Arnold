@@ -23,6 +23,15 @@ const listeners = new Set<TelemetryListener>();
 
 let nextInstanceId = 1;
 
+export function isRenderBudgetRuntimeEnabled(): boolean {
+  const forceEnabled = (globalThis as { __REIGH_FORCE_RENDER_TELEMETRY__?: boolean }).__REIGH_FORCE_RENDER_TELEMETRY__ === true;
+  if (Boolean(import.meta.env.VITEST) || import.meta.env.MODE === 'test') {
+    return forceEnabled;
+  }
+
+  return import.meta.env.DEV || import.meta.env.MODE === 'development';
+}
+
 function emitTelemetryChange() {
   for (const listener of listeners) {
     listener();
@@ -77,6 +86,12 @@ export function subscribeRenderBudgetTelemetry(listener: TelemetryListener): () 
   };
 }
 
+export function resetRenderBudgetTelemetryForTests(): void {
+  mountTelemetry.clear();
+  listeners.clear();
+  nextInstanceId = 1;
+}
+
 export function useRenderBudget(name: string, budget: number): void {
   const instanceIdRef = useRef<number | null>(null);
   const countRef = useRef(0);
@@ -88,7 +103,7 @@ export function useRenderBudget(name: string, budget: number): void {
     instanceIdRef.current = nextInstanceId++;
   }
 
-  const isDev = import.meta.env.DEV;
+  const isDev = isRenderBudgetRuntimeEnabled();
 
   if (isDev) {
     const now = Date.now();

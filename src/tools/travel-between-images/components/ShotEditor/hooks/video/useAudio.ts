@@ -47,21 +47,26 @@ export function useAudio({
     enabled: !!shotId,
     debounceMs: 100,
   });
+  const {
+    settings,
+    status,
+    updateFields,
+  } = audioSettings;
 
   const handleAudioChange = useCallback((
     url: string | null,
     metadata: AudioMetadata | null
   ) => {
-    audioSettings.updateFields({
+    updateFields({
       url,
       metadata: metadata ?? null,
     });
-  }, [audioSettings]);
+  }, [updateFields]);
 
   return {
-    audioUrl: audioSettings.settings.url ?? null,
-    audioMetadata: audioSettings.settings.metadata ?? null,
+    audioUrl: settings.url ?? null,
+    audioMetadata: settings.metadata ?? null,
     handleAudioChange,
-    isLoading: !!shotId && audioSettings.status === 'loading',
+    isLoading: !!shotId && status === 'loading',
   };
 }

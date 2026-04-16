@@ -37,15 +37,18 @@ export function useOutputSelection({
     enabled: !!shotId,
     debounceMs: 100,
   });
+  const {
+    settings,
+    status,
+    updateField,
+  } = outputSelection;
 
   const setSelectedOutputId = useCallback((id: string | null) => {
-    outputSelection.updateField('selectedParentGenerationId', id);
-  }, [outputSelection]);
-
-  const status = outputSelection.status;
+    updateField('selectedParentGenerationId', id);
+  }, [updateField]);
 
   return {
-    selectedOutputId: outputSelection.settings.selectedParentGenerationId ?? null,
+    selectedOutputId: settings.selectedParentGenerationId ?? null,
     setSelectedOutputId,
     isLoading: !!shotId && status === 'loading',
     isReady: !shotId || status === 'ready' || status === 'saving',

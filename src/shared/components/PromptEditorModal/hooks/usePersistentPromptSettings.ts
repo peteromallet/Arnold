@@ -45,29 +45,30 @@ export function usePersistentPromptSettings({ selectedProjectId }: UsePersistent
     enabled: !!selectedProjectId,
     debounceMs: 150,
   });
+  const { settings, updateField } = persisted;
 
   const handleGenerationValuesChange = useCallback((values: GenerationControlValues) => {
-    if (JSON.stringify(persisted.settings.generationSettings) === JSON.stringify(values)) {
+    if (JSON.stringify(settings.generationSettings) === JSON.stringify(values)) {
       return;
     }
-    persisted.updateField('generationSettings', values);
-  }, [persisted]);
+    updateField('generationSettings', values);
+  }, [settings.generationSettings, updateField]);
 
   const handleBulkEditValuesChange = useCallback((values: BulkEditControlValues) => {
-    if (JSON.stringify(persisted.settings.bulkEditSettings) === JSON.stringify(values)) {
+    if (JSON.stringify(settings.bulkEditSettings) === JSON.stringify(values)) {
       return;
     }
-    persisted.updateField('bulkEditSettings', values);
-  }, [persisted]);
+    updateField('bulkEditSettings', values);
+  }, [settings.bulkEditSettings, updateField]);
 
   const handleActiveTabChange = useCallback((mode: EditorMode) => {
-    persisted.updateField('activeTab', mode);
-  }, [persisted]);
+    updateField('activeTab', mode);
+  }, [updateField]);
 
   return {
-    activeTab: persisted.settings.activeTab,
-    generationControlValues: persisted.settings.generationSettings,
-    bulkEditControlValues: persisted.settings.bulkEditSettings,
+    activeTab: settings.activeTab,
+    generationControlValues: settings.generationSettings,
+    bulkEditControlValues: settings.bulkEditSettings,
     handleGenerationValuesChange,
     handleBulkEditValuesChange,
     handleActiveTabChange,

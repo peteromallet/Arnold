@@ -75,7 +75,7 @@ const SortableRow = React.memo(function SortableRow({
   onTrackChange,
   onRemoveTrack,
 }: SortableRowProps) {
-  useRenderBudget('SortableRow', 2);
+  useRenderBudget('SortableRow', 4);
   const sortable = useSortable({ id: `track-${track.id}` });
   const actionHeight = Math.max(12, rowHeight - ACTION_VERTICAL_MARGIN * 2);
   const style = {

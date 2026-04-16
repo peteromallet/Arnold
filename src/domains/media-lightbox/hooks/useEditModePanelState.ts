@@ -1,6 +1,6 @@
 /** View-model state for EditModePanel. */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Paintbrush, Pencil, Type, Move, Wand2, ArrowUp } from 'lucide-react';
 import React from 'react';
 import type {
@@ -130,7 +130,7 @@ export function useEditModePanelState({
     setLoraMode('none');
   };
 
-  const modeSelectorItems: ModeSelectorItem[] = [
+  const modeSelectorItems = useMemo<ModeSelectorItem[]>(() => [
     {
       id: 'text',
       label: 'Text',
@@ -167,7 +167,7 @@ export function useEditModePanelState({
       icon: React.createElement(ArrowUp),
       onClick: () => { setIsInpaintMode(false); setEditMode('upscale'); },
     }] : []),
-  ];
+  ], [handleUpscale, isCloudMode, setEditMode, setIsInpaintMode]);
 
   const labelSize = isMobile ? 'text-[10px] uppercase tracking-wide text-muted-foreground' : 'text-sm';
   const textareaMinHeight = isMobile ? 'min-h-[50px]' : 'min-h-[100px]';
@@ -176,7 +176,7 @@ export function useEditModePanelState({
   const textareaTextSize = isMobile ? 'text-base' : 'text-sm'; // 16px on mobile prevents iOS zoom
   const generationsSpacing = isMobile ? 'space-y-0.5' : 'space-y-2';
 
-  return {
+  return useMemo(() => ({
     isMobile,
     onClose,
     editMode,
@@ -237,7 +237,68 @@ export function useEditModePanelState({
     textareaPadding,
     textareaTextSize,
     generationsSpacing,
-  };
+  }), [
+    activeVariantId,
+    brushStrokes,
+    createAsGeneration,
+    currentSegmentImages,
+    customLoraUrl,
+    editMode,
+    flushTextFields,
+    generationsSpacing,
+    handleClearLora,
+    handleExitMagicEditMode,
+    hasTransformChanges,
+    hasUserEditedPrompt,
+    img2imgGenerateSuccess,
+    img2imgPrompt,
+    img2imgStrength,
+    inpaintGenerateSuccess,
+    inpaintNumGenerations,
+    inpaintPrompt,
+    isCreatingMagicEditTasks,
+    isGeneratingImg2Img,
+    isGeneratingInpaint,
+    isGeneratingReposition,
+    isLoadingVariants,
+    isMobile,
+    isPromoting,
+    isSavingAsVariant,
+    labelSize,
+    loraMode,
+    magicEditTasksCreated,
+    modeSelectorItems,
+    onClose,
+    onDeleteVariant,
+    onLoadVariantImages,
+    onLoadVariantSettings,
+    onMakePrimary,
+    onMarkAllViewed,
+    onPromoteToGeneration,
+    onVariantSelect,
+    pendingTaskCount,
+    qwenEditModel,
+    repositionGenerateSuccess,
+    saveAsVariantSuccess,
+    setCreateAsGeneration,
+    setCustomLoraUrl,
+    setEditMode,
+    setEnablePromptExpansion,
+    setHasUserEditedPrompt,
+    setImg2imgPrompt,
+    setImg2imgStrength,
+    setInpaintNumGenerations,
+    setInpaintPrompt,
+    setIsInpaintMode,
+    setLoraMode,
+    setQwenEditModel,
+    textareaMinHeight,
+    textareaPadding,
+    textareaRows,
+    textareaTextSize,
+    unviewedVariantCount,
+    variants,
+  ]);
 }
 
 export type EditModePanelState = ReturnType<typeof useEditModePanelState>;

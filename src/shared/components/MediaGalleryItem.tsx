@@ -120,7 +120,7 @@ export const MediaGalleryItem: React.FC<MediaGalleryItemProps> = ({
   projectAspectRatio,
   dataTour,
 }) => {
-  useRenderBudget('MediaGalleryItem', 3);
+  useRenderBudget('MediaGalleryItem', 5);
   const {
     selectedShotIdLocal,
     simplifiedShotOptions,

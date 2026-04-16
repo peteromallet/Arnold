@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { GenerationRow } from '@/domains/generation/types';
 import type { LightboxFeatureFlags, TaskDetailsData } from '../types';
 import type { ImageLightboxEnvironment } from './useImageLightboxEnvironment';
@@ -119,11 +119,14 @@ export function useImageLightboxEditing(
     variantFetchGenerationId,
   });
 
-  return {
-    editOrchestrator,
-    adjustedTaskDetailsData,
-    variantBadges,
-  };
+  return useMemo(
+    () => ({
+      editOrchestrator,
+      adjustedTaskDetailsData,
+      variantBadges,
+    }),
+    [adjustedTaskDetailsData, editOrchestrator, variantBadges],
+  );
 }
 
 export type ImageLightboxEditModel = ReturnType<typeof useImageLightboxEditing>;

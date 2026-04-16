@@ -67,7 +67,8 @@
     "remark-gfm": "^4.0.1",
     "remotion": "^4.0.434",
     "sucrase": "^3.35.1",
-    "tailwind-merge": "^2.5.2"
+    "tailwind-merge": "^2.5.2",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",

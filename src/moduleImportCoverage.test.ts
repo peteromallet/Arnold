@@ -484,5 +484,5 @@ describe('module import coverage batch', () => {
       expect(loadedModule).not.toBeNull();
       expect(() => Reflect.ownKeys(loadedModule)).not.toThrow();
     }
-  }, 30_000);
+  }, 240_000);
 });

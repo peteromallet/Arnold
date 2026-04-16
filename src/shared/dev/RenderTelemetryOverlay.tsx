@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   getRenderBudgetTelemetrySnapshot,
+  isRenderBudgetRuntimeEnabled,
   subscribeRenderBudgetTelemetry,
   type RenderBudgetTelemetryEntry,
 } from '@/shared/dev/useRenderBudget';
@@ -32,7 +33,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function RenderTelemetryOverlay(): React.ReactElement | null {
-  if (!import.meta.env.DEV) {
+  if (!isRenderBudgetRuntimeEnabled()) {
     return null;
   }
 

@@ -1,4 +1,4 @@
-import React, { useContext } from 'react';
+import React, { Suspense, useContext } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import { TooltipProvider } from '@/shared/components/ui/tooltip';
 import { Toaster as Sonner } from '@/shared/components/ui/runtime/sonner';
@@ -22,7 +22,12 @@ import { AppProviders } from '@/app/providers/AppProviders';
 import { useAppDndOverlay } from '@/app/hooks/useAppDndOverlay';
 import { useAppExternalDrop } from '@/app/hooks/useAppExternalDrop';
 import { AgentChat } from '@/tools/video-editor/components/AgentChat';
-import { RenderTelemetryOverlay } from '@/shared/dev/RenderTelemetryOverlay';
+import { isRenderBudgetRuntimeEnabled } from '@/shared/dev/useRenderBudget';
+
+const LazyRenderTelemetryOverlay = React.lazy(async () => {
+  const module = await import('@/shared/dev/RenderTelemetryOverlay');
+  return { default: module.RenderTelemetryOverlay };
+});
 
 const AppInternalContent: React.FC = () => {
   const { selectedProjectId } = useProjectSelectionContext();
@@ -67,7 +72,11 @@ const AppInternalContent: React.FC = () => {
       >
         <AppRoutes />
         <AgentChat />
-        {import.meta.env.DEV ? <RenderTelemetryOverlay /> : null}
+        {isRenderBudgetRuntimeEnabled() ? (
+          <Suspense fallback={null}>
+            <LazyRenderTelemetryOverlay />
+          </Suspense>
+        ) : null}
         <DragOverlay zIndex={10000} style={{ pointerEvents: 'none' }}>{overlayContent}</DragOverlay>
         <Sonner />
       </DndContext>

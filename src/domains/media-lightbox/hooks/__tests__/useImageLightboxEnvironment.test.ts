@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   useUpscale: vi.fn(),
   useEditSettingsPersistence: vi.fn(),
   extractDimensionsFromMedia: vi.fn(),
+  useChangedDepsLogger: vi.fn(),
 }));
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
@@ -54,6 +55,10 @@ vi.mock('../persistence/useEditSettingsPersistence', () => ({
 
 vi.mock('../../utils/dimensions', () => ({
   extractDimensionsFromMedia: (...args: unknown[]) => mocks.extractDimensionsFromMedia(...args),
+}));
+
+vi.mock('@/shared/lib/debug/debugRendering', () => ({
+  useChangedDepsLogger: (...args: unknown[]) => mocks.useChangedDepsLogger(...args),
 }));
 
 function createMedia(overrides: Partial<GenerationRow> = {}): GenerationRow {
@@ -183,5 +188,100 @@ describe('useImageLightboxEnvironment', () => {
 
     expect(result.current.isCloudMode).toBe(true);
     expect(result.current.isLocalGeneration).toBe(false);
+  });
+
+  it('returns a stable environment reference when upstream inputs are unchanged', () => {
+    const stableProjectState = {
+      project: { aspectRatio: '16:9' },
+      selectedProjectId: 'project-1',
+    };
+    const stablePanesState = {
+      isTasksPaneOpen: false,
+      tasksPaneWidth: 320,
+      isTasksPaneLocked: true,
+    };
+    const stableGenerationMethodsState = {
+      value: { onComputer: true, inCloud: false },
+    };
+    const stableAvailableLoras = [{ id: 'pub-1' }];
+    const stableLoraManager = {
+      selectedLoras: [{ path: 'lora://selected', strength: 0.8 }],
+    };
+    const stableUpscaleHook = {
+      isUpscaling: false,
+      effectiveImageUrl: 'https://img.example/current.png',
+      handleUpscale: vi.fn(),
+    };
+    const stableEditSettingsPersistence = {
+      editModeLoras: [{ url: 'lora://fallback', strength: 0.4 }],
+    };
+    const media = createMedia();
+
+    mocks.useProject.mockReturnValue(stableProjectState);
+    mocks.usePanes.mockReturnValue(stablePanesState);
+    mocks.useUserUIState.mockReturnValue(stableGenerationMethodsState);
+    mocks.usePublicLoras.mockReturnValue({ data: stableAvailableLoras });
+    mocks.useLoraManager.mockReturnValue(stableLoraManager);
+    mocks.useUpscale.mockReturnValue(stableUpscaleHook);
+    mocks.useEditSettingsPersistence.mockReturnValue(stableEditSettingsPersistence);
+
+    const { result, rerender } = renderHook(() =>
+      useImageLightboxEnvironment({
+        media,
+        shotId: 'shot-1',
+      }),
+    );
+
+    const firstEnv = result.current;
+    rerender();
+
+    expect(result.current).toBe(firstEnv);
+    expect(result.current.upscaleHook).toBe(stableUpscaleHook);
+    expect(result.current.editSettingsPersistence).toBe(stableEditSettingsPersistence);
+    expect(result.current.editLoraManager).toBe(stableLoraManager);
+    expect(result.current.availableLoras).toBe(stableAvailableLoras);
+    expect(result.current.effectiveEditModeLoras).toBe(firstEnv.effectiveEditModeLoras);
+  });
+
+  it('audits the actual upstream hook references and final env reference in dev mode', () => {
+    renderHook(() =>
+      useImageLightboxEnvironment({ media: createMedia(), shotId: 'shot-1' }),
+    );
+
+    expect(mocks.useChangedDepsLogger).toHaveBeenCalledWith(
+      'useImageLightboxEnvironment.inputs',
+      expect.objectContaining({
+        useIsMobile: true,
+        useProject: expect.objectContaining({ selectedProjectId: 'project-1' }),
+        useUserUIState_generationMethods: expect.objectContaining({
+          value: expect.objectContaining({ onComputer: true, inCloud: false }),
+        }),
+        usePanes: expect.objectContaining({
+          isTasksPaneLocked: true,
+          isTasksPaneOpen: false,
+          tasksPaneWidth: 320,
+        }),
+        usePublicLoras_data: [{ id: 'pub-1' }],
+        useLoraManager: expect.objectContaining({
+          selectedLoras: [{ path: 'lora://selected', strength: 0.8 }],
+        }),
+        useUpscale: expect.objectContaining({
+          effectiveImageUrl: 'https://img.example/current.png',
+        }),
+        useEditSettingsPersistence: expect.objectContaining({
+          editModeLoras: [{ url: 'lora://fallback', strength: 0.4 }],
+        }),
+        effectiveEditModeLoras: [{ url: 'lora://selected', strength: 0.8 }],
+      }),
+    );
+    expect(mocks.useChangedDepsLogger).toHaveBeenCalledWith(
+      'useImageLightboxEnvironment.env',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          actualGenerationId: 'gen-1',
+          variantFetchGenerationId: 'parent-1',
+        }),
+      }),
+    );
   });
 });

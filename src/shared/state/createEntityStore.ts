@@ -51,6 +51,7 @@ export interface EntityStoreState<T extends object> {
   entities: Record<string, EntityRecord<T>>;
   bootstrapEntity: (input: EntityBootstrapInput<T>) => void;
   ensureEntity: (entityId: string) => Promise<void>;
+  reloadEntity: (entityId: string) => Promise<void>;
   updateField: <K extends keyof T>(
     entityId: string,
     key: K,
@@ -90,6 +91,15 @@ function asError(error: unknown): Error {
 
 function uniqueKeys<T>(keys: Iterable<keyof T>): Array<keyof T> {
   return Array.from(new Set(keys));
+}
+
+function getChangedKeys<T extends object>(current: T, baseline: T): Array<keyof T> {
+  const keys = new Set<keyof T>([
+    ...(Object.keys(current) as Array<keyof T>),
+    ...(Object.keys(baseline) as Array<keyof T>),
+  ]);
+
+  return Array.from(keys).filter((key) => !deepEqual(current[key], baseline[key]));
 }
 
 export function createEntityStore<T extends object>(
@@ -294,7 +304,9 @@ export function createEntityStore<T extends object>(
           .map(([key]) => key)
           .filter((key) => textFieldKeySet.has(key) || explicitDeferredKeys.has(key))
       );
-      const shouldScheduleSave = changedEntries.some(([key]) => !deferredKeys.includes(key));
+      const shouldScheduleSave =
+        current.status !== 'loading'
+        && changedEntries.some(([key]) => !deferredKeys.includes(key));
 
       set((state) => {
         const entity = state.entities[entityId] ?? current;
@@ -331,19 +343,50 @@ export function createEntityStore<T extends object>(
       bootstrapEntity: ({ entityId, db, lastUsed }) => {
         clearPendingTimer(entityId);
         const seed = getSeed({ db, lastUsed });
+        const current = get().entities[entityId];
+        const currentHasPendingPersistence = hasPendingPersistenceRecord(entityId, current);
+        const currentIsDirty = isDirtyRecord(current);
+        const shouldPreserveLocalState = !!current && (currentHasPendingPersistence || currentIsDirty);
+        const changedKeys = shouldPreserveLocalState
+          ? getChangedKeys(current.settings, seed)
+          : [];
+        const pendingTextFieldKeys = shouldPreserveLocalState
+          ? uniqueKeys([
+              ...current.pendingTextFieldKeys,
+              ...changedKeys.filter((key) => textFieldKeySet.has(key)),
+            ])
+          : [];
+        const shouldScheduleSave = shouldPreserveLocalState
+          && changedKeys.some((key) => !pendingTextFieldKeys.includes(key));
+
         set((state) => ({
           entities: {
             ...state.entities,
-            [entityId]: createRecord(seed, {
-              status: 'ready',
-              error: null,
-              hasPersistedData: db !== null,
-              savedSettings: cloneValue(seed),
-              pendingTextFieldKeys: [],
-              loaded: true,
-            }),
+            [entityId]: createRecord(seed, shouldPreserveLocalState
+              ? {
+                  settings: cloneValue(current.settings),
+                  status: 'ready',
+                  error: null,
+                  hasPersistedData: db !== null,
+                  cleanSnapshot: cloneValue(seed),
+                  savedSettings: cloneValue(seed),
+                  pendingTextFieldKeys,
+                  loaded: true,
+                }
+              : {
+                  status: 'ready',
+                  error: null,
+                  hasPersistedData: db !== null,
+                  savedSettings: cloneValue(seed),
+                  pendingTextFieldKeys: [],
+                  loaded: true,
+                }),
           },
         }));
+
+        if (shouldScheduleSave) {
+          scheduleSave(entityId);
+        }
       },
 
       ensureEntity: async (entityId) => {
@@ -402,6 +445,27 @@ export function createEntityStore<T extends object>(
 
         loadPromises.set(entityId, loadPromise);
         return loadPromise;
+      },
+
+      reloadEntity: async (entityId) => {
+        clearPendingTimer(entityId);
+        loadPromises.delete(entityId);
+        set((state) => {
+          const existing = state.entities[entityId] ?? createRecord(config.defaults);
+          return {
+            entities: {
+              ...state.entities,
+              [entityId]: {
+                ...existing,
+                status: 'loading',
+                error: null,
+                loaded: false,
+              },
+            },
+          };
+        });
+
+        await get().ensureEntity(entityId);
       },
 
       updateField: (entityId, key, value, options) => {
@@ -521,7 +585,7 @@ export function createEntityStore<T extends object>(
     );
 
     useEffect(() => {
-      void store.getState().ensureEntity(entityId);
+      void store.getState().ensureEntity(entityId).catch(() => {});
     }, [entityId]);
 
     const actions = useMemo(

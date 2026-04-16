@@ -216,6 +216,34 @@ describe('useAutoSaveSettings', () => {
       expect(result.current.hasPersistedData).toBe(false);
     });
 
+    it('bootstraps custom entities from provided seed data when no persisted record exists', async () => {
+      const mockLoad = vi.fn().mockResolvedValue(null);
+      const mockSave = vi.fn().mockResolvedValue(undefined);
+      const bootstrapData = { prompt: '', mode: 'seeded' };
+
+      const { result } = renderHook(
+        () => useAutoSaveSettings({
+          defaults,
+          bootstrapData,
+          customLoadSave: {
+            entityId: 'custom-entity-seeded',
+            load: mockLoad,
+            save: mockSave,
+          },
+        }),
+        { wrapper: createWrapper() }
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(10);
+      });
+      await act(async () => {});
+
+      expect(result.current.settings).toEqual(bootstrapData);
+      expect(result.current.hasPersistedData).toBe(false);
+      expect(result.current.isDirty).toBe(false);
+    });
+
     it('handles custom load error', async () => {
       const mockLoad = vi.fn().mockRejectedValue(new Error('load failed'));
       const mockSave = vi.fn().mockResolvedValue(undefined);
