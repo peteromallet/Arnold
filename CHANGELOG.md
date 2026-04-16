@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.18.1 — 2026-04-16
+
+### Rework-cycle-aware stall detection in `megaplan auto`
+
+Fixes a false-positive stall in the auto-driver when a plan is in a review→rework loop.
+
+- **Bug**: `megaplan auto` counted iterations at the same `state` and bailed after `--stall-threshold` (default 5). When review returns `needs_rework`, state ping-pongs `finalized ↔ executed ↔ finalized` while execute re-runs batches. From the naive stall counter's view the plan looked "stuck at finalized for 5 iterations" even though new `review.json` / `execution.json` artifacts were being written and real progress was happening. Observed on plan `milestone-m1b-from-docs-state-20260416-1226` — 7 execute batches + 1 review cycle completed, driver exited rc=2.
+- **Fix**: auto's driver loop now tracks `review.json` mtime as a forward-progress marker. When the marker advances, the stall counter resets and a rework-cycle counter increments. The new `--max-review-rework-cycles` flag (default 3, mirroring `execution.max_review_rework_cycles`) caps runaway rework loops independently of `--stall-threshold`.
+- **Helpers**: `_resolve_plan_dir(plan, cwd)` walks up from cwd to find `.megaplan/plans/<plan>`, matching how `megaplan status` resolves plans. `_get_review_marker(plan_dir)` stats `review.json` and returns `None` for plans without a review artifact (e.g. light-robustness plans) — in that case the driver falls back to plain stall detection, preserving existing behavior.
+- **CLI**: `--stall-threshold` help text updated to clarify that it fires only when state AND `review.json` are both unchanged. New `--max-review-rework-cycles` flag added with matching default.
+- **Tests**: `tests/test_auto.py` (new file) covers stall reset on review-marker advance, rework cap enforcement, plain-stall fallback when no review.json exists, and the plan-dir resolver.
+- **Scope**: auto.py driver loop only — execute and review phase logic are untouched.
+
 ## v0.18.0 — 2026-04-15
 
 ### Automated tiebreaker triggering
