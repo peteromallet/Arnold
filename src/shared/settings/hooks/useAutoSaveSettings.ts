@@ -233,6 +233,11 @@ export function useAutoSaveSettings<T extends object>(
   const isStoredEntityDirty = storeState.isDirty;
   const reloadStoredEntity = storeState.reloadEntity;
   const activeEntityRef = useRef<string | null>(entityId ?? null);
+  const lastBootstrapRef = useRef<{
+    entityId: string | null;
+    seed: T | null;
+    hasShotSettings: boolean;
+  }>({ entityId: null, seed: null, hasShotSettings: false });
 
   useEffect(() => {
     activeEntityRef.current = entityId ?? null;
@@ -307,6 +312,21 @@ export function useAutoSaveSettings<T extends object>(
     }
 
     const seed = cloneValue(authoritativeSettings ?? defaults);
+
+    // Self-tracking guard: this effect is the one-and-only writer for
+    // RQ→store sync here, so it compares against its own last-known seed
+    // (not against store state, which can be mutated by other paths and
+    // cause a feedback loop).
+    if (
+      lastBootstrapRef.current.entityId === activeEntityId
+      && lastBootstrapRef.current.hasShotSettings === hasShotSettings
+      && deepEqual(lastBootstrapRef.current.seed, seed)
+    ) {
+      return;
+    }
+
+    // Secondary guard: if the store already has the same clean snapshot
+    // from some earlier path, skip re-bootstrapping but still record it.
     const currentEntity = store.getState().entities[activeEntityId];
     if (
       currentEntity
@@ -314,8 +334,11 @@ export function useAutoSaveSettings<T extends object>(
       && currentEntity.hasPersistedData === hasShotSettings
       && deepEqual(currentEntity.cleanSnapshot, seed)
     ) {
+      lastBootstrapRef.current = { entityId: activeEntityId, seed, hasShotSettings };
       return;
     }
+
+    lastBootstrapRef.current = { entityId: activeEntityId, seed, hasShotSettings };
 
     bootstrapEntity({
       entityId: activeEntityId,

@@ -85,10 +85,25 @@ function getTopOverlay(overlays: readonly OverlayStackEntry[]): OverlayStackEntr
   return overlays.at(-1) ?? null;
 }
 
+function isOverlayActuallyOpen(overlay: OverlayStackEntry): boolean {
+  if (overlay.elements.length === 0) {
+    return false;
+  }
+  return overlay.elements.some((element) => {
+    const state = element.getAttribute('data-state');
+    if (state === 'closed') return false;
+    if (element.hasAttribute('data-open')) return true;
+    if (state === 'open') return true;
+    // Fallback for overlays without base-ui open/close state markers:
+    // treat as open only when rendered with non-zero box.
+    return element.offsetParent !== null || element.getClientRects().length > 0;
+  });
+}
+
 function getTopModalOverlay(overlays: readonly OverlayStackEntry[]): OverlayStackEntry | null {
   for (let index = overlays.length - 1; index >= 0; index -= 1) {
     const overlay = overlays[index];
-    if (overlay.modal) {
+    if (overlay.modal && isOverlayActuallyOpen(overlay)) {
       return overlay;
     }
   }
@@ -132,17 +147,32 @@ function syncBodyPointerEvents(
   if (!previousTopModal && nextTopModal) {
     bodyPointerEventsSnapshot = document.body.style.pointerEvents;
     document.body.style.pointerEvents = 'none';
+    console.warn('[OverlayStack] body pointer-events LOCKED (none)', {
+      modalId: nextTopModal.id,
+      modalType: nextTopModal.type,
+      totalOverlays: nextOverlays.length,
+      snapshot: bodyPointerEventsSnapshot,
+    });
     return;
   }
 
   if (previousTopModal && !nextTopModal) {
     document.body.style.pointerEvents = bodyPointerEventsSnapshot ?? '';
+    console.log('[OverlayStack] body pointer-events RELEASED', {
+      prevModalId: previousTopModal.id,
+      restoredTo: bodyPointerEventsSnapshot ?? '(empty)',
+      totalOverlays: nextOverlays.length,
+    });
     bodyPointerEventsSnapshot = null;
     return;
   }
 
   if (nextTopModal) {
     document.body.style.pointerEvents = 'none';
+    console.log('[OverlayStack] body stays LOCKED (modal swap)', {
+      modalId: nextTopModal.id,
+      modalType: nextTopModal.type,
+    });
   }
 }
 
@@ -171,6 +201,7 @@ const overlayStackStore = createStore<OverlayStackState>((set, get) => ({
   overlays: [],
 
   pushOverlay: (input) => {
+    console.log('[OverlayStack] PUSH', { id: input.id, type: input.type, modal: input.modal, stackSizeBefore: get().overlays.length });
     const nextEntry = createOverlayEntry(input);
     set((state) => {
       const nextOverlays = [
@@ -212,8 +243,10 @@ const overlayStackStore = createStore<OverlayStackState>((set, get) => ({
     const previousOverlays = get().overlays;
     const removedOverlay = previousOverlays.find((overlay) => overlay.id === id);
     if (!removedOverlay) {
+      console.log('[OverlayStack] POP skipped (id not found)', { id });
       return;
     }
+    console.log('[OverlayStack] POP', { id, type: removedOverlay.type, modal: removedOverlay.modal, stackSizeBefore: previousOverlays.length });
 
     const previousTopModal = getTopModalOverlay(previousOverlays);
     const nextOverlays = previousOverlays.filter((overlay) => overlay.id !== id);

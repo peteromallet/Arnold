@@ -389,9 +389,18 @@ const panesStore = createStore<PanesStoreState>((set, get) => ({
   },
   bootstrap: (input) => {
     if (areBootstrapInputsEqual(activeBootstrapSnapshot, input)) {
+      console.log('[PanesBoot] bootstrap short-circuit (inputs equal)', { owner: input.owner.toString() });
       return;
     }
 
+    console.log('[PanesBoot] bootstrap APPLY set()', {
+      owner: input.owner.toString(),
+      prevOwner: activeBootstrapOwner?.toString() ?? null,
+      locks: input.locks,
+      isGenerationsPaneOpen: input.isGenerationsPaneOpen,
+      isEditorPaneOpen: input.isEditorPaneOpen,
+      isTasksPaneOpen: input.isTasksPaneOpen,
+    });
     activeBootstrapOwner = input.owner;
     activeBootstrapSnapshot = input;
     updateBootstrapRuntime(input);
@@ -500,16 +509,26 @@ export function useBootstrapPanesStore(): void {
     resetAllPaneLocks,
   ]);
 
-  bootstrapPanesStore(bootstrapInput);
+  console.log('[PanesBoot] useBootstrapPanesStore render', {
+    owner: ownerRef.current?.toString(),
+    inputId: bootstrapInput && (bootstrapInput as unknown as { __id?: number }).__id,
+  });
+
+  useEffect(() => {
+    console.log('[PanesBoot] effect fires (bootstrapInput changed identity)');
+    bootstrapPanesStore(bootstrapInput);
+  }, [bootstrapInput]);
 
   useEffect(() => {
     return () => {
+      console.log('[PanesBoot] CLEANUP unmount', { owner: ownerRef.current?.toString() });
       clearPanesStoreBootstrap(ownerRef.current ?? undefined);
     };
   }, []);
 }
 
 export function PanesStoreBootstrapBoundary({ children }: { children: ReactNode }) {
+  console.log('[PanesBoot] PanesStoreBootstrapBoundary render');
   useBootstrapPanesStore();
   return children;
 }
