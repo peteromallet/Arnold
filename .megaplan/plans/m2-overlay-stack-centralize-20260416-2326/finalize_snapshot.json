@@ -1,0 +1,284 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Freeze the actual repo surface before editing. Re-run the Base UI inventory grep across `src/`, record the raw-owner set that must be eliminated outside `src/shared/components/ui/overlay/`, verify `src/shared/state/createEntityStore.ts` and `src/shared/state/selectionStore.ts` exist, confirm `@base-ui/react/context-menu` and `@base-ui/react/drawer` are absent, record that `ToolsPaneDrawer` is bespoke and out of scope, and lock the containment rules: registration must follow true open/present lifecycle, modal overlays are the only ones allowed to own body pointer-events and focus restoration, while tooltip/preview-card are ordering-only overlays.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T2",
+      "description": "Implement `src/shared/state/overlayStack.ts` as the ordered overlay lifecycle store. Add the public JSDoc-documented actions/selectors required by the plan for open/update/close, topmost queries, layer lookup, element membership checks, and hooks. Centralize ownership so only the topmost modal overlay controls `document.body.style.pointerEvents`, focus restoration runs in reverse close order for modal overlays with a captured opener, and non-modal overlays remain in the ordering stack without affecting pointer-events or restore behavior.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T3",
+      "description": "Add the overlay bridge infrastructure under `src/shared/components/ui/overlay/`: registration hook(s), overlay instance context, and DOM helper utilities. Registration must track actual popup/backdrop presence rather than long-lived root mount, update tracked elements as refs change, unregister on close/teardown, and expose narrow bridge hooks for current overlay handle, topmost state, and element-based topmost checks. Preserve compatibility helpers for existing marker-driven callers during M2.",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T4",
+      "description": "Centralize all raw Base UI runtime ownership under `src/shared/components/ui/overlay/` while preserving import-compatible facades where practical. Re-home or rewrite the shared wrappers for dialog, alert-dialog, popover, select, dropdown-menu, tooltip, and hover-card/preview-card; clean up the type-only raw import in `src/shared/components/ui/command.tsx`; and move or rewrite the tooltip test so no raw Base UI imports or mocks remain anywhere under `src/` outside `ui/overlay/`. Remove hardcoded numeric z-index handling from migrated wrappers and route layering through the overlay stack while preserving required markers such as `data-dialog-content`, `data-dialog-backdrop`, and `data-lightbox-popup`.",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T5",
+      "description": "Complete the menu migration as a dedicated pass. Ensure both `DropdownMenuContent` and `DropdownMenuSubContent` register with the overlay stack, derive their layering from stack state instead of numeric classes or literals such as `z-50`, and preserve existing public props and behavior including submenu offsets and collision/placement options.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T6",
+      "description": "Migrate the media lightbox to the centralized overlay layer by introducing a sanctioned overlay-aware lightbox wrapper under `src/shared/components/ui/overlay/` and updating `src/domains/media-lightbox/components/LightboxShell.tsx` to use it instead of importing `@base-ui/react/dialog` directly. Preserve the current controlled-open contract, modal semantics, dismissal cancellation rules, custom pointer/click/touch handlers, container/marker exposure, and layout-driven styles, and make the overlay handle/topmost bridge available to lightbox hooks.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T7",
+      "description": "Retire DOM-marker and computed-z-index precedence logic for migrated overlay flows and centralize helper-based popup/container resolution. Replace `uiLayers.ts` topmost logic and update `LoraSelectorModal`, `useLightboxNavigation`, and `useLightboxShellInteractionHandlers` to use overlay-stack identity/topmost queries only, explicitly deleting `targetHasHigherZIndex()` and related fallback logic. In the same pass, migrate the named helper consumers (`CommunityLorasTab`, `MyLorasTab`, `sharedSections.tsx`, `useSlidingPane.ts`, `GuidanceVideoStrip.tsx`, `elementPolicy.ts`, `useMobileInteractions.ts`, and `useLightboxTransition.ts`) to shared overlay DOM helpers while keeping current marker/CSS compatibility intact.",
+      "depends_on": [
+        "T5",
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T8",
+      "description": "Execute the grep-driven cleanup for caller-side layering escape hatches on migrated Base UI overlays. Remove or neutralize `overlayClassName`, `zIndexBase`, layering-only `tooltipClassName`, and equivalent numeric z-index overrides from direct and forwarded consumer paths, including the known Lora, select, tooltip, and shot-selector flows. Preserve non-layering customization and leave unrelated non-overlay layout z-indexes alone. Treat the broad repo-wide numeric z-index grep as inventory only; use wrapper-only and migrated-consumer checks as the hard gate.",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T9",
+      "description": "Finish with proof. Add or update the focused unit/integration tests required by the plan for `overlayStack`, bridge hooks, menu submenu ownership, non-modal tooltip/preview-card behavior, lightbox precedence replacement, helper compatibility, and the required `open A -> open B -> close A -> close B` sequences for Dialog+Popover and Menu+Dialog. Then write a short throwaway reproduction script for the overlay pointer-events regression, run it to confirm the fix, delete the script, and run validation to green: relevant targeted tests first, `npx tsc --noEmit`, `npm test`, raw Base UI import greps, explicit empty greps for context-menu/drawer, wrapper-only z-index invariants, targeted migrated-consumer layering checks, and marker/CSS support greps. If any browser/runtime/manual-only verification is encountered, mark it `skipped` immediately with executor notes naming the blocker.",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Do not broaden scope into bespoke overlays. `ToolsPaneDrawer` is a custom fixed-position panel and remains out of scope unless a real Base UI drawer owner appears during execution.",
+    "`@base-ui/react/context-menu` and `@base-ui/react/drawer` are explicit verified N/A families for this repo revision. Their greps should stay empty before and after the migration.",
+    "Tooltip and preview-card are non-modal ordering-only overlays. They must receive stack identity/layering but must not capture opener focus, restore focus on close, or affect `document.body.style.pointerEvents`.",
+    "Overlay registration must follow actual popup/backdrop presence, not root mount lifetime. Long-lived roots that register while closed would recreate the same class of ordering bugs.",
+    "The overlay stack must become the only automated owner of body pointer-events and focus restoration for migrated modal overlays. Do not leave Base UI and wrapper logic competing for ownership.",
+    "Both menu popup branches matter. `DropdownMenuContent` and `DropdownMenuSubContent` each have their own portal/positioner lifecycle and both must register with the stack.",
+    "`LightboxShell` is a must-touch file. Raw `@base-ui/react/dialog` ownership cannot remain in that domain file after M2.",
+    "Retire computed-z-index precedence entirely for migrated lightbox/Lora flows. `targetHasHigherZIndex()`, `hasDialogAbove()`, and related DOM-order fallbacks should not survive as backups.",
+    "Preserve compatibility markers and CSS support during M2. Existing JS/CSS still depends on selectors such as `data-dialog-content`, `data-dialog-backdrop`, `data-lightbox-popup`, `[data-popup]`, `[data-side]`, `[role=\"listbox\"]`, and `role=\"menu\"`.",
+    "The broad repo-wide numeric `z-*` grep is noisy and not a clean pass/fail invariant. Use it for inventory only. The hard layering gates are wrapper-only invariants and targeted migrated-consumer checks.",
+    "No raw Base UI imports or mocks may remain anywhere under `src/` outside `src/shared/components/ui/overlay/`, including type-only imports and the tooltip test mock.",
+    "Keep wrappers thin and prop-compatible. If a wrapper drifts from the Base UI surface, the blast radius is large because existing consumers already depend on those facades.",
+    "Deferred-human checks must be treated exactly as deferred. If execution encounters runtime app interaction, browser-driving, drag smoke checks, or manual focus-trap verification, record `skipped` immediately with the blocker in executor notes and do not retry.",
+    "Do not worsen unrelated debt watch areas elsewhere in the repo while touching shared UI infrastructure."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Did the executor capture the actual current raw Base UI owner inventory, verify the state-store prerequisites, confirm context-menu/drawer absence, and document the modal vs non-modal containment rules before editing?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Does `overlayStack.ts` now exist with JSDoc-documented public actions/selectors, correct topmost/layer APIs, reverse-order modal focus restoration, and pointer-events cleanup that is independent of close order?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Do the new overlay bridge utilities register overlays only when popup/backdrop DOM is actually present, expose stable overlay identity/topmost hooks, and provide shared DOM helpers needed by current marker-based callers?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "After wrapper migration, are all raw Base UI imports and mocks confined to `src/shared/components/ui/overlay/`, with preview-card included, the tooltip test moved/rewritten, and migrated wrappers free of hardcoded numeric z-index ownership?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Do both menu popup branches (`DropdownMenuContent` and `DropdownMenuSubContent`) register with the overlay stack and avoid any hardcoded numeric z-index path such as `z-50` while preserving menu behavior?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Does `LightboxShell.tsx` stop importing `@base-ui/react/dialog` directly and instead use a sanctioned overlay-aware wrapper that preserves its existing modal, dismissal, event-handler, container, and marker contracts?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Have migrated lightbox/Lora flows stopped using DOM-marker or computed-z-index precedence, with helper consumers moved onto shared overlay DOM helpers and marker/CSS compatibility preserved?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Were layering-only caller escape hatches removed or neutralized from migrated overlay consumers and forwarded prop paths without disturbing unrelated non-overlay layout z-index usage?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Did the executor add the required focused tests, run a throwaway reproduction script and delete it, pass `npx tsc --noEmit` and `npm test`, and satisfy the invariant greps while marking any manual-only checks as `skipped` rather than `blocked`?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "meta_commentary": "Execution should stay narrow and aggressive about centralizing Base UI ownership rather than redesigning the app's broader overlay system. The critical judgment calls are: keep wrappers thin and prop-compatible; treat tooltip/preview-card as ordering-only overlays; make the overlay stack the sole automated owner of modal pointer-events and focus restoration; and remove competing DOM/computed-z-index precedence for migrated flows instead of leaving fallback branches behind. For validation, do not use the broad repo-wide numeric z-index grep as a literal pass/fail gate because it includes intentional non-overlay layout layers; the real hard gates are wrapper-only numeric-layer elimination, migrated-consumer escape-hatch cleanup, raw Base UI import elimination outside `ui/overlay`, and the required tests. If a task crosses into browser-driving, runtime app interaction, drag smoke tests, or manual keyboard/focus verification, stop immediately and mark that task `skipped` with explicit blocker evidence per the executor hard rule.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Audit raw Base UI owners, explicit N/A families, and menu submenu coverage",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Freeze overlay containment semantics before implementation",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Implement ordered `overlayStack.ts` lifecycle store",
+        "finalize_task_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Add registration utilities, identity bridge, and overlay DOM helpers",
+        "finalize_task_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Move all raw portal primitives into `src/shared/components/ui/overlay/`",
+        "finalize_task_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate the entire menu family including submenu portals",
+        "finalize_task_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate `LightboxShell` into the centralized overlay layer",
+        "finalize_task_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Replace topmost precedence logic with stack bridge hooks",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Centralize container resolution and popup-marker helpers",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Execute grep-driven cleanup for layering-only overrides",
+        "finalize_task_ids": [
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Add focused tests for stack ownership, bridge hooks, submenu, and compatibility",
+        "finalize_task_ids": [
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Validate with invariant greps and cheapest-first checks",
+        "finalize_task_ids": [
+          "T9"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All 12 approved plan steps were reviewed and mapped to at least one execution task. The only deliberate judgment call is that the noisy repo-wide numeric z-index grep is treated as exploratory inventory rather than a hard invariant; this matches the gate guidance and is captured in T8/T9 plus the watch items.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": null,
+  "baseline_test_command": null,
+  "baseline_test_note": "No supported test runner detected on PATH (looked for: pytest). Configure test_command in state config to specify one."
+}

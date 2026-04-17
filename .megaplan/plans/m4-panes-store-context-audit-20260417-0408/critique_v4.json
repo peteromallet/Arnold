@@ -1,0 +1,126 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Re-checked the revised counting contract against `src/tools/travel-between-images/providers/VideoTravelSettingsProvider.tsx` and the current grep surface. The plan now explicitly says consumer counts are based on external production consumers of the exported surface and exclude same-file helper wiring, tests, and mocks, which matches the repository reality where `useVideoTravelSettings()` has four external production call sites but many same-file focused-hook uses.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked step 6 against the approved brief and the repo's current lint/quality setup in `package.json`, `eslint.config.js`, and `scripts/quality/`. The brief only requires an automated guard for new fat `createContext(...)` usage, but the revised plan now requires automation for over-threshold recomposed hooks as well; with repo examples like `useProject()` and `useVideoTravelSettings()`, that is a broader deliverable than the approved requirement and introduces extra milestone scope beyond the panes migration itself.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Read `src/shared/contexts/PanesContext.tsx` again and confirmed the technical target is still accurate: the codebase already split panes into `PaneLockPolicyContext`, `PaneLayoutContext`, and `PaneSelectionContext`, and the remaining wide subscription surface is the exported `usePanes()` recomposition hook. The revised plan is technically sound on that point because it explicitly forbids recreating a broad aggregate facade on top of Zustand.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the revised store direction against existing Zustand patterns in `src/shared/state/selectionStore.ts` and `src/tools/video-editor/hooks/timelineStore.ts`. Those store migrations either expose an explicit test reset hook (`__resetSelectionStoreForTests`) or preserve an optional/mounted provider boundary (`useTimelineStoreApiSafe` and mounted gating); the plan talks about test updates and bootstrap behavior, but it still does not explicitly require an equivalent panes-store reset/lifecycle contract, so a literal implementation could leave singleton pane state leaking across tests or silently change the current outside-provider behavior.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Searched the repository again and the broader context-as-pubsub pattern is still real beyond panes. `useProject()` appears in 41 non-test production files, and the lightbox/context layer still exposes broad safe hooks such as `useImageEditCanvasSafe()` and the `useLightbox*Safe()` family, so keeping panes as the first migration while auditing the rest remains the right overall shape.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the plan's wrapper-hook inventory command against the actual exported safe/access hooks under `src/domains/media-lightbox/contexts`. The regex in step 1 only names `useProject()`, `useVideoTravelSettings()`, `use[A-Z]+Settings()`, `useImageEditCanvasSafe()`, and `useLightbox(Core|Media|Variants|Navigation)Safe()`, so it would miss other repo surfaces like `useVideoEditSafe()`, `useImageEditFormSafe()`, and `useImageEditStatusSafe()`. Those hooks likely stay below threshold, but the plan claims an exhaustive post-panes audit, and this inventory method is still narrower than the full related surface.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Re-ran the panes call-site search and confirmed the revised plan stays grounded in the real migration surface: `usePanes()` still appears across app shell files, lightbox environment hooks, task navigation, video editor shell, travel-between-images pages, and multiple tests such as `AppProviders.test.tsx`, `LayoutMainContent.test.tsx`, and `PreviewPersistence.test.tsx`. Treating those tests and harnesses as part of the change set is still correct.",
+          "flagged": false
+        },
+        {
+          "detail": "Compared the revised plan with the existing store-test infrastructure in `src/shared/state/selectionStore.ts` and related test files. Because this repo uses singleton Zustand stores plus explicit `__reset...ForTests()` helpers to avoid cross-test contamination, deleting `PanesProvider` in favor of a panes store also needs an explicit reset helper and test-harness migration path; the plan currently mentions general test updates but does not call out that supporting infrastructure, which leaves a real risk of order-dependent pane-state leakage in suites that stop mocking the old context module.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Sampled the high-level panes callers again and the plan's emphasis remains justified. `src/tools/video-editor/components/AgentChat/AgentChat.tsx`, `src/tools/travel-between-images/pages/ShotEditorView.tsx`, `src/features/tasks/components/TasksPane/TasksPane.tsx`, and `src/tools/video-editor/components/VideoEditorShell.tsx` all consume multiple pane values together, so these are still the places most likely to accidentally recreate a broad grouped selector if the migration is careless.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked additional action-heavy callers that are not just passive readers, including `src/app/hooks/useGlobalPaneShortcuts.ts`, `src/app/Layout.tsx`, and `src/shared/components/ProductTour/ProductTour.tsx`. These callers mix current lock booleans with multiple setters and reset behavior, but the revised plan's directive to mirror existing panes actions and migrate from a full grep-driven checklist appears sufficient for them; I did not find a remaining caller-specific gap after the revision.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "scope-automation-0",
+      "concern": "Context audit automation: the revised plan expands the required guard from the brief's fat-`createContext` check to semantic analysis of recomposed hooks like `useProject()` and `useVideoTravelSettings()`, which is broader than the approved requirement and adds avoidable policy/tooling scope to the milestone.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "The approved brief only requires a guard that flags new `createContext` usage with more than 10 fields, while revised step 6 requires automation for both `createContext` declarations and recomposed compatibility hooks."
+    },
+    {
+      "id": "all_locations-wrapper-hooks-0",
+      "concern": "Context audit inventory: the revised wrapper-hook grep is still not exhaustive, because it omits existing repo surfaces such as `useVideoEditSafe()`, `useImageEditFormSafe()`, and `useImageEditStatusSafe()`, so the audit doc can still miss related context access surfaces even if panes migration lands cleanly.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Step 1's hook inventory regex only targets `useProject`, `useVideoTravelSettings`, `use[A-Z]+Settings`, `useImageEditCanvasSafe`, and `useLightbox(Core|Media|Variants|Navigation)Safe`, but `src/domains/media-lightbox/contexts/VideoEditContext.tsx`, `ImageEditFormContext.tsx`, and `ImageEditStatusContext.tsx` export additional safe wrapper hooks."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 9: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 11: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-3",
+      "concern": "Criterion 12: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "issue_hints",
+    "correctness",
+    "scope",
+    "callers",
+    "FLAG-M4-006"
+  ],
+  "disputed_flag_ids": []
+}

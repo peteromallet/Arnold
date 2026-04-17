@@ -11,7 +11,13 @@
  */
 
 import React, { useMemo } from 'react';
-import { ImageGenerationFormContext } from './ImageGenerationFormContext.token';
+import {
+  ImageGenerationFormCoreContext,
+  ImageGenerationFormLorasContext,
+  ImageGenerationFormPromptsContext,
+  ImageGenerationFormReferencesContext,
+  ImageGenerationFormUIContext,
+} from './ImageGenerationFormContext.token';
 import type { ImageGenerationFormUIState, FormUIActions } from './state/useFormUIState';
 import type {
   FormCoreState,
@@ -53,9 +59,23 @@ export function ImageGenerationFormProvider({
   children,
 }: ImageGenerationFormProviderProps) {
   return (
-    <ImageGenerationFormContext.Provider value={value}>
-      {children}
-    </ImageGenerationFormContext.Provider>
+    <ImageGenerationFormUIContext.Provider value={{ uiState: value.uiState, uiActions: value.uiActions }}>
+      <ImageGenerationFormCoreContext.Provider value={value.core}>
+        <ImageGenerationFormPromptsContext.Provider
+          value={{ prompts: value.prompts, promptHandlers: value.promptHandlers }}
+        >
+          <ImageGenerationFormReferencesContext.Provider
+            value={{ references: value.references, referenceHandlers: value.referenceHandlers }}
+          >
+            <ImageGenerationFormLorasContext.Provider
+              value={{ loras: value.loras, loraHandlers: value.loraHandlers }}
+            >
+              {children}
+            </ImageGenerationFormLorasContext.Provider>
+          </ImageGenerationFormReferencesContext.Provider>
+        </ImageGenerationFormPromptsContext.Provider>
+      </ImageGenerationFormCoreContext.Provider>
+    </ImageGenerationFormUIContext.Provider>
   );
 }
 

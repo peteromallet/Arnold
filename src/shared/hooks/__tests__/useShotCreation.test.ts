@@ -6,6 +6,19 @@ import React from 'react';
 // Mock contexts and hooks
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: vi.fn(() => ({ selectedProjectId: 'test-project-id' })),
+  useProjectSelectionContext: vi.fn(() => ({ selectedProjectId: 'test-project-id', project: null, setSelectedProjectId: vi.fn() })),
+  useProjectCrudContext: vi.fn(() => ({
+    projects: [],
+    isLoadingProjects: false,
+    fetchProjects: vi.fn(),
+    addNewProject: vi.fn(),
+    isCreatingProject: false,
+    updateProject: vi.fn(),
+    isUpdatingProject: false,
+    deleteProject: vi.fn(),
+    isDeletingProject: false,
+  })),
+  useProjectIdentityContext: vi.fn(() => ({ userId: null })),
 }));
 
 vi.mock('@/shared/contexts/ShotsContext', () => ({

@@ -199,7 +199,7 @@ export const ShotSelector: React.FC<ShotSelectorProps> = ({
         </PopoverTrigger>
         <PopoverContent
           className={cn(
-            "p-0 z-[10000]",
+            "p-0",
             styles.content,
             contentClassName
           )}

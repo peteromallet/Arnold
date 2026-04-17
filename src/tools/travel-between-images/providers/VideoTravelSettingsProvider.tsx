@@ -33,7 +33,10 @@ import React, {
 import { useQueryClient } from '@tanstack/react-query';
 import { Shot } from '@/domains/generation/types';
 import { useShotSettings, UseShotSettingsReturn } from '../hooks/settings/useShotSettings';
-import { useVideoTravelSettingsHandlers, VideoTravelSettingsHandlers } from '../hooks/settings/useVideoTravelSettingsHandlers';
+import {
+  useVideoTravelSettingsHandlers as useVideoTravelSettingsHandlersCore,
+  VideoTravelSettingsHandlers,
+} from '../hooks/settings/useVideoTravelSettingsHandlers';
 import {
   VideoTravelSettings,
   PhaseConfig,
@@ -79,8 +82,29 @@ interface VideoTravelSettingsContextValue {
   availableLoras: LoraModel[];
 }
 
-// Export the context for direct useContext access in bridge hooks
-export const VideoTravelSettingsContext = createContext<VideoTravelSettingsContextValue | null>(null);
+interface VideoTravelSettingsStatusValue {
+  status: VideoTravelSettingsContextValue['status'];
+  isDirty: boolean;
+  isLoading: boolean;
+  shotId: string | null;
+  projectId: string | null;
+  save: () => Promise<void>;
+  saveImmediate: () => Promise<void>;
+  updateField: UseShotSettingsReturn['updateField'];
+  updateFields: UseShotSettingsReturn['updateFields'];
+}
+
+const VideoTravelSettingsDataContext = createContext<VideoTravelSettings | null>(null);
+const VideoTravelSettingsHandlersContext = createContext<VideoTravelSettingsHandlers | null>(null);
+const VideoTravelSettingsStatusContext = createContext<VideoTravelSettingsStatusValue | null>(null);
+const VideoTravelSettingsLorasContext = createContext<LoraModel[] | null>(null);
+
+function requireVideoTravelSettingsContext<T>(value: T | null, hookName: string): T {
+  if (!value) {
+    throw new Error(`${hookName} must be used within VideoTravelSettingsProvider`);
+  }
+  return value;
+}
 
 // =============================================================================
 // PROVIDER COMPONENT
@@ -148,7 +172,7 @@ export const VideoTravelSettingsProvider: React.FC<VideoTravelSettingsProviderPr
   shotSettingsRef.current = shotSettings;
 
   // All handlers
-  const handlers = useVideoTravelSettingsHandlers({
+  const handlers = useVideoTravelSettingsHandlersCore({
     shotSettingsRef,
     currentShotId: shotId || null,
     selectedShot,
@@ -289,22 +313,17 @@ export const VideoTravelSettingsProvider: React.FC<VideoTravelSettingsProviderPr
     handleGuidanceScaleChange: setGuidanceScale,
   }), [handlers, setGuidanceScale, setSelectedModel]);
 
-  // Memoize context value
-  const contextValue = useMemo<VideoTravelSettingsContextValue>(() => ({
-    settings: shotSettings.settings,
+  const statusValue = useMemo<VideoTravelSettingsStatusValue>(() => ({
     status: shotSettings.status,
     isDirty: shotSettings.isDirty,
     isLoading: shotSettings.status === 'loading' || shotSettings.status === 'idle',
     shotId: shotSettings.shotId,
     projectId: projectId || null,
-    handlers: providerHandlers,
     updateField: shotSettings.updateField,
     updateFields: shotSettings.updateFields,
     save: shotSettings.save,
     saveImmediate: shotSettings.saveImmediate,
-    availableLoras,
   }), [
-    shotSettings.settings,
     shotSettings.status,
     shotSettings.isDirty,
     shotSettings.shotId,
@@ -313,27 +332,96 @@ export const VideoTravelSettingsProvider: React.FC<VideoTravelSettingsProviderPr
     shotSettings.save,
     shotSettings.saveImmediate,
     projectId,
-    providerHandlers,
-    availableLoras,
   ]);
 
   return (
-    <VideoTravelSettingsContext.Provider value={contextValue}>
-      {children}
-    </VideoTravelSettingsContext.Provider>
+    <VideoTravelSettingsStatusContext.Provider value={statusValue}>
+      <VideoTravelSettingsDataContext.Provider value={shotSettings.settings}>
+        <VideoTravelSettingsHandlersContext.Provider value={providerHandlers}>
+          <VideoTravelSettingsLorasContext.Provider value={availableLoras}>
+            {children}
+          </VideoTravelSettingsLorasContext.Provider>
+        </VideoTravelSettingsHandlersContext.Provider>
+      </VideoTravelSettingsDataContext.Provider>
+    </VideoTravelSettingsStatusContext.Provider>
   );
 };
 
-// =============================================================================
-// BASE HOOK - Full context access
-// =============================================================================
+export function useVideoTravelSettingsStatus(): VideoTravelSettingsStatusValue {
+  return requireVideoTravelSettingsContext(
+    useContext(VideoTravelSettingsStatusContext),
+    'useVideoTravelSettingsStatus',
+  );
+}
 
+export function useVideoTravelSettingsMutations() {
+  const settings = requireVideoTravelSettingsContext(
+    useContext(VideoTravelSettingsDataContext),
+    'useVideoTravelSettingsMutations',
+  );
+  const status = useVideoTravelSettingsStatus();
+
+  return {
+    settings,
+    status: status.status,
+    shotId: status.shotId,
+    updateField: status.updateField,
+    updateFields: status.updateFields,
+  };
+}
+
+export function useVideoTravelSettingsHandlers() {
+  return requireVideoTravelSettingsContext(
+    useContext(VideoTravelSettingsHandlersContext),
+    'useVideoTravelSettingsHandlers',
+  );
+}
+
+function useVideoTravelSettingsData() {
+  return requireVideoTravelSettingsContext(
+    useContext(VideoTravelSettingsDataContext),
+    'useVideoTravelSettingsData',
+  );
+}
+
+function useVideoTravelSettingsLoras() {
+  return requireVideoTravelSettingsContext(
+    useContext(VideoTravelSettingsLorasContext),
+    'useVideoTravelSettingsLoras',
+  );
+}
+
+/** @deprecated Migrate production code to the narrower video-travel settings hooks. */
 export function useVideoTravelSettings(): VideoTravelSettingsContextValue {
-  const ctx = useContext(VideoTravelSettingsContext);
-  if (!ctx) {
-    throw new Error('useVideoTravelSettings must be used within VideoTravelSettingsProvider');
-  }
-  return ctx;
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
+  const {
+    status,
+    isDirty,
+    isLoading,
+    shotId,
+    projectId,
+    save,
+    saveImmediate,
+    updateField,
+    updateFields,
+  } = useVideoTravelSettingsStatus();
+  const availableLoras = useVideoTravelSettingsLoras();
+
+  return {
+    settings,
+    status,
+    isDirty,
+    isLoading,
+    shotId,
+    projectId,
+    handlers,
+    updateField,
+    updateFields,
+    save,
+    saveImmediate,
+    availableLoras,
+  };
 }
 
 // =============================================================================
@@ -344,7 +432,8 @@ export function useVideoTravelSettings(): VideoTravelSettingsContextValue {
  * Prompt-related settings
  */
 export function usePromptSettings() {
-  const { settings, handlers } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
   return useMemo(() => ({
     prompt: settings.prompt || '',
     negativePrompt: settings.negativePrompt || '',
@@ -363,7 +452,9 @@ export function usePromptSettings() {
  * Motion-related settings
  */
 export function useMotionSettings() {
-  const { settings, handlers, availableLoras } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
+  const availableLoras = useVideoTravelSettingsLoras();
   return useMemo(() => ({
     amountOfMotion: settings.amountOfMotion ?? 50,
     motionMode: settings.motionMode || 'basic',
@@ -381,7 +472,8 @@ export function useMotionSettings() {
  * Frame/duration settings
  */
 export function useFrameSettings() {
-  const { settings, handlers } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
   return useMemo(() => ({
     batchVideoFrames: settings.batchVideoFrames ?? 61,
     batchVideoSteps: settings.batchVideoSteps ?? 6,
@@ -391,7 +483,8 @@ export function useFrameSettings() {
 }
 
 export function useModelSettings() {
-  const { settings, handlers } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
   return useMemo(() => ({
     selectedModel: coerceSelectedModel(settings.selectedModel),
     guidanceScale: settings.guidanceScale,
@@ -406,7 +499,8 @@ export function useModelSettings() {
  * Phase config (advanced mode) settings
  */
 export function usePhaseConfigSettings() {
-  const { settings, handlers } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
   return useMemo(() => ({
     phaseConfig: settings.phaseConfig,
     selectedPhasePresetId: settings.selectedPhasePresetId,
@@ -424,7 +518,8 @@ export function usePhaseConfigSettings() {
  * Steerable motion settings (seed, model, etc.)
  */
 export function useSteerableMotionSettings() {
-  const { settings, handlers } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
   return useMemo(() => ({
     steerableMotionSettings: settings.steerableMotionSettings,
     setSteerableMotionSettings: handlers.handleSteerableMotionSettingsChange,
@@ -435,7 +530,9 @@ export function useSteerableMotionSettings() {
  * LoRA settings
  */
 export function useLoraSettings() {
-  const { settings, handlers, availableLoras } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
+  const availableLoras = useVideoTravelSettingsLoras();
   return useMemo(() => ({
     selectedLoras: settings.loras || [],
     availableLoras,
@@ -447,7 +544,9 @@ export function useLoraSettings() {
  * Generation mode (batch vs timeline)
  */
 export function useGenerationModeSettings() {
-  const { settings, handlers, shotId } = useVideoTravelSettings();
+  const settings = useVideoTravelSettingsData();
+  const handlers = useVideoTravelSettingsHandlers();
+  const { shotId } = useVideoTravelSettingsStatus();
   console.log('[ModeDebug][GenModeSettings] shotId=%s raw generationMode=%s resolved=%s', shotId, settings.generationMode, settings.generationMode || 'timeline');
   return useMemo(() => ({
     generationMode: settings.generationMode || 'timeline',
@@ -461,7 +560,8 @@ export function useGenerationModeSettings() {
  * Save operations
  */
 export function useSettingsSave() {
-  const { save, saveImmediate, handlers, isDirty, status } = useVideoTravelSettings();
+  const handlers = useVideoTravelSettingsHandlers();
+  const { save, saveImmediate, isDirty, status } = useVideoTravelSettingsStatus();
   return useMemo(() => ({
     save,
     saveImmediate,

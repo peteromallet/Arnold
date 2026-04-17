@@ -1,0 +1,374 @@
+{
+  "robustness": "standard",
+  "signals": {
+    "iteration": 6,
+    "idea": "Milestone M1 from docs/state_management_refactor_plan.md \u2014 Zustand foundation + port the smallest consumer.\n\nGoal: establish the store-factory pattern. Add Zustand. Write a generic entity-scoped store factory. Port `useJoinClipsSettings.ts` as the first consumer to validate the factory shape. No other migrations. This is the foundation that M1a, M1b, M1c, M3, M4 all build on.\n\n## Deliverables\n\n1. **Install Zustand**:\n   ```\n   npm install zustand\n   ```\n   Add to `package.json` dependencies. Verify no type conflicts.\n\n2. **`src/shared/state/createEntityStore.ts`** \u2014 generic entity-scoped store factory.\n\n   The factory creates a single Zustand store per domain (settings, selection, timeline, etc.) with entity state keyed by an `entityId`. Callers get a hook `useEntity(entityId)` that returns the shape needed by consumers.\n\n   **Factory signature:**\n   ```typescript\n   interface EntityStoreConfig<T extends object> {\n     toolId: string;                       // identifies the store (e.g. \"join-clips\")\n     defaults: T;                          // initial settings shape\n     load: (entityId: string) => Promise<{ db: T | null; lastUsed: T | null }>;\n     save: (entityId: string, data: T) => Promise<void>;\n     textFieldKeys?: readonly (keyof T)[];  // fields that save on blur/flush instead of debounce\n     persistenceDebounceMs?: number;         // default 300\n   }\n\n   interface EntityStoreApi<T extends object> {\n     useEntity: (entityId: string) => EntityView<T>;\n     // plus: direct action access for tests\n     getState: () => EntityStoreState<T>;\n   }\n\n   interface EntityView<T> {\n     settings: T;\n     status: 'idle' | 'loading' | 'ready' | 'saving' | 'error';\n     error: Error | null;\n     hasPersistedData: boolean;\n     updateField: <K extends keyof T>(key: K, value: T[K]) => void;\n     updateFields: (patch: Partial<T>) => void;\n     updateTextField: <K extends keyof T>(key: K, value: T[K]) => void;\n     flushTextFields: () => Promise<void>;\n     save: () => Promise<void>;\n     saveImmediate: () => Promise<void>;\n     revert: () => void;\n     reset: () => void;\n   }\n\n   function createEntityStore<T extends object>(config: EntityStoreConfig<T>): EntityStoreApi<T>;\n   ```\n\n   **Required behaviors:**\n   - Single Zustand store per factory instantiation. State shape: `{ entities: Record<entityId, EntityState<T>> }`.\n   - `useEntity(id)` subscribes the component to just that entity's slice. Different entity IDs do not cause cross-renders.\n   - Use `shallow` equality (from `zustand/shallow`) for selectors that return objects or arrays; default `Object.is` for primitives.\n   - Atomic bootstrap action: `bootstrapEntity({entityId, db, lastUsed})` merges in one dispatch \u2014 no multi-transition load sequence.\n   - On first mount for an entity: `useEntity` triggers a lazy load via `config.load()` and dispatches bootstrap.\n   - `updateField` / `updateFields`: optimistic write to settings, schedule debounced save.\n   - `updateTextField`: same state write but does NOT schedule the debounce \u2014 intended for prompt/textarea fields that should save on blur or flush.\n   - `flushTextFields`: force-save any pending text-field edits immediately.\n   - Debounce: 300ms default, configurable via `config.persistenceDebounceMs`.\n   - On React Query data arrival (for entities that source from RQ): scaffolding is responsible; the factory itself doesn't import RQ. The factory's `load` is invoked externally.\n\n3. **Port `useJoinClipsSettings.ts`** \u2014 smallest consumer, 5 fields, lowest risk.\n\n   **Current shape (verify at milestone start):**\n   ```\n   src/tools/join-clips/hooks/useJoinClipsSettings.ts\n   src/shared/lib/joinClips/defaults.ts\n   ```\n\n   **Port rules:**\n   - `useJoinClipsSettings(shotId: string)` public return shape UNCHANGED. Internal implementation switches to `createEntityStore`.\n   - Use the existing `JoinClipsSettings` type from current defaults.ts.\n   - Load fn and save fn use the existing `useToolSettings` / Supabase mechanism underneath. The factory is a layer above the existing save/load \u2014 don't reinvent persistence yet (that's M1a's job).\n   - Verify: `useJoinClipsSettings` tests pass unchanged. If tests reference internal state of the old hook, update the tests to use the public API.\n\n## Repo conventions (from reigh-app/CLAUDE.md)\n\n- Prefer editing existing files; don't create unnecessary new ones. `createEntityStore.ts` is new and justified.\n- No hardcoded colors. This milestone doesn't add UI \u2014 if any test renders, use theme tokens.\n- TypeScript strict. No `any`.\n- Don't modify any edge function, supabase migration, or worker-orchestrator code.\n- Don't touch `useAutoSaveSettings.ts` or any of the settings persistence helpers in this milestone \u2014 that's M1a.\n\n## Gate criteria (for human reviewer)\n\n- `npx tsc --noEmit` clean.\n- `npm test` at M0 baseline (4562 passing, 0 failing \u2014 any regression blocks).\n- `useJoinClipsSettings` tests unchanged behavior (may need test update if internals-coupled).\n- `createEntityStore` tests cover: bootstrap, update, flush, revert, reset, selector isolation between entities.\n- M0 telemetry unchanged (we didn't touch any instrumented surface).\n\n## Out of scope\n\n- Do not migrate any other consumer of `useAutoSaveSettings` (that's M1a).\n- Do not touch selection or timeline state (M1b, M1c).\n- Do not refactor `useDebouncedSettingsSave.ts` (M1a).\n- Do not change React Query behavior.\n- Do not add new cross-cutting patterns beyond the factory.\n\n## Branch\n\n`megaplan/m1-foundation-store` off main (pull latest main first \u2014 M0's telemetry PR may or may not be merged).\n\n## Base commit note\n\nIf this runs immediately after M0, M0's branch `megaplan/m0-render-telemetry` may still be unmerged on GitHub. This is fine \u2014 M1 depends conceptually on M0's existence, but the M0 branch doesn't need to be merged for M1 to proceed. M1 branches from origin/main and adds Zustand-related work in files that don't overlap with M0's telemetry changes.",
+    "significant_flags": 7,
+    "unresolved_flags": [
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: Checked Step 5 against the actual hook signature in `src/shared/state/createEntityStore.ts:39-44,400-449` and the existing null/undefined caller coverage in `src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:64-88`. The plan says \"when `projectId` is truthy, subscribe with `useEntity(projectId)`\" and \"when `projectId` is falsy, do not call `useEntity)`\", but `useEntity` is itself a hook, so that wording still needs a concrete hook-safe adapter strategy or the implementation can violate the Rules of Hooks while trying to preserve the current disabled contract.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: Checked the proposed prompt-field rewrite against the real Join Clips schema in `src/shared/lib/vaceDefaults.ts:74`, `src/shared/components/JoinClipsSettingsForm/types.ts:40-41`, and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:94-110`. `enhancePrompt` is a boolean switch, not a textarea-like field, so Step 6's instruction to route `prompt`, `negativePrompt`, and `enhancePrompt` through `updateTextField(...)` and blur plumbing is technically wrong for the third field and would blur the intended text-field semantics.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Checked the supporting unit-test surface for that prop widening in `src/shared/components/JoinClipsSettingsForm/types.test.ts:4-49` and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.test.tsx:61-138`. Those tests directly encode the current prop contract, so even with Step 8's generic \"narrowly affected prompt-component, form-stack, or generate-path test\" language, the implementation steps still leave a minor gap in explicitly naming these supporting test files as part of the required change set.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the current public hook surface in `src/shared/settings/hooks/useAutoSaveSettings.ts:123-136,590-608` against Step 5's delegation list. `useJoinClipsSettings` currently exposes more than the plan enumerates, including `entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, `initializeFrom`, and the full error/save surface, so the plan still leaves a real risk that an adapter rewrite could narrow the returned API while believing it preserved the \"public return shape unchanged\" requirement.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the actual setter callers in `src/tools/join-clips/pages/JoinClipsPage.tsx:95-103` and the corresponding prompt-form props in `src/shared/components/JoinClipsSettingsForm/types.ts:27-41`. The proposed changed callers are heterogeneous: `setPrompt` and `setNegativePrompt` pass free-text strings, while `setEnhancePrompt` is a boolean switch callback, so only the first two genuinely fit `updateTextField` plus blur/flush semantics.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-M1-011",
+        "concern": "Join Clips adapter: Step 5 still lacks a hook-safe strategy for the current `null`/`undefined` caller contract because `createEntityStore.useEntity(id)` is a hook but the plan says not to call it when `projectId` is falsy.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-M1-012",
+        "concern": "Join Clips prompt plumbing: Step 6 groups `enhancePrompt` with textarea-style fields even though the repository models it as a boolean switch, so blur and `updateTextField(...)` semantics should apply only to `prompt` and `negativePrompt`.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "resolved_flags": [
+      {
+        "id": "FLAG-M1-001",
+        "concern": "State management refactor: Join Clips is no longer a narrow 5-field pilot; the current settings shape includes VACE defaults, LoRA state, and persisted clip arrays, so the migration and test surface are materially larger than the plan states.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      },
+      {
+        "id": "FLAG-M1-002",
+        "concern": "State management refactor: the plan does not preserve the current pending-load protection from `useAutoSaveSettings`, so a late settings load can overwrite optimistic local edits in the new store.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      },
+      {
+        "id": "FLAG-M1-003",
+        "concern": "State management refactor: the proposed Join Clips port does not actually exercise the new text-field API, because current prompt setters call `updateField` and would need caller-side rewiring to use `updateTextField` or flush semantics.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      },
+      {
+        "id": "issue_hints-1",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the revised plan against the actual reader-mode implementation surface in [createEntityStore.ts](/workspace/reigh-app/src/shared/state/createEntityStore.ts:410). The plan now matches the tiebreaker at the architectural level, but it still does not name the concrete change needed to keep Join Clips reader-only: `useEntity(entityId)` currently always triggers `ensureEntity(entityId)`, which in turn calls `config.load(entityId)`. Without an explicit bypass or alternate sync path for RQ-backed consumers, the execution would drift back toward the rejected authoritative-load behavior.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "issue_hints-2",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the text-field requirement against the current Join Clips prompt UI in [JoinClipsPromptSettings.tsx](/workspace/reigh-app/src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:48). The plan's pre-generate flush covers one flush path, but these textareas currently only call setter functions on change/clear/voice input and have no blur handler. That means the revised plan only partially covers the approved requirement that text fields save on blur or flush.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "scope-1",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Reviewed the Join Clips page adapter in `src/tools/join-clips/pages/JoinClipsPage.tsx:86-135`. All prompt-like setters (`prompt`, `negativePrompt`, `enhancePrompt`) currently call `joinSettings.updateField(...)`, not `updateTextField(...)`, so the new text-field blur/flush behavior from the factory would not actually be exercised by this consumer unless the port also touches the page or form adapter layer. That broadens the migration beyond a hook-only swap.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      },
+      {
+        "id": "scope-2",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Reviewed the clip persistence path in `src/tools/join-clips/hooks/useClipManager.ts:171-186`. Join Clips is not only a small scalar settings consumer; it also pushes `clips` and `transitionPrompts` array payloads back through `joinSettings.updateFields(...)` on hydration and edit flows. That means the pilot consumer already exercises larger, higher-churn object graphs than the plan summary implies.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      },
+      {
+        "id": "callers-1",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the live `useJoinClipsSettings` caller in [JoinClipsPage.tsx](/workspace/reigh-app/src/tools/join-clips/pages/JoinClipsPage.tsx:248) and the hook tests in [useJoinClipsSettings.test.ts](/workspace/reigh-app/src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:71). The caller and tests both exercise `null` and `undefined` project IDs, but the factory API is `useEntity(entityId: string)`. The revised plan keeps talking about `useEntity(projectId)` without spelling out the null-disabled wrapper behavior that the current hook contract requires, so this edge-case caller handling is still under-specified.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "callers-2",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the prompt-like callers that would be rewired for `updateTextField(...)`. The actual setters are still passed through a shared props adapter with only `(value) => void` callbacks, so adopting text-field semantics is caller-compatible for the page layer, but only if the implementation also introduces a flush path elsewhere because the present caller contract has no blur callback to piggyback on.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "FLAG-M1-004",
+        "concern": "State synchronization: the revised pure-store plus hook-bridge design still leaves the initial read path under-specified, because `useEntity()` lazy loading and `useToolSettings()` observation can fetch and bootstrap the same entity independently.",
+        "resolution": "Revised the plan to define a single authoritative first-read path, gate the React Query observer until after first bootstrap, and add explicit dedupe/refresh rules so the Join Clips bridge cannot double-fetch or repeatedly bootstrap the same entity."
+      },
+      {
+        "id": "correctness",
+        "concern": "Are the proposed changes technically correct?: Checked the current `createEntityStore` control flow in `src/shared/state/createEntityStore.ts:280-446`. `useEntity(entityId)` always subscribes first and then calls `ensureEntity(entityId)` in an effect, while the store currently has no pre-subscription hook or reader-mode registration API. The revised plan correctly adds an external-entity bypass and sync primitive, but it still does not specify a React-safe sequencing point for the required 'register before subscribe' step, so the most correctness-sensitive seam remains slightly under-specified and could otherwise drift into render-time store mutation or accidental `config.load()` calls.",
+        "resolution": "Refined the plan at the last concrete seams: it now specifies a React-safe registration sequence for external entities, explicitly includes the intermediary shared-form prop/type wiring needed for prompt blur saves, and clarifies that Join Clips validates the store in reader/sync mode while direct factory-owned write actions are proven by factory tests."
+      },
+      {
+        "id": "FLAG-M1-005",
+        "concern": "React Query integration: Recurring debt: the plan still changes the initial query ownership/timing for Join Clips by disabling `useToolSettings` until after store bootstrap, which conflicts with both the milestone's out-of-scope note and the settled tiebreaker that RQ-backed settings stay RQ-authoritative.",
+        "resolution": "Rewrote the plan around the settled reader-mode architecture: Join Clips stays React Query-authoritative, `createEntityStore.load` is no longer part of the Join Clips initial-read path, and the hook now validates the store via boundary-internal RQ-to-store sync instead of a store-owned bootstrap flow."
+      },
+      {
+        "id": "scope",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Checked the file-level work breakdown in Step 7 against the real caller code. The plan names both `JoinClipsPage.tsx` and `useJoinClipsGenerate.ts` for prompt-like rewiring, but the actual prompt setters live in `JoinClipsPage.tsx:95-103`; `useJoinClipsGenerate.ts` only needs the flush boundary before task submission. That mismatch is minor, but it is still a real planning inaccuracy about where the setter changes actually land.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "FLAG-M1-006",
+        "concern": "Join Clips adapter: `useJoinClipsSettings` currently supports `null` / `undefined` project IDs via a disabled `useAutoSaveSettings` path, but the revised plan does not explain how that caller contract is preserved once the hook introduces `createEntityStore.useEntity(entityId: string)` internally.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "FLAG-M1-007",
+        "concern": "State ownership: the revised plan still leaves ambiguous whether local Join Clips writes flow through `useAutoSaveSettings`, `createEntityStore`, or both, even though both layers already implement debounce/save/revert/reset and text-field semantics.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "FLAG-M1-008",
+        "concern": "Hook callers: the revised plan does not explicitly preserve the current `null`/`undefined` disabled behavior of `useJoinClipsSettings` when wrapping the string-only `useEntity(entityId)` API.",
+        "resolution": "Tightened the plan at the concrete seams: it now adds an explicit external-entity bypass/sync path to the factory, makes `useAutoSaveSettings` the sole write owner in the Join Clips adapter, preserves `null`/`undefined` disabled behavior explicitly, treats the hook tests as required integration work, and adds a real blur-based flush path for prompt fields in addition to pre-generate flush."
+      },
+      {
+        "id": "FLAG-M1-009",
+        "concern": "Join Clips form plumbing: the new blur-save path also requires widening the shared Join Clips form prop/types surface, but the revised plan only names the page adapter and prompt component explicitly.",
+        "resolution": "`src/shared/components/JoinClipsSettingsForm/types.ts:17-50` and `src/shared/components/JoinClipsSettingsForm/JoinClipsSettingsForm.tsx:49-151` currently expose only setter callbacks for prompt fields, so a blur callback cannot reach `JoinClipsPromptSettings` without additional intermediary wiring."
+      },
+      {
+        "id": "FLAG-M1-010",
+        "concern": "Entity-store registration ordering: the revised plan adds the right reader-mode primitives, but it still leaves the pre-subscription registration step under-specified against the current `useEntity()` implementation.",
+        "resolution": "Refined the plan at the last concrete seams: it now specifies a React-safe registration sequence for external entities, explicitly includes the intermediary shared-form prop/type wiring needed for prompt blur saves, and clarifies that Join Clips validates the store in reader/sync mode while direct factory-owned write actions are proven by factory tests."
+      }
+    ],
+    "weighted_score": 7.5,
+    "weighted_history": [
+      11.0,
+      14.0,
+      7.5,
+      17.5,
+      6.0
+    ],
+    "plan_delta_from_previous": 67.62,
+    "recurring_critiques": [
+      "criterion 10: requires human verification (subjective_judgment).",
+      "criterion 9: requires human verification (subjective_judgment)."
+    ],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 6. Weighted score trajectory: 11.0 -> 14.0 -> 7.5 -> 17.5 -> 6.0 -> 7.5. Plan deltas: 89.0%, 89.5%, 59.7%, 90.2%, 67.6%. Recurring critiques: 2. Resolved flags: 18. Open significant flags: 7.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "warnings": [
+    "Iteration 6: high iteration count."
+  ],
+  "criteria_check": {
+    "count": 12,
+    "items": [
+      {
+        "criterion": "`createEntityStore` exposes the requested generic API and passes focused tests for bootstrap precedence, optimistic updates, text-field flush, revert, reset, selector isolation, external-entity load bypass, React-safe registration ordering, overwrite-protected external sync, and equality deduping for repeated authoritative snapshots.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`useJoinClipsSettings(projectId)` preserves its current public API for callers while internally using the entity store only as a reader-mode synchronized read model.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "For Join Clips, `useAutoSaveSettings` remains the sole owner of local writes, debounce/save scheduling, revert/reset, and text-field semantics, so the adapter does not duplicate write ownership with `createEntityStore`.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The Join Clips adapter preserves the current `null` / `undefined` disabled behavior even though `createEntityStore.useEntity` is string-based.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "Prompt-like Join Clips fields save through both required concrete paths: blur wiring through the shared form stack and explicit flush before generation.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "The Join Clips pilot handles the real current settings surface, including scalar fields and composite settings such as `clips`, `transitionPrompts`, and LoRA state, without changing RQ ownership semantics.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "The milestone explicitly validates `createEntityStore` in two places: direct factory-owned write actions through dedicated store tests, and reader/sync integration through the Join Clips production adapter.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "TypeScript remains clean with `npx tsc --noEmit`.",
+        "priority": "must",
+        "requires": [
+          "run_shell",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "`npm test` passes with no regressions from the baseline suite.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "The final diff stays limited to the foundation store, the Join Clips adapter, the prompt blur/flush plumbing, tests, and dependency metadata if needed.",
+        "priority": "should",
+        "requires": [
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "The factory internals stay simple enough to reuse for later milestones without adding new cross-cutting abstractions beyond the external-entity sync support required for reader mode.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "M0 telemetry behavior remains unchanged because no instrumented telemetry surfaces are modified in this milestone.",
+        "priority": "info",
+        "requires": [
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "correctness-1",
+      "concern": "Are the proposed changes technically correct?: Checked Step 5 against the actual hook signature in `src/shared/state/createEntityStore.ts:39-44,400-449` and the existing null/undefined caller coverage in `src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:64-88`. The plan says \"when `projectId` is truthy, subscribe with `useEntity(projectId)`\" and \"when `projectId` is falsy, do not call `useEntity)`\", but `useEntity` is itself a hook, so that wording still needs a concrete hook-safe adapter strategy or the implementation can violate the Rules of Hooks while trying to preserve the current disabled contract.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked Step 5 against the actual hook signature in `src/shared/state/createEntityStore.ts:39-44,400-449` and the existing null/undefined caller coverage in `src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:64-88`. The plan says \"when `projectId` is truthy, subscribe with `useEntity(projectId)`\" and \"when `projectId` is falsy, do not call `useEntity)`\", but `useEntity` is itself a hook, so that wording still needs a concrete hook-safe adapter strategy or the implementation can violate the Rules of Hooks while trying to preserve the current disabled contract.",
+      "raised_in": "critique_v6.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v5.md",
+      "verified_in": "critique_v5.json"
+    },
+    {
+      "id": "correctness-2",
+      "concern": "Are the proposed changes technically correct?: Checked the proposed prompt-field rewrite against the real Join Clips schema in `src/shared/lib/vaceDefaults.ts:74`, `src/shared/components/JoinClipsSettingsForm/types.ts:40-41`, and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:94-110`. `enhancePrompt` is a boolean switch, not a textarea-like field, so Step 6's instruction to route `prompt`, `negativePrompt`, and `enhancePrompt` through `updateTextField(...)` and blur plumbing is technically wrong for the third field and would blur the intended text-field semantics.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the proposed prompt-field rewrite against the real Join Clips schema in `src/shared/lib/vaceDefaults.ts:74`, `src/shared/components/JoinClipsSettingsForm/types.ts:40-41`, and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:94-110`. `enhancePrompt` is a boolean switch, not a textarea-like field, so Step 6's instruction to route `prompt`, `negativePrompt`, and `enhancePrompt` through `updateTextField(...)` and blur plumbing is technically wrong for the third field and would blur the intended text-field semantics.",
+      "raised_in": "critique_v6.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v5.md",
+      "verified_in": "critique_v5.json"
+    },
+    {
+      "id": "all_locations",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: Checked the supporting unit-test surface for that prop widening in `src/shared/components/JoinClipsSettingsForm/types.test.ts:4-49` and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.test.tsx:61-138`. Those tests directly encode the current prop contract, so even with Step 8's generic \"narrowly affected prompt-component, form-stack, or generate-path test\" language, the implementation steps still leave a minor gap in explicitly naming these supporting test files as part of the required change set.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the supporting unit-test surface for that prop widening in `src/shared/components/JoinClipsSettingsForm/types.test.ts:4-49` and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.test.tsx:61-138`. Those tests directly encode the current prop contract, so even with Step 8's generic \"narrowly affected prompt-component, form-stack, or generate-path test\" language, the implementation steps still leave a minor gap in explicitly naming these supporting test files as part of the required change set.",
+      "raised_in": "critique_v6.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v6.md",
+      "verified_in": "critique_v6.json"
+    },
+    {
+      "id": "issue_hints",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the current public hook surface in `src/shared/settings/hooks/useAutoSaveSettings.ts:123-136,590-608` against Step 5's delegation list. `useJoinClipsSettings` currently exposes more than the plan enumerates, including `entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, `initializeFrom`, and the full error/save surface, so the plan still leaves a real risk that an adapter rewrite could narrow the returned API while believing it preserved the \"public return shape unchanged\" requirement.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the current public hook surface in `src/shared/settings/hooks/useAutoSaveSettings.ts:123-136,590-608` against Step 5's delegation list. `useJoinClipsSettings` currently exposes more than the plan enumerates, including `entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, `initializeFrom`, and the full error/save surface, so the plan still leaves a real risk that an adapter rewrite could narrow the returned API while believing it preserved the \"public return shape unchanged\" requirement.",
+      "raised_in": "critique_v6.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v6.md",
+      "verified_in": "critique_v6.json"
+    },
+    {
+      "id": "callers",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the actual setter callers in `src/tools/join-clips/pages/JoinClipsPage.tsx:95-103` and the corresponding prompt-form props in `src/shared/components/JoinClipsSettingsForm/types.ts:27-41`. The proposed changed callers are heterogeneous: `setPrompt` and `setNegativePrompt` pass free-text strings, while `setEnhancePrompt` is a boolean switch callback, so only the first two genuinely fit `updateTextField` plus blur/flush semantics.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the actual setter callers in `src/tools/join-clips/pages/JoinClipsPage.tsx:95-103` and the corresponding prompt-form props in `src/shared/components/JoinClipsSettingsForm/types.ts:27-41`. The proposed changed callers are heterogeneous: `setPrompt` and `setNegativePrompt` pass free-text strings, while `setEnhancePrompt` is a boolean switch callback, so only the first two genuinely fit `updateTextField` plus blur/flush semantics.",
+      "raised_in": "critique_v6.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v5.md",
+      "verified_in": "critique_v5.json"
+    },
+    {
+      "id": "FLAG-M1-011",
+      "concern": "Join Clips adapter: Step 5 still lacks a hook-safe strategy for the current `null`/`undefined` caller contract because `createEntityStore.useEntity(id)` is a hook but the plan says not to call it when `projectId` is falsy.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/state/createEntityStore.ts:400-449` defines `useEntity` as the hook surface, while `src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:64-88` requires falsy `projectId` inputs to remain supported.",
+      "raised_in": "critique_v6.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-M1-012",
+      "concern": "Join Clips prompt plumbing: Step 6 groups `enhancePrompt` with textarea-style fields even though the repository models it as a boolean switch, so blur and `updateTextField(...)` semantics should apply only to `prompt` and `negativePrompt`.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/components/JoinClipsSettingsForm/types.ts:40-41` and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:94-110` show `enhancePrompt` as a switch-backed boolean rather than a text field.",
+      "raised_in": "critique_v6.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ]
+}

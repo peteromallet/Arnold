@@ -57,7 +57,7 @@ export const WorkflowControlsBar: React.FC<WorkflowControlsBarProps> = ({
                   {isStaged ? <Check className="h-4 w-4" /> : <FilmIcon className="h-4 w-4" />}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="z-[100001]">
+              <TooltipContent>
                 {isStaged ? 'Click to jump to video editor' : 'Add to video editor timeline'}
               </TooltipContent>
             </Tooltip>
@@ -86,7 +86,7 @@ export const WorkflowControlsBar: React.FC<WorkflowControlsBarProps> = ({
                   <Settings className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="z-[100001]">Apply settings</TooltipContent>
+              <TooltipContent>Apply settings</TooltipContent>
             </Tooltip>
           )}
         </div>

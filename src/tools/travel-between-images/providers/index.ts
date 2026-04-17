@@ -1,6 +1,9 @@
 export {
   VideoTravelSettingsProvider,
   useVideoTravelSettings,
+  useVideoTravelSettingsHandlers,
+  useVideoTravelSettingsMutations,
+  useVideoTravelSettingsStatus,
   usePromptSettings,
   useMotionSettings,
   useFrameSettings,

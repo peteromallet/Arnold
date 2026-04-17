@@ -1,0 +1,128 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the revised plan against the in-repo all-projects task-pane path in `src/features/tasks/components/TasksPane/hooks/useTasksPaneController.ts:83-96` and the current realtime boundary in `src/shared/providers/RealtimeProvider.tsx:79-91` plus `src/shared/realtime/RealtimeConnection.ts:174-182`. `useTaskStatusCounts` still has a first-class `{ allProjectIds }` mode, but the realtime connection only subscribes to one `task-updates:${projectId}` channel for the currently selected project. Because the plan keeps subscription setup out of scope while also moving visible counts away from polling/invalidation toward store selectors, it still does not explain how non-selected projects stay fresh in all-project mode.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the previously addressed acceptance-gate concerns against the revised text and metadata. This version explicitly restores stable object/array selector references to a MUST and explicitly preserves `applyRootTaskFilter(...)` plus `resolveTaskProjectScope()` semantics, so those earlier critique items now appear to be carried forward correctly.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the store-backed aggregate plan against `useTaskStatusCounts` all-project usage. The current code can query counts across every project via `allProjectIds`, but `RealtimeConnection` only streams task events for the selected project channel. Without either keeping a query-backed refresh path for all-project counts or widening subscriptions, a store-only aggregate will go stale for tasks in non-selected projects, so the revised plan still has a correctness gap around that mode.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked `src/shared/providers/RealtimeProvider.tsx:64-69` together with `src/shared/realtime/types.ts:44-98` and `src/shared/hooks/tasks/useTasks.ts:58-88`. The provider still receives raw task rows with enough fields to normalize through the existing `mapDbTaskToTask(...)` path, so the core idea of boundary-side full-record upserts remains technically workable.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Searched the broader single-task surface and found that the repo still handles this concept outside the named `useGetTask` readers. `src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts:30-58` issues its own `taskQueryKeys.single(...)` query, and both `src/shared/hooks/tasks/useTaskPrefetch.ts:23-107` and `src/domains/generation/hooks/tasks/generationTaskCache.ts:31-104` read or seed that same cache directly. The revised plan inventories the visible hook consumers more carefully, but it still treats the migration as if `useGetTask` were the only live single-task entry point.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the adjacent task hooks that were previously questioned. `useActiveTaskClips` and `usePendingSegmentTasks` are still meaningfully narrower than the gallery/task-details surface and are explicitly or defensibly deferred, so the plan's boundary is otherwise reasonably contained.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Grepped all `taskQueryKeys.single(...)` usage and found supporting infrastructure beyond the named hook migrations: `src/shared/hooks/tasks/useTaskPrefetch.ts`, `src/domains/generation/hooks/tasks/generationTaskCache.ts`, and `src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts` all populate or consume the same single-task cache contract directly. If `useGetTask` becomes store-backed without updating or explicitly deferring these helpers and their tests, the repo will end up with split hydration paths where hover prefetch and generation-task cache warmups no longer benefit the new store.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the declared dependency under `src/shared/state/` and confirmed `createEntityStore.ts` is present, so the plan is no longer blocked on the M1 store factory prerequisite.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked actual callers of the single-task query contract with `rg \"taskQueryKeys.single\\(\" src`. In addition to the `useGetTask` wrappers, `useTaskPrefetch` and `generationTaskCache` pass resolved project ids into direct cache reads and writes, while `useVariantSourceTask` passes a raw `projectId` into its own `useQuery` around `fetchTaskInProject(...)`. The revised plan preserves `useGetTask` caller semantics, but it still does not say whether these other callers are adapted to write into the new store or intentionally left on React Query only.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the direct `useGetTask` callers again in `MediaGalleryItem`, `useMediaGalleryItemTaskShare`, `VariantDetails`, `useGenerationDetails`, and `useGenerationTaskDetails`. They still mostly pass either a concrete task id or the existing empty-string sentinel plus nullable project ids, and the revised plan now explicitly preserves those edge-case inputs.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "correctness-4",
+      "concern": "Task counts scope: all-project aggregate freshness is under-specified because the plan keeps a single-project realtime subscription boundary while moving `useTaskStatusCounts` toward store-backed selectors.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`useTaskStatusCounts` still supports `{ allProjectIds }` in `src/shared/hooks/tasks/useTaskStatusCounts.ts:244-260` and is used that way in `src/features/tasks/components/TasksPane/hooks/useTasksPaneController.ts:83-96`, but `RealtimeConnection` subscribes only to `task-updates:${projectId}` for the selected project in `src/shared/realtime/RealtimeConnection.ts:174-182`."
+    },
+    {
+      "id": "all_locations-4",
+      "concern": "Task snapshot integration: direct `taskQueryKeys.single(...)` helpers remain outside the named migration surface, so prefetch and cached task warmup can diverge from the new store unless they are explicitly integrated or deferred.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Direct single-task cache usage still exists in `src/shared/hooks/tasks/useTaskPrefetch.ts:23-107`, `src/domains/generation/hooks/tasks/generationTaskCache.ts:31-104`, and `src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts:30-58`."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 12: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 13: requires human verification (drive_browser, inspect_runtime_ui).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-3",
+      "concern": "Criterion 14: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "correctness-1",
+    "correctness-2",
+    "correctness-3",
+    "callers",
+    "callers-3",
+    "issue_hints",
+    "issue_hints-3"
+  ],
+  "disputed_flag_ids": []
+}

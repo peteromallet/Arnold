@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   }),
   useReorderShots: vi.fn(),
   useShots: vi.fn(),
-  useProject: vi.fn(),
+  useProjectSelectionContext: vi.fn(),
+  useProjectCrudContext: vi.fn(),
   useQueryClient: vi.fn(),
   toastError: vi.fn(),
   usePendingNewShotDrop: vi.fn(),
@@ -43,7 +44,8 @@ vi.mock('@/shared/contexts/ShotsContext', () => ({
 }));
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
-  useProject: mocks.useProject,
+  useProjectSelectionContext: mocks.useProjectSelectionContext,
+  useProjectCrudContext: mocks.useProjectCrudContext,
 }));
 
 vi.mock('@tanstack/react-query', () => ({
@@ -66,8 +68,10 @@ describe('useShotListDisplayController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.useShots.mockReturnValue({ isLoading: false, error: null });
-    mocks.useProject.mockReturnValue({
+    mocks.useProjectSelectionContext.mockReturnValue({
       selectedProjectId: 'project-1',
+    });
+    mocks.useProjectCrudContext.mockReturnValue({
       projects: [{ id: 'project-1', name: 'Project One' }],
     });
     mocks.useReorderShots.mockReturnValue({

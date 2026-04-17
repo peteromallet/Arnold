@@ -1,0 +1,168 @@
+{
+  "version": 5,
+  "timestamp": "2026-04-17T02:57:27Z",
+  "hash": "sha256:9ed5cc7947a3f6fb25ca66b8c4e3b5b2dd7c3840a1a6a734bdc1931d62eab07c",
+  "changes_summary": "Added an explicit cold-start bootstrap path for pending-generation tasks, expanded the migration checklist and tests to cover `GenerationTaskContext`, and replaced the vacuous `RealtimeContext` gate with acceptance criteria that prove selector narrowing and bootstrap correctness.",
+  "flags_addressed": [
+    "all_locations",
+    "issue_hints",
+    "correctness",
+    "correctness-5",
+    "completeness-0"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "A new `src/shared/state/realtimeStore.ts` exists with effective-project task storage, full-record single-task upsert, batch pending-task bootstrap upsert, scoped reset actions, and selector helpers for single-task, pending-generation, and current-project aggregate task views.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Cold-start hydration is explicitly implemented through centralized query or repository helpers so current-project task details and pending-generation badges are correct before the first new realtime event.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`RealtimeProvider` writes incoming task realtime updates into the store at the boundary while preserving the existing selected-project Supabase connection lifecycle and the public status-only `useRealtime` API.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`useGetTask` preserves the empty-id disabled contract and `resolveTaskProjectScope()` fallback behavior while reading from the store when available and staying React-Query-authoritative for fetch lifecycle.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Every live single-task cache writer or reader that uses `taskQueryKeys.single(...)` is either integrated into store seeding or explicitly deferred with rationale and test impact, including `useTaskPrefetch`, `generationTaskCache`, `GenerationTaskContext`, and `useVariantSourceTask`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`usePendingGenerationTasks` preserves current cold-start semantics by bootstrapping the full current-project queued or in-progress task set before deriving generation-specific results from narrow store selectors.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`usePendingGenerationTasks`, `useGenerationTaskDetails`, and other visible current-project task-state surfaces read from narrow store selectors or the adapted single-task path instead of relying on unrelated invalidation churn for updates.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`useTaskStatusCounts` preserves current derivation semantics, including root-task exclusion, visible task-type filtering, processing-status rules, and recent success or failure windows.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`useTaskStatusCounts({ allProjectIds })` remains correct by keeping a query-authoritative freshness path rather than relying on selected-project realtime store updates for non-selected projects.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Selectors that return objects or arrays provide stable references for semantically unchanged results, using `shallow` or equivalent equality control, and tests cover that behavior.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Store, hook, and facade tests cover task upsert, batch pending bootstrap, scoped reset, selector narrowing for unrelated task updates, aggregate status-count derivation, `resolveTaskProjectScope()` fallback behavior, empty-id disabled behavior, and coherent store seeding from prefetch, preload, and generation-task facade helpers.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` completes successfully.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` completes at baseline.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Existing public hook and facade signatures remain stable enough that gallery items, variant details, Tasks Pane, lightbox, task details, and generation-task consumers require little or no API churn.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "`useActiveTaskClips` is explicitly classified as deferred or migrated with rationale so the milestone scope remains intentional.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Gallery items no longer rerender on unrelated task events in a 50+ item runtime smoke test.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "A per-task status surface, if present after migration, rerenders only for the matching task when observed with runtime telemetry.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    }
+  ],
+  "assumptions": [
+    "`src/shared/state/createEntityStore.ts` still exists as a local reference pattern, but `realtimeStore.ts` will remain purpose-built around effective-project task snapshots rather than a generic entity abstraction.",
+    "`RealtimeProvider` remains the selected-project realtime boundary and `RealtimeConnection` continues subscribing to one `task-updates:${projectId}` channel at a time.",
+    "React Query remains authoritative for server truth and fetch lifecycle; the store exists only to narrow subscriptions and hold normalized current-project task snapshots for visible UI consumers.",
+    "Cold-start correctness for pending-generation badges must be preserved by a current-project pending-task bootstrap query that seeds the store before relying on realtime updates.",
+    "`GenerationTaskContext` remains a facade over generation-task mapping and task-data preload helpers; M3 must keep that facade coherent rather than replacing it.",
+    "All-project task counts remain query-authoritative unless subscription coverage changes in a later milestone.",
+    "`useActiveTaskClips` remains outside M3 unless it can adopt an already-built selector helper with no new semantics, no widened scope, and negligible extra tests."
+  ],
+  "delta_from_previous_percent": 90.0,
+  "structure_warnings": []
+}

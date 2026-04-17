@@ -9,7 +9,7 @@ import {
 import { GenerationRow } from '@/domains/generation/types';
 import { isVideoAny } from '@/shared/lib/typeGuards';
 import { useIsMobile } from '@/shared/hooks/mobile';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useUserUIState } from '@/shared/hooks/useUserUIState';
 import { usePublicLoras } from '@/features/resources/hooks/useResources';
 import { TOOL_IDS } from '@/shared/lib/tooling/toolIds';
@@ -125,7 +125,7 @@ export function useInlineEditState(
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
   const [createAsGeneration, setCreateAsGeneration] = useState(false);
   const isMobile = useIsMobile();
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const { value: generationMethods } = useUserUIState('generationMethods', { onComputer: true, inCloud: true });
   const isCloudMode = generationMethods.inCloud;
   const isVideo = isVideoAny(media);

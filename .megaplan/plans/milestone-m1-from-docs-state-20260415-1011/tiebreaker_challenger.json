@@ -1,0 +1,85 @@
+{
+  "measurements_vs_assumptions": "Backed by code or direct measurement:\n- The React Query boundary claim is real. [src/shared/hooks/settings/useToolSettings.ts] fetches via `useQuery`, writes via `useMutation`, updates query cache, and refetches shot batch settings.\n- The dual-mode claim is real. [src/shared/settings/hooks/useAutoSaveSettings.ts] switches on `customLoadSave`; [src/shared/settings/hooks/autoSaveSettingsLoaders.ts] has separate `useCustomModeLoad` and `useReactQueryModeLoad` paths.\n- The overwrite race is real, not hypothetical. [src/shared/settings/hooks/autoSaveSettingsLoaders.ts] explicitly skips applying RQ data when `debouncedSave.hasPendingFor(entityId)` is true, and [src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts] asserts user edits survive both custom-load and RQ loading races.\n- The `useShotSettings` bootstrap race is real and stronger than the researcher made it sound. [src/tools/travel-between-images/hooks/settings/useShotSettings.ts] documents that inherited defaults must call `updateFields` early so the RQ loader does not wipe them. [src/tools/travel-between-images/providers/VideoTravelSettingsProvider.tsx] also pre-seeds the RQ cache synchronously before `useShotSettings` runs. That means the current design depends on pre-hook hydration, not just \u201csome guard later.\u201d\n- The custom-load/save production path is real. [src/domains/media-lightbox/hooks/useGenerationEditSettings.ts] uses `customLoadSave` and invalidates generation queries on flush/save.\n- The 13 importer / 2,129 LOC figure is reproducible. `rg` over non-test imports of `useAutoSaveSettings` returns 13 files and `wc -l` totals 2,129 LOC.\n\nAssumptions presented too confidently:\n- \u201cA expands migration work across 13 importers\u201d is directionally true but under-measured. The researcher counted files importing `useAutoSaveSettings`, not files that would need bridge logic. That misses hidden surface in adapters like [src/shared/hooks/usePersistentToolState.ts] and provider-level cache seeding like [src/tools/travel-between-images/providers/VideoTravelSettingsProvider.tsx]. The real unit of change is not \u201cimporter count\u201d; it is \u201cplaces that currently rely on synchronous hydration, pending-write protection, or query cache helpers.\u201d\n- \u201cB requires architectural reversal\u201d is partly evidence-backed by docs, but the researcher slides from \u201cdocs say server state belongs in RQ\u201d to \u201ctherefore store-first is wrong.\u201d That is governance evidence, not runtime evidence. The missing proof is whether current consumers actually depend on RQ features such as invalidation fanout, cache selectors, or prefetch semantics in ways a store cannot preserve.\n- \u201cC is least disruptive\u201d is asserted, not measured. The repo already has two modes inside `useAutoSaveSettings`, but that does not prove a per-entity ownership declaration will stay understandable once a third abstraction (`createEntityStore`) exists. The researcher did not quantify the policy/documentation cost, codegen/API branching cost, or test-matrix expansion.\n- The requested LOC comparison \u201cunder each option\u201d was not actually done. They measured total consumer surface once, not migration delta for A vs B vs C. That is a gap in the core task, not a minor omission.\n- The spec contradiction is treated as fixed, but the researcher did not pressure-test whether constraint (1) is too strong or whether M1 should exclude RQ-backed settings entirely. That is the most obvious design escape hatch and it was not analyzed as a first-class alternative.",
+  "missing_options": [
+    {
+      "name": "D) Boundary-owned adapter, not consumer-owned bridge",
+      "description": "Keep React Query authoritative for settings, but do not make each consumer call `bootstrapEntity(id, data)` in an effect. Instead, put the bridge inside `useAutoSaveSettings` or a dedicated settings adapter so the RQ-to-store sync happens once at the boundary that already owns pending-edit and flush semantics.",
+      "why_missed": "The researcher accepted option A's consumer-level bridge shape as if it were inseparable from 'RQ-first'. That conflates authority with placement of synchronization logic. The codebase already centralizes the hard logic in `useAutoSaveSettings`; a challenger should have separated those concerns."
+    },
+    {
+      "name": "E) Query-cache-as-store for RQ-backed entities",
+      "description": "For RQ-owned settings, `createEntityStore` does not hold a second canonical copy at all. It exposes selectors/actions over React Query cache plus a local draft buffer only while dirty. Persisted state stays in query cache; the store exists only for UI ergonomics.",
+      "why_missed": "The researcher assumed the new store must physically mirror persisted data. The existing code already uses query cache helpers like `extractSettingsFromCache`, `updateSettingsCache`, synchronous cache seeding, and invalidation fanout, which suggests the cache is already part of the state layer."
+    },
+    {
+      "name": "F) M1 scope split: exclude RQ-backed settings from `createEntityStore`",
+      "description": "Declare that M1's factory is for entities without an existing RQ authority. Join-clips and other settings stay on `useAutoSaveSettings` for now; only custom-load/save entities or net-new state move to the factory.",
+      "why_missed": "The decision question is framed as though every entity must fit `createEntityStore` immediately. The repository evidence points the other way: settings already have a mature boundary with race protections. The researcher kept trying to fit settings into the factory instead of asking whether M1 should avoid that integration."
+    },
+    {
+      "name": "G) Relax `useEntity(id)` into `ensureEntity(id)` + selector split",
+      "description": "Make loading explicit and separate from reading. `useEntity(id)` becomes a synchronous reader over whichever authority owns the data; `ensureEntity(id)` or route-level prefetch performs lazy authoritative loading. This removes the requirement that the same hook both read and authoritatively load.",
+      "why_missed": "The researcher treated constraint (1) as an implementation requirement rather than a contract design choice. Much of the contradiction disappears if the API stops demanding that mount-time read and authoritative load are the same operation."
+    }
+  ],
+  "hard_cases": [
+    {
+      "scenario": "A new shot mounts with inherited defaults and no shot row yet. Current code relies on `useShotSettings` calling `updateFields` immediately and on `VideoTravelSettingsProvider` seeding the query cache before `useShotSettings` runs. A consumer-level `bootstrapEntity(id, data)` effect fires too late, after render and after RQ may already have supplied project fallback data.",
+      "which_option_breaks": "A) RQ-first consumer bridge",
+      "severity": "high"
+    },
+    {
+      "scenario": "A user types into a text field while the initial RQ fetch is still loading, then a refetch resolves. Current protection is implemented inside `useAutoSaveSettings` via pending refs and load guards. If the mirror store has an external bootstrap path plus local writes, the bridge can reapply stale query data unless every consumer reproduces the same pending-edit discipline.",
+      "which_option_breaks": "A) RQ-first consumer bridge",
+      "severity": "high"
+    },
+    {
+      "scenario": "A component needs synchronous first-render data to avoid loading flash. `VideoTravelSettingsProvider` currently seeds the query cache synchronously from already-loaded shot data before calling the hook. A useEffect-based bootstrap cannot provide first-render parity.",
+      "which_option_breaks": "A) RQ-first consumer bridge",
+      "severity": "medium"
+    },
+    {
+      "scenario": "Non-settings consumers or helpers mutate/query the RQ cache directly using helpers like `updateSettingsCache`, `extractSettingsFromCache`, or by invalidating `queryKeys.settings.tool(...)`. If the store becomes authoritative and RQ merely wraps it, those existing cache-level assumptions become stale or duplicated.",
+      "which_option_breaks": "B) store-first",
+      "severity": "high"
+    },
+    {
+      "scenario": "Best-effort flush on unmount/beforeunload currently goes through `updateToolSettingsSupabase` and then invalidates/refetches query keys. A store-first rewrite must preserve write queue semantics, cleanup flushes, and cache fanout across related queries such as shot batch settings. Missing any of these yields subtle stale-data bugs outside the settings form itself.",
+      "which_option_breaks": "B) store-first",
+      "severity": "high"
+    },
+    {
+      "scenario": "The entity's persisted representation lives in multiple backends or query families, like generation edit settings persisting to `generations.params` while still invalidating generation detail queries. A generic store-owned `load/save` abstraction can flatten these differences poorly and force backend-specific hooks back into the store layer.",
+      "which_option_breaks": "B) store-first",
+      "severity": "medium"
+    },
+    {
+      "scenario": "A domain starts as RQ-owned but later needs custom persistence or route-prefetch behavior. Under hybrid ownership, switching owners risks parallel implementations, migration shims, and ambiguous authority unless ownership metadata is enforced in code review and APIs.",
+      "which_option_breaks": "C) hybrid",
+      "severity": "medium"
+    },
+    {
+      "scenario": "Shared infrastructure like `usePersistentToolState` sits above `useAutoSaveSettings` and below feature code. If some entities are store-owned and others RQ-owned, adapter hooks must branch on ownership and the test matrix doubles: loading, pending edits, save flush, entity change, cache invalidation, and preseed behavior per ownership mode.",
+      "which_option_breaks": "C) hybrid",
+      "severity": "medium"
+    },
+    {
+      "scenario": "Developers misclassify an entity's owner or bypass the declared owner 'just once' for convenience. Hybrid systems tend to fail by drift rather than by immediate type errors, especially when both paths appear to work locally.",
+      "which_option_breaks": "C) hybrid",
+      "severity": "medium"
+    }
+  ],
+  "reframings": [
+    "The real question is not 'who owns fetching?' but 'where is the single authority boundary for hydration, dirty drafts, and flush semantics?' In this repo that boundary is currently `useAutoSaveSettings`, not individual feature hooks.",
+    "The contradiction comes from forcing one API to do two jobs: synchronous read and authoritative lazy load. Split those responsibilities and the A/B/C dilemma weakens substantially.",
+    "This is less a React Query vs store debate than a migration-scope debate. For M1, ask which existing invariants must remain centralized: pending-edit protection, entity-change flush, query invalidation fanout, and first-render cache seeding.",
+    "Join-clips may be the wrong proving ground. It is intentionally a thin passthrough over the mature settings stack. A better M1 framing is: should settings be a consumer of `createEntityStore` at all, or should settings remain the reference boundary while other entities adopt the new factory first?",
+    "Instead of per-entity ownership, define per-boundary ownership. Example: 'settings boundary remains RQ-authoritative in M1; generation-edit custom persistence remains boundary-owned custom mode; new non-settings entities may use createEntityStore directly.' That is more stable than ad hoc per-hook declarations."
+  ],
+  "aging_analysis": "A) RQ-first with consumer-owned mirror ages the worst. Over 6-12 months it will accumulate boilerplate bridge effects, inconsistent pending-edit handling, and first-render/hydration edge cases that only show up in complex forms. Every new consumer has to remember how to mirror, when to suppress bootstrap, and how to avoid stomping dirty drafts. This creates a distributed correctness problem and locks the codebase into dual authorities without one obvious place to fix races.\n\nB) store-first can age well only if the team is willing to fully re-found the settings stack. In the next 6 months it is the highest-risk option because it front-loads infrastructure churn: query invalidation semantics, write queue integration, cache fanout, and existing helper ecosystem all have to be rebuilt or wrapped. If done halfway, technical debt is severe because both store and RQ remain half-authoritative. If done thoroughly, it could pay off later, but M1 does not look like that kind of migration budget.\n\nC) hybrid ages acceptably in the short term but drifts unless ownership rules are narrow and enforced. The current code already has two persistence modes inside one hook, so hybrid matches today's reality. The risk over 6-12 months is policy entropy: more entities, more exceptions, broader API surface, and more test permutations. Hybrid becomes debt when 'per-entity declared ownership' means 'decide ad hoc each time.' It is tolerable only if the declaration happens at boundary level and the number of sanctioned modes stays very small.\n\nThe most durable path is not any pure A/B/C variant as stated. The path that ages best is: keep a centralized settings boundary for settings, centralize any bridge logic there if needed, and relax the requirement that every `useEntity(id)` be an authoritative loader. That reduces lock-in because it preserves current invariants while leaving room to move specific domains later.",
+  "counter_recommendation": {
+    "option_name": "Relax constraint (1) and treat settings as boundary-owned in M1; closest to a narrowed C, not the researcher's broad hybrid",
+    "rationale": "I would not accept the current A/B/C framing as-is. The spec should relax constraint (1): for RQ-backed settings, `useEntity(id)` should be a reader over the authoritative boundary, not the authoritative loader itself. In M1, keep the settings boundary authoritative where it already is: `useAutoSaveSettings` over `useToolSettings` for RQ-backed settings, and `customLoadSave` for entities like generation edit settings. If `createEntityStore` must participate, put any sync inside the boundary hook, not in each consumer. This rejects A's distributed bridge, avoids B's premature architectural inversion, and makes C precise enough to be governable. The missing decision is not 'pick an owner for every entity' but 'which original constraint is safe to relax?' The answer is constraint (1), because the repo already proves that first-render cache seeding, pending-edit guards, and cleanup flushes matter more than making mount-time reads double as authoritative loaders.",
+    "agrees_with_researcher": false
+  }
+}

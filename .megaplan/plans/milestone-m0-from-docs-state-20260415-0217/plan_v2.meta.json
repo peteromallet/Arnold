@@ -1,0 +1,68 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-15T04:42:25Z",
+  "hash": "sha256:a458773696db5ff4629a5aa425acf7337c4de657dfc2cbe265cb437edce17d27",
+  "changes_summary": "Resolved the major plan contradictions by switching baseline capture to dev-mode build artifacts, replacing the conflicting keybind, pinning timeline-row instrumentation to `TrackListRenderer.tsx` (`SortableRow`), clarifying wrapper-component hook placement, defining name-level aggregation semantics, and tightening validation/coverage requirements (5 components \u00d7 3 interactions each).",
+  "flags_addressed": [
+    "FLAG-M0-001",
+    "FLAG-M0-002",
+    "issue_hints-1",
+    "issue_hints-2",
+    "issue_hints-3",
+    "correctness-1",
+    "correctness-2",
+    "correctness-3",
+    "scope-1",
+    "scope-2",
+    "all_locations",
+    "callers-1",
+    "callers-2"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`useRenderBudget(name, budget): void` is implemented in `src/shared/dev/useRenderBudget.ts` with React hooks declared unconditionally, dev-gated runtime telemetry logic, 1s idle reset, and over-budget warning behavior.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`RenderTelemetryOverlay` is mounted only in dev, hidden by default, persisted via `localStorage`, uses a non-conflicting keybind, and shows live per-name count/budget status.",
+      "priority": "must"
+    },
+    {
+      "criterion": "All required surfaces are instrumented, including `TrackListRenderer.tsx` (`SortableRow`), with hook placement in executable inner render functions for wrapped components.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Baseline doc is created at `docs/state_management_refactor_baselines.md` with capture date, commit SHA, and measurements covering at least 5 components with at least 3 interactions per measured component.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Budgets are calibrated to baseline behavior (raised to observed max + 1 where needed) so normal baseline interactions do not produce persistent warnings.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`npx tsc --noEmit`, `npm test`, and `npm run build` succeed after telemetry changes.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Production runtime bundles (JS/CSS) in `dist/` contain no `RenderBudget` or `RenderTelemetryOverlay` strings when grepped excluding sourcemaps.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Implementation stays within approved paths (`src/shared/dev/`, `src/app/App.tsx`, `docs/`, and explicitly instrumented component files) with no render-refactor/state-management changes.",
+      "priority": "should"
+    },
+    {
+      "criterion": "Manual dev-mode smoke verifies toggle, persistence, live counts, and synthetic over-budget warning before handoff.",
+      "priority": "info"
+    }
+  ],
+  "assumptions": [
+    "`npm run build:dev` (or an equivalent `vite build --mode development`) is available for non-HMR telemetry capture.",
+    "`TrackListRenderer.tsx` `SortableRow` remains the correct per-row render surface at execution time.",
+    "A non-conflicting global shortcut exists; if collisions are found during audit, the first collision-free fallback is documented and used.",
+    "Existing debug/perf diagnostics remain unchanged in M0; any duplicate signal is documented rather than refactored."
+  ],
+  "delta_from_previous_percent": 73.98,
+  "structure_warnings": []
+}

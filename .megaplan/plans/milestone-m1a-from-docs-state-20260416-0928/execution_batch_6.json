@@ -1,0 +1,56 @@
+{
+  "output": "Completed T9. `useImageLightboxEnvironment` now audits its actual upstream dependency graph in dev mode and returns a memoized environment object so unchanged inputs do not cascade a fresh env reference. The audited upstreams from current code are `useIsMobile`, `useProject`, `useUserUIState('generationMethods')`, `usePanes`, `usePublicLoras` data, `useLoraManager`, `useUpscale`, and `useEditSettingsPersistence`, plus derived `effectiveEditModeLoras`. Added regression coverage for both the audit logger and stable env-reference behavior, and checkpointed the batch record.",
+  "files_changed": [
+    "src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts",
+    "src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts",
+    ".megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_6.json"
+  ],
+  "commands_run": [
+    "sed -n '1,260p' src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts",
+    "rg -n \"useImageLightboxEnvironment\\(|function useImageLightboxEnvironment|const useImageLightboxEnvironment\" src/domains/media-lightbox src -g '!node_modules'",
+    "rg -n \"useLoraManager|useUpscale|useEditSettingsPersistence|usePanes|useUserUIState\" src/domains/media-lightbox src -g '!node_modules'",
+    "sed -n '1,260p' src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts",
+    "sed -n '1,240p' src/domains/media-lightbox/hooks/useUpscale.ts",
+    "sed -n '1,260p' src/domains/lora/hooks/useLoraManager.tsx",
+    "sed -n '1,260p' src/shared/contexts/PanesContext.tsx",
+    "sed -n '1,260p' src/shared/hooks/useUserUIState.ts",
+    "sed -n '1,260p' src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts",
+    "rg -n \"ref-equality|reference equality|stable reference|debug.*ref|changed across renders|same reference|Object.is\" src/shared src/domains/media-lightbox src -g '!node_modules'",
+    "rg -n \"dev-mode|DEV|import\\.meta\\.env\\.DEV|process\\.env\\.NODE_ENV !== 'production'|useRenderLogger|debugRendering\" src/domains/media-lightbox src/shared -g '!node_modules'",
+    "sed -n '1,220p' src/shared/lib/debug/debugRendering.ts",
+    "sed -n '1,220p' src/features/resources/hooks/useResources.ts",
+    "rg -n \"export const usePublicLoras|function usePublicLoras\" src/features/resources/hooks/useResources.ts",
+    "sed -n '408,445p' src/features/resources/hooks/useResources.ts",
+    "npx vitest run src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+    "npx tsc --noEmit",
+    "git diff -- src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts",
+    "git status --short src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_6.json"
+  ],
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_6.json",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/shared/state/createEntityStore.test.ts",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitignore, .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/schemas/critique.json, .megaplan/schemas/execution.json, .megaplan/schemas/execution_doc.json, .megaplan/schemas/finalize.json, .megaplan/schemas/gate.json, .megaplan/schemas/plan.json, .megaplan/schemas/review.json, .megaplan/schemas/revise.json, .megaplan/schemas/tiebreaker_challenger.json, .megaplan/schemas/tiebreaker_researcher.json, package-lock.json, package.json, src/app/App.tsx, src/app/main.test.tsx, src/integrations/supabase/__tests__/clientContracts.test.ts, src/moduleImportCoverage.test.ts, src/shared/components/MediaGalleryItem.tsx, src/shared/dev/RenderTelemetryOverlay.tsx, src/shared/dev/useRenderBudget.ts, src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts, src/tools/join-clips/hooks/useJoinClipsSettings.ts, src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Audited the current `useImageLightboxEnvironment` dependency graph and enumerated the actual upstream inputs from code: `useIsMobile`, `useProject`, `useUserUIState('generationMethods')`, `usePanes`, `usePublicLoras` data, `useLoraManager`, `useUpscale`, and `useEditSettingsPersistence`. Added dev-mode ref-equality logging for those inputs and for the final env object via `useChangedDepsLogger`, then memoized the final returned environment object so unchanged upstream references no longer force a fresh env reference each render. Verified with module tests that the env reference stays stable when upstream inputs are unchanged and that the audit logger covers the enumerated inputs; targeted lightbox/transitive tests and `npx tsc --noEmit` are clean. Based on this audit, no additional unstable-return source remains inside `useImageLightboxEnvironment`; M2 should stay skipped unless the later browser/render-count gate uncovers a different non-audited path outside this dependency graph.",
+      "files_changed": [
+        "src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts",
+        "src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+        "npx tsc --noEmit"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Yes. The dev-mode audit now logs the actual current inputs feeding `useImageLightboxEnvironment` (`useIsMobile`, `useProject`, `useUserUIState`, `usePanes`, `usePublicLoras` data, `useLoraManager`, `useUpscale`, `useEditSettingsPersistence`, plus derived `effectiveEditModeLoras`) and separately logs the final `env` object. The remaining instability inside this hook was the final returned env reference itself; memoizing that object removed the unchanged-input churn, and the updated hook test confirms the env reference stays stable across rerenders when upstream refs are unchanged."
+    }
+  ]
+}

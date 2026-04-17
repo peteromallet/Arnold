@@ -35,7 +35,7 @@ export const ProfitSplitBar: React.FC<ProfitSplitBarProps> = ({ className }) => 
                   onClick={() => { if (isMobile) setEngineersOpen((v) => !v); }}
                 />
               </TooltipTrigger>
-              <TooltipContent side="bottom" align="center" className="px-2 py-1 text-center text-[11px] leading-tight z-[100010] max-w-[240px]">
+              <TooltipContent side="bottom" align="center" className="px-2 py-1 text-center text-[11px] leading-tight max-w-[240px]">
                 supporting developers whose LoRAs/workflows are used in Reigh, and funding open source projects (model training, extensions, etc.).
               </TooltipContent>
             </Tooltip>
@@ -53,7 +53,7 @@ export const ProfitSplitBar: React.FC<ProfitSplitBarProps> = ({ className }) => 
                   onClick={() => { if (isMobile) setArtistsOpen((v) => !v); }}
                 />
               </TooltipTrigger>
-              <TooltipContent side="bottom" align="center" className="px-2 py-1 text-center text-[11px] leading-tight z-[100010] max-w-[240px]">
+              <TooltipContent side="bottom" align="center" className="px-2 py-1 text-center text-[11px] leading-tight max-w-[240px]">
                 supporting artists who refer others to Reigh, and funding art competitions and arts support.
               </TooltipContent>
             </Tooltip>
@@ -71,7 +71,7 @@ export const ProfitSplitBar: React.FC<ProfitSplitBarProps> = ({ className }) => 
                   onClick={() => { if (isMobile) setBanoOpen((v) => !v); }}
                 />
               </TooltipTrigger>
-              <TooltipContent side="bottom" align="center" className="px-2 py-1 text-center text-[11px] leading-tight z-[100010] max-w-[240px]">
+              <TooltipContent side="bottom" align="center" className="px-2 py-1 text-center text-[11px] leading-tight max-w-[240px]">
                 funding Reigh and future projects.
               </TooltipContent>
             </Tooltip>

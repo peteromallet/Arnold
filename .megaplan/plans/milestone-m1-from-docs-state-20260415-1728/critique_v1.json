@@ -1,0 +1,120 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the referenced planning source and this repository only contains `docs/state_management_refactor_baselines.md`; `docs/state_management_refactor_plan.md` is missing from the checkout. The plan notices that gap, but it still means one of the named user inputs cannot be verified in-repo and the milestone will effectively be driven by the brief plus current source instead of the cited document.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified the current Join Clips settings surface in `src/shared/lib/joinClips/defaults.ts:12-40` and `src/tools/join-clips/pages/JoinClipsPage.tsx:84-136`. The idea text describes this as a 5-field pilot, but the real settings object now spreads `VACE_GENERATION_DEFAULTS` and includes prompts, motion/phase settings, LoRA state, `clips`, and `transitionPrompts`, so the first consumer is materially broader than the approved milestone summary suggests.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the current `useAutoSaveSettings` behavior in `src/shared/settings/hooks/useAutoSaveSettings.ts:378-395`. That hook deliberately tracks pending local edits during loading so a late DB/RQ payload does not overwrite user input, but the proposed factory contract only mentions lazy `load()` plus atomic `bootstrapEntity()` and does not describe any equivalent pending-update merge or protection. In this repository that is a real correctness regression risk, not just an internal implementation detail.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the actual persistence boundary in `src/shared/hooks/settings/useToolSettings.ts:181-290`. The plan says the new store should keep using `useToolSettings` underneath, but `useToolSettings` is a React hook with `useQuery` and `useMutation` inside it, so it cannot be called from a module-scoped Zustand factory config. The repo does expose non-hook primitives such as `fetchToolSettingsSupabase` and `updateToolSettingsSupabase`, but the plan needs to name an adapter layer explicitly or it is not technically executable as written.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Reviewed the Join Clips page adapter in `src/tools/join-clips/pages/JoinClipsPage.tsx:86-135`. All prompt-like setters (`prompt`, `negativePrompt`, `enhancePrompt`) currently call `joinSettings.updateField(...)`, not `updateTextField(...)`, so the new text-field blur/flush behavior from the factory would not actually be exercised by this consumer unless the port also touches the page or form adapter layer. That broadens the migration beyond a hook-only swap.",
+          "flagged": true
+        },
+        {
+          "detail": "Reviewed the clip persistence path in `src/tools/join-clips/hooks/useClipManager.ts:171-186`. Join Clips is not only a small scalar settings consumer; it also pushes `clips` and `transitionPrompts` array payloads back through `joinSettings.updateFields(...)` on hydration and edit flows. That means the pilot consumer already exercises larger, higher-churn object graphs than the plan summary implies.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Searched the call sites for `useJoinClipsSettings` and found the concrete runtime dependencies are concentrated in `JoinClipsPage`, `useClipManager`, and `useJoinClipsGenerate`, while most other tests and consumers stub a plain `joinSettings` object rather than importing the hook implementation directly. That means the direct file-edit blast radius is fairly contained, and the plan is reasonable in not expecting widespread consumer rewrites.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the supporting infrastructure under `src/shared/hooks/settings/useToolSettings.ts:199-275`. Because current Join Clips settings are sourced through React Query, a Zustand-backed port still needs glue for query-cache arrival, cache seeding, or invalidation-aware refresh; the plan only discusses `load` and `save` adapters and does not describe how the store will observe or react to `useToolSettings` cache changes. In this repository, omitting that bridge leaves the new store disconnected from the existing settings synchronization path.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked the actual `joinSettings` callers across `src/tools/join-clips` and `src/tools/travel-between-images`. The live callers mainly consume `settings`, `status`, `updateField`, and `updateFields`; none of the Join Clips UI call sites currently route through `updateTextField` or `updateTextFields`, so preserving the old public surface is safe for compatibility but does not by itself validate the new text-field API that M1 is supposed to establish.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the argument shapes passed by callers. `JoinClipsPage` sends many scalar fields through `updateField(...)`, while `useClipManager` sends composite `clips` and `transitionPrompts` arrays through `updateFields(...)` and `useJoinClipsGenerate` reads a broad slice of VACE-derived settings. The plan's 'smallest consumer' framing does not match those caller contracts, so the factory has to handle both scalar and bulky array patches correctly on day one.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-M1-001",
+      "concern": "State management refactor: Join Clips is no longer a narrow 5-field pilot; the current settings shape includes VACE defaults, LoRA state, and persisted clip arrays, so the migration and test surface are materially larger than the plan states.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/lib/joinClips/defaults.ts:12-40` spreads `VACE_GENERATION_DEFAULTS` and adds `clips`, `transitionPrompts`, and `loras`, while `src/tools/join-clips/pages/JoinClipsPage.tsx:84-136` wires many of those fields into the live UI."
+    },
+    {
+      "id": "FLAG-M1-002",
+      "concern": "State management refactor: the plan does not preserve the current pending-load protection from `useAutoSaveSettings`, so a late settings load can overwrite optimistic local edits in the new store.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/settings/hooks/useAutoSaveSettings.ts:389-395` explicitly tracks pending updates to protect against DB-load overwrites, but the proposed factory requirements only specify lazy `load()` and atomic `bootstrapEntity()`."
+    },
+    {
+      "id": "FLAG-M1-003",
+      "concern": "State management refactor: the proposed Join Clips port does not actually exercise the new text-field API, because current prompt setters call `updateField` and would need caller-side rewiring to use `updateTextField` or flush semantics.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/tools/join-clips/pages/JoinClipsPage.tsx:95-103` maps `prompt`, `negativePrompt`, and `enhancePrompt` to `joinSettings.updateField(...)`, not to a text-field-specific path."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 5: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 6: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 7: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

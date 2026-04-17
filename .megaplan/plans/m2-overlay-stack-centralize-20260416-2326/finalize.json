@@ -1,0 +1,474 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Freeze the actual repo surface before editing. Re-run the Base UI inventory grep across `src/`, record the raw-owner set that must be eliminated outside `src/shared/components/ui/overlay/`, verify `src/shared/state/createEntityStore.ts` and `src/shared/state/selectionStore.ts` exist, confirm `@base-ui/react/context-menu` and `@base-ui/react/drawer` are absent, record that `ToolsPaneDrawer` is bespoke and out of scope, and lock the containment rules: registration must follow true open/present lifecycle, modal overlays are the only ones allowed to own body pointer-events and focus restoration, while tooltip/preview-card are ordering-only overlays.",
+      "depends_on": [],
+      "status": "done",
+      "executor_notes": "Captured the actual current Base UI owner inventory before edits. Exact milestone grep (`rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup)' src/ --type ts -l | sort`) returns 8 raw owners: `src/domains/media-lightbox/components/LightboxShell.tsx`, `src/shared/components/ui/alert-dialog.tsx`, `src/shared/components/ui/command.tsx`, `src/shared/components/ui/dialog.tsx`, `src/shared/components/ui/dropdown-menu.tsx`, `src/shared/components/ui/popover.tsx`, `src/shared/components/ui/select.tsx`, and `src/shared/components/ui/tooltipPrimitives.tsx`. Wider inventory including preview-card/hover-card adds `src/shared/components/ui/hover-card.tsx`, bringing the real raw-owner set to 9 files that must be eliminated outside `src/shared/components/ui/overlay/`. Verified store prerequisites exist in `src/shared/state/`: `createEntityStore.ts` and `selectionStore.ts`. Verified `@base-ui/react/context-menu`, `@base-ui/react/drawer`, and `@base-ui/react/popup` are absent under `src/`. Verified `ToolsPaneDrawer` in `src/shared/components/ToolsPane/ToolsPane.tsx` is a bespoke fixed-position div-based drawer (`zIndex: 60`), so it remains out of scope. Containment rules locked from current surface: registration must follow actual popup/backdrop presence rather than root mount lifetime; modal overlays (`dialog`, `alert-dialog`, lightbox dialog, and modal menu/select/popover cases when applicable) are the only overlays allowed to own `document.body.style.pointerEvents` and focus restoration; tooltip and preview-card/hover-card stay ordering-only overlays with no body pointer-events or focus-restore ownership. Current numeric layering ownership to retire is concentrated in the raw wrappers: dialog `z-[100002]/z-[100003]` plus `zIndexBase`, alert-dialog `z-[100004]/z-[100005]`, popover `z-[100010]`, select `z-[100004]`, dropdown-menu `z-50`, tooltip `z-[100010]`, hover-card `z-[100001]`, and lightbox `UI_Z_LAYERS.LIGHTBOX_MODAL`.",
+      "files_changed": [
+        "/workspace/reigh-app/.megaplan/plans/m2-overlay-stack-centralize-20260416-2326/execution_batch_1.json"
+      ],
+      "commands_run": [
+        "pwd && ls src/shared/state",
+        "rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|drawer|preview-card|hover-card)' src/ --type ts -l | sort",
+        "rg '@base-ui/react/(context-menu|drawer)' src/ -n",
+        "rg 'ToolsPaneDrawer' src/ -n",
+        "rg -n '@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|popup|preview-card|hover-card)' src/domains/media-lightbox/components/LightboxShell.tsx src/shared/components/ui/alert-dialog.tsx src/shared/components/ui/command.tsx src/shared/components/ui/dialog.tsx src/shared/components/ui/dropdown-menu.tsx src/shared/components/ui/hover-card.tsx src/shared/components/ui/popover.tsx src/shared/components/ui/select.tsx src/shared/components/ui/tooltipPrimitives.tsx",
+        "rg -n 'z-[0-9]+|zIndex|modal=|modal\\s|finalFocus|restoreFocus|pointer-events|pointerEvents' src/domains/media-lightbox/components/LightboxShell.tsx src/shared/components/ui/alert-dialog.tsx src/shared/components/ui/command.tsx src/shared/components/ui/dialog.tsx src/shared/components/ui/dropdown-menu.tsx src/shared/components/ui/hover-card.tsx src/shared/components/ui/popover.tsx src/shared/components/ui/select.tsx src/shared/components/ui/tooltipPrimitives.tsx",
+        "sed -n '150,230p' src/shared/components/ToolsPane/ToolsPane.tsx",
+        "sed -n '1,220p' src/shared/components/ui/dialog.tsx",
+        "sed -n '1,220p' src/shared/components/ui/dropdown-menu.tsx",
+        "sed -n '1,220p' src/shared/components/ui/hover-card.tsx",
+        "sed -n '1,260p' src/domains/media-lightbox/components/LightboxShell.tsx",
+        "sed -n '1,220p' src/shared/components/ui/popover.tsx",
+        "sed -n '1,280p' src/shared/components/ui/select.tsx",
+        "sed -n '1,220p' src/shared/components/ui/tooltipPrimitives.tsx",
+        "sed -n '1,220p' src/shared/components/ui/alert-dialog.tsx",
+        "rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup)' src/ --type ts -l | sort",
+        "sed -n '1,80p' src/shared/components/ui/command.tsx",
+        "rg -n '@base-ui/react/popup|@base-ui/react/context-menu|@base-ui/react/drawer' src/",
+        "ls -ld .megaplan/plans/m2-overlay-stack-centralize-20260416-2326 && ls -l .megaplan/plans/m2-overlay-stack-centralize-20260416-2326/execution_batch_1.json"
+      ],
+      "evidence_files": [
+        "src/shared/components/ToolsPane/ToolsPane.tsx",
+        "src/shared/state/createEntityStore.ts",
+        "src/shared/state/selectionStore.ts"
+      ],
+      "reviewer_verdict": "Pass. Inventory, prerequisite-store verification, and the explicit ContextMenu/Drawer N/A decisions match the repo state and the untouched bespoke `ToolsPaneDrawer`."
+    },
+    {
+      "id": "T2",
+      "description": "Implement `src/shared/state/overlayStack.ts` as the ordered overlay lifecycle store. Add the public JSDoc-documented actions/selectors required by the plan for open/update/close, topmost queries, layer lookup, element membership checks, and hooks. Centralize ownership so only the topmost modal overlay controls `document.body.style.pointerEvents`, focus restoration runs in reverse close order for modal overlays with a captured opener, and non-modal overlays remain in the ordering stack without affecting pointer-events or restore behavior.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "executor_notes": "Implemented `src/shared/state/overlayStack.ts` as the centralized ordered overlay store. The public API now exposes JSDoc-documented open/update/close actions plus topmost, topmost-modal, layer, and element-membership selectors and matching hooks. Global ownership is centralized: the first modal overlay snapshots `document.body.style.pointerEvents`, any open modal keeps it at `'none'`, and the last modal restore returns the prior inline value regardless of close order. Modal focus restoration only fires when the closing overlay was the current topmost modal, so nested modal closes restore in reverse close order while non-topmost closes do not steal focus. Added focused store tests covering pointer-events cleanup, reverse-order focus restore, layer lookup, and element-membership queries.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/state/overlayStack.ts",
+        "/workspace/reigh-app/src/shared/state/overlayStack.test.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/state/overlayStack.test.ts"
+      ],
+      "evidence_files": [
+        "src/shared/state/overlayStack.ts",
+        "src/shared/state/overlayStack.test.ts"
+      ],
+      "reviewer_verdict": "Pass. `overlayStack.ts` provides the documented ordered store API plus centralized pointer-events/focus behavior, with matching unit coverage."
+    },
+    {
+      "id": "T3",
+      "description": "Add the overlay bridge infrastructure under `src/shared/components/ui/overlay/`: registration hook(s), overlay instance context, and DOM helper utilities. Registration must track actual popup/backdrop presence rather than long-lived root mount, update tracked elements as refs change, unregister on close/teardown, and expose narrow bridge hooks for current overlay handle, topmost state, and element-based topmost checks. Preserve compatibility helpers for existing marker-driven callers during M2.",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "executor_notes": "Added `src/shared/components/ui/overlay/overlayBridge.tsx`, `overlayDom.ts`, and `index.ts` to centralize overlay bridge infrastructure. The bridge registers overlays only while popup/backdrop elements are actually mounted, rewrites tracked elements when refs move, stamps shared overlay metadata onto live DOM nodes, unregisters on close/teardown, and exposes narrow hooks for the current overlay handle, topmost state, and element-based topmost checks. Added focused coverage in `src/shared/components/ui/overlay/overlayBridge.test.tsx` for DOM-presence-driven registration, nested topmost hooks, and marker-compatible DOM helper fallbacks. Verified with `npx tsc --noEmit` and `npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/overlay/overlayBridge.test.tsx src/shared/state/overlayStack.test.ts`.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/components/ui/overlay/overlayBridge.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/overlayDom.ts",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/index.ts",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/overlayBridge.test.tsx"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/overlay/overlayBridge.test.tsx src/shared/state/overlayStack.test.ts"
+      ],
+      "evidence_files": [
+        "src/shared/components/ui/overlay/overlayBridge.tsx",
+        "src/shared/components/ui/overlay/overlayDom.ts",
+        "src/shared/components/ui/overlay/overlayBridge.test.tsx"
+      ],
+      "reviewer_verdict": "Pass. The overlay bridge registers on real DOM presence, exposes overlay identity/topmost hooks, and preserves compatibility helpers."
+    },
+    {
+      "id": "T4",
+      "description": "Centralize all raw Base UI runtime ownership under `src/shared/components/ui/overlay/` while preserving import-compatible facades where practical. Re-home or rewrite the shared wrappers for dialog, alert-dialog, popover, select, dropdown-menu, tooltip, and hover-card/preview-card; clean up the type-only raw import in `src/shared/components/ui/command.tsx`; and move or rewrite the tooltip test so no raw Base UI imports or mocks remain anywhere under `src/` outside `ui/overlay/`. Remove hardcoded numeric z-index handling from migrated wrappers and route layering through the overlay stack while preserving required markers such as `data-dialog-content`, `data-dialog-backdrop`, and `data-lightbox-popup`.",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "executor_notes": "Centralized the shared Base UI overlay runtime owners under `src/shared/components/ui/overlay/` by adding overlay-backed wrapper modules for dialog, alert-dialog, popover, select, dropdown-menu, tooltip, and hover-card/preview-card. The legacy `src/shared/components/ui/*` wrapper files are now thin re-export facades, `src/shared/components/ui/command.tsx` no longer type-imports `@base-ui/react/dialog`, and the tooltip mock test moved to `src/shared/components/ui/overlay/tooltip.test.tsx` so no raw Base UI mocks remain outside `ui/overlay/`. Migrated wrappers now derive layering from the overlay stack via shared helper styles and preserve required markers such as `data-dialog-content` and `data-dialog-backdrop`; there are no wrapper-local numeric `z-*` classes left under `src/shared/components/ui/overlay/`. Verification: `npx tsc --noEmit` passed; `npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/dialog.test.tsx src/shared/components/ui/select.test.tsx src/shared/components/ui/overlay/tooltip.test.tsx src/shared/components/ui/overlay/overlayBridge.test.tsx src/shared/state/overlayStack.test.ts` passed; `rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card|hover-card)' src/ --type ts -l | grep -v 'ui/overlay/' | sort` now returns only `src/domains/media-lightbox/components/LightboxShell.tsx`, which is the planned T6 owner outside this batch.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/components/ui/overlay/shared.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/dialog.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/alert-dialog.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/popover.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/select.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/dropdown-menu.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/tooltip.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/hover-card.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/tooltip.test.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/index.ts",
+        "/workspace/reigh-app/src/shared/components/ui/dialog.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/alert-dialog.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/popover.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/select.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/dropdown-menu.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/tooltipPrimitives.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/hover-card.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/command.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/tooltipPrimitives.test.tsx"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/dialog.test.tsx src/shared/components/ui/select.test.tsx src/shared/components/ui/overlay/tooltip.test.tsx src/shared/components/ui/overlay/overlayBridge.test.tsx src/shared/state/overlayStack.test.ts",
+        "rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card|hover-card)' src/ --type ts -l | grep -v 'ui/overlay/' | sort",
+        "rg 'z-\\[[0-9]+\\]|z-[0-9]+' src/shared/components/ui/overlay/ -n"
+      ],
+      "evidence_files": [
+        "src/shared/components/ui/overlay/dialog.tsx",
+        "src/shared/components/ui/overlay/tooltip.tsx",
+        "src/shared/components/ui/overlay/tooltip.test.tsx"
+      ],
+      "reviewer_verdict": "Pass. Raw Base UI ownership moved under `ui/overlay`, public facades were preserved, and the tooltip test mock moved with the wrappers."
+    },
+    {
+      "id": "T5",
+      "description": "Complete the menu migration as a dedicated pass. Ensure both `DropdownMenuContent` and `DropdownMenuSubContent` register with the overlay stack, derive their layering from stack state instead of numeric classes or literals such as `z-50`, and preserve existing public props and behavior including submenu offsets and collision/placement options.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "executor_notes": "Completed the dedicated menu pass in `src/shared/components/ui/overlay/dropdown-menu.tsx`. `DropdownMenuSub` now uses `MenuPrimitive.SubmenuRoot` so submenu triggers/content mount on the correct Base UI lifecycle, and both `DropdownMenuContent` and `DropdownMenuSubContent` register through `useOverlayBridge` with stack-derived layers. Added shared positioner props for submenu placement/collision options and focused coverage in `src/shared/components/ui/overlay/dropdown-menu.test.tsx` proving both popup branches register with the overlay stack and do not rely on `z-50` or other numeric z-index classes.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/components/ui/overlay/dropdown-menu.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/dropdown-menu.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/overlay/dropdown-menu.test.tsx src/shared/components/ui/overlay/lightbox.test.tsx src/domains/media-lightbox/hooks/useLightboxNavigation.test.ts src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.test.ts src/shared/components/ui/dialog.test.tsx src/shared/components/ui/select.test.tsx src/shared/components/ui/overlay/tooltip.test.tsx src/shared/components/ui/overlay/overlayBridge.test.tsx src/shared/state/overlayStack.test.ts",
+        "rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card|hover-card)' src/ --type ts -l | grep -v 'ui/overlay/' | sort",
+        "rg 'z-\\[[0-9]+\\]|z-[0-9]+' src/shared/components/ui/overlay/ -n",
+        "npx tsc --noEmit",
+        "npm test"
+      ],
+      "evidence_files": [
+        "src/shared/components/ui/overlay/dropdown-menu.tsx",
+        "src/shared/components/ui/overlay/dropdown-menu.test.tsx"
+      ],
+      "reviewer_verdict": "Pass. Both menu popup branches now register through the stack and the submenu-specific regression test covers the previously risky branch."
+    },
+    {
+      "id": "T6",
+      "description": "Migrate the media lightbox to the centralized overlay layer by introducing a sanctioned overlay-aware lightbox wrapper under `src/shared/components/ui/overlay/` and updating `src/domains/media-lightbox/components/LightboxShell.tsx` to use it instead of importing `@base-ui/react/dialog` directly. Preserve the current controlled-open contract, modal semantics, dismissal cancellation rules, custom pointer/click/touch handlers, container/marker exposure, and layout-driven styles, and make the overlay handle/topmost bridge available to lightbox hooks.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "executor_notes": "Introduced the sanctioned overlay-aware lightbox wrapper in `src/shared/components/ui/overlay/lightbox.tsx` and exported it via `src/shared/components/ui/overlay/index.ts`. Updated `src/domains/media-lightbox/components/LightboxShell.tsx` to stop importing `@base-ui/react/dialog` directly and instead use the wrapper primitives, preserving the existing controlled-open contract, modal toggle, dismissal cancellation, pointer/click/touch handlers, accessibility titles/descriptions, and `data-lightbox-popup` marker. Added `src/shared/components/ui/overlay/lightbox.test.tsx` to verify popup/backdrop registration plus current-overlay bridge availability for lightbox descendants.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/components/ui/overlay/lightbox.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/lightbox.test.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/index.ts",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/LightboxShell.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/overlay/dropdown-menu.test.tsx src/shared/components/ui/overlay/lightbox.test.tsx src/domains/media-lightbox/hooks/useLightboxNavigation.test.ts src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.test.ts src/shared/components/ui/dialog.test.tsx src/shared/components/ui/select.test.tsx src/shared/components/ui/overlay/tooltip.test.tsx src/shared/components/ui/overlay/overlayBridge.test.tsx src/shared/state/overlayStack.test.ts",
+        "rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card|hover-card)' src/ --type ts -l | grep -v 'ui/overlay/' | sort",
+        "npx tsc --noEmit",
+        "npm test"
+      ],
+      "evidence_files": [
+        "src/domains/media-lightbox/components/LightboxShell.tsx",
+        "src/shared/components/ui/overlay/lightbox.tsx",
+        "src/shared/components/ui/overlay/lightbox.test.tsx"
+      ],
+      "reviewer_verdict": "Pass. `LightboxShell` now uses the sanctioned overlay-aware wrapper path while preserving markers, handlers, and controlled-open behavior."
+    },
+    {
+      "id": "T7",
+      "description": "Retire DOM-marker and computed-z-index precedence logic for migrated overlay flows and centralize helper-based popup/container resolution. Replace `uiLayers.ts` topmost logic and update `LoraSelectorModal`, `useLightboxNavigation`, and `useLightboxShellInteractionHandlers` to use overlay-stack identity/topmost queries only, explicitly deleting `targetHasHigherZIndex()` and related fallback logic. In the same pass, migrate the named helper consumers (`CommunityLorasTab`, `MyLorasTab`, `sharedSections.tsx`, `useSlidingPane.ts`, `GuidanceVideoStrip.tsx`, `elementPolicy.ts`, `useMobileInteractions.ts`, and `useLightboxTransition.ts`) to shared overlay DOM helpers while keeping current marker/CSS compatibility intact.",
+      "depends_on": [
+        "T5",
+        "T6"
+      ],
+      "status": "done",
+      "executor_notes": "Retired the remaining computed-z-index and DOM-marker precedence fallback for migrated lightbox/Lora flows. `uiLayers.ts` no longer owns topmost-dialog detection; `LoraSelectorModal`, `useLightboxNavigation`, and `useLightboxShellInteractionHandlers` now gate behavior from overlay-stack topmost identity only, with `targetHasHigherZIndex()` and `hasDialogAbove()` removed. In the same pass, the named helper consumers (`CommunityLorasTab`, `MyLorasTab`, `sharedSections.tsx`, `useSlidingPane.ts`, `GuidanceVideoStrip.tsx`, `elementPolicy.ts`, `useMobileInteractions.ts`, and `useLightboxTransition.ts`) were moved onto shared overlay DOM helpers so popup/container resolution stays centralized while existing marker/CSS selectors remain supported through the helper layer. Verification: targeted lightbox/helper Vitest modules passed, `src/shared/components/ui/overlay/overlayBridge.test.tsx` and `src/moduleImportCoverage.test.ts` passed, `npx tsc --noEmit` passed, and the retired precedence/helper-selector grep returned empty across the touched T7 files.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/components/ui/overlay/overlayDom.ts",
+        "/workspace/reigh-app/src/shared/lib/uiLayers.ts",
+        "/workspace/reigh-app/src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+        "/workspace/reigh-app/src/domains/lora/components/LoraSelectorModal/components/CommunityLorasTab.tsx",
+        "/workspace/reigh-app/src/domains/lora/components/LoraSelectorModal/components/MyLorasTab/MyLorasTab.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/LightboxShell.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/hooks/useLightboxNavigation.ts",
+        "/workspace/reigh-app/src/domains/media-lightbox/hooks/useLightboxNavigation.test.ts",
+        "/workspace/reigh-app/src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.ts",
+        "/workspace/reigh-app/src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.test.ts",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/editModes/sharedSections.tsx",
+        "/workspace/reigh-app/src/shared/hooks/useSlidingPane.ts",
+        "/workspace/reigh-app/src/shared/lib/interactions/elementPolicy.ts",
+        "/workspace/reigh-app/src/shared/components/MediaGallery/hooks/useMobileInteractions.ts",
+        "/workspace/reigh-app/src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts",
+        "/workspace/reigh-app/src/tools/travel-between-images/components/Timeline/GuidanceVideoStrip.tsx",
+        "/workspace/reigh-app/src/shared/lib/uiLayers.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/domains/media-lightbox/hooks/useLightboxNavigation.test.ts src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.test.ts src/shared/lib/interactions/elementPolicy.test.ts src/shared/hooks/__tests__/useSlidingPane.test.ts src/shared/lib/uiLayers.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/overlay/overlayBridge.test.tsx src/moduleImportCoverage.test.ts",
+        "npx tsc --noEmit",
+        "rg -n \"targetHasHigherZIndex|hasDialogAbove|getTopDialogElement|\\[data-dialog-content\\]|\\[data-lightbox-popup\\]|\\[data-dialog-backdrop\\]|\\[data-popup\\]|\\[role=\\\\\\\"listbox\\\\\\\"\\]|\\[role=\\\\\\\"menu\\\\\\\"\\]\" src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx src/domains/lora/components/LoraSelectorModal/components/CommunityLorasTab.tsx src/domains/lora/components/LoraSelectorModal/components/MyLorasTab/MyLorasTab.tsx src/domains/media-lightbox/hooks/useLightboxNavigation.ts src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.ts src/domains/media-lightbox/components/editModes/sharedSections.tsx src/shared/hooks/useSlidingPane.ts src/tools/travel-between-images/components/Timeline/GuidanceVideoStrip.tsx src/shared/lib/interactions/elementPolicy.ts src/shared/components/MediaGallery/hooks/useMobileInteractions.ts src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts src/shared/lib/uiLayers.ts"
+      ],
+      "evidence_files": [
+        "src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.ts",
+        "src/domains/media-lightbox/hooks/useLightboxNavigation.ts",
+        "src/shared/lib/uiLayers.ts"
+      ],
+      "reviewer_verdict": "Pass. Migrated precedence logic now routes through overlay-stack helpers, and the named popup/container helper consumers were updated accordingly."
+    },
+    {
+      "id": "T8",
+      "description": "Execute the grep-driven cleanup for caller-side layering escape hatches on migrated Base UI overlays. Remove or neutralize `overlayClassName`, `zIndexBase`, layering-only `tooltipClassName`, and equivalent numeric z-index overrides from direct and forwarded consumer paths, including the known Lora, select, tooltip, and shot-selector flows. Preserve non-layering customization and leave unrelated non-overlay layout z-indexes alone. Treat the broad repo-wide numeric z-index grep as inventory only; use wrapper-only and migrated-consumer checks as the hard gate.",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "executor_notes": "Removed the remaining caller-side layering escape hatches from migrated overlay consumers and the forwarded dialog/tooltip paths. Lora modal no longer passes `overlayClassName`/`zIndexBase`; `ShotPrimaryActionButton` no longer forwards `tooltipClassName`; `ShotSelector` dropped its hardcoded popover `z-[10000]`; lightbox, variant-selector, hover-card, and select consumer callsites had numeric overlay `z-*` classes removed while preserving non-layering styling. Hard-gate cleanup verified with `rg -n \"overlayClassName|zIndexBase|tooltipClassName|<(TooltipContent|HoverCardContent|PopoverContent|SelectContent)[^\\n>]*className=.*z-\" src/`, which now returns empty. Validation passed with `npx tsc --noEmit` and full `npm test` (`883` files, `4558` tests).",
+      "files_changed": [
+        "/workspace/reigh-app/src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/ButtonGroups.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/ShotSelectorControls.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/WorkflowControlsBar.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/controls/PositionToggleButton.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/controls/UndoClearButtons.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/editModes/sharedSections.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/LightboxLayout.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx",
+        "/workspace/reigh-app/src/shared/components/ProfitSplitBar.tsx",
+        "/workspace/reigh-app/src/shared/components/VariantSelector/VariantSelector.tsx",
+        "/workspace/reigh-app/src/shared/components/VariantSelector/components/VariantCard.tsx",
+        "/workspace/reigh-app/src/shared/components/selectors/ShotSelector.tsx",
+        "/workspace/reigh-app/src/shared/components/selectors/ShotSelectorWithAdd.tsx",
+        "/workspace/reigh-app/src/shared/components/shots/ShotPrimaryActionButton.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/dialog.tsx"
+      ],
+      "commands_run": [
+        "git status --short",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName|zIndex\\s*[:=]|z-\\[[0-9]+\\]|z-[0-9]+\" src/",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName\" src/",
+        "sed -n '1,220p' src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+        "sed -n '1,260p' src/shared/components/selectors/ShotSelectorWithAdd.tsx",
+        "sed -n '1,180p' src/shared/components/shots/ShotPrimaryActionButton.tsx",
+        "sed -n '1,220p' src/shared/components/ui/overlay/dialog.tsx",
+        "rg -n \"overlayClassName=|zIndexBase=|tooltipClassName=|contentClassName=.*z-|className=.*z-\\[[0-9]+\\].*(TooltipContent|PopoverContent|SelectContent|DropdownMenuContent|DialogContent)|UI_Z_LAYERS\\.(LIGHTBOX_MODAL|TOOLTIP|DROPDOWN|MODAL)\" src/",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName|z-\\[1000|z-50|z-\\[100\" src/domains src/shared src/tools",
+        "rg -n \"<TooltipContent[^\\n>]*className=|tooltipClassName=|contentClassName=.*z-|<SelectContent[^\\n>]*className=|<DialogContent[^\\n>]*(overlayClassName|zIndexBase)=|overlayClassName=|zIndexBase=\" src/",
+        "rg -n \"ShotPrimaryActionButton\" src/",
+        "sed -n '1,280p' src/shared/components/selectors/ShotSelector.tsx",
+        "sed -n '1,260p' src/shared/components/ui/overlay/select.tsx",
+        "rg -n \"<(TooltipContent|HoverCardContent|PopoverContent|SelectContent|DropdownMenuContent|DropdownMenuSubContent|DialogContent|AlertDialogContent)[^\\n>]*className=.*z-\" src/",
+        "sed -n '120,170p' src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx",
+        "sed -n '120,175p' src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx",
+        "sed -n '220,260p' src/shared/components/VariantSelector/components/VariantCard.tsx",
+        "npx tsc --noEmit",
+        "npm test",
+        "git diff --name-only -- src/ .megaplan/plans/m2-overlay-stack-centralize-20260416-2326 | sort",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName|<(TooltipContent|HoverCardContent|PopoverContent|SelectContent)[^\\n>]*className=.*z-\" src/",
+        "git diff --stat -- src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx src/shared/components/shots/ShotPrimaryActionButton.tsx src/shared/components/selectors/ShotSelectorWithAdd.tsx src/shared/components/selectors/ShotSelector.tsx src/shared/components/ui/overlay/dialog.tsx src/domains/media-lightbox/components/editModes/sharedSections.tsx src/domains/media-lightbox/components/controls/PositionToggleButton.tsx src/domains/media-lightbox/components/controls/UndoClearButtons.tsx src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx src/domains/media-lightbox/components/layouts/LightboxLayout.tsx src/domains/media-lightbox/components/WorkflowControlsBar.tsx src/domains/media-lightbox/components/ShotSelectorControls.tsx src/domains/media-lightbox/components/ButtonGroups.tsx src/shared/components/VariantSelector/VariantSelector.tsx src/shared/components/VariantSelector/components/VariantCard.tsx src/shared/components/ProfitSplitBar.tsx src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx"
+      ],
+      "evidence_files": [
+        "src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+        "src/shared/components/selectors/ShotSelectorWithAdd.tsx",
+        "src/shared/components/shots/ShotPrimaryActionButton.tsx"
+      ],
+      "reviewer_verdict": "Pass. The layering escape hatches identified during critique were removed from direct and forwarded consumer paths without breaking facade imports."
+    },
+    {
+      "id": "T9",
+      "description": "Finish with proof. Add or update the focused unit/integration tests required by the plan for `overlayStack`, bridge hooks, menu submenu ownership, non-modal tooltip/preview-card behavior, lightbox precedence replacement, helper compatibility, and the required `open A -> open B -> close A -> close B` sequences for Dialog+Popover and Menu+Dialog. Then write a short throwaway reproduction script for the overlay pointer-events regression, run it to confirm the fix, delete the script, and run validation to green: relevant targeted tests first, `npx tsc --noEmit`, `npm test`, raw Base UI import greps, explicit empty greps for context-menu/drawer, wrapper-only z-index invariants, targeted migrated-consumer layering checks, and marker/CSS support greps. If any browser/runtime/manual-only verification is encountered, mark it `skipped` immediately with executor notes naming the blocker.",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "executor_notes": "Strengthened the close-order regression proof instead of relying on the existing weaker variant: `overlaySequences.test.tsx` now exercises Dialog+modal-Popover and Menu+Dialog with the required open A -> open B -> close A -> close B order and asserts `document.body.style.pointerEvents` stays blocked until the last modal closes. `hover-card.test.tsx` now explicitly proves preview-card remains ordering-only by closing it and confirming it does not trigger focus restoration. Ran a throwaway `tsx` reproduction script for the pointer-events regression (`dialog-a` + `popover-b` modal close-order), confirmed the fix, and deleted the script afterward. Full verification passed: targeted Vitest overlay suite passed, `npx tsc --noEmit` passed, `npm test` passed (`885` files, `4562` tests), raw Base UI import/context-menu/drawer greps are empty outside `ui/overlay/`, wrapper source files have no numeric `z-*` classes, migrated-consumer layering override grep is empty, and marker/CSS support selectors remain present in the expected helper and stylesheet surfaces.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/components/ui/overlay/overlaySequences.test.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/hover-card.test.tsx",
+        "/workspace/reigh-app/.tmp-overlay-stack-repro.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/components/ui/overlay/overlaySequences.test.tsx src/shared/components/ui/overlay/hover-card.test.tsx src/shared/components/ui/overlay/tooltip.test.tsx src/shared/components/ui/overlay/dropdown-menu.test.tsx src/shared/components/ui/overlay/lightbox.test.tsx src/shared/components/ui/overlay/overlayBridge.test.tsx src/shared/state/overlayStack.test.ts",
+        "npx tsx .tmp-overlay-stack-repro.ts",
+        "npx tsc --noEmit",
+        "npm test",
+        "set -e\nrg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card|hover-card|drawer)' src/ --type ts -l | grep -v 'ui/overlay/' || true\nprintf '\\n---context-drawer---\\n'\nrg '@base-ui/react/(context-menu|drawer)' src/ -n || true\nprintf '\\n---wrapper-z-index---\\n'\nrg 'z-\\[[0-9]+\\]|z-[0-9]+' src/shared/components/ui/overlay/ -n || true\nprintf '\\n---migrated-consumer-overrides---\\n'\nrg 'overlayClassName|zIndexBase|tooltipClassName|<(TooltipContent|HoverCardContent|PopoverContent|SelectContent)[^\\n>]*className=.*z-' src/ -n || true\nprintf '\\n---marker-support---\\n'\nrg '\\[data-dialog-content\\]|\\[data-dialog-backdrop\\]|\\[data-lightbox-popup\\]|\\[data-popup\\]|\\[data-side\\]|\\[role=\"listbox\"\\]|role=\"menu\"' src/index.css src/styles/components/interactions.css src/styles/components/dialog-overrides.css src/styles/components/wes-surfaces.css src/styles/foundations/base-case.css src/shared/components/ui/overlay/overlayDom.ts src/domains/media-lightbox/components/LightboxShell.tsx src/shared/lib/interactions/elementPolicy.ts src/shared/hooks/useSlidingPane.ts src/tools/travel-between-images/components/Timeline/GuidanceVideoStrip.tsx -n || true",
+        "printf '%s\\n' '---wrapper-z-index-source-only---'\nrg 'z-\\[[0-9]+\\]|z-[0-9]+' src/shared/components/ui/overlay/ --glob '!**/*.test.tsx' -n || true\nprintf '\\n%s\\n' '---raw-base-ui-outside-overlay---'\nrg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card|hover-card|drawer)' src/ --type ts -l | grep -v 'ui/overlay/' || true"
+      ],
+      "evidence_files": [
+        "src/shared/components/ui/overlay/overlaySequences.test.tsx",
+        "src/shared/components/ui/overlay/hover-card.test.tsx"
+      ],
+      "reviewer_verdict": "Pass. The required close-order integration tests and non-modal preview-card regression tests are present; the audit mismatch on the temp repro script is consistent with creating and deleting a throwaway file."
+    }
+  ],
+  "watch_items": [
+    "Do not broaden scope into bespoke overlays. `ToolsPaneDrawer` is a custom fixed-position panel and remains out of scope unless a real Base UI drawer owner appears during execution.",
+    "`@base-ui/react/context-menu` and `@base-ui/react/drawer` are explicit verified N/A families for this repo revision. Their greps should stay empty before and after the migration.",
+    "Tooltip and preview-card are non-modal ordering-only overlays. They must receive stack identity/layering but must not capture opener focus, restore focus on close, or affect `document.body.style.pointerEvents`.",
+    "Overlay registration must follow actual popup/backdrop presence, not root mount lifetime. Long-lived roots that register while closed would recreate the same class of ordering bugs.",
+    "The overlay stack must become the only automated owner of body pointer-events and focus restoration for migrated modal overlays. Do not leave Base UI and wrapper logic competing for ownership.",
+    "Both menu popup branches matter. `DropdownMenuContent` and `DropdownMenuSubContent` each have their own portal/positioner lifecycle and both must register with the stack.",
+    "`LightboxShell` is a must-touch file. Raw `@base-ui/react/dialog` ownership cannot remain in that domain file after M2.",
+    "Retire computed-z-index precedence entirely for migrated lightbox/Lora flows. `targetHasHigherZIndex()`, `hasDialogAbove()`, and related DOM-order fallbacks should not survive as backups.",
+    "Preserve compatibility markers and CSS support during M2. Existing JS/CSS still depends on selectors such as `data-dialog-content`, `data-dialog-backdrop`, `data-lightbox-popup`, `[data-popup]`, `[data-side]`, `[role=\"listbox\"]`, and `role=\"menu\"`.",
+    "The broad repo-wide numeric `z-*` grep is noisy and not a clean pass/fail invariant. Use it for inventory only. The hard layering gates are wrapper-only invariants and targeted migrated-consumer checks.",
+    "No raw Base UI imports or mocks may remain anywhere under `src/` outside `src/shared/components/ui/overlay/`, including type-only imports and the tooltip test mock.",
+    "Keep wrappers thin and prop-compatible. If a wrapper drifts from the Base UI surface, the blast radius is large because existing consumers already depend on those facades.",
+    "Deferred-human checks must be treated exactly as deferred. If execution encounters runtime app interaction, browser-driving, drag smoke checks, or manual focus-trap verification, record `skipped` immediately with the blocker in executor notes and do not retry.",
+    "Do not worsen unrelated debt watch areas elsewhere in the repo while touching shared UI infrastructure."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Did the executor capture the actual current raw Base UI owner inventory, verify the state-store prerequisites, confirm context-menu/drawer absence, and document the modal vs non-modal containment rules before editing?",
+      "executor_note": "Yes. Inventory, prerequisite files, explicit absence of context-menu/drawer/popup, bespoke `ToolsPaneDrawer` scope exclusion, and the modal-vs-ordering containment rules were all captured before any implementation edits.",
+      "verdict": "Confirmed. The repo state supports the captured inventory, prerequisite-store presence, and explicit ContextMenu/Drawer absence."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Does `overlayStack.ts` now exist with JSDoc-documented public actions/selectors, correct topmost/layer APIs, reverse-order modal focus restoration, and pointer-events cleanup that is independent of close order?",
+      "executor_note": "Yes. `overlayStack.ts` now exists with documented public actions/selectors/hooks, imperative topmost and layer APIs, reverse-order modal focus restoration, and body pointer-events cleanup derived from modal presence rather than close order.",
+      "verdict": "Confirmed. `overlayStack.ts` exports the documented API and the tests cover close-order cleanup and focus restoration."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Do the new overlay bridge utilities register overlays only when popup/backdrop DOM is actually present, expose stable overlay identity/topmost hooks, and provide shared DOM helpers needed by current marker-based callers?",
+      "executor_note": "Yes. The new bridge registers only while popup/backdrop DOM exists, keeps overlay identity stable through context, exposes current-handle/topmost hooks including element-based topmost checks, and adds shared DOM helpers that preserve legacy marker-based behavior during M2.",
+      "verdict": "Confirmed. `useOverlayBridge` only registers while popup/backdrop DOM exists and provides the promised bridge hooks/helpers."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "After wrapper migration, are all raw Base UI imports and mocks confined to `src/shared/components/ui/overlay/`, with preview-card included, the tooltip test moved/rewritten, and migrated wrappers free of hardcoded numeric z-index ownership?",
+      "executor_note": "Shared wrapper ownership is now confined to `src/shared/components/ui/overlay/`, the tooltip mock test was moved there, and migrated overlay wrapper files no longer carry numeric `z-*` ownership. The repo-wide raw-import grep is not fully empty yet because `src/domains/media-lightbox/components/LightboxShell.tsx` still imports `@base-ui/react/dialog`; that remaining non-overlay owner is the planned T6 migration.",
+      "verdict": "Confirmed. Shared wrapper raw imports are confined to `src/shared/components/ui/overlay/`; the remaining T4 caveat was later resolved by T6."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Do both menu popup branches (`DropdownMenuContent` and `DropdownMenuSubContent`) register with the overlay stack and avoid any hardcoded numeric z-index path such as `z-50` while preserving menu behavior?",
+      "executor_note": "Yes. Both menu popup branches are now overlay-stack participants: root content uses the stack-backed menu bridge and submenu content mounts under `MenuPrimitive.SubmenuRoot`, registers as `menu-submenu`, accepts the same placement/collision knobs, and no wrapper path uses numeric z-index classes such as `z-50`.",
+      "verdict": "Confirmed. Both menu popup branches are stack participants and no longer rely on numeric menu z-index classes."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Does `LightboxShell.tsx` stop importing `@base-ui/react/dialog` directly and instead use a sanctioned overlay-aware wrapper that preserves its existing modal, dismissal, event-handler, container, and marker contracts?",
+      "executor_note": "Yes. `LightboxShell.tsx` no longer imports `@base-ui/react/dialog`; it uses the new overlay-aware lightbox wrapper under `src/shared/components/ui/overlay/`, which preserves the existing modal semantics, dismissal cancellation, event handlers, marker/container behavior, and exposes the overlay bridge context to lightbox descendants.",
+      "verdict": "Confirmed. `LightboxShell.tsx` no longer directly owns `@base-ui/react/dialog` and instead uses the overlay-aware wrapper path."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Have migrated lightbox/Lora flows stopped using DOM-marker or computed-z-index precedence, with helper consumers moved onto shared overlay DOM helpers and marker/CSS compatibility preserved?",
+      "executor_note": "Yes. The migrated lightbox/Lora path now relies on overlay-stack topmost identity instead of computed z-index or DOM-marker precedence, and the named helper consumers were moved onto shared overlay DOM helpers. Marker/CSS compatibility remains intact because the shared helper layer still recognizes the legacy selectors (`data-lightbox-popup`, `data-dialog-content`, `data-dialog-backdrop`, `data-popup`, `role=listbox`, and `role=menu`) while centralizing their resolution.",
+      "verdict": "Confirmed. Migrated lightbox/Lora precedence logic now relies on overlay-stack identity/topmost helpers, with compatibility selectors centralized in `overlayDom.ts`."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Were layering-only caller escape hatches removed or neutralized from migrated overlay consumers and forwarded prop paths without disturbing unrelated non-overlay layout z-index usage?",
+      "executor_note": "Yes. The remaining layering-only escape hatches were removed from migrated overlay consumers and from the forwarded dialog/tooltip prop path, while unrelated layout z-index usage was left untouched. The hard-gate grep for `overlayClassName`, `zIndexBase`, `tooltipClassName`, and overlay component `className` z-index overrides now returns empty.",
+      "verdict": "Confirmed. The escape-hatch grep is clean and the touched consumer paths reflect that cleanup."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Did the executor add the required focused tests, run a throwaway reproduction script and delete it, pass `npx tsc --noEmit` and `npm test`, and satisfy the invariant greps while marking any manual-only checks as `skipped` rather than `blocked`?",
+      "executor_note": "Yes. Added the focused close-order proof by strengthening Dialog+Popover to use two modal overlays and adding an explicit preview-card non-modal close/no-focus-restore assertion, ran a throwaway `tsx` reproduction script and deleted it, passed `npx tsc --noEmit` and full `npm test` (`885` files, `4562` tests), and the invariant greps are clean for raw Base UI imports outside `ui/overlay`, context-menu/drawer absence, wrapper source z-index ownership, and migrated-consumer layering overrides while marker/CSS compatibility selectors remain present.",
+      "verdict": "Confirmed. The required focused tests, typecheck, full test run, and overlay-specific invariant greps are all supported by the final diff and recorded command evidence."
+    }
+  ],
+  "meta_commentary": "Execution should stay narrow and aggressive about centralizing Base UI ownership rather than redesigning the app's broader overlay system. The critical judgment calls are: keep wrappers thin and prop-compatible; treat tooltip/preview-card as ordering-only overlays; make the overlay stack the sole automated owner of modal pointer-events and focus restoration; and remove competing DOM/computed-z-index precedence for migrated flows instead of leaving fallback branches behind. For validation, do not use the broad repo-wide numeric z-index grep as a literal pass/fail gate because it includes intentional non-overlay layout layers; the real hard gates are wrapper-only numeric-layer elimination, migrated-consumer escape-hatch cleanup, raw Base UI import elimination outside `ui/overlay`, and the required tests. If a task crosses into browser-driving, runtime app interaction, drag smoke tests, or manual keyboard/focus verification, stop immediately and mark that task `skipped` with explicit blocker evidence per the executor hard rule.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Audit raw Base UI owners, explicit N/A families, and menu submenu coverage",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Freeze overlay containment semantics before implementation",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Implement ordered `overlayStack.ts` lifecycle store",
+        "finalize_task_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Add registration utilities, identity bridge, and overlay DOM helpers",
+        "finalize_task_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Move all raw portal primitives into `src/shared/components/ui/overlay/`",
+        "finalize_task_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate the entire menu family including submenu portals",
+        "finalize_task_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate `LightboxShell` into the centralized overlay layer",
+        "finalize_task_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Replace topmost precedence logic with stack bridge hooks",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Centralize container resolution and popup-marker helpers",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Execute grep-driven cleanup for layering-only overrides",
+        "finalize_task_ids": [
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Add focused tests for stack ownership, bridge hooks, submenu, and compatibility",
+        "finalize_task_ids": [
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Validate with invariant greps and cheapest-first checks",
+        "finalize_task_ids": [
+          "T9"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All 12 approved plan steps were reviewed and mapped to at least one execution task. The only deliberate judgment call is that the noisy repo-wide numeric z-index grep is treated as exploratory inventory rather than a hard invariant; this matches the gate guidance and is captured in T8/T9 plus the watch items.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": null,
+  "baseline_test_command": null,
+  "baseline_test_note": "No supported test runner detected on PATH (looked for: pytest). Configure test_command in state config to specify one."
+}

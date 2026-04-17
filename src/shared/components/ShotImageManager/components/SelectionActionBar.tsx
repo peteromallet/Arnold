@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Button } from '@/shared/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/components/ui/tooltip';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { MOBILE_BOTTOM_OFFSET, DESKTOP_BOTTOM_OFFSET } from '../constants';
 import { FolderPlus, ExternalLink, Loader2 } from 'lucide-react';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 interface SelectionActionBarProps {
   selectedCount: number;
@@ -26,12 +26,10 @@ export const SelectionActionBar: React.FC<SelectionActionBarProps> = ({
   const [newShotState, setNewShotState] = useState<'idle' | 'loading' | 'success'>('idle');
   const [createdShotId, setCreatedShotId] = useState<string | null>(null);
 
-  const {
-    isShotsPaneLocked,
-    isTasksPaneLocked,
-    shotsPaneWidth,
-    tasksPaneWidth
-  } = usePanes();
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
   const isMobile = useIsMobile();
 
   const handleNewShot = async () => {

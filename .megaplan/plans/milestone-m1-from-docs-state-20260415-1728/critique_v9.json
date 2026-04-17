@@ -1,0 +1,117 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Updated `critique_output.json` with findings that the revised plan honors the settled reader-mode tiebreaker for Join Clips, but still narrows production validation relative to the original milestone brief.",
+          "flagged": true
+        },
+        {
+          "detail": "Added a second finding that the new external reader/sync layer is not yet reflected in the repository\u2019s documented settings architecture, so the plan only partially covers the shared-pattern impact.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Flagged the disabled/sentinel path as still underspecified because `createEntityStore.useEntity()` currently lazy-loads every string entity id, so a sentinel would still hit `config.load()` unless the implementation adds an explicit bypass or external registration for that sentinel.",
+          "flagged": true
+        },
+        {
+          "detail": "Recorded that the revised same-tick mirror requirement does resolve the prior stale-read prompt/generate bug surface.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Recorded that the real Join Clips settings surface is broader than five scalars and that the plan\u2019s composite-payload coverage aligns with current callers.",
+          "flagged": false
+        },
+        {
+          "detail": "Flagged that the pilot now establishes a brand-new external-reader architecture beyond the repo\u2019s existing documented adapter patterns, so it is broader than the original \u2018smallest consumer\u2019 framing.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Recorded that the revised plan now covers the shared form plumbing and downstream prop-builder/test surfaces for optional prompt blur callbacks.",
+          "flagged": false
+        },
+        {
+          "detail": "Flagged that supporting infrastructure still includes a settings-system doc update, which the plan does not mention even though the repo rules require doc maintenance for cross-cutting pattern changes.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Recorded that `prompt` and `negativePrompt` are the actual text-field callers and `enhancePrompt` remains a boolean toggle across current builders.",
+          "flagged": false
+        },
+        {
+          "detail": "Flagged that callers like `useClipManager` and `useJoinClipsGenerate` consume whole `joinSettings.settings` snapshots, so the adapter must prove composite-field synchronization too, not just scalar prompt mirroring.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "correctness-2",
+      "concern": "Disabled entity path: the sentinel-based disabled strategy is still underspecified against `createEntityStore.useEntity()` because that hook currently lazy-loads every string entity id; without an explicit bypass or external registration for the sentinel, null/undefined Join Clips mounts would still call `config.load()`.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/state/createEntityStore.ts` unconditionally calls `ensureEntity(entityId)` from `useEffect`, while the revised plan relies on a stable sentinel entity id for disabled `projectId` cases."
+    },
+    {
+      "id": "maintainability-0",
+      "concern": "Settings architecture: the revised plan introduces a new reader-mode registration/sync layer alongside `useAutoSaveSettings` and `usePersistentToolState`, but it does not include the corresponding shared settings documentation update that repository guidance requires for cross-cutting pattern changes.",
+      "category": "maintainability",
+      "severity_hint": "uncertain",
+      "evidence": "`docs/structure_detail/settings_system.md` currently documents a three-layer settings stack, while `CLAUDE.md` requires updating relevant sub-docs for cross-cutting pattern changes."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 14: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 15: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 16: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "correctness",
+    "callers",
+    "FLAG-M1-015"
+  ],
+  "disputed_flag_ids": []
+}

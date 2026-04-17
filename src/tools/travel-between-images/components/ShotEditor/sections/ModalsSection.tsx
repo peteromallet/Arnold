@@ -9,7 +9,7 @@ import { LoraSelectorModal } from '@/domains/lora/components';
 import type { LoraModel } from '@/domains/lora/types/lora';
 import { mapSelectedLorasForModal } from '@/shared/components/lora/mapSelectedLorasForModal';
 import { SettingsModal } from '@/shared/components/SettingsModal/SettingsModal';
-import { useShotSettingsContext } from '../ShotSettingsContext';
+import { useShotSettingsGeneration } from '../ShotSettingsContext';
 import type { ModalSelectedLora } from '../types/modalLora';
 import { getModelSpec, type SelectedModel } from '@/tools/travel-between-images/settings';
 
@@ -39,7 +39,7 @@ export const ModalsSection: React.FC<ModalsSectionProps> = ({
   isSettingsModalOpen,
   onSettingsModalOpenChange,
 }) => {
-  const { availableLoras } = useShotSettingsContext();
+  const { availableLoras } = useShotSettingsGeneration();
 
   return (
     <>

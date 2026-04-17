@@ -1,19 +1,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { UI_Z_LAYERS } from '@/shared/lib/uiLayers';
 import { useLightboxNavigation } from './useLightboxNavigation';
-
-function createDialogBackdrop(zIndex: number) {
-  const backdrop = document.createElement('div');
-  backdrop.setAttribute('data-dialog-backdrop', '');
-  document.body.appendChild(backdrop);
-
-  vi.spyOn(window, 'getComputedStyle').mockReturnValue({
-    zIndex: String(zIndex),
-  } as CSSStyleDeclaration);
-
-  return backdrop;
-}
+import { __resetOverlayStackForTests, useOverlayStackApi } from '@/shared/state/overlayStack';
 
 function dispatchKey(key: string) {
   act(() => {
@@ -25,7 +13,7 @@ describe('useLightboxNavigation', () => {
   afterEach(() => {
     cleanup();
     document.body.innerHTML = '';
-    vi.restoreAllMocks();
+    __resetOverlayStackForTests();
   });
 
   it('fires onPrevious for ArrowLeft when no dialog backdrop exists', () => {
@@ -62,7 +50,7 @@ describe('useLightboxNavigation', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('suppresses navigation keys when a higher dialog backdrop exists', () => {
+  it('suppresses navigation keys when a non-lightbox overlay is topmost', () => {
     const onPrevious = vi.fn();
 
     renderHook(() =>
@@ -73,14 +61,28 @@ describe('useLightboxNavigation', () => {
       }),
     );
 
-    createDialogBackdrop(200000);
+    useOverlayStackApi().getState().pushOverlay({
+      id: 'dialog-above-lightbox',
+      type: 'dialog',
+      modal: true,
+    });
     dispatchKey('ArrowLeft');
 
     expect(onPrevious).not.toHaveBeenCalled();
   });
 
-  it('does not suppress navigation keys when a backdrop matches LIGHTBOX_MODAL exactly', () => {
+  it('does not suppress navigation keys when the lightbox is topmost', () => {
     const onPrevious = vi.fn();
+
+    const lightboxPopup = document.createElement('div');
+    document.body.appendChild(lightboxPopup);
+
+    useOverlayStackApi().getState().pushOverlay({
+      id: 'lightbox',
+      type: 'lightbox',
+      modal: true,
+      elements: [lightboxPopup],
+    });
 
     renderHook(() =>
       useLightboxNavigation({
@@ -90,7 +92,6 @@ describe('useLightboxNavigation', () => {
       }),
     );
 
-    createDialogBackdrop(UI_Z_LAYERS.LIGHTBOX_MODAL);
     dispatchKey('ArrowLeft');
 
     expect(onPrevious).toHaveBeenCalledTimes(1);

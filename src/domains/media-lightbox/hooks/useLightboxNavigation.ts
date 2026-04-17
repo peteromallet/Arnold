@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { UI_Z_LAYERS, hasDialogAbove } from '@/shared/lib/uiLayers';
+import { getTopmostKnownOverlayType } from '@/shared/components/ui/overlay';
 
 interface UseLightboxNavigationProps {
   onNext?: () => void;
@@ -86,7 +86,8 @@ export const useLightboxNavigation = ({
      * the keydown event during the bubble phase.
      */
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (hasDialogAbove(UI_Z_LAYERS.LIGHTBOX_MODAL)) return;
+      const topOverlayType = getTopmostKnownOverlayType();
+      if (topOverlayType && topOverlayType !== 'lightbox') return;
 
       // Don't intercept arrow keys when user is in a text field
       const active = document.activeElement;

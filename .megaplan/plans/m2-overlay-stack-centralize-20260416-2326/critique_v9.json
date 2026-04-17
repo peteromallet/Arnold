@@ -1,0 +1,81 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Re-checked the repository surface with `rg -n \"@base-ui/react/context-menu|@base-ui/react/drawer\" src` and `sed -n '158,220p' src/shared/components/ToolsPane/ToolsPane.tsx`. The revised plan now does explicitly reconcile the brief's Drawer family with this checkout: both Base UI families remain absent under `src/`, and the only drawer-like implementation is the bespoke `ToolsPaneDrawer` div shell, which the plan correctly records as a non-Base-UI overlay that stays out of scope.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the local Base UI type surface in `node_modules/@base-ui/react/dialog/popup/DialogPopup.d.ts`, `popover/popup/PopoverPopup.d.ts`, `select/popup/SelectPopup.d.ts`, and `menu/popup/MenuPopup.d.ts`. The plan's containment strategy is technically plausible against the actual library APIs in this repo revision because those popup primitives expose public `initialFocus` and `finalFocus` controls, while the roots expose `modal`, so centralized focus restoration and body-lock ownership can be implemented without patching Base UI internals.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Searched the broader overlay subsystem again with `rg -n \"@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|preview-card)\" src` and the marker/CSS grep from the prior review. The plan is still scoped at the real shared mechanism rather than just the Model Select symptom: raw Base UI ownership remains concentrated in shared wrappers plus `LightboxShell` and one tooltip test mock, while the marker-dependent helper and CSS surfaces are explicitly included for cleanup.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Re-ran the raw-owner inventory and confirmed the revised plan now names the full production and test surface that actually exists here, including `src/shared/components/ui/command.tsx` for the type-only dialog import and `src/shared/components/ui/tooltipPrimitives.test.tsx` for the mock. That matches the current `rg -n \"@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card|drawer)\" src` output and closes the earlier location-coverage gaps around Drawer scope and menu submenu coverage.",
+          "flagged": false
+        },
+        {
+          "detail": "Overlay validation: Step 12's layering-cleanup grep only checks `tooltipClassName|overlayClassName|zIndexBase|z-\\[[0-9]+\\]`, but the current menu wrapper's hardcoded numeric layers are plain `z-50` in `src/shared/components/ui/dropdown-menu.tsx:58` and `:106`. That means the plan's own final invariant command can still pass if an executor leaves the top-level or submenu `z-50` positioners in place, so the validation recipe is still weaker than the wrapper invariant it is trying to prove.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked the current caller chains that still rely on caller-supplied layering. `src/shared/components/selectors/ShotSelectorWithAdd.tsx:192` forwards `tooltipClassName=\"z-[100001]\"` through `src/shared/components/shots/ShotPrimaryActionButton.tsx:81`, and `src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx:111-112` still passes `overlayClassName` plus `zIndexBase` into the dialog wrapper. The revised plan names both of those real caller contracts, so the executor is no longer limited to direct overlay JSX and should be able to remove the forwarded escape hatches as part of the migration.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "layering-validation-1",
+      "concern": "Overlay validation: Step 12's cleanup grep does not search for plain numeric Tailwind classes such as `z-50`, so the plan can claim wrapper-layering cleanup while still missing the current hardcoded menu positioner layers.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "The current wrappers still use `className=\"z-50\"` in `src/shared/components/ui/dropdown-menu.tsx:58` and `:106`, but the proposed validation command only matches `z-\\[[0-9]+\\]`, `tooltipClassName`, `overlayClassName`, and `zIndexBase`."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 20: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "issue_hints",
+    "all_locations",
+    "menu-submenu-1",
+    "drawer-scope-1"
+  ],
+  "disputed_flag_ids": []
+}

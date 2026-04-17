@@ -1,0 +1,152 @@
+{
+  "version": 5,
+  "timestamp": "2026-04-15T21:46:15Z",
+  "hash": "sha256:dcad922e12d71b6f48033b62b81f8b44412d20ab85590be9e173c28450206198",
+  "changes_summary": "Removed the bespoke raw project bootstrap path, made `useToolSettings` the authoritative initial-load/readiness source again, and added an explicit Join Clips status-reconciliation contract so callers only hydrate after merged settings are safe.",
+  "flags_addressed": [
+    "issue_hints",
+    "correctness",
+    "all_locations",
+    "callers",
+    "scope",
+    "FLAG-007"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`createEntityStore` exposes the requested generic API, stays React Query-free, and provides one Zustand store per factory instance with per-entity state keyed by `entityId`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The store implements atomic bootstrap, lazy per-entity load, optimistic updates, text-field flush, revert, reset, save, saveImmediate, and error handling without discarding optimistic local state.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The store exposes only minimal internal dirty/pending inspection and external-sync helpers needed for adapter lifecycle flushing and safe query reconciliation, without widening the public `EntityView<T>` contract beyond M1 needs.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useEntity(entityId)` subscriptions are isolated so updates to one entity do not re-render another entity consumer.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useJoinClipsSettings(projectId)` is ported to the store factory while preserving the full existing public hook contract used by current callers.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Join Clips keeps the existing `useToolSettings` / Supabase path as the authoritative merged-load source and does not introduce a bespoke raw project bootstrap path in M1.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`useJoinClipsSettings.status` remains behavior-compatible with current callers by staying `loading` until the merged settings snapshot for the current project has been safely reconciled, so `JoinClipsPage` and `useClipManager` do not hydrate from an unsafe intermediate snapshot.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Join Clips adapter keeps React Query behavior coherent by continuing to read merged settings through `useToolSettings` and explicitly synchronizing or invalidating the relevant settings cache after direct saves.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Join Clips preserves best-effort persistence of pending edits on project change, hook unmount, and browser unload, matching the lifecycle behavior it currently inherits from `useAutoSaveSettings`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Join Clips prompt and textarea settings keep their current debounced autosave behavior in M1; no new blur-only wiring is silently introduced.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` passes cleanly after the refactor, covering downstream consumers typed against `ReturnType<typeof useJoinClipsSettings>`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Targeted tests for `createEntityStore` and `useJoinClipsSettings` pass and cover bootstrap, update, flush, revert, reset, selector isolation, safe external reconciliation, status timing, query-sync behavior, and lifecycle flush behavior.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` returns to the stated M0 baseline with no regressions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The final design remains readable shared infrastructure and does not turn M1 into a broader settings-runtime refactor.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "M0 telemetry remains unchanged because no instrumented surface was intentionally modified in this milestone.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "This turn is revising the implementation plan rather than executing the code changes.",
+    "The milestone goal remains correct: build the generic Zustand foundation and validate it by porting only `useJoinClipsSettings`.",
+    "`zustand` already being present in `package.json` means the dependency task is verification and lockfile consistency, not necessarily a fresh install.",
+    "Preserving current caller behavior is more important in M1 than introducing new persisted-source semantics for `hasPersistedData`.",
+    "If precise project-row persistence provenance is needed later, it belongs in a follow-up settings-runtime milestone rather than this first consumer migration."
+  ],
+  "delta_from_previous_percent": 59.11,
+  "structure_warnings": []
+}

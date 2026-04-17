@@ -1,0 +1,74 @@
+{
+  "version": 3,
+  "timestamp": "2026-04-15T10:22:37Z",
+  "hash": "sha256:ab556d372d0f3af67844955b4b59e4ef1f7cfcca3be0bf5bc2cb3ecb67ca95dc",
+  "changes_summary": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer.",
+  "flags_addressed": [
+    "issue_hints",
+    "correctness-1",
+    "correctness-2",
+    "scope",
+    "all_locations",
+    "callers",
+    "FLAG-M1-003",
+    "FLAG-M1-004"
+  ],
+  "questions": [
+    "Is there any existing join-clips-specific source in the repository that should populate `lastUsed` for M1, or should the first consumer explicitly continue with `lastUsed: null` as the bootstrap fallback?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`zustand` is added to `package.json` dependencies and the repo still passes `npx tsc --noEmit` without new type conflicts.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`src/shared/state/createEntityStore.ts` implements the milestone factory API with a single store per factory instance, atomic bootstrap, lazy entity load, debounced save, text-field flush, revert, reset, and selector isolation between entity IDs.",
+      "priority": "must"
+    },
+    {
+      "criterion": "The generic factory remains React-Query-free, while `useJoinClipsSettings` preserves the existing React Query-backed read/write path through `useToolSettings` in hook-local scaffolding.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`useJoinClipsSettings(projectId)` is ported to the new store while preserving the full current public contract, including `entityId`, `isDirty`, `error`, `hasShotSettings`, `hasPersistedData`, `updateTextField`, `updateTextFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom`.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`reset()` in the ported join-clips hook remains a local non-saving reset, and `initializeFrom()` preserves current no-op behavior for this non-custom consumer.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Join-clips bootstrap semantics are explicit and tested as `db ?? lastUsed ?? defaults`, with `lastUsed` currently `null` for this first consumer unless an existing repository source is found.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Factory tests cover bootstrap, optimistic updates, text-field flush, revert, local non-save reset, and selector isolation between two entity IDs.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`useJoinClipsSettings` tests verify unchanged public behavior through the hook API while mocking the persistence boundary at the `useToolSettings` layer instead of the old `useAutoSaveSettings` implementation detail.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`npm test` passes at or above the stated M0 baseline with no regressions introduced by the Zustand foundation work.",
+      "priority": "must"
+    },
+    {
+      "criterion": "The implementation stays within M1 scope: one new factory, one ported consumer, and only minimal compatibility edits in join-clips callers/tests; no other `useAutoSaveSettings` consumer is migrated.",
+      "priority": "should"
+    },
+    {
+      "criterion": "M0 telemetry behavior remains unchanged because no instrumented surface is modified in this milestone.",
+      "priority": "info"
+    }
+  ],
+  "assumptions": [
+    "M1 still migrates exactly one consumer: `useJoinClipsSettings` in `src/tools/join-clips/hooks/useJoinClipsSettings.ts`, with only minimal caller/test compatibility edits if required.",
+    "The generic factory in `src/shared/state/createEntityStore.ts` must stay React-Query-free; React Query integration belongs in consumer-specific hook scaffolding.",
+    "For join-clips in M1, query hydration will provide `db` state and `lastUsed` will remain `null` unless repository inspection finds an existing join-clips source of truth for it.",
+    "Project-scoped join-clips behavior should continue to expose `hasShotSettings: false`, matching the current effective behavior of the existing hook.",
+    "`initializeFrom` parity for this non-custom consumer means keeping it available on the return object but preserving its current no-op behavior."
+  ],
+  "delta_from_previous_percent": 94.21,
+  "structure_warnings": []
+}

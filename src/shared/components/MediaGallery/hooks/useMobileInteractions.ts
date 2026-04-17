@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { isElementWithinKnownOverlay } from '@/shared/components/ui/overlay';
 import type { GeneratedImageWithMetadata } from '../types';
 
 interface UseMobileInteractionsProps {
@@ -77,7 +78,7 @@ export const useMobileInteractions = ({
     const handleClickOutside = (event: MouseEvent) => {
       // Close if clicking outside any popover content
       const target = event.target as Element;
-      if (!target.closest('[data-popup]')) {
+      if (!isElementWithinKnownOverlay(target)) {
         setMobilePopoverOpenImageId(null);
       }
     };

@@ -1,0 +1,159 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Checked the revised plan against the live realtime boundary in `src/shared/providers/RealtimeProvider.tsx` and `src/shared/realtime/RealtimeConnection.ts`. The repository still routes raw connection events into `realtimeEventProcessor` and exposes only connection status through `useRealtime()`, so the revised plan's split between raw-row store hydration and a status-only public context now matches the actual code instead of fighting it.",
+          "flagged": false
+        },
+        {
+          "detail": "I also verified the plan now responds to the earlier acceptance-gap note: `rg -n \"RealtimeContext|useRealtime\\(\" src` shows only the provider itself and its tests using that context, so Step 9.1's replacement of the old 'no RealtimeContext consumers' MUST gate is justified. That old criterion was already green in this checkout and would not have been meaningful milestone evidence.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked the revised plan against the original M3 brief and the live count callers in `src/features/tasks/components/TasksPane/hooks/useTasksPaneController.ts` and `src/domains/media-lightbox/hooks/videoLightbox/useVideoLightboxEnvironment.ts`. The earlier gap is actually resolved: those callers only pass `projectId` or `{ allProjectIds }`, and the new plan now keeps `useTaskStatusCounts` query-authoritative instead of pretending there is a caller-provided store bootstrap.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "I also verified the plan now matches the repository's realtime boundary: `src/shared/providers/RealtimeProvider.tsx` currently wires raw connection events into `realtimeEventProcessor`, while `src/shared/realtime/RealtimeConnection.ts` still emits full raw `payload.new` rows. The revised step to hydrate the store from raw connection events, while preserving `useRealtime()` as the status-only public API, is consistent with the current code instead of conflicting with it.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Verified the main realtime typing risk is addressed at the plan level. `src/shared/realtime/types.ts` still defines a narrower `TaskRecord`, but the revision now explicitly binds store hydration to `isTaskDbRow(...)` and `mapTaskDbRowToTask(...)` in `src/shared/lib/taskRowMapper.ts`, which is the right way to avoid silently dropping fields such as `dependant_on`, `generation_started_at`, and `generation_processed_at`.",
+          "flagged": false
+        },
+        {
+          "detail": "Task status counts: `src/shared/hooks/tasks/useTaskStatusCounts.ts` still collapses every all-project query to `taskQueryKeys.statusCounts('__all-projects__')`, so different `allProjectIds` sets alias to the same cache entry even though the hook signature accepts arbitrary project lists. The revised plan says `useTaskStatusCounts({ allProjectIds })` remains correct and query-authoritative, but it does not mention this existing cache-key constraint, so that success criterion is still slightly under-specified if the milestone touches count wiring or tests.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified the main prior correctness concern is addressed. `src/shared/realtime/RealtimeEventProcessor.ts` only emits reduced `tasks-created` and `tasks-updated` payloads, but the revised plan explicitly stops using those processed task events for store hydration and instead writes from raw `RealtimeConnection` task rows with a fetch fallback for incomplete rows.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Task snapshot typing still has a concrete correctness risk that the plan does not name. `src/shared/realtime/types.ts` defines `TaskRecord` without fields such as `dependant_on`, `generation_started_at`, and `generation_processed_at`, while the canonical mapper in `src/shared/lib/taskRowMapper.ts` and the `Task` shape in `src/types/database.ts` do include them. If the executor follows the plan by building store writes around `TaskRecord` rather than reusing `isTaskDbRow/mapTaskDbRowToTask`, realtime-hydrated tasks can silently lose fields compared with fetched tasks.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Checked the adjacent task-state surface in `src/tools/video-editor/hooks/useActiveTaskClips.ts`. It still uses its own pending-task query plus `realtimeEventProcessor` invalidation rather than the single-task readers targeted by M3, so the revised plan's explicit defer of that path keeps the milestone focused on gallery and task-details rerender fanout instead of broadening into video-editor overlays.",
+          "flagged": false
+        },
+        {
+          "detail": "I also re-checked the broader visible single-task surface and the plan's scope language is adequate. Beyond `useGenerationTaskDetails`, the current repo has direct `useGetTask(...)` readers in `src/shared/components/MediaGalleryItem.tsx`, `src/shared/components/MediaGalleryItem/hooks/useMediaGalleryItemTaskShare.ts`, `src/shared/components/VariantSelector/components/VariantDetails.tsx`, and `src/domains/generation/components/GenerationDetails/useGenerationDetails.ts`, so the revision's 'other visible current-project single-task surfaces' wording is a necessary broadening rather than scope drift.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "I re-checked adjacent task-state paths and the plan's narrower scope is intentional. `src/tools/video-editor/hooks/useActiveTaskClips.ts` still uses its own pending-task query plus realtime invalidation, but the revised plan explicitly classifies it as deferred unless it can reuse the same selector helper without new semantics, which keeps M3 focused on gallery and task-detail rerender fanout instead of expanding into video-editor task overlays.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "The broader single-task surface is covered better than the original brief listed. Besides `useGenerationTaskDetails` and gallery pending badges, the repo has direct `useGetTask` readers in `src/shared/components/MediaGalleryItem.tsx`, `src/shared/components/MediaGalleryItem/hooks/useMediaGalleryItemTaskShare.ts`, `src/shared/components/VariantSelector/components/VariantDetails.tsx`, and `src/domains/generation/components/GenerationDetails/useGenerationDetails.ts`. The revised plan's 'other visible current-project single-task surfaces' language is appropriate for this broader set and is not missing an obvious caller class.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Checked the core supporting infrastructure that currently owns task snapshots or query cache writes. The plan now explicitly touches `src/shared/providers/RealtimeProvider.tsx`, `src/shared/hooks/tasks/useTasks.ts`, `src/shared/hooks/tasks/useTaskPrefetch.ts`, `src/domains/generation/hooks/tasks/generationTaskCache.ts`, `src/shared/contexts/GenerationTaskContext.tsx`, and `src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts`, which lines up with the live places that subscribe, fetch, prefetch, or merge single-task data today.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the by-id prefetch path as well, because it is easy to miss when only thinking about generation-driven task lookups. `src/shared/components/VariantSelector/hooks/useVariantActions.ts` calls `usePrefetchTaskById()` on hover, and that helper writes `taskQueryKeys.single(...)` directly, so the executor needs to treat that path as part of the `useTaskPrefetch` migration even though the plan names the module more generally than the specific helper.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "The revised plan now covers the important supporting infrastructure that actually owns or seeds task data: `src/shared/providers/RealtimeProvider.tsx`, `src/shared/hooks/tasks/useTasks.ts`, `src/shared/hooks/tasks/useTaskPrefetch.ts`, `src/domains/generation/hooks/tasks/generationTaskCache.ts`, `src/shared/contexts/GenerationTaskContext.tsx`, and `src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts`. That matches the live places where single-task query cache entries are fetched, prefetched, or merged into UI state.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "One piece of supporting infrastructure is still under-specified for the raw-event path. The repo already has a canonical row validator and mapper in `src/shared/lib/taskRowMapper.ts`, but the plan only says 'use the existing task normalization path' without explicitly naming that mapper or aligning `src/shared/realtime/types.ts` with it. Because the realtime `TaskRecord` type is narrower than the fetched `TaskDbRow`, the plan leaves room for a second ad-hoc mapper that would drift from the repository's existing task normalization contract.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Re-checked the `useTaskStatusCounts` callers and the revised plan handles their real arguments. `src/features/tasks/components/TasksPane/hooks/useTasksPaneController.ts` passes either a concrete `projectId` or `{ allProjectIds }`, while `src/domains/media-lightbox/hooks/videoLightbox/useVideoLightboxEnvironment.ts` passes only the selected project id, so keeping counts query-authoritative is consistent with how the hook is actually called in the repo.",
+          "flagged": false
+        },
+        {
+          "detail": "I also checked the single-task fetch and prefetch callers. `useGetTask(...)` callers typically pass an explicit `projectId`, but `usePrefetchTaskData()` and `usePrefetchTaskById()` can be invoked without one and then rely on `resolveTaskProjectScope()` inside `src/shared/hooks/tasks/useTaskPrefetch.ts`; the revised plan's contract freeze around effective project scope is therefore grounded in real caller behavior rather than being an abstract design preference.",
+          "flagged": false
+        },
+        {
+          "detail": "There is one caller-shape distinction the executor still needs to preserve carefully: `src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts` uses `taskQueryKeys.single(variantSourceTaskId ?? '', projectId ?? null)` with an explicit project id and does not call `resolveTaskProjectScope()`, while `useTaskPrefetch` does. The revised plan acknowledges `useVariantSourceTask` as a special path, which is the right treatment; collapsing it into the fallback-based flow without checking the actual caller contract would be risky.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "I re-checked the `useTaskStatusCounts` callers and confirmed the revised plan handles their real arguments. `src/features/tasks/components/TasksPane/hooks/useTasksPaneController.ts` passes `(selectedProjectId, { allProjectIds })`, and `src/domains/media-lightbox/hooks/videoLightbox/useVideoLightboxEnvironment.ts` passes just `selectedProjectId`; neither caller provides preload state, so keeping counts query-authoritative is the correct fix.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "The plan also now matches the real single-task caller patterns. `useGetTask` callers like `src/shared/components/MediaGalleryItem.tsx`, `src/shared/components/VariantSelector/components/VariantDetails.tsx`, and `src/shared/components/TaskDetails/hooks/useGenerationTaskDetails.ts` pass explicit project ids, while `usePrefetchTaskData()` in `src/shared/hooks/tasks/useTaskPrefetch.ts` and its gallery caller can omit the project id and rely on `resolveTaskProjectScope()` plus `getProjectSelectionFallbackId()`. The revised contract freeze around effective project scope is necessary and correctly grounded in those caller shapes.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "correctness-9",
+      "concern": "Task status counts: `useTaskStatusCounts({ allProjectIds })` still aliases different project sets to the same `__all-projects__` query key, so the revised correctness criterion for all-project counts remains under-specified if this milestone changes count wiring or tests.",
+      "category": "correctness",
+      "severity_hint": "likely-minor",
+      "evidence": "`src/shared/hooks/tasks/useTaskStatusCounts.ts` computes `cacheProjectId = isAllProjects ? \"__all-projects__\" : ...` and then uses `taskQueryKeys.statusCounts(cacheProjectId)`, which ignores the actual `allProjectIds` array even though the hook accepts it."
+    }
+  ],
+  "verified_flag_ids": [
+    "all_locations",
+    "correctness",
+    "correctness-8",
+    "verifiability-5"
+  ],
+  "disputed_flag_ids": []
+}

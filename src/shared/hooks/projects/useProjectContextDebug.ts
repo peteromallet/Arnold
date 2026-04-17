@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 
 type ProjectContextDebugInfo = {
   timestamp: string;
@@ -21,7 +21,8 @@ export function getProjectContextDebugLog(): ProjectContextDebugInfo[] {
  * Enable by setting DEBUG_PROJECT_CONTEXT=true in localStorage.
  */
 export const useProjectContextDebug = (enabled: boolean = import.meta.env.DEV) => {
-  const { projects, selectedProjectId, isLoadingProjects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects, isLoadingProjects } = useProjectCrudContext();
 
   useEffect(() => {
     // Never run project debug instrumentation outside an explicitly enabled local dev runtime.

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-15T17:29:55Z",
+  "hash": "sha256:9b1007c3163ae7f83e74a1153159e1f294614a14bc6e49688ad04febe1639cd4",
+  "questions": [
+    "The brief names `docs/state_management_refactor_plan.md`, but that file is missing in this checkout. Is there another canonical planning doc to follow, or should the implementation use the brief plus current source as the sole source of truth?",
+    "The worktree already contains uncommitted M1-style changes in `package.json`, `package-lock.json`, `src/shared/state/createEntityStore.ts`, and `src/shared/state/createEntityStore.test.ts`. Should implementation refine those drafts in place, or should they be ignored as unrelated user-owned work and rebuilt from the clean baseline?",
+    "When you say `useJoinClipsSettings` public return shape must remain unchanged, do you want the full current `useAutoSaveSettings`-style surface preserved exactly, including members not listed in `EntityView<T>` such as `entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, and `initializeFrom`?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`createEntityStore` exposes the requested generic API and passes focused tests for bootstrap precedence, optimistic updates, text-field flush, revert, reset, and per-entity selector isolation.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useJoinClipsSettings(projectId)` continues to satisfy existing caller expectations while internally using the entity-store factory instead of `useAutoSaveSettings`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Join Clips port keeps persistence routed through the existing tool-settings/Supabase layer and does not modify `useAutoSaveSettings`, debounced-save helpers, or other settings infrastructure.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "TypeScript remains clean with `npx tsc --noEmit`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes with no regressions from the baseline suite.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The final diff is limited to the new store foundation, the Join Clips hook/test adaptation, dependency metadata if needed, and any necessary imports/exports.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The factory implementation stays simple enough that future M1a/M1b/M1c migrations can reuse it without additional cross-cutting abstractions.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "M0 telemetry behavior remains unchanged because no telemetry surfaces are touched in this milestone.",
+      "priority": "info",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The brief and the current code are the authoritative inputs for planning because the referenced `docs/state_management_refactor_plan.md` file is not present in this checkout.",
+    "`useJoinClipsSettings` should preserve its current public API surface, even if that requires adapting `EntityView<T>` output with extra derived fields rather than expanding the generic factory contract.",
+    "The existing `useToolSettings` load/update path remains the only allowed persistence boundary for this milestone; no changes are needed in `useAutoSaveSettings`, `useDebouncedSettingsSave`, or the Supabase settings services.",
+    "Any existing uncommitted M1-related files in the worktree are treated as draft context to verify and refine, not as proven-correct implementation."
+  ],
+  "structure_warnings": []
+}

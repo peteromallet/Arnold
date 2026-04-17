@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/primitives/label";
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { getRandomDummyName } from '@/shared/lib/seeding/dummyNames';
@@ -19,7 +19,8 @@ interface CreateProjectModalProps {
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onOpenChange, initialName }) => {
   const [projectName, setProjectName] = useState(initialName || '');
   const [aspectRatio, setAspectRatio] = useState<string>('16:9');
-  const { addNewProject, isCreatingProject, projects, selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { addNewProject, isCreatingProject, projects } = useProjectCrudContext();
   const navigate = useNavigate();
 
   // Get current project to use its aspect ratio as default

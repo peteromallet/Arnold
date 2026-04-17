@@ -33,8 +33,14 @@ vi.mock('@/shared/state/selectionStore', () => ({
   useGallerySelection: (...args: unknown[]) => mocks.useGallerySelection(...args),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: () => ({
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: {
+    isTasksPaneLocked: false,
+    tasksPaneWidth: 0,
+    isGenerationsPaneLocked: false,
+    isGenerationsPaneOpen: false,
+    effectiveGenerationsPaneHeight: 0,
+  }) => unknown) => selector({
     isTasksPaneLocked: false,
     tasksPaneWidth: 0,
     isGenerationsPaneLocked: false,

@@ -4,7 +4,7 @@ import { Label } from '@/shared/components/ui/primitives/label';
 import { Slider } from '@/shared/components/ui/slider';
 import { Plus } from 'lucide-react';
 import { framesToSeconds } from '@/shared/lib/media/videoUtils';
-import { useTimelineMedia } from '../../TimelineMediaContext';
+import { useTimelineFps } from '../../TimelineMediaContext';
 
 export interface TimelineBottomControlsProps {
   resetGap: number;
@@ -38,7 +38,7 @@ export const TimelineBottomControls: React.FC<TimelineBottomControlsProps> = ({
   pushMode,
   showDragHint = false,
 }) => {
-  const { timelineFps } = useTimelineMedia();
+  const timelineFps = useTimelineFps();
   return (
     <div
       className="absolute bottom-4 left-0 z-30 flex items-center justify-between pointer-events-none px-8"

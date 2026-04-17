@@ -3,18 +3,18 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/shared/contexts/AuthContext';
 import { AuthGate } from '@/shared/auth/components/AuthGate';
 import { UserSettingsProvider } from '@/shared/contexts/UserSettingsContext';
-import { ProjectProvider, useProject } from '@/shared/contexts/ProjectContext';
+import { ProjectProvider, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { RealtimeProvider } from '@/shared/providers/RealtimeProvider';
 import { ShotsProvider } from '@/shared/contexts/ShotsContext';
 import { GenerationTaskProvider } from '@/shared/contexts/GenerationTaskContext';
 import { IncomingTasksProvider } from '@/shared/contexts/IncomingTasksContext';
-import { PanesProvider } from '@/shared/contexts/PanesContext';
 import { AgentChatProvider } from '@/shared/contexts/AgentChatContext';
 import { ToolPageHeaderProvider } from '@/shared/contexts/ToolPageHeaderContext';
 import { TaskTypeConfigInitializer } from '@/shared/components/TaskTypeConfigInitializer';
 import { TooltipProvider } from '@/shared/components/ui/tooltip';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
+import { PanesStoreBootstrapBoundary } from '@/shared/state/panesStore';
 import { useLastAffectedShot, useSelectionStoreApi } from '@/shared/state/selectionStore';
 import { queryClient } from '@/app/providers/queryClient';
 
@@ -38,7 +38,7 @@ interface LastAffectedShotSettings {
 }
 
 function SelectionStoreBoundary({ children }: { children: React.ReactNode }) {
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const selectionStore = useSelectionStoreApi();
   const { lastAffectedShotId } = useLastAffectedShot();
   const previousProjectIdRef = useRef<string | null>(null);
@@ -109,7 +109,7 @@ const AppProviderTree = composeProviders([
   ShotsProvider,
   GenerationTaskProvider,
   IncomingTasksProvider,
-  PanesProvider,
+  PanesStoreBootstrapBoundary,
   AgentChatProvider,
   SelectionStoreBoundary,
   ToolPageHeaderProvider,

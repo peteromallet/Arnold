@@ -1,0 +1,99 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Re-checked the repository against the revised plan with `rg -n \"@base-ui/react/context-menu|@base-ui/react/drawer|DrawerPrimitive|context-menu\" src` and `rg -n \"@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card)\" src`. The ContextMenu gap from the prior critique is now genuinely addressed: there is still no `@base-ui/react/context-menu` usage under `src/`, and the plan explicitly records that family as absent/N/A instead of silently dropping it.",
+          "flagged": false
+        },
+        {
+          "detail": "Overlay scope: the revised plan fixed the same omission for `ContextMenu`, but it still does not explicitly reconcile the brief's `Drawer` wrapper requirement with the actual repo surface. There is no Base UI drawer primitive under `src/`, and the only drawer-like surface I found is the custom `ToolsPaneDrawer` in `src/shared/components/ToolsPane/ToolsPane.tsx`, so the plan should state whether Drawer is another verified N/A family or whether that bespoke drawer is intentionally out of scope under the brief's non-goals.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Re-read `src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.ts` and `src/shared/lib/uiLayers.ts`. The current lightbox path still has both DOM-precedence mechanisms that earlier critiques called out: `hasDialogAbove()` and the separate `targetHasHigherZIndex()` computed-style walk. The revised plan now explicitly says `useLightboxShellInteractionHandlers.ts` must delete `targetHasHigherZIndex()` rather than leave it as a fallback, so the previously-open lightbox-precedence correctness gap is actually closed at the planning level.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the current non-modal overlay owners in `src/shared/components/ui/tooltipPrimitives.tsx` and `src/shared/components/ui/hover-card.tsx`. Both are plain popup/preview surfaces with hardcoded z-index classes and no explicit focus-restoration logic, so the plan's rule that tooltip and preview-card participate only in ordering/layer assignment and never in body pointer-event locking or opener-focus restore matches the real wrapper behavior instead of inventing modal semantics those primitives do not have today.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Searched the broader overlay/marker subsystem with `rg -n \"\\[data-popup\\]|data-dialog-backdrop|data-dialog-content|data-lightbox-popup|role=\\\"menu\\\"|role=\\\"listbox\\\"|\\[data-side\\]\" src/shared src/domains src/tools src/styles src/index.css` and confirmed the revised plan is aimed at the broader mechanism rather than only the Model Select symptom. It now covers the actual helper and CSS surfaces that depend on overlay markers today, including `elementPolicy.ts`, `useSlidingPane.ts`, `useMobileInteractions.ts`, `GuidanceVideoStrip.tsx`, `useLightboxTransition.ts`, `CommunityLorasTab.tsx`, `MyLorasTab.tsx`, and the marker-driven CSS files.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Re-ran the raw Base UI inventory and confirmed the plan now covers the real owner set present in this checkout: 10 current `src/` matches, namely the shared wrapper files, the type-only import in `src/shared/components/ui/command.tsx`, the test-only tooltip mock in `src/shared/components/ui/tooltipPrimitives.test.tsx`, and the domain-level raw owner `src/domains/media-lightbox/components/LightboxShell.tsx`. That is the full repo surface for the portal families named by the milestone grep, so the cleanup story is no longer scoped to an outdated `20+` assumption.",
+          "flagged": false
+        },
+        {
+          "detail": "Overlay infrastructure: I checked `src/shared/components/ui/dropdown-menu.tsx` and found that the menu wrapper family owns two separate popup branches, `DropdownMenuContent` and `DropdownMenuSubContent`, each with its own `MenuPrimitive.Portal` and `Positioner`. The plan talks about migrating `Menu` generically, but it never explicitly names the submenu popup branch, so an executor could centralize the top-level menu content and still leave submenu layering on the existing hardcoded `z-50` path.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Re-checked the forwarded layering path the plan now calls out. `src/shared/components/selectors/ShotSelectorWithAdd.tsx` passes `tooltipClassName=\"z-[100001]\"` into `src/shared/components/shots/ShotPrimaryActionButton.tsx`, which forwards it directly to `TooltipContent`, so the revised Step 9 is now looking at the real caller/callee chain rather than only direct JSX consumers.",
+          "flagged": false
+        },
+        {
+          "detail": "I also checked the lightbox callers of the DOM-precedence helpers. `src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx` currently depends on `getTopDialogElement()` for outside-click handling, and `src/domains/media-lightbox/hooks/useLightboxNavigation.ts` still gates keyboard behavior through `hasDialogAbove(UI_Z_LAYERS.LIGHTBOX_MODAL)`. The revised plan now names both call sites and routes them to stack/context bridge hooks, so the remaining callers of the old DOM-z-index helpers are accounted for instead of being left behind.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "drawer-scope-1",
+      "concern": "Overlay scope: the plan now explicitly reconciles ContextMenu with the actual repo, but it still does not say how the brief's Drawer family maps to this checkout, where there is no Base UI drawer primitive and the only drawer-like surface is the custom `ToolsPaneDrawer` in `src/shared/components/ToolsPane/ToolsPane.tsx`.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "Repo search found no `@base-ui/react/drawer` or Base UI drawer owner under `src/`, but it did find a custom fixed-position drawer implementation in `src/shared/components/ToolsPane/ToolsPane.tsx:170-256`; the revised plan names ContextMenu-as-N/A but never makes the same explicit scope decision for Drawer."
+    },
+    {
+      "id": "menu-submenu-1",
+      "concern": "Overlay callers: menu submenu ownership remains implicit even though `DropdownMenuSubContent` is a separate `MenuPrimitive.Portal`/`Positioner` branch with its own hardcoded z-index path.",
+      "category": "correctness",
+      "severity_hint": "uncertain",
+      "evidence": "`src/shared/components/ui/dropdown-menu.tsx:51-70` defines `DropdownMenuSubContent` with its own `MenuPrimitive.Portal` and `className=\"z-50\"`. The revised plan refers to `Menu` generically, but does not explicitly say that submenu popups must register with the overlay stack alongside `DropdownMenuContent`."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 19: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "issue_hints",
+    "correctness",
+    "overlay-precedence-1"
+  ],
+  "disputed_flag_ids": []
+}

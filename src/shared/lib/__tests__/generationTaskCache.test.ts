@@ -46,11 +46,13 @@ describe('preloadGenerationTaskMappings', () => {
   const mockQueryClient = {
     setQueryData: vi.fn(),
     prefetchQuery: vi.fn(),
+    fetchQuery: vi.fn(),
     getQueryData: vi.fn(),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQueryClient.fetchQuery.mockResolvedValue(null);
   });
 
   it('does nothing for empty generation IDs', async () => {
@@ -116,7 +118,7 @@ describe('preloadGenerationTaskMappings', () => {
       { preloadFullTaskData: true },
     );
 
-    expect(mockQueryClient.prefetchQuery).toHaveBeenCalledWith(
+    expect(mockQueryClient.fetchQuery).toHaveBeenCalledWith(
       expect.objectContaining({
         queryKey: ['tasks', 'single', 'task-1', PROJECT_ID],
       }),

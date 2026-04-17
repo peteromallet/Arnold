@@ -1,0 +1,116 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-15T17:36:49Z",
+  "hash": "sha256:a6cdee16176c592da4b4c536a73b081a9474f7b6efde142fcb35d09754858bd0",
+  "changes_summary": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+  "flags_addressed": [
+    "FLAG-M1-001",
+    "FLAG-M1-002",
+    "FLAG-M1-003",
+    "issue_hints-1",
+    "issue_hints-2",
+    "correctness-1",
+    "correctness-2",
+    "scope-1",
+    "scope-2",
+    "all_locations",
+    "callers-1",
+    "callers-2"
+  ],
+  "questions": [
+    "The referenced `docs/state_management_refactor_plan.md` is still absent from this checkout. If there is another canonical copy, it should be provided before implementation starts; otherwise execution will proceed from the brief and current source only."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`createEntityStore` exposes the requested generic API and passes focused tests for bootstrap precedence, optimistic updates, text-field flush, revert, reset, selector isolation, and the late-load race where async bootstrap must not overwrite newer local edits.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useJoinClipsSettings(projectId)` preserves its current public API for callers while internally using the entity-store factory plus a hook-layer synchronization bridge.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Join Clips pilot handles the real current settings surface, including scalar fields and composite settings such as `clips`, `transitionPrompts`, and LoRA state, without introducing behavior regressions.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The factory remains React Query-free, and the port uses an explicit executable persistence/synchronization design instead of calling `useToolSettings` from module scope.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Prompt-like Join Clips fields are rewired to the text-field path and an explicit flush boundary is covered by tests, so M1 validates `updateTextField`/`flushTextFields` in a real consumer.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "TypeScript remains clean with `npx tsc --noEmit`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes with no regressions from the baseline suite.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The final diff stays limited to the foundation store, the Join Clips hook bridge, minimal Join Clips caller rewiring required for text-field validation, tests, and dependency metadata if needed.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The factory internals stay simple enough to reuse for later milestones without adding new cross-cutting abstractions beyond the documented bridge and store metadata needed for correctness.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "M0 telemetry behavior remains unchanged because no instrumented telemetry surfaces are modified in this milestone.",
+      "priority": "info",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The repository still does not contain `docs/state_management_refactor_plan.md`, so the brief plus current source code remain the planning source of truth.",
+    "Minimal rewiring inside the Join Clips consumer itself is in scope when it is necessary to validate the new factory behavior, especially `updateTextField` and `flushTextFields`.",
+    "Using the existing non-hook settings services that `useToolSettings` delegates to still satisfies the requirement to keep the port on top of the existing tool-settings/Supabase persistence mechanism.",
+    "Any existing uncommitted M1-related files in the worktree are draft context to verify and refine, not proof that the milestone is already correctly implemented."
+  ],
+  "delta_from_previous_percent": 89.0,
+  "structure_warnings": []
+}

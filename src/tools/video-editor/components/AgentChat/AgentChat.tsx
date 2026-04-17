@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { ChevronDown, ChevronUp, Loader2, MessageSquareText, Mic, Send, Square, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
+import { shallow } from 'zustand/shallow';
 import type { GenerationRow } from '@/domains/generation/types';
 import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
 import { Button } from '@/shared/components/ui/button';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { useAgentChatBridge } from '@/shared/contexts/AgentChatContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useGallerySelection } from '@/shared/state/selectionStore';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { useAgentSession, useAgentSessions, useCancelSession, useCreateSession, useSendMessage } from '@/tools/video-editor/hooks/useAgentSession';
 import {
   buildSummary,
@@ -153,7 +154,19 @@ export function AgentChat() {
   } = useAgentChatBridge();
   const sessions = useAgentSessions(timelineId);
   const createSession = useCreateSession(timelineId);
-  const { isTasksPaneLocked, tasksPaneWidth, isGenerationsPaneLocked, isGenerationsPaneOpen, effectiveGenerationsPaneHeight } = usePanes();
+  const {
+    isTasksPaneLocked,
+    tasksPaneWidth,
+    isGenerationsPaneLocked,
+    isGenerationsPaneOpen,
+    effectiveGenerationsPaneHeight,
+  } = usePanesStore((state) => ({
+    isTasksPaneLocked: state.isTasksPaneLocked,
+    tasksPaneWidth: state.tasksPaneWidth,
+    isGenerationsPaneLocked: state.isGenerationsPaneLocked,
+    isGenerationsPaneOpen: state.isGenerationsPaneOpen,
+    effectiveGenerationsPaneHeight: state.effectiveGenerationsPaneHeight,
+  }), shallow);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [draft, setDraft] = useState('');

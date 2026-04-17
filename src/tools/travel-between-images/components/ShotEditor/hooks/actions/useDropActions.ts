@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import { toast } from "@/shared/components/ui/runtime/sonner";
 import { normalizeAndPresentError } from "@/shared/lib/errorHandling/runtimeError";
 import { GenerationRow, Shot } from "@/domains/generation/types";
-import { useProject } from "@/shared/contexts/ProjectContext";
+import { useProjectCrudContext } from "@/shared/contexts/ProjectContext";
 import {
   useAddImageToShot,
   useHandleExternalImageDrop,
@@ -136,7 +136,7 @@ export const useDropActions = ({
   projectId,
   batchVideoFrames,
 }: UseDropActionsProps) => {
-  const { projects } = useProject();
+  const { projects } = useProjectCrudContext();
   const queryClient = useQueryClient();
   const addImageToShotMutation = useAddImageToShot();
   const handleExternalImageDropMutation = useHandleExternalImageDrop();

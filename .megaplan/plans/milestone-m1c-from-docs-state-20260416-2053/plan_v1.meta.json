@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-16T20:56:52Z",
+  "hash": "sha256:58caee36b50b613110cc4e9e2f57948da81d6b32d515086e19003135cd688a44",
+  "questions": [
+    "Has M1b actually landed on the branch that M1c should build from, or should this plan explicitly assume a rebase/cherry-pick onto a branch where `src/shared/state/selectionStore.ts` is already committed?",
+    "For the provider-owned lightbox flow in `VideoEditorProvider.tsx`, do you want the PR to keep that state local unless there is clear multi-consumer value, or is there a hard requirement that all lightbox-related state move into `timelineStore.ts` as part of this milestone?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Implementation starts from a base that already contains the M1b selection-store migration, and the milestone-owned paths still match the brief before code changes begin.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`src/tools/video-editor/hooks/timelineStore.ts` exists and exposes selector-based access to Data, Ops, Chrome, and Playback slices using stable shallow-equality subscriptions rather than a monolithic context object.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`useTimelineState.ts` is ported to bootstrap/write the timeline store directly, while the imperative sub-hooks (`useClipDrag`, `useClipResizeGesture`, `useAssetManagement`, `useExternalDrop`, `useTimelinePersistence`, `usePollSync`) remain separate files and preserve their control flow.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The three legacy timeline contexts are fully removed, and all timeline consumers/tests have been migrated off `TimelineEditorContext`, `TimelineChromeContext`, and `TimelinePlaybackContext` imports.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "`VideoEditorProvider.tsx`'s non-context responsibilities are explicitly classified in the PR notes as store-owned, provider-local, or extracted sibling-hook behavior, with no silent removal of AgentChat bridge, pending-add URL drain, double-click lightbox flow, or navigation/lightbox state.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "`TimelineCanvas` stays within the M1c render budget of at most 2 renders per scroll event, and drag isolation keeps non-dragged `SortableRow` instances at 0 rerenders during clip drag.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Keyboard shortcuts, selection behavior, playback behavior, clip drag, and clip resize behave identically to the pre-migration timeline in manual verification.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "subjective_judgment",
+        "verify_physical_device"
+      ]
+    },
+    {
+      "criterion": "AgentChat bridge registration still supports a chat-to-timeline selection replacement flow after the migration.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The pending-add-from-URL flow still works when loading the editor with `?addGeneration=...`.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` completes cleanly after the migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The relevant timeline/provider regression tests pass, and the broader test suite matches the established baseline pass count.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Hot-path selectors stay narrow enough that `TimelineCanvas`, `TimelineEditor`, and `PreviewPanel` do not subscribe to unrelated state changes.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Context-stability refs are removed where the store makes them obsolete, while gesture/persistence refs are retained where they protect against stale closures.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Manual drag/resize/rapid-selection smoke testing is documented in the PR with an explicit note that at least 10 minutes of hands-on validation was performed.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment",
+        "verify_physical_device"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The supplied milestone brief is the authoritative scope document because `docs/state_management_refactor_plan.md` is missing from this repository.",
+    "M1c will be implemented on top of a base where M1 and M1b are already present, especially `src/shared/state/selectionStore.ts` and the agreed M1 slice/factory pattern.",
+    "The safest simplification is to migrate shared timeline state into Zustand while leaving provider-local orchestration and imperative drag/resize/save state machines structurally intact unless a concrete simplification is proven.",
+    "`SortableRow` in `src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx` is the correct row-level render-budget target referenced by the gate, not a non-existent `ClipRow` component.",
+    "No Zustand middleware, cross-cutting store abstractions, or out-of-scope persistence/selection changes will be introduced during this milestone."
+  ],
+  "structure_warnings": []
+}

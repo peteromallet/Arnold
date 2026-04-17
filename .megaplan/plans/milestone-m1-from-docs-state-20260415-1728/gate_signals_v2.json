@@ -1,0 +1,380 @@
+{
+  "robustness": "standard",
+  "signals": {
+    "iteration": 2,
+    "idea": "Milestone M1 from docs/state_management_refactor_plan.md \u2014 Zustand foundation + port the smallest consumer.\n\nGoal: establish the store-factory pattern. Add Zustand. Write a generic entity-scoped store factory. Port `useJoinClipsSettings.ts` as the first consumer to validate the factory shape. No other migrations. This is the foundation that M1a, M1b, M1c, M3, M4 all build on.\n\n## Deliverables\n\n1. **Install Zustand**:\n   ```\n   npm install zustand\n   ```\n   Add to `package.json` dependencies. Verify no type conflicts.\n\n2. **`src/shared/state/createEntityStore.ts`** \u2014 generic entity-scoped store factory.\n\n   The factory creates a single Zustand store per domain (settings, selection, timeline, etc.) with entity state keyed by an `entityId`. Callers get a hook `useEntity(entityId)` that returns the shape needed by consumers.\n\n   **Factory signature:**\n   ```typescript\n   interface EntityStoreConfig<T extends object> {\n     toolId: string;                       // identifies the store (e.g. \"join-clips\")\n     defaults: T;                          // initial settings shape\n     load: (entityId: string) => Promise<{ db: T | null; lastUsed: T | null }>;\n     save: (entityId: string, data: T) => Promise<void>;\n     textFieldKeys?: readonly (keyof T)[];  // fields that save on blur/flush instead of debounce\n     persistenceDebounceMs?: number;         // default 300\n   }\n\n   interface EntityStoreApi<T extends object> {\n     useEntity: (entityId: string) => EntityView<T>;\n     // plus: direct action access for tests\n     getState: () => EntityStoreState<T>;\n   }\n\n   interface EntityView<T> {\n     settings: T;\n     status: 'idle' | 'loading' | 'ready' | 'saving' | 'error';\n     error: Error | null;\n     hasPersistedData: boolean;\n     updateField: <K extends keyof T>(key: K, value: T[K]) => void;\n     updateFields: (patch: Partial<T>) => void;\n     updateTextField: <K extends keyof T>(key: K, value: T[K]) => void;\n     flushTextFields: () => Promise<void>;\n     save: () => Promise<void>;\n     saveImmediate: () => Promise<void>;\n     revert: () => void;\n     reset: () => void;\n   }\n\n   function createEntityStore<T extends object>(config: EntityStoreConfig<T>): EntityStoreApi<T>;\n   ```\n\n   **Required behaviors:**\n   - Single Zustand store per factory instantiation. State shape: `{ entities: Record<entityId, EntityState<T>> }`.\n   - `useEntity(id)` subscribes the component to just that entity's slice. Different entity IDs do not cause cross-renders.\n   - Use `shallow` equality (from `zustand/shallow`) for selectors that return objects or arrays; default `Object.is` for primitives.\n   - Atomic bootstrap action: `bootstrapEntity({entityId, db, lastUsed})` merges in one dispatch \u2014 no multi-transition load sequence.\n   - On first mount for an entity: `useEntity` triggers a lazy load via `config.load()` and dispatches bootstrap.\n   - `updateField` / `updateFields`: optimistic write to settings, schedule debounced save.\n   - `updateTextField`: same state write but does NOT schedule the debounce \u2014 intended for prompt/textarea fields that should save on blur or flush.\n   - `flushTextFields`: force-save any pending text-field edits immediately.\n   - Debounce: 300ms default, configurable via `config.persistenceDebounceMs`.\n   - On React Query data arrival (for entities that source from RQ): scaffolding is responsible; the factory itself doesn't import RQ. The factory's `load` is invoked externally.\n\n3. **Port `useJoinClipsSettings.ts`** \u2014 smallest consumer, 5 fields, lowest risk.\n\n   **Current shape (verify at milestone start):**\n   ```\n   src/tools/join-clips/hooks/useJoinClipsSettings.ts\n   src/shared/lib/joinClips/defaults.ts\n   ```\n\n   **Port rules:**\n   - `useJoinClipsSettings(shotId: string)` public return shape UNCHANGED. Internal implementation switches to `createEntityStore`.\n   - Use the existing `JoinClipsSettings` type from current defaults.ts.\n   - Load fn and save fn use the existing `useToolSettings` / Supabase mechanism underneath. The factory is a layer above the existing save/load \u2014 don't reinvent persistence yet (that's M1a's job).\n   - Verify: `useJoinClipsSettings` tests pass unchanged. If tests reference internal state of the old hook, update the tests to use the public API.\n\n## Repo conventions (from reigh-app/CLAUDE.md)\n\n- Prefer editing existing files; don't create unnecessary new ones. `createEntityStore.ts` is new and justified.\n- No hardcoded colors. This milestone doesn't add UI \u2014 if any test renders, use theme tokens.\n- TypeScript strict. No `any`.\n- Don't modify any edge function, supabase migration, or worker-orchestrator code.\n- Don't touch `useAutoSaveSettings.ts` or any of the settings persistence helpers in this milestone \u2014 that's M1a.\n\n## Gate criteria (for human reviewer)\n\n- `npx tsc --noEmit` clean.\n- `npm test` at M0 baseline (4562 passing, 0 failing \u2014 any regression blocks).\n- `useJoinClipsSettings` tests unchanged behavior (may need test update if internals-coupled).\n- `createEntityStore` tests cover: bootstrap, update, flush, revert, reset, selector isolation between entities.\n- M0 telemetry unchanged (we didn't touch any instrumented surface).\n\n## Out of scope\n\n- Do not migrate any other consumer of `useAutoSaveSettings` (that's M1a).\n- Do not touch selection or timeline state (M1b, M1c).\n- Do not refactor `useDebouncedSettingsSave.ts` (M1a).\n- Do not change React Query behavior.\n- Do not add new cross-cutting patterns beyond the factory.\n\n## Branch\n\n`megaplan/m1-foundation-store` off main (pull latest main first \u2014 M0's telemetry PR may or may not be merged).\n\n## Base commit note\n\nIf this runs immediately after M0, M0's branch `megaplan/m0-render-telemetry` may still be unmerged on GitHub. This is fine \u2014 M1 depends conceptually on M0's existence, but the M0 branch doesn't need to be merged for M1 to proceed. M1 branches from origin/main and adds Zustand-related work in files that don't overlap with M0's telemetry changes.",
+    "significant_flags": 13,
+    "unresolved_flags": [
+      {
+        "id": "issue_hints-1",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the referenced planning source and this repository only contains `docs/state_management_refactor_baselines.md`; `docs/state_management_refactor_plan.md` is missing from the checkout. The plan notices that gap, but it still means one of the named user inputs cannot be verified in-repo and the milestone will effectively be driven by the brief plus current source instead of the cited document.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "issue_hints-2",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Verified the current Join Clips settings surface in `src/shared/lib/joinClips/defaults.ts:12-40` and `src/tools/join-clips/pages/JoinClipsPage.tsx:84-136`. The idea text describes this as a 5-field pilot, but the real settings object now spreads `VACE_GENERATION_DEFAULTS` and includes prompts, motion/phase settings, LoRA state, `clips`, and `transitionPrompts`, so the first consumer is materially broader than the approved milestone summary suggests.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: Checked the current `useAutoSaveSettings` behavior in `src/shared/settings/hooks/useAutoSaveSettings.ts:378-395`. That hook deliberately tracks pending local edits during loading so a late DB/RQ payload does not overwrite user input, but the proposed factory contract only mentions lazy `load()` plus atomic `bootstrapEntity()` and does not describe any equivalent pending-update merge or protection. In this repository that is a real correctness regression risk, not just an internal implementation detail.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: Checked the actual persistence boundary in `src/shared/hooks/settings/useToolSettings.ts:181-290`. The plan says the new store should keep using `useToolSettings` underneath, but `useToolSettings` is a React hook with `useQuery` and `useMutation` inside it, so it cannot be called from a module-scoped Zustand factory config. The repo does expose non-hook primitives such as `fetchToolSettingsSupabase` and `updateToolSettingsSupabase`, but the plan needs to name an adapter layer explicitly or it is not technically executable as written.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "scope-1",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Reviewed the Join Clips page adapter in `src/tools/join-clips/pages/JoinClipsPage.tsx:86-135`. All prompt-like setters (`prompt`, `negativePrompt`, `enhancePrompt`) currently call `joinSettings.updateField(...)`, not `updateTextField(...)`, so the new text-field blur/flush behavior from the factory would not actually be exercised by this consumer unless the port also touches the page or form adapter layer. That broadens the migration beyond a hook-only swap.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "scope-2",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Reviewed the clip persistence path in `src/tools/join-clips/hooks/useClipManager.ts:171-186`. Join Clips is not only a small scalar settings consumer; it also pushes `clips` and `transitionPrompts` array payloads back through `joinSettings.updateFields(...)` on hydration and edit flows. That means the pilot consumer already exercises larger, higher-churn object graphs than the plan summary implies.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "all_locations",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: The remaining supporting-infrastructure gap is the bridge policy between the store and React Query. `useToolSettings` already mounts a query in `src/shared/hooks/settings/useToolSettings.ts:199-207`, while the factory contract still requires a lazy `load()` path for `useEntity()`. Without an explicit cache-first or deduping rule in the plan, the supporting glue is still under-specified for how the initial read and subsequent cache updates interact.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "callers-1",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the actual `joinSettings` callers across `src/tools/join-clips` and `src/tools/travel-between-images`. The live callers mainly consume `settings`, `status`, `updateField`, and `updateFields`; none of the Join Clips UI call sites currently route through `updateTextField` or `updateTextFields`, so preserving the old public surface is safe for compatibility but does not by itself validate the new text-field API that M1 is supposed to establish.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "callers-2",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the argument shapes passed by callers. `JoinClipsPage` sends many scalar fields through `updateField(...)`, while `useClipManager` sends composite `clips` and `transitionPrompts` arrays through `updateFields(...)` and `useJoinClipsGenerate` reads a broad slice of VACE-derived settings. The plan's 'smallest consumer' framing does not match those caller contracts, so the factory has to handle both scalar and bulky array patches correctly on day one.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "addressed"
+      },
+      {
+        "id": "FLAG-M1-004",
+        "concern": "State synchronization: the revised pure-store plus hook-bridge design still leaves the initial read path under-specified, because `useEntity()` lazy loading and `useToolSettings()` observation can fetch and bootstrap the same entity independently.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The canonical `docs/state_management_refactor_plan.md` file is still absent from this checkout, and the revised plan can only acknowledge that by leaving an open question in metadata. That is a real remaining tension with the user-provided source list, even though the plan handles it as responsibly as it can from inside this repository.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness",
+        "concern": "Are the proposed changes technically correct?: Checked the revised bridge architecture against the actual hook boundary in `src/shared/hooks/settings/useToolSettings.ts:181-207`. The plan now correctly stops trying to call `useToolSettings` from module scope, but it still proposes both a factory-level lazy `load()` on first `useEntity()` mount and a hook-level `useToolSettings(...)` observer that can bootstrap on fresh DB snapshots. In this repository that creates two independent read paths for the same entity on first mount, and the plan does not yet define how duplicate initial fetch/bootstrap cycles are suppressed or reconciled.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked how callers will behave if the bridge bootstraps from every fresh `useToolSettings` snapshot. `JoinClipsPage` and `useJoinClipsGenerate` mainly read scalar settings, but `useClipManager` hydrates from `joinSettings.settings` and mirrors `clips` and `transitionPrompts` back through `updateFields(...)`, so repeated bootstrap from both the lazy loader and observer path could still create extra churn or overwrite pressure on those composite fields unless the bridge policy is made more explicit.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "resolved_flags": [
+      {
+        "id": "FLAG-M1-001",
+        "concern": "State management refactor: Join Clips is no longer a narrow 5-field pilot; the current settings shape includes VACE defaults, LoRA state, and persisted clip arrays, so the migration and test surface are materially larger than the plan states.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      },
+      {
+        "id": "FLAG-M1-002",
+        "concern": "State management refactor: the plan does not preserve the current pending-load protection from `useAutoSaveSettings`, so a late settings load can overwrite optimistic local edits in the new store.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      },
+      {
+        "id": "FLAG-M1-003",
+        "concern": "State management refactor: the proposed Join Clips port does not actually exercise the new text-field API, because current prompt setters call `updateField` and would need caller-side rewiring to use `updateTextField` or flush semantics.",
+        "resolution": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised."
+      }
+    ],
+    "weighted_score": 14.0,
+    "weighted_history": [
+      11.0
+    ],
+    "plan_delta_from_previous": 89.0,
+    "recurring_critiques": [
+      "criterion 7: requires human verification (subjective_judgment)."
+    ],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 2. Weighted score trajectory: 11.0 -> 14.0. Plan deltas: 89.0%. Recurring critiques: 1. Resolved flags: 3. Open significant flags: 13.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "warnings": [],
+  "criteria_check": {
+    "count": 10,
+    "items": [
+      {
+        "criterion": "`createEntityStore` exposes the requested generic API and passes focused tests for bootstrap precedence, optimistic updates, text-field flush, revert, reset, selector isolation, and the late-load race where async bootstrap must not overwrite newer local edits.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`useJoinClipsSettings(projectId)` preserves its current public API for callers while internally using the entity-store factory plus a hook-layer synchronization bridge.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The Join Clips pilot handles the real current settings surface, including scalar fields and composite settings such as `clips`, `transitionPrompts`, and LoRA state, without introducing behavior regressions.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "The factory remains React Query-free, and the port uses an explicit executable persistence/synchronization design instead of calling `useToolSettings` from module scope.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "Prompt-like Join Clips fields are rewired to the text-field path and an explicit flush boundary is covered by tests, so M1 validates `updateTextField`/`flushTextFields` in a real consumer.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "TypeScript remains clean with `npx tsc --noEmit`.",
+        "priority": "must",
+        "requires": [
+          "run_shell",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "`npm test` passes with no regressions from the baseline suite.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "The final diff stays limited to the foundation store, the Join Clips hook bridge, minimal Join Clips caller rewiring required for text-field validation, tests, and dependency metadata if needed.",
+        "priority": "should",
+        "requires": [
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "The factory internals stay simple enough to reuse for later milestones without adding new cross-cutting abstractions beyond the documented bridge and store metadata needed for correctness.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "M0 telemetry behavior remains unchanged because no instrumented telemetry surfaces are modified in this milestone.",
+        "priority": "info",
+        "requires": [
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "issue_hints-1",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the referenced planning source and this repository only contains `docs/state_management_refactor_baselines.md`; `docs/state_management_refactor_plan.md` is missing from the checkout. The plan notices that gap, but it still means one of the named user inputs cannot be verified in-repo and the milestone will effectively be driven by the brief plus current source instead of the cited document.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "issue_hints-2",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Verified the current Join Clips settings surface in `src/shared/lib/joinClips/defaults.ts:12-40` and `src/tools/join-clips/pages/JoinClipsPage.tsx:84-136`. The idea text describes this as a 5-field pilot, but the real settings object now spreads `VACE_GENERATION_DEFAULTS` and includes prompts, motion/phase settings, LoRA state, `clips`, and `transitionPrompts`, so the first consumer is materially broader than the approved milestone summary suggests.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "correctness-1",
+      "concern": "Are the proposed changes technically correct?: Checked the current `useAutoSaveSettings` behavior in `src/shared/settings/hooks/useAutoSaveSettings.ts:378-395`. That hook deliberately tracks pending local edits during loading so a late DB/RQ payload does not overwrite user input, but the proposed factory contract only mentions lazy `load()` plus atomic `bootstrapEntity()` and does not describe any equivalent pending-update merge or protection. In this repository that is a real correctness regression risk, not just an internal implementation detail.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "correctness-2",
+      "concern": "Are the proposed changes technically correct?: Checked the actual persistence boundary in `src/shared/hooks/settings/useToolSettings.ts:181-290`. The plan says the new store should keep using `useToolSettings` underneath, but `useToolSettings` is a React hook with `useQuery` and `useMutation` inside it, so it cannot be called from a module-scoped Zustand factory config. The repo does expose non-hook primitives such as `fetchToolSettingsSupabase` and `updateToolSettingsSupabase`, but the plan needs to name an adapter layer explicitly or it is not technically executable as written.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "scope-1",
+      "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Reviewed the Join Clips page adapter in `src/tools/join-clips/pages/JoinClipsPage.tsx:86-135`. All prompt-like setters (`prompt`, `negativePrompt`, `enhancePrompt`) currently call `joinSettings.updateField(...)`, not `updateTextField(...)`, so the new text-field blur/flush behavior from the factory would not actually be exercised by this consumer unless the port also touches the page or form adapter layer. That broadens the migration beyond a hook-only swap.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "scope-2",
+      "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Reviewed the clip persistence path in `src/tools/join-clips/hooks/useClipManager.ts:171-186`. Join Clips is not only a small scalar settings consumer; it also pushes `clips` and `transitionPrompts` array payloads back through `joinSettings.updateFields(...)` on hydration and edit flows. That means the pilot consumer already exercises larger, higher-churn object graphs than the plan summary implies.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "all_locations",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: The remaining supporting-infrastructure gap is the bridge policy between the store and React Query. `useToolSettings` already mounts a query in `src/shared/hooks/settings/useToolSettings.ts:199-207`, while the factory contract still requires a lazy `load()` path for `useEntity()`. Without an explicit cache-first or deduping rule in the plan, the supporting glue is still under-specified for how the initial read and subsequent cache updates interact.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The remaining supporting-infrastructure gap is the bridge policy between the store and React Query. `useToolSettings` already mounts a query in `src/shared/hooks/settings/useToolSettings.ts:199-207`, while the factory contract still requires a lazy `load()` path for `useEntity()`. Without an explicit cache-first or deduping rule in the plan, the supporting glue is still under-specified for how the initial read and subsequent cache updates interact.",
+      "raised_in": "critique_v2.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "callers-1",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the actual `joinSettings` callers across `src/tools/join-clips` and `src/tools/travel-between-images`. The live callers mainly consume `settings`, `status`, `updateField`, and `updateFields`; none of the Join Clips UI call sites currently route through `updateTextField` or `updateTextFields`, so preserving the old public surface is safe for compatibility but does not by itself validate the new text-field API that M1 is supposed to establish.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "callers-2",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the argument shapes passed by callers. `JoinClipsPage` sends many scalar fields through `updateField(...)`, while `useClipManager` sends composite `clips` and `transitionPrompts` arrays through `updateFields(...)` and `useJoinClipsGenerate` reads a broad slice of VACE-derived settings. The plan's 'smallest consumer' framing does not match those caller contracts, so the factory has to handle both scalar and bulky array patches correctly on day one.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to treat Join Clips as a broad real-world pilot, add explicit late-load overwrite protection, replace the non-executable hook-in-factory persistence idea with a pure store plus hook-layer React Query bridge, and add minimal Join Clips caller rewiring so the new text-field API is actually exercised.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "FLAG-M1-004",
+      "concern": "State synchronization: the revised pure-store plus hook-bridge design still leaves the initial read path under-specified, because `useEntity()` lazy loading and `useToolSettings()` observation can fetch and bootstrap the same entity independently.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The revised plan keeps the factory requirement that `useEntity(id)` triggers `config.load()` on first mount, while `src/shared/hooks/settings/useToolSettings.ts:199-207` shows the hook-layer observer already starts its own React Query fetch for the same settings snapshot.",
+      "raised_in": "critique_v2.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "issue_hints",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The canonical `docs/state_management_refactor_plan.md` file is still absent from this checkout, and the revised plan can only acknowledge that by leaving an open question in metadata. That is a real remaining tension with the user-provided source list, even though the plan handles it as responsibly as it can from inside this repository.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The canonical `docs/state_management_refactor_plan.md` file is still absent from this checkout, and the revised plan can only acknowledge that by leaving an open question in metadata. That is a real remaining tension with the user-provided source list, even though the plan handles it as responsibly as it can from inside this repository.",
+      "raised_in": "critique_v2.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "correctness",
+      "concern": "Are the proposed changes technically correct?: Checked the revised bridge architecture against the actual hook boundary in `src/shared/hooks/settings/useToolSettings.ts:181-207`. The plan now correctly stops trying to call `useToolSettings` from module scope, but it still proposes both a factory-level lazy `load()` on first `useEntity()` mount and a hook-level `useToolSettings(...)` observer that can bootstrap on fresh DB snapshots. In this repository that creates two independent read paths for the same entity on first mount, and the plan does not yet define how duplicate initial fetch/bootstrap cycles are suppressed or reconciled.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the revised bridge architecture against the actual hook boundary in `src/shared/hooks/settings/useToolSettings.ts:181-207`. The plan now correctly stops trying to call `useToolSettings` from module scope, but it still proposes both a factory-level lazy `load()` on first `useEntity()` mount and a hook-level `useToolSettings(...)` observer that can bootstrap on fresh DB snapshots. In this repository that creates two independent read paths for the same entity on first mount, and the plan does not yet define how duplicate initial fetch/bootstrap cycles are suppressed or reconciled.",
+      "raised_in": "critique_v2.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "callers",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked how callers will behave if the bridge bootstraps from every fresh `useToolSettings` snapshot. `JoinClipsPage` and `useJoinClipsGenerate` mainly read scalar settings, but `useClipManager` hydrates from `joinSettings.settings` and mirrors `clips` and `transitionPrompts` back through `updateFields(...)`, so repeated bootstrap from both the lazy loader and observer path could still create extra churn or overwrite pressure on those composite fields unless the bridge policy is made more explicit.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked how callers will behave if the bridge bootstraps from every fresh `useToolSettings` snapshot. `JoinClipsPage` and `useJoinClipsGenerate` mainly read scalar settings, but `useClipManager` hydrates from `joinSettings.settings` and mirrors `clips` and `transitionPrompts` back through `updateFields(...)`, so repeated bootstrap from both the lazy loader and observer path could still create extra churn or overwrite pressure on those composite fields unless the bridge policy is made more explicit.",
+      "raised_in": "critique_v2.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ]
+}

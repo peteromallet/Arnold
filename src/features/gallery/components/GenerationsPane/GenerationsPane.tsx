@@ -7,8 +7,8 @@ import { PaneControlTab } from '@/shared/components/PaneControlTab';
 import { GenerationsPaneControls } from './components/GenerationsPaneControls';
 import { GenerationsPaneGallery } from './components/GenerationsPaneGallery';
 import { useGenerationsPaneController } from './hooks/useGenerationsPaneController';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { UI_Z_LAYERS } from '@/shared/lib/uiLayers';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 type GenerationsPaneController = ReturnType<typeof useGenerationsPaneController>;
 
@@ -40,7 +40,7 @@ function GenerationsPaneBackdrop({ controller }: { controller: GenerationsPaneCo
 
 function GenerationsPaneTab({ controller }: { controller: GenerationsPaneController }) {
   const { pane, navigation, modal } = controller;
-  const { effectiveGenerationsPaneHeight } = usePanes();
+  const effectiveGenerationsPaneHeight = usePanesStore((state) => state.effectiveGenerationsPaneHeight);
 
   if (pane.isOnImageGenerationPage) {
     return null;
@@ -92,7 +92,7 @@ function GenerationsPaneTab({ controller }: { controller: GenerationsPaneControl
 
 function GenerationsPaneSurface({ controller }: { controller: GenerationsPaneController }) {
   const { pane, filters, gallery, layout } = controller;
-  const { effectiveGenerationsPaneHeight } = usePanes();
+  const effectiveGenerationsPaneHeight = usePanesStore((state) => state.effectiveGenerationsPaneHeight);
 
   return (
     <div

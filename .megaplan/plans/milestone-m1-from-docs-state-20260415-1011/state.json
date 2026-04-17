@@ -1,0 +1,757 @@
+{
+  "name": "milestone-m1-from-docs-state-20260415-1011",
+  "idea": "Milestone M1 from docs/state_management_refactor_plan.md \u2014 Zustand foundation + port the smallest consumer.\n\nGoal: establish the store-factory pattern. Add Zustand. Write a generic entity-scoped store factory. Port `useJoinClipsSettings.ts` as the first consumer to validate the factory shape. No other migrations. This is the foundation that M1a, M1b, M1c, M3, M4 all build on.\n\n## Deliverables\n\n1. **Install Zustand**:\n   ```\n   npm install zustand\n   ```\n   Add to `package.json` dependencies. Verify no type conflicts.\n\n2. **`src/shared/state/createEntityStore.ts`** \u2014 generic entity-scoped store factory.\n\n   The factory creates a single Zustand store per domain (settings, selection, timeline, etc.) with entity state keyed by an `entityId`. Callers get a hook `useEntity(entityId)` that returns the shape needed by consumers.\n\n   **Factory signature:**\n   ```typescript\n   interface EntityStoreConfig<T extends object> {\n     toolId: string;                       // identifies the store (e.g. \"join-clips\")\n     defaults: T;                          // initial settings shape\n     load: (entityId: string) => Promise<{ db: T | null; lastUsed: T | null }>;\n     save: (entityId: string, data: T) => Promise<void>;\n     textFieldKeys?: readonly (keyof T)[];  // fields that save on blur/flush instead of debounce\n     persistenceDebounceMs?: number;         // default 300\n   }\n\n   interface EntityStoreApi<T extends object> {\n     useEntity: (entityId: string) => EntityView<T>;\n     // plus: direct action access for tests\n     getState: () => EntityStoreState<T>;\n   }\n\n   interface EntityView<T> {\n     settings: T;\n     status: 'idle' | 'loading' | 'ready' | 'saving' | 'error';\n     error: Error | null;\n     hasPersistedData: boolean;\n     updateField: <K extends keyof T>(key: K, value: T[K]) => void;\n     updateFields: (patch: Partial<T>) => void;\n     updateTextField: <K extends keyof T>(key: K, value: T[K]) => void;\n     flushTextFields: () => Promise<void>;\n     save: () => Promise<void>;\n     saveImmediate: () => Promise<void>;\n     revert: () => void;\n     reset: () => void;\n   }\n\n   function createEntityStore<T extends object>(config: EntityStoreConfig<T>): EntityStoreApi<T>;\n   ```\n\n   **Required behaviors:**\n   - Single Zustand store per factory instantiation. State shape: `{ entities: Record<entityId, EntityState<T>> }`.\n   - `useEntity(id)` subscribes the component to just that entity's slice. Different entity IDs do not cause cross-renders.\n   - Use `shallow` equality (from `zustand/shallow`) for selectors that return objects or arrays; default `Object.is` for primitives.\n   - Atomic bootstrap action: `bootstrapEntity({entityId, db, lastUsed})` merges in one dispatch \u2014 no multi-transition load sequence.\n   - On first mount for an entity: `useEntity` triggers a lazy load via `config.load()` and dispatches bootstrap.\n   - `updateField` / `updateFields`: optimistic write to settings, schedule debounced save.\n   - `updateTextField`: same state write but does NOT schedule the debounce \u2014 intended for prompt/textarea fields that should save on blur or flush.\n   - `flushTextFields`: force-save any pending text-field edits immediately.\n   - Debounce: 300ms default, configurable via `config.persistenceDebounceMs`.\n   - On React Query data arrival (for entities that source from RQ): scaffolding is responsible; the factory itself doesn't import RQ. The factory's `load` is invoked externally.\n\n3. **Port `useJoinClipsSettings.ts`** \u2014 smallest consumer, 5 fields, lowest risk.\n\n   **Current shape (verify at milestone start):**\n   ```\n   src/tools/join-clips/hooks/useJoinClipsSettings.ts\n   src/shared/lib/joinClips/defaults.ts\n   ```\n\n   **Port rules:**\n   - `useJoinClipsSettings(shotId: string)` public return shape UNCHANGED. Internal implementation switches to `createEntityStore`.\n   - Use the existing `JoinClipsSettings` type from current defaults.ts.\n   - Load fn and save fn use the existing `useToolSettings` / Supabase mechanism underneath. The factory is a layer above the existing save/load \u2014 don't reinvent persistence yet (that's M1a's job).\n   - Verify: `useJoinClipsSettings` tests pass unchanged. If tests reference internal state of the old hook, update the tests to use the public API.\n\n## Repo conventions (from reigh-app/CLAUDE.md)\n\n- Prefer editing existing files; don't create unnecessary new ones. `createEntityStore.ts` is new and justified.\n- No hardcoded colors. This milestone doesn't add UI \u2014 if any test renders, use theme tokens.\n- TypeScript strict. No `any`.\n- Don't modify any edge function, supabase migration, or worker-orchestrator code.\n- Don't touch `useAutoSaveSettings.ts` or any of the settings persistence helpers in this milestone \u2014 that's M1a.\n\n## Gate criteria (for human reviewer)\n\n- `npx tsc --noEmit` clean.\n- `npm test` at M0 baseline (4562 passing, 0 failing \u2014 any regression blocks).\n- `useJoinClipsSettings` tests unchanged behavior (may need test update if internals-coupled).\n- `createEntityStore` tests cover: bootstrap, update, flush, revert, reset, selector isolation between entities.\n- M0 telemetry unchanged (we didn't touch any instrumented surface).\n\n## Out of scope\n\n- Do not migrate any other consumer of `useAutoSaveSettings` (that's M1a).\n- Do not touch selection or timeline state (M1b, M1c).\n- Do not refactor `useDebouncedSettingsSave.ts` (M1a).\n- Do not change React Query behavior.\n- Do not add new cross-cutting patterns beyond the factory.\n\n## Branch\n\n`megaplan/m1-foundation-store` off main (pull latest main first \u2014 M0's telemetry PR may or may not be merged).\n\n## Base commit note\n\nIf this runs immediately after M0, M0's branch `megaplan/m0-render-telemetry` may still be unmerged on GitHub. This is fine \u2014 M1 depends conceptually on M0's existence, but the M0 branch doesn't need to be merged for M1 to proceed. M1 branches from origin/main and adds Zustand-related work in files that don't overlap with M0's telemetry changes.",
+  "current_state": "finalized",
+  "iteration": 4,
+  "created_at": "2026-04-15T10:11:32Z",
+  "config": {
+    "project_dir": "/workspace/reigh-app",
+    "auto_approve": true,
+    "robustness": "standard",
+    "agent": ""
+  },
+  "sessions": {
+    "codex_planner": {
+      "id": "019d909f-f252-7c92-8ad3-8bb421321292",
+      "mode": "persistent",
+      "created_at": "2026-04-15T10:13:07Z",
+      "last_used_at": "2026-04-15T10:25:54Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019d90a1-63eb-7cb1-9435-ea6fa3a0b02c",
+      "mode": "persistent",
+      "created_at": "2026-04-15T10:16:09Z",
+      "last_used_at": "2026-04-15T12:58:04Z",
+      "refreshed": false
+    },
+    "codex_gatekeeper": {
+      "id": "019d90a4-28e2-71b3-a945-db127f219bca",
+      "mode": "persistent",
+      "created_at": "2026-04-15T10:16:52Z",
+      "last_used_at": "2026-04-15T12:59:05Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019d9139-556c-7500-9be6-963f225dbecc",
+      "mode": "persistent",
+      "created_at": "2026-04-15T13:00:33Z",
+      "last_used_at": "2026-04-15T13:00:33Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "mode": "persistent",
+      "created_at": "2026-04-15T13:06:24Z",
+      "last_used_at": "2026-04-15T13:17:30Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:60557959a2c4e0b246a8048a99bc79d16089be0bf24367e50d66b6179a6bc004",
+      "timestamp": "2026-04-15T10:13:07Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:926dffe3442540c7900896ff6ba7ded2082c63c7bfb30aac041505ab027dcdc7",
+      "timestamp": "2026-04-15T10:18:20Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:ab556d372d0f3af67844955b4b59e4ef1f7cfcca3be0bf5bc2cb3ecb67ca95dc",
+      "timestamp": "2026-04-15T10:22:37Z"
+    },
+    {
+      "version": 4,
+      "file": "plan_v4.md",
+      "hash": "sha256:17d478d2e05a60c2353514b25d448f148f5fb9b4105705a48d978d8c700f5dc1",
+      "timestamp": "2026-04-15T10:25:54Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-15T10:11:32Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-15T10:13:07Z",
+      "duration_ms": 94944,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d909f-f252-7c92-8ad3-8bb421321292",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:60557959a2c4e0b246a8048a99bc79d16089be0bf24367e50d66b6179a6bc004"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T10:16:09Z",
+      "duration_ms": 180193,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a1-63eb-7cb1-9435-ea6fa3a0b02c",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:7679aa6c2c5db919ee104fbd6b8e0be04724b4a45a5929c47d87adee4a5d0b21",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T10:16:52Z",
+      "duration_ms": 42169,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a4-28e2-71b3-a945-db127f219bca",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:1e9a1fa892c0a6764c9c8318718399c4433e83425b5619d88612f187a31f2d9b",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T10:18:20Z",
+      "duration_ms": 86840,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d909f-f252-7c92-8ad3-8bb421321292",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:926dffe3442540c7900896ff6ba7ded2082c63c7bfb30aac041505ab027dcdc7",
+      "flags_addressed": [
+        "FLAG-M1-001",
+        "issue_hints",
+        "correctness-1",
+        "correctness-2",
+        "scope",
+        "all_locations",
+        "callers"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T10:20:39Z",
+      "duration_ms": 136944,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a1-63eb-7cb1-9435-ea6fa3a0b02c",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:4e1124ea23b2f1b6028889c6b1fb687ef348bf3f4b879a6e6bf0e4c076220529",
+      "flags_count": 6
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T10:21:06Z",
+      "duration_ms": 25891,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a4-28e2-71b3-a945-db127f219bca",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:61e8ba6a3ab8bdb218b740f252612e653362bf13acebf58f7fc84190d19ce613",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T10:22:37Z",
+      "duration_ms": 90116,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d909f-f252-7c92-8ad3-8bb421321292",
+      "agent": "codex",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:ab556d372d0f3af67844955b4b59e4ef1f7cfcca3be0bf5bc2cb3ecb67ca95dc",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness-1",
+        "correctness-2",
+        "scope",
+        "all_locations",
+        "callers",
+        "FLAG-M1-003",
+        "FLAG-M1-004"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T10:23:43Z",
+      "duration_ms": 64927,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a1-63eb-7cb1-9435-ea6fa3a0b02c",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:13a0a6c7ca7ea4d15f13832a0f787e11114e4d6020207f1cc9280b6185029293",
+      "flags_count": 5
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T10:24:20Z",
+      "duration_ms": 35462,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a4-28e2-71b3-a945-db127f219bca",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:b74c33de48437801ed98b07979e14f06f20c5f71a3d6066baa9ca95ba63b8866",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T10:25:54Z",
+      "duration_ms": 92364,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d909f-f252-7c92-8ad3-8bb421321292",
+      "agent": "codex",
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:17d478d2e05a60c2353514b25d448f148f5fb9b4105705a48d978d8c700f5dc1",
+      "flags_addressed": [
+        "issue_hints",
+        "all_locations",
+        "FLAG-M1-005",
+        "FLAG-M1-006",
+        "correctness"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T10:26:55Z",
+      "duration_ms": 60117,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a1-63eb-7cb1-9435-ea6fa3a0b02c",
+      "agent": "codex",
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:966abe84b48d21d5cd2572c1327533892e26b644e093bd7d444cfb17eb50b746",
+      "flags_count": 6
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T10:27:22Z",
+      "duration_ms": 25547,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a4-28e2-71b3-a945-db127f219bca",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:80fd8403812392ff3b78bfa277c30d135eca21e45bf4eb78a636535bd8f7add7",
+      "recommendation": "ESCALATE"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T12:58:04Z",
+      "duration_ms": 138597,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a1-63eb-7cb1-9435-ea6fa3a0b02c",
+      "agent": "codex",
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:04d241ebef7097837faa7cb76f57736910c4c87563371a4deb34dfa6fe6b0eea",
+      "flags_count": 18
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T12:59:05Z",
+      "duration_ms": 59705,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d90a4-28e2-71b3-a945-db127f219bca",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:644cde85b59fb778a700aa13c09decbdb66ccba33be09e5498dde389125cf0fa",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-15T13:00:33Z",
+      "duration_ms": 86303,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9139-556c-7500-9be6-963f225dbecc",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:224dd37d6b130e8eb43913b23bb10fcad82ade89147456e3efe44223122a8e53"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:08:39Z",
+      "duration_ms": 484544,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:eff07dbb1cb382860b9cfd6d737d2ecbd8bf13f7c3e4e149f63ceef8e5ac384d",
+      "finalize_hash": "sha256:5ead731a989c2a0b4063cc9870a000d127972796ca8b74236ac2eb551a5e78e2",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:08:55Z",
+      "duration_ms": 14524,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:d99e3631f2d845d2004078e60511f2744ba465715512c1e7f4ca01ab37d1aeff",
+      "finalize_hash": "sha256:6dab28054dc8bea1e33130177c5343d9dce831bed0b580e3c5307f96dbdd7011",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:09:10Z",
+      "duration_ms": 14425,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:3431f79657e59e1e7236cbd0985baa63062d535d48924b3216313be01534ba1e",
+      "finalize_hash": "sha256:1a46ef1eb14b28f3f2714d06a1d4d216a8a38aaa36ccc61692e14de3f783dec5",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:09:19Z",
+      "duration_ms": 7052,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:35a6ee0ee0b92840e807c5df30af15c62f0cbcedf6c8218f0cc37f0f7e2a3353",
+      "finalize_hash": "sha256:02256cefa8458b37d491f4bb13095b6c07c9a9a95098b4085c5aa9a063fd8888",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:09:28Z",
+      "duration_ms": 8438,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:4b871e1758fca02c62e8a17b1dc402db4250547ccfe4c8d33a45e8772c2aeabe",
+      "finalize_hash": "sha256:02256cefa8458b37d491f4bb13095b6c07c9a9a95098b4085c5aa9a063fd8888",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:10:40Z",
+      "duration_ms": 9584,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:e0e7b9996f6a8ee138f286de1f748da66fbd5a3fe1504de727acda50f30323bf",
+      "finalize_hash": "sha256:02256cefa8458b37d491f4bb13095b6c07c9a9a95098b4085c5aa9a063fd8888",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:10:51Z",
+      "duration_ms": 9723,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:fb0c28c5a8e113e11cdb55a257255ddda292c596f75e129d6e91a6fa5be0f8c6",
+      "finalize_hash": "sha256:02256cefa8458b37d491f4bb13095b6c07c9a9a95098b4085c5aa9a063fd8888",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:11:03Z",
+      "duration_ms": 10360,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:83f0fc4b2e27571e333e9d3676df8d62e6c9a5dc8cce624ad2544f7f9f53f7ef",
+      "finalize_hash": "sha256:02256cefa8458b37d491f4bb13095b6c07c9a9a95098b4085c5aa9a063fd8888",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:11:41Z",
+      "duration_ms": 36915,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:21890f9e399ad578b81d499b06aabdfeec87d1ffd4a8d618b56880c20415128e",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:11:50Z",
+      "duration_ms": 8028,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:e6ac29441a940904a3d002645e4f29969f40d42ac28013fc3f7f4c4a29b87711",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:13:00Z",
+      "duration_ms": 7922,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:3f07c5699f4b80da54789b3621aebe1b867727557f6c119dc817250484047b96",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:13:08Z",
+      "duration_ms": 6314,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:1de4513cbe345e4b111a56869265ede97d1727c76eee358bca1fd0540aa8a41b",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:13:16Z",
+      "duration_ms": 7342,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:8849d253491bcabf417a363b9ea93df44dcfeeefdfafeeb7cd463e9a74a17012",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:13:27Z",
+      "duration_ms": 9806,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:3a38f96985310874d583d6f66a24e0899a1c6a95358ad96e5cf23fc2e86cceb8",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:13:36Z",
+      "duration_ms": 6855,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:8d1cb54e3a7fe4e65d2d1eb6ff338b5c39d7929a15346ecb3df676a9b57e8a8f",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:14:44Z",
+      "duration_ms": 6722,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:14:53Z",
+      "duration_ms": 6937,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:15:24Z",
+      "duration_ms": 30610,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:15:37Z",
+      "duration_ms": 10688,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:15:48Z",
+      "duration_ms": 10467,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:16:57Z",
+      "duration_ms": 7013,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:17:05Z",
+      "duration_ms": 6201,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:17:13Z",
+      "duration_ms": 6609,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:17:20Z",
+      "duration_ms": 6210,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T13:17:30Z",
+      "duration_ms": 8036,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f14dba5176814f68110f36f3ede6d266f6568d1fbc73e51c22d508d820858141",
+      "finalize_hash": "sha256:494eb2a905f7df38a23e282e7a0c1611b951ebf8b22a0bfde1a70fc92164b541",
+      "approval_mode": "auto_approve"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      7,
+      8,
+      5,
+      6,
+      7
+    ],
+    "weighted_scores": [
+      10.0,
+      11.5,
+      8.5,
+      9.75
+    ],
+    "plan_deltas": [
+      83.93,
+      94.21,
+      54.5
+    ],
+    "recurring_critiques": [
+      [],
+      [],
+      [],
+      [],
+      []
+    ],
+    "total_cost_usd": 0.0,
+    "overrides": [
+      {
+        "action": "add-note",
+        "timestamp": "2026-04-15T12:53:25Z",
+        "note": "TIEBREAKER VERDICT (architectural tension resolved).\n\nDECISION: Option C (hybrid) narrowed \u2014 per-BOUNDARY ownership (not per-entity), plus constraint (1) RELAXED for RQ-backed entities.\n\nARCHITECTURE:\n(a) `useEntity(id)` is a READER over whichever authority owns the entity; it is NOT an authoritative loader. Authoritative loading is a separate concern (boundary-level pre-seed, route prefetch, or an explicit `ensureEntity` helper).\n(b) RQ-backed settings (including `useJoinClipsSettings`) stay RQ-authoritative through the existing `useAutoSaveSettings` \u2192 `useToolSettings` boundary, unchanged. If `createEntityStore` needs to participate, the RQ\u2192store sync lives INSIDE the settings boundary hook \u2014 never in feature-consumer `useEffect` bridges.\n(c) `createEntityStore`'s factory keeps `load/save` for store-owned entities (the custom-load/save path already used by `useGenerationEditSettings`). For RQ-owned entities the factory DOES NOT own `load` \u2014 ownership is declared at the boundary, not fabricated per consumer.\n\nWHAT DROPS FROM THE M1 SPEC:\n- Constraint (1) is relaxed: `useEntity(id)` does not lazy-load authoritatively on first mount for RQ-backed entities. Justified by live overwrite-race evidence in `useShotSettings` + `VideoTravelSettingsProvider` pre-seeding, and by pending-edit guards already in `autoSaveSettingsLoaders.ts`.\n- Constraint (2) is preserved: RQ-backed entities are scaffolded externally (at the boundary, not by consumers).\n- Constraint (3) is preserved: `useJoinClipsSettings` keeps current behavior as a thin passthrough over `useAutoSaveSettings`.\n\nWHY NOT A (RQ-first with consumer bridge): Tiebreaker evidence is decisive against it. A consumer-owned `bootstrapEntity(id, data)` in `useEffect` recreates the exact race the critique worker kept catching (first-render timing vs pending-edit protection vs cache fanout). `useShotSettings` already demonstrates this class of bug in production.\n\nWHY NOT B (store-first): Architectural inversion reimplementing 1,200+ LOC of existing invariants (`useAutoSaveSettings`, `useDebouncedSettingsSave`, loaders, helpers) without migration budget in M1.\n\nLOOP INSTRUCTIONS: Settled by tiebreaker (see `.megaplan/plans/milestone-m1-from-docs-state-20260415-1011/tiebreaker.md`). Do not re-raise this architectural concern under new surface. Revise the plan to reflect: (i) factory `load` is for store-owned entities only, (ii) RQ-backed entities route through the settings boundary, (iii) `useEntity(id)` is a reader, (iv) any RQ\u2192store bridge is boundary-internal. Then proceed to gate/finalize/execute."
+      },
+      {
+        "action": "replan",
+        "timestamp": "2026-04-15T12:55:38Z",
+        "reason": "Tiebreaker verdict attached as note; plan must be revised to reflect boundary-owned ownership architecture (see notes and tiebreaker.md). Do not re-raise the createEntityStore/RQ tension."
+      }
+    ],
+    "notes": [
+      {
+        "timestamp": "2026-04-15T12:53:25Z",
+        "note": "TIEBREAKER VERDICT (architectural tension resolved).\n\nDECISION: Option C (hybrid) narrowed \u2014 per-BOUNDARY ownership (not per-entity), plus constraint (1) RELAXED for RQ-backed entities.\n\nARCHITECTURE:\n(a) `useEntity(id)` is a READER over whichever authority owns the entity; it is NOT an authoritative loader. Authoritative loading is a separate concern (boundary-level pre-seed, route prefetch, or an explicit `ensureEntity` helper).\n(b) RQ-backed settings (including `useJoinClipsSettings`) stay RQ-authoritative through the existing `useAutoSaveSettings` \u2192 `useToolSettings` boundary, unchanged. If `createEntityStore` needs to participate, the RQ\u2192store sync lives INSIDE the settings boundary hook \u2014 never in feature-consumer `useEffect` bridges.\n(c) `createEntityStore`'s factory keeps `load/save` for store-owned entities (the custom-load/save path already used by `useGenerationEditSettings`). For RQ-owned entities the factory DOES NOT own `load` \u2014 ownership is declared at the boundary, not fabricated per consumer.\n\nWHAT DROPS FROM THE M1 SPEC:\n- Constraint (1) is relaxed: `useEntity(id)` does not lazy-load authoritatively on first mount for RQ-backed entities. Justified by live overwrite-race evidence in `useShotSettings` + `VideoTravelSettingsProvider` pre-seeding, and by pending-edit guards already in `autoSaveSettingsLoaders.ts`.\n- Constraint (2) is preserved: RQ-backed entities are scaffolded externally (at the boundary, not by consumers).\n- Constraint (3) is preserved: `useJoinClipsSettings` keeps current behavior as a thin passthrough over `useAutoSaveSettings`.\n\nWHY NOT A (RQ-first with consumer bridge): Tiebreaker evidence is decisive against it. A consumer-owned `bootstrapEntity(id, data)` in `useEffect` recreates the exact race the critique worker kept catching (first-render timing vs pending-edit protection vs cache fanout). `useShotSettings` already demonstrates this class of bug in production.\n\nWHY NOT B (store-first): Architectural inversion reimplementing 1,200+ LOC of existing invariants (`useAutoSaveSettings`, `useDebouncedSettingsSave`, loaders, helpers) without migration budget in M1.\n\nLOOP INSTRUCTIONS: Settled by tiebreaker (see `.megaplan/plans/milestone-m1-from-docs-state-20260415-1011/tiebreaker.md`). Do not re-raise this architectural concern under new surface. Revise the plan to reflect: (i) factory `load` is for store-owned entities only, (ii) RQ-backed entities route through the settings boundary, (iii) `useEntity(id)` is a reader, (iv) any RQ\u2192store bridge is boundary-internal. Then proceed to gate/finalize/execute."
+      }
+    ],
+    "user_approved_gate": true
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "Execution should move forward now because the blocking architectural tension has been explicitly resolved by the user\u2019s tiebreaker verdict, and the remaining open flags are critiques of the now-superseded delegate-registry plan rather than of the settled direction. The governing decision is clear: for RQ-backed settings, `useEntity(id)` is a reader, not an authoritative loader; `createEntityStore.load/save` remain for store-owned entities; any RQ-to-store participation belongs inside the shared settings boundary; and `useJoinClipsSettings` stays a thin passthrough over `useAutoSaveSettings`. That resolves the repeated loop on hydration authority and removes the need for the rejected feature-level delegate bridge.",
+    "reprompted": false,
+    "signals_assessment": "The score worsened from 9.75 to 11.25 only because the critiqued plan had not yet been updated to match the user-provided tiebreaker. Preflight remains fully green: the project exists, is writable, and the criteria are present. The unresolved flags all target the stale single-authority delegate design; once the tiebreaker is treated as the authoritative plan delta, those flags no longer block execution.",
+    "warnings": [
+      "Execution must not implement the stale delegate-registry architecture. No module-local `registerJoinClipsPersistence()` bridge, no feature-level bootstrap path, and no consumer-owned store lifecycle for join-clips.",
+      "`useJoinClipsSettings` should remain a thin passthrough over [src/tools/join-clips/hooks/useJoinClipsSettings.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsSettings.ts:1) semantics via `useAutoSaveSettings`; any RQ-to-store sync belongs inside the shared settings boundary if it is added at all.",
+      "Because the tiebreaker relaxes first-mount authoritative lazy load for RQ-backed entities, review notes should make that scope change explicit so M1 is judged against the settled architecture rather than the pre-tiebreaker wording."
+    ],
+    "settled_decisions": [
+      {
+        "id": "boundary-ownership",
+        "decision": "Ownership is per boundary, not per entity.",
+        "rationale": "The user notes explicitly choose 'Option C (hybrid) narrowed \u2014 per-BOUNDARY ownership' for this milestone."
+      },
+      {
+        "id": "useentity-reader-only-for-rq",
+        "decision": "For RQ-backed settings, `useEntity(id)` is a reader, not an authoritative loader.",
+        "rationale": "The tiebreaker explicitly relaxes the old first-mount lazy-load constraint for RQ-backed entities."
+      },
+      {
+        "id": "factory-load-save-store-owned-only",
+        "decision": "`createEntityStore.load/save` are for store-owned entities only.",
+        "rationale": "The user notes explicitly reserve factory `load/save` for the custom-load/save path and not for RQ-backed settings like join-clips."
+      },
+      {
+        "id": "joinclips-stays-thin-wrapper",
+        "decision": "`useJoinClipsSettings` remains a thin passthrough over `useAutoSaveSettings`.",
+        "rationale": "The tiebreaker explicitly preserves the existing join-clips boundary instead of introducing a feature-level delegate bridge."
+      },
+      {
+        "id": "rq-store-sync-boundary-internal",
+        "decision": "If any RQ-to-store sync is introduced, it must live inside the shared settings boundary hook, not in feature-consumer code.",
+        "rationale": "The user notes explicitly prohibit consumer-level RQ/store bridges and point to boundary-internal integration only."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting."
+  },
+  "active_step": {
+    "step": "execute",
+    "agent": "codex",
+    "mode": "persistent",
+    "run_id": "73ef76de-7bed-4454-bcab-4bd3e177b748",
+    "started_at": "2026-04-15T17:27:55Z",
+    "session_id": "019d913a-ab96-7b42-91b6-13ebb5eec7d1"
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "version": 7,
+  "timestamp": "2026-04-17T00:27:09Z",
+  "hash": "sha256:30bb9a02fc5d207a95135146d9dd412488c668b30752511f685c2439b505a027",
+  "changes_summary": "Patched the plan surgically: corrected the raw-import inventory to include the tooltip test mock, added explicit cleanup for that test and the `GuidanceVideoStrip` helper path, extended layering cleanup to forwarded `tooltipClassName` callers, and made non-modal tooltip/preview-card overlays opt out of focus restoration and body-lock ownership.",
+  "flags_addressed": [
+    "all_locations-1",
+    "all_locations-2",
+    "callers",
+    "issue_hints",
+    "correctness",
+    "FLAG-012"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`src/shared/state/overlayStack.ts` exists and exports JSDoc-documented public actions/selectors for ordered overlay registration, topmost queries, stack-derived layering, and element/context bridge helpers, while remaining a small dedicated lifecycle store.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The implementation explicitly contains Base UI's built-in focus/body ownership so the overlay stack is the single automated owner of `document.body.style.pointerEvents` and focus restoration for modal overlays after wrapper composition.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Overlay registration is tied to actual open/present popup or backdrop lifecycle rather than long-lived root mount state.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Tooltip and preview-card are treated as non-modal ordering-only overlays: they receive stack layering/topmost identity but do not capture `restoreFocusTo`, do not restore focus on close, and do not affect body pointer-events ownership.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "An explicit overlay-identity bridge exists under `src/shared/components/ui/overlay/` so ref-based dialog callers and callback-only lightbox hooks can consume topmost state without bespoke prop threading.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "No raw `@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card)` imports or mocks remain anywhere under `src/` outside `src/shared/components/ui/overlay/`, including type-only imports and the current tooltip test mock.",
+      "priority": "must",
+      "requires": [
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "`LightboxShell.tsx` no longer imports `@base-ui/react/dialog` directly and instead consumes a sanctioned overlay-aware wrapper path under `src/shared/components/ui/overlay/` that preserves its modal semantics, dismissal-cancellation contract, custom event handlers, and marker exposure.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The existing Base UI `preview-card` wrapper is migrated into the centralized overlay ownership layer so no stack-relevant Base UI portal primitive remains outside M2.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "DOM/z-index precedence helpers are retired for migrated overlay flows: `uiLayers.ts`, lightbox interaction/navigation hooks, and `LoraSelectorModal` no longer determine topmost state by querying DOM markers and comparing computed z-index values.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Helper-based container and popup-overlay resolution is centralized and preserved: `CommunityLorasTab.tsx`, `MyLorasTab.tsx`, `sharedSections.tsx`, `useSlidingPane.ts`, `GuidanceVideoStrip.tsx`, `elementPolicy.ts`, `useMobileInteractions.ts`, and `useLightboxTransition.ts` use shared overlay helpers instead of open-coded marker queries.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Backdrop-marker and popup-marker compatibility remain explicit and intact during M2 across both JS and CSS support surfaces, including `src/index.css`, `src/styles/components/interactions.css`, `src/styles/components/dialog-overrides.css`, `src/styles/components/wes-surfaces.css`, and `src/styles/foundations/base-case.css`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Caller-side layering escape hatches for migrated Base UI overlay consumers are removed or neutralized, including indirect forwarded-prop paths such as `tooltipClassName`; no remaining `zIndexBase`, `overlayClassName`, or layering-only numeric `z-[...]` overrides are required on Dialog, Select, Popover, Menu, Tooltip, AlertDialog, or HoverCard consumers.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Integration tests cover `open A -> open B -> close A -> close B` for both Dialog+Popover and Menu+Dialog, and assert `document.body.style.pointerEvents === ''` after full close.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Tests validate the overlay identity bridge, the lightbox precedence path, the non-modal opt-out semantics for tooltip/preview-card, and the shared marker-helper compatibility contracts that replace the old DOM-z-index ordering strategy.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The overlay-stack migration passes `npx tsc --noEmit`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes after the overlay migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Public wrapper entrypoints remain import-compatible for existing consumers where practical, while removing only the layering-specific escape hatches that conflict with central ownership.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Deferred manual checks pass in a real app session: nested LoRA modal plus Model Select closes cleanly, drag interactions do not spuriously dismiss overlays, and focus trap / Escape / restore behavior feels correct.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "verify_physical_device"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The critique does not invalidate the M2 root-cause hypothesis; overlay ownership centralization remains the correct milestone target.",
+    "The current repo inventory is authoritative: there are 10 relevant `@base-ui/react/...` matches under `src/` today, including the test-only tooltip mock.",
+    "Tooltip and preview-card should participate in stack ordering and layer calculation, but not in modal body locking or opener-focus restoration.",
+    "Existing marker-based JS/CSS consumers still require `data-dialog-content`, `data-dialog-backdrop`, `data-lightbox-popup`, and popup-like selectors during M2, so wrappers must preserve them until helper cleanup lands.",
+    "Automated proof remains limited to shell and jsdom/Vitest; any browser-driven, runtime-app, drag, or manual focus-trap verification must be reported as `skipped` on first encounter with executor notes naming the blocker."
+  ],
+  "delta_from_previous_percent": 89.68,
+  "structure_warnings": []
+}

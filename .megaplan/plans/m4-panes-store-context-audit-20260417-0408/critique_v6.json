@@ -1,0 +1,162 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Checked the revised Step 4 and Step 6 language against the milestone brief and the repo's existing quality-check pattern in `package.json` and `scripts/quality/`. The plan now keeps the permanent automation scoped to new over-threshold `createContext(...)` declarations and separately treats wrapper-hook analysis as one-time audit work, which matches the approved requirement rather than broadening the guard beyond what was asked.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the plan's claim that execution starts from a \"complete grep-driven inventory\" against the actual repository layout. Step 1 still limits the wrapper-hook search to `src/shared/contexts`, `src/domains/media-lightbox/contexts`, and `src/tools/travel-between-images/providers`, but `src/shared/components/ImageGenerationForm/hooks/useImageGenerationFormContexts.ts` exports five context-access hooks around `ImageGenerationFormContext`, including `useFormCoreContext()` with 7 non-test production consumers, so the plan still does not fully satisfy its own exhaustive audit requirement unless that search scope is widened.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked step 6 against `package.json`, `eslint.config.js`, and `scripts/quality/`. The revised plan now limits the permanent automation to new over-threshold `createContext(...)` declarations and routes it through the repo's existing quality-check pattern, so the earlier objection about broadening the guard to recomposed hooks is actually resolved.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked the revised field-count contract against `src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.provider.tsx` and `src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.types.ts`. Because the plan says imported opaque types count as one unless expanded from the same file, `createContext<ShotSettingsContextValue | null>(null)` would be counted as effectively one field even though the sibling type expands to well over 10 fields and `useShotSettingsContext()` has 6 production consumers, so the revised audit rule still undercuts the brief's requirement to count actual context fields.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Re-checked the revised field-count rule against `src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.provider.tsx` and `src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.types.ts`. The plan now explicitly says to resolve context value types across sibling/local imports and expand local repository definitions recursively, so `createContext<ShotSettingsContextValue | null>(null)` would be counted from the actual imported value shape instead of being treated as an opaque single field.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Compared the revised panes-store plan with `src/shared/state/selectionStore.ts` and `src/tools/video-editor/hooks/timelineStore.ts`. The plan now explicitly requires a singleton lifecycle contract, bootstrap idempotence, and a test reset helper for panes state, which matches the repository's existing Zustand patterns and resolves the earlier leakage risk.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "The revised counting algorithm is still technically lossy for real repo code. `ShotSettingsContext.provider.tsx` imports `ShotSettingsContextValue` from a sibling file, and that type contains large grouped state/handler surfaces, but the plan's 'same-file one level deep' rule would treat the imported type as opaque and likely classify this context as thin, so an executor following the plan literally can miss a context that is plainly above the milestone's >10-field threshold.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Re-ran the broader context-access search and confirmed the milestone shape is still directionally right: `useProject()` alone has 40 non-test production call sites, so replacing panes first and then auditing the remaining context-as-pubsub surfaces is still a proportionate way to tackle the broader problem.",
+          "flagged": false
+        },
+        {
+          "detail": "The broader wrapper-hook surface is still wider than the Step 1 inventory suggests. Besides `ProjectContext` and the explicitly named media-lightbox/travel files, the repo has exported context-access families under `src/shared/components/ImageGenerationForm/` that are not in the listed search roots; for example, `useFormCoreContext()` in `useImageGenerationFormContexts.ts` has 7 production consumers. That means the plan still risks treating the audit as exhaustive while missing related context-wrapper surfaces outside the three named directories.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Re-ran the panes and project-context surface search. The broader context-as-pubsub problem is still real beyond panes, with `useProject()` appearing in more than 40 non-test production files, so keeping panes as the primary migration target while auditing the rest is still the right milestone shape.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked the revised wrapper-hook inventory command against the actual export style in `src/shared/contexts/ProjectContext.tsx`. The sample grep still only matches `export function use...`, but `useProject` and the split project hooks are exported as `const`, so the plan's own inventory method can still miss one of the repo's largest recomposed context-access surfaces before the audit even starts.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Re-ran the panes call-site and test-mock search across `src/` and confirmed the plan still covers the real panes migration blast radius. Production imports of `usePanes()` are concentrated in layout, gallery, tasks, travel, video-shot, and product-tour files, while test infrastructure includes direct `vi.mock('@/shared/contexts/PanesContext')` usage in app, gallery, lightbox, video editor, and shot-editor tests plus `src/shared/contexts/__tests__/PanesContext.test.tsx`; the revised delete-and-replace steps line up with those supporting locations.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Re-ran the panes call-site and test-mock search (`usePanes`, `PanesProvider`, and `@/shared/contexts/PanesContext`) across `src/`. The revised plan still lines up with the real supporting infrastructure: app shell files, travel/video editor surfaces, lightbox environment hooks, and multiple tests and mocks all remain in the migration blast radius and are explicitly covered by the plan's delete-and-update steps.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Sampled action-heavy panes callers including `src/app/hooks/useGlobalPaneShortcuts.ts`, `src/shared/components/ProductTour/ProductTour.tsx`, `src/features/tasks/components/TasksPane/hooks/useTaskNavigation.ts`, `src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.ts`, and `src/tools/travel-between-images/components/ShotEditor/useShotEditorController.ts`. They only read booleans, widths/heights, `activeTaskId`, and setter-style actions that map cleanly onto selector-based store hooks, so I did not find a remaining caller-shape mismatch after the lifecycle/reset revisions.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Sampled action-heavy panes callers including `src/app/hooks/useGlobalPaneShortcuts.ts`, `src/shared/components/ProductTour/ProductTour.tsx`, `src/features/tasks/components/TasksPane/hooks/useTaskNavigation.ts`, and `src/tools/travel-between-images/components/hooks/useVideoGenerationModalController.ts`. They all use ordinary booleans, setters, width/height values, and reset behavior that the revised plan says the store will mirror mechanically, so I did not find a remaining caller-shape gap after the lifecycle/reset revisions.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "all_locations-wrapper-hooks-1",
+      "concern": "Context audit inventory: Step 1's wrapper-hook inventory is still path-limited to three directories, so it misses exported context-access hook families elsewhere in the repo such as `src/shared/components/ImageGenerationForm/hooks/useImageGenerationFormContexts.ts`.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`useImageGenerationFormContexts.ts` is outside the listed search roots, exports five wrapper hooks around `ImageGenerationFormContext`, and `useFormCoreContext()` alone has 7 non-test production consumers."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 12: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 13: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-3",
+      "concern": "Criterion 14: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "issue_hints",
+    "correctness",
+    "scope",
+    "all_locations-wrapper-hooks-0",
+    "correctness-counting-rule-0"
+  ],
+  "disputed_flag_ids": []
+}

@@ -7,10 +7,11 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   normalizeAndPresentError: vi.fn(),
   useProject: vi.fn(),
+  useProjectCrudContext: vi.fn(),
   useQueryClient: vi.fn(),
   useEnqueueGenerationsInvalidation: vi.fn(),
   useShotNavigation: vi.fn(),
-  usePanes: vi.fn(),
+  usePanesStore: vi.fn(),
   useShotSettings: vi.fn(),
   useToolSettings: vi.fn(),
   useProjectGenerationModesCache: vi.fn(),
@@ -36,6 +37,9 @@ vi.mock('@/shared/lib/errorHandling/runtimeError', () => ({
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: (...args: unknown[]) => mocks.useProject(...args),
+  useProjectSelectionContext: (...args: unknown[]) => mocks.useProject(...args),
+  useProjectCrudContext: (...args: unknown[]) => mocks.useProjectCrudContext(...args),
+  useProjectIdentityContext: () => ({ userId: null }),
 }));
 
 vi.mock('@tanstack/react-query', () => ({
@@ -50,8 +54,8 @@ vi.mock('@/shared/hooks/shots/useShotNavigation', () => ({
   useShotNavigation: (...args: unknown[]) => mocks.useShotNavigation(...args),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: (...args: unknown[]) => mocks.usePanes(...args),
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: unknown) => unknown) => selector(mocks.usePanesStore()),
 }));
 
 vi.mock('../../hooks/settings/useShotSettings', () => ({
@@ -114,12 +118,22 @@ describe('useVideoGenerationModalController', () => {
     vi.useFakeTimers();
     mocks.useProject.mockReturnValue({
       selectedProjectId: 'project-1',
+    });
+    mocks.useProjectCrudContext.mockReturnValue({
       projects: [{ id: 'project-1', aspectRatio: '16:9' }],
+      isLoadingProjects: false,
+      fetchProjects: vi.fn(),
+      addNewProject: vi.fn(),
+      isCreatingProject: false,
+      updateProject: vi.fn(),
+      isUpdatingProject: false,
+      deleteProject: vi.fn(),
+      isDeletingProject: false,
     });
     mocks.useQueryClient.mockReturnValue({ query: 'client' });
     mocks.useEnqueueGenerationsInvalidation.mockReturnValue(vi.fn());
     mocks.useShotNavigation.mockReturnValue({ navigateToShot: vi.fn() });
-    mocks.usePanes.mockReturnValue({ isShotsPaneLocked: false, setIsShotsPaneLocked: vi.fn() });
+    mocks.usePanesStore.mockReturnValue({ isShotsPaneLocked: false, setIsShotsPaneLocked: vi.fn() });
     mocks.useToolSettings.mockReturnValue({
       settings: { acceleratedMode: false, randomSeed: true },
       update: vi.fn(),

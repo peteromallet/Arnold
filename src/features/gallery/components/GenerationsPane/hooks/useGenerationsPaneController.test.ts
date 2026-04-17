@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   useLocation: vi.fn(),
   useContainerWidth: vi.fn(),
   calculateGalleryLayout: vi.fn(),
-  usePanes: vi.fn(),
+  panesState: {} as Record<string, unknown>,
   useGalleryPageState: vi.fn(),
   useIsMobile: vi.fn(),
   useCurrentShot: vi.fn(),
@@ -56,8 +56,8 @@ vi.mock('@/shared/components/MediaGallery/utils', () => ({
   calculateGalleryLayout: (...args: unknown[]) => mocks.calculateGalleryLayout(...args),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: (...args: unknown[]) => mocks.usePanes(...args),
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: typeof mocks.panesState) => unknown) => selector(mocks.panesState),
 }));
 
 vi.mock('@/features/gallery/hooks/useGalleryPageState', () => ({
@@ -189,7 +189,7 @@ describe('useGenerationsPaneController', () => {
       isInteractionDisabled: false,
     });
     mocks.useSlidingPane.mockReturnValue(buildSlidingPaneState());
-    mocks.usePanes.mockReturnValue(buildPanesState());
+    mocks.panesState = buildPanesState();
     mocks.useProjectSelectionContext.mockReturnValue({ selectedProjectId: 'project-1' });
     mocks.useProjectCrudContext.mockReturnValue({
       projects: [{ id: 'project-1', aspectRatio: 1.6 }],
@@ -222,11 +222,11 @@ describe('useGenerationsPaneController', () => {
       isOpen: true,
       isLocked: false,
     }));
-    mocks.usePanes.mockReturnValue(buildPanesState({
+    mocks.panesState = buildPanesState({
       isGenerationsPaneOpen: true,
       setIsGenerationsPaneOpen,
       setIsGenerationsPaneLocked,
-    }));
+    });
     mocks.useGalleryPageState.mockReturnValue(galleryPageState);
     mocks.useQueryClient.mockReturnValue({ invalidateQueries });
 
@@ -297,11 +297,11 @@ describe('useGenerationsPaneController', () => {
     });
 
     mocks.useLocation.mockReturnValue({ pathname: '/tools/image-generation' });
-    mocks.usePanes.mockReturnValue(buildPanesState({
+    mocks.panesState = buildPanesState({
       isGenerationsPaneOpen: false,
       isGenerationsPaneLocked: true,
       setIsGenerationsPaneLocked,
-    }));
+    });
     mocks.useSlidingPane.mockReturnValue(buildSlidingPaneState({
       isOpen: false,
       isLocked: true,

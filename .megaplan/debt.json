@@ -3010,6 +3010,40 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-178",
+      "subsystem": "overlay-validation",
+      "concern": "the broad repo-wide numeric z-index grep is noisy and cannot serve as a standalone invariant because it includes intentional non-overlay layout layers.",
+      "flag_ids": [
+        "all_locations"
+      ],
+      "plan_ids": [
+        "m2-overlay-stack-centralize-20260416-2326"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-17T01:04:43Z",
+      "updated_at": "2026-04-17T01:04:43Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-179",
+      "subsystem": "task-status-counts",
+      "concern": "all-project status-count queries alias to a shared cache key for different `allprojectids` sets.",
+      "flag_ids": [
+        "correctness"
+      ],
+      "plan_ids": [
+        "m3-realtime-events-store-20260417-0218"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-17T03:21:43Z",
+      "updated_at": "2026-04-17T03:21:43Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

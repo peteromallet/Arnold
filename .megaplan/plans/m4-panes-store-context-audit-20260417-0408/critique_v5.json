@@ -1,0 +1,117 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked step 6 against `package.json`, `eslint.config.js`, and `scripts/quality/`. The revised plan now limits the permanent automation to new over-threshold `createContext(...)` declarations and routes it through the repo's existing quality-check pattern, so the earlier objection about broadening the guard to recomposed hooks is actually resolved.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the revised field-count contract against `src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.provider.tsx` and `src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.types.ts`. Because the plan says imported opaque types count as one unless expanded from the same file, `createContext<ShotSettingsContextValue | null>(null)` would be counted as effectively one field even though the sibling type expands to well over 10 fields and `useShotSettingsContext()` has 6 production consumers, so the revised audit rule still undercuts the brief's requirement to count actual context fields.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Compared the revised panes-store plan with `src/shared/state/selectionStore.ts` and `src/tools/video-editor/hooks/timelineStore.ts`. The plan now explicitly requires a singleton lifecycle contract, bootstrap idempotence, and a test reset helper for panes state, which matches the repository's existing Zustand patterns and resolves the earlier leakage risk.",
+          "flagged": false
+        },
+        {
+          "detail": "The revised counting algorithm is still technically lossy for real repo code. `ShotSettingsContext.provider.tsx` imports `ShotSettingsContextValue` from a sibling file, and that type contains large grouped state/handler surfaces, but the plan's 'same-file one level deep' rule would treat the imported type as opaque and likely classify this context as thin, so an executor following the plan literally can miss a context that is plainly above the milestone's >10-field threshold.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Re-ran the panes and project-context surface search. The broader context-as-pubsub problem is still real beyond panes, with `useProject()` appearing in more than 40 non-test production files, so keeping panes as the primary migration target while auditing the rest is still the right milestone shape.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the revised wrapper-hook inventory command against the actual export style in `src/shared/contexts/ProjectContext.tsx`. The sample grep still only matches `export function use...`, but `useProject` and the split project hooks are exported as `const`, so the plan's own inventory method can still miss one of the repo's largest recomposed context-access surfaces before the audit even starts.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Re-ran the panes call-site and test-mock search (`usePanes`, `PanesProvider`, and `@/shared/contexts/PanesContext`) across `src/`. The revised plan still lines up with the real supporting infrastructure: app shell files, travel/video editor surfaces, lightbox environment hooks, and multiple tests and mocks all remain in the migration blast radius and are explicitly covered by the plan's delete-and-update steps.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Sampled action-heavy panes callers including `src/app/hooks/useGlobalPaneShortcuts.ts`, `src/shared/components/ProductTour/ProductTour.tsx`, `src/features/tasks/components/TasksPane/hooks/useTaskNavigation.ts`, and `src/tools/travel-between-images/components/hooks/useVideoGenerationModalController.ts`. They all use ordinary booleans, setters, width/height values, and reset behavior that the revised plan says the store will mirror mechanically, so I did not find a remaining caller-shape gap after the lifecycle/reset revisions.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "all_locations-wrapper-hooks-0",
+      "concern": "Context audit inventory: Recurring debt: step 1's sample wrapper-hook grep still keys on `export function use...` and misses const-exported hooks such as `useProject` in `src/shared/contexts/ProjectContext.tsx`, leaving one of the largest recomposed access surfaces out of the supposedly exhaustive audit.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/contexts/ProjectContext.tsx` exports `useProject` as `export const useProject = () => { ... }`, and `rg -l \"useProject\\(\" src --glob '*.ts' --glob '*.tsx' -g '!**/*.test.ts' -g '!**/*.test.tsx'` returns 40+ production callers, but the revised sample inventory command only matches `export function use...`."
+    },
+    {
+      "id": "correctness-counting-rule-0",
+      "concern": "Context audit counting: the revised 'same-file one level deep' rule undercounts imported context value types, so obviously fat contexts can be misclassified as thin. `ShotSettingsContext.provider.tsx` imports `ShotSettingsContextValue` from `ShotSettingsContext.types.ts`; following the plan literally would count that declaration as opaque even though the actual value shape is far above the >10-field threshold and has 6 production consumers.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.provider.tsx` declares `createContext<ShotSettingsContextValue | null>(null)`, while `src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.types.ts` expands that imported type into a large multi-section context and `rg -n \"useShotSettingsContext\\(\" src --glob '*.ts' --glob '*.tsx'` shows 6 production consumers outside the provider file."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 12: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-3",
+      "concern": "Criterion 13: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "issue_hints",
+    "correctness",
+    "all_locations",
+    "scope-automation-0"
+  ],
+  "disputed_flag_ids": []
+}

@@ -17,7 +17,7 @@ import { useTimelineOrchestrator } from '../hooks/timeline-core/useTimelineOrche
 import { useTrailingEndpoint } from '../hooks/segment/useTrailingEndpoint';
 
 import type { TimelineContainerProps } from './types';
-import { useTimelineMedia } from '../TimelineMediaContext';
+import { useTimelineAudioMedia, useTimelineGuidanceMedia } from '../TimelineMediaContext';
 
 const TimelineContainer: React.FC<TimelineContainerProps> = ({
   shotId,
@@ -68,10 +68,8 @@ const TimelineContainer: React.FC<TimelineContainerProps> = ({
     onAddStructureVideo,
     onUpdateStructureVideo,
     onRemoveStructureVideo,
-    audioUrl,
-    audioMetadata,
-    onAudioChange,
-  } = useTimelineMedia();
+  } = useTimelineGuidanceMedia();
+  const { audioUrl, audioMetadata, onAudioChange } = useTimelineAudioMedia();
 
   const trailingEndFrame = framePositions.get(TRAILING_ENDPOINT_KEY);
 

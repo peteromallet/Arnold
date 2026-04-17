@@ -15,4 +15,8 @@ export type {
 export {
   ShotSettingsProvider,
   useShotSettingsContext,
+  useShotSettingsGeneration,
+  useShotSettingsIdentity,
+  useShotSettingsMedia,
+  useShotSettingsUi,
 } from './ShotSettingsContext.provider';

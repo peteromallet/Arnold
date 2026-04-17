@@ -1,0 +1,92 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the current [useJoinClipsSettings](/workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsSettings.ts:9) implementation against the plan's open question about what public shape must be preserved. The repository answers that directly: the hook currently returns the full `UseAutoSaveSettingsReturn<T>` object by forwarding `useAutoSaveSettings(...)` unchanged, so preserving only the subset used by today's join-clips callers would still narrow a public API that other code or future tests can legally depend on.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the milestone brief's stale `shotId` wording against the actual repo and confirmed the plan correctly treats join-clips as project-scoped work. The live hook accepts `projectId`, passes `scope: 'project'`, and `JoinClipsPage` calls it with `selectedProjectId`, so the plan is aligned with the repository rather than the outdated brief wording here.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the proposed `useToolSettings` bridge against the real API in [useToolSettings.ts](/workspace/reigh-app/src/shared/hooks/settings/useToolSettings.ts:132). `useToolSettings` is a React hook that returns `{ settings, update, hasShotSettings }`; it does not expose an async `load(entityId) => { db, lastUsed }` function and it cannot be called from a module-level store factory or Zustand action. The plan's Step 3 sketch therefore does not map cleanly to the stated `createEntityStore` signature without either switching to lower-level runtime helpers such as `fetchToolSettingsSupabase` / `updateToolSettingsSupabase` or redesigning how the factory receives persistence callbacks.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the existing join-clips persistence semantics against the factory's `load` contract. The current settings stack only gives join-clips merged project settings plus `hasShotSettings`; there is no repository surface here that yields separate `db` and `lastUsed` payloads for this tool, so the plan still leaves the bootstrap precedence and `lastUsed` meaning underspecified for the first migration target.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Searched the repo for `useAutoSaveSettings` wrappers and confirmed there are many other consumers, but the milestone explicitly says not to migrate them yet. The plan stays appropriately narrow on that front; the broader pattern exists in `character-animate`, `image-generation`, `travel-between-images`, prompt editor hooks, and others, but limiting the execution to the new factory plus join-clips is consistent with the requested M1 scope.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the claim that join-clips is the 'smallest consumer, 5 fields, lowest risk' against the actual page and hook usage. In this repository the join-clips path reads or writes far more than five settings: `contextFrameCount`, `gapFrameCount`, `replaceMode`, `keepBridgingImages`, `prompt`, `negativePrompt`, `useIndividualPrompts`, `enhancePrompt`, `useInputVideoResolution`, `useInputVideoFps`, `noisedInputVideo`, `motionMode`, `phaseConfig`, `randomSeed`, `selectedPhasePresetId`, `loras`, `loopFirstClip`, `clips`, and `transitionPrompts`, plus many inherited VACE defaults. That makes the first consumer materially broader than the plan's risk framing suggests.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Searched all current join-clips touch points and found the migration is not isolated to [useJoinClipsSettings.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsSettings.ts:1). Supporting infrastructure also includes [JoinClipsPage.tsx](/workspace/reigh-app/src/tools/join-clips/pages/JoinClipsPage.tsx:248), [useClipManager.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useClipManager.ts:140), [useJoinClipsGenerate.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsGenerate.ts:62), [useJoinClipsPageHelpers.ts](/workspace/reigh-app/src/tools/join-clips/pages/hooks/useJoinClipsPageHelpers.ts:17), and [JoinClipsGrid.tsx](/workspace/reigh-app/src/tools/join-clips/pages/components/JoinClipsGrid.tsx:45). The plan references the page and tests, which is good, but it should be treated as a multi-file integration even though only one hook is being ported.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked package-level setup and found Zustand is not currently present in [package.json](/workspace/reigh-app/package.json:1), nor is there any existing `src/shared/state` store infrastructure to plug into. Adding the dependency and the new state directory is necessary glue, and the plan does call out both pieces explicitly.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked all direct call sites of `useJoinClipsSettings` and found the runtime caller is [JoinClipsPage.tsx](/workspace/reigh-app/src/tools/join-clips/pages/JoinClipsPage.tsx:248), which passes `selectedProjectId` and therefore exercises three real cases: a string project id, `null` before project selection, and `undefined` in tests. The plan's test update notes cover `null`/`undefined`, so that edge handling is accounted for.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked what the callers actually use from the returned object. `JoinClipsPage`, `useClipManager`, `useJoinClipsGenerate`, `useJoinClipsPageHelpers`, and `JoinClipsGrid` all rely on `settings`, `status`, `updateField`, and `updateFields`, while the wrapper itself currently also exposes `entityId`, `isDirty`, `error`, `hasShotSettings`, `hasPersistedData`, `updateTextField`, `updateTextFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom` through passthrough. The plan does not yet state how those remaining public members will be preserved by the adapter, even though the current implementation exposes them today.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-M1-001",
+      "concern": "Settings-store adapter: the proposed join-clips bridge is still inconsistent with the real `useToolSettings` API and the factory's `load/save` contract, so the first migration path is under-specified at the persistence boundary.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`useToolSettings` in `src/shared/hooks/settings/useToolSettings.ts` is a hook returning merged settings plus `update(scope, patch)`, not a plain async loader/saver that can satisfy `createEntityStore`'s module-level `load` and `save` callbacks."
+    },
+    {
+      "id": "FLAG-M1-002",
+      "concern": "Join-clips migration surface: the plan still frames `useJoinClipsSettings` as a tiny five-field consumer, but the actual repository uses a much larger settings shape and more integration points, so the risk and test surface are understated.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "Current join-clips code reads or writes many settings beyond the five named in the brief, including prompts, motion settings, LoRA sync, clip arrays, transition prompts, loop toggles, and VACE-derived defaults across `JoinClipsPage`, `useClipManager`, and `useJoinClipsGenerate`."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

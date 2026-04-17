@@ -8,7 +8,7 @@ import {
 } from './VideoGenerationModalSections';
 
 const mocks = vi.hoisted(() => ({
-  useVideoTravelSettings: vi.fn(),
+  useVideoTravelSettingsHandlers: vi.fn(),
   handleGenerationTypeModeChange: vi.fn(),
   handlePhaseConfigChange: vi.fn(),
   handlePhasePresetRemove: vi.fn(),
@@ -102,7 +102,7 @@ vi.mock('@/shared/components/ui/skeleton', () => ({
 }));
 
 vi.mock('@/tools/travel-between-images/providers', () => ({
-  useVideoTravelSettings: (...args: unknown[]) => mocks.useVideoTravelSettings(...args),
+  useVideoTravelSettingsHandlers: (...args: unknown[]) => mocks.useVideoTravelSettingsHandlers(...args),
 }));
 
 vi.mock('@/tools/travel-between-images/components/BatchSettingsForm', () => ({
@@ -120,13 +120,11 @@ vi.mock('@/shared/components/ImageGenerationForm/components', () => ({
 describe('VideoGenerationModalSections', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.useVideoTravelSettings.mockReturnValue({
-      handlers: {
-        handleGenerationTypeModeChange: mocks.handleGenerationTypeModeChange,
-        handlePhaseConfigChange: mocks.handlePhaseConfigChange,
-        handlePhasePresetRemove: mocks.handlePhasePresetRemove,
-        handlePhasePresetSelect: mocks.handlePhasePresetSelect,
-      },
+    mocks.useVideoTravelSettingsHandlers.mockReturnValue({
+      handleGenerationTypeModeChange: mocks.handleGenerationTypeModeChange,
+      handlePhaseConfigChange: mocks.handlePhaseConfigChange,
+      handlePhasePresetRemove: mocks.handlePhasePresetRemove,
+      handlePhasePresetSelect: mocks.handlePhasePresetSelect,
     });
   });
 

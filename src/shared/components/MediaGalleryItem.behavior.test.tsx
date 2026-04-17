@@ -46,6 +46,7 @@ vi.mock('@/shared/hooks/tasks/useTaskPrefetch', () => ({
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProjectSelectionContext: () => ({ selectedProjectId: 'project-1' }),
   useProject: () => ({ updateProject: vi.fn() }),
+  useProjectCrudContext: () => ({ updateProject: vi.fn() }),
 }));
 
 vi.mock('@/shared/hooks/shots/useShotNavigation', () => ({

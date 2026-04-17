@@ -2,7 +2,6 @@ import React, { useState, useEffect, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useSlidingPane } from '@/shared/hooks/useSlidingPane';
 import { cn } from '@/shared/components/ui/contracts/cn';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { PaneControlTab } from '../PaneControlTab';
 import { useBottomOffset } from '@/shared/hooks/layout/useBottomOffset';
 import { useUserUIState } from '@/shared/hooks/useUserUIState';
@@ -20,6 +19,7 @@ import { AppEnv, type AppEnvValue } from '@/types/env';
 import { isToolEligible } from '@/shared/lib/tooling/toolEligibility';
 import { toolsUIManifest, type ToolUIDefinition } from '@/shared/lib/tooling/toolManifest';
 import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 const processTools = toolsUIManifest.filter((tool) => tool.paneSection === 'main');
 const assistantTools = toolsUIManifest.filter((tool) => tool.paneSection === 'assistant');
@@ -259,11 +259,9 @@ const ToolsPaneComponent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { selectedProjectId } = useProjectSelectionContext();
-  const {
-    isShotsPaneLocked,
-    setIsShotsPaneLocked,
-    shotsPaneWidth,
-  } = usePanes();
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const setIsShotsPaneLocked = usePanesStore((state) => state.setIsShotsPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
 
   // Get current environment
   let env = import.meta.env.VITE_APP_ENV?.toLowerCase() || AppEnv.WEB;

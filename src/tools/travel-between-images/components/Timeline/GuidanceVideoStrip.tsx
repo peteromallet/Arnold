@@ -14,6 +14,7 @@ import { useVideoHoverPreview } from '@/shared/hooks/videoHoverPreview/useVideoH
 import { GuidanceVideoStripPreviewPortal } from './GuidanceVideoStripPreviewPortal';
 import { GuidanceVideoStripRangeControls } from './GuidanceVideoStripRangeControls';
 import { calculateVideoFrameFromPosition, type GuidanceVideoStripProps } from './GuidanceVideoStrip.types';
+import { isElementWithinKnownOverlay } from '@/shared/components/ui/overlay';
 
 export const GuidanceVideoStrip: React.FC<GuidanceVideoStripProps> = ({
   videoUrl,
@@ -243,7 +244,10 @@ export const GuidanceVideoStrip: React.FC<GuidanceVideoStripProps> = ({
     if (isTablet) {
       return;
     }
-    if ((e.target as HTMLElement).closest('button, select, [role="listbox"], [data-resize-handle]')) {
+    if (
+      (e.target as HTMLElement).closest('button, select, [data-resize-handle]')
+      || isElementWithinKnownOverlay(e.target as Element)
+    ) {
       return;
     }
     setIsStripActive((prev) => !prev);
@@ -384,7 +388,10 @@ export const GuidanceVideoStrip: React.FC<GuidanceVideoStripProps> = ({
               }}
               onClick={handleStripClick}
               onMouseDown={(e) => {
-                if ((e.target as HTMLElement).closest('button, select, [role="listbox"]')) {
+                if (
+                  (e.target as HTMLElement).closest('button, select')
+                  || isElementWithinKnownOverlay(e.target as Element)
+                ) {
                   return;
                 }
                 if (!isStripActive) {

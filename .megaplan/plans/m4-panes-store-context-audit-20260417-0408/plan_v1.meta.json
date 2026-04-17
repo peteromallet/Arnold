@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-17T04:10:59Z",
+  "hash": "sha256:26116ec545a95941e6cf6609fbde627b5e215fd830c9f31a1c6e924e30d45834",
+  "questions": [
+    "For the audit threshold, should `>10 field values` count only the top-level context shape, or should nested subobjects like `LightboxStateContext.core/media/variants/navigation` be flattened into the count?",
+    "When counting `direct consumers`, should wrapper hooks that internally read a context count as consumers by themselves, or should their downstream component call sites also count toward the migration threshold?",
+    "If `VideoTravelSettingsContext` or `ImageEditCanvasContext` crosses the agreed threshold, do you want them migrated in this same milestone, or should M4 stay strictly limited to panes plus an audit/guard and leave secondary migrations for follow-up work?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`src/shared/state/panesStore.ts` exists and exports the public panes state API used by migrated consumers.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "No production file imports `PanesContext` or `PanesProvider`; the old panes context implementation is removed or left unused only in deleted-history form.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "All former panes consumers compile against selector-backed store access or the compatibility `usePanes()` facade without behavior drift in the existing automated tests.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`docs/state_management_context_audit.md` is committed and lists each remaining `createContext` usage with field count, consumer count, keep/migrate decision, and rationale.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "A fat-context guard exists and is wired into an automated repo check (`eslint`, `quality:check`, or equivalent) so new over-threshold contexts fail automation.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` passes cleanly after the migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes at baseline after the migration and any required test updates.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Panes selectors avoid broad resubscription by returning primitives where possible and using `shallow` for grouped object selections.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Any additional context migration triggered by the audit chooses the smallest viable architecture change: split context when concerns are separable, Zustand only when the state truly behaves like shared mutable store state.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Opening one pane does not visually re-render unrelated panes when checked with the telemetry overlay in a running app.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Mobile exclusive-pane behavior remains unchanged on a small viewport: opening pane B closes pane A as before.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "verify_physical_device"
+      ]
+    }
+  ],
+  "assumptions": [
+    "`usePanes()` can remain as a temporary compatibility export backed by Zustand selectors while call sites are migrated, as long as `PanesContext` and its provider are deleted in the same change.",
+    "A small mounted bootstrap component is acceptable if the store still needs hook-derived inputs such as mobile/tablet signals and persisted `paneLocks`; the requirement is to remove the context provider, not to eliminate all runtime composition.",
+    "`ProjectContext` will likely stay documented as `keep` because the provider is already split into three narrower contexts and the combined `useProject()` hook is a compatibility facade rather than a single wide provider value.",
+    "The simplest durable enforcement mechanism is probably a repo-level quality script wired into existing automation rather than a bespoke ESLint plugin, unless implementation evidence shows an ESLint rule is equally small and clearer.",
+    "Manual rendering/perf checks and mobile interaction checks are deferred human verification only; the automated plan stops at source, typecheck, tests, and static guard verification."
+  ],
+  "structure_warnings": []
+}

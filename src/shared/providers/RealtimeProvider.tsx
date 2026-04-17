@@ -8,13 +8,21 @@
  *
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
+import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
+import { isTaskDbRow, mapTaskDbRowToTask } from '@/shared/lib/taskRowMapper';
 import { getRealtimeConnection } from '@/shared/realtime/RealtimeConnection';
 import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor';
 import { dataFreshnessManager } from '@/shared/realtime/DataFreshnessManager';
 import { useRealtimeInvalidation } from '@/shared/hooks/useRealtimeInvalidation';
-import type { ConnectionState, ConnectionStatus } from '@/shared/realtime/types';
+import { fetchAndSeedTaskQuery, getCachedTaskSnapshot } from '@/shared/hooks/tasks/useTasks';
+import {
+  resetRealtimeTaskScope,
+  upsertRealtimeTaskSnapshot,
+} from '@/shared/state/realtimeStore';
+import type { ConnectionState, ConnectionStatus, RawDatabaseEvent } from '@/shared/realtime/types';
 
 // =============================================================================
 // Context
@@ -57,23 +65,82 @@ interface RealtimeProviderProps {
   children: React.ReactNode;
 }
 
+function getTaskRowStringField(value: unknown, field: 'id' | 'project_id'): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const fieldValue = (value as Record<string, unknown>)[field];
+  return typeof fieldValue === 'string' && fieldValue.trim().length > 0 ? fieldValue : null;
+}
+
 export function RealtimeProvider({ children }: RealtimeProviderProps) {
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const queryClient = useQueryClient();
   const realtimeConnection = useMemo(() => getRealtimeConnection(), []);
   const [connectionState, setConnectionState] = useState<ConnectionState>(() =>
     realtimeConnection.getState()
   );
+  const activeProjectIdRef = useRef<string | null>(null);
 
   // Set up the invalidation hook (subscribes to processed events)
   useRealtimeInvalidation();
 
+  const hydrateTaskSnapshot = useCallback(async (event: RawDatabaseEvent) => {
+    if (event.table !== 'tasks' || (event.eventType !== 'INSERT' && event.eventType !== 'UPDATE')) {
+      return;
+    }
+
+    const fallbackProjectId = getTaskRowStringField(event.new, 'project_id')
+      ?? getTaskRowStringField(event.old, 'project_id')
+      ?? activeProjectIdRef.current;
+
+    if (isTaskDbRow(event.new)) {
+      upsertRealtimeTaskSnapshot(mapTaskDbRowToTask(event.new), fallbackProjectId);
+      return;
+    }
+
+    const taskId = getTaskRowStringField(event.new, 'id') ?? getTaskRowStringField(event.old, 'id');
+    if (!taskId || !fallbackProjectId) {
+      return;
+    }
+
+    try {
+      const cachedTask = getCachedTaskSnapshot(queryClient, taskId, fallbackProjectId);
+
+      if (cachedTask !== undefined) {
+        if (cachedTask && activeProjectIdRef.current === fallbackProjectId) {
+          upsertRealtimeTaskSnapshot(cachedTask, fallbackProjectId);
+        }
+        return;
+      }
+
+      const fetchedTask = await fetchAndSeedTaskQuery(queryClient, taskId, fallbackProjectId);
+
+      if (fetchedTask && activeProjectIdRef.current === fallbackProjectId) {
+        upsertRealtimeTaskSnapshot(fetchedTask, fallbackProjectId);
+      }
+    } catch (error) {
+      normalizeAndPresentError(error, {
+        context: 'RealtimeProvider.hydrateTaskSnapshot',
+        showToast: false,
+        logData: {
+          taskId,
+          projectId: fallbackProjectId,
+          eventType: event.eventType,
+        },
+      });
+    }
+  }, [queryClient]);
+
   // Wire connection events → processor
   useEffect(() => {
     const unsubscribe = realtimeConnection.onEvent((event) => {
+      void hydrateTaskSnapshot(event);
       realtimeEventProcessor.process(event);
     });
     return unsubscribe;
-  }, [realtimeConnection]);
+  }, [hydrateTaskSnapshot, realtimeConnection]);
 
   // Subscribe to connection status changes
   useEffect(() => {
@@ -85,12 +152,24 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
 
   // Connect/disconnect when project changes
   useEffect(() => {
+    const previousProjectId = activeProjectIdRef.current;
+
+    if (previousProjectId && previousProjectId !== selectedProjectId) {
+      resetRealtimeTaskScope(previousProjectId);
+    }
+
     if (!selectedProjectId) {
+      activeProjectIdRef.current = null;
       realtimeConnection.disconnect();
       dataFreshnessManager.reset();
       return;
     }
 
+    if (previousProjectId !== selectedProjectId) {
+      resetRealtimeTaskScope(selectedProjectId);
+    }
+
+    activeProjectIdRef.current = selectedProjectId;
     realtimeConnection.connect(selectedProjectId);
 
     return () => {
@@ -102,6 +181,9 @@ export function RealtimeProvider({ children }: RealtimeProviderProps) {
   // Clean up on unmount
   useEffect(() => {
     return () => {
+      if (activeProjectIdRef.current) {
+        resetRealtimeTaskScope(activeProjectIdRef.current);
+      }
       realtimeEventProcessor.clear();
     };
   }, []);

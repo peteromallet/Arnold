@@ -65,6 +65,7 @@ vi.mock('@/shared/components/GenerationControls/AspectRatioSelector', () => ({
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: () => ({ updateProject: mocks.updateProject }),
+  useProjectCrudContext: () => ({ updateProject: mocks.updateProject }),
 }));
 
 vi.mock('@/shared/components/ModalContainer', () => ({

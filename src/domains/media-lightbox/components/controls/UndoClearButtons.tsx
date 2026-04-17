@@ -32,7 +32,7 @@ export const UndoClearButtons: React.FC<UndoClearButtonsProps> = ({
             <Undo2 className="h-3 w-3" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent className="z-[100001]">Undo</TooltipContent>
+        <TooltipContent>Undo</TooltipContent>
       </Tooltip>
       
       <Tooltip>
@@ -47,9 +47,8 @@ export const UndoClearButtons: React.FC<UndoClearButtonsProps> = ({
             <X className="h-3 w-3" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent className="z-[100001]">Clear all</TooltipContent>
+        <TooltipContent>Clear all</TooltipContent>
       </Tooltip>
     </div>
   );
 };
-

@@ -1,0 +1,119 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Updated `critique_output.json` with a verified finding that the revised plan now explicitly covers caller-side z-index cleanup, lightbox DOM-precedence retirement, and `hover-card.tsx` / `@base-ui/react/preview-card`, resolving the earlier `FLAG-001` through `FLAG-003` gaps.",
+          "flagged": false
+        },
+        {
+          "detail": "Added a flagged finding that `src/domains/media-lightbox/components/LightboxShell.tsx` is still a bespoke raw Base UI dialog owner, but the revised migration steps never explicitly move that file into `src/shared/components/ui/overlay/`, leaving a gap against the no-raw-import end state.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Recorded that the revised plan now gives a coherent technical replacement for the old LoRA/lightbox ordering path by having both overlays register with `overlayStack` and by switching close guards away from `getTopDialogElement()` and fixed z-layers.",
+          "flagged": false
+        },
+        {
+          "detail": "Added a flagged finding that the migration path for `LightboxShell` remains under-specified: its current contract depends on `modal={isActuallyModal}`, `disablePointerDismissal`, `eventDetails.cancel()` / `allowPropagation()`, and custom backdrop/popup handlers, but the plan does not yet say whether that file will use a dedicated overlay-aware wrapper or some other sanctioned raw-owner path.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Recorded that the revised plan now covers the broader overlay surface previously missed, including shared wrappers, downstream z-index override callers, lightbox precedence helpers, and `hover-card.tsx`.",
+          "flagged": false
+        },
+        {
+          "detail": "Added a flagged finding that the broader surface still includes `src/domains/media-lightbox/components/LightboxShell.tsx`, which imports `@base-ui/react/dialog` directly and is not explicitly named as an overlay-owner migration target in the wrapper-migration steps.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Recorded that the revised plan now names the main supporting files that previously held a second source of truth: `uiLayers.ts`, `uiLayers.test.ts`, `useLightboxShellInteractionHandlers.ts`, `useLightboxNavigation.ts`, and `LoraSelectorModal.tsx`.",
+          "flagged": false
+        },
+        {
+          "detail": "Added a flagged finding that helper-based portal-container resolution is still implicit support infrastructure: `CommunityLorasTab.tsx`, `MyLorasTab.tsx`, and `sharedSections.tsx` discover containers via `[data-dialog-content]` / `[data-lightbox-popup]`, but the plan does not explicitly preserve those markers or list those helper files in the migration checklist.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Recorded that the revised plan now explicitly preserves `container`, non-z-index layout `style`, and existing event-handler behavior while removing only layering escape hatches, addressing the earlier caller-contract gap.",
+          "flagged": false
+        },
+        {
+          "detail": "Added a flagged finding that some callers discover the `container` indirectly through helper hooks searching for `[data-dialog-content]` and `[data-lightbox-popup]` before passing it to `SelectContent`; those helper-based callers are not named in the plan, so marker changes could still break popup rooting even if the prop API remains unchanged.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-004",
+      "concern": "Overlay stack: `LightboxShell.tsx` remains a live raw `@base-ui/react/dialog` owner, but the revised steps still do not explicitly migrate that file into the centralized overlay wrapper layer even though the success criteria forbid raw portal imports outside `src/shared/components/ui/overlay/`.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The repo currently imports `@base-ui/react/dialog` in `src/domains/media-lightbox/components/LightboxShell.tsx:18`, and the plan's wrapper migration file list only names the shared UI wrapper modules, not `LightboxShell` itself."
+    },
+    {
+      "id": "FLAG-005",
+      "concern": "Overlay stack: helper-based `container` callers still depend on `[data-dialog-content]` / `[data-lightbox-popup]` DOM markers, but the migration plan does not state that those markers remain stable or list the helper files that resolve containers through them.",
+      "category": "correctness",
+      "severity_hint": "uncertain",
+      "evidence": "Container resolution helpers in `CommunityLorasTab.tsx`, `MyLorasTab.tsx`, and `sharedSections.tsx` call `closest()` on those marker selectors before passing the result to `SelectContent`."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-001",
+    "FLAG-002",
+    "FLAG-003",
+    "issue_hints-1",
+    "issue_hints-2",
+    "correctness-1",
+    "correctness-2",
+    "scope-1",
+    "scope-2",
+    "all_locations-1",
+    "all_locations-2",
+    "callers"
+  ],
+  "disputed_flag_ids": []
+}

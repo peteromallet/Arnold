@@ -1,13 +1,14 @@
 import { useState, useRef, useMemo, useLayoutEffect } from 'react';
+import { shallow } from 'zustand/shallow';
 import type { GenerationRow } from '@/domains/generation/types';
-import { useProject } from '@/shared/contexts/ProjectContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useUserUIState } from '@/shared/hooks/useUserUIState';
 import { usePublicLoras } from '@/features/resources/hooks/useResources';
 import { useLoraManager } from '@/domains/lora/hooks/useLoraManager';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { getGenerationId } from '@/shared/lib/media/mediaTypeHelpers';
 import { useChangedDepsLogger } from '@/shared/lib/debug/debugRendering';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { useUpscale } from './useUpscale';
 import { useEditSettingsPersistence } from './persistence/useEditSettingsPersistence';
 import { extractDimensionsFromMedia } from '../utils/dimensions';
@@ -23,7 +24,7 @@ export function useImageLightboxEnvironment(props: UseImageLightboxEnvironmentPr
   const { media, shotId, tasksPaneOpen, tasksPaneWidth } = props;
 
   const isMobile = useIsMobile();
-  const projectState = useProject();
+  const projectState = useProjectSelectionContext();
   const { project, selectedProjectId } = projectState;
   const projectAspectRatio = project?.aspectRatio;
 
@@ -35,7 +36,11 @@ export function useImageLightboxEnvironment(props: UseImageLightboxEnvironmentPr
   const isCloudMode = generationMethods.inCloud;
   const isLocalGeneration = generationMethods.onComputer && !generationMethods.inCloud;
 
-  const panesState = usePanes();
+  const panesState = usePanesStore((state) => ({
+    isTasksPaneOpen: state.isTasksPaneOpen,
+    tasksPaneWidth: state.tasksPaneWidth,
+    isTasksPaneLocked: state.isTasksPaneLocked,
+  }), shallow);
   const {
     isTasksPaneOpen: tasksPaneOpenContext,
     tasksPaneWidth: tasksPaneWidthContext,
@@ -147,7 +152,7 @@ export function useImageLightboxEnvironment(props: UseImageLightboxEnvironmentPr
 
   useChangedDepsLogger('useImageLightboxEnvironment.inputs', {
     useIsMobile: isMobile,
-    useProject: projectState,
+    useProjectSelectionContext: projectState,
     useUserUIState_generationMethods: generationMethodsState,
     usePanes: panesState,
     usePublicLoras_data: availableLoras,

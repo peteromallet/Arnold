@@ -275,7 +275,7 @@ function CompactEditControls() {
                 <Undo2 className="h-3 w-3" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="z-[100001]">Undo</TooltipContent>
+            <TooltipContent>Undo</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -290,7 +290,7 @@ function CompactEditControls() {
                 <X className="h-3 w-3" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="z-[100001]">Clear all</TooltipContent>
+            <TooltipContent>Clear all</TooltipContent>
           </Tooltip>
         </div>
       </div>

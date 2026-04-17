@@ -1,0 +1,285 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Build the authoritative migration inventory before editing code: grep the full panes surface (`PanesContext`, `PanesProvider`, `usePanes()`), enumerate all panes-related tests/mocks, capture the repo-wide `createContext` declaration inventory with the generic-aware regex, and capture the repo-wide exported hook inventory (`export const/function use...`) so the later audit includes recomposed context-access hook families outside the original context/provider directories.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [
+        "src/shared/contexts/PanesContext.tsx",
+        "src/app/providers/AppProviders.tsx",
+        "docs/state_management_context_audit.md"
+      ],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T2",
+      "description": "Implement `src/shared/state/panesStore.ts` as the new selector-first panes state surface, mirroring current pane behavior and provider-owned logic: preserve pane open/lock/dimension/effective-height/`activeTaskId` semantics, fold in the current pane lock policy bootstrap behavior, add an explicit singleton lifecycle contract including an idempotent bootstrap path and a test reset helper, and define the intended behavior for outside-bootstrap reads so tests can assert it intentionally.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [
+        "src/shared/state/panesStore.ts"
+      ],
+      "commands_run": [],
+      "evidence_files": [
+        "src/shared/state/selectionStore.ts",
+        "src/shared/contexts/PanesContext.tsx",
+        "src/shared/contexts/usePaneLockPolicyState.ts"
+      ],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T3",
+      "description": "Replace `PanesProvider` in the app provider tree with the panes-store bootstrap wiring while preserving mount order and initialization timing relative to `ProjectProvider`, `RealtimeProvider`, `IncomingTasksProvider`, and `AgentChatProvider`; then migrate every former panes consumer, including high-level panes readers, from `usePanes()` to dedicated selectors or explicitly narrow grouped selectors without recreating a broad compatibility facade.",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [
+        "src/app/providers/AppProviders.tsx"
+      ],
+      "commands_run": [],
+      "evidence_files": [
+        "src/tools/video-editor/components/AgentChat/AgentChat.tsx",
+        "src/tools/travel-between-images/pages/ShotEditorView.tsx",
+        "src/features/tasks/components/TasksPane/TasksPane.tsx",
+        "src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts",
+        "src/domains/media-lightbox/hooks/videoLightbox/useVideoLightboxEnvironment.ts"
+      ],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T4",
+      "description": "Migrate panes-related tests and mocks to the store/bootstrap model, replace the old `PanesContext` test coverage with store/bootstrap-focused coverage, ensure singleton reset/lifecycle behavior is exercised, and then delete the old panes context surface entirely so no production file imports `PanesContext`, `PanesProvider`, or `usePanes()` afterward.",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [
+        "src/shared/contexts/__tests__/PanesContext.test.tsx"
+      ],
+      "commands_run": [],
+      "evidence_files": [
+        "src/app/providers/AppProviders.test.tsx",
+        "src/app/components/LayoutMainContent.test.tsx",
+        "src/tools/video-editor/components/__tests__/PreviewPersistence.test.tsx",
+        "src/tools/video-editor/components/AgentChat/AgentChat.test.tsx",
+        "src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.test.ts",
+        "src/tools/travel-between-images/components/VideoGallery/VideoShotDisplay.test.tsx"
+      ],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T5",
+      "description": "Run the exhaustive context audit using the repo-wide declaration and exported-hook inventories: compute field counts using imported local type expansion, compute external production consumer counts while excluding same-file helper wiring/tests/mocks, classify every provider declaration and recomposed context-access hook (`migrate`, `narrow`, `keep`, or `out-of-scope`), and commit the results to `docs/state_management_context_audit.md` with rationale and any explicit exemptions.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [
+        "docs/state_management_context_audit.md"
+      ],
+      "commands_run": [],
+      "evidence_files": [
+        "src/shared/contexts/ProjectContext.tsx",
+        "src/domains/media-lightbox/contexts/ImageEditCanvasContext.tsx",
+        "src/domains/media-lightbox/contexts/LightboxStateContext.tsx",
+        "src/tools/travel-between-images/providers/VideoTravelSettingsProvider.tsx",
+        "src/shared/components/ImageGenerationForm/hooks/useImageGenerationFormContexts.ts"
+      ],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T6",
+      "description": "For every non-pane surface that exceeds both audit thresholds under the documented counting rules, migrate or narrow it in this same branch using the smallest viable fix: replace recomposed compatibility hooks with narrower exports where possible, move truly wide mutable state to selector-based access where necessary, and leave below-threshold or local UI token contexts documented rather than redesigned.",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [
+        "src/shared/contexts/ProjectContext.tsx",
+        "src/domains/media-lightbox/contexts/ImageEditCanvasContext.tsx",
+        "src/domains/media-lightbox/contexts/LightboxStateContext.tsx",
+        "src/tools/travel-between-images/providers/VideoTravelSettingsProvider.tsx",
+        "src/shared/components/ImageGenerationForm"
+      ],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T7",
+      "description": "Add the permanent automated fat-context declaration guard using the same field-count rule documented in the audit: implement the repo-level check (preferably under `scripts/quality/`), keep its scope limited to new over-threshold `createContext(...)` declarations, wire it into an automated repo command or CI quality path, and document the mechanism plus any allowlist/exemption handling in the audit doc and/or repo docs.",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [
+        "package.json",
+        "scripts/quality",
+        "docs/state_management_context_audit.md"
+      ],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T8",
+      "description": "Run end-to-end verification and close the branch: write a short throwaway reproduction script that exercises the original broad panes subscription/problem shape and/or the targeted state transitions, run it to confirm the new store/selectors behave as intended, delete the script afterward, run the most relevant focused tests first, then run `npx tsc --noEmit` and `npm test`, grep-verify that no production file imports `PanesContext`, `PanesProvider`, or `usePanes()`, and if any test or typecheck fails, fix the code and re-run until clean. For deferred-human runtime-only checks such as telemetry-overlay rerender confirmation and small-viewport exclusivity behavior, mark them `skipped` on first encounter with executor notes citing the sandbox/runtime/browser limitation.",
+      "depends_on": [
+        "T6",
+        "T7"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npm test"
+      ],
+      "evidence_files": [
+        "src/shared/state/panesStore.ts",
+        "docs/state_management_context_audit.md"
+      ],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Panes are already split across `PaneLockPolicyContext`, `PaneLayoutContext`, and `PaneSelectionContext`; the real hotspot is the recomposed `usePanes()` surface plus provider-owned bootstrap state. Judge success by deletion of that broad facade, not by the stale 'single fat context' wording.",
+    "Do not recreate a broad panes compatibility API on top of Zustand. High-level panes consumers must move to dedicated selectors or tightly scoped grouped selectors only where genuinely necessary.",
+    "Preserve mount order and initialization timing in `src/app/providers/AppProviders.tsx`; panes bootstrap is load-bearing relative to `ProjectProvider`, `RealtimeProvider`, `IncomingTasksProvider`, and `AgentChatProvider`.",
+    "Preserve pane-lock policy behavior, including mobile/tablet exclusivity, persisted `paneLocks` hydration, and tasks-pane open/lock coupling from the current bootstrap logic.",
+    "Define the panes-store singleton lifecycle contract explicitly. Add an idempotent bootstrap and a reset helper to avoid cross-test leakage; do not leave behavior to incidental module state.",
+    "Audit for side effects currently embedded in panes/provider logic before deletion, including any open/lock transitions that may trigger analytics or downstream coordination.",
+    "The context audit must start from a repo-wide exported hook inventory, not path-limited guesses. Include surfaces such as `useProject`, media-lightbox safe hooks, travel-between-images hooks, and `useImageGenerationFormContexts`.",
+    "Use the documented field-count rule consistently in both the audit doc and the permanent guard: expand imported local repository types recursively until a documented cutoff; third-party or opaque types count as one.",
+    "Consumer counts for wrapper hooks must use external production consumers only. Exclude same-file helper composition, tests, and mocks from threshold decisions.",
+    "Keep scope tight during the audit: framework/local UI token contexts may be marked `out-of-scope` or `keep` with rationale rather than migrated.",
+    "Every audited non-pane surface above both thresholds must be migrated or narrowed in this branch; do not stop after panes if additional over-threshold surfaces are found.",
+    "Do not worsen unrelated debt-watch items elsewhere in the repo; ignore unrelated dirty-worktree changes unless they directly conflict with this milestone.",
+    "Deferred-human checks are first-class `skipped` outcomes in this sandbox. If browser/runtime/device/manual verification is required, skip immediately with concrete blocker evidence rather than blocking or retrying."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Did the inventory capture the full panes caller/test surface, the generic-aware `createContext` declaration set, and the repo-wide exported hook set needed for an exhaustive audit?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Does `src/shared/state/panesStore.ts` now provide selector-first panes state with explicit bootstrap/reset lifecycle semantics and preserved pane behavior?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Were all production panes consumers migrated off `usePanes()` to narrow selectors without recreating a broad grouped panes facade, and is provider-tree mount order preserved?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Are panes tests/mocks updated for the store lifecycle, and are `PanesContext`, `PanesProvider`, and `usePanes()` fully deleted from production usage?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does `docs/state_management_context_audit.md` cover every remaining context declaration and recomposed access hook with field count, external production consumer count, decision, and rationale?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "For every non-pane surface above both thresholds, was the surface actually migrated or narrowed in this branch rather than merely documented?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Is there now an automated repo check that flags new over-threshold `createContext(...)` declarations using the same counting rule documented in the audit, and is it wired into an automated quality path?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Did the executor run a throwaway reproduction script, delete it afterward, pass `npx tsc --noEmit` and `npm test`, and verify by grep that no production file imports `PanesContext`, `PanesProvider`, or `usePanes()`?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "meta_commentary": "Execution should follow the concrete hot path, not the stale prose framing. The repository already split panes into three contexts; the performance win comes from deleting `usePanes()` and provider-owned pane state in favor of narrow store selectors and explicit bootstrap state. Treat T1 as the authoritative checklist generator so later work is inventory-backed rather than sample-driven. During the audit, keep the counting contract disciplined: imported local types must be expanded for field counts, while consumer counts must exclude same-file composition/tests/mocks. The permanent guard is intentionally narrower than the audit: it blocks new fat `createContext(...)` declarations only, while recomposed wrapper-hook anti-patterns are handled as milestone migration work, not permanent lint scope. The final verification task must include a disposable reproduction script, focused test passes before full suite runs, and immediate `skipped` handling for browser/runtime/device-only checks with explicit blocker notes.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Build complete repo-wide inventory for panes, contexts, and wrapper hooks",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Introduce selector-first panes store with lifecycle contract",
+        "finalize_task_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate all panes callers to narrow selectors and delete old panes surface",
+        "finalize_task_ids": [
+          "T3",
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Audit provider declarations and recomposed access hooks with accurate counting rules",
+        "finalize_task_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate or narrow every over-threshold non-pane surface",
+        "finalize_task_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Add permanent fat-context declaration guard",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Prove the milestone end-to-end with tests, grep checks, and required artifacts",
+        "finalize_task_ids": [
+          "T8"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All seven approved plan steps are covered. The split between T3 and T4 is deliberate: Step 3 in the approved plan spans both production consumer migration and test/mock deletion work, so it maps to two execution tasks for clarity. Deferred-human runtime checks remain intentionally handled inside T8 as `skipped` if encountered because the sandbox cannot produce browser/device evidence.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": null,
+  "baseline_test_command": null,
+  "baseline_test_note": "No supported test runner detected on PATH (looked for: pytest). Configure test_command in state config to specify one."
+}

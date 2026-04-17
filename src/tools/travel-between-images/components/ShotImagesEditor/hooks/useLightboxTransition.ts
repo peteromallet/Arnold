@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { hasKnownModalOverlay } from '@/shared/components/ui/overlay';
 
 interface UseLightboxTransitionReturn {
   /** Whether a transition is currently in progress */
@@ -50,7 +51,10 @@ export function useLightboxTransition(): UseLightboxTransitionReturn {
 
   const cleanupTransitionArtifacts = useCallback(() => {
     document.body.classList.remove('lightbox-transitioning');
-    if (document.body.style.overflow === 'hidden' && !document.querySelector('[data-dialog-backdrop]')) {
+    if (
+      document.body.style.overflow === 'hidden'
+      && !hasKnownModalOverlay()
+    ) {
       document.body.style.overflow = '';
     }
   }, []);

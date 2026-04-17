@@ -1,0 +1,107 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the current overlay ownership files and helper callers against the revised steps. The plan now explicitly moves `src/domains/media-lightbox/components/LightboxShell.tsx` onto a sanctioned wrapper path under `src/shared/components/ui/overlay/`, and it now names the real helper-based `container` callers in `CommunityLorasTab.tsx`, `MyLorasTab.tsx`, and `sharedSections.tsx`, so the earlier LightboxShell and content-marker gaps are actually addressed.",
+          "flagged": false
+        },
+        {
+          "detail": "Overlay markers are still only partially covered by the revised compatibility contract. The plan now preserves `data-dialog-content` and `data-lightbox-popup`, but the repository also has live code in `src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts` and CSS in `src/styles/components/interactions.css` / `src/index.css` that key off `[data-dialog-backdrop]`; because the revision does not explicitly preserve that backdrop marker while centralizing backdrop ownership, it still leaves one approved-plan requirement only partially covered.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "The LightboxShell contract itself now lines up with the revised plan: `src/domains/media-lightbox/components/LightboxShell.tsx` really does depend on `modal={isActuallyModal}`, `disablePointerDismissal`, `eventDetails.cancel()` / `allowPropagation()`, and custom backdrop and popup handlers, so the new dedicated lightbox-wrapper step is technically the right shape for this repository.",
+          "flagged": false
+        },
+        {
+          "detail": "The revised technical contract is still incomplete around backdrop identity. `useLightboxTransition.ts` clears `document.body.style.overflow` only when no `[data-dialog-backdrop]` remains, and the lightbox transition CSS also targets `[data-dialog-backdrop]`; since the plan only makes `data-dialog-content` / `data-lightbox-popup` marker stability explicit, a literal implementation could migrate dialog and lightbox backdrops into new wrappers but silently break this cleanup path.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "I checked the broader overlay surface with ripgrep and the revision correctly broadened scope to the real raw owners: there are 9 current raw Base UI import sites under `src/`, including the shared wrappers, `command.tsx`, and `LightboxShell.tsx`, so the plan is no longer narrowly focused on just the original Model Select path.",
+          "flagged": false
+        },
+        {
+          "detail": "The broader support surface also includes non-wrapper consumers of overlay markers beyond the three `container` helpers. In particular, `src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts` and `src/shared/hooks/useSlidingPane.ts` both consult live overlay DOM markers, but only the content-marker helper callers are called out in the migration checklist; the backdrop-marker consumer is therefore still outside the named scope even though wrapper centralization can affect it.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "The revision now covers the main infrastructure that held the old ordering model: `uiLayers.ts`, `uiLayers.test.ts`, `useLightboxShellInteractionHandlers.ts`, `useLightboxNavigation.ts`, `LoraSelectorModal.tsx`, and the three helper-based `SelectContent` container resolvers are all explicitly named, which matches the repository layout I inspected.",
+          "flagged": false
+        },
+        {
+          "detail": "One supporting-infrastructure gap remains: the repo still has backdrop-marker integrations in `src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts`, `src/styles/components/interactions.css`, and `src/index.css`, all of which reference `[data-dialog-backdrop]`. The revised plan's compatibility checklist mentions content markers and CSS tied to `[data-dialog-content]`, but it still does not name the backdrop marker or the transition hook that depends on it.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "I re-checked the helper-based popup callers named by the prior flag. `CommunityLorasTab.tsx`, `MyLorasTab.tsx`, and `sharedSections.tsx` are the actual `SelectContent container={...}` callers that derive their container from `[data-dialog-content]` or `[data-lightbox-popup]`, so the revised shared-helper and marker-preservation steps now match the real caller contracts.",
+          "flagged": false
+        },
+        {
+          "detail": "There is still another concrete caller contract tied to overlay markers: `useLightboxTransition.ts` calls `document.querySelector('[data-dialog-backdrop]')` before deciding whether to clear `document.body.style.overflow`. Because the revised plan does not explicitly preserve or replace that backdrop marker contract, this caller can still break even if the `container` callers are handled correctly.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-006",
+      "concern": "Overlay markers: backdrop-marker compatibility is still under-specified; `useLightboxTransition.ts` and lightbox transition CSS depend on `[data-dialog-backdrop]`, but the revised plan only makes `data-dialog-content` and `data-lightbox-popup` stability explicit.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Repo references to `[data-dialog-backdrop]` remain in `src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts`, `src/styles/components/interactions.css`, and `src/index.css`, while the plan's marker contract names only `data-dialog-content` / `data-lightbox-popup`."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 12: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 13: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "callers",
+    "FLAG-004",
+    "FLAG-005",
+    "issue_hints",
+    "correctness",
+    "scope",
+    "all_locations"
+  ],
+  "disputed_flag_ids": []
+}

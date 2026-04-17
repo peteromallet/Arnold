@@ -3,7 +3,7 @@ import { MessageSquare } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/shared/components/ui/tooltip";
 import { PairPromptTooltipContent } from '@/shared/components/ShotImageManager/components/PairPromptTooltipContent';
 import { framesToSeconds } from '@/shared/lib/media/videoUtils';
-import { useTimelineMedia } from './TimelineMediaContext';
+import { useTimelineFps } from './TimelineMediaContext';
 
 interface PairRegionProps {
   index: number;
@@ -47,7 +47,7 @@ const PairRegion: React.FC<PairRegionProps> = ({
   hidePairLabel = false,
   readOnly = false,
 }) => {
-  const { timelineFps } = useTimelineMedia();
+  const timelineFps = useTimelineFps();
   const pairColorSchemes = [
     { bg: 'bg-blue-50 dark:bg-blue-950/40', border: 'border-blue-300 dark:border-blue-700', context: 'bg-blue-200/60 dark:bg-blue-800/40', text: 'text-blue-700 dark:text-gray-300', line: 'bg-blue-400 dark:bg-blue-600' },
     { bg: 'bg-emerald-50 dark:bg-emerald-950/40', border: 'border-emerald-300 dark:border-emerald-700', context: 'bg-emerald-200/60 dark:bg-emerald-800/40', text: 'text-emerald-700 dark:text-gray-300', line: 'bg-emerald-400 dark:bg-emerald-600' },

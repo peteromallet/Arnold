@@ -1,0 +1,113 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the revised Step 6 wording against the current implementation in `src/tools/join-clips/hooks/useJoinClipsGenerate.ts:31-195` and its tests in `src/tools/join-clips/hooks/__tests__/useJoinClipsGenerate.test.ts`. The repository still has no pre-generate prompt flush today, and the revised plan now calls that behavior out explicitly as new implementation work with dedicated test coverage instead of describing it as preserved behavior, which resolves the earlier mismatch.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the settled tiebreaker note against `src/tools/join-clips/hooks/useJoinClipsSettings.ts:1-16`, `src/shared/settings/hooks/useAutoSaveSettings.ts:118-136`, and the revised plan\u2019s Step 5. The plan follows the user note by keeping React Query plus `useAutoSaveSettings` authoritative for Join Clips and moving the factory validation for store-owned `load`/`save` behavior into dedicated `createEntityStore` tests, but that also means the production consumer now validates only reader/sync integration rather than the original milestone brief\u2019s more direct end-to-end factory ownership path, so the scope is intentionally narrower than the pre-tiebreaker milestone wording.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the proposed reader-mode adapter shape against the actual controlled-input and generate call paths in `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:17-101`, `src/tools/join-clips/pages/JoinClipsPage.tsx:53-118`, and `src/tools/join-clips/hooks/useJoinClipsGenerate.ts:41-170`. The plan says `useAutoSaveSettings` remains the sole write owner while the Zustand entity store is only a synchronized read model fed by `useLayoutEffect`/sync effects; unless the adapter also updates the store in the same setter path, `joinSettings.settings` can lag one render behind `updateField`/`updateTextField`, which would make the textarea values and `handleGenerate` payload read stale prompt data immediately after a keystroke or blur-triggered save.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the hook-safety part of the plan against the current disabled caller behavior in `src/tools/join-clips/pages/JoinClipsPage.tsx:243-274` and the null/undefined tests in `src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:61-79`. The stable sentinel-entity approach described in the plan remains technically sound for preserving the disabled contract without introducing conditional hook calls.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Checked the actual Join Clips settings surface in `src/shared/lib/joinClips/defaults.ts:11-34`, `src/tools/join-clips/hooks/useClipManager.ts:89-159`, and `src/tools/join-clips/hooks/useJoinClipsGenerate.ts:47-142`. The plan correctly treats this pilot as broader than a five-scalar-field form: the same hook also carries composite `clips`, `transitionPrompts`, VACE settings, model/seed/priority fields, and LoRA-related state, so calling out broad-payload stability coverage is consistent with the repository.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked all current `JoinClipsSettingsForm` consumers in `src/tools/join-clips/pages/JoinClipsPage.tsx`, `src/tools/travel-between-images/components/ShotEditor/sections/generation/joinClipsFormProps.ts`, `src/tools/travel-between-images/components/ShotEditor/sections/generation/JoinModeContent.tsx`, and `src/tools/travel-between-images/components/ShotEditor/sections/generation/BatchModeContent.tsx`. The revised plan now scopes prompt blur/deferred-save behavior to the Join Clips page and keeps the shared form callbacks optional for Join Segments and Batch Mode, which contains the blast radius to the intended subsystem.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Checked the shared-form plumbing points in `src/shared/components/JoinClipsSettingsForm/types.ts`, `src/shared/components/JoinClipsSettingsForm/JoinClipsSettingsForm.tsx`, and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx`. The revised plan now explicitly includes the type contract, the intermediate form component, and the prompt leaf component rather than only the page adapter, so the core prop-threading infrastructure is accounted for.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the supporting tests and fixture builders that construct `JoinClipsSettingsForm` props, including `src/tools/travel-between-images/components/ShotEditor/sections/generation/BatchModeContent.test.tsx:201-214`, `src/tools/travel-between-images/components/ShotEditor/index.test.tsx:138-151`, `src/tools/travel-between-images/components/ShotEditor/controllers/useShotEditorLayoutModel.test.ts:126-139`, and `src/tools/travel-between-images/components/ShotEditor/controllers/useGenerationControllerInputModel.test.tsx:26-39`. The revised plan names those supporting surfaces explicitly, so the earlier omission around optional callback fallout appears addressed.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked the real caller shapes in `src/tools/join-clips/pages/JoinClipsPage.tsx:79-118` and `src/tools/travel-between-images/components/ShotEditor/sections/generation/joinClipsFormProps.ts:40-58`. Across both builders, `prompt` and `negativePrompt` are the free-text setters while `enhancePrompt` is still a boolean toggle, so the plan\u2019s decision to route only those two fields through text-field blur/flush behavior matches the actual arguments passed by callers.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the generation caller path in `src/tools/join-clips/hooks/useJoinClipsGenerate.ts:41-170`. `handleGenerate` closes over `joinSettings.settings` values such as `prompt`, `negativePrompt`, `contextFrameCount`, and `gapFrameCount`; if the adapter returns store-backed `settings` but delegates writes to `useAutoSaveSettings`, this caller will observe whatever snapshot the read model most recently mirrored, so the proposed effect-based sync path needs an explicit guarantee against stale reads for the fix to handle this caller correctly.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-M1-015",
+      "concern": "State mirror: Reader-mode store plus delegated `useAutoSaveSettings` writes can leave `joinSettings.settings` one render behind controlled inputs and generate-time reads unless the adapter synchronizes the Zustand slice in the same write path instead of only via an effect-driven mirror.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The plan\u2019s Step 5 makes the store a read-only mirror while write methods still mutate `useAutoSaveSettings`. Current callers read `joinSettings.settings` directly in controlled form props (`JoinClipsPage.tsx` -> `JoinClipsPromptSettings.tsx`) and in `useJoinClipsGenerate.ts`, so an async mirror can surface stale prompt/settings values."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 13: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 14: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 15: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "all_locations",
+    "issue_hints",
+    "correctness",
+    "scope",
+    "FLAG-M1-013",
+    "FLAG-M1-014"
+  ],
+  "disputed_flag_ids": []
+}

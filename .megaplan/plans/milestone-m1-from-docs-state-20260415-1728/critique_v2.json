@@ -1,0 +1,115 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Checked the revised plan against the earlier M1 flags and it now explicitly treats Join Clips as a broad real-world settings surface rather than a stale 5-field pilot. That matches the current repository reality in `src/shared/lib/joinClips/defaults.ts` and the live caller wiring in `src/tools/join-clips/pages/JoinClipsPage.tsx`, so the previous scope-understatement concern appears addressed.",
+          "flagged": false
+        },
+        {
+          "detail": "The canonical `docs/state_management_refactor_plan.md` file is still absent from this checkout, and the revised plan can only acknowledge that by leaving an open question in metadata. That is a real remaining tension with the user-provided source list, even though the plan handles it as responsibly as it can from inside this repository.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Checked the revised late-load handling against `src/shared/settings/hooks/useAutoSaveSettings.ts`, especially the pending-update protection around local edits during load. The new plan now calls that invariant out explicitly, adds store metadata for it, and requires a dedicated late-load race test, so the original overwrite-on-load correctness gap looks genuinely addressed.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the revised bridge architecture against the actual hook boundary in `src/shared/hooks/settings/useToolSettings.ts:181-207`. The plan now correctly stops trying to call `useToolSettings` from module scope, but it still proposes both a factory-level lazy `load()` on first `useEntity()` mount and a hook-level `useToolSettings(...)` observer that can bootstrap on fresh DB snapshots. In this repository that creates two independent read paths for the same entity on first mount, and the plan does not yet define how duplicate initial fetch/bootstrap cycles are suppressed or reconciled.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Reviewed the revised Step 7 against the current prompt setter wiring in `src/tools/join-clips/pages/JoinClipsPage.tsx`. The plan now scopes a minimal caller rewire for `prompt`, `negativePrompt`, and `enhancePrompt`, which is the missing work needed to exercise `updateTextField` and `flushTextFields` in a real consumer without broadening into a whole-form refactor.",
+          "flagged": false
+        },
+        {
+          "detail": "I also rechecked the broader Join Clips state surface through `src/tools/join-clips/hooks/useClipManager.ts` and `src/tools/join-clips/hooks/useJoinClipsGenerate.ts`. The revised plan keeps the migration scoped to one consumer while acknowledging that the consumer still pushes array payloads like `clips` and `transitionPrompts`, so the earlier 'toy consumer' scope mismatch is no longer the primary risk.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Searched the `useJoinClipsSettings` runtime surface again and the concrete implementation touch points are still local to `useJoinClipsSettings`, `JoinClipsPage`, `useClipManager`, `useJoinClipsGenerate`, and the targeted hook/store tests. Most other usages in the repo mock a plain `joinSettings` object instead of importing the real hook, so the revised plan remains contained in terms of direct file ownership.",
+          "flagged": false
+        },
+        {
+          "detail": "The remaining supporting-infrastructure gap is the bridge policy between the store and React Query. `useToolSettings` already mounts a query in `src/shared/hooks/settings/useToolSettings.ts:199-207`, while the factory contract still requires a lazy `load()` path for `useEntity()`. Without an explicit cache-first or deduping rule in the plan, the supporting glue is still under-specified for how the initial read and subsequent cache updates interact.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Checked the current signature and caller contract for `useJoinClipsSettings`: the live page passes `selectedProjectId`, which is `string | null`, and the revised plan now consistently talks about `projectId` plus disabled `null` or `undefined` semantics. That aligns with the real callers and resolves the earlier mismatch with the stale `shotId` wording in the idea text.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked how callers will behave if the bridge bootstraps from every fresh `useToolSettings` snapshot. `JoinClipsPage` and `useJoinClipsGenerate` mainly read scalar settings, but `useClipManager` hydrates from `joinSettings.settings` and mirrors `clips` and `transitionPrompts` back through `updateFields(...)`, so repeated bootstrap from both the lazy loader and observer path could still create extra churn or overwrite pressure on those composite fields unless the bridge policy is made more explicit.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-M1-004",
+      "concern": "State synchronization: the revised pure-store plus hook-bridge design still leaves the initial read path under-specified, because `useEntity()` lazy loading and `useToolSettings()` observation can fetch and bootstrap the same entity independently.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The revised plan keeps the factory requirement that `useEntity(id)` triggers `config.load()` on first mount, while `src/shared/hooks/settings/useToolSettings.ts:199-207` shows the hook-layer observer already starts its own React Query fetch for the same settings snapshot."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 7: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 8: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 9: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-M1-001",
+    "FLAG-M1-002",
+    "FLAG-M1-003"
+  ],
+  "disputed_flag_ids": []
+}

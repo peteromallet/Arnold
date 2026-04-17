@@ -6,7 +6,7 @@ import { ImageGenerationForm } from "@/shared/components/ImageGenerationForm";
 import { MediaGallery } from "@/shared/components/MediaGallery";
 import type { GeneratedImageWithMetadata } from "@/shared/components/MediaGallery/types";
 import { Button } from "@/shared/components/ui/button";
-import { useProject } from "@/shared/contexts/ProjectContext";
+import { useProjectCrudContext, useProjectSelectionContext } from "@/shared/contexts/ProjectContext";
 import { usePublicLoras, usePublicStyleReferences, useMyStyleReferences } from '@/features/resources/hooks/useResources';
 import { PageFadeIn } from '@/shared/components/transitions/PageFadeIn';
 import { useIsMobile, useIsTablet } from "@/shared/hooks/mobile";
@@ -57,7 +57,8 @@ const ImageGenerationToolPage: React.FC = React.memo(() => {
   usePublicStyleReferences();
   useMyStyleReferences();
 
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
 
   const effectiveProjectId = useMemo(() => {
     if (selectedProjectId) return selectedProjectId;

@@ -66,7 +66,7 @@ export const TopRightControls: React.FC<TopRightControlsProps> = ({
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent className="z-[100001]">
+          <TooltipContent>
             {isDownloading ? 'Downloading...' : `Download ${isVideo ? 'video' : 'image'}`}
           </TooltipContent>
         </Tooltip>
@@ -93,7 +93,7 @@ export const TopRightControls: React.FC<TopRightControlsProps> = ({
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent className="z-[100001]">Delete from timeline</TooltipContent>
+          <TooltipContent>Delete from timeline</TooltipContent>
         </Tooltip>
       )}
     </div>
@@ -192,7 +192,7 @@ export const BottomRightControls: React.FC<BottomRightControlsProps> = ({
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent className="z-[100001]">
+          <TooltipContent>
             {isAddingToReferences ? 'Adding...' : addToReferencesSuccess ? 'Added!' : 'Add to references'}
           </TooltipContent>
         </Tooltip>
@@ -222,7 +222,7 @@ export const BottomRightControls: React.FC<BottomRightControlsProps> = ({
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent className="z-[100001]">
+          <TooltipContent>
             {isAddingToJoin ? 'Adding...' : addToJoinSuccess ? 'Added! Go to Join Clips' : 'Add to Join Clips'}
           </TooltipContent>
         </Tooltip>

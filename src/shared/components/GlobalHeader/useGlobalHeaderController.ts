@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIsTablet } from '@/shared/hooks/mobile';
 import { useTextCase } from '@/shared/hooks/useTextCase';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useProjectContextDebug } from '@/shared/hooks/projects/useProjectContextDebug';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { useGlobalHeaderAuth } from './useGlobalHeaderAuth';
 
 export function useGlobalHeaderController() {
-  const { projects, selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const isTablet = useIsTablet();
   useTextCase();
-  const { isGenerationsPaneLocked } = usePanes();
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
   useProjectContextDebug(import.meta.env.DEV);
 
   const { session, referralStats } = useGlobalHeaderAuth();

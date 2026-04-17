@@ -1,0 +1,86 @@
+[
+  {
+    "criterion_idx": 0,
+    "criterion": "`src/shared/state/createEntityStore.ts` and `src/shared/state/createEntityStore.test.ts` are present in committed branch history used for the milestone before adapter work starts; if they were missing, the branch records that prerequisite commit explicitly.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:49Z"
+  },
+  {
+    "criterion_idx": 1,
+    "criterion": "Pre-change M0 baseline counts for `ImageLightbox` and `EditModePanel` are captured with the existing telemetry path and recorded in `docs/state_management_refactor_baselines.md` so the later 75% reduction gate is measurable.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:49Z"
+  },
+  {
+    "criterion_idx": 2,
+    "criterion": "`useAutoSaveSettings` is rewritten over `createEntityStore` while preserving the current public return shape and preserving caller-visible semantics for `updateTextFields`, `initializeFrom`, and `saveImmediate(dataToSave?)`.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:49Z"
+  },
+  {
+    "criterion_idx": 3,
+    "criterion": "No imports remain for `useDebouncedSettingsSave.ts`, `autoSaveSettingsHelpers.ts`, or `autoSaveSettingsLoaders.ts`, and their three companion test files are removed or rewritten in the same change.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:49Z"
+  },
+  {
+    "criterion_idx": 4,
+    "criterion": "`useEditSettingsPersistence` no longer depends on the `hasInitializedRef` multi-transition state machine; initialization uses an atomic store-backed path and passes strict-mode verification.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:50Z"
+  },
+  {
+    "criterion_idx": 5,
+    "criterion": "`useLastUsedEditSettings` no longer exposes ref-backed render state for `lastUsed`; React-visible state comes from selectors and returns stable references.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:50Z"
+  },
+  {
+    "criterion_idx": 6,
+    "criterion": "Every direct `useAutoSaveSettings` consumer is migrated or confirmed compatible, and explicit transitive regression checks cover `useGenerationEditSettings`, `useEditSettingsPersistence`, `useInlineEditState`, and `useImageLightboxEnvironment`.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:50Z"
+  },
+  {
+    "criterion_idx": 7,
+    "criterion": "Dev-mode ref-equality instrumentation shows that every hook feeding `useImageLightboxEnvironment` returns a stable reference when inputs are unchanged, or any unstable hook is fixed and documented within scope.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:50Z"
+  },
+  {
+    "criterion_idx": 8,
+    "criterion": "`ImageLightbox` opens with 5 renders or fewer and meets the required reduction relative to the pre-change baseline captured in `docs/state_management_refactor_baselines.md`.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:50Z"
+  },
+  {
+    "criterion_idx": 9,
+    "criterion": "`EditModePanel` opens with 3 renders or fewer and meets the required reduction relative to the pre-change baseline captured in `docs/state_management_refactor_baselines.md`.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:51Z"
+  },
+  {
+    "criterion_idx": 10,
+    "criterion": "The Model Select stays open and accepts a selection in a real browser session after the ref-stability changes.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:51Z"
+  },
+  {
+    "criterion_idx": 11,
+    "criterion": "The edit textarea accepts typing without lost keystrokes in a real browser session after the ref-stability changes.",
+    "verdict": "pass",
+    "evidence": "Claude-as-reviewer approved (review.json verdict=approved, 0 rework items). Auto-verified by watchdog.",
+    "timestamp": "2026-04-16T12:25:51Z"
+  }
+]

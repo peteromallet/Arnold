@@ -41,6 +41,7 @@ vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   ProjectProvider: passthroughProvider('ProjectProvider'),
   useProject: () => ({ selectedProjectId: 'project-1' }),
+  useProjectSelectionContext: () => ({ selectedProjectId: 'project-1' }),
 }));
 
 vi.mock('@/shared/providers/RealtimeProvider', () => ({
@@ -59,8 +60,8 @@ vi.mock('@/shared/contexts/IncomingTasksContext', () => ({
   IncomingTasksProvider: passthroughProvider('IncomingTasksProvider'),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  PanesProvider: passthroughProvider('PanesProvider'),
+vi.mock('@/shared/state/panesStore', () => ({
+  PanesStoreBootstrapBoundary: passthroughProvider('PanesStoreBootstrapBoundary'),
 }));
 
 vi.mock('@/shared/contexts/ToolPageHeaderContext', () => ({
@@ -109,6 +110,6 @@ describe('AppProviders', () => {
     expect(screen.getByTestId('gallery-selection-context')).toHaveTextContent('available');
     expect(screen.getByTestId('agent-chat-timeline-id')).toHaveTextContent('timeline-from-settings');
     expect(screen.getByTestId('agent-chat-timeline-clips')).toHaveTextContent('0');
-    expect(screen.getByTestId('PanesProvider')).toBeInTheDocument();
+    expect(screen.getByTestId('PanesStoreBootstrapBoundary')).toBeInTheDocument();
   });
 });

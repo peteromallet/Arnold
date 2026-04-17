@@ -3,21 +3,19 @@ import { LayoutGrid } from 'lucide-react';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { PaneControlTab } from '@/shared/components/PaneControlTab';
 import { useSlidingPane } from '@/shared/hooks/useSlidingPane';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { ShotsPanelContent } from '@/features/editor/components/ShotsPanelContent';
 
 function useEditorPane() {
-  const {
-    isEditorPaneLocked,
-    setIsEditorPaneLocked,
-    setIsEditorPaneOpen,
-    effectiveEditorPaneHeight,
-    isShotsPaneLocked,
-    shotsPaneWidth,
-    isTasksPaneLocked,
-    tasksPaneWidth,
-  } = usePanes();
+  const isEditorPaneLocked = usePanesStore((state) => state.isEditorPaneLocked);
+  const setIsEditorPaneLocked = usePanesStore((state) => state.setIsEditorPaneLocked);
+  const setIsEditorPaneOpen = usePanesStore((state) => state.setIsEditorPaneOpen);
+  const effectiveEditorPaneHeight = usePanesStore((state) => state.effectiveEditorPaneHeight);
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
 
   const pane = useSlidingPane({
     side: 'top',

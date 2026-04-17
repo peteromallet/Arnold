@@ -1,0 +1,170 @@
+{
+  "version": 9,
+  "timestamp": "2026-04-15T20:03:47Z",
+  "hash": "sha256:b7b55c4c698b867d35d281cdd77b1b54a3514a455f5890bfd02b7d5c17e6fcaf",
+  "changes_summary": "Made the remaining adapter-correctness gap explicit: the plan now requires same-tick Zustand slice updates in delegated write paths, adds corresponding factory and adapter test coverage, and records the reader-mode narrowing as an accepted tradeoff of the settled tiebreaker.",
+  "flags_addressed": [
+    "issue_hints",
+    "correctness",
+    "callers",
+    "FLAG-M1-015"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`createEntityStore` exposes the requested generic API and passes focused tests for bootstrap precedence, optimistic updates, text-field flush, revert, reset, selector isolation, external-entity load bypass, React-safe registration ordering, same-tick external patching, overwrite-protected external sync, and equality deduping for repeated authoritative snapshots.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useJoinClipsSettings(projectId)` preserves its current public API for callers while internally using the entity store only as a reader-mode synchronized read model.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Join Clips adapter preserves the full existing public surface from `useAutoSaveSettings`, including `entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, `initializeFrom`, and the current error/save semantics.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "For Join Clips, `useAutoSaveSettings` remains the sole owner of local writes, debounce/save scheduling, revert/reset, and text-field semantics, so the adapter does not duplicate write ownership with `createEntityStore`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Join Clips adapter preserves the current `null` / `undefined` disabled behavior via a hook-safe strategy even though `createEntityStore.useEntity` is string-based.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Only the real text fields, `prompt` and `negativePrompt`, use `updateTextField` plus blur/flush plumbing; `enhancePrompt` stays on its existing boolean path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Prompt-like Join Clips fields save through both required concrete paths: optional blur wiring through the shared form stack and explicit flush before generation.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The shared `JoinClipsSettingsForm` prop widening remains optional and default-safe, so Join Segments / Batch Mode consumers keep their current behavior in M1 unless explicitly updated.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Join Clips adapter guarantees same-tick consistency for `joinSettings.settings` after delegated write calls, so controlled inputs and generate-time reads do not observe stale prompt or settings snapshots.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The Join Clips pilot handles the real current settings surface, including scalar fields and composite settings such as `clips`, `transitionPrompts`, and LoRA state, without changing RQ ownership semantics.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The milestone explicitly validates `createEntityStore` in two places: direct factory-owned write actions through dedicated store tests, and reader/sync integration through the Join Clips production adapter.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The generic store-owned `load` path remains part of the factory contract and is proven in M1 through factory-level injected-callback tests, without claiming a new repo-backed read integration for a production consumer.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "TypeScript remains clean with `npx tsc --noEmit`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes with no regressions from the baseline suite.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The final diff stays limited to the foundation store, the Join Clips adapter, the optional prompt blur/flush plumbing, targeted supporting tests, and dependency metadata if needed.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The factory internals stay simple enough to reuse for later milestones without adding new cross-cutting abstractions beyond the external-entity sync support required for reader mode.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "M0 telemetry behavior remains unchanged because no instrumented telemetry surfaces are modified in this milestone.",
+      "priority": "info",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The user-settled tiebreaker verdict remains authoritative: for RQ-backed settings, `useEntity(id)` is reader-only, RQ remains authoritative through the existing boundary, and `createEntityStore.load` is reserved for store-owned non-server entities.",
+    "For the Join Clips pilot, `useAutoSaveSettings` remains the sole owner of local-write lifecycle and persistence semantics; the new store is validated as a synchronized read model, not as a second writer.",
+    "Shared-form blur callbacks remain optional and default-safe so non-Join-Clips consumers keep their existing behavior in M1.",
+    "Any existing uncommitted M1-related files in the worktree are draft context to verify and refine, not proof that the milestone is already correctly implemented."
+  ],
+  "delta_from_previous_percent": 17.54,
+  "structure_warnings": []
+}

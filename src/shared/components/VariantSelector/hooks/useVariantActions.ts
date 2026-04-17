@@ -14,7 +14,7 @@ import { getLineageDepth } from '@/shared/hooks/variants/useLineageChain';
 import { getSourceTaskIdLegacyCompatible } from '@/shared/lib/taskIdHelpers';
 import { useToggleVariantStar } from '@/shared/hooks/variants/useToggleVariantStar';
 import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 
 interface UseVariantActionsProps {
   variants: GenerationVariant[];
@@ -49,7 +49,7 @@ export function useVariantActions(props: UseVariantActionsProps) {
 
   const deleteOperation = useAsyncOperationMap();
   const { toggleStar } = useToggleVariantStar();
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
 
   // Lineage depth checking on hover
   const checkedLineageIdsRef = useRef<Set<string>>(new Set());

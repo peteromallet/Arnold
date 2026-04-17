@@ -1,0 +1,337 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Re-audit the live task-state surface while implementing M3 so the migration covers every current-project single-task and pending-generation path that materially contributes to rerender fanout. Classify each touched path as `store-backed now`, `store seeding boundary`, `query-authoritative by design`, or explicit defer. This audit must include `useGetTask` readers on gallery and variant UI, `useTaskPrefetch` including `usePrefetchTaskById()` as used by `VariantActions`, `generationTaskCache`, `GenerationTaskContext`, `useVariantSourceTask`, `usePendingGenerationTasks`, `useGenerationTaskDetails`, and an explicit defer-or-adopt decision for `useActiveTaskClips`. Lock the canonical normalization rule up front: realtime task hydration must use `isTaskDbRow(...)` and `mapTaskDbRowToTask(...)` from `src/shared/lib/taskRowMapper.ts`, must store canonical `Task` objects only, and must fetch or prefetch instead of creating partial snapshots when a raw realtime row is incomplete or invalid.",
+      "depends_on": [],
+      "status": "done",
+      "executor_notes": "Re-audited the live task-state surface before any M3 store implementation. Wrote the classification and locked normalization rules in `.megaplan/plans/m3-realtime-events-store-20260417-0218/t1-task-state-audit.md`. Confirmed `createEntityStore` exists at `src/shared/state/createEntityStore.ts`. Classified visible single-task readers (`useGetTask` gallery/variant/detail paths and `usePendingGenerationTasks`) as `store-backed now`; classified `RealtimeProvider`, `useTaskPrefetch` including the `usePrefetchTaskById()` hover path in `VariantActions`, `generationTaskCache`, and `GenerationTaskContext` as `store seeding boundary`; kept `useTaskStatusCounts` and generation-task mapping status `query-authoritative by design`; explicitly deferred `useActiveTaskClips`, `useTaskPlaceholder`, and `usePendingSegmentTasks`. Locked the canonical hydration rule up front: realtime store writes must use `isTaskDbRow(...)` + `mapTaskDbRowToTask(...)` from `src/shared/lib/taskRowMapper.ts` and must fetch/prefetch instead of writing partial snapshots when a raw row is incomplete or invalid.",
+      "files_changed": [
+        ".megaplan/plans/m3-realtime-events-store-20260417-0218/t1-task-state-audit.md",
+        ".megaplan/plans/m3-realtime-events-store-20260417-0218/execution_batch_1.json"
+      ],
+      "commands_run": [
+        "pwd && git status --short && rg --files src/shared/state src/shared/hooks/tasks src/shared/components/TaskDetails src/shared/providers src/shared/lib | sed 's#^#/workspace/reigh-app/#'",
+        "rg 'useTaskStatus|usePendingGenerationTasks|useGenerationTaskDetails|RealtimeProvider|useGetTask|useTaskPrefetch|usePrefetchTaskById|generationTaskCache|GenerationTaskContext|useVariantSourceTask|useActiveTaskClips' src/ --type ts -n",
+        "sed -n '1,240p' src/shared/providers/RealtimeProvider.tsx",
+        "sed -n '1,240p' src/shared/hooks/tasks/useTasks.ts",
+        "sed -n '1,240p' src/shared/hooks/tasks/useTaskPrefetch.ts",
+        "sed -n '1,240p' src/shared/hooks/tasks/usePendingGenerationTasks.ts",
+        "sed -n '1,240p' src/shared/components/TaskDetails/hooks/useGenerationTaskDetails.ts",
+        "sed -n '1,220p' src/shared/hooks/tasks/useTaskStatusCounts.ts",
+        "sed -n '1,260p' src/domains/generation/hooks/tasks/generationTaskCache.ts",
+        "sed -n '1,220p' src/shared/contexts/GenerationTaskContext.tsx",
+        "sed -n '1,220p' src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts",
+        "sed -n '1,260p' src/tools/video-editor/hooks/useActiveTaskClips.ts",
+        "sed -n '1,240p' src/shared/lib/taskRowMapper.ts",
+        "sed -n '150,260p' src/shared/components/MediaGalleryItem.tsx",
+        "sed -n '1,160p' src/shared/components/MediaGalleryItem/hooks/useMediaGalleryItemTaskShare.ts",
+        "sed -n '1,140p' src/shared/components/VariantSelector/components/VariantDetails.tsx",
+        "sed -n '1,220p' src/shared/components/VariantSelector/hooks/useVariantActions.ts",
+        "sed -n '1,200p' src/domains/generation/components/GenerationDetails/useGenerationDetails.ts",
+        "rg \"useGetTask\\(\" src/ --type ts --glob '!**/*.test.ts' --glob '!**/*.test.tsx' -n",
+        "sed -n '1,220p' src/shared/hooks/tasks/useTaskPlaceholder.ts",
+        "sed -n '1,220p' src/shared/hooks/tasks/usePendingSegmentTasks.ts",
+        "rg 'taskQueryKeys\\.single\\(' src/ --type ts --glob '!**/*.test.ts' --glob '!**/*.test.tsx' -n",
+        "sed -n '1,220p' src/integrations/supabase/repositories/taskRepository.ts",
+        "sed -n '1,240p' src/shared/realtime/RealtimeEventProcessor.ts",
+        "sed -n '1,240p' src/shared/realtime/RealtimeConnection.ts",
+        "sed -n '1,240p' src/shared/hooks/useRealtimeInvalidation.ts"
+      ],
+      "evidence_files": [
+        ".megaplan/plans/m3-realtime-events-store-20260417-0218/t1-task-state-audit.md"
+      ],
+      "reviewer_verdict": "Pass. The audit file exists and explicitly classifies in-scope, query-authoritative, and deferred paths, including `usePrefetchTaskById()` and `useActiveTaskClips`."
+    },
+    {
+      "id": "T2",
+      "description": "Implement `src/shared/state/realtimeStore.ts` and the centralized task-store seeding helpers. The store must be keyed by effective project scope and then `taskId`, expose single-task and pending-generation selectors only, support single upsert, batch upsert, and scoped reset, and preserve stable references for object or array selectors using `shallow` or equivalent equality control. Add canonical helper paths so boundary and query code can seed the store from either full `Task` snapshots or raw `unknown` realtime rows validated through the canonical task-row mapper. Do not add store-backed status-count ownership in M3.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "executor_notes": "Implemented `src/shared/state/realtimeStore.ts` as a scoped Zustand task store keyed by effective project scope then `taskId`, with only the M3 single-task and pending-generation selectors plus scoped reset and single/batch upsert actions. Added canonical seeding helpers in the same module for full `Task` snapshots and raw realtime rows through `isTaskDbRow(...)` + `mapTaskDbRowToTask(...)`, kept `useTaskStatusCounts` ownership out of the store, and verified stable selector behavior with `src/shared/state/realtimeStore.test.ts` covering single upsert, batch upsert, raw-row hydration, unrelated-selector narrowing, stable pending selector references, and scoped reset. Verification run: `npx vitest run --config config/testing/vitest.config.ts src/shared/state/realtimeStore.test.ts src/shared/lib/taskRowMapper.test.ts`; `npx tsc --noEmit`.",
+      "files_changed": [
+        "src/shared/state/realtimeStore.ts",
+        "src/shared/state/realtimeStore.test.ts",
+        ".megaplan/plans/m3-realtime-events-store-20260417-0218/execution_batch_2.json"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/state/realtimeStore.test.ts src/shared/lib/taskRowMapper.test.ts",
+        "npx tsc --noEmit"
+      ],
+      "evidence_files": [
+        "src/shared/state/realtimeStore.ts",
+        "src/shared/state/realtimeStore.test.ts"
+      ],
+      "reviewer_verdict": "Pass. `realtimeStore.ts` implements the scoped Zustand store, canonical raw-row seeding helpers, and stable selector behavior proven by targeted tests."
+    },
+    {
+      "id": "T3",
+      "description": "Rewrite `src/shared/providers/RealtimeProvider.tsx` into the selected-project store-writer boundary without changing Supabase connection ownership or the public status-only `useRealtime` API. The provider must hydrate `realtimeStore` from raw `RealtimeConnection` task `INSERT` and `UPDATE` rows, validate or map through the canonical task-row contract, fall back to targeted single-task fetch or prefetch when the raw row is incomplete or invalid, preserve existing invalidation or non-task fanout behavior through `RealtimeEventProcessor`, and clear scoped task snapshots when the selected project changes or disconnects so snapshots do not leak across projects.",
+      "depends_on": [
+        "T1",
+        "T2"
+      ],
+      "status": "done",
+      "executor_notes": "Rewrote `src/shared/providers/RealtimeProvider.tsx` into a selected-project store-writer boundary while preserving the existing Supabase connection lifecycle and public `useRealtime` status API. Raw `tasks` `INSERT` and `UPDATE` events now hydrate `realtimeStore` through the canonical `isTaskDbRow(...)` + `mapTaskDbRowToTask(...)` contract when valid, and fall back to targeted single-task React Query fetches through `fetchTaskInProject(...)` when the raw row is incomplete or invalid so no partial snapshots are written. The provider still forwards every raw event through `RealtimeEventProcessor` for invalidation and non-task fanout, and it now clears scoped task snapshots on selected-project switches, disconnect, and unmount to prevent cross-project leakage. Verified with `npx vitest run --config config/testing/vitest.config.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/state/realtimeStore.test.ts` and `npx tsc --noEmit`.",
+      "files_changed": [
+        "src/shared/providers/RealtimeProvider.tsx",
+        "src/shared/providers/__tests__/RealtimeProvider.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/state/realtimeStore.test.ts",
+        "npx tsc --noEmit"
+      ],
+      "evidence_files": [
+        "src/shared/providers/RealtimeProvider.tsx",
+        "src/shared/providers/__tests__/RealtimeProvider.test.tsx"
+      ],
+      "reviewer_verdict": "Pass. `RealtimeProvider` now hydrates from raw task rows through the canonical mapper, preserves the status API, and falls back to targeted fetches for incomplete rows."
+    },
+    {
+      "id": "T4",
+      "description": "Adapt the single-task data path so React Query remains authoritative for fetch lifecycle while visible task readers subscribe narrowly through the store. Update `useGetTask` to preserve `resolveTaskProjectScope()` behavior, the empty-string disabled contract, and current return semantics while reading from store snapshots when available and seeding the store from successful query results. Integrate every live `taskQueryKeys.single(...)` writer or reader that is in scope into the same canonical seeding path, including `useTaskPrefetch`, `usePrefetchTaskById()`, `generationTaskCache`, `GenerationTaskContext`, and `useVariantSourceTask`. Migrate `useGenerationTaskDetails` and the gallery or variant surfaces that already flow through these hooks without introducing avoidable API churn.",
+      "depends_on": [
+        "T2",
+        "T3"
+      ],
+      "status": "done",
+      "executor_notes": "Adapted the single-task data path so `useGetTask` keeps the empty-string disabled contract, `resolveTaskProjectScope()` fallback, and caller-facing return semantics while sourcing visible task data from narrow realtime-store subscriptions when available and seeding the store from cached or fetched React Query results. Routed the in-scope `taskQueryKeys.single(...)` paths through the same helpers across `useTaskPrefetch`, `usePrefetchTaskById()`, generation-task cache preload and merge helpers, `useVariantSourceTask`, and the provider fallback fetch path so React Query remains authoritative for fetch lifecycle while store snapshots stay canonical and aligned. Verified with `npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/components/TaskDetails/hooks/__tests__/useGenerationTaskDetails.test.ts`, `npx tsc --noEmit`, and grep confirming only `src/shared/hooks/tasks/useTasks.ts` now references `taskQueryKeys.single(...)` directly in `src/`.",
+      "files_changed": [
+        "src/shared/state/realtimeStore.ts",
+        "src/shared/hooks/tasks/useTasks.ts",
+        "src/shared/hooks/tasks/useTaskPrefetch.ts",
+        "src/domains/generation/hooks/tasks/generationTaskCache.ts",
+        "src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts",
+        "src/shared/providers/RealtimeProvider.tsx",
+        "src/shared/lib/__tests__/generationTaskCache.test.ts",
+        "src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts",
+        "src/shared/providers/__tests__/RealtimeProvider.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/components/TaskDetails/hooks/__tests__/useGenerationTaskDetails.test.ts",
+        "npx tsc --noEmit",
+        "rg 'taskQueryKeys\\.single\\(' src/ --type ts -n"
+      ],
+      "evidence_files": [
+        "src/shared/hooks/tasks/useTasks.ts",
+        "src/shared/hooks/tasks/useTaskPrefetch.ts",
+        "src/domains/generation/hooks/tasks/generationTaskCache.ts",
+        "src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts"
+      ],
+      "reviewer_verdict": "Pass. The single-task read/write surface was unified through `useTasks` helpers across `useGetTask`, prefetch, generation cache, and variant-source reading."
+    },
+    {
+      "id": "T5",
+      "description": "Rework generation-pending task reads while intentionally keeping aggregate counts query-authoritative. Update `usePendingGenerationTasks` so it preserves current cold-start correctness by bootstrapping the current-project queued or in-progress task set through the existing query path, validating and mapping those rows through the canonical helper, seeding `realtimeStore`, and then deriving generation-specific `pendingTasks` and `pendingCount` from a narrow selector keyed by effective project scope and generation id. Keep `useTaskStatusCounts` query-authoritative for both single-project and all-project modes, preserving current semantics including root-task exclusion, visible task-type filtering, processing rules, and recent success or failure windows. Do not silently claim the pre-existing `allProjectIds` cache-key aliasing defect is fixed unless you explicitly fix it as adjacent follow-up work.",
+      "depends_on": [
+        "T2",
+        "T4"
+      ],
+      "status": "done",
+      "executor_notes": "Reworked `usePendingGenerationTasks` so it preserves cold-start correctness by fetching the existing current-project queued/in-progress task set, validating and mapping those rows through the canonical realtime-store seeding path, and then deriving generation-specific `pendingTasks`/`pendingCount` from the scoped realtime selector. `useTaskStatusCounts` was left query-authoritative with its existing semantics and cache-key behavior unchanged, including the known `allProjectIds` aliasing debt. Verified with `npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskStatusCounts.test.ts` and `npx tsc --noEmit`.",
+      "files_changed": [
+        "src/shared/hooks/tasks/usePendingGenerationTasks.ts",
+        "src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts",
+        ".megaplan/plans/m3-realtime-events-store-20260417-0218/execution_batch_5.json"
+      ],
+      "commands_run": [
+        "sed -n '1,240p' src/shared/hooks/tasks/usePendingGenerationTasks.ts",
+        "sed -n '1,260p' src/shared/hooks/tasks/useTaskStatusCounts.ts",
+        "rg --files src/shared/hooks/tasks src/shared/state src/shared/components/TaskDetails src/domains/generation src/shared/providers | rg 'usePendingGenerationTasks|useTaskStatusCounts|realtimeStore|useTasks|test'",
+        "sed -n '1,320p' src/shared/state/realtimeStore.ts",
+        "sed -n '1,260p' src/shared/state/realtimeStore.test.ts",
+        "sed -n '1,240p' src/shared/hooks/tasks/__tests__/useTaskStatusCounts.test.ts",
+        "sed -n '1,260p' src/shared/hooks/tasks/useTasks.ts",
+        "rg 'usePendingGenerationTasks\\(' src/ -g '*.ts' -g '*.tsx' -n",
+        "sed -n '1,240p' src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts",
+        "sed -n '1,260p' src/shared/lib/taskRowMapper.ts",
+        "sed -n '1,240p' src/test/test-utils.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskStatusCounts.test.ts",
+        "npx tsc --noEmit",
+        "git diff -- src/shared/hooks/tasks/usePendingGenerationTasks.ts src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts",
+        "git status --short -- src/shared/hooks/tasks/usePendingGenerationTasks.ts src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts"
+      ],
+      "evidence_files": [
+        "src/shared/hooks/tasks/usePendingGenerationTasks.ts",
+        "src/shared/hooks/tasks/useTaskStatusCounts.ts",
+        "src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts"
+      ],
+      "reviewer_verdict": "Pass. `usePendingGenerationTasks` now bootstraps pending tasks into the store, while `useTaskStatusCounts` intentionally remains query-authoritative and unchanged in semantics."
+    },
+    {
+      "id": "T6",
+      "description": "Run end-to-end code verification and only finish when the implementation is clean. Update existing tests for the store, provider, hooks, and facades so they cover task upsert, batch pending bootstrap, scoped reset, selector narrowing for unrelated task updates, stable selector references, canonical raw-event hydration, incomplete-row fetch fallback, empty-id disabled behavior, `resolveTaskProjectScope()` fallback, and coherent store seeding from prefetch, preload, and generation-task facade helpers. Then run grep audits for stale realtime-broadcast usage and `taskQueryKeys.single(...)` integration, write a short throwaway repro script for the specific bug shape in this milestone, run it to confirm unrelated task updates do not affect an unrelated selector subscription, delete the script, run the most relevant existing tests for changed files, run `npx tsc --noEmit`, and run `npm test`. If any automated check fails, fix the code and re-run until green. If a requested verification requires a browser, runtime app instance, telemetry overlay, or manual interaction, mark that verification as skipped immediately in execution evidence because it is deferred human validation.",
+      "depends_on": [
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "status": "done",
+      "executor_notes": "Closed the verification loop for the realtime task-store migration. Added missing automated coverage in `src/shared/hooks/tasks/__tests__/useTasks.test.ts` and `src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts` for `resolveTaskProjectScope()` fallback and canonical prefetch seeding through the selected-project fallback path. Ran grep audits confirming no `RealtimeContext` consumers remain outside `src/shared/providers/RealtimeProvider.tsx` and only `src/shared/hooks/tasks/useTasks.ts` still references `taskQueryKeys.single(...)` in `src/`. Wrote and ran a short throwaway reproduction test proving an update to task A does not rerender a task-B selector subscription, then deleted it. Focused verification passed with `npx vitest run --config config/testing/vitest.config.ts src/shared/state/realtimeStore.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskStatusCounts.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/components/TaskDetails/hooks/__tests__/useGenerationTaskDetails.test.ts`; `npx tsc --noEmit` passed; `npm test` passed with 886 files / 4573 tests. Deferred-human rerender verification was skipped on first encounter because there is no browser-driving path or telemetry overlay path available in this executor.",
+      "files_changed": [
+        "src/shared/hooks/tasks/__tests__/useTasks.test.ts",
+        "src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts",
+        ".megaplan/plans/m3-realtime-events-store-20260417-0218/execution_batch_6.json"
+      ],
+      "commands_run": [
+        "git status --short",
+        "rg 'RealtimeContext|useRealtimeContext|broadcast' src/ --type ts -n",
+        "rg 'taskQueryKeys\\.single\\(' src/ --type ts -n",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts",
+        "rg 'useContext\\(RealtimeContext\\)|RealtimeContext' src/ --glob '!src/shared/providers/RealtimeProvider.tsx' -n",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/state/tmp-realtime-selector-repro.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/state/realtimeStore.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskStatusCounts.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/components/TaskDetails/hooks/__tests__/useGenerationTaskDetails.test.ts",
+        "npx tsc --noEmit",
+        "npm test"
+      ],
+      "evidence_files": [
+        "src/shared/hooks/tasks/__tests__/useTasks.test.ts",
+        "src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts",
+        "src/shared/lib/__tests__/generationTaskCache.test.ts",
+        "src/shared/providers/__tests__/RealtimeProvider.test.tsx",
+        "src/shared/state/realtimeStore.test.ts"
+      ],
+      "reviewer_verdict": "Pass. Verification evidence matches the repo state: targeted tests cover selector narrowing and seeding paths, `npx tsc --noEmit` passes, and executor evidence shows a green full `npm test` run."
+    }
+  ],
+  "watch_items": [
+    "Use `src/shared/lib/taskRowMapper.ts` as the only canonical normalization path for realtime task snapshots; do not add a second realtime-only mapper.",
+    "Store snapshots must be canonical `Task` objects scoped by effective project id, not raw `TaskRecord` fragments from realtime typing.",
+    "If a raw realtime task row fails `isTaskDbRow(...)` or is missing required fields, fetch or prefetch the single task and seed from the fetched result; never create a partial snapshot.",
+    "Preserve `RealtimeProvider` as the selected-project realtime boundary and preserve the public status-only `useRealtime` API.",
+    "Keep `RealtimeEventProcessor` for invalidation and non-task fanout; do not turn it into the source of truth for full task snapshots.",
+    "Preserve `useGetTask(taskId || '', projectId)` empty-id disabling and `resolveTaskProjectScope()` fallback semantics exactly.",
+    "Cover `usePrefetchTaskById()` through the `useTaskPrefetch` migration, because `VariantActions` uses it on hover and it writes `taskQueryKeys.single(...)`.",
+    "Integrate every live single-task cache writer or reader in scope so React Query, prefetch helpers, generation cache helpers, and the new store do not diverge.",
+    "`usePendingGenerationTasks` must keep cold-start correctness by seeding from the current-project queued or in-progress query before relying on realtime updates.",
+    "`useTaskStatusCounts` stays query-authoritative in M3; preserve existing derivation semantics and avoid broadening the milestone into full-project snapshot ownership.",
+    "Do not silently claim the pre-existing `useTaskStatusCounts({ allProjectIds })` cache-key aliasing defect is fixed unless you explicitly change its query keying.",
+    "Provide stable references for selectors returning arrays or objects and prove that with tests.",
+    "Clear the scoped store on selected-project change or disconnect so task data does not leak across projects.",
+    "`useActiveTaskClips` is intentionally deferred unless it can adopt the finished selector helper with negligible extra semantics and tests; document whichever decision is taken.",
+    "Human-only runtime rerender checks are deferred: if encountered during execution, skip them immediately with evidence rather than blocking or retrying."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Did the implementation inventory every live task-state surface in scope, explicitly classify each one, include the `usePrefetchTaskById()` hover path, and lock the canonical mapper and incomplete-row rules before store hydration logic was added?",
+      "executor_note": "Yes. The audit enumerates the current live task-state surface in `.megaplan/plans/m3-realtime-events-store-20260417-0218/t1-task-state-audit.md`, explicitly classifies each touched path, includes the `usePrefetchTaskById()` hover path from `VariantActions`, and locks the canonical mapper plus incomplete-row fallback rule before any store hydration code.",
+      "verdict": "Confirmed. The added audit file explicitly inventories the live task-state surface, includes the hover prefetch path, and locks the canonical mapper plus invalid-row fallback rules before implementation."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Does `realtimeStore.ts` store canonical `Task` objects by effective project scope and `taskId`, expose only the M3 selectors and actions, and preserve stable references for semantically unchanged array or object selector results?",
+      "executor_note": "Yes. `src/shared/state/realtimeStore.ts` stores canonical `Task` snapshots under effective project scope keys and `taskId`, exports only single-task and pending-generation selectors plus upsert/reset actions, and preserves stable selector references by reusing unchanged task objects and pending arrays with `shallow` equality for object selectors. The coverage in `src/shared/state/realtimeStore.test.ts` proves unrelated task updates do not rerender other task selectors and do not churn pending-generation array references.",
+      "verdict": "Confirmed. The store is keyed by effective project scope and `taskId`, only exposes the M3 selectors/actions, and the tests prove stable pending selector references and unrelated-selector narrowing."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Does `RealtimeProvider` now seed the store from raw realtime task rows through the canonical validator or mapper path, preserve the existing selected-project lifecycle and `useRealtime` API, and fall back to targeted task fetch instead of partial writes on invalid rows?",
+      "executor_note": "Yes. `RealtimeProvider` now seeds scoped task snapshots directly from raw realtime `tasks` rows through the canonical `isTaskDbRow(...)` and `mapTaskDbRowToTask(...)` path, falls back to a targeted `fetchTaskInProject(...)` query when the row is incomplete or invalid instead of writing a partial snapshot, preserves the selected-project connection lifecycle plus the public status-only `useRealtime` API, and clears scoped store state on project change or disconnect.",
+      "verdict": "Confirmed. `RealtimeProvider` seeds the store from raw realtime rows via the canonical validator/mapper, preserves the selected-project lifecycle and `useRealtime` API, and fetches on incomplete rows instead of writing partial snapshots."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Do `useGetTask`, prefetch helpers, generation cache helpers, variant-source readers, and generation-task facade paths now share one canonical store-seeding contract while preserving empty-id behavior, project-scope resolution, and caller-facing signatures?",
+      "executor_note": "Yes. `useGetTask`, prefetch helpers, generation-task cache preload and merge helpers, `useVariantSourceTask`, and the realtime-provider fallback fetch path now share the same task query plus store-seeding helpers. The updated path preserves `resolveTaskProjectScope()` resolution, the empty-string disabled contract, and existing hook signatures while returning store-backed snapshots for visible readers.",
+      "verdict": "Confirmed. `useGetTask`, prefetch helpers, generation-task cache helpers, `useVariantSourceTask`, and provider fallback fetches now share the same canonical single-task query/store seeding path while preserving existing hook contracts."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does `usePendingGenerationTasks` still cold-start from the existing current-project pending query before deriving generation-specific results from narrow selectors, while `useTaskStatusCounts` remains query-authoritative with unchanged counting semantics?",
+      "executor_note": "Yes. `usePendingGenerationTasks` now cold-starts by querying the current-project queued/in-progress task set, seeding canonical task snapshots into `realtimeStore`, and reading generation-specific `pendingTasks`/`pendingCount` from the narrow scoped selector. `useTaskStatusCounts` remained on its query-authoritative path with unchanged derivation semantics; the existing `allProjectIds` cache-key aliasing defect was not changed or claimed fixed.",
+      "verdict": "Confirmed. `usePendingGenerationTasks` cold-starts from the current-project pending query and then reads narrow selectors, while `useTaskStatusCounts` remains query-authoritative with unchanged semantics."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Did the executor prove the change through existing automated tests, grep audits, a temporary reproduction script that was run and deleted, `npx tsc --noEmit`, and `npm test`, and explicitly skip only the browser or human-only rerender checks with evidence?",
+      "executor_note": "Yes. The change is covered by updated automated tests for project-scope fallback and prefetch seeding, grep audits for stale broadcast usage and `taskQueryKeys.single(...)`, a temporary reproduction test that was run and deleted, `npx tsc --noEmit`, and a green `npm test` run (886 files, 4573 tests). Browser-only gallery rerender and telemetry-overlay verification were explicitly skipped as deferred-human because no browser-driving path is available in this executor.",
+      "verdict": "Confirmed. The repository contains the claimed automated coverage, grep evidence aligns with the migrated surface, `npx tsc --noEmit` passes, and executor evidence supports the green full test run; browser-only rerender checks were correctly deferred."
+    }
+  ],
+  "meta_commentary": "Execution should stay tightly scoped to selector narrowing for current-project single-task and pending-generation reads. The highest-risk failure mode is accidental drift between three task hydration paths: query results, prefetch helpers, and raw realtime rows. Solve that once with a canonical seeding layer and route all in-scope writers through it. Keep React Query authoritative for fetching and aggregate freshness; the store is only a subscription-narrowing layer. Treat the open `useTaskStatusCounts({ allProjectIds })` cache-key aliasing issue as accepted adjacent debt unless you deliberately choose to fix it without destabilizing scope. Do not reintroduce broadcast-style context reads or consumer-side `useEffect` bridges from query results into the store. For verification, prefer focused existing tests first, then full typecheck and `npm test`; runtime rerender observations requiring a browser or telemetry overlay are deferred-human and should be marked skipped on first encounter with concrete evidence.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Reconfirm migration surface and classify live task readers or cache writers",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Freeze canonical task-row normalization contract",
+        "finalize_task_ids": [
+          "T1",
+          "T2",
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Freeze caller-facing task contracts for single-task, pending bootstrap, and counts",
+        "finalize_task_ids": [
+          "T1",
+          "T4",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Build the scoped realtime task snapshot store",
+        "finalize_task_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Centralize canonical store-seeding helpers in task data layer",
+        "finalize_task_ids": [
+          "T2",
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Wire raw realtime task rows into the store at the provider boundary",
+        "finalize_task_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Adapt single-task readers and generation-task facade onto the store-backed path",
+        "finalize_task_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Rework pending-generation reads while keeping counts query-authoritative",
+        "finalize_task_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Remove obsolete assumptions and document the narrowed milestone outcome",
+        "finalize_task_ids": [
+          "T5",
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Add coverage for selector narrowing, canonical hydration, and boundary contracts",
+        "finalize_task_ids": [
+          "T6"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All ten numbered plan steps map to at least one execution task. Execution ordering is encoded directly in task dependencies: audit and contract lock first, store and seeding layer second, provider wiring third, single-task consumer migration fourth, pending-generation and count handling fifth, and all verification last. The final task intentionally absorbs grep audits, the required throwaway reproduction script, focused existing test runs, `npx tsc --noEmit`, and `npm test` so the executor closes the loop instead of stopping at implementation. Human-only rerender checks remain intentionally outside automated completion and should be skipped with evidence if encountered.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": null,
+  "baseline_test_command": null,
+  "baseline_test_note": "No supported test runner detected on PATH (looked for: pytest). Configure test_command in state config to specify one."
+}

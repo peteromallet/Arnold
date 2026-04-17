@@ -7,13 +7,12 @@
 
 import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { getSupabaseClient as supabase } from '@/integrations/supabase/client';
-import { mapDbTaskToTask } from './useTasks';
 import { taskQueryKeys } from '@/shared/lib/queryKeys/tasks';
 import { isUuid } from '@/shared/lib/uuid';
 import type { GenerationTaskMappingCacheEntry } from '@/shared/lib/tasks/generationTaskRepository';
 import { resolveTaskProjectScope } from '@/shared/lib/tasks/resolveTaskProjectScope';
 import { prefetchGenerationTaskMapping } from '@/domains/generation/hooks/tasks/useGenerationTaskMapping';
+import { fetchAndSeedTaskQuery, getCachedTaskSnapshot } from './useTasks';
 
 /**
  * Hook to prefetch task data for a generation on hover.
@@ -46,24 +45,10 @@ export function usePrefetchTaskData() {
 
     // Prefetch the full task data if we have a task ID and it's not cached
     if (taskId) {
-      const cachedTask = queryClient.getQueryData(taskQueryKeys.single(taskId, effectiveProjectId));
+      const cachedTask = getCachedTaskSnapshot(queryClient, taskId, effectiveProjectId);
       if (!cachedTask) {
         try {
-          await queryClient.fetchQuery({
-            queryKey: taskQueryKeys.single(taskId, effectiveProjectId),
-            queryFn: async () => {
-              const { data, error } = await supabase().from('tasks')
-                .select('*')
-                .eq('id', taskId)
-                .eq('project_id', effectiveProjectId)
-                .single();
-
-              if (error) throw error;
-              // Transform to match useGetTask format
-              return mapDbTaskToTask(data);
-            },
-            staleTime: Infinity,
-          });
+          await fetchAndSeedTaskQuery(queryClient, taskId, effectiveProjectId);
         } catch {
           // Silently fail - prefetch is best-effort
         }
@@ -86,26 +71,13 @@ export function usePrefetchTaskById() {
     if (!taskId || !effectiveProjectId || !isUuid(taskId)) return;
 
     // Check if already cached
-    const cached = queryClient.getQueryData(taskQueryKeys.single(taskId, effectiveProjectId));
+    const cached = getCachedTaskSnapshot(queryClient, taskId, effectiveProjectId);
     if (cached) {
       return;
     }
 
     try {
-      await queryClient.fetchQuery({
-        queryKey: taskQueryKeys.single(taskId, effectiveProjectId),
-        queryFn: async () => {
-          const { data, error } = await supabase().from('tasks')
-            .select('*')
-            .eq('id', taskId)
-            .eq('project_id', effectiveProjectId)
-            .single();
-
-          if (error) throw error;
-          return mapDbTaskToTask(data);
-        },
-        staleTime: Infinity,
-      });
+      await fetchAndSeedTaskQuery(queryClient, taskId, effectiveProjectId);
     } catch {
       // Silently fail - prefetch is best-effort
     }

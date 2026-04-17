@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GenerationsPane } from './GenerationsPane';
 
 const paneControlTabMock = vi.fn();
-const usePanesMock = vi.fn();
+const panesState = vi.hoisted(() => ({
+  effectiveGenerationsPaneHeight: 180,
+}));
 const useGenerationsPaneControllerMock = vi.fn();
 
 vi.mock('@/shared/components/PaneControlTab', () => ({
@@ -13,8 +15,8 @@ vi.mock('@/shared/components/PaneControlTab', () => ({
   },
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: () => usePanesMock(),
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: typeof panesState) => unknown) => selector(panesState),
 }));
 
 vi.mock('./hooks/useGenerationsPaneController', () => ({
@@ -130,9 +132,7 @@ function buildController() {
 describe('GenerationsPane', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    usePanesMock.mockReturnValue({
-      effectiveGenerationsPaneHeight: 180,
-    });
+    panesState.effectiveGenerationsPaneHeight = 180;
     useGenerationsPaneControllerMock.mockReturnValue(buildController());
   });
 

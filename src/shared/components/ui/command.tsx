@@ -1,5 +1,4 @@
 import * as React from "react"
-import { Dialog as DialogPrimitiveForProps } from "@base-ui/react/dialog"
 import { Command as CommandPrimitive } from "cmdk"
 import { Search } from "lucide-react"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -38,7 +37,7 @@ const Command = React.forwardRef<
 ))
 Command.displayName = CommandPrimitive.displayName
 
-type CommandDialogProps = Omit<React.ComponentPropsWithoutRef<typeof DialogPrimitiveForProps.Root>, 'children'> & {
+type CommandDialogProps = Omit<React.ComponentPropsWithoutRef<typeof Dialog>, 'children'> & {
   children?: React.ReactNode;
 };
 

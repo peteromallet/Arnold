@@ -10,7 +10,7 @@ import {
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useReorderShots } from '@/shared/hooks/shots';
 import { useShots } from '@/shared/contexts/ShotsContext';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { shotQueryKeys } from '@/shared/lib/queryKeys/shots';
@@ -33,7 +33,8 @@ export function useShotListDisplayController({
   onSkeletonSetupReady,
 }: UseShotListDisplayControllerParams) {
   const { isLoading: shotsLoading, error: shotsError } = useShots();
-  const { selectedProjectId: currentProjectId, projects } = useProject();
+  const { selectedProjectId: currentProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const effectiveProjectId = projectId || currentProjectId;
   const currentProject = React.useMemo(
     () => projects.find((project) => project.id === currentProjectId) || null,

@@ -195,7 +195,7 @@ export const ShotSelectorControls: React.FC<ShotSelectorControlsProps> = ({
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="z-[100001]">
+            <TooltipContent>
               {isShowingTick
                 ? 'Added without position. Jump to shot.'
                 : 'Add to shot without position'}
@@ -231,7 +231,7 @@ export const ShotSelectorControls: React.FC<ShotSelectorControlsProps> = ({
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent className="z-[100001]">
+            <TooltipContent>
               {addedVariantAsNewSuccess
                 ? 'Added variant as new image to shot!'
                 : 'Add variant as new image to shot'}

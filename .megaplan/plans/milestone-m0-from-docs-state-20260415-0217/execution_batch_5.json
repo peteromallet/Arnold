@@ -1,0 +1,67 @@
+{
+  "output": "Completed T6 compliance pass and checkpointed results. Verified tracked code edits are confined to approved M0 paths and are additive instrumentation-only; no prohibited subsystem edits detected. Acknowledged SC6 with evidence. Noted non-product `.megaplan` artifacts as out-of-scope harness files and confirmed baseline doc is currently gitignored (`*.md`).",
+  "files_changed": [
+    "/workspace/reigh-app/.megaplan/plans/milestone-m0-from-docs-state-20260415-0217/execution_batch_5.json"
+  ],
+  "commands_run": [
+    "git -C /workspace/reigh-app status --short",
+    "git -C /workspace/reigh-app diff --name-only",
+    "git -C /workspace/reigh-app diff --name-only --cached",
+    "ls -la /workspace/reigh-app/src/shared/dev",
+    "git -C /workspace/reigh-app diff --stat",
+    "ls -la /workspace/reigh-app/docs/state_management_refactor_baselines.md && git -C /workspace/reigh-app check-ignore -v docs/state_management_refactor_baselines.md || true",
+    "git -C /workspace/reigh-app diff -- src/app/App.tsx src/domains/media-lightbox/ImageLightbox.tsx src/domains/media-lightbox/components/EditModePanel.tsx src/domains/media-lightbox/components/LightboxShell.tsx src/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx src/shared/components/MediaGalleryItem.tsx src/features/tasks/components/TasksPane/TasksPane.tsx src/features/editor/components/ShotsPanelContent.tsx src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.tsx src/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx src/shared/dev/useRenderBudget.ts src/shared/dev/RenderTelemetryOverlay.tsx",
+    "git -C /workspace/reigh-app diff -U0 | rg \"^-.*(debugRendering|usePerfDiagnostics)\" || true",
+    "cd /workspace/reigh-app && allowed=(\"src/shared/dev/useRenderBudget.ts\" \"src/shared/dev/RenderTelemetryOverlay.tsx\" \"src/app/App.tsx\" \"src/domains/media-lightbox/ImageLightbox.tsx\" \"src/domains/media-lightbox/components/EditModePanel.tsx\" \"src/domains/media-lightbox/components/LightboxShell.tsx\" \"src/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx\" \"src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx\" \"src/shared/components/MediaGalleryItem.tsx\" \"src/features/tasks/components/TasksPane/TasksPane.tsx\" \"src/features/editor/components/ShotsPanelContent.tsx\" \"src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.tsx\" \"src/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx\" \"docs/state_management_refactor_baselines.md\"); mapfile -t changed < <(git diff --name-only; git ls-files --others --exclude-standard); printf '%s\\n' \"Changed_or_untracked:\"; printf '%s\\n' \"${changed[@]}\"; printf '%s\\n' \"---\"; for f in \"${changed[@]}\"; do ok=0; for a in \"${allowed[@]}\"; do [[ \"$f\" == \"$a\" ]] && ok=1 && break; done; if [[ $ok -eq 0 ]]; then echo \"OUT_OF_SCOPE:$f\"; fi; done",
+    "cat > /workspace/reigh-app/.megaplan/plans/milestone-m0-from-docs-state-20260415-0217/execution_batch_5.json <<'EOF' ... EOF",
+    "sed -n '1,220p' /workspace/reigh-app/.megaplan/plans/milestone-m0-from-docs-state-20260415-0217/execution_batch_5.json"
+  ],
+  "deviations": [
+    "`docs/state_management_refactor_baselines.md` exists but is ignored by repository `.gitignore` (`*.md`), so it does not appear in git diff/status without force-add.",
+    "Out-of-scope files detected under `.megaplan/...` are harness-generated plan artifacts, not product-code edits.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/execution_batch_5.json",
+    "Advisory audit finding: Executor claimed changed files not present in git status: docs/state_management_refactor_baselines.md, src/shared/dev/RenderTelemetryOverlay.tsx, src/shared/dev/useRenderBudget.ts",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/plans/2-week-aggressive-state-20260415-0113, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217, src/shared/dev",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Compliance pass completed. Tracked code changes are confined to approved M0 files: `src/shared/dev/*`, `src/app/App.tsx`, and the explicitly instrumented component files. `docs/state_management_refactor_baselines.md` exists but is ignored by `.gitignore` (`*.md`). Diff audit confirms instrumentation edits are insertion-only (+import/+hook call), with no diagnostic removals (`debugRendering`/`usePerfDiagnostics`) and no refactor behavior changes. No prohibited subsystem edits detected in tracked diffs (no `supabase`, migrations, edge/worker orchestration files touched). Non-source out-of-scope files under `.megaplan/...` are plan artifacts from the execution harness, not product-code edits.",
+      "files_changed": [
+        "/workspace/reigh-app/src/shared/dev/useRenderBudget.ts",
+        "/workspace/reigh-app/src/shared/dev/RenderTelemetryOverlay.tsx",
+        "/workspace/reigh-app/src/app/App.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/ImageLightbox.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/EditModePanel.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/LightboxShell.tsx",
+        "/workspace/reigh-app/src/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx",
+        "/workspace/reigh-app/src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx",
+        "/workspace/reigh-app/src/shared/components/MediaGalleryItem.tsx",
+        "/workspace/reigh-app/src/features/tasks/components/TasksPane/TasksPane.tsx",
+        "/workspace/reigh-app/src/features/editor/components/ShotsPanelContent.tsx",
+        "/workspace/reigh-app/src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.tsx",
+        "/workspace/reigh-app/src/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx",
+        "/workspace/reigh-app/docs/state_management_refactor_baselines.md"
+      ],
+      "commands_run": [
+        "git -C /workspace/reigh-app status --short",
+        "git -C /workspace/reigh-app diff --name-only",
+        "git -C /workspace/reigh-app diff --name-only --cached",
+        "ls -la /workspace/reigh-app/src/shared/dev",
+        "git -C /workspace/reigh-app diff --stat",
+        "ls -la /workspace/reigh-app/docs/state_management_refactor_baselines.md && git -C /workspace/reigh-app check-ignore -v docs/state_management_refactor_baselines.md || true",
+        "git -C /workspace/reigh-app diff -- src/app/App.tsx src/domains/media-lightbox/ImageLightbox.tsx src/domains/media-lightbox/components/EditModePanel.tsx src/domains/media-lightbox/components/LightboxShell.tsx src/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx src/shared/components/MediaGalleryItem.tsx src/features/tasks/components/TasksPane/TasksPane.tsx src/features/editor/components/ShotsPanelContent.tsx src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.tsx src/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx src/shared/dev/useRenderBudget.ts src/shared/dev/RenderTelemetryOverlay.tsx",
+        "git -C /workspace/reigh-app diff -U0 | rg \"^-.*(debugRendering|usePerfDiagnostics)\" || true",
+        "cd /workspace/reigh-app && allowed=(\"src/shared/dev/useRenderBudget.ts\" \"src/shared/dev/RenderTelemetryOverlay.tsx\" \"src/app/App.tsx\" \"src/domains/media-lightbox/ImageLightbox.tsx\" \"src/domains/media-lightbox/components/EditModePanel.tsx\" \"src/domains/media-lightbox/components/LightboxShell.tsx\" \"src/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx\" \"src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx\" \"src/shared/components/MediaGalleryItem.tsx\" \"src/features/tasks/components/TasksPane/TasksPane.tsx\" \"src/features/editor/components/ShotsPanelContent.tsx\" \"src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.tsx\" \"src/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx\" \"docs/state_management_refactor_baselines.md\"); mapfile -t changed < <(git diff --name-only; git ls-files --others --exclude-standard); printf '%s\\n' \"Changed_or_untracked:\"; printf '%s\\n' \"${changed[@]}\"; printf '%s\\n' \"---\"; for f in \"${changed[@]}\"; do ok=0; for a in \"${allowed[@]}\"; do [[ \"$f\" == \"$a\" ]] && ok=1 && break; done; if [[ $ok -eq 0 ]]; then echo \"OUT_OF_SCOPE:$f\"; fi; done"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Yes. Tracked repository edits are confined to approved M0 locations (dev hook/overlay, App mount, and the named instrumented components). Diff is additive-only instrumentation with no removals of existing diagnostics and no edits in prohibited subsystems (edge functions/supabase/workers). Out-of-scope paths detected are `.megaplan` execution artifacts, not product-code changes."
+    }
+  ]
+}

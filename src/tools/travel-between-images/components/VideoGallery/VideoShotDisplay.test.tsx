@@ -37,8 +37,10 @@ vi.mock('@/shared/hooks/interaction/useClickRipple', () => ({
   }),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: () => ({ isGenerationsPaneLocked: false }),
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: { isGenerationsPaneLocked: boolean }) => unknown) => selector({
+    isGenerationsPaneLocked: false,
+  }),
 }));
 
 vi.mock('@/shared/hooks/mobile', () => ({

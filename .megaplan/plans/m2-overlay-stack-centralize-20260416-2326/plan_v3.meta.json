@@ -1,0 +1,141 @@
+{
+  "version": 3,
+  "timestamp": "2026-04-16T23:42:09Z",
+  "hash": "sha256:3d78da4aeb819324cd46be09b5688b759a04b9dcfd8fea409e9a9c0608da9ccb",
+  "changes_summary": "Revised the plan to explicitly migrate `LightboxShell` through a sanctioned overlay wrapper path, preserve and centralize marker-based `container` resolution, and include the concrete helper callers and type-only raw import cleanup needed to satisfy the no-raw-import and single-source-of-truth goals.",
+  "flags_addressed": [
+    "callers",
+    "FLAG-004",
+    "FLAG-005",
+    "issue_hints",
+    "correctness",
+    "scope",
+    "all_locations"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`src/shared/state/overlayStack.ts` exists, exports JSDoc-documented public actions/selectors for overlay registration, topmost queries, and stack-derived layering, and is the only automated source of truth for modal body pointer-events and focus restoration.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "No raw `@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup|preview-card)` imports remain anywhere under `src/` outside `src/shared/components/ui/overlay/`, including type-only imports that would fail the invariant grep.",
+      "priority": "must",
+      "requires": [
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "`LightboxShell.tsx` no longer imports `@base-ui/react/dialog` directly and instead consumes a sanctioned overlay-aware wrapper path under `src/shared/components/ui/overlay/` that preserves its current modal, dismissal-cancellation, and custom event-handler contract.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The existing Base UI `preview-card` portal wrapper is migrated into the centralized overlay ownership layer so no in-repo Base UI portal primitive with stack-relevant ownership remains outside M2.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "DOM/z-index precedence helpers are retired for migrated overlay flows: `uiLayers.ts`, lightbox interaction/navigation hooks, and `LoraSelectorModal` no longer determine topmost state by querying DOM markers and comparing computed z-index values.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Helper-based `container` resolution is centralized and preserved: the known helper callers in `CommunityLorasTab.tsx`, `MyLorasTab.tsx`, and `sharedSections.tsx` are migrated to the shared helper, and the relevant overlay wrappers still expose compatible `data-dialog-content` / `data-lightbox-popup` markers during M2.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Caller-side layering escape hatches for migrated overlay primitives are removed or neutralized: no remaining `zIndexBase`, overlay z-index class overrides, or equivalent caller-owned numeric layering controls are needed for Dialog, Select, Popover, Menu, Tooltip, AlertDialog, or HoverCard flows.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Integration tests cover `open A -> open B -> close A -> close B` for both Dialog+Popover and Menu+Dialog, and assert `document.body.style.pointerEvents === ''` after full close.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Tests that previously encoded the old DOM-z-index ordering strategy are updated or replaced so the suite validates the new stack-based precedence model instead, including the lightbox precedence path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The overlay-stack migration passes `npx tsc --noEmit`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes after the overlay migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Public wrapper entrypoints remain import-compatible for existing consumers where possible, while removing only the layering-specific escape hatches that conflict with central ownership.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The overlay stack implementation remains a small, dedicated ordered-store abstraction rather than absorbing unrelated persistence or styling responsibilities.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Deferred manual checks pass in a real app session: nested LoRA modal plus Model Select closes cleanly, drag interactions do not spuriously dismiss overlays, and focus trap / Escape / restore behavior feels correct.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "verify_physical_device"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The critique indicates missing integration detail, not a wrong root-cause hypothesis: the milestone should still centralize Base UI portal ownership and overlay ordering rather than pivot to a different subsystem.",
+    "`LightboxShell.tsx` is in scope because it is a live raw Base UI dialog owner; migrating it is required to satisfy the raw-import invariant, not optional scope growth.",
+    "Existing marker selectors such as `[data-dialog-content]` and `[data-lightbox-popup]` remain compatibility contracts for this milestone because helper-based `container` resolution and CSS still depend on them.",
+    "A dedicated lightbox-specific wrapper under `src/shared/components/ui/overlay/` is the narrowest way to preserve LightboxShell's specialized Base UI contract while centralizing raw portal ownership.",
+    "Automated verification remains limited to shell and jsdom/Vitest. Any verification that requires a running browser session or manual interaction is deferred-human and should be reported as skipped, not blocked."
+  ],
+  "delta_from_previous_percent": 94.95,
+  "structure_warnings": []
+}

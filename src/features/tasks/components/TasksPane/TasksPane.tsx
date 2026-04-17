@@ -6,9 +6,8 @@ import { cn } from '@/shared/components/ui/contracts/cn';
 import { Button } from '@/shared/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/components/ui/tooltip';
 import { Loader2 } from 'lucide-react';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { PaneControlTab } from '@/shared/components/PaneControlTab';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useIncomingTasks } from '@/shared/contexts/IncomingTasksContext';
 import { TasksPaneProcessingWarning } from '@/shared/components/ProcessingWarnings';
 import { useBottomOffset } from '@/shared/hooks/layout/useBottomOffset';
@@ -29,6 +28,7 @@ import { useShotActions } from './hooks/useShotActions';
 import { useTasksPaneController } from './hooks/useTasksPaneController';
 import { useTasksPaneSlidingPane } from './hooks/useTasksPaneSlidingPane';
 import { useRenderBudget } from '@/shared/dev/useRenderBudget';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 interface TasksPaneProps {
   onOpenSettings: () => void;
@@ -36,18 +36,17 @@ interface TasksPaneProps {
 
 const TasksPaneComponent: React.FC<TasksPaneProps> = ({ onOpenSettings }) => {
   useRenderBudget('TasksPane', 5);
-  const {
-    isTasksPaneLocked,
-    setIsTasksPaneLocked,
-    tasksPaneWidth,
-    activeTaskId,
-    setActiveTaskId,
-    isTasksPaneOpen: isTasksPaneOpenProgrammatic,
-    setIsTasksPaneOpen: setIsTasksPaneOpenProgrammatic,
-  } = usePanes();
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const setIsTasksPaneLocked = usePanesStore((state) => state.setIsTasksPaneLocked);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
+  const activeTaskId = usePanesStore((state) => state.activeTaskId);
+  const setActiveTaskId = usePanesStore((state) => state.setActiveTaskId);
+  const isTasksPaneOpenProgrammatic = usePanesStore((state) => state.isTasksPaneOpen);
+  const setIsTasksPaneOpenProgrammatic = usePanesStore((state) => state.setIsTasksPaneOpen);
 
   // Project context & task helpers
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
 
   // Shots data for lightbox
   const { data: shots } = useListShots(selectedProjectId);

@@ -1,0 +1,288 @@
+{
+  "skip": false,
+  "task_summary": "This refactor is not skippable: it spans many files, three shared state domains, and multiple API-compatibility and performance constraints. I could not perform the required repository investigation in this environment because local shell reads are blocked by the sandbox (`bwrap: Creating new namespace failed: Permission denied`), so this brief is a task-grounded fallback rather than a verified codebase map.",
+  "key_evidence": [
+    {
+      "point": "The sprint is explicitly split into five atomic migrations: foundation, core settings store, settings callers migration, selection store, and timeline store, each required to revert cleanly on its own branch.",
+      "source": "task description",
+      "relevance": "high"
+    },
+    {
+      "point": "The settings migration must preserve the public `useAutoSaveSettings` return shape and keep hook names stable at the API boundary, while moving reducer/debounce/load logic into a Zustand-backed store.",
+      "source": "task description",
+      "relevance": "high"
+    },
+    {
+      "point": "Success depends on structural render reductions, not just behavioral parity: `ImageLightbox` must open at <= 3 renders, `EditModePanel` should be <= 2, and timeline drag should avoid whole-editor rerenders via selector-based subscriptions.",
+      "source": "task description",
+      "relevance": "high"
+    },
+    {
+      "point": "The task already identifies specific dead code that must be removed in the same sprint: `useDebouncedSettingsSave`, `autoSaveSettingsHelpers`, `autoSaveSettingsLoaders`, `GallerySelectionContext`, and at least one timeline context.",
+      "source": "task description",
+      "relevance": "high"
+    },
+    {
+      "point": "Required prep work includes tracing all callers of `useAutoSaveSettings`, `useShotSettings`, `useTimelineState`, and the selection contexts, plus identifying unusual consumers that rely on current identity/ref behavior.",
+      "source": "task description",
+      "relevance": "high"
+    },
+    {
+      "point": "Repository investigation could not be completed here because every attempted local read command failed before execution with a sandbox namespace error, and writes to `prep.json` were also blocked by the read-only sandbox.",
+      "source": "tooling attempt in this session",
+      "relevance": "high"
+    }
+  ],
+  "relevant_code": [
+    {
+      "file_path": "/workspace/reigh-app/src/shared/state/createEntityStore.ts",
+      "why": "New generic Zustand foundation required by the sprint; expected home for entity bootstrap, field updates, persistence middleware, pending text protection, and save/revert/reset flows.",
+      "functions": [
+        "createEntityStore",
+        "bootstrapEntity",
+        "updateField",
+        "updateFields",
+        "updateTextField",
+        "flushTextFields",
+        "save",
+        "saveImmediate",
+        "revert",
+        "reset",
+        "initializeFrom"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/settings/hooks/useAutoSaveSettings.ts",
+      "why": "Core settings hook whose public API must remain unchanged while its internals move to store-backed state keyed by `(toolId, entityId, scope)`.",
+      "functions": [
+        "useAutoSaveSettings"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/settings/hooks/useDebouncedSettingsSave.ts",
+      "why": "Named for deletion after its debounce/pending-tracking/beforeunload responsibilities are absorbed into store persistence middleware.",
+      "functions": [
+        "useDebouncedSettingsSave"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/settings/hooks/autoSaveSettingsHelpers.ts",
+      "why": "Reducer helper module called out for deletion once reducer-based state handling is removed.",
+      "functions": [
+        "autoSaveSettingsHelpers"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/settings/hooks/autoSaveSettingsLoaders.ts",
+      "why": "Load-path helper module called out for deletion once store bootstrap owns loading.",
+      "functions": [
+        "useReactQueryModeLoad",
+        "useCustomModeLoad"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts",
+      "why": "Explicitly called out as containing render-time state mutation around readiness that must be eliminated.",
+      "functions": [
+        "useEditSettingsPersistence"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts",
+      "why": "Explicitly called out as using ref-based pseudo-state that should become a real store slice.",
+      "functions": [
+        "useLastUsedEditSettings"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsSettings.ts",
+      "why": "Day-1 pilot migration for validating the generic settings-store shape with a smaller 5-field caller.",
+      "functions": [
+        "useJoinClipsSettings"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/domains/media-lightbox/hooks/useGenerationEditSettings.ts",
+      "why": "Named loud caller to migrate after the core settings-store refactor.",
+      "functions": [
+        "useGenerationEditSettings"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/travel-between-images/hooks/settings/useShotSettings.ts",
+      "why": "Named hook to trace because it likely layers on top of `useAutoSaveSettings` and may have tool-specific assumptions.",
+      "functions": [
+        "useShotSettings"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/edit-images/hooks/useInlineEditState.ts",
+      "why": "Named caller to migrate during the settings rollout.",
+      "functions": [
+        "useInlineEditState"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/character-animate/hooks/useCharacterAnimateSettings.ts",
+      "why": "Named caller to migrate during the settings rollout.",
+      "functions": [
+        "useCharacterAnimateSettings"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/image-generation/hooks/useImageGenGallery.ts",
+      "why": "Named caller to migrate during the settings rollout.",
+      "functions": [
+        "useImageGenGallery"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/travel-between-images/components/ShotEditor/hooks/video/",
+      "why": "Directory explicitly identified as containing additional `useAutoSaveSettings` consumers such as `useStructureVideo` and `useAudio` that must all be enumerated before migration.",
+      "functions": [
+        "useStructureVideo",
+        "useAudio"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/state/selectionStore.ts",
+      "why": "Planned unified Zustand store replacing multiple selection-related contexts and internal timeline selection state.",
+      "functions": [
+        "selectGalleryItems",
+        "selectClip",
+        "setCurrentShot",
+        "enterShotAdditionMode"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/contexts/GallerySelectionContext.tsx",
+      "why": "Context listed for removal during unified selection-store migration.",
+      "functions": [
+        "GallerySelectionContext"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/contexts/LastAffectedShotContext.tsx",
+      "why": "Context listed for removal during unified selection-store migration.",
+      "functions": [
+        "LastAffectedShotContext"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/contexts/CurrentShotContext.tsx",
+      "why": "Context listed for removal during unified selection-store migration.",
+      "functions": [
+        "CurrentShotContext"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/shared/contexts/ShotAdditionSelectionContext.tsx",
+      "why": "Context listed for removal during unified selection-store migration.",
+      "functions": [
+        "ShotAdditionSelectionContext"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/video-editor/state/timelineStore.ts",
+      "why": "Planned unified store replacing the current timeline editor context split.",
+      "functions": [
+        "timelineStore"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/video-editor/contexts/TimelineEditorContext.tsx",
+      "why": "Named timeline context to collapse into selector-based store subscriptions.",
+      "functions": [
+        "TimelineEditorContext"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/video-editor/contexts/TimelineChromeContext.tsx",
+      "why": "Named timeline context to collapse into selector-based store subscriptions.",
+      "functions": [
+        "TimelineChromeContext"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/video-editor/contexts/TimelinePlaybackContext.tsx",
+      "why": "Named timeline context to collapse into selector-based store subscriptions.",
+      "functions": [
+        "TimelinePlaybackContext"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts",
+      "why": "Named internal timeline state hook to shrink substantially and remove ref-based stability workarounds.",
+      "functions": [
+        "useTimelineState"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/docs/structure_detail/state_management.md",
+      "why": "Only new documentation file explicitly allowed by repo conventions; must document the post-refactor state placement model.",
+      "functions": [
+        "state_management.md"
+      ]
+    },
+    {
+      "file_path": "/workspace/reigh-app/CLAUDE.md",
+      "why": "Repo conventions source for constraints such as editing existing files, no success toasts, no hardcoded colors, and using `getGenerationId(media)`.",
+      "functions": [
+        "CLAUDE.md"
+      ]
+    }
+  ],
+  "test_expectations": [
+    {
+      "test_id": "render-budget-lightbox-open",
+      "what_it_checks": "Dev-only `useRenderBudget` instrumentation confirms `ImageLightbox` renders <= 3 and `EditModePanel` renders <= 2 on lightbox open after settings migration.",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "lightbox-model-select-stability",
+      "what_it_checks": "Opening the model Select in the image lightbox no longer closes immediately and selection works without focus-trap instability.",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "lightbox-prompt-textarea-typing",
+      "what_it_checks": "Prompt textarea accepts continuous typing without lost keystrokes or refetch stomping.",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "timeline-render-budget-drag",
+      "what_it_checks": "Timeline canvas stays flat except on scale/viewport changes, and dragging a clip rerenders only the clip and its row.",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "useAutoSaveSettings-user-behavior",
+      "what_it_checks": "Existing user-facing tests in `/workspace/reigh-app/src/shared/settings/hooks/__tests__/useAutoSaveSettings.test.ts` continue to pass with the unchanged public API.",
+      "status": "pass_to_pass"
+    },
+    {
+      "test_id": "debounced-save-behavior-moved-to-store",
+      "what_it_checks": "Coverage from `/workspace/reigh-app/src/shared/settings/hooks/__tests__/useDebouncedSettingsSave.test.ts` is replaced by store-level tests for pending text tracking, edit versioning, debounce, flush, and beforeunload behavior.",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "deleted-implementation-detail-tests",
+      "what_it_checks": "Implementation-detail tests for `autoSaveSettingsHelpers` and `autoSaveSettingsLoaders` are removed or replaced with store-level behavior tests once those modules are deleted.",
+      "status": "fail_to_pass"
+    },
+    {
+      "test_id": "typecheck-and-baseline-suite",
+      "what_it_checks": "TypeScript typecheck is clean and the full test suite passes at no worse rate than the pre-refactor baseline, without attempting unrelated test fixes.",
+      "status": "pass_to_pass"
+    }
+  ],
+  "constraints": [
+    "Zustand is fixed; do not evaluate alternatives or replace React Query.",
+    "Settings-hook API boundaries must remain stable; consumer changes are only allowed where deleted internal fields disappear.",
+    "Server data remains in React Query with one-way flow into stores; do not mirror server state in Zustand.",
+    "Delete predecessor helpers/hooks/contexts in the same PR that introduces the successor; no temporary backup implementations.",
+    "Maintain TypeScript strictness with exhaustive actions and precise selectors; no `any`.",
+    "Respect repo conventions from `CLAUDE.md`, including editing existing files where possible and using `getGenerationId(media)` instead of inline generation-id fallbacks.",
+    "Five atomic migrations must stay separately revertible on their designated branches.",
+    "I could not verify actual call sites, unusual consumers, or current tests in this environment because local code inspection and file writes were blocked by the sandbox."
+  ],
+  "suggested_approach": "Use this as a gated prep task once local inspection is available: 1. Enumerate every caller of `useAutoSaveSettings`, `useShotSettings`, `useTimelineState`, and each selection context, plus all relevant tests. 2. Trace identity-sensitive consumers first, especially media-lightbox settings persistence, last-used edit settings, and any timeline consumers that rely on refs staying current. 3. For PR 1, build `createEntityStore` and migrate only `useJoinClipsSettings` plus render-budget instrumentation. 4. For PR 2, rewrite `useAutoSaveSettings` as a thin keyed-store wrapper, absorb debounced-save/load logic, and delete the old helpers/hooks in the same change. 5. For PR 3, migrate all settings callers listed in the task and verify the lightbox render/select/textarea milestones. 6. For PR 4, replace the four selection contexts and internal timeline selection state with targeted selector subscriptions, removing effect-chain synchronization. 7. For PR 5, collapse the timeline editor contexts into a single store, remove ref-based latest-value workarounds, and verify drag/scroll render budgets. I could not write `/workspace/reigh-app/.megaplan/plans/2-week-aggressive-state-20260415-0113/prep.json` because the sandbox is read-only and rejected file creation."
+}

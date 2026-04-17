@@ -1,0 +1,719 @@
+{
+  "name": "m2-overlay-stack-centralize-20260416-2326",
+  "idea": "M2 \u2014 Overlay stack. Centralize Base UI portal ownership to harden against the class of bugs that caused the Model Select flash-close (and will re-emerge through other triggers if the mechanism isn't hardened).\n\n## Executor rules\n\nEXECUTOR HARD RULE (authoritative): For any task whose satisfaction requires a browser, runtime app instance, device, or manual human input that the sandboxed executor cannot produce (examples: telemetry overlay capture from a running app, drag/resize smoke checks, keyboard/playback behavior, AgentChat bridge manual test, pending-add URL flow verification, Model Select click behavior, textarea typing verification, any rendering count measured at runtime) \u2014 return status=skipped on FIRST encounter with executor_notes evidence naming the blocker (e.g. \"no browser-driving path available\"). DO NOT return status=blocked. DO NOT retry the task expecting different sandbox capabilities. The review/gate phase already marks these criteria as deferred_human; skipped tasks are first-class evidence that the criterion is deferred to post-milestone human verification. Blocked retries waste iteration budget and do not change outcome.\n\n## Motivation\n\nM1 \u2192 M1c eliminated the known render-storm triggers that caused Base UI overlay portals to unmount before their click-outside detection settled. That fixed the immediate Model Select / textarea-typing bugs. But the underlying mechanism \u2014 ad-hoc ownership of `body.pointer-events: none`, per-portal focus restoration, and uncoordinated z-index stacking across ~20 portal primitives \u2014 still exists. Any future render-storm trigger (new hook, new provider, new lib upgrade) can re-express the same bug class.\n\nM2 hardens the mechanism itself: centralize overlay lifecycle so bugs in this class have one place to fix instead of twenty.\n\n## Goal\n\nBuild a single overlay-stack store that wraps every Base UI portal primitive and owns:\n1. `document.body.style.pointerEvents` \u2014 only the outermost open overlay sets it to 'none'; close order does not matter.\n2. Focus restoration \u2014 central stack tracks which element had focus at overlay open; restores on close in reverse order.\n3. Z-index layering \u2014 overlays consult the stack for their layer; no hardcoded z-index across files.\n\n## Scope\n\n### In scope\n\n- `src/shared/state/overlayStack.ts` \u2014 Zustand store (using `createEntityStore` factory pattern where appropriate, or a simpler slice if entity-keyed isn't a fit).\n- Wrapper components in `src/shared/components/ui/overlay/` for each Base UI portal primitive:\n  - Dialog, Popover, Select, Menu, Tooltip-with-modal, Drawer, AlertDialog, ContextMenu\n- Migrate every callsite to the wrapper. Inventory command:\n  `rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup)' src/ --type ts -l`\n  Expect 20+ callsites; actual count must match inventory at milestone start.\n\n### Out of scope\n\n- Replacing Base UI itself.\n- Adding new overlay types.\n- Touching overlay styling beyond what centralization requires.\n- Writing E2E tests (no browser harness in repo).\n\n## Dependencies (technical, not temporal)\n\n- The M1-M1c store substrate must exist in the worktree: specifically `src/shared/state/createEntityStore.ts` and `src/shared/state/selectionStore.ts`. Verify at milestone start via `ls src/shared/state/`.\n- React 18+ (already in repo).\n- Base UI portal primitives (already in repo).\n\n## Implementation approach\n\n1. **Inventory** all portal callsites via the grep above. Document each with its current z-index, focus-restoration behavior (if any), and pointer-events ownership.\n2. **Build `overlayStack.ts`** \u2014 store with actions: `pushOverlay({ id, type, restoreFocusTo })`, `popOverlay(id)`, `getTopOverlay()`. Selector: `useIsOverlayTopmost(id)`.\n3. **Build wrapper components** \u2014 one per primitive. Each wrapper:\n   - Calls `pushOverlay` on mount; `popOverlay` on unmount.\n   - Reads `useIsOverlayTopmost(id)` to decide whether to own body pointer-events.\n   - Uses stack-layered z-index via a CSS variable pegged to stack depth.\n4. **Migrate callsites** \u2014 one primitive type at a time. Keep prop API identical so consumer code doesn't change. Delete unused per-callsite z-index overrides and focus-management code as wrappers land.\n5. **Regression harness** \u2014 integration tests (RTL/Vitest) that open/close overlay sequences and assert `document.body.style.pointerEvents === ''` after all overlays close.\n\n## MUST (all automated)\n\n- `npx tsc --noEmit` clean on the branch.\n- `npm test` passes at M0/M1c baseline count or higher.\n- No portal primitive imports remain outside `src/shared/components/ui/overlay/` except in the wrappers themselves. Verify: `rg 'from .*@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup)' src/ --type ts -l | grep -v 'ui/overlay/'` returns empty.\n- Integration tests covering open-A \u2192 open-B \u2192 close-A \u2192 close-B sequence for at least Dialog+Popover and Menu+Dialog pairings. Asserts `document.body.style.pointerEvents === ''` after full close.\n- `overlayStack.ts` exports a public API documented with JSDoc on each action.\n- No `z-index: [number]` literals in any migrated overlay wrapper file; all layering flows through the stack.\n\n## DEFERRED_HUMAN (skipped by executor, verified manually post-milestone)\n\n- Nested overlay sequences: LoRA modal \u2192 Model Select inside it; close LoRA \u2192 Model Select should close cleanly with no focus stolen, no body pointer-events stuck.\n- Drag-while-overlay-open: open any overlay, drag a clip in timeline \u2014 overlay stays open, drag works, no click-outside false-positive dismissing overlay.\n- Tab key traversal inside overlay stays trapped; Escape closes topmost; focus returns to opener.\n\n## Non-goals / explicit choices\n\n- No migration of non-Base-UI overlays (our own bespoke modals) unless they already use the same portal plumbing.\n- No accessibility audit beyond focus-restoration correctness (different milestone if needed).\n- No animation changes \u2014 this milestone is plumbing, not polish.\n\n## Risk notes\n\n- 20+ callsite migration is the largest-surface milestone in the chain. If a wrapper diverges from Base UI's prop API, all consumers of that primitive break. Keep wrappers thin.\n- `document.body.style.pointerEvents` is a shared global; any non-migrated Base UI primitive opened during this milestone could conflict with the stack. Recommend landing all primitives in one PR.\n",
+  "current_state": "done",
+  "iteration": 10,
+  "created_at": "2026-04-16T23:26:20Z",
+  "config": {
+    "project_dir": "/workspace/reigh-app",
+    "auto_approve": true,
+    "robustness": "standard",
+    "mode": "code",
+    "agent": ""
+  },
+  "sessions": {
+    "codex_gatekeeper": {
+      "id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "mode": "persistent",
+      "created_at": "2026-04-16T23:31:42Z",
+      "last_used_at": "2026-04-17T01:04:43Z",
+      "refreshed": true
+    },
+    "codex_planner": {
+      "id": "019d98e8-45a1-76c3-9a1b-b6f5fbd907f0",
+      "mode": "persistent",
+      "created_at": "2026-04-17T00:49:58Z",
+      "last_used_at": "2026-04-17T00:58:18Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019d98f4-6024-78d0-a815-2eaafc9be110",
+      "mode": "persistent",
+      "created_at": "2026-04-17T01:04:15Z",
+      "last_used_at": "2026-04-17T01:04:15Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019d98f8-06eb-7702-b8a7-1b5ba78e2ad2",
+      "mode": "persistent",
+      "created_at": "2026-04-17T01:05:53Z",
+      "last_used_at": "2026-04-17T01:05:53Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019d9930-1144-7b01-9fbf-563ad0b3e204",
+      "mode": "persistent",
+      "created_at": "2026-04-17T02:15:16Z",
+      "last_used_at": "2026-04-17T02:15:16Z",
+      "refreshed": false
+    },
+    "codex_reviewer": {
+      "id": "019d9938-a5f7-7850-a99b-e492827fbc88",
+      "mode": "persistent",
+      "created_at": "2026-04-17T02:18:45Z",
+      "last_used_at": "2026-04-17T02:18:45Z",
+      "refreshed": true
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:c3a57a44221efc4139e96feafe5ac59838ac27b3e5f7afa82bec5fed3fad5ca6",
+      "timestamp": "2026-04-16T23:28:40Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:32d1d44038746fed85da51b74ab54471acd28b4e96ff9aba8a45fe185928390f",
+      "timestamp": "2026-04-16T23:33:29Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:3d78da4aeb819324cd46be09b5688b759a04b9dcfd8fea409e9a9c0608da9ccb",
+      "timestamp": "2026-04-16T23:42:09Z"
+    },
+    {
+      "version": 4,
+      "file": "plan_v4.md",
+      "hash": "sha256:b47f2f42b87ff4e92c94dfc751bd31333dc547936fbc2159b60ca597e4b060de",
+      "timestamp": "2026-04-16T23:53:34Z"
+    },
+    {
+      "version": 5,
+      "file": "plan_v5.md",
+      "hash": "sha256:c3a9a1a444bf5a01726eecf3223c5a44f3c284ec92a0b77358fc72849c33d039",
+      "timestamp": "2026-04-17T00:05:29Z"
+    },
+    {
+      "version": 6,
+      "file": "plan_v6.md",
+      "hash": "sha256:03b4b3a06e2671fe435303af3f5e839f5b7672a0d9f661382bd36ec42bde6803",
+      "timestamp": "2026-04-17T00:16:02Z"
+    },
+    {
+      "version": 7,
+      "file": "plan_v7.md",
+      "hash": "sha256:30bb9a02fc5d207a95135146d9dd412488c668b30752511f685c2439b505a027",
+      "timestamp": "2026-04-17T00:27:09Z"
+    },
+    {
+      "version": 8,
+      "file": "plan_v8.md",
+      "hash": "sha256:d9764a79f9f09f358e7b0694321fff765a5ed393d1460ef0a7d47332605cea54",
+      "timestamp": "2026-04-17T00:37:57Z"
+    },
+    {
+      "version": 9,
+      "file": "plan_v9.md",
+      "hash": "sha256:02c0b0da14c99b9de78360d3f20b467f1f7f8a0677d2b3e6dee186b6ff3b37bd",
+      "timestamp": "2026-04-17T00:49:58Z"
+    },
+    {
+      "version": 10,
+      "file": "plan_v10.md",
+      "hash": "sha256:5aaf06b610538f3ec0c3da45337c382db07548323f572cc08718ee6da8734c62",
+      "timestamp": "2026-04-17T00:58:18Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-16T23:26:20Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-16T23:28:40Z",
+      "duration_ms": 139913,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d989d-f4c4-7852-9e09-f2386d2aab11",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:c3a57a44221efc4139e96feafe5ac59838ac27b3e5f7afa82bec5fed3fad5ca6"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-16T23:31:23Z",
+      "duration_ms": 161721,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a0-18d0-7f42-8e91-5448f176cc9b",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:6334aa17d25867e2d8d6c93b80cb8bb7cb4c3466d4ad7cb255ec3cf92bc919bc",
+      "flags_count": 14
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-16T23:31:42Z",
+      "duration_ms": 16575,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:c91b88677010e23c94b2873ee9edb6d1f0e218fc20df881b6874214a6d97bbb4",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-16T23:33:29Z",
+      "duration_ms": 105330,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d989d-f4c4-7852-9e09-f2386d2aab11",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:32d1d44038746fed85da51b74ab54471acd28b4e96ff9aba8a45fe185928390f",
+      "flags_addressed": [
+        "FLAG-001",
+        "FLAG-002",
+        "FLAG-003",
+        "issue_hints-1",
+        "issue_hints-2",
+        "correctness-1",
+        "correctness-2",
+        "scope-1",
+        "scope-2",
+        "all_locations-1",
+        "all_locations-2",
+        "callers"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-16T23:37:32Z",
+      "duration_ms": 140711,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a6-08fa-7862-bed0-07a9c8dd1205",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:61992c5da63a0d9c88e082a5b29a81e568078fdad083c8401ecdedb12254313a",
+      "flags_count": 9
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-16T23:37:52Z",
+      "duration_ms": 17528,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:6c9a3a7b243261dd5248b7dcb6be436dbe106d5e42bc1b2c9c51a191a617d104",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-16T23:42:09Z",
+      "duration_ms": 152228,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98aa-197c-7692-958b-8de8de09ec8a",
+      "agent": "codex",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:3d78da4aeb819324cd46be09b5688b759a04b9dcfd8fea409e9a9c0608da9ccb",
+      "flags_addressed": [
+        "callers",
+        "FLAG-004",
+        "FLAG-005",
+        "issue_hints",
+        "correctness",
+        "scope",
+        "all_locations"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-16T23:48:59Z",
+      "duration_ms": 218840,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98af-5524-74f3-bc65-ad09e6b6ac68",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:7e97d2f06bce792087cbe9f44a89875b6d6c33fed9a7914a72d7e3c3f66e434b",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-16T23:49:17Z",
+      "duration_ms": 15526,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:d25b3aa54d6998f4766286bb34ce3b67831d50d55f182f83a9733f3e7a1307f0",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-16T23:53:34Z",
+      "duration_ms": 128368,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98b4-e849-78c2-8756-9c7936954d15",
+      "agent": "codex",
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:b47f2f42b87ff4e92c94dfc751bd31333dc547936fbc2159b60ca597e4b060de",
+      "flags_addressed": [
+        "callers",
+        "issue_hints",
+        "correctness",
+        "scope",
+        "all_locations",
+        "FLAG-006"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T00:00:40Z",
+      "duration_ms": 234813,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98b9-c717-7503-a12a-774ce79ae632",
+      "agent": "codex",
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:de5c6ec510a7ffa79c6cae90eb6c5d07d711f8ac74b6559be177492669ce23c9",
+      "flags_count": 9
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T00:00:58Z",
+      "duration_ms": 16115,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:36ac7783fde9f12c79b6fa1471926362683c69ea6cc5ca1cf28a35789c9771ea",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T00:05:29Z",
+      "duration_ms": 127087,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98bf-d6d1-7723-bae7-76e223f07bd0",
+      "agent": "codex",
+      "output_file": "plan_v5.md",
+      "artifact_hash": "sha256:c3a9a1a444bf5a01726eecf3223c5a44f3c284ec92a0b77358fc72849c33d039",
+      "flags_addressed": [
+        "callers",
+        "issue_hints",
+        "correctness",
+        "scope",
+        "all_locations",
+        "FLAG-007",
+        "FLAG-008"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T00:10:33Z",
+      "duration_ms": 192317,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98c3-7b18-7063-8f1f-a87257aeb997",
+      "agent": "codex",
+      "output_file": "critique_v5.json",
+      "artifact_hash": "sha256:3c2b90488c5483b737cfb2f9e492795b47c1dc67aa5059ddb8377260cf93314e",
+      "flags_count": 11
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T00:10:55Z",
+      "duration_ms": 19777,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:28ff1e636853c2c3eae660b184af74b996ad1f6d594b087470433148a1c62ed6",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T00:16:02Z",
+      "duration_ms": 159426,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98c9-0085-75b1-a2db-78a90d2d668a",
+      "agent": "codex",
+      "output_file": "plan_v6.md",
+      "artifact_hash": "sha256:03b4b3a06e2671fe435303af3f5e839f5b7672a0d9f661382bd36ec42bde6803",
+      "flags_addressed": [
+        "all_locations-1",
+        "all_locations-2",
+        "callers",
+        "issue_hints",
+        "correctness",
+        "scope",
+        "FLAG-009",
+        "FLAG-011"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T00:21:33Z",
+      "duration_ms": 218432,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98cd-27d2-77f1-ab73-0e751d11dd4d",
+      "agent": "codex",
+      "output_file": "critique_v6.json",
+      "artifact_hash": "sha256:8cf409d09e5d0724e26fb83c3464e0b820af3cac60269535d94512bb353994c6",
+      "flags_count": 9
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T00:21:54Z",
+      "duration_ms": 18300,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:2db7d3e72a99ecd3c9e0b980752a596975dda5ef050891c9f73973465ff907b3",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T00:27:09Z",
+      "duration_ms": 163013,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98d3-213f-7901-9826-410da350e0bf",
+      "agent": "codex",
+      "output_file": "plan_v7.md",
+      "artifact_hash": "sha256:30bb9a02fc5d207a95135146d9dd412488c668b30752511f685c2439b505a027",
+      "flags_addressed": [
+        "all_locations-1",
+        "all_locations-2",
+        "callers",
+        "issue_hints",
+        "correctness",
+        "FLAG-012"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T00:32:07Z",
+      "duration_ms": 197920,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98d7-2511-7632-9695-515ae48b2b41",
+      "agent": "codex",
+      "output_file": "critique_v7.json",
+      "artifact_hash": "sha256:b8e5c6fa1fb019a0ae9151ff9632f9c9e164c72fca31dfa98644c643bb564bdf",
+      "flags_count": 4
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T00:32:25Z",
+      "duration_ms": 14830,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:295a71ea735b197b2d43ad222ffe34b4beb8db1b99027c9325eaa900d1d6310e",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T00:37:57Z",
+      "duration_ms": 160037,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98dd-0da2-7ae1-b2be-c8dad59ab4a0",
+      "agent": "codex",
+      "output_file": "plan_v8.md",
+      "artifact_hash": "sha256:d9764a79f9f09f358e7b0694321fff765a5ed393d1460ef0a7d47332605cea54",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "overlay-precedence-1"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T00:43:55Z",
+      "duration_ms": 197990,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98e1-f1f0-7870-9c1c-9670ba198ba3",
+      "agent": "codex",
+      "output_file": "critique_v8.json",
+      "artifact_hash": "sha256:8756d3dd03bf736b9d663996d4695bf6359df4ff7abcdc69f612810f50f92a86",
+      "flags_count": 5
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T00:44:32Z",
+      "duration_ms": 34463,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:3f68dda066c1c7447b62a979a23f91b2fd75ee197b81f7c98a2af8c78d47c7e5",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T00:49:58Z",
+      "duration_ms": 145804,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98e8-45a1-76c3-9a1b-b6f5fbd907f0",
+      "agent": "codex",
+      "output_file": "plan_v9.md",
+      "artifact_hash": "sha256:02c0b0da14c99b9de78360d3f20b467f1f7f8a0677d2b3e6dee186b6ff3b37bd",
+      "flags_addressed": [
+        "issue_hints",
+        "all_locations",
+        "menu-submenu-1"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T00:55:31Z",
+      "duration_ms": 139998,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98ed-74e4-72b2-b0a3-08e386e66457",
+      "agent": "codex",
+      "output_file": "critique_v9.json",
+      "artifact_hash": "sha256:e9de0c5ed0d44b9fcb54bc80d9ac12b4e4c9d385c871a3f50b7f8100736b9872",
+      "flags_count": 3
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T00:55:52Z",
+      "duration_ms": 17317,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:f3d24c20e7586fa98549921f1b5e0a154d093c3cf1bbf16d4130bb0588715aa7",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T00:58:18Z",
+      "duration_ms": 144805,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98e8-45a1-76c3-9a1b-b6f5fbd907f0",
+      "agent": "codex",
+      "output_file": "plan_v10.md",
+      "artifact_hash": "sha256:5aaf06b610538f3ec0c3da45337c382db07548323f572cc08718ee6da8734c62",
+      "flags_addressed": [
+        "all_locations"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T01:04:15Z",
+      "duration_ms": 209692,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98f4-6024-78d0-a815-2eaafc9be110",
+      "agent": "codex",
+      "output_file": "critique_v10.json",
+      "artifact_hash": "sha256:41ccfa55878ad89dc072c5297b94dc8d77a7c94d23a7f149e6d658f974fa3df1",
+      "flags_count": 3
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T01:04:43Z",
+      "duration_ms": 25804,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98a2-9a3b-7fe1-82dc-ac85edc30adc",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:6e5c9d58aac1704cbe259c17447a6b6544ba53252ee31712e40d93254a5f9c02",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-17T01:05:53Z",
+      "duration_ms": 68957,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d98f8-06eb-7702-b8a7-1b5ba78e2ad2",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:bf158b886be1d0ceeee79ee8a53fb3c3ff03b18b5e807d8d5e8615ddb9272236"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T02:15:16Z",
+      "duration_ms": 559146,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9930-1144-7b01-9fbf-563ad0b3e204",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f9c3177e5902acbe67228882e71ebe5bff5ea9af5cfd579dad679a3bfa9ee64b",
+      "finalize_hash": "sha256:2bc5cd8af59b39f37f29da319411baba48ace1c8bf7bb9829050f155bcc7c76e",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-17T02:18:45Z",
+      "duration_ms": 206059,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9938-a5f7-7850-a99b-e492827fbc88",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:1f7a94dea012a2513cd7cd32c1d74c1197f331f3bf68ffd7b8b39772b0c30926",
+      "finalize_hash": "sha256:3780c556551ef198d0bdd2becb27dc854f5da2ab8a743781d904bdfb5693eebe"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      12,
+      7,
+      6,
+      7,
+      8,
+      6,
+      3,
+      3,
+      1,
+      1
+    ],
+    "weighted_scores": [
+      20.5,
+      12.0,
+      10.0,
+      10.5,
+      13.5,
+      10.0,
+      5.5,
+      5.0,
+      1.5,
+      1.5
+    ],
+    "plan_deltas": [
+      88.12,
+      94.95,
+      63.29,
+      85.69,
+      74.13,
+      89.68,
+      6.79,
+      86.7,
+      2.69
+    ],
+    "recurring_critiques": [
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      []
+    ],
+    "total_cost_usd": 0.0,
+    "overrides": [],
+    "notes": [],
+    "user_approved_gate": true
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "The plan is ready to execute. Score has dropped to 1.5 after 10 iterations, there are no recurring critiques, preflight is clean, and the lone remaining significant flag is about one validation command being too coarse, not about subsystem choice, technical correctness, or missing migration scope. The plan already narrows the actual implementation and invariant surface to the centralized overlay wrappers, menu submenu branches, lightbox migration, helper cleanup, and call-site escape-hatch removal. That is sufficient to move forward without another rewrite cycle.",
+    "reprompted": false,
+    "signals_assessment": "Weighted score improved from 20.5 to 1.5 and then stabilized, with 29 resolved flags and only 1 open significant flag. The remaining flag is completeness-oriented and limited to validation ergonomics for a repo-wide z-index grep, not the core design. Preflight is fully green: project exists, is writable, criteria are present, and executor tooling is available. Given the low score, lack of reopened critiques, and clean preflight posture, execution should continue now.",
+    "warnings": [
+      "Iteration 10: high iteration count.",
+      "Do not treat the broad repo-wide numeric z-index grep as a literal pass/fail invariant for the whole repository; it will include intentional non-overlay layout layers.",
+      "During execution, rely on the wrapper-only z-index invariant and targeted migrated-overlay consumer checks as the hard gates for layering centralization.",
+      "Manual runtime behaviors in the deferred-human list must be reported as `skipped` immediately if encountered; do not block or retry them in sandbox."
+    ],
+    "settled_decisions": [
+      {
+        "id": "scope-na-families",
+        "decision": "`ContextMenu` and `Drawer` remain explicit verified N/A families unless a real Base UI owner appears during execution.",
+        "rationale": "Repo inspection already established no `@base-ui/react/context-menu` or `@base-ui/react/drawer` usage under `src/`, and the visible drawer-like `ToolsPaneDrawer` is bespoke and out of scope."
+      },
+      {
+        "id": "non-modal-overlay-semantics",
+        "decision": "Tooltip and preview-card participate in ordering/layer assignment only, not modal body-lock or focus restoration.",
+        "rationale": "This is now an explicit implementation invariant in the plan and should not be reopened during review."
+      },
+      {
+        "id": "precedence-source-of-truth",
+        "decision": "Overlay-stack identity/topmost queries replace DOM-marker and computed-z-index precedence for migrated flows.",
+        "rationale": "The plan explicitly retires `targetHasHigherZIndex()` and related DOM/z-index precedence helpers for lightbox and Lora flows, avoiding dual ownership."
+      },
+      {
+        "id": "menu-branch-coverage",
+        "decision": "Both `DropdownMenuContent` and `DropdownMenuSubContent` must register with the stack and must not retain hardcoded numeric layering.",
+        "rationale": "The submenu branch is a distinct portal/positioner path and was called out explicitly to prevent partial menu migration."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting."
+  }
+}

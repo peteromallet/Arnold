@@ -1,0 +1,112 @@
+{
+  "output": "Batch 7 executed for `T8`. Layering-only caller escape hatches were removed or neutralized across migrated overlay consumers and forwarded wrapper paths. The hard-gate grep for `overlayClassName`, `zIndexBase`, `tooltipClassName`, and overlay consumer `className` z-index overrides now returns empty. Validation passed with `npx tsc --noEmit` and full `npm test` (`883` test files, `4558` tests). Checkpoint written to `.megaplan/plans/m2-overlay-stack-centralize-20260416-2326/execution_batch_7.json`.",
+  "files_changed": [
+    "/workspace/reigh-app/src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/ButtonGroups.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/ShotSelectorControls.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/WorkflowControlsBar.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/controls/PositionToggleButton.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/controls/UndoClearButtons.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/editModes/sharedSections.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/LightboxLayout.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx",
+    "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx",
+    "/workspace/reigh-app/src/shared/components/ProfitSplitBar.tsx",
+    "/workspace/reigh-app/src/shared/components/VariantSelector/VariantSelector.tsx",
+    "/workspace/reigh-app/src/shared/components/VariantSelector/components/VariantCard.tsx",
+    "/workspace/reigh-app/src/shared/components/selectors/ShotSelector.tsx",
+    "/workspace/reigh-app/src/shared/components/selectors/ShotSelectorWithAdd.tsx",
+    "/workspace/reigh-app/src/shared/components/shots/ShotPrimaryActionButton.tsx",
+    "/workspace/reigh-app/src/shared/components/ui/overlay/dialog.tsx",
+    "/workspace/reigh-app/.megaplan/plans/m2-overlay-stack-centralize-20260416-2326/execution_batch_7.json"
+  ],
+  "commands_run": [
+    "git status --short",
+    "rg -n \"overlayClassName|zIndexBase|tooltipClassName|zIndex\\s*[:=]|z-\\[[0-9]+\\]|z-[0-9]+\" src/",
+    "rg -n \"overlayClassName|zIndexBase|tooltipClassName\" src/",
+    "sed -n '1,220p' src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+    "sed -n '1,260p' src/shared/components/selectors/ShotSelectorWithAdd.tsx",
+    "sed -n '1,180p' src/shared/components/shots/ShotPrimaryActionButton.tsx",
+    "sed -n '1,220p' src/shared/components/ui/overlay/dialog.tsx",
+    "rg -n \"overlayClassName=|zIndexBase=|tooltipClassName=|contentClassName=.*z-|className=.*z-\\[[0-9]+\\].*(TooltipContent|PopoverContent|SelectContent|DropdownMenuContent|DialogContent)|UI_Z_LAYERS\\.(LIGHTBOX_MODAL|TOOLTIP|DROPDOWN|MODAL)\" src/",
+    "rg -n \"overlayClassName|zIndexBase|tooltipClassName|z-\\[1000|z-50|z-\\[100\" src/domains src/shared src/tools",
+    "rg -n \"<TooltipContent[^\\n>]*className=|tooltipClassName=|contentClassName=.*z-|<SelectContent[^\\n>]*className=|<DialogContent[^\\n>]*(overlayClassName|zIndexBase)=|overlayClassName=|zIndexBase=\" src/",
+    "rg -n \"ShotPrimaryActionButton\" src/",
+    "sed -n '1,280p' src/shared/components/selectors/ShotSelector.tsx",
+    "sed -n '1,260p' src/shared/components/ui/overlay/select.tsx",
+    "rg -n \"<(TooltipContent|HoverCardContent|PopoverContent|SelectContent|DropdownMenuContent|DropdownMenuSubContent|DialogContent|AlertDialogContent)[^\\n>]*className=.*z-\" src/",
+    "sed -n '120,170p' src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx",
+    "sed -n '120,175p' src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx",
+    "sed -n '220,260p' src/shared/components/VariantSelector/components/VariantCard.tsx",
+    "npx tsc --noEmit",
+    "npm test",
+    "git diff --name-only -- src/ .megaplan/plans/m2-overlay-stack-centralize-20260416-2326 | sort",
+    "rg -n \"overlayClassName|zIndexBase|tooltipClassName|<(TooltipContent|HoverCardContent|PopoverContent|SelectContent)[^\\n>]*className=.*z-\" src/",
+    "git diff --stat -- src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx src/shared/components/shots/ShotPrimaryActionButton.tsx src/shared/components/selectors/ShotSelectorWithAdd.tsx src/shared/components/selectors/ShotSelector.tsx src/shared/components/ui/overlay/dialog.tsx src/domains/media-lightbox/components/editModes/sharedSections.tsx src/domains/media-lightbox/components/controls/PositionToggleButton.tsx src/domains/media-lightbox/components/controls/UndoClearButtons.tsx src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx src/domains/media-lightbox/components/layouts/LightboxLayout.tsx src/domains/media-lightbox/components/WorkflowControlsBar.tsx src/domains/media-lightbox/components/ShotSelectorControls.tsx src/domains/media-lightbox/components/ButtonGroups.tsx src/shared/components/VariantSelector/VariantSelector.tsx src/shared/components/VariantSelector/components/VariantCard.tsx src/shared/components/ProfitSplitBar.tsx src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx"
+  ],
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/m2-overlay-stack-centralize-20260416-2326/execution_batch_7.json, src/shared/components/ui/overlay/dialog.tsx",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/plans/milestone-m1b-from-docs-state-20260416-1226/, .megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/, test-results/",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Removed the remaining caller-side layering escape hatches from migrated overlay consumers and the forwarded dialog/tooltip paths. Lora modal no longer passes `overlayClassName`/`zIndexBase`; `ShotPrimaryActionButton` no longer forwards `tooltipClassName`; `ShotSelector` dropped its hardcoded popover `z-[10000]`; lightbox, variant-selector, hover-card, and select consumer callsites had numeric overlay `z-*` classes removed while preserving non-layering styling. Hard-gate cleanup verified with `rg -n \"overlayClassName|zIndexBase|tooltipClassName|<(TooltipContent|HoverCardContent|PopoverContent|SelectContent)[^\\n>]*className=.*z-\" src/`, which now returns empty. Validation passed with `npx tsc --noEmit` and full `npm test` (`883` files, `4558` tests).",
+      "files_changed": [
+        "/workspace/reigh-app/src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/ButtonGroups.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/ShotSelectorControls.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/WorkflowControlsBar.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/controls/PositionToggleButton.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/controls/UndoClearButtons.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/editModes/sharedSections.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/LightboxLayout.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx",
+        "/workspace/reigh-app/src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx",
+        "/workspace/reigh-app/src/shared/components/ProfitSplitBar.tsx",
+        "/workspace/reigh-app/src/shared/components/VariantSelector/VariantSelector.tsx",
+        "/workspace/reigh-app/src/shared/components/VariantSelector/components/VariantCard.tsx",
+        "/workspace/reigh-app/src/shared/components/selectors/ShotSelector.tsx",
+        "/workspace/reigh-app/src/shared/components/selectors/ShotSelectorWithAdd.tsx",
+        "/workspace/reigh-app/src/shared/components/shots/ShotPrimaryActionButton.tsx",
+        "/workspace/reigh-app/src/shared/components/ui/overlay/dialog.tsx"
+      ],
+      "commands_run": [
+        "git status --short",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName|zIndex\\s*[:=]|z-\\[[0-9]+\\]|z-[0-9]+\" src/",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName\" src/",
+        "sed -n '1,220p' src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx",
+        "sed -n '1,260p' src/shared/components/selectors/ShotSelectorWithAdd.tsx",
+        "sed -n '1,180p' src/shared/components/shots/ShotPrimaryActionButton.tsx",
+        "sed -n '1,220p' src/shared/components/ui/overlay/dialog.tsx",
+        "rg -n \"overlayClassName=|zIndexBase=|tooltipClassName=|contentClassName=.*z-|className=.*z-\\[[0-9]+\\].*(TooltipContent|PopoverContent|SelectContent|DropdownMenuContent|DialogContent)|UI_Z_LAYERS\\.(LIGHTBOX_MODAL|TOOLTIP|DROPDOWN|MODAL)\" src/",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName|z-\\[1000|z-50|z-\\[100\" src/domains src/shared src/tools",
+        "rg -n \"<TooltipContent[^\\n>]*className=|tooltipClassName=|contentClassName=.*z-|<SelectContent[^\\n>]*className=|<DialogContent[^\\n>]*(overlayClassName|zIndexBase)=|overlayClassName=|zIndexBase=\" src/",
+        "rg -n \"ShotPrimaryActionButton\" src/",
+        "sed -n '1,280p' src/shared/components/selectors/ShotSelector.tsx",
+        "sed -n '1,260p' src/shared/components/ui/overlay/select.tsx",
+        "rg -n \"<(TooltipContent|HoverCardContent|PopoverContent|SelectContent|DropdownMenuContent|DropdownMenuSubContent|DialogContent|AlertDialogContent)[^\\n>]*className=.*z-\" src/",
+        "sed -n '120,170p' src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx",
+        "sed -n '120,175p' src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx",
+        "sed -n '220,260p' src/shared/components/VariantSelector/components/VariantCard.tsx",
+        "npx tsc --noEmit",
+        "npm test",
+        "git diff --name-only -- src/ .megaplan/plans/m2-overlay-stack-centralize-20260416-2326 | sort",
+        "rg -n \"overlayClassName|zIndexBase|tooltipClassName|<(TooltipContent|HoverCardContent|PopoverContent|SelectContent)[^\\n>]*className=.*z-\" src/",
+        "git diff --stat -- src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx src/shared/components/shots/ShotPrimaryActionButton.tsx src/shared/components/selectors/ShotSelectorWithAdd.tsx src/shared/components/selectors/ShotSelector.tsx src/shared/components/ui/overlay/dialog.tsx src/domains/media-lightbox/components/editModes/sharedSections.tsx src/domains/media-lightbox/components/controls/PositionToggleButton.tsx src/domains/media-lightbox/components/controls/UndoClearButtons.tsx src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx src/domains/media-lightbox/components/layouts/LightboxLayout.tsx src/domains/media-lightbox/components/WorkflowControlsBar.tsx src/domains/media-lightbox/components/ShotSelectorControls.tsx src/domains/media-lightbox/components/ButtonGroups.tsx src/shared/components/VariantSelector/VariantSelector.tsx src/shared/components/VariantSelector/components/VariantCard.tsx src/shared/components/ProfitSplitBar.tsx src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Yes. The remaining layering-only escape hatches were removed from migrated overlay consumers and from the forwarded dialog/tooltip prop path, while unrelated layout z-index usage was left untouched. The hard-gate grep for `overlayClassName`, `zIndexBase`, `tooltipClassName`, and overlay component `className` z-index overrides now returns empty."
+    }
+  ]
+}

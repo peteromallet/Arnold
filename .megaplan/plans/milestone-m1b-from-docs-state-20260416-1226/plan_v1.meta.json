@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-16T14:28:35Z",
+  "hash": "sha256:3785fe05fc4e813ee070ebf1228556577ce72bd275b0701c3c940dd4afab7638",
+  "questions": [
+    "The brief references `docs/state_management_refactor_plan.md`, but that file is not present in this checkout. Should implementation treat the issue text plus current code as the authoritative source, or is there another in-repo replacement doc to follow?",
+    "The repository is currently on `megaplan/m1a-settings-store` with unrelated local changes. Should M1b implementation start from a fresh `main`-based worktree/branch as the brief requires, or should it be layered on top of the current dirty state?",
+    "For the required app-driven discovery and telemetry capture, what is the preferred reproducible setup for this repo: `npm run dev` against existing local data, or is there a specific seeded project/test account the PR should use for the gallery \u2194 timeline \u2194 shot smoke tests?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`src/shared/state/selectionStore.ts` owns gallery, timeline, and shot selection state, and no imports of `GallerySelectionContext`, `LastAffectedShotContext`, `CurrentShotContext`, or `ShotAdditionSelectionContext` remain under `src/`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Timeline selection ownership is migrated out of local React state in `useTimelineCommit`/`useTimelineState` and into the store without changing non-selection timeline responsibilities.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Cross-surface selection sync no longer depends on peer-clear/effect bridges; the migrated flows update relevant slices through explicit store actions.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` completes successfully after the migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The post-change test suite matches the agreed M0 baseline pass count, with no net regression.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Manual smoke checks confirm the preserved UX behaviors called out in the brief, including gallery \u2194 timeline highlighting, current shot propagation, last affected shot updates, and shot-addition selection survival.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Render telemetry shows gallery-only selection does not trigger timeline-only rerenders, and timeline-only selection does not trigger gallery-only rerenders.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Selectors that return grouped objects or arrays use stable equality (`shallow`) so consumer subscriptions stay domain-scoped.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The PR notes include the initial consumer inventory plus a before/after sketch for each removed effect-chain sync.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "If regressions cluster in one selection area during validation, the PR flags that cluster as a gating signal for re-scoping M1c.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "`src/shared/state/createEntityStore.ts` on the current mainline is sufficient evidence that the M1 dependency is available; M1a does not need to land first for this milestone.",
+    "The four context filenames/paths named in the brief are the current canonical files to delete; no renamed replacement context was found during repo inspection.",
+    "`selectionStore.ts` is the only new source file needed; helper hooks/selectors can live in that file to satisfy the repo's 'prefer editing existing files' constraint.",
+    "`LastAffectedShot` persistence remains React Query/settings-boundary owned, but the selection store becomes the runtime source of truth for consumers.",
+    "Manual behavior discovery and render-telemetry capture are part of implementation, not something that can be completed from static code review alone.",
+    "Because the referenced refactor-plan doc is missing from this checkout, the plan uses the issue brief, CLAUDE rules, and the current code as the working source of truth."
+  ],
+  "structure_warnings": []
+}

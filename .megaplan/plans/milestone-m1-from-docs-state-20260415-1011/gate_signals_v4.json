@@ -1,0 +1,264 @@
+{
+  "robustness": "standard",
+  "signals": {
+    "iteration": 4,
+    "idea": "Milestone M1 from docs/state_management_refactor_plan.md \u2014 Zustand foundation + port the smallest consumer.\n\nGoal: establish the store-factory pattern. Add Zustand. Write a generic entity-scoped store factory. Port `useJoinClipsSettings.ts` as the first consumer to validate the factory shape. No other migrations. This is the foundation that M1a, M1b, M1c, M3, M4 all build on.\n\n## Deliverables\n\n1. **Install Zustand**:\n   ```\n   npm install zustand\n   ```\n   Add to `package.json` dependencies. Verify no type conflicts.\n\n2. **`src/shared/state/createEntityStore.ts`** \u2014 generic entity-scoped store factory.\n\n   The factory creates a single Zustand store per domain (settings, selection, timeline, etc.) with entity state keyed by an `entityId`. Callers get a hook `useEntity(entityId)` that returns the shape needed by consumers.\n\n   **Factory signature:**\n   ```typescript\n   interface EntityStoreConfig<T extends object> {\n     toolId: string;                       // identifies the store (e.g. \"join-clips\")\n     defaults: T;                          // initial settings shape\n     load: (entityId: string) => Promise<{ db: T | null; lastUsed: T | null }>;\n     save: (entityId: string, data: T) => Promise<void>;\n     textFieldKeys?: readonly (keyof T)[];  // fields that save on blur/flush instead of debounce\n     persistenceDebounceMs?: number;         // default 300\n   }\n\n   interface EntityStoreApi<T extends object> {\n     useEntity: (entityId: string) => EntityView<T>;\n     // plus: direct action access for tests\n     getState: () => EntityStoreState<T>;\n   }\n\n   interface EntityView<T> {\n     settings: T;\n     status: 'idle' | 'loading' | 'ready' | 'saving' | 'error';\n     error: Error | null;\n     hasPersistedData: boolean;\n     updateField: <K extends keyof T>(key: K, value: T[K]) => void;\n     updateFields: (patch: Partial<T>) => void;\n     updateTextField: <K extends keyof T>(key: K, value: T[K]) => void;\n     flushTextFields: () => Promise<void>;\n     save: () => Promise<void>;\n     saveImmediate: () => Promise<void>;\n     revert: () => void;\n     reset: () => void;\n   }\n\n   function createEntityStore<T extends object>(config: EntityStoreConfig<T>): EntityStoreApi<T>;\n   ```\n\n   **Required behaviors:**\n   - Single Zustand store per factory instantiation. State shape: `{ entities: Record<entityId, EntityState<T>> }`.\n   - `useEntity(id)` subscribes the component to just that entity's slice. Different entity IDs do not cause cross-renders.\n   - Use `shallow` equality (from `zustand/shallow`) for selectors that return objects or arrays; default `Object.is` for primitives.\n   - Atomic bootstrap action: `bootstrapEntity({entityId, db, lastUsed})` merges in one dispatch \u2014 no multi-transition load sequence.\n   - On first mount for an entity: `useEntity` triggers a lazy load via `config.load()` and dispatches bootstrap.\n   - `updateField` / `updateFields`: optimistic write to settings, schedule debounced save.\n   - `updateTextField`: same state write but does NOT schedule the debounce \u2014 intended for prompt/textarea fields that should save on blur or flush.\n   - `flushTextFields`: force-save any pending text-field edits immediately.\n   - Debounce: 300ms default, configurable via `config.persistenceDebounceMs`.\n   - On React Query data arrival (for entities that source from RQ): scaffolding is responsible; the factory itself doesn't import RQ. The factory's `load` is invoked externally.\n\n3. **Port `useJoinClipsSettings.ts`** \u2014 smallest consumer, 5 fields, lowest risk.\n\n   **Current shape (verify at milestone start):**\n   ```\n   src/tools/join-clips/hooks/useJoinClipsSettings.ts\n   src/shared/lib/joinClips/defaults.ts\n   ```\n\n   **Port rules:**\n   - `useJoinClipsSettings(shotId: string)` public return shape UNCHANGED. Internal implementation switches to `createEntityStore`.\n   - Use the existing `JoinClipsSettings` type from current defaults.ts.\n   - Load fn and save fn use the existing `useToolSettings` / Supabase mechanism underneath. The factory is a layer above the existing save/load \u2014 don't reinvent persistence yet (that's M1a's job).\n   - Verify: `useJoinClipsSettings` tests pass unchanged. If tests reference internal state of the old hook, update the tests to use the public API.\n\n## Repo conventions (from reigh-app/CLAUDE.md)\n\n- Prefer editing existing files; don't create unnecessary new ones. `createEntityStore.ts` is new and justified.\n- No hardcoded colors. This milestone doesn't add UI \u2014 if any test renders, use theme tokens.\n- TypeScript strict. No `any`.\n- Don't modify any edge function, supabase migration, or worker-orchestrator code.\n- Don't touch `useAutoSaveSettings.ts` or any of the settings persistence helpers in this milestone \u2014 that's M1a.\n\n## Gate criteria (for human reviewer)\n\n- `npx tsc --noEmit` clean.\n- `npm test` at M0 baseline (4562 passing, 0 failing \u2014 any regression blocks).\n- `useJoinClipsSettings` tests unchanged behavior (may need test update if internals-coupled).\n- `createEntityStore` tests cover: bootstrap, update, flush, revert, reset, selector isolation between entities.\n- M0 telemetry unchanged (we didn't touch any instrumented surface).\n\n## Out of scope\n\n- Do not migrate any other consumer of `useAutoSaveSettings` (that's M1a).\n- Do not touch selection or timeline state (M1b, M1c).\n- Do not refactor `useDebouncedSettingsSave.ts` (M1a).\n- Do not change React Query behavior.\n- Do not add new cross-cutting patterns beyond the factory.\n\n## Branch\n\n`megaplan/m1-foundation-store` off main (pull latest main first \u2014 M0's telemetry PR may or may not be merged).\n\n## Base commit note\n\nIf this runs immediately after M0, M0's branch `megaplan/m0-render-telemetry` may still be unmerged on GitHub. This is fine \u2014 M1 depends conceptually on M0's existence, but the M0 branch doesn't need to be merged for M1 to proceed. M1 branches from origin/main and adds Zustand-related work in files that don't overlap with M0's telemetry changes.",
+    "significant_flags": 7,
+    "unresolved_flags": [
+      {
+        "id": "issue_hints",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the revised plan against the tiebreaker verdict included in the user notes. The verdict explicitly settles the architecture the other way: for RQ-backed settings, `useEntity(id)` should be a reader only, `createEntityStore.load/save` should be reserved for store-owned entities, any RQ-to-store participation must live inside the settings boundary hook, and `useJoinClipsSettings` should stay a thin passthrough over `useAutoSaveSettings`. The current plan still says the factory is the sole authority for join-clips hydration/persistence and introduces a delegate bridge inside `useJoinClipsSettings`, so it directly contradicts the settled tiebreaker rather than revising to it.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "scope",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Checked the plan against the narrowed scope in the tiebreaker. The approved split is broader architecturally but narrower operationally: `createEntityStore` should serve store-owned entities, while RQ-backed settings like join-clips remain on the existing `useAutoSaveSettings` boundary unchanged. The current plan still broadens M1 into a new delegate-registry architecture for an RQ-backed consumer, which is beyond the settled scope for this milestone and no longer matches the 'thin passthrough' decision.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Checked the repository locations that currently own the RQ-backed settings invariants. Those behaviors live in the shared settings boundary, especially `src/shared/settings/hooks/useAutoSaveSettings.ts`, `src/shared/settings/hooks/autoSaveSettingsLoaders.ts`, and `src/shared/settings/hooks/useDebouncedSettingsSave.ts`. The tiebreaker says any RQ-to-store sync must live inside that boundary hook, but the current plan still relocates the integration into `src/tools/join-clips/hooks/useJoinClipsSettings.ts` plus a module-local delegate registry, so it still misses the actual supporting boundary locations where the repository already contains the pending-edit and load-order protections.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the actual public caller model again. `JoinClipsPage` still passes `selectedProjectId`, and the hook is currently just a thin passthrough wrapper over `useAutoSaveSettings`; the tiebreaker explicitly preserves that boundary for this RQ-backed consumer. The current plan still changes the hook into a delegate-registration boundary with module-local lifecycle concerns, so it is still not handling the caller contract in the approved place.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness",
+        "concern": "Are the proposed changes technically correct?: Checked the current single-authority delegate design against the required first-mount lazy-load behavior. The plan still says `useEntity(projectId)` triggers the factory's authoritative `load()` and that per-project delegates are registered from inside `useJoinClipsSettings`; if that registration has not happened yet, the plan still allows the load path to bootstrap defaults-compatible empty data. Because the same plan also says first-mount `load()` is authoritative and runs once per entity, the original race remains unresolved in practice.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-M1-007",
+        "concern": "Delegate registration: the revised single-authority design still has a first-mount race because the factory's required lazy `load()` can run before the hook registers the per-project delegate, and the current fallback still bootstraps empty/default data.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-M1-008",
+        "concern": "Delegate lifecycle: the module-local registry remains keyed only by `projectId` and still does not define ownership or ref-counting, so multiple hook instances for the same entity can overwrite or unregister each other's adapters.",
+        "category": "maintainability",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "resolved_flags": [
+      {
+        "id": "FLAG-M1-001",
+        "concern": "Settings-store adapter: the proposed join-clips bridge is still inconsistent with the real `useToolSettings` API and the factory's `load/save` contract, so the first migration path is under-specified at the persistence boundary.",
+        "resolution": "Reworked the plan around the real blocking issue: `useToolSettings` cannot be the factory\u2019s persistence API. The revision now uses lower-level existing settings helpers for `load/save`, treats `useJoinClipsSettings` as a full-contract passthrough that must keep every current public member, explicitly defines the join-clips `lastUsed` handling for M1, and names the real join-clips integration touch points without expanding the milestone beyond one consumer migration."
+      },
+      {
+        "id": "FLAG-M1-002",
+        "concern": "Join-clips migration surface: the plan still frames `useJoinClipsSettings` as a tiny five-field consumer, but the actual repository uses a much larger settings shape and more integration points, so the risk and test surface are understated.",
+        "resolution": "Current join-clips code reads or writes many settings beyond the five named in the brief, including prompts, motion settings, LoRA sync, clip arrays, transition prompts, loop toggles, and VACE-derived defaults across `JoinClipsPage`, `useClipManager`, and `useJoinClipsGenerate`."
+      },
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: Checked the revised adapter plan for `initializeFrom` against the actual implementation in `src/shared/settings/hooks/useAutoSaveSettings.ts`. Today `initializeFrom` is custom-mode-only and is a no-op for project-scoped `useJoinClipsSettings`, because `useJoinClipsSettings` calls `useAutoSaveSettings` without `customLoadSave`. The revised plan says the adapter should reintroduce `initializeFrom(data)` as a local helper that applies a partial object into settings, which would change the current public behavior rather than preserve it.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: Checked the revised open question about `reset()` semantics against the current repository behavior and tests in `src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts`. The existing hook already answers part of that question: `reset()` is a local reset that clears pending work and updates the clean baseline without performing a save, so leaving reset semantics open in M1 is still a correctness gap if the plan claims to preserve the full current contract for the first port.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "FLAG-M1-003",
+        "concern": "Settings contract: the revised adapter still changes `initializeFrom` semantics by turning a currently non-custom no-op into a state-mutating helper for `useJoinClipsSettings`.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "FLAG-M1-004",
+        "concern": "React Query integration: the revised persistence design fixes the hook/factory mismatch but still risks changing current join-clips behavior by bypassing the existing `useToolSettings` query layer and its cache/invalidation semantics.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "FLAG-M1-005",
+        "concern": "Store hydration: the revised plan still leaves a race between the factory's required lazy `load()` path and the hook-local React Query bootstrap path for the same entity.",
+        "resolution": "Revised the plan around a single-authority model. The factory now stays fully responsible for lazy load and persistence, while `useJoinClipsSettings` only registers per-project delegates backed by `useToolSettings`. That removes the race between factory load and hook-local bootstrap, makes the bridge API concrete, and keeps the first consumer validating the factory contract."
+      },
+      {
+        "id": "FLAG-M1-006",
+        "concern": "Factory validation: the first consumer no longer clearly validates the factory's own persistence contract because the revised join-clips plan moves actual save scheduling and query-driven hydration into hook-local scaffolding.",
+        "resolution": "Revised the plan around a single-authority model. The factory now stays fully responsible for lazy load and persistence, while `useJoinClipsSettings` only registers per-project delegates backed by `useToolSettings`. That removes the race between factory load and hook-local bootstrap, makes the bridge API concrete, and keeps the first consumer validating the factory contract."
+      }
+    ],
+    "weighted_score": 11.25,
+    "weighted_history": [
+      10.0,
+      11.5,
+      8.5,
+      9.75
+    ],
+    "plan_delta_from_previous": 54.5,
+    "recurring_critiques": [],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 4. Weighted score trajectory: 10.0 -> 11.5 -> 8.5 -> 9.75 -> 11.25. Plan deltas: 83.9%, 94.2%, 54.5%. Recurring critiques: 0. Resolved flags: 8. Open significant flags: 7.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "warnings": [],
+  "criteria_check": {
+    "count": 12,
+    "items": [
+      {
+        "criterion": "`zustand` is added to `package.json` dependencies and the repo still passes `npx tsc --noEmit` without new type conflicts.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`src/shared/state/createEntityStore.ts` implements the milestone factory API with a single store per factory instance, atomic bootstrap, lazy entity load, debounced save, text-field flush, revert, reset, and selector isolation between entity IDs.",
+        "priority": "must"
+      },
+      {
+        "criterion": "For the join-clips port, the factory is the only authority for entity hydration and persistence actions; there is no separate hook-local bootstrap path that can race the store\u2019s first-mount `load()` behavior.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`useJoinClipsSettings(projectId)` is ported to the new store while preserving the full current public contract, including `entityId`, `isDirty`, `error`, `hasShotSettings`, `hasPersistedData`, `updateTextField`, `updateTextFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom`.",
+        "priority": "must"
+      },
+      {
+        "criterion": "The join-clips port preserves the existing React Query-backed settings behavior by routing factory `load/save` through a concrete per-project delegate bridge backed by `useToolSettings`, not by bypassing the query layer.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`reset()` in the ported join-clips hook remains a local non-saving reset, and `initializeFrom()` preserves current no-op behavior for this non-custom consumer.",
+        "priority": "must"
+      },
+      {
+        "criterion": "Join-clips bootstrap semantics are explicit and tested as `db ?? lastUsed ?? defaults`, with `lastUsed` currently `null` for this first consumer unless an existing repository source is found.",
+        "priority": "must"
+      },
+      {
+        "criterion": "Factory tests cover bootstrap, optimistic updates, text-field flush, revert, local non-save reset, first-mount lazy-load authority, and selector isolation between two entity IDs.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`useJoinClipsSettings` tests verify unchanged public behavior and also prove that first-mount hydration and persistence flow through the factory-owned delegate-backed path rather than a second hook-local bootstrap path.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`npm test` passes at or above the stated M0 baseline with no regressions introduced by the Zustand foundation work.",
+        "priority": "must"
+      },
+      {
+        "criterion": "The implementation stays within M1 scope: one new factory, one ported consumer, and only minimal compatibility edits in join-clips callers/tests; no other `useAutoSaveSettings` consumer is migrated.",
+        "priority": "should"
+      },
+      {
+        "criterion": "M0 telemetry behavior remains unchanged because no instrumented surface is modified in this milestone.",
+        "priority": "info"
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "issue_hints",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the revised plan against the tiebreaker verdict included in the user notes. The verdict explicitly settles the architecture the other way: for RQ-backed settings, `useEntity(id)` should be a reader only, `createEntityStore.load/save` should be reserved for store-owned entities, any RQ-to-store participation must live inside the settings boundary hook, and `useJoinClipsSettings` should stay a thin passthrough over `useAutoSaveSettings`. The current plan still says the factory is the sole authority for join-clips hydration/persistence and introduces a delegate bridge inside `useJoinClipsSettings`, so it directly contradicts the settled tiebreaker rather than revising to it.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the revised plan against the tiebreaker verdict included in the user notes. The verdict explicitly settles the architecture the other way: for RQ-backed settings, `useEntity(id)` should be a reader only, `createEntityStore.load/save` should be reserved for store-owned entities, any RQ-to-store participation must live inside the settings boundary hook, and `useJoinClipsSettings` should stay a thin passthrough over `useAutoSaveSettings`. The current plan still says the factory is the sole authority for join-clips hydration/persistence and introduces a delegate bridge inside `useJoinClipsSettings`, so it directly contradicts the settled tiebreaker rather than revising to it.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "scope",
+      "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Checked the plan against the narrowed scope in the tiebreaker. The approved split is broader architecturally but narrower operationally: `createEntityStore` should serve store-owned entities, while RQ-backed settings like join-clips remain on the existing `useAutoSaveSettings` boundary unchanged. The current plan still broadens M1 into a new delegate-registry architecture for an RQ-backed consumer, which is beyond the settled scope for this milestone and no longer matches the 'thin passthrough' decision.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the plan against the narrowed scope in the tiebreaker. The approved split is broader architecturally but narrower operationally: `createEntityStore` should serve store-owned entities, while RQ-backed settings like join-clips remain on the existing `useAutoSaveSettings` boundary unchanged. The current plan still broadens M1 into a new delegate-registry architecture for an RQ-backed consumer, which is beyond the settled scope for this milestone and no longer matches the 'thin passthrough' decision.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v3.md",
+      "verified_in": "critique_v3.json"
+    },
+    {
+      "id": "all_locations",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: Checked the repository locations that currently own the RQ-backed settings invariants. Those behaviors live in the shared settings boundary, especially `src/shared/settings/hooks/useAutoSaveSettings.ts`, `src/shared/settings/hooks/autoSaveSettingsLoaders.ts`, and `src/shared/settings/hooks/useDebouncedSettingsSave.ts`. The tiebreaker says any RQ-to-store sync must live inside that boundary hook, but the current plan still relocates the integration into `src/tools/join-clips/hooks/useJoinClipsSettings.ts` plus a module-local delegate registry, so it still misses the actual supporting boundary locations where the repository already contains the pending-edit and load-order protections.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the repository locations that currently own the RQ-backed settings invariants. Those behaviors live in the shared settings boundary, especially `src/shared/settings/hooks/useAutoSaveSettings.ts`, `src/shared/settings/hooks/autoSaveSettingsLoaders.ts`, and `src/shared/settings/hooks/useDebouncedSettingsSave.ts`. The tiebreaker says any RQ-to-store sync must live inside that boundary hook, but the current plan still relocates the integration into `src/tools/join-clips/hooks/useJoinClipsSettings.ts` plus a module-local delegate registry, so it still misses the actual supporting boundary locations where the repository already contains the pending-edit and load-order protections.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "callers",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the actual public caller model again. `JoinClipsPage` still passes `selectedProjectId`, and the hook is currently just a thin passthrough wrapper over `useAutoSaveSettings`; the tiebreaker explicitly preserves that boundary for this RQ-backed consumer. The current plan still changes the hook into a delegate-registration boundary with module-local lifecycle concerns, so it is still not handling the caller contract in the approved place.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the actual public caller model again. `JoinClipsPage` still passes `selectedProjectId`, and the hook is currently just a thin passthrough wrapper over `useAutoSaveSettings`; the tiebreaker explicitly preserves that boundary for this RQ-backed consumer. The current plan still changes the hook into a delegate-registration boundary with module-local lifecycle concerns, so it is still not handling the caller contract in the approved place.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v3.md",
+      "verified_in": "critique_v3.json"
+    },
+    {
+      "id": "correctness",
+      "concern": "Are the proposed changes technically correct?: Checked the current single-authority delegate design against the required first-mount lazy-load behavior. The plan still says `useEntity(projectId)` triggers the factory's authoritative `load()` and that per-project delegates are registered from inside `useJoinClipsSettings`; if that registration has not happened yet, the plan still allows the load path to bootstrap defaults-compatible empty data. Because the same plan also says first-mount `load()` is authoritative and runs once per entity, the original race remains unresolved in practice.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the current single-authority delegate design against the required first-mount lazy-load behavior. The plan still says `useEntity(projectId)` triggers the factory's authoritative `load()` and that per-project delegates are registered from inside `useJoinClipsSettings`; if that registration has not happened yet, the plan still allows the load path to bootstrap defaults-compatible empty data. Because the same plan also says first-mount `load()` is authoritative and runs once per entity, the original race remains unresolved in practice.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "FLAG-M1-007",
+      "concern": "Delegate registration: the revised single-authority design still has a first-mount race because the factory's required lazy `load()` can run before the hook registers the per-project delegate, and the current fallback still bootstraps empty/default data.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The plan continues to pair factory-owned first-mount `load()` with hook-local adapter registration and a missing-delegate fallback to defaults-compatible empty data; that leaves the same one-time bootstrap hazard open.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-M1-008",
+      "concern": "Delegate lifecycle: the module-local registry remains keyed only by `projectId` and still does not define ownership or ref-counting, so multiple hook instances for the same entity can overwrite or unregister each other's adapters.",
+      "category": "maintainability",
+      "severity_hint": "likely-significant",
+      "evidence": "The plan still describes `registerJoinClipsPersistence(projectId, adapter)` / `unregisterJoinClipsPersistence(projectId)` as simple module-local operations and does not add any caller-ownership rules despite the earlier critique.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ]
+}

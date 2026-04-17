@@ -1,0 +1,171 @@
+{
+  "question": "For `createEntityStore` in the M1 state-management refactor, should React Query stay authoritative (`A`), should the store become authoritative (`B`), or should ownership be declared per entity (`C`), given the current `useToolSettings`/`useAutoSaveSettings` design, the existing race protections, and the goal of porting `useJoinClipsSettings` without introducing a competing bootstrap path?",
+  "evidence": [
+    {
+      "claim": "The repository does not currently have a Zustand layer, and the documented frontend architecture still assigns server state to React Query.",
+      "evidence_type": "doc",
+      "file_paths": [
+        "docs/structure_detail/frontend_architecture.md",
+        "package.json"
+      ],
+      "quote": "`No Redux/Zustand. State flows through specific layers:` and `Server state | React Query | Remote data (shots, generations, settings)`. `package.json` has `@tanstack/react-query` in dependencies and no `zustand` entry."
+    },
+    {
+      "claim": "The settings stack is intentionally layered today: `useAutoSaveSettings` is the feature-level API, and `useToolSettings` is the low-level read/write boundary.",
+      "evidence_type": "doc",
+      "file_paths": [
+        "docs/structure_detail/settings_system.md",
+        "src/shared/hooks/settings/useToolSettings.ts"
+      ],
+      "quote": "`useAutoSaveSettings is the default feature-level API.` `useToolSettings is the low-level read/write boundary for manual scope control and shared infrastructure.` The hook source repeats: `Most features should use useAutoSaveSettings instead`."
+    },
+    {
+      "claim": "`useToolSettings` is explicitly a React Query boundary: it fetches with `useQuery`, writes with `useMutation`, and merges the mutation result back into the React Query cache.",
+      "evidence_type": "code",
+      "file_paths": [
+        "src/shared/hooks/settings/useToolSettings.ts"
+      ],
+      "quote": "The hook imports `useQuery, useMutation, useQueryClient`; fetches with `useQuery({ queryKey: queryKeys.settings.tool(...) ... fetchToolSettingsSupabase(...) })`; and on success does `queryClient.setQueryData(...)` plus `queryClient.refetchQueries(...)`."
+    },
+    {
+      "claim": "`useAutoSaveSettings` already has two distinct ownership modes: a React Query-backed mode and a custom `load/save` mode.",
+      "evidence_type": "code",
+      "file_paths": [
+        "src/shared/settings/hooks/useAutoSaveSettings.ts",
+        "src/shared/settings/hooks/autoSaveSettingsLoaders.ts"
+      ],
+      "quote": "`const isCustomMode = !!customLoadSave;` and later both loaders are wired: `useCustomModeLoad({...})` and `useReactQueryModeLoad({...})`."
+    },
+    {
+      "claim": "The current React Query loader has explicit guards to prevent query results from overwriting pending local edits, which means a second bootstrap path for the same entity is already treated as hazardous.",
+      "evidence_type": "code",
+      "file_paths": [
+        "src/shared/settings/hooks/autoSaveSettingsLoaders.ts",
+        "src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts"
+      ],
+      "quote": "Loader comment: `React Query cache refreshes must not stomp pending text edits for the same entity.` The test asserts: `User's edit should be preserved` after DB data arrives in React Query mode."
+    },
+    {
+      "claim": "A real competing-bootstrap race already exists in the codebase: `useShotSettings` relies on writing pending state before the React Query loader overwrites inherited defaults.",
+      "evidence_type": "code",
+      "file_paths": [
+        "src/tools/travel-between-images/hooks/settings/useShotSettings.ts"
+      ],
+      "quote": "`We use updateFields (not saveImmediate) ... updateFields marks the settings as pending-write, which causes the RQ loader to skip its overwrite and keep our inherited seed. ... We fire as soon as possible ... so this happens before the RQ loader would otherwise overwrite state.`"
+    },
+    {
+      "claim": "The debounce/save state machine preserves newer edits during in-flight saves and flushes pending work on cleanup; any replacement store has to preserve those invariants.",
+      "evidence_type": "code",
+      "file_paths": [
+        "src/shared/settings/hooks/useDebouncedSettingsSave.ts",
+        "src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts"
+      ],
+      "quote": "`Only clear pending when the saved payload still matches the latest tracked input. If the user typed again during the async save, pendingSettingsRef now points to newer data and must be preserved.` The test verifies `second edit during save` remains in settings after the first save resolves."
+    },
+    {
+      "claim": "`useJoinClipsSettings` is currently just a thin passthrough to `useAutoSaveSettings`, so its public contract is whatever `useAutoSaveSettings` returns.",
+      "evidence_type": "code",
+      "file_paths": [
+        "src/tools/join-clips/hooks/useJoinClipsSettings.ts"
+      ],
+      "quote": "The hook is 19 LOC and does only `return useAutoSaveSettings<JoinClipsSettings>({ toolId: TOOL_IDS.JOIN_CLIPS, scope: 'project', projectId, defaults: joinClipsSettings.defaults, enabled: !!projectId, ... })`."
+    },
+    {
+      "claim": "There is already one production consumer using `useAutoSaveSettings` in custom-load/save mode, which means the codebase already needs a non-React-Query path for some entities.",
+      "evidence_type": "code",
+      "file_paths": [
+        "src/domains/media-lightbox/hooks/useGenerationEditSettings.ts"
+      ],
+      "quote": "`Uses useAutoSaveSettings (customLoadSave mode) for the core persistence logic` and passes `customLoadSave: { entityId: generationId, load: loadGenerationSettings, save: saveGenerationSettings, onFlush: ... }`."
+    },
+    {
+      "claim": "The migration surface is large if every current `useAutoSaveSettings` consumer must gain its own React Query bridge: there are 13 non-test importers totaling 2,129 LOC.",
+      "evidence_type": "measurement",
+      "file_paths": [
+        "src/domains/media-lightbox/hooks/useGenerationEditSettings.ts",
+        "src/tools/travel-between-images/hooks/settings/useJoinSegmentsSettings.ts",
+        "src/tools/travel-between-images/hooks/settings/useShotSettings.ts",
+        "src/tools/join-clips/hooks/useJoinClipsSettings.ts",
+        "src/tools/character-animate/hooks/useCharacterAnimateSettings.ts",
+        "src/tools/image-generation/hooks/useImageGenGallery.ts",
+        "src/tools/travel-between-images/components/ShotEditor/hooks/video/useStructureVideo.ts",
+        "src/tools/travel-between-images/components/ShotEditor/hooks/video/useAudio.ts",
+        "src/tools/travel-between-images/components/ShotEditor/hooks/video/useOutputSelection.ts",
+        "src/shared/settings/hooks/useEditVideoSettings.ts",
+        "src/shared/hooks/usePersistentToolState.ts",
+        "src/shared/components/PromptEditorModal/hooks/usePersistentPromptSettings.ts",
+        "src/shared/components/ImageGenerationForm/hooks/useShotManagement.ts"
+      ],
+      "quote": "`wc -l` over the 13 non-test `useAutoSaveSettings` importers returned `2129 total`."
+    },
+    {
+      "claim": "Direct `useToolSettings` usage is smaller and concentrated in manual-control contexts, which aligns with the existing layering docs.",
+      "evidence_type": "measurement",
+      "file_paths": [
+        "src/domains/media-lightbox/hooks/useAddToVideoEditor.ts",
+        "src/shared/hooks/useHomeNavigation.ts",
+        "src/tools/video-editor/pages/VideoEditorPage.tsx",
+        "src/shared/contexts/AgentChatContext.tsx",
+        "src/shared/components/ToolsPane/ToolsPane.tsx"
+      ],
+      "quote": "`rg -l \"useToolSettings\\(\"` outside tests found 5 production callsites; `wc -l` across them returned `943 total`."
+    },
+    {
+      "claim": "The milestone plan document named in the brief is not actually present in the repository, so the implementation has to be judged against the shipped code and docs, not an in-repo plan file.",
+      "evidence_type": "doc",
+      "file_paths": [
+        "docs/state_management_refactor_baselines.md"
+      ],
+      "quote": "`docs/state_management_refactor_plan.md is not present in this repository.`"
+    }
+  ],
+  "options": [
+    {
+      "name": "A) RQ-first",
+      "description": "React Query remains the fetch authority for settings. `createEntityStore` becomes a writable mirror only; consumers read `useToolSettings`, then bridge query results into the store with an effect such as `bootstrapEntity(id, data)`.",
+      "assumptions": [
+        "Settings entities should continue to follow the documented `server state = React Query` architecture.",
+        "Every RQ-backed consumer can safely maintain a second local mirror without introducing another authority problem.",
+        "Non-RQ entities can use a separate path, because dropping `load` removes the current custom-load/save capability from the factory itself."
+      ],
+      "costs": [
+        "This recreates the exact class of competing-bootstrap race already documented in `useShotSettings`, where local initialization must beat the RQ loader to avoid overwrite.",
+        "It expands migration work across the 13 current `useAutoSaveSettings` importers (2,129 LOC measured), because each migrated consumer needs its own query-to-store bridge.",
+        "It does not fit the existing production custom-load/save pattern in `useGenerationEditSettings` unless a second factory or parallel API is kept."
+      ]
+    },
+    {
+      "name": "B) store-first",
+      "description": "`createEntityStore` owns `load/save` for each entity; React Query becomes an implementation detail behind the store or wraps the store after the fact.",
+      "assumptions": [
+        "A Zustand store can become the canonical draft and hydration state for persisted settings without violating the app's server-state model.",
+        "The store can either call the same Supabase/settings primitives directly or await React Query-backed data without losing cache correctness.",
+        "The team is willing to shift away from the current documented layering where `useAutoSaveSettings` sits on top of `useToolSettings`."
+      ],
+      "costs": [
+        "This is an architectural reversal from the current docs: the repo explicitly says server state lives in React Query and has no Zustand today.",
+        "To preserve current behavior, the new store has to reproduce the existing settings state machine invariants now spread across `useAutoSaveSettings.ts` (609 LOC), `useDebouncedSettingsSave.ts` (274 LOC), `autoSaveSettingsLoaders.ts` (183 LOC), and `autoSaveSettingsHelpers.ts` (133 LOC).",
+        "Direct `useToolSettings` manual-control callsites still remain, so this does not eliminate the React Query boundary; it adds a second cross-cutting foundation unless more migration follows."
+      ]
+    },
+    {
+      "name": "C) hybrid",
+      "description": "Ownership is declared per entity/domain. RQ-backed settings stay RQ-owned; store-backed entities use store-owned `load/save`. The important rule is one authority per entity, not one authority for the whole app.",
+      "assumptions": [
+        "The codebase can tolerate two sanctioned ownership modes, because it already has both a React Query mode and a custom-load/save mode inside `useAutoSaveSettings`.",
+        "The M1 constraints must be relaxed for RQ-owned entities: if React Query is authoritative for a given entity, `useEntity(id)` cannot also be an authoritative loader for that same entity.",
+        "The main contract to preserve is single-authority hydration and save behavior, not that every entity must use the exact same bootstrap mechanism."
+      ],
+      "costs": [
+        "This requires an explicit ownership policy in code and docs so callers know whether an entity is RQ-owned or store-owned.",
+        "The factory API becomes more complex than a universal `load/save` contract, because some entities will not use internal `load` at all.",
+        "For M1 specifically, the team must accept that the original three constraints do not all hold simultaneously; at least the `useEntity(id)` authoritative-lazy-load rule has to be relaxed for RQ-backed settings like join-clips if RQ behavior is to remain unchanged."
+      ]
+    }
+  ],
+  "preliminary_pick": {
+    "option_name": "C) hybrid",
+    "rationale": "The shipped code already behaves as a hybrid system. `useAutoSaveSettings` has an explicit split between React Query mode and custom `load/save` mode, and there is a real production custom-load/save consumer in `useGenerationEditSettings`. At the same time, the documented architecture still says server state belongs to React Query, and the settings docs intentionally layer `useAutoSaveSettings` on top of `useToolSettings`. The strongest negative evidence is `useShotSettings`: it documents a live overwrite race between local bootstrap logic and the RQ loader, and solves it by exploiting the pending-write guards. That is a direct warning against option A's external-bootstrap mirror for RQ-backed settings. Option B is internally consistent, but it requires an architectural reversal plus reimplementation of a large existing state machine before it buys anything for the rest of the codebase. Hybrid is the least disruptive interpretation of the evidence: keep one authority per entity, let RQ-backed settings remain RQ-owned, and reserve store-owned `load/save` for entities that are already custom-managed or that the team explicitly chooses to move off the RQ boundary later.",
+    "what_im_least_sure_about": "The biggest uncertainty is whether the M1 reviewers are willing to relax the spec's `useEntity(id)` authoritative-lazy-load requirement for RQ-backed settings. If that constraint is non-negotiable for join-clips specifically, then the practical choice for that one migration becomes closer to `B` even though the broader repository evidence points to `C` as the stronger architecture."
+  }
+}

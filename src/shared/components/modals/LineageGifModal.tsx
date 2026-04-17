@@ -10,7 +10,7 @@ import { Download, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/shared/components/ui/button';
 import { Progress } from '@/shared/components/ui/progress';
 import { useLineageChain } from '@/shared/hooks/variants/useLineageChain';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 interface CreateGifProgress {
   stage: 'loading' | 'encoding' | 'complete';
   current: number;
@@ -143,7 +143,7 @@ export const LineageGifModal: React.FC<LineageGifModalProps> = ({
   onClose,
   variantId,
 }) => {
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const [downloadState, setDownloadState] = useState<DownloadState>({ status: 'idle' });
 
   // Fetch the lineage chain

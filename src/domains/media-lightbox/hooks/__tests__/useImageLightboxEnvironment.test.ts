@@ -5,7 +5,11 @@ import { useImageLightboxEnvironment } from '../useImageLightboxEnvironment';
 
 const mocks = vi.hoisted(() => ({
   useProject: vi.fn(),
-  usePanes: vi.fn(),
+  panesState: {
+    isTasksPaneOpen: false,
+    tasksPaneWidth: 320,
+    isTasksPaneLocked: true,
+  },
   useUserUIState: vi.fn(),
   usePublicLoras: vi.fn(),
   useLoraManager: vi.fn(),
@@ -19,10 +23,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: (...args: unknown[]) => mocks.useProject(...args),
+  useProjectSelectionContext: (...args: unknown[]) => mocks.useProject(...args),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: (...args: unknown[]) => mocks.usePanes(...args),
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: typeof mocks.panesState) => unknown) => selector(mocks.panesState),
 }));
 
 vi.mock('@/shared/hooks/useUserUIState', () => ({
@@ -77,11 +82,11 @@ describe('useImageLightboxEnvironment', () => {
       project: { aspectRatio: '16:9' },
       selectedProjectId: 'project-1',
     });
-    mocks.usePanes.mockReturnValue({
+    mocks.panesState = {
       isTasksPaneOpen: false,
       tasksPaneWidth: 320,
       isTasksPaneLocked: true,
-    });
+    };
     mocks.useUserUIState.mockReturnValue({
       value: { onComputer: true, inCloud: false },
     });
@@ -218,7 +223,7 @@ describe('useImageLightboxEnvironment', () => {
     const media = createMedia();
 
     mocks.useProject.mockReturnValue(stableProjectState);
-    mocks.usePanes.mockReturnValue(stablePanesState);
+    mocks.panesState = stablePanesState;
     mocks.useUserUIState.mockReturnValue(stableGenerationMethodsState);
     mocks.usePublicLoras.mockReturnValue({ data: stableAvailableLoras });
     mocks.useLoraManager.mockReturnValue(stableLoraManager);
@@ -252,7 +257,7 @@ describe('useImageLightboxEnvironment', () => {
       'useImageLightboxEnvironment.inputs',
       expect.objectContaining({
         useIsMobile: true,
-        useProject: expect.objectContaining({ selectedProjectId: 'project-1' }),
+        useProjectSelectionContext: expect.objectContaining({ selectedProjectId: 'project-1' }),
         useUserUIState_generationMethods: expect.objectContaining({
           value: expect.objectContaining({ onComputer: true, inCloud: false }),
         }),

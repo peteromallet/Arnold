@@ -10,7 +10,7 @@ import { ShotImagesEditor } from '@/tools/travel-between-images/components/ShotI
 import { FinalVideoSection } from '@/tools/travel-between-images/components/FinalVideoSection';
 import { ImageManagerSkeleton } from '@/tools/travel-between-images/components/ShotEditor/ui/Skeleton';
 import { DEFAULT_PHASE_CONFIG, coerceSelectedModel, type VideoTravelSettings } from '@/tools/travel-between-images/settings';
-import { useVideoTravelSettings } from '@/tools/travel-between-images/providers';
+import { useVideoTravelSettingsHandlers } from '@/tools/travel-between-images/providers';
 import { useModalImageHandlers } from './hooks/useModalImageHandlers';
 import { useSegmentOutputsForShot } from '@/shared/hooks/segments/useSegmentOutputsForShot';
 import type { GenerationRow } from '@/domains/generation/types';
@@ -146,7 +146,7 @@ export function VideoGenerationModalFormContent({
   onAddTriggerWord,
 }: VideoGenerationModalFormContentProps): React.ReactElement {
   const selectedModel = coerceSelectedModel(settings.selectedModel);
-  const { handlers } = useVideoTravelSettings();
+  const handlers = useVideoTravelSettingsHandlers();
   const {
     handleGenerationTypeModeChange,
     handlePhaseConfigChange,

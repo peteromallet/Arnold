@@ -1,0 +1,80 @@
+{
+  "output": "Implemented T4 by routing the in-scope single-task readers and writers through one canonical React Query plus realtime-store seeding path. `useGetTask` now preserves `resolveTaskProjectScope()` and empty-id disabling while returning narrow store snapshots when available, seeding scoped task snapshots from cached or fetched query results, and keeping React Query authoritative for fetch lifecycle. Updated `useTaskPrefetch`, generation-task cache helpers, `RealtimeProvider` fallback fetches, and `useVariantSourceTask` to use the same helpers, so `taskQueryKeys.single(...)` readers and writers in scope no longer diverge. Targeted verification passed for the changed task hooks, generation cache facade, variant-source reader, and realtime provider fallback path. Checkpointed batch evidence to `.megaplan/plans/m3-realtime-events-store-20260417-0218/execution_batch_4.json`.",
+  "files_changed": [
+    "src/shared/state/realtimeStore.ts",
+    "src/shared/hooks/tasks/useTasks.ts",
+    "src/shared/hooks/tasks/useTaskPrefetch.ts",
+    "src/domains/generation/hooks/tasks/generationTaskCache.ts",
+    "src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts",
+    "src/shared/providers/RealtimeProvider.tsx",
+    "src/shared/lib/__tests__/generationTaskCache.test.ts",
+    "src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts",
+    "src/shared/providers/__tests__/RealtimeProvider.test.tsx",
+    ".megaplan/plans/m3-realtime-events-store-20260417-0218/execution_batch_4.json"
+  ],
+  "commands_run": [
+    "sed -n '1,260p' src/shared/hooks/tasks/useTasks.ts",
+    "sed -n '1,260p' src/shared/hooks/tasks/useTaskPrefetch.ts",
+    "sed -n '1,260p' src/domains/generation/hooks/tasks/generationTaskCache.ts",
+    "sed -n '1,240p' src/shared/contexts/GenerationTaskContext.tsx",
+    "sed -n '1,220p' src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts",
+    "sed -n '1,220p' src/shared/components/TaskDetails/hooks/useGenerationTaskDetails.ts",
+    "rg 'taskQueryKeys\\.single\\(|useGetTask\\(|usePrefetchTaskById|generationTaskCache|GenerationTaskContext|useVariantSourceTask' src/ --type ts -n",
+    "sed -n '1,320p' src/shared/state/realtimeStore.ts",
+    "sed -n '320,520p' src/shared/state/realtimeStore.ts",
+    "sed -n '1,220p' src/integrations/supabase/repositories/taskRepository.ts",
+    "sed -n '1,260p' src/shared/hooks/tasks/__tests__/useTasks.test.ts",
+    "sed -n '1,260p' src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts",
+    "sed -n '1,260p' src/shared/lib/__tests__/generationTaskCache.test.ts",
+    "sed -n '1,240p' src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts",
+    "sed -n '1,240p' src/shared/providers/RealtimeProvider.tsx",
+    "sed -n '1,220p' src/shared/lib/queryKeys/tasks.ts",
+    "sed -n '1,200p' src/domains/generation/components/GenerationDetails/useGenerationDetails.ts",
+    "sed -n '160,240p' src/shared/components/MediaGalleryItem.tsx",
+    "sed -n '1,140p' src/shared/components/VariantSelector/components/VariantDetails.tsx",
+    "sed -n '1,360p' src/shared/providers/__tests__/RealtimeProvider.test.tsx",
+    "npx tsc --noEmit",
+    "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx",
+    "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/components/TaskDetails/hooks/__tests__/useGenerationTaskDetails.test.ts",
+    "git status --short",
+    "rg 'taskQueryKeys\\.single\\(' src/ --type ts -n",
+    "rg 'RealtimeContext|useRealtime\\(' src/ --type ts -n",
+    "ls -la .megaplan/plans/m3-realtime-events-store-20260417-0218"
+  ],
+  "deviations": [
+    "Repository worktree contains many unrelated pre-existing changes outside T4 scope; they were left untouched.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/m3-realtime-events-store-20260417-0218/execution_batch_4.json",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/m2-overlay-stack-centralize-20260416-2326/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/plans/milestone-m1b-from-docs-state-20260416-1226/, .megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/, src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx, src/domains/lora/components/LoraSelectorModal/components/CommunityLorasTab.tsx, src/domains/lora/components/LoraSelectorModal/components/MyLorasTab/MyLorasTab.tsx, src/domains/media-lightbox/components/ButtonGroups.tsx, src/domains/media-lightbox/components/LightboxShell.tsx, src/domains/media-lightbox/components/ShotSelectorControls.tsx, src/domains/media-lightbox/components/WorkflowControlsBar.tsx, src/domains/media-lightbox/components/controls/PositionToggleButton.tsx, src/domains/media-lightbox/components/controls/UndoClearButtons.tsx, src/domains/media-lightbox/components/editModes/sharedSections.tsx, src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx, src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx, src/domains/media-lightbox/components/layouts/LightboxLayout.tsx, src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx, src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx, src/domains/media-lightbox/hooks/useLightboxNavigation.test.ts, src/domains/media-lightbox/hooks/useLightboxNavigation.ts, src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.test.ts, src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.ts, src/shared/components/MediaGallery/hooks/useMobileInteractions.ts, src/shared/components/ProfitSplitBar.tsx, src/shared/components/VariantSelector/VariantSelector.tsx, src/shared/components/VariantSelector/components/VariantCard.tsx, src/shared/components/selectors/ShotSelector.tsx, src/shared/components/selectors/ShotSelectorWithAdd.tsx, src/shared/components/shots/ShotPrimaryActionButton.tsx, src/shared/components/ui/alert-dialog.tsx, src/shared/components/ui/command.tsx, src/shared/components/ui/dialog.tsx, src/shared/components/ui/dropdown-menu.tsx, src/shared/components/ui/hover-card.tsx, src/shared/components/ui/overlay/, src/shared/components/ui/popover.tsx, src/shared/components/ui/select.tsx, src/shared/components/ui/tooltipPrimitives.test.tsx, src/shared/components/ui/tooltipPrimitives.tsx, src/shared/hooks/useSlidingPane.ts, src/shared/lib/interactions/elementPolicy.ts, src/shared/lib/uiLayers.test.ts, src/shared/lib/uiLayers.ts, src/shared/state/overlayStack.test.ts, src/shared/state/overlayStack.ts, src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts, src/tools/travel-between-images/components/Timeline/GuidanceVideoStrip.tsx, test-results/",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Adapted the single-task data path so `useGetTask` keeps the empty-string disabled contract, `resolveTaskProjectScope()` fallback, and caller-facing return semantics while sourcing visible task data from narrow realtime-store subscriptions when available and seeding the store from cached or fetched React Query results. Routed the in-scope `taskQueryKeys.single(...)` paths through the same helpers across `useTaskPrefetch`, `usePrefetchTaskById()`, generation-task cache preload and merge helpers, `useVariantSourceTask`, and the provider fallback fetch path so React Query remains authoritative for fetch lifecycle while store snapshots stay canonical and aligned. Verified with `npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/components/TaskDetails/hooks/__tests__/useGenerationTaskDetails.test.ts`, `npx tsc --noEmit`, and grep confirming only `src/shared/hooks/tasks/useTasks.ts` now references `taskQueryKeys.single(...)` directly in `src/`.",
+      "files_changed": [
+        "src/shared/state/realtimeStore.ts",
+        "src/shared/hooks/tasks/useTasks.ts",
+        "src/shared/hooks/tasks/useTaskPrefetch.ts",
+        "src/domains/generation/hooks/tasks/generationTaskCache.ts",
+        "src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts",
+        "src/shared/providers/RealtimeProvider.tsx",
+        "src/shared/lib/__tests__/generationTaskCache.test.ts",
+        "src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts",
+        "src/shared/providers/__tests__/RealtimeProvider.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/tasks/__tests__/useTasks.test.ts src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts src/shared/lib/__tests__/generationTaskCache.test.ts src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts src/shared/providers/__tests__/RealtimeProvider.test.tsx src/shared/components/TaskDetails/hooks/__tests__/useGenerationTaskDetails.test.ts",
+        "npx tsc --noEmit",
+        "rg 'taskQueryKeys\\.single\\(' src/ --type ts -n"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. `useGetTask`, prefetch helpers, generation-task cache preload and merge helpers, `useVariantSourceTask`, and the realtime-provider fallback fetch path now share the same task query plus store-seeding helpers. The updated path preserves `resolveTaskProjectScope()` resolution, the empty-string disabled contract, and existing hook signatures while returning store-backed snapshots for visible readers."
+    }
+  ]
+}

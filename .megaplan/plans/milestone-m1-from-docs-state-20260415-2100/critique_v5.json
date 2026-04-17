@@ -1,0 +1,115 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the revised milestones against the current repository shape in [package.json](/workspace/reigh-app/package.json:1) and [createEntityStore.ts](/workspace/reigh-app/src/shared/state/createEntityStore.ts:1). The revision correctly acknowledges that `zustand` and the shared entity-store file already exist in this branch, so M1 is now framed as verification/finalization work instead of inventing duplicate foundation files.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the approved brief's requirement that `useJoinClipsSettings(projectId)` keep its public behavior against the current React Query-mode semantics in [useAutoSaveSettings.ts](/workspace/reigh-app/src/shared/settings/hooks/useAutoSaveSettings.ts:459) and its tests in [useAutoSaveSettings.test.ts](/workspace/reigh-app/src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts:482). The revised plan's Step 9 says `initializeFrom(data)` should remain a local merge in the Join Clips adapter, but today `initializeFrom` is explicitly a no-op in React Query mode, so that is still a contract change inside the one consumer M1 is supposed to preserve.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the current hydration contract in [JoinClipsPage.tsx](/workspace/reigh-app/src/tools/join-clips/pages/JoinClipsPage.tsx:248) and [useClipManager.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useClipManager.ts:126). The revised plan now explicitly keeps `useJoinClipsSettings.status` in `loading` until the merged `useToolSettings` snapshot has been reconciled, which matches the existing `settingsLoaded` gate and resolves the earlier unsafe hydration window.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked `reset(newDefaults?)` against the current implementation in [useAutoSaveSettings.ts](/workspace/reigh-app/src/shared/settings/hooks/useAutoSaveSettings.ts:445), where reset rewrites `loadedSettingsRef` before clearing pending state so the hook becomes clean again after a reset. The revised plan says `reset(newDefaults?)` remains local-only while also computing `isDirty` from the store's current settings versus its saved snapshot, and taken literally that would leave `isDirty` stuck `true` whenever persisted project settings differ from the reset target because the saved snapshot was not updated.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Searched for Join Clips consumers and confirmed the affected surface is still intentionally narrow: [JoinClipsPage.tsx](/workspace/reigh-app/src/tools/join-clips/pages/JoinClipsPage.tsx:248), [useClipManager.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useClipManager.ts:32), and helper types in [useJoinClipsPageHelpers.ts](/workspace/reigh-app/src/tools/join-clips/pages/hooks/useJoinClipsPageHelpers.ts:13) are the only current callers. The revised plan stays disciplined about not pulling other settings consumers into the Zustand migration.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the runtime surface the revised plan would create against the current baseline in [useJoinClipsSettings.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsSettings.ts:1), [useToolSettings.ts](/workspace/reigh-app/src/shared/hooks/settings/useToolSettings.ts:1), and [toolSettingsService.ts](/workspace/reigh-app/src/shared/settings/runtime/toolSettingsService.ts:1). Even after removing the raw project-row bootstrap, the adapter still plans to do its own direct store `load(projectId)` plus a parallel `useToolSettings` read for readiness, which means the first migrated consumer now carries two merged-settings read paths where the current implementation only has one.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Checked the named integration points against the current repo seams in [createEntityStore.ts](/workspace/reigh-app/src/shared/state/createEntityStore.ts:1), [useToolSettings.ts](/workspace/reigh-app/src/shared/hooks/settings/useToolSettings.ts:1), [useDebouncedSettingsSave.ts](/workspace/reigh-app/src/shared/settings/hooks/useDebouncedSettingsSave.ts:1), [JoinClipsPage.tsx](/workspace/reigh-app/src/tools/join-clips/pages/JoinClipsPage.tsx:248), and [useClipManager.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useClipManager.ts:32). The revision now covers the previously-missed glue around readiness semantics, lifecycle flushing, and direct-save cache synchronization instead of limiting itself to the store internals.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked the real call sites in [JoinClipsPage.tsx](/workspace/reigh-app/src/tools/join-clips/pages/JoinClipsPage.tsx:248), [useClipManager.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useClipManager.ts:32), and [useJoinClipsPageHelpers.ts](/workspace/reigh-app/src/tools/join-clips/pages/hooks/useJoinClipsPageHelpers.ts:13). Callers still only pass a selected project ID or a nullish value, and none of them depend on exotic arguments beyond the current public hook contract, so the plan is right to preserve the adapter return surface instead of exposing bare `EntityView<T>` directly.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked actual caller behavior against the plan's API mapping and the current React Query-mode baseline in [useAutoSaveSettings.ts](/workspace/reigh-app/src/shared/settings/hooks/useAutoSaveSettings.ts:459). No current Join Clips caller invokes `initializeFrom`, but the exported hook surface does include it today and it is a React Query no-op, so the plan's proposal to remap it to a local merge still changes the public contract even if the known callers happen not to hit that branch yet.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "join-clips-settings-contract",
+      "concern": "Join Clips settings contract: `initializeFrom` is planned as a local merge even though the current React Query-backed hook treats it as a no-op, so the migration still changes exported behavior beyond the approved brief.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Current behavior is enforced in src/shared/settings/hooks/useAutoSaveSettings.ts:459-474 and tested in src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts:482-500, while Step 9 of the revised plan says `initializeFrom(data)` remains a local merge."
+    },
+    {
+      "id": "join-clips-reset-dirty-state",
+      "concern": "Join Clips reset semantics: the revised plan keeps `reset(newDefaults?)` local-only while deriving `isDirty` from current versus saved store state, which would diverge from the current hook's clean-after-reset behavior unless the adapter also updates its clean baseline.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The current hook updates `loadedSettingsRef` inside reset in src/shared/settings/hooks/useAutoSaveSettings.ts:445-457 before clearing pending state. The revised plan says `reset(newDefaults?)` remains local-only and separately says `isDirty` should come from current state versus saved snapshot."
+    },
+    {
+      "id": "join-clips-double-read-path",
+      "concern": "Join Clips settings runtime: the revised plan gives the first migrated consumer both a direct store `load(projectId)` path and a parallel `useToolSettings` merged-query path, which broadens M1's runtime surface and adds an extra merged-settings read compared with the current implementation.",
+      "category": "performance",
+      "severity_hint": "likely-minor",
+      "evidence": "Current useJoinClipsSettings is a thin useAutoSaveSettings wrapper in src/tools/join-clips/hooks/useJoinClipsSettings.ts:1-15. The revised plan's Steps 5-6 call for both factory `load(projectId)` via fetchToolSettingsSupabase/equivalent and continued `useToolSettings(...)` usage for readiness."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 13: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 14: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "issue_hints",
+    "correctness",
+    "all_locations",
+    "callers",
+    "FLAG-007"
+  ],
+  "disputed_flag_ids": []
+}

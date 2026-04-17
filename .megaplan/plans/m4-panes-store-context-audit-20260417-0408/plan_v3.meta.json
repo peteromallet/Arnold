@@ -1,0 +1,138 @@
+{
+  "version": 3,
+  "timestamp": "2026-04-17T04:24:29Z",
+  "hash": "sha256:b0709d3c4262a7b9f802edfbfd915fa6fe21bd928cae1f0dc68083b6f7872576",
+  "changes_summary": "Strengthened the plan so the post-panes audit must process every over-threshold non-pane surface, not just a possible single follow-on, and expanded the guard to cover broad recomposed access hooks like `useProject()` in addition to raw `createContext` declarations. Also called out the known high-level panes callers that must be migrated to narrow selectors instead of another grouped facade.",
+  "flags_addressed": [
+    "FLAG-M4-004",
+    "FLAG-M4-005",
+    "issue_hints",
+    "correctness",
+    "scope",
+    "callers"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`src/shared/state/panesStore.ts` exists and exports selector-based panes state APIs used by production consumers.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "No production file imports `PanesContext`, `PanesProvider`, or `usePanes()` after the migration.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "All former `usePanes()` call sites are migrated to dedicated selector hooks or explicit narrow grouped selectors, with no broad panes compatibility facade left behind.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`docs/state_management_context_audit.md` is committed and covers both remaining `createContext` provider declarations and exported recomposed wrapper hooks, including field count, consumer count, decision, and rationale.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The audit inventory method captures generic and namespaced context declarations in this repo and also inventories recomposed context-access hooks.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Every audited non-pane surface that exceeds both thresholds is migrated or narrowed within the same milestone branch; the work does not stop after the first plausible follow-on candidate.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "An automated guard exists, uses the same documented counting rule as the audit, and covers both over-threshold `createContext` declarations and over-threshold recomposed compatibility hooks.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` passes cleanly after the migration and any required test updates.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes at baseline after the panes migration and any additional required audit-driven migrations.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "High-level panes consumers such as `AgentChat.tsx`, `ShotEditorView.tsx`, `TasksPane.tsx`, `useImageLightboxEnvironment.ts`, and `useVideoLightboxEnvironment.ts` are migrated without recreating a broad grouped panes facade.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The audit keeps scope tight by documenting framework/local UI token contexts as out-of-scope instead of migrating them unnecessarily.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Opening one pane does not visually re-render unrelated panes when checked with the telemetry overlay in a running app.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Mobile exclusive-pane behavior remains unchanged on a small viewport: opening pane B closes pane A as before.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "verify_physical_device"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The main implementation target remains the panes subsystem; additional migrations happen only for audited non-pane surfaces that actually exceed both thresholds.",
+    "A repo-level quality check under `scripts/quality/` is the preferred enforcement mechanism because it can cover both context declarations and recomposed exported hooks with one documented rule set.",
+    "Broad recomposed access hooks are treated as part of the same architectural problem as fat contexts, not as a separate unrelated cleanup effort.",
+    "High-level panes consumers that currently read multiple fields can still use grouped selectors where necessary, but only as explicit narrow groupings rather than a recreated `usePanes()`-style aggregate facade."
+  ],
+  "delta_from_previous_percent": 87.38,
+  "structure_warnings": []
+}

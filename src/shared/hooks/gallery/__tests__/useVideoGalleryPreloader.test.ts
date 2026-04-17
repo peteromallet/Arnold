@@ -23,6 +23,19 @@ vi.mock('@/shared/contexts/ShotsContext', () => ({
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: vi.fn(() => ({ selectedProjectId: 'proj-1' })),
+  useProjectSelectionContext: vi.fn(() => ({ selectedProjectId: 'proj-1', project: null, setSelectedProjectId: vi.fn() })),
+  useProjectCrudContext: vi.fn(() => ({
+    projects: [],
+    isLoadingProjects: false,
+    fetchProjects: vi.fn(),
+    addNewProject: vi.fn(),
+    isCreatingProject: false,
+    updateProject: vi.fn(),
+    isUpdatingProject: false,
+    deleteProject: vi.fn(),
+    isDeletingProject: false,
+  })),
+  useProjectIdentityContext: vi.fn(() => ({ userId: null })),
 }));
 
 vi.mock('@/shared/hooks/settings/useToolSettings', () => ({

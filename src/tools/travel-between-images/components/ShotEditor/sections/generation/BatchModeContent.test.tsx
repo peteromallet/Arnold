@@ -113,20 +113,13 @@ vi.mock('@/shared/components/JoinClipsSettingsForm/JoinClipsSettingsForm', () =>
 }));
 
 vi.mock('../../ShotSettingsContext', () => ({
-  useShotSettingsContext: () => ({
+  useShotSettingsIdentity: () => ({
     projectId: 'project-1',
     selectedProjectId: 'project-1',
     projects: [{ id: 'project-1', name: 'Project 1' }],
+  }),
+  useShotSettingsMedia: () => ({
     simpleFilteredImages: simpleFilteredImagesMock,
-    loraManager: {
-      selectedLoras: [],
-      setIsLoraModalOpen: vi.fn(),
-      handleRemoveLora: vi.fn(),
-      handleLoraStrengthChange: vi.fn(),
-      handleAddTriggerWord: vi.fn(),
-      renderHeaderActions: vi.fn(),
-    },
-    availableLoras: [{ id: 'lora-1' }],
     structureVideo: {
       structureVideoPath: structureVideoPathMock,
       structureVideoMotionStrength: structureVideoMotionStrengthMock,
@@ -138,7 +131,28 @@ vi.mock('../../ShotSettingsContext', () => ({
       handleUni3cEndPercentChange: handleUni3cEndPercentChangeMock,
       handleStructureTypeChangeFromMotionControl: handleStructureTypeChangeFromMotionControlMock,
     },
+  }),
+  useShotSettingsUi: () => ({
     state: { showStepsNotification: false },
+    dimensions: {
+      dimensionSource: 'project',
+      onDimensionSourceChange: vi.fn(),
+      customWidth: 1280,
+      onCustomWidthChange: vi.fn(),
+      customHeight: 720,
+      onCustomHeightChange: vi.fn(),
+    },
+  }),
+  useShotSettingsGeneration: () => ({
+    loraManager: {
+      selectedLoras: [],
+      setIsLoraModalOpen: vi.fn(),
+      handleRemoveLora: vi.fn(),
+      handleLoraStrengthChange: vi.fn(),
+      handleAddTriggerWord: vi.fn(),
+      renderHeaderActions: vi.fn(),
+    },
+    availableLoras: [{ id: 'lora-1' }],
     generationMode: {
       accelerated: false,
       onAcceleratedChange: vi.fn(),
@@ -182,14 +196,6 @@ vi.mock('../../ShotSettingsContext', () => ({
         selectedLoras: [],
       },
       handleRestoreJoinDefaults: vi.fn(),
-    },
-    dimensions: {
-      dimensionSource: 'project',
-      onDimensionSourceChange: vi.fn(),
-      customWidth: 1280,
-      onCustomWidthChange: vi.fn(),
-      customHeight: 720,
-      onCustomHeightChange: vi.fn(),
     },
   }),
 }));
@@ -247,7 +253,7 @@ vi.mock('@/tools/travel-between-images/providers', () => ({
   useSettingsSave: () => ({
     onBlurSave: vi.fn(),
   }),
-  useVideoTravelSettings: () => ({
+  useVideoTravelSettingsStatus: () => ({
     isLoading: false,
   }),
 }));

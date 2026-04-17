@@ -1,0 +1,320 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Handle the M1 substrate precondition before any M1a feature edits: verify whether `src/shared/state/createEntityStore.ts` and `src/shared/state/createEntityStore.test.ts` exist in committed branch history versus only the working tree, then apply the approved tradeoff by committing/staging that substrate onto `megaplan/m1a-settings-store` before adapter work if it is still untracked-only; record in the PR notes that this absorbed the missing M1 prerequisite and that a later rebase/squash may be needed if M1 lands separately.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T2",
+      "description": "Capture the missing pre-change M0 render baselines for `ImageLightbox` and `EditModePanel` using the existing telemetry path, and append the measured counts to `docs/state_management_refactor_baselines.md` before any production behavior changes. Preserve the baseline evidence needed for the later 75% reduction gate.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T3",
+      "description": "Lock the migration surface before coding: rerun `rg 'from .*useAutoSaveSettings' src/ --type ts -l`, verify the direct-caller count is still in the expected range, paste the exact caller list into the PR description, confirm the real hook/helper paths under `src/shared/settings/hooks/`, and use `src/tools/join-clips/hooks/useJoinClipsSettings.ts` as the compatibility reference for unchanged `useAutoSaveSettings` API semantics including `updateTextFields`, `initializeFrom`, and `saveImmediate(dataToSave?)`. Halt and discuss only if the caller inventory has drifted wildly.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T4",
+      "description": "Rewrite `src/shared/settings/hooks/useAutoSaveSettings.ts` as a thin adapter over `createEntityStore` with one store instance per logical settings domain, preserving the public return shape and caller-visible semantics. Keep persistence ownership in the existing Supabase/IndexedDB/custom load-save layers, implement the missing adapter behaviors (`updateTextFields`, `initializeFrom`, `saveImmediate(dataToSave?)`), use a stable custom domain key for generation edit settings, and ensure the returned object/callbacks are reference-stable when inputs are unchanged.",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T5",
+      "description": "Delete the obsolete autosave helper layer and its supporting tests once no imports remain: remove `useDebouncedSettingsSave.ts`, `autoSaveSettingsHelpers.ts`, `autoSaveSettingsLoaders.ts`, and update or remove their companion tests in the same change so the build stays green. Do not recreate equivalent helper files under new names.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T6",
+      "description": "Refactor the lightbox persistence initialization path to remove render-time mutation and the `hasInitializedRef` state machine in `useEditSettingsPersistence.ts`, replacing it with the store-backed atomic bootstrap path coordinated through the generation settings flow. Preserve the semantic rule that `editMode` still comes from last-used state while generation-specific settings stay generation-scoped, and add/update strict-mode coverage for the old double-invoke churn regression.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T7",
+      "description": "Replace the ref-as-state pattern in `useLastUsedEditSettings.ts` with store/selectors-driven React-visible state. Preserve the existing precedence and sync behavior (project localStorage, then global localStorage, then DB sync through `useToolSettings`), keep writes out of render, and return stable `lastUsed` data plus a stable updater callback for downstream lightbox consumers.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T8",
+      "description": "Migrate and verify every direct `useAutoSaveSettings` consumer and the named transitive consumers. Update call sites only where previous dependency/ref workarounds become unnecessary, explicitly preserve `saveImmediate(payload)` seeding behavior for travel-between-images settings hooks, preserve deferred text editing and `initializeFrom` behavior for generation edit settings, and verify transitive paths through `useEditSettingsPersistence`, `useInlineEditState`, and other wrappers remain compatible without widening scope into selection/timeline work.",
+      "depends_on": [
+        "T5",
+        "T6",
+        "T7"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T9",
+      "description": "Instrument and fix the `useImageLightboxEnvironment` dependency graph: add a dev-mode ref-equality logger for each input and the final env object, enumerate the actual upstream hooks from the current code, and eliminate any remaining unstable-return sources when inputs are unchanged. Memoize the final environment object only after the contributing hooks are stable, and document whether M2 is skipped or still required based on the audit outcome.",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T10",
+      "description": "Run the full verification gate and iterate until green: update and run the focused existing tests for store/hooks/lightbox/inline-edit paths, run the broader existing suite to confirm no net regression in pass count, run `npx tsc --noEmit`, measure post-change render counts against the pre-change baselines, manually verify in a real browser that Model Select stays open and the textarea accepts typing without dropped keystrokes, capture either a screen recording or step-by-step PR notes for those manual checks, and write a short throwaway reproduction script for the original typing bug, execute it to confirm the fix, then delete the script before finishing.",
+      "depends_on": [
+        "T9",
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Do not start adapter work until the `createEntityStore` substrate is in committed branch history for this branch; this is an accepted tradeoff against the brief's literal halt instruction and must be called out in the PR.",
+    "Capture `ImageLightbox` and `EditModePanel` baseline render counts before any production behavior change; if done afterward, the 75% reduction claim is unverifiable.",
+    "The direct-caller inventory was previously 12 production callers plus 1 internal helper and 1 test; if rerun results are wildly different, stop and discuss rather than freelancing scope.",
+    "Use `src/tools/join-clips/hooks/useJoinClipsSettings.ts` as the compatibility model. Do not invent a second adapter contract.",
+    "Preserve unchanged `useAutoSaveSettings` return shape and semantics, especially `updateTextFields`, `initializeFrom`, `saveImmediate(dataToSave?)`, null/disabled entity handling, and stable references for dependency arrays.",
+    "The only known production custom-load/save caller is `src/domains/media-lightbox/hooks/useGenerationEditSettings.ts`; key that store with a stable domain string rather than callback identity.",
+    "Delete helper tests together with helper sources or the suite will fail on stale imports/symbols.",
+    "`useEditSettingsPersistence` must stop mutating state during render; strict-mode double invoke is part of the regression surface.",
+    "`useLastUsedEditSettings` must stop exposing ref-backed render state; React-visible state must come from selectors/store state.",
+    "The dependency audit is structural, not optional: every hook feeding `useImageLightboxEnvironment` must be checked for stable references when inputs are unchanged, not just `useAutoSaveSettings`.",
+    "Manual gate evidence is required: capture either a screen recording or step-by-step notes in the PR for Model Select and textarea verification.",
+    "Keep the final diff inside settings persistence, lightbox dependency stability, and baseline recording. Do not expand into selection state, timeline state, overlay refactors, telemetry changes, React Query redesign, edge functions, migrations, or worker/orchestrator code.",
+    "If M1 later lands separately on `main`, this branch may need a clean rebase or squash to avoid duplicate factory-file commits; note that explicitly in the PR.",
+    "Use existing tests only; do not create new permanent test files. The reproduction script in the final task must be temporary and deleted after use."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Before any M1a edits, are `createEntityStore` and its test present in committed history for the working branch, and is the substrate/precondition note prepared for the PR?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Were the pre-change `ImageLightbox` and `EditModePanel` render counts captured before behavior changes and written into `docs/state_management_refactor_baselines.md` with enough detail to compare later?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Does the execution record contain the exact direct-caller list from `rg`, and were any count drifts evaluated before proceeding?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Does the rewritten `useAutoSaveSettings` preserve the old public API and semantics while routing through `createEntityStore` with stable references and existing persistence backends?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Are all obsolete helper source files and their companion tests removed or rewritten, with no remaining imports to the deleted helper layer?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Has `useEditSettingsPersistence` eliminated the render-time mutation and `hasInitializedRef` state machine in favor of a single atomic bootstrap path, with strict-mode behavior verified?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Does `useLastUsedEditSettings` now derive React-visible state from selectors/store state instead of refs read during render, while preserving storage precedence and stable outputs?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Were all direct callers and named transitive consumers migrated or confirmed compatible, including the seeding and deferred-text semantics relied on by travel-between-images and generation-edit hooks?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Does the dev-mode instrumentation show stable references for every actual input to `useImageLightboxEnvironment` and for the final env object when inputs are unchanged, with any remaining instability fixed or explicitly routed to M2?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Did the final gate pass end-to-end: existing tests green with no net regression, `npx tsc --noEmit` clean, render-count targets met against the recorded baselines, manual browser checks documented in the PR, and the temporary reproduction script run then deleted?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "meta_commentary": "Execution order matters here more than usual. Treat T1 and T2 as hard pre-change gates: do not start the adapter rewrite until the factory substrate is in committed branch history for this branch, and do not touch production behavior until the lightbox/edit-panel baseline counts are captured and written down. The approved plan intentionally accepts a tradeoff on the chain-config issue: if the factory still exists only in the working tree, absorb that prerequisite onto the M1a branch first, but explicitly document the deviation and later rebase risk in the PR. For implementation, keep the contract anchored to `useJoinClipsSettings.ts`; that file is the closest thing to a repo-native reference implementation and should prevent accidental behavior drift in `updateTextFields`, `initializeFrom`, `saveImmediate(dataToSave?)`, disabled-entity handling, and authoritative resync. During the lightbox work, assume the motivating bug is structural until the ref-equality logger proves otherwise. Do not stop at making `useAutoSaveSettings` stable if another input into `useImageLightboxEnvironment` is still churning references. The final gate is not complete without manual evidence in the PR: include either a screen recording or step-by-step notes for Model Select and textarea typing, and make the throwaway reproduction script part of the closeout, not an optional extra.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Stage or commit the M1 substrate before M1a edits",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Capture and record missing M0 lightbox render baselines",
+        "finalize_task_ids": [
+          "T2",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Lock adapter contract against real callers and reference migration",
+        "finalize_task_ids": [
+          "T3",
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Lock caller inventory and helper-test migration surface",
+        "finalize_task_ids": [
+          "T3",
+          "T5",
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Rewrite core `useAutoSaveSettings` adapter over store factory",
+        "finalize_task_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Preserve React Query and custom-mode semantics without call-site churn",
+        "finalize_task_ids": [
+          "T4",
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Delete bespoke autosave helper layer completely",
+        "finalize_task_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Replace `useEditSettingsPersistence` init state machine",
+        "finalize_task_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Replace ref-as-state in `useLastUsedEditSettings`",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate direct callers with canonical bridge contract",
+        "finalize_task_ids": [
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Audit `useImageLightboxEnvironment` inputs and stabilize references",
+        "finalize_task_ids": [
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Update focused tests for store, autosave, lightbox, and transitive hooks",
+        "finalize_task_ids": [
+          "T6",
+          "T7",
+          "T8",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Run hard gate, render checks, typecheck, suite, and manual verification",
+        "finalize_task_ids": [
+          "T10"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All 13 approved plan steps are mapped to at least one execution task. The only deliberate execution emphasis added beyond the written plan is making the temporary reproduction script explicit inside the final verification task because the harness requires it. Manual PR evidence for browser verification is also called out explicitly to close the known wording gap from critique history.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": null,
+  "baseline_test_command": null,
+  "baseline_test_note": "No supported test runner detected on PATH (looked for: pytest). Configure test_command in state config to specify one."
+}

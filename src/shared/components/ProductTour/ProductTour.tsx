@@ -13,8 +13,8 @@ import {
 } from './stateMachine';
 import { useProductTour } from '@/shared/hooks/useProductTour';
 import { TOOL_ROUTES } from '@/shared/lib/tooling/toolRoutes';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { dispatchAppEvent } from '@/shared/lib/typedEvents';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { CustomTooltip } from './CustomTooltip';
 import { scheduleBoundedTargetWait } from './waitForTarget';
 type ScheduleTimeout = (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
@@ -225,7 +225,9 @@ function useJoyrideCallback(input: {
 
 export function ProductTour() {
   const { isRunning, completeTour, skipTour } = useProductTour();
-  const { setIsGenerationsPaneLocked, setIsTasksPaneLocked, resetAllPaneLocks } = usePanes();
+  const setIsGenerationsPaneLocked = usePanesStore((state) => state.setIsGenerationsPaneLocked);
+  const setIsTasksPaneLocked = usePanesStore((state) => state.setIsTasksPaneLocked);
+  const resetAllPaneLocks = usePanesStore((state) => state.resetAllPaneLocks);
   const navigate = useNavigate();
   const { scheduleTimeout, clearScheduledTimeouts } = useManagedTimeouts();
   const { stepIndex, setStepIndex, isPaused, setIsPaused } = useTourProgressState(

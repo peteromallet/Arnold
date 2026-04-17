@@ -1,0 +1,173 @@
+{
+  "output": "Aggregated execute batches: completed 1/1.\nBatch 1: Implemented the requested rework for the remaining lightbox edit-panel instability and captured updated verification evidence.",
+  "commands_run": [
+    "npx vitest run src/.tmp-m1a-repro-script.test.tsx",
+    "npx vitest run src/domains/media-lightbox/hooks/__tests__/useImageEditOrchestrator.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts",
+    "npx tsc --noEmit",
+    "npm test"
+  ],
+  "deviations": [
+    "`/workspace/reigh-app/.megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_checkpoint.json` does not exist in this checkout, so no best-effort checkpoint updates were possible.",
+    "The first `npm test` rerun failed only because Vitest had already discovered the temporary repro file before it was deleted; I reran `npm test` after cleanup and it passed cleanly with `881/881` test files and `4559/4559` tests.",
+    "T10 remains blocked on manual-only gate items. I did not rerun the required real-browser verification artifact flow, and the required pre-change bug-path render baseline is still missing from [docs/state_management_refactor_baselines.md](/workspace/reigh-app/docs/state_management_refactor_baselines.md:1). The prior browser note showing the textarea issue is still the latest manual artifact at [browser_check.json](/workspace/reigh-app/.megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/browser_check.json:1).",
+    "Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): T1, T2, T3, T4, T5, T6, T7, T8",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitignore, .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/schemas/critique.json, .megaplan/schemas/execution.json, .megaplan/schemas/execution_doc.json, .megaplan/schemas/finalize.json, .megaplan/schemas/gate.json, .megaplan/schemas/plan.json, .megaplan/schemas/review.json, .megaplan/schemas/revise.json, .megaplan/schemas/tiebreaker_challenger.json, .megaplan/schemas/tiebreaker_researcher.json, docs/state_management_refactor_baselines.md, package-lock.json, package.json, src/app/App.tsx, src/app/main.test.tsx, src/domains/media-lightbox/hooks/__tests__/useImageEditOrchestrator.test.ts, src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts, src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts, src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts, src/domains/media-lightbox/hooks/useGenerationEditSettings.ts, src/domains/media-lightbox/hooks/useImageEditOrchestrator.ts, src/domains/media-lightbox/hooks/useImageLightboxEditing.ts, src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts, src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts, src/integrations/supabase/__tests__/clientContracts.test.ts, src/moduleImportCoverage.test.ts, src/shared/components/MediaGalleryItem.tsx, src/shared/components/PromptEditorModal/hooks/usePersistentPromptSettings.ts, src/shared/dev/RenderTelemetryOverlay.tsx, src/shared/dev/useRenderBudget.ts, src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts, src/shared/settings/hooks/__tests__/useDebouncedSettingsSave.test.ts, src/shared/settings/hooks/autoSaveSettingsHelpers.test.ts, src/shared/settings/hooks/autoSaveSettingsHelpers.ts, src/shared/settings/hooks/autoSaveSettingsLoaders.test.ts, src/shared/settings/hooks/autoSaveSettingsLoaders.ts, src/shared/settings/hooks/useAutoSaveSettings.ts, src/shared/settings/hooks/useDebouncedSettingsSave.ts, src/shared/state/createEntityStore.ts, src/tools/image-generation/hooks/useImageGenGallery.ts, src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts, src/tools/join-clips/hooks/useJoinClipsSettings.ts, src/tools/travel-between-images/components/ShotEditor/hooks/video/useAudio.ts, src/tools/travel-between-images/components/ShotEditor/hooks/video/useOutputSelection.ts, src/tools/travel-between-images/components/ShotEditor/hooks/video/useStructureVideo.ts, src/tools/travel-between-images/hooks/settings/useJoinSegmentsSettings.ts, src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx, test-results/",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitignore, .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/schemas/critique.json, .megaplan/schemas/execution.json, .megaplan/schemas/execution_doc.json, .megaplan/schemas/finalize.json, .megaplan/schemas/gate.json, .megaplan/schemas/plan.json, .megaplan/schemas/review.json, .megaplan/schemas/revise.json, .megaplan/schemas/tiebreaker_challenger.json, .megaplan/schemas/tiebreaker_researcher.json, docs/state_management_refactor_baselines.md, package-lock.json, package.json, src/app/App.tsx, src/app/main.test.tsx, src/domains/media-lightbox/hooks/__tests__/useImageEditOrchestrator.test.ts, src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts, src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts, src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts, src/domains/media-lightbox/hooks/useGenerationEditSettings.ts, src/domains/media-lightbox/hooks/useImageEditOrchestrator.ts, src/domains/media-lightbox/hooks/useImageLightboxEditing.ts, src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts, src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts, src/integrations/supabase/__tests__/clientContracts.test.ts, src/moduleImportCoverage.test.ts, src/shared/components/MediaGalleryItem.tsx, src/shared/components/PromptEditorModal/hooks/usePersistentPromptSettings.ts, src/shared/dev/RenderTelemetryOverlay.tsx, src/shared/dev/useRenderBudget.ts, src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts, src/shared/settings/hooks/__tests__/useDebouncedSettingsSave.test.ts, src/shared/settings/hooks/autoSaveSettingsHelpers.test.ts, src/shared/settings/hooks/autoSaveSettingsHelpers.ts, src/shared/settings/hooks/autoSaveSettingsLoaders.test.ts, src/shared/settings/hooks/autoSaveSettingsLoaders.ts, src/shared/settings/hooks/useAutoSaveSettings.ts, src/shared/settings/hooks/useDebouncedSettingsSave.ts, src/shared/state/createEntityStore.ts, src/tools/image-generation/hooks/useImageGenGallery.ts, src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts, src/tools/join-clips/hooks/useJoinClipsSettings.ts, src/tools/travel-between-images/components/ShotEditor/hooks/video/useAudio.ts, src/tools/travel-between-images/components/ShotEditor/hooks/video/useOutputSelection.ts, src/tools/travel-between-images/components/ShotEditor/hooks/video/useStructureVideo.ts, src/tools/travel-between-images/hooks/settings/useJoinSegmentsSettings.ts, src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx, test-results/"
+  ],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "executor_notes": "No substrate changes were needed in this pass. Branch-wide verification still compiles and tests against the existing committed `createEntityStore` substrate, so the M1 precondition remains satisfied.",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "No baseline document edits were made in this rework. The recorded baseline artifact remains unchanged, and the current automation run did not alter that evidence.",
+      "files_changed": [],
+      "commands_run": [
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "The direct-caller surface was not expanded by this rework. The follow-up changes stayed above the migrated callers in the edit-panel/lightbox layer, and the existing branch still passes typecheck and the full suite.",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "`useAutoSaveSettings` was left untouched in this pass. The adapter rewrite remains intact, and the current verification run did not surface contract regressions in the migrated settings flow.",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/domains/media-lightbox/hooks/__tests__/useImageEditOrchestrator.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts",
+        "npx tsc --noEmit",
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "The deleted autosave helper layer remained deleted. The full suite rerun did not surface any stale imports or test references to the removed helper files.",
+      "files_changed": [],
+      "commands_run": [
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "`useEditSettingsPersistence` was not changed in this rework, and the strict-mode-safe bootstrap path remains in place. Branch-wide verification stayed green after the panel-stability follow-up.",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "`useLastUsedEditSettings` was not changed in this pass. Its selector/store-backed behavior remains the active path, and no regressions surfaced in the current verification run.",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "No caller migrations were needed in this rework. The follow-up fix stayed in the edit-panel presentation path above the migrated callers, and the full suite plus focused lightbox/inline-edit tests stayed green.",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/domains/media-lightbox/hooks/__tests__/useImageEditOrchestrator.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts",
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Stabilized the remaining lightbox edit-panel prop graph by memoizing the `EditModePanel` component itself, memoizing the control bundles passed from `ImageLightboxControlsPanel`, and memoizing `useEditModePanelState` outputs. That removes gratuitous wrapper churn above the migrated settings stack without changing the underlying settings contract. Focused lightbox tests, the temporary heartbeat repro, typecheck, and the rerun full suite all passed after the change.",
+      "files_changed": [
+        "src/domains/media-lightbox/components/EditModePanel.tsx",
+        "src/domains/media-lightbox/components/ImageLightboxControlsPanel.tsx",
+        "src/domains/media-lightbox/hooks/useEditModePanelState.ts"
+      ],
+      "commands_run": [
+        "npx vitest run src/.tmp-m1a-repro-script.test.tsx",
+        "npx vitest run src/domains/media-lightbox/hooks/__tests__/useImageEditOrchestrator.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts",
+        "npx tsc --noEmit",
+        "npm test"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "skipped",
+      "executor_notes": "Automation is green after the rework: the temporary reproduction script passed before deletion, the focused lightbox/inline-edit suites passed, `npx tsc --noEmit` is clean, and the rerun full suite passed with `881/881` files and `4559/4559` tests. The hard gate is still not fully closable in this session because the required real-browser artifact was not rerun and the required pre-change bug-path render baseline is still missing from repo evidence.",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/.tmp-m1a-repro-script.test.tsx",
+        "npx vitest run src/domains/media-lightbox/hooks/__tests__/useImageEditOrchestrator.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts",
+        "npx tsc --noEmit",
+        "npm test"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Still satisfied. This pass did not touch the `createEntityStore` substrate, and the branch continued to typecheck and test against the existing committed factory implementation."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Unchanged. The baseline artifact was not modified in this pass, and the known missing pre-change bug-path capture remains the same manual/evidence gap."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Unchanged. The rework stayed above the direct-caller layer; no caller inventory drift was introduced in this pass."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Still satisfied. `useAutoSaveSettings` was not changed here; the follow-up fix only memoized the downstream edit-panel presentation path consuming the migrated store-backed hooks."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Still satisfied. The obsolete helper layer remained removed, and the rerun full suite did not reveal any stale imports or helper-test references."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Still satisfied. `useEditSettingsPersistence` kept its store-backed atomic bootstrap path; this pass did not reintroduce render-time mutation or `hasInitializedRef` logic."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Still satisfied. `useLastUsedEditSettings` remains selector/store-backed and unchanged in this pass."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Still satisfied. Direct callers and named transitive consumers remained compatible; this rework only reduced presentation-layer churn above them."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Advanced further. In addition to the existing env/orchestrator stabilization, the edit-panel path now memoizes `EditModePanel`, memoizes the control bundles built in `useImageLightboxControlsPanel`, and memoizes `useEditModePanelState` outputs so unchanged upstream inputs do not force extra wrapper churn through the panel layer."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "Partially advanced but still not fully closed. The temporary repro passed, focused suites passed, `npx tsc --noEmit` passed, and the rerun full suite passed with `881/881` files and `4559/4559` tests. The required real-browser artifact and the missing pre-change bug-path baseline comparison remain outstanding manual blockers."
+    }
+  ],
+  "files_changed": [
+    "src/domains/media-lightbox/components/EditModePanel.tsx",
+    "src/domains/media-lightbox/components/ImageLightboxControlsPanel.tsx",
+    "src/domains/media-lightbox/hooks/useEditModePanelState.ts"
+  ]
+}

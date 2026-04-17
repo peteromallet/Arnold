@@ -1,0 +1,216 @@
+{
+  "robustness": "standard",
+  "signals": {
+    "iteration": 3,
+    "idea": "Milestone M1 from docs/state_management_refactor_plan.md \u2014 Zustand foundation + port the smallest consumer.\n\nGoal: establish the store-factory pattern. Add Zustand. Write a generic entity-scoped store factory. Port `useJoinClipsSettings.ts` as the first consumer to validate the factory shape. No other migrations. This is the foundation that M1a, M1b, M1c, M3, M4 all build on.\n\n## Deliverables\n\n1. **Install Zustand**:\n   ```\n   npm install zustand\n   ```\n   Add to `package.json` dependencies. Verify no type conflicts.\n\n2. **`src/shared/state/createEntityStore.ts`** \u2014 generic entity-scoped store factory.\n\n   The factory creates a single Zustand store per domain (settings, selection, timeline, etc.) with entity state keyed by an `entityId`. Callers get a hook `useEntity(entityId)` that returns the shape needed by consumers.\n\n   **Factory signature:**\n   ```typescript\n   interface EntityStoreConfig<T extends object> {\n     toolId: string;                       // identifies the store (e.g. \"join-clips\")\n     defaults: T;                          // initial settings shape\n     load: (entityId: string) => Promise<{ db: T | null; lastUsed: T | null }>;\n     save: (entityId: string, data: T) => Promise<void>;\n     textFieldKeys?: readonly (keyof T)[];  // fields that save on blur/flush instead of debounce\n     persistenceDebounceMs?: number;         // default 300\n   }\n\n   interface EntityStoreApi<T extends object> {\n     useEntity: (entityId: string) => EntityView<T>;\n     // plus: direct action access for tests\n     getState: () => EntityStoreState<T>;\n   }\n\n   interface EntityView<T> {\n     settings: T;\n     status: 'idle' | 'loading' | 'ready' | 'saving' | 'error';\n     error: Error | null;\n     hasPersistedData: boolean;\n     updateField: <K extends keyof T>(key: K, value: T[K]) => void;\n     updateFields: (patch: Partial<T>) => void;\n     updateTextField: <K extends keyof T>(key: K, value: T[K]) => void;\n     flushTextFields: () => Promise<void>;\n     save: () => Promise<void>;\n     saveImmediate: () => Promise<void>;\n     revert: () => void;\n     reset: () => void;\n   }\n\n   function createEntityStore<T extends object>(config: EntityStoreConfig<T>): EntityStoreApi<T>;\n   ```\n\n   **Required behaviors:**\n   - Single Zustand store per factory instantiation. State shape: `{ entities: Record<entityId, EntityState<T>> }`.\n   - `useEntity(id)` subscribes the component to just that entity's slice. Different entity IDs do not cause cross-renders.\n   - Use `shallow` equality (from `zustand/shallow`) for selectors that return objects or arrays; default `Object.is` for primitives.\n   - Atomic bootstrap action: `bootstrapEntity({entityId, db, lastUsed})` merges in one dispatch \u2014 no multi-transition load sequence.\n   - On first mount for an entity: `useEntity` triggers a lazy load via `config.load()` and dispatches bootstrap.\n   - `updateField` / `updateFields`: optimistic write to settings, schedule debounced save.\n   - `updateTextField`: same state write but does NOT schedule the debounce \u2014 intended for prompt/textarea fields that should save on blur or flush.\n   - `flushTextFields`: force-save any pending text-field edits immediately.\n   - Debounce: 300ms default, configurable via `config.persistenceDebounceMs`.\n   - On React Query data arrival (for entities that source from RQ): scaffolding is responsible; the factory itself doesn't import RQ. The factory's `load` is invoked externally.\n\n3. **Port `useJoinClipsSettings.ts`** \u2014 smallest consumer, 5 fields, lowest risk.\n\n   **Current shape (verify at milestone start):**\n   ```\n   src/tools/join-clips/hooks/useJoinClipsSettings.ts\n   src/shared/lib/joinClips/defaults.ts\n   ```\n\n   **Port rules:**\n   - `useJoinClipsSettings(shotId: string)` public return shape UNCHANGED. Internal implementation switches to `createEntityStore`.\n   - Use the existing `JoinClipsSettings` type from current defaults.ts.\n   - Load fn and save fn use the existing `useToolSettings` / Supabase mechanism underneath. The factory is a layer above the existing save/load \u2014 don't reinvent persistence yet (that's M1a's job).\n   - Verify: `useJoinClipsSettings` tests pass unchanged. If tests reference internal state of the old hook, update the tests to use the public API.\n\n## Repo conventions (from reigh-app/CLAUDE.md)\n\n- Prefer editing existing files; don't create unnecessary new ones. `createEntityStore.ts` is new and justified.\n- No hardcoded colors. This milestone doesn't add UI \u2014 if any test renders, use theme tokens.\n- TypeScript strict. No `any`.\n- Don't modify any edge function, supabase migration, or worker-orchestrator code.\n- Don't touch `useAutoSaveSettings.ts` or any of the settings persistence helpers in this milestone \u2014 that's M1a.\n\n## Gate criteria (for human reviewer)\n\n- `npx tsc --noEmit` clean.\n- `npm test` at M0 baseline (4562 passing, 0 failing \u2014 any regression blocks).\n- `useJoinClipsSettings` tests unchanged behavior (may need test update if internals-coupled).\n- `createEntityStore` tests cover: bootstrap, update, flush, revert, reset, selector isolation between entities.\n- M0 telemetry unchanged (we didn't touch any instrumented surface).\n\n## Out of scope\n\n- Do not migrate any other consumer of `useAutoSaveSettings` (that's M1a).\n- Do not touch selection or timeline state (M1b, M1c).\n- Do not refactor `useDebouncedSettingsSave.ts` (M1a).\n- Do not change React Query behavior.\n- Do not add new cross-cutting patterns beyond the factory.\n\n## Branch\n\n`megaplan/m1-foundation-store` off main (pull latest main first \u2014 M0's telemetry PR may or may not be merged).\n\n## Base commit note\n\nIf this runs immediately after M0, M0's branch `megaplan/m0-render-telemetry` may still be unmerged on GitHub. This is fine \u2014 M1 depends conceptually on M0's existence, but the M0 branch doesn't need to be merged for M1 to proceed. M1 branches from origin/main and adds Zustand-related work in files that don't overlap with M0's telemetry changes.",
+    "significant_flags": 5,
+    "unresolved_flags": [
+      {
+        "id": "issue_hints",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the revised approach against the milestone deliverable that the factory itself should support lazy `load()` and `save()` while React Query hydration is handled externally. The plan now splits the first consumer across both mechanisms at once \u2014 generic factory lazy load plus hook-local React Query bootstrap and mutation scaffolding \u2014 and does not yet explain which path is authoritative for join-clips. That is still a real tension against the brief because the first consumer is supposed to validate the factory shape, not bypass half of it.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Checked the revised plan against the supporting infrastructure hidden behind `src/shared/hooks/settings/useToolSettings.ts`. Keeping the first consumer on `useToolSettings` does preserve the existing React Query cache and invalidation layer, which addresses the previous gap. The remaining infrastructure risk is not missing files, but that the plan now needs extra store APIs for external bootstrap/baseline refresh in addition to the factory's own lazy `load()` path, and those extra APIs are only sketched generically rather than nailed down as a concrete integration surface.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-M1-005",
+        "concern": "Store hydration: the revised plan still leaves a race between the factory's required lazy `load()` path and the hook-local React Query bootstrap path for the same entity.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-M1-006",
+        "concern": "Factory validation: the first consumer no longer clearly validates the factory's own persistence contract because the revised join-clips plan moves actual save scheduling and query-driven hydration into hook-local scaffolding.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness",
+        "concern": "Are the proposed changes technically correct?: Checked the revised hydration story against the factory requirements in the brief. The factory is still required to lazy-load on first `useEntity(entityId)` mount, but the join-clips plan also says query data arriving from `useToolSettings` should atomically bootstrap or refresh the same entity from hook-local scaffolding. Without an explicit rule for preventing the store's own `config.load()` path and the hook-local React Query bootstrap path from racing each other, the same entity can be bootstrapped twice with different status transitions or persisted baselines.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "resolved_flags": [
+      {
+        "id": "FLAG-M1-001",
+        "concern": "Settings-store adapter: the proposed join-clips bridge is still inconsistent with the real `useToolSettings` API and the factory's `load/save` contract, so the first migration path is under-specified at the persistence boundary.",
+        "resolution": "Reworked the plan around the real blocking issue: `useToolSettings` cannot be the factory\u2019s persistence API. The revision now uses lower-level existing settings helpers for `load/save`, treats `useJoinClipsSettings` as a full-contract passthrough that must keep every current public member, explicitly defines the join-clips `lastUsed` handling for M1, and names the real join-clips integration touch points without expanding the milestone beyond one consumer migration."
+      },
+      {
+        "id": "FLAG-M1-002",
+        "concern": "Join-clips migration surface: the plan still frames `useJoinClipsSettings` as a tiny five-field consumer, but the actual repository uses a much larger settings shape and more integration points, so the risk and test surface are understated.",
+        "resolution": "Current join-clips code reads or writes many settings beyond the five named in the brief, including prompts, motion settings, LoRA sync, clip arrays, transition prompts, loop toggles, and VACE-derived defaults across `JoinClipsPage`, `useClipManager`, and `useJoinClipsGenerate`."
+      },
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: Checked the revised adapter plan for `initializeFrom` against the actual implementation in `src/shared/settings/hooks/useAutoSaveSettings.ts`. Today `initializeFrom` is custom-mode-only and is a no-op for project-scoped `useJoinClipsSettings`, because `useJoinClipsSettings` calls `useAutoSaveSettings` without `customLoadSave`. The revised plan says the adapter should reintroduce `initializeFrom(data)` as a local helper that applies a partial object into settings, which would change the current public behavior rather than preserve it.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: Checked the revised open question about `reset()` semantics against the current repository behavior and tests in `src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts`. The existing hook already answers part of that question: `reset()` is a local reset that clears pending work and updates the clean baseline without performing a save, so leaving reset semantics open in M1 is still a correctness gap if the plan claims to preserve the full current contract for the first port.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "scope",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Checked the claim that join-clips is the 'smallest consumer, 5 fields, lowest risk' against the actual page and hook usage. In this repository the join-clips path reads or writes far more than five settings: `contextFrameCount`, `gapFrameCount`, `replaceMode`, `keepBridgingImages`, `prompt`, `negativePrompt`, `useIndividualPrompts`, `enhancePrompt`, `useInputVideoResolution`, `useInputVideoFps`, `noisedInputVideo`, `motionMode`, `phaseConfig`, `randomSeed`, `selectedPhasePresetId`, `loras`, `loopFirstClip`, `clips`, and `transitionPrompts`, plus many inherited VACE defaults. That makes the first consumer materially broader than the plan's risk framing suggests.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked what the callers actually use from the returned object. `JoinClipsPage`, `useClipManager`, `useJoinClipsGenerate`, `useJoinClipsPageHelpers`, and `JoinClipsGrid` all rely on `settings`, `status`, `updateField`, and `updateFields`, while the wrapper itself currently also exposes `entityId`, `isDirty`, `error`, `hasShotSettings`, `hasPersistedData`, `updateTextField`, `updateTextFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom` through passthrough. The plan does not yet state how those remaining public members will be preserved by the adapter, even though the current implementation exposes them today.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "FLAG-M1-003",
+        "concern": "Settings contract: the revised adapter still changes `initializeFrom` semantics by turning a currently non-custom no-op into a state-mutating helper for `useJoinClipsSettings`.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      },
+      {
+        "id": "FLAG-M1-004",
+        "concern": "React Query integration: the revised persistence design fixes the hook/factory mismatch but still risks changing current join-clips behavior by bypassing the existing `useToolSettings` query layer and its cache/invalidation semantics.",
+        "resolution": "Revised the plan to preserve the current React Query-backed join-clips behavior instead of bypassing it. The new version keeps `useToolSettings` in hook-local scaffolding, uses Zustand only as the state layer, locks `reset()` to local non-save behavior, and preserves `initializeFrom()` as a no-op for this project-scoped consumer."
+      }
+    ],
+    "weighted_score": 8.5,
+    "weighted_history": [
+      10.0,
+      11.5
+    ],
+    "plan_delta_from_previous": 94.21,
+    "recurring_critiques": [],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 3. Weighted score trajectory: 10.0 -> 11.5 -> 8.5. Plan deltas: 83.9%, 94.2%. Recurring critiques: 0. Resolved flags: 8. Open significant flags: 5.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "warnings": [],
+  "criteria_check": {
+    "count": 11,
+    "items": [
+      {
+        "criterion": "`zustand` is added to `package.json` dependencies and the repo still passes `npx tsc --noEmit` without new type conflicts.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`src/shared/state/createEntityStore.ts` implements the milestone factory API with a single store per factory instance, atomic bootstrap, lazy entity load, debounced save, text-field flush, revert, reset, and selector isolation between entity IDs.",
+        "priority": "must"
+      },
+      {
+        "criterion": "The generic factory remains React-Query-free, while `useJoinClipsSettings` preserves the existing React Query-backed read/write path through `useToolSettings` in hook-local scaffolding.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`useJoinClipsSettings(projectId)` is ported to the new store while preserving the full current public contract, including `entityId`, `isDirty`, `error`, `hasShotSettings`, `hasPersistedData`, `updateTextField`, `updateTextFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom`.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`reset()` in the ported join-clips hook remains a local non-saving reset, and `initializeFrom()` preserves current no-op behavior for this non-custom consumer.",
+        "priority": "must"
+      },
+      {
+        "criterion": "Join-clips bootstrap semantics are explicit and tested as `db ?? lastUsed ?? defaults`, with `lastUsed` currently `null` for this first consumer unless an existing repository source is found.",
+        "priority": "must"
+      },
+      {
+        "criterion": "Factory tests cover bootstrap, optimistic updates, text-field flush, revert, local non-save reset, and selector isolation between two entity IDs.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`useJoinClipsSettings` tests verify unchanged public behavior through the hook API while mocking the persistence boundary at the `useToolSettings` layer instead of the old `useAutoSaveSettings` implementation detail.",
+        "priority": "must"
+      },
+      {
+        "criterion": "`npm test` passes at or above the stated M0 baseline with no regressions introduced by the Zustand foundation work.",
+        "priority": "must"
+      },
+      {
+        "criterion": "The implementation stays within M1 scope: one new factory, one ported consumer, and only minimal compatibility edits in join-clips callers/tests; no other `useAutoSaveSettings` consumer is migrated.",
+        "priority": "should"
+      },
+      {
+        "criterion": "M0 telemetry behavior remains unchanged because no instrumented surface is modified in this milestone.",
+        "priority": "info"
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "issue_hints",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the revised approach against the milestone deliverable that the factory itself should support lazy `load()` and `save()` while React Query hydration is handled externally. The plan now splits the first consumer across both mechanisms at once \u2014 generic factory lazy load plus hook-local React Query bootstrap and mutation scaffolding \u2014 and does not yet explain which path is authoritative for join-clips. That is still a real tension against the brief because the first consumer is supposed to validate the factory shape, not bypass half of it.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the revised approach against the milestone deliverable that the factory itself should support lazy `load()` and `save()` while React Query hydration is handled externally. The plan now splits the first consumer across both mechanisms at once \u2014 generic factory lazy load plus hook-local React Query bootstrap and mutation scaffolding \u2014 and does not yet explain which path is authoritative for join-clips. That is still a real tension against the brief because the first consumer is supposed to validate the factory shape, not bypass half of it.",
+      "raised_in": "critique_v3.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v3.md",
+      "verified_in": "critique_v3.json"
+    },
+    {
+      "id": "all_locations",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: Checked the revised plan against the supporting infrastructure hidden behind `src/shared/hooks/settings/useToolSettings.ts`. Keeping the first consumer on `useToolSettings` does preserve the existing React Query cache and invalidation layer, which addresses the previous gap. The remaining infrastructure risk is not missing files, but that the plan now needs extra store APIs for external bootstrap/baseline refresh in addition to the factory's own lazy `load()` path, and those extra APIs are only sketched generically rather than nailed down as a concrete integration surface.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the revised plan against the supporting infrastructure hidden behind `src/shared/hooks/settings/useToolSettings.ts`. Keeping the first consumer on `useToolSettings` does preserve the existing React Query cache and invalidation layer, which addresses the previous gap. The remaining infrastructure risk is not missing files, but that the plan now needs extra store APIs for external bootstrap/baseline refresh in addition to the factory's own lazy `load()` path, and those extra APIs are only sketched generically rather than nailed down as a concrete integration surface.",
+      "raised_in": "critique_v3.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v3.md",
+      "verified_in": "critique_v3.json"
+    },
+    {
+      "id": "FLAG-M1-005",
+      "concern": "Store hydration: the revised plan still leaves a race between the factory's required lazy `load()` path and the hook-local React Query bootstrap path for the same entity.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The milestone requires `useEntity(id)` to trigger `config.load()` on first mount, while the revised plan also says `useJoinClipsSettings` should bootstrap or refresh the same store entity from `useToolSettings` query results via hook-local effects; it does not specify how one path suppresses or reconciles the other.",
+      "raised_in": "critique_v3.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-M1-006",
+      "concern": "Factory validation: the first consumer no longer clearly validates the factory's own persistence contract because the revised join-clips plan moves actual save scheduling and query-driven hydration into hook-local scaffolding.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The shared factory is still specified to own lazy load, debounced persistence, and `save`/`saveImmediate`, but the revised plan says the join-clips hook scaffolding should own the actual write path through `useToolSettings` and also push query results back into the store, which undercuts the milestone's goal of validating the generic factory shape with the first consumer.",
+      "raised_in": "critique_v3.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "correctness",
+      "concern": "Are the proposed changes technically correct?: Checked the revised hydration story against the factory requirements in the brief. The factory is still required to lazy-load on first `useEntity(entityId)` mount, but the join-clips plan also says query data arriving from `useToolSettings` should atomically bootstrap or refresh the same entity from hook-local scaffolding. Without an explicit rule for preventing the store's own `config.load()` path and the hook-local React Query bootstrap path from racing each other, the same entity can be bootstrapped twice with different status transitions or persisted baselines.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the revised hydration story against the factory requirements in the brief. The factory is still required to lazy-load on first `useEntity(entityId)` mount, but the join-clips plan also says query data arriving from `useToolSettings` should atomically bootstrap or refresh the same entity from hook-local scaffolding. Without an explicit rule for preventing the store's own `config.load()` path and the hook-local React Query bootstrap path from racing each other, the same entity can be bootstrapped twice with different status transitions or persisted baselines.",
+      "raised_in": "critique_v3.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ]
+}

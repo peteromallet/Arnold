@@ -1,0 +1,563 @@
+{
+  "name": "milestone-m1-from-docs-state-20260415-2100",
+  "idea": "Milestone M1 from docs/state_management_refactor_plan.md \u2014 Zustand foundation + port the smallest consumer.\n\nGoal: establish the store-factory pattern. Add Zustand. Write a generic entity-scoped store factory. Port `useJoinClipsSettings.ts` as the first consumer to validate the factory shape. No other migrations. This is the foundation that M1a, M1b, M1c, M3, M4 all build on.\n\n## Deliverables\n\n1. **Install Zustand**:\n   ```\n   npm install zustand\n   ```\n   Add to `package.json` dependencies. Verify no type conflicts.\n\n2. **`src/shared/state/createEntityStore.ts`** \u2014 generic entity-scoped store factory.\n\n   The factory creates a single Zustand store per domain (settings, selection, timeline, etc.) with entity state keyed by an `entityId`. Callers get a hook `useEntity(entityId)` that returns the shape needed by consumers.\n\n   **Factory signature:**\n   ```typescript\n   interface EntityStoreConfig<T extends object> {\n     toolId: string;                       // identifies the store (e.g. \"join-clips\")\n     defaults: T;                          // initial settings shape\n     load: (entityId: string) => Promise<{ db: T | null; lastUsed: T | null }>;\n     save: (entityId: string, data: T) => Promise<void>;\n     textFieldKeys?: readonly (keyof T)[];  // fields that save on blur/flush instead of debounce\n     persistenceDebounceMs?: number;         // default 300\n   }\n\n   interface EntityStoreApi<T extends object> {\n     useEntity: (entityId: string) => EntityView<T>;\n     // plus: direct action access for tests\n     getState: () => EntityStoreState<T>;\n   }\n\n   interface EntityView<T> {\n     settings: T;\n     status: 'idle' | 'loading' | 'ready' | 'saving' | 'error';\n     error: Error | null;\n     hasPersistedData: boolean;\n     updateField: <K extends keyof T>(key: K, value: T[K]) => void;\n     updateFields: (patch: Partial<T>) => void;\n     updateTextField: <K extends keyof T>(key: K, value: T[K]) => void;\n     flushTextFields: () => Promise<void>;\n     save: () => Promise<void>;\n     saveImmediate: () => Promise<void>;\n     revert: () => void;\n     reset: () => void;\n   }\n\n   function createEntityStore<T extends object>(config: EntityStoreConfig<T>): EntityStoreApi<T>;\n   ```\n\n   **Required behaviors:**\n   - Single Zustand store per factory instantiation. State shape: `{ entities: Record<entityId, EntityState<T>> }`.\n   - `useEntity(id)` subscribes the component to just that entity's slice. Different entity IDs do not cause cross-renders.\n   - Use `shallow` equality (from `zustand/shallow`) for selectors that return objects or arrays; default `Object.is` for primitives.\n   - Atomic bootstrap action: `bootstrapEntity({entityId, db, lastUsed})` merges in one dispatch \u2014 no multi-transition load sequence.\n   - On first mount for an entity: `useEntity` triggers a lazy load via `config.load()` and dispatches bootstrap.\n   - `updateField` / `updateFields`: optimistic write to settings, schedule debounced save.\n   - `updateTextField`: same state write but does NOT schedule the debounce \u2014 intended for prompt/textarea fields that should save on blur or flush.\n   - `flushTextFields`: force-save any pending text-field edits immediately.\n   - Debounce: 300ms default, configurable via `config.persistenceDebounceMs`.\n   - On React Query data arrival (for entities that source from RQ): scaffolding is responsible; the factory itself doesn't import RQ. The factory's `load` is invoked externally.\n\n3. **Port `useJoinClipsSettings.ts`** \u2014 smallest consumer, 5 fields, lowest risk.\n\n   **Current shape (verify at milestone start):**\n   ```\n   src/tools/join-clips/hooks/useJoinClipsSettings.ts\n   src/shared/lib/joinClips/defaults.ts\n   ```\n\n   **Port rules:**\n   - `useJoinClipsSettings(shotId: string)` public return shape UNCHANGED. Internal implementation switches to `createEntityStore`.\n   - Use the existing `JoinClipsSettings` type from current defaults.ts.\n   - Load fn and save fn use the existing `useToolSettings` / Supabase mechanism underneath. The factory is a layer above the existing save/load \u2014 don't reinvent persistence yet (that's M1a's job).\n   - Verify: `useJoinClipsSettings` tests pass unchanged. If tests reference internal state of the old hook, update the tests to use the public API.\n\n## Repo conventions (from reigh-app/CLAUDE.md)\n\n- Prefer editing existing files; don't create unnecessary new ones. `createEntityStore.ts` is new and justified.\n- No hardcoded colors. This milestone doesn't add UI \u2014 if any test renders, use theme tokens.\n- TypeScript strict. No `any`.\n- Don't modify any edge function, supabase migration, or worker-orchestrator code.\n- Don't touch `useAutoSaveSettings.ts` or any of the settings persistence helpers in this milestone \u2014 that's M1a.\n\n## Gate criteria (for human reviewer)\n\n- `npx tsc --noEmit` clean.\n- `npm test` at M0 baseline (4562 passing, 0 failing \u2014 any regression blocks).\n- `useJoinClipsSettings` tests unchanged behavior (may need test update if internals-coupled).\n- `createEntityStore` tests cover: bootstrap, update, flush, revert, reset, selector isolation between entities.\n- M0 telemetry unchanged (we didn't touch any instrumented surface).\n\n## Out of scope\n\n- Do not migrate any other consumer of `useAutoSaveSettings` (that's M1a).\n- Do not touch selection or timeline state (M1b, M1c).\n- Do not refactor `useDebouncedSettingsSave.ts` (M1a).\n- Do not change React Query behavior.\n- Do not add new cross-cutting patterns beyond the factory.\n\n## Branch\n\n`megaplan/m1-foundation-store` off main (pull latest main first \u2014 M0's telemetry PR may or may not be merged).\n\n## Base commit note\n\nIf this runs immediately after M0, M0's branch `megaplan/m0-render-telemetry` may still be unmerged on GitHub. This is fine \u2014 M1 depends conceptually on M0's existence, but the M0 branch doesn't need to be merged for M1 to proceed. M1 branches from origin/main and adds Zustand-related work in files that don't overlap with M0's telemetry changes.",
+  "current_state": "done",
+  "iteration": 7,
+  "created_at": "2026-04-15T21:00:26Z",
+  "config": {
+    "project_dir": "/workspace/reigh-app",
+    "auto_approve": true,
+    "robustness": "standard",
+    "mode": "code",
+    "agent": ""
+  },
+  "sessions": {
+    "codex_gatekeeper": {
+      "id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "mode": "persistent",
+      "created_at": "2026-04-15T21:07:40Z",
+      "last_used_at": "2026-04-15T22:13:56Z",
+      "refreshed": true
+    },
+    "codex_planner": {
+      "id": "019d9324-6c83-7203-88d2-47a19b75b211",
+      "mode": "persistent",
+      "created_at": "2026-04-15T21:57:56Z",
+      "last_used_at": "2026-04-15T22:05:44Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019d9331-928d-7c41-a64a-1724582383cb",
+      "mode": "persistent",
+      "created_at": "2026-04-15T22:13:19Z",
+      "last_used_at": "2026-04-15T22:13:19Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019d9335-5109-7a80-a520-cefdd49de83c",
+      "mode": "persistent",
+      "created_at": "2026-04-15T22:14:52Z",
+      "last_used_at": "2026-04-15T22:14:52Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019d934b-b200-7063-92eb-7bb69a8414c8",
+      "mode": "persistent",
+      "created_at": "2026-04-15T22:46:48Z",
+      "last_used_at": "2026-04-15T22:46:48Z",
+      "refreshed": false
+    },
+    "codex_reviewer": {
+      "id": "019d9353-6db9-79a3-9bfb-bf4babec4646",
+      "mode": "persistent",
+      "created_at": "2026-04-15T22:50:56Z",
+      "last_used_at": "2026-04-15T22:50:56Z",
+      "refreshed": true
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:90360b34f66b776ecbe0507f66dfd450f3a475f9e9a9dd2ad90543c28fb4c0a9",
+      "timestamp": "2026-04-15T21:03:00Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:43f71170c8e0fa433a7c4966dfce2e09f3f326e3c10caa7aa2b9cb8f7cc3d3df",
+      "timestamp": "2026-04-15T21:11:54Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:fe6bdbc8fcfabd5477656bec4819bb0bb57fdcbc53921200b9eb955e19014fb2",
+      "timestamp": "2026-04-15T21:23:11Z"
+    },
+    {
+      "version": 4,
+      "file": "plan_v4.md",
+      "hash": "sha256:7cb7102b581d7c9dc2d4a0d57c489bf0c75fa9d18efedc7dedc418774d86e806",
+      "timestamp": "2026-04-15T21:33:49Z"
+    },
+    {
+      "version": 5,
+      "file": "plan_v5.md",
+      "hash": "sha256:dcad922e12d71b6f48033b62b81f8b44412d20ab85590be9e173c28450206198",
+      "timestamp": "2026-04-15T21:46:15Z"
+    },
+    {
+      "version": 6,
+      "file": "plan_v6.md",
+      "hash": "sha256:9607bc014628b51533c0eb683a3822d670fb2bc0c9b52b3334986d035cd7b38e",
+      "timestamp": "2026-04-15T21:57:56Z"
+    },
+    {
+      "version": 7,
+      "file": "plan_v7.md",
+      "hash": "sha256:b56d3de4153ebb66f81792784d59f2238def887d5a9e28c889b0dd8ca38b8ae5",
+      "timestamp": "2026-04-15T22:05:44Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-15T21:00:26Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-15T21:03:00Z",
+      "duration_ms": 153536,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f2-0566-72a2-8ef1-3acde353236e",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:90360b34f66b776ecbe0507f66dfd450f3a475f9e9a9dd2ad90543c28fb4c0a9"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T21:07:21Z",
+      "duration_ms": 259574,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f4-5d6a-7262-967f-702aff5bce03",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:253a7cd3c3c8af552332602e65ab823e9ebe46d4331643d182e842f78affbed9",
+      "flags_count": 11
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T21:07:40Z",
+      "duration_ms": 16410,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:089585d6b68903debeaaa214ebdf0c98f221ee4ca43c0ce554f1a7ee1b4adf64",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T21:11:54Z",
+      "duration_ms": 120102,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92fa-aa37-7b70-bfc6-3f733ff4bedf",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:43f71170c8e0fa433a7c4966dfce2e09f3f326e3c10caa7aa2b9cb8f7cc3d3df",
+      "flags_addressed": [
+        "FLAG-001",
+        "FLAG-002",
+        "FLAG-003",
+        "issue_hints",
+        "correctness",
+        "scope-1",
+        "scope-2",
+        "all_locations",
+        "callers"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T21:16:41Z",
+      "duration_ms": 177853,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92fe-2bf0-7570-b3d7-28cc41223ea0",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:cd643ec57cf41390d218b24521eb4fa0c948b84efa95736f35b78ef6839cc098",
+      "flags_count": 9
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T21:17:02Z",
+      "duration_ms": 18087,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:cee32588182a4ea385db62865d1eb81e0d8ac0ba7285e2950cea610354a934a9",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T21:23:11Z",
+      "duration_ms": 172906,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9304-3062-7731-9ad0-a8449a3e4e7e",
+      "agent": "codex",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:fe6bdbc8fcfabd5477656bec4819bb0bb57fdcbc53921200b9eb955e19014fb2",
+      "flags_addressed": [
+        "issue_hints",
+        "all_locations",
+        "FLAG-004",
+        "FLAG-005",
+        "correctness-1",
+        "correctness-2",
+        "scope"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T21:29:09Z",
+      "duration_ms": 206135,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9309-26e4-7382-8109-677e0f2a51db",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:d9afe547c0f6cc561c701fbfbc0cb13927ba896edae506877fcbfcf6667aee70",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T21:29:58Z",
+      "duration_ms": 46135,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:6570e2821e022060fe0bf1b086db42dce28afdb61734134792b77b59a8b85388",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T21:33:49Z",
+      "duration_ms": 137017,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d930e-7871-7f23-95ad-9d42ac872d7b",
+      "agent": "codex",
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:7cb7102b581d7c9dc2d4a0d57c489bf0c75fa9d18efedc7dedc418774d86e806",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "all_locations",
+        "callers",
+        "scope",
+        "FLAG-006"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T21:40:33Z",
+      "duration_ms": 171985,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9314-1c89-7433-aee7-5a4aaf7eb0a5",
+      "agent": "codex",
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:f493668da1279d079e9f274b0c2cb3c4113243baa8b4d90db821748fcb610797",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T21:40:57Z",
+      "duration_ms": 20066,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:303d819f19901842a551a87a6a7b067950b769b2c4fb31ac4fd84f9c4138326f",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T21:46:15Z",
+      "duration_ms": 163767,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9319-7362-7bb0-b764-bf80685b0a7c",
+      "agent": "codex",
+      "output_file": "plan_v5.md",
+      "artifact_hash": "sha256:dcad922e12d71b6f48033b62b81f8b44412d20ab85590be9e173c28450206198",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "all_locations",
+        "callers",
+        "scope",
+        "FLAG-007"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T21:53:01Z",
+      "duration_ms": 237140,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d931e-8473-7641-a3a3-5a992ed01bf5",
+      "agent": "codex",
+      "output_file": "critique_v5.json",
+      "artifact_hash": "sha256:deb0009df0b9e412717f423d5172b8448dfa0694c3c65fdff377d1ec72269172",
+      "flags_count": 9
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T21:53:28Z",
+      "duration_ms": 24697,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:e1d2f4e1433a4191672034db8edbdb1c9b983bfb1d3a25d5b68b4b464b74a5bb",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T21:57:56Z",
+      "duration_ms": 145204,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9324-6c83-7203-88d2-47a19b75b211",
+      "agent": "codex",
+      "output_file": "plan_v6.md",
+      "artifact_hash": "sha256:9607bc014628b51533c0eb683a3822d670fb2bc0c9b52b3334986d035cd7b38e",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "callers",
+        "scope",
+        "join-clips-settings-contract",
+        "join-clips-reset-dirty-state"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T22:03:13Z",
+      "duration_ms": 204506,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9328-5a4a-7152-9aa0-f563fd69d927",
+      "agent": "codex",
+      "output_file": "critique_v6.json",
+      "artifact_hash": "sha256:27d44f1331d903e0b96bf72f40fccf10e16cdf3fe6cce9bba3e30c84397958ae",
+      "flags_count": 7
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T22:03:39Z",
+      "duration_ms": 23579,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:3aa51d2906cfb989517256b7597707ca34f643f4190b053fb3480562d800be4f",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-15T22:05:44Z",
+      "duration_ms": 124033,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9324-6c83-7203-88d2-47a19b75b211",
+      "agent": "codex",
+      "output_file": "plan_v7.md",
+      "artifact_hash": "sha256:b56d3de4153ebb66f81792784d59f2238def887d5a9e28c889b0dd8ca38b8ae5",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "callers",
+        "join-clips-null-entity-id"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T22:13:19Z",
+      "duration_ms": 206754,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9331-928d-7c41-a64a-1724582383cb",
+      "agent": "codex",
+      "output_file": "critique_v7.json",
+      "artifact_hash": "sha256:279e9a924df883a83664d6d0501e6f536225c23abc84a0edaf66953a540b5836",
+      "flags_count": 7
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-15T22:13:56Z",
+      "duration_ms": 34677,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d92f8-5d9f-7351-a6a5-679f2cf06ce9",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:31fa6464c9c9d916f2e9732fb9fe237efc57e9ff021f1937d5bebf9ebaf1f196",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-15T22:14:52Z",
+      "duration_ms": 54760,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9335-5109-7a80-a520-cefdd49de83c",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:04604cff3d0781cf8bc846d0a8071e22bd899db1c196c092afb946ab934bb23e"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-15T22:46:48Z",
+      "duration_ms": 1621498,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d934b-b200-7063-92eb-7bb69a8414c8",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:cd46835416bd4eacf9441ce821de4c422beb69f6dbe77b7bf9e52a6728bd9fac",
+      "finalize_hash": "sha256:db582a337e7ce375207cc81d40a7c86e9a26537d7efe86df3bc3f8086a2b96ba",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-15T22:50:56Z",
+      "duration_ms": 244519,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9353-6db9-79a3-9bfb-bf4babec4646",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:2ada25102aa30235971f691f0f2c068a6a029e018ed1f780edb0e541215b9456",
+      "finalize_hash": "sha256:3617de479be2da31852cb4400c1478132c3388a07125a17efa9827977e0e3fe9"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      9,
+      11,
+      6,
+      6,
+      6,
+      4,
+      3
+    ],
+    "weighted_scores": [
+      8.0,
+      15.5,
+      10.5,
+      10.5,
+      11.0,
+      7.5,
+      2.5
+    ],
+    "plan_deltas": [
+      75.65,
+      81.01,
+      52.96,
+      59.11,
+      74.43,
+      26.71
+    ],
+    "recurring_critiques": [
+      [],
+      [
+        "criterion 8: requires human verification (subjective_judgment).",
+        "criterion 9: requires human verification (subjective_judgment)."
+      ],
+      [],
+      [],
+      [
+        "criterion 13: requires human verification (subjective_judgment)."
+      ],
+      [],
+      []
+    ],
+    "total_cost_usd": 0.0,
+    "overrides": [],
+    "notes": [],
+    "user_approved_gate": true
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "Execution should move forward now. The score dropped to 2.5 after seven iterations, there are no recurring critiques, preflight is clean, and the remaining significant flags are no longer plan-quality blockers. Two of them are scope-clarity complaints about the Join Clips surface being broader than the original milestone summary; the revised plan already incorporates that reality by preserving the full existing `useJoinClipsSettings` contract rather than a five-field subset. The remaining documentation-traceability flag is real, but it is a source-of-truth limitation in this checkout, not an execution blocker for M1.",
+    "reprompted": false,
+    "signals_assessment": "Weighted score improved from 7.5 to 2.5 on iteration 7, with 18 resolved flags, 3 open significant flags, and 0 recurring critiques. Plan delta is down to 26.71%, which suggests convergence rather than churn. Preflight posture is fully green: project directory exists and is writable, success criteria are present, and both Claude/Codex availability checks passed.",
+    "warnings": [
+      "Iteration 7: high iteration count.",
+      "The repository still lacks `docs/state_management_refactor_plan.md`, so milestone traceability remains prompt-driven plus code-verified rather than repo-document-driven.",
+      "`useJoinClipsSettings` is broader in this checkout than the milestone summary suggests; execution must preserve the full existing hook contract and caller behavior, not a reduced settings subset."
+    ],
+    "settled_decisions": [
+      {
+        "id": "D1",
+        "decision": "`useToolSettings` remains the only authoritative merged-read and readiness source for Join Clips.",
+        "rationale": "This avoids introducing a second merged-settings read path in M1 and preserves existing caller-facing load semantics."
+      },
+      {
+        "id": "D2",
+        "decision": "`createEntityStore` stays React Query-free and owns only local entity state plus persistence timing.",
+        "rationale": "The factory is foundational shared infrastructure; query reconciliation belongs in the Join Clips adapter layer, not in the generic store."
+      },
+      {
+        "id": "D3",
+        "decision": "Nullish `projectId` values are bridged through an adapter-local inert sentinel entity ID.",
+        "rationale": "This preserves Rules of Hooks compliance while keeping disabled callers on idle/default/no-op behavior without exposing or persisting sentinel state."
+      },
+      {
+        "id": "D4",
+        "decision": "The Join Clips migration preserves the full current public hook surface, not the stale five-field milestone framing.",
+        "rationale": "Current repository reality is broader: callers depend on VACE-derived defaults plus persisted clips/prompts/LoRA/toggle fields, so compatibility must be evaluated against the real exported contract."
+      },
+      {
+        "id": "D5",
+        "decision": "`textFieldKeys` remain unset for the Join Clips consumer in M1.",
+        "rationale": "Current Join Clips callers persist prompt-like fields through the ordinary debounced path, and changing that behavior belongs to a later milestone rather than this foundation pass."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting."
+  }
+}

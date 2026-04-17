@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, useCallback } from 'react';
 import { getSupabaseClient as supabase } from '@/integrations/supabase/client';
 import { useShots } from '@/shared/contexts/ShotsContext';
-import { useProject } from "@/shared/contexts/ProjectContext";
+import { useProjectSelectionContext } from "@/shared/contexts/ProjectContext";
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { useProjectVideoCountsCache } from '@/shared/hooks/projects/useProjectVideoCountsCache';
 import { Shot } from '@/domains/generation/types';
@@ -39,7 +39,7 @@ export const useVideoGalleryPreloader = (options?: {
   const TARGET_CACHED_IMAGES = isMobile ? 12 : 48; // 2 shots × 6 images on mobile, 8 shots × 6 images on desktop
 
   // Get project and shots data from contexts
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const { shots } = useShots();
   const { getShotVideoCount } = useProjectVideoCountsCache(selectedProjectId);
 

@@ -1,0 +1,144 @@
+{
+  "version": 4,
+  "timestamp": "2026-04-15T21:33:49Z",
+  "hash": "sha256:7cb7102b581d7c9dc2d4a0d57c489bf0c75fa9d18efedc7dedc418774d86e806",
+  "changes_summary": "Added the missing Join Clips autosave lifecycle work to the plan: the adapter now explicitly restores cleanup-on-project-change/unmount and `beforeunload` flushing, with minimal store-side pending-state support and matching tests, while keeping the raw-vs-merged data boundary and query-cache sync decisions intact.",
+  "flags_addressed": [
+    "issue_hints",
+    "correctness",
+    "all_locations",
+    "callers",
+    "scope",
+    "FLAG-006"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`createEntityStore` exposes the requested generic API, stays React Query-free, and provides one Zustand store per factory instance with per-entity state keyed by `entityId`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The store implements atomic bootstrap, lazy per-entity load, optimistic updates, text-field flush, revert, reset, save, saveImmediate, and error handling without discarding optimistic local state.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The store exposes only minimal internal pending/dirty inspection needed for adapter lifecycle flushing, without widening the public `EntityView<T>` contract beyond M1 needs.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useEntity(entityId)` subscriptions are isolated so updates to one entity do not re-render another entity consumer.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useJoinClipsSettings(projectId)` is ported to the store factory while preserving the full existing public hook contract used by current callers.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Join Clips bootstrap uses raw project-scoped persisted data for the store snapshot and does not treat merged `fetchToolSettingsSupabase()` output as persisted `db` state.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Join Clips adapter keeps React Query behavior coherent by continuing to read merged settings through `useToolSettings` and explicitly synchronizing or invalidating the relevant settings cache after direct saves.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Join Clips preserves best-effort persistence of pending edits on project change, hook unmount, and browser unload, matching the lifecycle behavior it currently inherits from `useAutoSaveSettings`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Join Clips prompt and textarea settings keep their current debounced autosave behavior in M1; no new blur-only wiring is silently introduced.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` passes cleanly after the refactor, covering downstream consumers typed against `ReturnType<typeof useJoinClipsSettings>`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Targeted tests for `createEntityStore` and `useJoinClipsSettings` pass and cover bootstrap, update, flush, revert, reset, selector isolation, raw-persistence semantics, query-sync behavior, and lifecycle flush behavior.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` returns to the stated M0 baseline with no regressions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The final design remains readable shared infrastructure and does not turn M1 into a broader settings-runtime refactor.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "M0 telemetry remains unchanged because no instrumented surface was intentionally modified in this milestone.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "This turn is revising the implementation plan, not executing the code changes.",
+    "The milestone goal remains correct: build the generic Zustand foundation and validate it by porting only `useJoinClipsSettings`.",
+    "`zustand` being present in `package.json` means the dependency task is verification plus lockfile reconciliation, not necessarily a fresh install.",
+    "The autosave lifecycle gap can be restored at the Join Clips adapter seam with at most minimal store-state inspection, without modifying shared autosave helpers in M1.",
+    "Correct persisted-snapshot semantics remain more important than avoiding one temporary extra raw project read during the first consumer migration."
+  ],
+  "delta_from_previous_percent": 52.96,
+  "structure_warnings": []
+}

@@ -1,0 +1,6 @@
+error: the argument '--dangerously-bypass-approvals-and-sandbox' cannot be used with '--full-auto'
+
+Usage: codex exec [OPTIONS] [PROMPT]
+       codex exec [OPTIONS] <COMMAND> [ARGS]
+
+For more information, try '--help'.

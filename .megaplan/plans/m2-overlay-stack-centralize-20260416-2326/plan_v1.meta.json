@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-16T23:28:40Z",
+  "hash": "sha256:c3a57a44221efc4139e96feafe5ac59838ac27b3e5f7afa82bec5fed3fad5ca6",
+  "questions": [
+    "The brief lists `Drawer`, `ContextMenu`, and `popup`, but the current `src/` inventory has no such Base UI imports and only 8 matching TypeScript files total. Should the milestone cover only primitives that actually exist in this worktree, or do you want placeholder wrappers added for absent types?",
+    "`LightboxShell` currently imports `@base-ui/react/dialog` directly outside shared UI. Should it be migrated into the new overlay wrapper system in this milestone to satisfy the hard grep gate, even though the non-goals say bespoke overlays are out unless they already use the same portal plumbing?",
+    "`HoverCard` uses Base UI `preview-card` with its own portal and hardcoded z-index, but it is outside the brief's primitive list. Do you want it explicitly left out for M2, or folded into the same stack while this plumbing is being centralized?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`src/shared/state/overlayStack.ts` exists, exports documented JSDoc actions/selectors for push/pop/topmost/layer access, and centralizes body pointer-events plus focus restoration logic.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "No raw `@base-ui/react/(dialog|popover|select|menu|tooltip|alert-dialog|context-menu|popup)` imports remain anywhere under `src/` outside `src/shared/components/ui/overlay/`.",
+      "priority": "must",
+      "requires": [
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Representative integration tests cover `open A -> open B -> close A -> close B` for both Dialog+Popover and Menu+Dialog, and assert `document.body.style.pointerEvents === ''` after full close.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The new overlay stack logic and wrapper migration pass `npx tsc --noEmit`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`npm test` passes after the overlay migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "No migrated overlay wrapper file in `src/shared/components/ui/overlay/` contains a literal numeric `z-index` value; layering is derived from the central stack.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Existing public wrapper APIs remain source-compatible for current consumers, so most downstream files do not need behavioral rewrites beyond direct raw Base UI import sites.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The overlay stack implementation stays small and mechanical rather than recreating entity-store persistence abstractions that overlays do not use.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Deferred manual checks pass in a real app session: nested LoRA modal + Model Select closes cleanly, drag interactions do not spuriously dismiss overlays, and focus trap/Escape/restore behavior feels correct.",
+      "priority": "info",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "verify_physical_device"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Plan proceeds against the actual repository inventory: 8 current Base UI portal-importing TypeScript files, with no present `drawer`, `context-menu`, or `popup` usage under `src/`.",
+    "The simplest acceptable migration path is to centralize raw Base UI ownership under `src/shared/components/ui/overlay/` and preserve existing public imports through compatibility re-exports, rather than editing every consumer import path immediately.",
+    "`overlayStack.ts` should be a dedicated Zustand store, not an instance of `createEntityStore`, unless implementation work uncovers a strong reason to reuse that abstraction.",
+    "Only modal overlays should own `document.body.style.pointerEvents = 'none'`; non-modal overlays still participate in focus/z-order stacking but should not globally disable body interaction.",
+    "Automated verification is limited to shell, typecheck, and jsdom/Vitest. Any criterion that depends on real browser interaction or rendered runtime behavior will be treated as deferred human verification and therefore skipped by the executor rather than blocked."
+  ],
+  "structure_warnings": []
+}

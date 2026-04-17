@@ -1,0 +1,206 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Implement `src/shared/dev/useRenderBudget.ts` with dev-gated runtime behavior, per-mount render counting, 1s idle reset, first-over-budget warning per active window, and an in-file telemetry registry/subscription API aggregated by component name using `max` active count (status red when `maxCount > budget`). While doing this, confirm target component names/paths and wrapper insertion points (`TasksPaneComponent`, `PreviewPanelComponent`) and lock timeline row target to `TrackListRenderer.tsx` `SortableRow`; halt and remap immediately if any named target is missing.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T2",
+      "description": "Add `src/shared/dev/RenderTelemetryOverlay.tsx` as a fixed bottom-right dev widget using Tailwind theme tokens (no hardcoded colors), hidden by default with localStorage persistence, live subscription to telemetry, and a non-conflicting global toggle shortcut (explicitly avoid `Ctrl/Cmd+Shift+R`); mount it from `src/app/App.tsx` only in dev.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T3",
+      "description": "Instrument required surfaces by calling `useRenderBudget` at top of executable render functions with initial budgets: `ImageLightbox`(5), `EditModePanel`(3), `LightboxShell`(5), `TimelineCanvas`(3), `TrackListRenderer` `SortableRow`(2), `MediaGalleryItem`(3), `TasksPaneComponent` name `TasksPane`(5), `ShotsPanelContent`(5), `GenerationsPaneGallery`(5), `PreviewPanelComponent` name `PreviewPanel`(5). Keep changes insertion-only (no render/state refactors).",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T4",
+      "description": "Capture baseline metrics on a non-HMR development-mode built artifact (`build:dev` + preview or equivalent), run normal interaction flows, and calibrate budgets upward to observed max + 1 where needed so baseline behavior is not perpetually warning. Collect at least 5 components \u00d7 3 interactions each, including mount plus applicable flows (lightbox open, clip select, pane toggle).",
+      "depends_on": [
+        "T2",
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T5",
+      "description": "Create `docs/state_management_refactor_baselines.md` with capture date and commit SHA, per-component baseline table, interaction-sequence sections, and observations. Explicitly document aggregation semantics (`max` active per-mount count per component name in 1s window) to lock future comparability.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T6",
+      "description": "Run scope/compliance pass: ensure edits are limited to approved locations (`src/shared/dev/`, `src/app/App.tsx`, `docs/`, and explicitly instrumented files), confirm existing diagnostics remain additive (not removed/refactored), and verify no prohibited subsystems were touched.",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T7",
+      "description": "Final verification and bug-repro smoke: run `npx tsc --noEmit`, `npm test`, and `npm run build`; grep runtime `dist` assets excluding sourcemaps for `RenderBudget` and `RenderTelemetryOverlay`; verify dev toggle/persistence/live updates and synthetic over-budget warning path. Also create a short throwaway script that reproduces the targeted M0 telemetry behavior (over-budget warning/reset and/or production-string stripping check), run it, confirm outcome, then delete the script. If any check fails, fix and re-run until green.",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Aggregation contract is fixed: overlay/docs use per-name `max` active count in the 1s window; do not switch to sum/latest.",
+    "Telemetry and overlay must remain dev-only at runtime; production bundles must not contain `RenderBudget` or `RenderTelemetryOverlay` in JS/CSS assets (ignore `.map`).",
+    "Avoid keybind collision with existing AgentChat `Ctrl/Cmd+Shift+R` binding; choose and document a conflict-free shortcut.",
+    "Use hook placement in executable inner components (`TasksPaneComponent`, `PreviewPanelComponent`) rather than memoized wrappers.",
+    "Timeline row instrumentation is specifically `TrackListRenderer.tsx` `SortableRow`; do not leave this abstract.",
+    "Baseline capture must be from non-HMR dev-mode built artifact, not production mode and not HMR session.",
+    "Budgets are heuristic starts; raise to observed max + 1 to avoid noisy false alarms during normal baseline interactions.",
+    "Overlay styling must use Tailwind theme tokens only; no hardcoded color literals.",
+    "Keep existing render diagnostics (`debugRendering`, `usePerfDiagnostics`) untouched; new telemetry is additive.",
+    "Do not expand scope into render optimization/refactors, stores (Zustand), or non-approved directories."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Does `useRenderBudget` compile with hooks declared unconditionally, runtime dev-gating in place, 1s idle reset + warning behavior implemented, and registry aggregation/status defined as `max` per component name?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Is overlay mounted only in dev, hidden by default with persisted visibility, visually tokenized via Tailwind theme classes, and toggled by a shortcut that does not conflict with existing bindings?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Are all required component surfaces instrumented at the correct inner render function with the intended names/budgets, including `SortableRow` in `TrackListRenderer.tsx`?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Were baseline counts captured from a non-HMR dev build/preview across at least 5 components with at least 3 interactions each, and were over-noisy budgets raised to observed max + 1?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does `state_management_refactor_baselines.md` include date, commit SHA, per-component table, interaction narratives, and explicit `max` aggregation semantics for comparability?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Are changes confined to approved files/paths with no forbidden subsystem edits and no refactoring beyond instrumentation/overlay/hook/doc scope?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Do `npx tsc --noEmit`, `npm test`, and `npm run build` pass; are runtime dist assets clean of target strings (excluding `.map`); did dev smoke + synthetic over-budget path pass; and was the throwaway repro script removed after execution?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "meta_commentary": "Execute in plan order, but treat baseline capture as the truth source that can force budget bumps and minor naming clarifications before final verification. Preserve strict M0 scope: instrumentation and measurement only. If any named component/file differs from the brief, resolve to the exact in-repo equivalent and document it in the baseline notes rather than improvising new surfaces. Keep the aggregation operator immutable (`max`) across hook, overlay, and docs to avoid invalidating M1+ comparisons.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Step 1: Reconfirm scope, target files, timeline row surface, wrapper insertion points, and additive coexistence",
+        "finalize_task_ids": [
+          "T1",
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 2: Implement dev-only render-budget hook and shared registry with deterministic aggregation",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 3: Add dev-only telemetry overlay, persistence, non-conflicting toggle, root mount",
+        "finalize_task_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 4: Instrument all required component surfaces with initial budgets",
+        "finalize_task_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 5: Calibrate budgets on dev-mode built artifact and capture/document baselines",
+        "finalize_task_ids": [
+          "T4",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 6: Run typecheck/tests/build, production stripping grep, and dev smoke validation",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All six approved plan steps are mapped. Execution-order and validation-order intents are preserved via task dependencies and the final verification task. Accepted tradeoff on aggregation is explicitly locked as `max` in implementation and documentation checkpoints.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": null,
+  "baseline_test_command": null,
+  "baseline_test_note": "No supported test runner detected on PATH (looked for: pytest). Configure test_command in state config to specify one."
+}

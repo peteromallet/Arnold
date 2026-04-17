@@ -13,7 +13,7 @@ const { mockRefetch } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
-  useProject: vi.fn().mockReturnValue({
+  useProjectSelectionContext: vi.fn().mockReturnValue({
     selectedProjectId: 'proj-1',
   }),
 }));

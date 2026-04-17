@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-15T10:13:07Z",
+  "hash": "sha256:60557959a2c4e0b246a8048a99bc79d16089be0bf24367e50d66b6179a6bc004",
+  "questions": [
+    "What exact public return shape must `useJoinClipsSettings(projectId)` preserve beyond the fields visible in its current unit test? In particular, should M1 keep parity with the full `useAutoSaveSettings` return contract (`entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, `initializeFrom`), or only with the subset used by current join-clips consumers?",
+    "For `createEntityStore.reset()`, should the factory persist the reset-to-defaults value immediately/debounced, or should reset remain a local state change until `save`/`saveImmediate` is called? The brief requires the method but does not define its persistence semantics.",
+    "Should `load(entityId)` prefer `db` over `lastUsed` unconditionally when both are present, with `lastUsed` only serving as a fallback snapshot for revert/bootstrap metadata? The milestone names both payload fields but does not define the merge precedence explicitly."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`zustand` is added to `package.json` dependencies and the repo still passes `npx tsc --noEmit` without new type conflicts.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`src/shared/state/createEntityStore.ts` provides the generic factory API from the brief, including lazy entity load, atomic bootstrap, debounced persistence, text-field flush, revert, reset, and per-entity slice subscription isolation.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`useJoinClipsSettings(projectId)` is ported to the new store factory while preserving its public consumer-facing behavior for join-clips pages/hooks.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Factory tests cover bootstrap, optimistic updates, flush, revert, reset, and selector isolation between two entity IDs.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`useJoinClipsSettings` tests validate unchanged behavior through the public hook API rather than asserting the old internal call into `useAutoSaveSettings`.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`npm test` passes at or above the stated M0 baseline with no regressions introduced by the Zustand migration.",
+      "priority": "must"
+    },
+    {
+      "criterion": "The new factory implementation stays self-contained and does not import React Query or modify `useAutoSaveSettings` / persistence helpers that the milestone marks out of scope.",
+      "priority": "should"
+    },
+    {
+      "criterion": "`useEntity(entityId)` selectors are written narrowly enough that unrelated entity updates do not trigger cross-renders in tests.",
+      "priority": "should"
+    },
+    {
+      "criterion": "M0 telemetry behavior remains unchanged because no instrumented surfaces are modified in this milestone.",
+      "priority": "info"
+    }
+  ],
+  "assumptions": [
+    "The missing `docs/state_management_refactor_plan.md` file in the local checkout is not required for planning because the prompt already contains the milestone brief and current source files confirm the insertion points.",
+    "`useJoinClipsSettings` is the only consumer being migrated in M1; no other `useAutoSaveSettings` wrapper should be changed unless a test proves it is necessary.",
+    "The existing `useToolSettings` hook remains the persistence/read boundary for join-clips in this milestone, and the new Zustand layer should sit above it rather than replacing its Supabase or React Query logic.",
+    "The implementation may add one or more private helpers near `createEntityStore.ts` if needed, but should avoid introducing broader cross-cutting abstractions beyond the factory itself.",
+    "The branch/worktree note in the brief is informational for execution; the planning output should account for a dirty local tree and avoid assuming unrelated changes can be reverted."
+  ],
+  "structure_warnings": []
+}

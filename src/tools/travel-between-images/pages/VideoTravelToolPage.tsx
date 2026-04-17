@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLocation } from 'react-router-dom';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useVideoTravelData } from '../hooks/workflow/useVideoTravelData';
 import { useHashDeepLink } from '../hooks/navigation/useHashDeepLink';
@@ -33,7 +33,8 @@ const VideoTravelToolPage: React.FC = () => {
   const shotFromState = location.state?.shotData;
   const isNewlyCreatedShot = location.state?.isNewlyCreated === true;
 
-  const { selectedProjectId, setSelectedProjectId, projects } = useProject();
+  const { selectedProjectId, setSelectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const { currentShotId, setCurrentShotId } = useCurrentShot();
 
   // Warm the project video counts cache (includes structure video presence)

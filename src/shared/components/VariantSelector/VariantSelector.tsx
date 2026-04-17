@@ -208,7 +208,7 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
                         <span>Based on ({parentVariants.size})</span>
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="z-[100001]">
+                    <TooltipContent side="top">
                       <p>Show variants this is based on</p>
                     </TooltipContent>
                   </Tooltip>
@@ -230,7 +230,7 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
                         <span>Based on this ({childVariants.size})</span>
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="z-[100001]">
+                    <TooltipContent side="top">
                       <p>Show variants based on this one</p>
                     </TooltipContent>
                   </Tooltip>
@@ -253,7 +253,7 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
                       <span>Starred ({starredCount})</span>
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="top" className="z-[100001]">
+                  <TooltipContent side="top">
                     <p>Show starred variants</p>
                   </TooltipContent>
                 </Tooltip>
@@ -286,7 +286,7 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
                       Make main
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="top" className="z-[100001]">
+                  <TooltipContent side="top">
                     <p>Set this variant as the main variant</p>
                   </TooltipContent>
                 </Tooltip>
@@ -314,7 +314,7 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
                       {actions.promoteSuccess ? 'Created!' : 'New image'}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="top" className="z-[100001]">
+                  <TooltipContent side="top">
                     <p>Create a standalone image from this variant</p>
                   </TooltipContent>
                 </Tooltip>

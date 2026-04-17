@@ -102,7 +102,10 @@ interface LightboxStateValue {
   navigation: LightboxNavigationState;
 }
 
-const LightboxStateContext = createContext<LightboxStateValue | null>(null);
+const LightboxCoreContext = createContext<LightboxCoreState | null>(null);
+const LightboxMediaContext = createContext<LightboxMediaState | null>(null);
+const LightboxVariantsContext = createContext<LightboxVariantState | null>(null);
+const LightboxNavigationContext = createContext<LightboxNavigationState | null>(null);
 
 // ============================================================================
 // Provider Component
@@ -118,9 +121,15 @@ export const LightboxStateProvider: React.FC<LightboxStateProviderProps> = ({
   value,
 }) => {
   return (
-    <LightboxStateContext.Provider value={value}>
-      {children}
-    </LightboxStateContext.Provider>
+    <LightboxCoreContext.Provider value={value.core}>
+      <LightboxMediaContext.Provider value={value.media}>
+        <LightboxVariantsContext.Provider value={value.variants}>
+          <LightboxNavigationContext.Provider value={value.navigation}>
+            {children}
+          </LightboxNavigationContext.Provider>
+        </LightboxVariantsContext.Provider>
+      </LightboxMediaContext.Provider>
+    </LightboxCoreContext.Provider>
   );
 };
 
@@ -196,32 +205,32 @@ const EMPTY_NAVIGATION: LightboxNavigationState = {
  * Use this in components that may render outside the lightbox context.
  */
 export function useLightboxCoreSafe(): LightboxCoreState {
-  const context = useContext(LightboxStateContext);
-  return context?.core ?? EMPTY_CORE;
+  const context = useContext(LightboxCoreContext);
+  return context ?? EMPTY_CORE;
 }
 
 /**
  * Safe version of useLightboxMedia that returns defaults when used outside provider.
  */
 export function useLightboxMediaSafe(): LightboxMediaState {
-  const context = useContext(LightboxStateContext);
-  return context?.media ?? EMPTY_MEDIA;
+  const context = useContext(LightboxMediaContext);
+  return context ?? EMPTY_MEDIA;
 }
 
 /**
  * Safe version of useLightboxVariants that returns defaults when used outside provider.
  */
 export function useLightboxVariantsSafe(): LightboxVariantState {
-  const context = useContext(LightboxStateContext);
-  return context?.variants ?? EMPTY_VARIANTS;
+  const context = useContext(LightboxVariantsContext);
+  return context ?? EMPTY_VARIANTS;
 }
 
 /**
  * Safe version of useLightboxNavigation that returns defaults when used outside provider.
  */
 export function useLightboxNavigationSafe(): LightboxNavigationState {
-  const context = useContext(LightboxStateContext);
-  return context?.navigation ?? EMPTY_NAVIGATION;
+  const context = useContext(LightboxNavigationContext);
+  return context ?? EMPTY_NAVIGATION;
 }
 
 // ============================================================================

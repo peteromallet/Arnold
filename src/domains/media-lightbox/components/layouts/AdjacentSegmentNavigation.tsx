@@ -137,7 +137,7 @@ export const AdjacentSegmentNavigation: React.FC<AdjacentSegmentNavigationProps>
         <HoverCardContent
           side="bottom"
           sideOffset={8}
-          className="p-2 w-auto border-0 bg-background/95 backdrop-blur-sm z-[100001]"
+          className="p-2 w-auto border-0 bg-background/95 backdrop-blur-sm"
         >
           <div className="flex flex-col items-center gap-2">
             <div className="flex items-center gap-2">

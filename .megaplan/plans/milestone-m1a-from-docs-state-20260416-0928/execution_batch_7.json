@@ -1,0 +1,54 @@
+{
+  "output": "Verification completed, but T10 is blocked rather than green. Focused suites passed (`71/71` tests across 12 files), `npm test` passed (`4558/4558` tests across `881/881` files), and `npx tsc --noEmit` is clean. A real Chromium browser harness was run and its notes were saved to `.megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/browser_check.json`; that check confirmed the model select path and measured `EditModePanel` initial open at 1 render, but the textarea interaction did not pass in the browser harness because only the first typed character persisted. The render-reduction gate is also still evidence-blocked because `docs/state_management_refactor_baselines.md` explicitly says the required pre-change bug-path baseline was never captured, so the mandated 75% comparison cannot be verified from repo evidence. The temporary repro script/harness was deleted after execution.",
+  "files_changed": [
+    ".megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/browser_check.json",
+    ".megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_7.json",
+    "package.json",
+    "package-lock.json"
+  ],
+  "commands_run": [
+    "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/shared/components/PromptEditorModal/hooks/usePersistentPromptSettings.test.ts src/shared/hooks/__tests__/usePersistentToolState.test.ts src/tools/travel-between-images/providers/VideoTravelSettingsProvider.test.tsx src/tools/travel-between-images/components/ShotEditor/controllers/useOutputController.test.tsx src/tools/travel-between-images/components/ShotEditor/sections/generation/BatchModeContent.test.tsx src/shared/components/SegmentSettingsForm/SegmentSettingsForm.test.tsx src/moduleImportCoverage.test.ts src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts",
+    "npx tsc --noEmit",
+    "npm test",
+    "npm install --no-save @playwright/test@1.59.1 playwright@1.59.1",
+    "npx vite --config .tmp-m1a/vite.config.ts",
+    "node .tmp-m1a/repro-check.mjs"
+  ],
+  "deviations": [
+    "Final gate did not pass: browser harness recorded a textarea typing failure, so T10 is blocked instead of done.",
+    "The required pre-change bug-path render baseline is still missing from repo evidence, so the 75% render-reduction comparison could not be verified.",
+    "Browser-tool setup required `npm install --no-save @playwright/test@1.59.1 playwright@1.59.1`, which touched already-dirty `package.json` and `package-lock.json`; temporary harness files were removed afterward.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/browser_check.json, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_7.json, package-lock.json, package.json",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: test-results/",
+    "1/1 batch tasks have no executor update \u2014 tracking is incomplete.",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/shared/state/createEntityStore.test.ts",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitignore, .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/schemas/critique.json, .megaplan/schemas/execution.json, .megaplan/schemas/execution_doc.json, .megaplan/schemas/finalize.json, .megaplan/schemas/gate.json, .megaplan/schemas/plan.json, .megaplan/schemas/review.json, .megaplan/schemas/revise.json, .megaplan/schemas/tiebreaker_challenger.json, .megaplan/schemas/tiebreaker_researcher.json, src/app/App.tsx, src/app/main.test.tsx, src/integrations/supabase/__tests__/clientContracts.test.ts, src/moduleImportCoverage.test.ts, src/shared/components/MediaGalleryItem.tsx, src/shared/dev/RenderTelemetryOverlay.tsx, src/shared/dev/useRenderBudget.ts, src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts, src/tools/join-clips/hooks/useJoinClipsSettings.ts, src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx, test-results/"
+  ],
+  "task_updates": [
+    {
+      "task_id": "T10",
+      "status": "blocked",
+      "executor_notes": "Focused verification and the full repository suite are green, and `npx tsc --noEmit` is clean. Focused suites passed (`71/71` across 12 files), and the full suite passed with `881/881` files and `4558/4558` tests. A real Chromium browser harness was run with a temporary repro script, and that script was deleted afterward; the resulting notes were saved to `.megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/browser_check.json`. That browser check verified the model select path and measured `EditModePanel` initial open at 1 render, but it did not clear the textarea gate: typing into the edit textarea only persisted the first character (`\"t\"`) in the harness. The hard gate also remains evidence-blocked on the render-reduction comparison because `docs/state_management_refactor_baselines.md` still explicitly says the bug-path pre-change baseline was never captured, so the required 75% reduction claim cannot be verified from repo evidence. Because the browser/manual gate and baseline-comparison gate are not green end-to-end, T10 is blocked rather than complete.",
+      "files_changed": [
+        ".megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/browser_check.json",
+        ".megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_7.json",
+        "package.json",
+        "package-lock.json"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/shared/components/PromptEditorModal/hooks/usePersistentPromptSettings.test.ts src/shared/hooks/__tests__/usePersistentToolState.test.ts src/tools/travel-between-images/providers/VideoTravelSettingsProvider.test.tsx src/tools/travel-between-images/components/ShotEditor/controllers/useOutputController.test.tsx src/tools/travel-between-images/components/ShotEditor/sections/generation/BatchModeContent.test.tsx src/shared/components/SegmentSettingsForm/SegmentSettingsForm.test.tsx src/moduleImportCoverage.test.ts src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts",
+        "npx tsc --noEmit",
+        "npm test",
+        "npm install --no-save @playwright/test@1.59.1 playwright@1.59.1",
+        "npx vite --config .tmp-m1a/vite.config.ts",
+        "node .tmp-m1a/repro-check.mjs"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "No. The automated suites and typecheck are green, but the end-to-end gate is still blocked. The real-browser repro harness notes saved in `browser_check.json` show the model select path succeeded while the textarea path did not: only the first character persisted in the harness. Separately, the required bug-path pre-change render baseline is still missing from repo evidence, so the mandated 75% reduction comparison cannot be verified. The temporary browser repro script was run and then deleted."
+    }
+  ]
+}

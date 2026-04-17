@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { GripVertical, ImagePlus } from "lucide-react";
 import { framesToSeconds } from '@/shared/lib/media/videoUtils';
-import { useTimelineMedia } from './TimelineMediaContext';
+import { useTimelineFps } from './TimelineMediaContext';
 import { TIMELINE_PADDING_OFFSET } from "./constants";
 
 interface TrailingEndpointProps {
@@ -67,7 +67,7 @@ const TrailingEndpoint: React.FC<TrailingEndpointProps> = ({
   hasTrailingVideo = false,
   onExtractFinalFrame,
 }) => {
-  const { timelineFps } = useTimelineMedia();
+  const timelineFps = useTimelineFps();
   const [isHovered, setIsHovered] = useState(false);
   // Track if we should show label during drag (set on mousedown, cleared when drag ends)
   const [showLabelForDrag, setShowLabelForDrag] = useState(false);

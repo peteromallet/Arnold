@@ -3,6 +3,7 @@ import { useIsMobile, useIsTablet } from '@/shared/hooks/mobile';
 import { useLocation } from 'react-router-dom';
 import { PANE_CONFIG } from '@/shared/config/panes';
 import { dispatchAppEvent, useAppEventListener } from '@/shared/lib/typedEvents';
+import { isElementWithinKnownOverlay } from '@/shared/components/ui/overlay';
 
 interface UseSlidingPaneOptions {
   side: 'left' | 'right' | 'bottom' | 'top';
@@ -109,11 +110,7 @@ export const useSlidingPane = ({ side, isLocked, onToggleLock, additionalRefs, p
 
       // Ignore clicks on floating UI portal elements (Select, Popover, Dialog, etc.)
       // These are rendered outside the pane but should be considered "inside" for interaction purposes
-      if (
-        targetEl.closest('[role="listbox"]') ||
-        targetEl.closest('[data-popup]') ||
-        targetEl.closest('[data-dialog-content]')
-      ) {
+      if (isElementWithinKnownOverlay(targetEl)) {
         return; // allow event to proceed, don't close pane
       }
 
@@ -153,7 +150,7 @@ export const useSlidingPane = ({ side, isLocked, onToggleLock, additionalRefs, p
   }, [isSmallMobile, isOpen]);
 
   // Exclusive pane coordination on small phones
-  // When another pane opens, this one should close (locking the other will handle unlocking this via PanesContext)
+  // When another pane opens, this one should close; the panes store bootstrap keeps the lock policy in sync.
   const handleMobilePaneOpen = useCallback((detail: { side: string | null }) => {
     if (!isSmallMobile) return;
     const openedSide = detail?.side ?? null;
@@ -161,8 +158,8 @@ export const useSlidingPane = ({ side, isLocked, onToggleLock, additionalRefs, p
       // Another pane (or null) requested and we're not locked - close this one
       setHoverOpen(false);
     }
-    // Note: If this pane IS locked, PanesContext will handle unlocking it
-    // when the other pane gets locked (only one can be locked at a time on mobile)
+    // If this pane is locked, the panes store lock policy will unlock it
+    // when the other pane gets locked (only one can be locked at a time on mobile).
   }, [isSmallMobile, side, isLocked]);
 
   useAppEventListener('mobilePaneOpen', handleMobilePaneOpen);

@@ -1,0 +1,2402 @@
+{"checks":[{"id":"callers-and-hotspots","question":"Does the plan start from a verified repository map of callers, hotspots, and ownership boundaries?","findings":[{"detail":"Compared the plan against the repository-derived engineering brief and found that the plan still treats caller enumeration as future work rather than an already-verified prerequisite. That is a real gap because the brief explicitly says local inspection was blocked and calls out ShotEditor video hooks, selection contexts, and timeline selection internals as surfaces that still need a concrete caller map before migration sizing is trustworthy.","flagged":true},{"detail":"The plan does correctly elevate the repository hotspots named in the brief, especially `useEditSettingsPersistence`, `useLastUsedEditSettings`, `useShotSettings`, and the ShotEditor video hooks. That alignment reduces the risk of doing the settings rewrite in the wrong order, even though the actual caller inventory is still unresolved.","flagged":false}]},{"id":"settings-store-contract","question":"Does the settings-store design fully preserve the current API and behavior constraints in the repository?","findings":[{"detail":"Checked the plan against the stated API constraints and the plan keeps the `useAutoSaveSettings` public return shape stable, keeps React Query as the one-way server source, and folds debounce/load logic into the Zustand layer. That matches the brief's non-negotiable compatibility boundary.","flagged":false},{"detail":"The plan leaves two behavior-critical repository decisions open in its own metadata: whether keyed stores survive unmount/remount for the same `(toolId, entityId, scope)`, and whether concurrent `useAutoSaveSettings` consumers share one debounce and pending-text queue. Those are not cosmetic details in this codebase because the brief ties the lightbox typing/focus failures to identity churn and multi-layer persistence behavior.","flagged":true},{"detail":"The plan says pending-text protection moves into store persistence, but it does not yet spell out the rebootstrap rules when React Query delivers fresher server data while a keyed store already has unsaved text. In this repository that is a correctness-sensitive edge because the brief explicitly requires preventing refetches from stomping in-flight textarea edits.","flagged":true}]},{"id":"surface-area-and-deletions","question":"Does the plan touch all required repository surfaces, deletions, and migration cleanup?","findings":[{"detail":"Checked the plan against the brief's mandatory deletions and it does schedule same-series removal of `useDebouncedSettingsSave.ts`, `autoSaveSettingsHelpers.ts`, `autoSaveSettingsLoaders.ts`, the four selection contexts, and the timeline contexts. That is consistent with the repository rule that predecessor helpers and contexts should not linger beside their replacements.","flagged":false},{"detail":"The cleanup plan is still broader than the named file list because the brief also requires tracing every importer and unusual consumer of the deleted hooks and contexts. The plan says 'migrate consumers to selectors' and 'migrate every caller found by the audit', but it does not add an explicit no-imports-left gate or grep-based verification step for the removed modules, so repository-wide cleanup is still partly implied rather than enforced.","flagged":true},{"detail":"PR 4 intentionally pulls timeline selection out of `useTimelineState.ts` before PR 5 collapses the remaining timeline contexts, which means the repository will temporarily have split ownership between the new selection store and the old timeline state path. That may be the only practical sequencing, but it is still a real integration risk because the brief identifies internal timeline selection state as part of the same render-storm problem.","flagged":true}]},{"id":"validation-and-evidence","question":"Are the success criteria tied to concrete validation that can prove the repository problems are actually fixed?","findings":[{"detail":"Compared the validation section to the brief's acceptance gates and found the plan is directionally correct: it keeps `useAutoSaveSettings` user-behavior tests, replaces deleted implementation-detail tests with store-level coverage, and adds render-budget instrumentation for lightbox and timeline flows.","flagged":false},{"detail":"The plan still leaves the render-budget mechanism under-specified by asking where `useRenderBudget` should live and whether the numeric limits are enforced in automated tests, a dev harness, or both. Because `ImageLightbox <= 3 renders` and `EditModePanel <= 2 renders` are explicit MUST/SHOULD gates for this repository, that unresolved instrumentation strategy is a real verification gap.","flagged":true},{"detail":"The two most user-visible regressions in the brief, the model `Select` staying open and the prompt textarea accepting uninterrupted typing, are named as milestones but not attached to concrete integration tests or a specific harness file. As written, the plan could pass the hook-level suites and still leave those UI behaviors to manual checking.","flagged":true}]},{"id":"branch-structure-and-revertibility","question":"Does the five-PR structure remain atomic and independently revertible for this repository?","findings":[{"detail":"Checked the branch order against the engineering brief and the plan preserves the required high-level sequence: foundation before core settings, core settings before caller migration, selection before full timeline collapse. That sequencing matches the repository brief's intended rollback boundaries better than a single large refactor would.","flagged":false},{"detail":"The plan also says the Step 1 audit may reprioritize individual callers but not the five-PR architecture unless the brief is materially wrong. That is a tension with the repository state described in the brief, because the caller map is still unverified and the revert surface of PR 3 through PR 5 depends directly on how many hidden consumers and identity-sensitive edge cases the audit uncovers.","flagged":true},{"detail":"The optional oversized-context lint/check is still treated as something that might land in PR 5 if it stays cheap. That weakens the revert boundary for the timeline-store branch because it mixes architectural cleanup with a repo-wide policy change unless the plan explicitly demotes it to follow-up-only.","flagged":true}]}],"flags":[{"id":"FLAG-001","concern":"Settings-store lifecycle: keyed-store disposal, remount persistence, and shared debounce semantics are still unresolved even though lightbox stability depends on them.","category":"correctness","severity_hint":"likely-significant","evidence":"The plan metadata explicitly leaves open whether keyed settings stores persist across unmount/remount and whether concurrent `useAutoSaveSettings` consumers share one debounce/pending-text queue, while the brief ties the current failures to identity churn and persistence layering."},{"id":"FLAG-002","concern":"Validation: render-budget and UI-stability acceptance criteria are not yet bound to a concrete automated verification path.","category":"performance","severity_hint":"likely-significant","evidence":"The plan asks where `useRenderBudget` should live and whether counts are asserted in tests or a dev harness, and it names the model `Select` and prompt textarea milestones without mapping them to a specific integration test surface."},{"id":"FLAG-003","concern":"Migration boundaries: PR 4 introduces temporary split ownership between the new selection store and the old timeline state path, which increases integration and rollback risk unless the intermediate ownership rules are explicit.","category":"completeness","severity_hint":"uncertain","evidence":"The brief identifies internal timeline selection state inside `useTimelineState.ts` as part of the migration surface, while the plan moves shared selection into PR 4 and delays the full timeline-store collapse to PR 5."}],"verified_flag_ids":[],"disputed_flag_ids":[]}
+OpenAI Codex v0.120.0 (research preview)
+--------
+workdir: /workspace/reigh-app
+model: gpt-5.4
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /workspace/reigh-app, /workspace/reigh-app/.megaplan/plans/2-week-aggressive-state-20260415-0113, /root/.codex/memories]
+reasoning effort: high
+reasoning summaries: none
+session id: 019d8ec7-7325-7510-b338-3f791bbdc2de
+--------
+user
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+        Project directory:
+        /workspace/reigh-app
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        This refactor is not skippable: it spans many files, three shared state domains, and multiple API-compatibility and performance constraints. I could not perform the required repository investigation in this environment because local shell reads are blocked by the sandbox (`bwrap: Creating new namespace failed: Permission denied`), so this brief is a task-grounded fallback rather than a verified codebase map.
+
+        ### Key Evidence
+        - The sprint is explicitly split into five atomic migrations: foundation, core settings store, settings callers migration, selection store, and timeline store, each required to revert cleanly on its own branch. (source: task description; relevance: high)
+- The settings migration must preserve the public `useAutoSaveSettings` return shape and keep hook names stable at the API boundary, while moving reducer/debounce/load logic into a Zustand-backed store. (source: task description; relevance: high)
+- Success depends on structural render reductions, not just behavioral parity: `ImageLightbox` must open at <= 3 renders, `EditModePanel` should be <= 2, and timeline drag should avoid whole-editor rerenders via selector-based subscriptions. (source: task description; relevance: high)
+- The task already identifies specific dead code that must be removed in the same sprint: `useDebouncedSettingsSave`, `autoSaveSettingsHelpers`, `autoSaveSettingsLoaders`, `GallerySelectionContext`, and at least one timeline context. (source: task description; relevance: high)
+- Required prep work includes tracing all callers of `useAutoSaveSettings`, `useShotSettings`, `useTimelineState`, and the selection contexts, plus identifying unusual consumers that rely on current identity/ref behavior. (source: task description; relevance: high)
+- Repository investigation could not be completed here because every attempted local read command failed before execution with a sandbox namespace error, and writes to `prep.json` were also blocked by the read-only sandbox. (source: tooling attempt in this session; relevance: high)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| /workspace/reigh-app/src/shared/state/createEntityStore.ts | createEntityStore, bootstrapEntity, updateField, updateFields, updateTextField, flushTextFields, save, saveImmediate, revert, reset, initializeFrom | New generic Zustand foundation required by the sprint; expected home for entity bootstrap, field updates, persistence middleware, pending text protection, and save/revert/reset flows. |
+| /workspace/reigh-app/src/shared/settings/hooks/useAutoSaveSettings.ts | useAutoSaveSettings | Core settings hook whose public API must remain unchanged while its internals move to store-backed state keyed by `(toolId, entityId, scope)`. |
+| /workspace/reigh-app/src/shared/settings/hooks/useDebouncedSettingsSave.ts | useDebouncedSettingsSave | Named for deletion after its debounce/pending-tracking/beforeunload responsibilities are absorbed into store persistence middleware. |
+| /workspace/reigh-app/src/shared/settings/hooks/autoSaveSettingsHelpers.ts | autoSaveSettingsHelpers | Reducer helper module called out for deletion once reducer-based state handling is removed. |
+| /workspace/reigh-app/src/shared/settings/hooks/autoSaveSettingsLoaders.ts | useReactQueryModeLoad, useCustomModeLoad | Load-path helper module called out for deletion once store bootstrap owns loading. |
+| /workspace/reigh-app/src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts | useEditSettingsPersistence | Explicitly called out as containing render-time state mutation around readiness that must be eliminated. |
+| /workspace/reigh-app/src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts | useLastUsedEditSettings | Explicitly called out as using ref-based pseudo-state that should become a real store slice. |
+| /workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsSettings.ts | useJoinClipsSettings | Day-1 pilot migration for validating the generic settings-store shape with a smaller 5-field caller. |
+| /workspace/reigh-app/src/domains/media-lightbox/hooks/useGenerationEditSettings.ts | useGenerationEditSettings | Named loud caller to migrate after the core settings-store refactor. |
+| /workspace/reigh-app/src/tools/travel-between-images/hooks/settings/useShotSettings.ts | useShotSettings | Named hook to trace because it likely layers on top of `useAutoSaveSettings` and may have tool-specific assumptions. |
+| /workspace/reigh-app/src/tools/edit-images/hooks/useInlineEditState.ts | useInlineEditState | Named caller to migrate during the settings rollout. |
+| /workspace/reigh-app/src/tools/character-animate/hooks/useCharacterAnimateSettings.ts | useCharacterAnimateSettings | Named caller to migrate during the settings rollout. |
+| /workspace/reigh-app/src/tools/image-generation/hooks/useImageGenGallery.ts | useImageGenGallery | Named caller to migrate during the settings rollout. |
+| /workspace/reigh-app/src/tools/travel-between-images/components/ShotEditor/hooks/video/ | useStructureVideo, useAudio | Directory explicitly identified as containing additional `useAutoSaveSettings` consumers such as `useStructureVideo` and `useAudio` that must all be enumerated before migration. |
+| /workspace/reigh-app/src/shared/state/selectionStore.ts | selectGalleryItems, selectClip, setCurrentShot, enterShotAdditionMode | Planned unified Zustand store replacing multiple selection-related contexts and internal timeline selection state. |
+| /workspace/reigh-app/src/shared/contexts/GallerySelectionContext.tsx | GallerySelectionContext | Context listed for removal during unified selection-store migration. |
+| /workspace/reigh-app/src/shared/contexts/LastAffectedShotContext.tsx | LastAffectedShotContext | Context listed for removal during unified selection-store migration. |
+| /workspace/reigh-app/src/shared/contexts/CurrentShotContext.tsx | CurrentShotContext | Context listed for removal during unified selection-store migration. |
+| /workspace/reigh-app/src/shared/contexts/ShotAdditionSelectionContext.tsx | ShotAdditionSelectionContext | Context listed for removal during unified selection-store migration. |
+| /workspace/reigh-app/src/tools/video-editor/state/timelineStore.ts | timelineStore | Planned unified store replacing the current timeline editor context split. |
+| /workspace/reigh-app/src/tools/video-editor/contexts/TimelineEditorContext.tsx | TimelineEditorContext | Named timeline context to collapse into selector-based store subscriptions. |
+| /workspace/reigh-app/src/tools/video-editor/contexts/TimelineChromeContext.tsx | TimelineChromeContext | Named timeline context to collapse into selector-based store subscriptions. |
+| /workspace/reigh-app/src/tools/video-editor/contexts/TimelinePlaybackContext.tsx | TimelinePlaybackContext | Named timeline context to collapse into selector-based store subscriptions. |
+| /workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts | useTimelineState | Named internal timeline state hook to shrink substantially and remove ref-based stability workarounds. |
+| /workspace/reigh-app/docs/structure_detail/state_management.md | state_management.md | Only new documentation file explicitly allowed by repo conventions; must document the post-refactor state placement model. |
+| /workspace/reigh-app/CLAUDE.md | CLAUDE.md | Repo conventions source for constraints such as editing existing files, no success toasts, no hardcoded colors, and using `getGenerationId(media)`. |
+
+        ### Test Expectations
+        - [fail_to_pass] render-budget-lightbox-open: Dev-only `useRenderBudget` instrumentation confirms `ImageLightbox` renders <= 3 and `EditModePanel` renders <= 2 on lightbox open after settings migration.
+- [fail_to_pass] lightbox-model-select-stability: Opening the model Select in the image lightbox no longer closes immediately and selection works without focus-trap instability.
+- [fail_to_pass] lightbox-prompt-textarea-typing: Prompt textarea accepts continuous typing without lost keystrokes or refetch stomping.
+- [fail_to_pass] timeline-render-budget-drag: Timeline canvas stays flat except on scale/viewport changes, and dragging a clip rerenders only the clip and its row.
+- [pass_to_pass] useAutoSaveSettings-user-behavior: Existing user-facing tests in `/workspace/reigh-app/src/shared/settings/hooks/__tests__/useAutoSaveSettings.test.ts` continue to pass with the unchanged public API.
+- [fail_to_pass] debounced-save-behavior-moved-to-store: Coverage from `/workspace/reigh-app/src/shared/settings/hooks/__tests__/useDebouncedSettingsSave.test.ts` is replaced by store-level tests for pending text tracking, edit versioning, debounce, flush, and beforeunload behavior.
+- [fail_to_pass] deleted-implementation-detail-tests: Implementation-detail tests for `autoSaveSettingsHelpers` and `autoSaveSettingsLoaders` are removed or replaced with store-level behavior tests once those modules are deleted.
+- [pass_to_pass] typecheck-and-baseline-suite: TypeScript typecheck is clean and the full test suite passes at no worse rate than the pre-refactor baseline, without attempting unrelated test fixes.
+
+        ### Constraints
+        - Zustand is fixed; do not evaluate alternatives or replace React Query.
+- Settings-hook API boundaries must remain stable; consumer changes are only allowed where deleted internal fields disappear.
+- Server data remains in React Query with one-way flow into stores; do not mirror server state in Zustand.
+- Delete predecessor helpers/hooks/contexts in the same PR that introduces the successor; no temporary backup implementations.
+- Maintain TypeScript strictness with exhaustive actions and precise selectors; no `any`.
+- Respect repo conventions from `CLAUDE.md`, including editing existing files where possible and using `getGenerationId(media)` instead of inline generation-id fallbacks.
+- Five atomic migrations must stay separately revertible on their designated branches.
+- I could not verify actual call sites, unusual consumers, or current tests in this environment because local code inspection and file writes were blocked by the sandbox.
+
+        ### Suggested Approach
+        Use this as a gated prep task once local inspection is available: 1. Enumerate every caller of `useAutoSaveSettings`, `useShotSettings`, `useTimelineState`, and each selection context, plus all relevant tests. 2. Trace identity-sensitive consumers first, especially media-lightbox settings persistence, last-used edit settings, and any timeline consumers that rely on refs staying current. 3. For PR 1, build `createEntityStore` and migrate only `useJoinClipsSettings` plus render-budget instrumentation. 4. For PR 2, rewrite `useAutoSaveSettings` as a thin keyed-store wrapper, absorb debounced-save/load logic, and delete the old helpers/hooks in the same change. 5. For PR 3, migrate all settings callers listed in the task and verify the lightbox render/select/textarea milestones. 6. For PR 4, replace the four selection contexts and internal timeline selection state with targeted selector subscriptions, removing effect-chain synchronization. 7. For PR 5, collapse the timeline editor contexts into a single store, remove ref-based latest-value workarounds, and verify drag/scroll render budgets. I could not write `/workspace/reigh-app/.megaplan/plans/2-week-aggressive-state-20260415-0113/prep.json` because the sandbox is read-only and rejected file creation.
+
+        The engineering brief above was produced by analyzing the codebase. Use it as a strong starting point, but the suggested approach is a hypothesis — verify it's the best fix, not just a valid one.
+
+        Idea:
+2-week aggressive state-management refactor for reigh-app. Replace the hook-chain / context-as-pubsub architecture with a Zustand-based store pattern for the three cross-cutting state domains that cause the most re-render storms: settings persistence, selection, and timeline editor state.
+
+Motivation: the current architecture causes 15-20 cascading renders on media-lightbox open, stuck focus traps in Base UI overlays (Select flashes closed, textarea rejects typing), pervasive memoization churn, and has five layers of hooks coordinating the same value across refs/state/localStorage/DB. Every time we patch one instability, another surfaces elsewhere — the render storms are architectural, not incidental. This refactor moves all three domains to subscription-based stores so unrelated state updates stop cascading through the tree.
+
+Tech choice (fixed, no alternatives): Zustand. Not Jotai, not Redux, not custom useSyncExternalStore, not Valtio. Keep React Query for server-data fetching; store subscribes to RQ on data arrival, does NOT replicate server state.
+
+# WEEK 1 — Settings store
+
+## Day 1: Foundation
+- Create src/shared/state/createEntityStore.ts: a generic Zustand factory.
+  - Actions: bootstrapEntity({ entityId, db, lastUsed }), updateField, updateFields, updateTextField (deferred save), flushTextFields, save, saveImmediate, revert, reset, initializeFrom.
+  - State shape: { entityId, status: 'idle' | 'loading' | 'ready' | 'saving' | 'error', settings: T, loadedSettings: T | null, error: Error | null, hasPersistedData: boolean, pendingEntityId: string | null, pendingSettings: T | null, editVersion: number }.
+  - One atomic bootstrapEntity action that computes the final state from db + lastUsed in a single dispatch (not four sequential transitions).
+  - Preserve pending-text-field protection (tracks user edits in flight so refetches don't stomp typing).
+  - Persistence middleware that wraps a user-provided save fn with debounce + flush + beforeunload.
+- Port the smallest caller first (src/tools/join-clips/hooks/useJoinClipsSettings.ts, 5 fields) to validate the shape. Hook signature unchanged.
+
+## Day 2-3: Core settings store
+- Rewrite src/shared/settings/hooks/useAutoSaveSettings.ts as a thin wrapper over createEntityStore. Public return shape IDENTICAL (settings, status, entityId, isDirty, error, hasShotSettings, hasPersistedData, updateField, updateFields, save, saveImmediate, revert, reset, initializeFrom). Internally instantiates / reuses a store keyed on (toolId, entityId, scope).
+- Absorb src/shared/settings/hooks/useDebouncedSettingsSave.ts (pending tracking, edit versioning, beforeunload flush) into the store's persistence middleware. Delete the hook file once absorbed.
+- Kill the render-time state mutation at src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts:110-114 (hasInitializedRef / lastGenerationIdRef / isReady). Store owns readiness now.
+- Kill the ref-based pseudo-state in src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts (currentValueRef used as React state). Move to a real store slice.
+- Collapse useReactQueryModeLoad and useCustomModeLoad into one load path (the distinction was a workaround for two state machines that can now be one).
+
+## Day 4: Migrate loud callers
+Migrate every useAutoSaveSettings caller. No visible behavior change, no API change at the hook boundary:
+- src/domains/media-lightbox/hooks/useGenerationEditSettings.ts
+- src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts
+- src/tools/travel-between-images/hooks/settings/useShotSettings.ts
+- src/tools/edit-images/hooks/useInlineEditState.ts
+- src/tools/join-clips/hooks/useJoinClipsSettings.ts (already done Day 1)
+- src/tools/character-animate/hooks/useCharacterAnimateSettings.ts
+- src/tools/image-generation/hooks/useImageGenGallery.ts
+- Plus every hook under src/tools/travel-between-images/components/ShotEditor/hooks/video/ that uses useAutoSaveSettings (useStructureVideo, useAudio, etc.).
+
+Verification milestone: open the image lightbox, render counter ≤ 3 (down from 15-20). Click the model Select — stays open. Type in the prompt textarea — no lost keystrokes.
+
+## Day 5: Delete dead code + update tests
+- Delete src/shared/settings/hooks/autoSaveSettingsHelpers.ts (reducer helpers — no reducer now).
+- Delete src/shared/settings/hooks/autoSaveSettingsLoaders.ts (load effects — store owns them).
+- Delete the pseudo-reducer action types and dispatch wrappers.
+- Update tests: src/shared/settings/hooks/__tests__/useAutoSaveSettings.test.ts, useDebouncedSettingsSave.test.ts, autoSaveSettingsHelpers.test.ts, autoSaveSettingsLoaders.test.ts. Delete implementation-detail tests; keep user-behavior tests; add new store-level tests where appropriate.
+
+End-of-week-1 target: ~2000 lines deleted, ~800 added. Storm dies. Model Select + textarea bugs fixed structurally.
+
+# WEEK 2 — Selection store + Timeline store
+
+## Day 6-7: Unified selection store
+Collapse these contexts into a single src/shared/state/selectionStore.ts with slices:
+- src/shared/contexts/GallerySelectionContext.tsx
+- src/shared/contexts/LastAffectedShotContext.tsx
+- src/shared/contexts/CurrentShotContext.tsx
+- src/shared/contexts/ShotAdditionSelectionContext.tsx
+- Internal selection state inside useTimelineState.ts (selectedClipId, selectedClipIds, selectedTrackId, additiveSelectionRef, etc.).
+
+Store shape:
+{ gallery: { ids: string[], lastSelected: string | null }, timeline: { clipIds: string[], primaryClipId: string | null, trackId: string | null }, shot: { current: string | null, lastAffected: string | null, pendingAddition: string | null } }
+
+Cross-cutting actions that were effect-chain glue become single dispatches:
+- selectGalleryItems({ ids, replace }) — auto-deselects timeline if configured
+- selectClip({ clipId, additive }) — updates primaryClipId if first
+- setCurrentShot(shotId) — also sets lastAffected
+- enterShotAdditionMode(imageId) — mutually exclusive with gallery selection
+
+Migrate every consumer to read specific slices via selectors. Contexts deleted. Effect-chain sync between contexts deleted.
+
+## Day 8-9: Timeline editor state store
+Collapse the four-way context split (a workaround for context-as-pubsub) into a single store at src/tools/video-editor/state/timelineStore.ts:
+- src/tools/video-editor/contexts/TimelineEditorContext.tsx (Data + Ops providers)
+- src/tools/video-editor/contexts/TimelineChromeContext.tsx
+- src/tools/video-editor/contexts/TimelinePlaybackContext.tsx
+
+Consumers subscribe to the specific fields they need via selectors. Components currently reading whole context values get targeted subscriptions (timeline canvas reads scale + clip list; chrome reads deviceClass; playback reads isPlaying; etc.).
+
+Kill the editorRef.current / dataRef / clipsRef / interactionStateRef workarounds scattered through VideoEditorProvider.tsx and useTimelineState.ts — the store is always latest, no ref dance needed for stability.
+
+useTimelineState.ts target: from ~300 lines to ~150. Most of today's memo plumbing disappears.
+
+Verification milestone: scroll the timeline, render counter on the timeline canvas stays flat except when scale/viewport changes. Drag a clip, only the clip and its row re-render, not the whole editor.
+
+## Day 10: Consolidation + docs
+- Write docs/structure_detail/state_management.md: one page explaining where state lives now (React Query for server data, stores for shared client state, useState for local UI).
+- Add ESLint rule or check: context values with >10 fields should be a store.
+- Delete stragglers: any hooks whose only job was memo plumbing for the dead contexts.
+- Open follow-up GitHub issues for (but do NOT start) weeks 3-4 migrations: realtime task events, panes state.
+
+# RULES DURING THE SPRINT (non-negotiable)
+
+1. One PR per atomic migration. Five PRs total: foundation → core settings store → settings callers migration → selection store → timeline store. Each must revert cleanly on its own.
+2. Keep hook names at the API boundary. useShotSettings(id) stays; only its implementation swaps. No consumer file changes in the settings migration unless the consumer is literally reading a deleted internal field.
+3. Don't replace React Query. Store subscribes to RQ data on arrival via the existing useToolSettings hook. One-way binding: RQ → store.
+4. Delete aggressively. If a helper exists only to paper over the old problem, it goes. Predecessor removed in the same PR that adds the successor. No "leave the old hook for backup" during this sprint.
+5. No dev-time performance regressions allowed. Add a render counter dev-only hook (useRenderBudget). Instrument ImageLightbox, EditModePanel, LightboxShell, TimelineCanvas, one timeline track row. If their render counts on lightbox-open / drag-clip go up after a migration, the migration regressed.
+6. TypeScript strict throughout. Store actions should be exhaustive; selectors should narrow precisely. No `any`.
+
+# WHAT THIS SPRINT DOES NOT TOUCH
+
+- Realtime task events (RealtimeProvider / useTaskStatus) — weeks 3-4.
+- Panes state (PanesContext) — weeks 3-4.
+- Tool registry / per-tool state beyond settings — later.
+- Modal / overlay stack primitive — later (weeks 3-4; depends on this work landing).
+- Supabase schema, edge functions, workers — completely out of scope.
+- Any feature work — no new features, only refactor.
+
+# REPO CONVENTIONS (from reigh-app/CLAUDE.md)
+
+- Prefer editing existing files; don't create new .md docs unless explicitly requested (state_management.md on Day 10 is the one allowed exception).
+- Toasts are errors-only (no success toasts).
+- Never hardcode colors; use Tailwind theme tokens.
+- Never run `npx supabase db reset --linked`.
+- Use `getGenerationId(media)` from shared/lib/mediaTypeHelpers.ts, not inline `media.generation_id || media.id`.
+
+# WORK SETUP
+
+- Work directory: /workspace/reigh-app.
+- Base branch: main.
+- Each of the five migration PRs lands on its own branch:
+  1. megaplan/state-store-foundation
+  2. megaplan/settings-store-core
+  3. megaplan/settings-callers-migrated
+  4. megaplan/selection-store
+  5. megaplan/timeline-store
+- Merge via fast-forward (or create GitHub PRs for review if GITHUB_TOKEN is available).
+
+# SUCCESS CRITERIA (for the reviewer)
+
+- MUST: ImageLightbox opens with ≤ 3 renders (measured by the new render counter).
+- MUST: Model Select dropdown stays open on click and accepts selection.
+- MUST: Prompt textarea accepts typing without lost keystrokes.
+- MUST: Full test suite passes at no worse rate than pre-refactor (the repo has pre-existing failures in unrelated areas — match that baseline, don't improve unrelated tests).
+- MUST: Typecheck clean.
+- MUST: All five listed files deleted (useDebouncedSettingsSave, autoSaveSettingsHelpers, autoSaveSettingsLoaders, GallerySelectionContext, one of the timeline contexts).
+- SHOULD: EditModePanel renders ≤ 2 times on lightbox open.
+- SHOULD: Line count net-negative (delete more than you add, measured across the five PRs).
+- SHOULD: docs/structure_detail/state_management.md exists and is accurate.
+- INFO: Selection store has 4+ consumers migrated; timeline store has 8+ consumers migrated.
+
+Start with thorough prep: investigate the existing hook chain, map every caller of useAutoSaveSettings, useShotSettings, useTimelineState, and the five selection contexts. Identify any unique state patterns or unusual consumers that need special handling. Surface any real surprises (e.g., a caller that depends on a specific reference-identity behavior) before planning.
+
+        Plan:
+        # Implementation Plan: Zustand Refactor for Settings, Selection, and Timeline
+
+## Overview
+This sprint should stay on the five-PR structure from the brief: foundation, core settings store, settings callers migration, selection store, and timeline store. I considered a narrower fix first: lightbox-only memo cleanup, overlay-specific focus fixes, or targeted reducer cleanup. Those are not sufficient for the stated gates because the failures span three shared state domains, the dead-code deletions are explicit, and timeline/selection render isolation is part of the acceptance criteria.
+
+Planning note: direct repository reads were blocked in this sandbox with `bwrap: Creating new namespace failed: Permission denied`, so this plan uses the engineering brief as the source of truth and treats caller enumeration as the first hard gate of execution rather than pretending the audit already happened.
+
+Key constraints to preserve throughout:
+- Zustand is fixed; React Query remains the server-data source of truth.
+- Settings hook names and the public `useAutoSaveSettings` return shape stay stable.
+- Old helpers/hooks/contexts are deleted in the same PR that introduces their successor.
+- The five migration branches stay independently revertible.
+- TypeScript strictness stays intact; selector and action typing must remain precise.
+
+## Phase 1: Prep and Foundation (PR 1: `megaplan/state-store-foundation`)
+
+### Step 1: Audit callers, ownership, and tests
+**Scope:** Small
+1. Enumerate every caller of `[useAutoSaveSettings.ts](/workspace/reigh-app/src/shared/settings/hooks/useAutoSaveSettings.ts)`, `[useShotSettings.ts](/workspace/reigh-app/src/tools/travel-between-images/hooks/settings/useShotSettings.ts)`, `[useTimelineState.ts](/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts)`, and the four selection contexts under `/workspace/reigh-app/src/shared/contexts/`.
+2. Record, per caller, the store key it will need, which returned fields/actions it uses, and whether it appears identity-sensitive or ref-sensitive.
+3. Treat the brief’s named hotspots as mandatory audit targets: `[useEditSettingsPersistence.ts](/workspace/reigh-app/src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts)`, `[useLastUsedEditSettings.ts](/workspace/reigh-app/src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts)`, the ShotEditor video hooks under `/workspace/reigh-app/src/tools/travel-between-images/components/ShotEditor/hooks/video/`, and timeline selection state living inside `[useTimelineState.ts](/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts)`.
+4. Build a migration matrix before rewriting code: caller -> current owner -> target store slice -> branch/PR -> validation.
+
+### Step 2: Add measurement before behavior changes
+**Scope:** Small
+1. Introduce a dev-only `useRenderBudget` helper and instrument the components called out in the brief: `ImageLightbox`, `EditModePanel`, `LightboxShell`, `TimelineCanvas`, and one timeline track row.
+2. Wire the instrumentation so it is usable in targeted tests or a stable dev harness before the first store rewrite lands.
+3. Capture the pre-refactor baseline for lightbox-open and drag-clip flows so later PRs can prove structural improvement instead of anecdotal parity.
+
+### Step 3: Build the generic entity-store foundation and pilot it on join-clips
+**Scope:** Medium
+1. Implement `[createEntityStore.ts](/workspace/reigh-app/src/shared/state/createEntityStore.ts)` as the shared Zustand factory with the briefed state shape and the full action surface: `bootstrapEntity`, `updateField`, `updateFields`, `updateTextField`, `flushTextFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom`.
+2. Keep `bootstrapEntity` atomic: DB data, last-used defaults, readiness, and `hasPersistedData` should resolve in one state transition instead of sequential local state churn.
+3. Move debounce, flush, pending-text protection, edit-version tracking, and `beforeunload` flushing into the store’s persistence layer instead of leaving them in hook chains.
+4. Port `[useJoinClipsSettings.ts](/workspace/reigh-app/src/tools/join-clips/hooks/useJoinClipsSettings.ts)` first as the smallest caller and use it to validate store ergonomics, typing, and save semantics before touching the heavier lightbox flow.
+
+## Phase 2: Core Settings Store (PR 2: `megaplan/settings-store-core`)
+
+### Step 4: Rewrite `useAutoSaveSettings` as a keyed store wrapper
+**Scope:** Medium
+1. Rebuild `[useAutoSaveSettings.ts](/workspace/reigh-app/src/shared/settings/hooks/useAutoSaveSettings.ts)` as a thin adapter over `createEntityStore`, keyed by `(toolId, entityId, scope)`.
+2. Preserve the public return contract exactly: `settings`, `status`, `entityId`, `isDirty`, `error`, `hasShotSettings`, `hasPersistedData`, `updateField`, `updateFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom`.
+3. Ensure store reuse is selector-driven so consumers stop receiving whole-object churn when unrelated settings fields change.
+4. Keep React Query one-way: query result bootstraps the store; the store does not become a second cache of server data beyond the current editable entity state.
+
+### Step 5: Move readiness/load/persistence responsibilities into the store and delete the old chain
+**Scope:** Medium
+1. Absorb `[useDebouncedSettingsSave.ts](/workspace/reigh-app/src/shared/settings/hooks/useDebouncedSettingsSave.ts)` into the store implementation, then delete the file.
+2. Collapse `[autoSaveSettingsHelpers.ts](/workspace/reigh-app/src/shared/settings/hooks/autoSaveSettingsHelpers.ts)` and `[autoSaveSettingsLoaders.ts](/workspace/reigh-app/src/shared/settings/hooks/autoSaveSettingsLoaders.ts)` into the new bootstrap/load path, then delete them.
+3. Remove render-time readiness mutation from `[useEditSettingsPersistence.ts](/workspace/reigh-app/src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts)` and move any `hasInitializedRef` / `lastGenerationIdRef` / readiness bookkeeping into store state or derived selectors.
+4. Replace the ref-backed pseudo-state in `[useLastUsedEditSettings.ts](/workspace/reigh-app/src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts)` with a real store slice so lightbox consumers stop relying on mutable refs as implicit state.
+
+## Phase 3: Settings Callers Migration (PR 3: `megaplan/settings-callers-migrated`)
+
+### Step 6: Migrate all settings callers, starting with identity-sensitive lightbox flows
+**Scope:** Large
+1. Migrate the loud callers named in the brief: `[useGenerationEditSettings.ts](/workspace/reigh-app/src/domains/media-lightbox/hooks/useGenerationEditSettings.ts)`, `[useEditSettingsPersistence.ts](/workspace/reigh-app/src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts)`, `[useShotSettings.ts](/workspace/reigh-app/src/tools/travel-between-images/hooks/settings/useShotSettings.ts)`, `[useInlineEditState.ts](/workspace/reigh-app/src/tools/edit-images/hooks/useInlineEditState.ts)`, `[useCharacterAnimateSettings.ts](/workspace/reigh-app/src/tools/character-animate/hooks/useCharacterAnimateSettings.ts)`, `[useImageGenGallery.ts](/workspace/reigh-app/src/tools/image-generation/hooks/useImageGenGallery.ts)`, and every audited `useAutoSaveSettings` consumer under `/workspace/reigh-app/src/tools/travel-between-images/components/ShotEditor/hooks/video/`.
+2. Migrate the identity-sensitive consumers first so the riskiest overlay and typing regressions are resolved before broader rollout.
+3. Remove any remaining reducer wrappers, dispatch indirection, or helper APIs that only existed to stabilize the old chain.
+4. Verify that multiple callers targeting the same `(toolId, entityId, scope)` now share a single authoritative editable store instead of competing refs or local reducer instances.
+
+### Step 7: Rebuild tests around observable behavior, not implementation detail
+**Scope:** Medium
+1. Keep the user-facing coverage in `/workspace/reigh-app/src/shared/settings/hooks/__tests__/useAutoSaveSettings.test.ts` and update it only where internals disappeared.
+2. Replace `/workspace/reigh-app/src/shared/settings/hooks/__tests__/useDebouncedSettingsSave.test.ts` with store-level tests for debounce timing, pending text protection, versioning, flush, and unload behavior.
+3. Delete or replace implementation-detail tests for the removed helpers/loaders with store/bootstrap behavior tests.
+4. Prove the lightbox milestones with instrumentation-backed checks: open render budget, stable model `Select`, and uninterrupted prompt textarea typing.
+
+## Phase 4: Unified Selection Store (PR 4: `megaplan/selection-store`)
+
+### Step 8: Replace cross-context selection pubsub with a single selector-driven store
+**Scope:** Medium
+1. Implement `[selectionStore.ts](/workspace/reigh-app/src/shared/state/selectionStore.ts)` with explicit `gallery`, `timeline`, and `shot` slices, matching the brief’s target shape.
+2. Move the four shared contexts into store actions/selectors and delete `[GallerySelectionContext.tsx](/workspace/reigh-app/src/shared/contexts/GallerySelectionContext.tsx)`, `[LastAffectedShotContext.tsx](/workspace/reigh-app/src/shared/contexts/LastAffectedShotContext.tsx)`, `[CurrentShotContext.tsx](/workspace/reigh-app/src/shared/contexts/CurrentShotContext.tsx)`, and `[ShotAdditionSelectionContext.tsx](/workspace/reigh-app/src/shared/contexts/ShotAdditionSelectionContext.tsx)` in the same branch.
+3. Pull timeline-owned selection out of `[useTimelineState.ts](/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts)` only for the shared selection concerns in this PR so PR 5 can focus on editor state, not duplicate ownership.
+4. Re-express the old effect-chain glue as atomic actions: `selectGalleryItems`, `selectClip`, `setCurrentShot`, and `enterShotAdditionMode`, with mutually exclusive state handled inside the action rather than by cascading effects.
+5. Migrate consumers to narrow selectors so unrelated gallery/shot/timeline selection updates no longer invalidate whole subtrees.
+
+## Phase 5: Timeline Store and Consolidation (PR 5: `megaplan/timeline-store`)
+
+### Step 9: Collapse timeline editor contexts into one store and shrink `useTimelineState`
+**Scope:** Large
+1. Implement `[timelineStore.ts](/workspace/reigh-app/src/tools/video-editor/state/timelineStore.ts)` as the single owner for editor, chrome, playback, and interaction state.
+2. Replace `[TimelineEditorContext.tsx](/workspace/reigh-app/src/tools/video-editor/contexts/TimelineEditorContext.tsx)`, `[TimelineChromeContext.tsx](/workspace/reigh-app/src/tools/video-editor/contexts/TimelineChromeContext.tsx)`, and `[TimelinePlaybackContext.tsx](/workspace/reigh-app/src/tools/video-editor/contexts/TimelinePlaybackContext.tsx)` with selector subscriptions, deleting the old context split in the same PR.
+3. Remove `editorRef.current`, `dataRef`, `clipsRef`, interaction refs, and similar latest-value workarounds from the provider and `[useTimelineState.ts](/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts)` once the store becomes the always-current source.
+4. Target a materially smaller `useTimelineState` that only coordinates what still belongs in a hook after store extraction.
+5. Validate the drag/scroll render budget with the instrumentation from PR 1: timeline canvas stays flat except when scale/viewport changes, and dragging rerenders only the active clip and its row.
+
+### Step 10: Finish docs and cleanup in the same branch
+**Scope:** Small
+1. Add `[state_management.md](/workspace/reigh-app/docs/structure_detail/state_management.md)` as the one allowed new docs file, documenting where server state, shared client state, and local UI state now live.
+2. Delete any remaining memo-plumbing hooks whose only purpose was feeding the removed contexts.
+3. If the lint/check for oversized context values is still cheap and clearly scoped, land it here; otherwise capture it as a follow-up issue rather than creating a sixth migration PR.
+
+## Execution Order
+1. Do not start store rewrites until the Step 1 audit and Step 2 instrumentation are in place.
+2. Use PR 1 to prove the generic store on `join-clips` before changing the central settings hook.
+3. Land PR 2 before PR 3 so all caller migrations move onto one stable `useAutoSaveSettings` implementation.
+4. Land PR 4 before PR 5 so timeline selection ownership is settled before the full timeline-store collapse.
+5. Keep deletions in the same PR as replacements; do not carry temporary dual paths across branches.
+
+## Validation Order
+1. Start each PR with the cheapest targeted tests for the files it changes.
+2. Run instrumentation-backed lightbox checks immediately after PRs 2 and 3.
+3. Run selection-focused regression checks after PR 4 before touching the larger timeline provider changes.
+4. Run timeline render-budget checks and drag/scroll smoke tests before the full suite in PR 5.
+5. Finish each PR with `tsc` and the repo test baseline check; the final branch should match or improve the existing pass rate without unrelated fixes.
+
+## Risks To Watch
+- `useEditSettingsPersistence` and `useLastUsedEditSettings` are likely the highest-risk identity-sensitive callers; migrate them early in PR 3.
+- `useShotSettings` and the ShotEditor video hooks may create multiple live consumers for the same settings key; store-key reuse and shared pending text behavior need explicit verification.
+- Selection state currently leaks into timeline internals; PR 4 must carve out only shared selection ownership so PR 5 does not reintroduce cross-domain duplication.
+- If the Step 1 audit contradicts the brief in a major way, pause after PR 1 and adjust the branch breakdown before rewriting the core settings hook.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-04-15T01:28:34Z",
+  "hash": "sha256:d5b16122c0227931d2dfee0711a10b7932953ecb50e1de84a319860b546ad455",
+  "questions": [
+    "Should keyed settings stores persist unsaved state across component unmount/remount for the same `(toolId, entityId, scope)`, or should they be disposed as soon as the last subscriber leaves?",
+    "Where should the dev-only `useRenderBudget` instrumentation live, and are the numeric render budgets expected to be asserted in automated tests, a dev harness, or both?",
+    "If multiple `useAutoSaveSettings` consumers target the same key concurrently, should they always share one debounce/pending-text queue, or are there audited cases that need isolated instances?",
+    "Can the optional oversized-context lint/check land inside PR 5, or should it be treated as follow-up-only if it would broaden the revert surface of the timeline migration?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`useAutoSaveSettings`, `useShotSettings`, and the other public hook names keep their existing API boundaries while their internals move to Zustand-backed stores.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`ImageLightbox` opens within the new render budget of 3 or fewer renders, the model `Select` stays open and accepts selection, and the prompt textarea allows continuous typing without lost keystrokes.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`createEntityStore` provides atomic bootstrap, pending-text protection, debounced persistence with flush and `beforeunload`, and the full save/revert/reset/initialize action surface with store-level coverage.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`useDebouncedSettingsSave.ts`, `autoSaveSettingsHelpers.ts`, `autoSaveSettingsLoaders.ts`, `GallerySelectionContext.tsx`, and at least one timeline context file are deleted in the same PR series that introduces their replacements.",
+      "priority": "must"
+    },
+    {
+      "criterion": "All callers found by the initial audit are migrated off the deleted settings helpers/selection contexts/timeline contexts, with no remaining imports of those removed modules.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Timeline drag and scroll validation shows selector-based subscriptions prevent whole-editor rerenders, and TypeScript typecheck is clean at the end of the branch series.",
+      "priority": "must"
+    },
+    {
+      "criterion": "Existing user-behavior tests for `useAutoSaveSettings` continue to pass, replacement store-level tests cover the deleted implementation details, and the full test suite passes at no worse than the pre-refactor baseline.",
+      "priority": "must"
+    },
+    {
+      "criterion": "`EditModePanel` opens within 2 or fewer renders and the net line count across the five PRs is negative.",
+      "priority": "should"
+    },
+    {
+      "criterion": "`useTimelineState` is materially smaller after the migration and the provider/state path no longer relies on latest-value refs for stability.",
+      "priority": "should"
+    },
+    {
+      "criterion": "`docs/structure_detail/state_management.md` accurately documents the post-refactor state placement model, and follow-up issues for realtime task events and panes state are captured without expanding this sprint.",
+      "priority": "info"
+    }
+  ],
+  "assumptions": [
+    "The engineering brief\u2019s file inventory and named hotspots are accurate enough to seed implementation, even though direct file reads were blocked in this sandbox.",
+    "The five migration branches and their revert boundaries are fixed; docs and any optional lint/check work must fit inside those branches rather than creating a sixth PR.",
+    "Creating `/workspace/reigh-app/src/shared/state/createEntityStore.ts`, `/workspace/reigh-app/src/shared/state/selectionStore.ts`, `/workspace/reigh-app/src/tools/video-editor/state/timelineStore.ts`, and `/workspace/reigh-app/docs/structure_detail/state_management.md` is allowed despite the repo\u2019s general preference to edit existing files.",
+    "React Query remains the sole source of server truth; Zustand stores only bootstrap from fetched data and manage editable client-side state.",
+    "Any additional callers uncovered in Step 1 are migrated within PRs 3, 4, or 5 instead of being deferred to later weeks.",
+    "Render-budget tooling is dev/test-only and should not alter production behavior or add user-visible UI.",
+    "The final validation target is to match or improve the current baseline test pass rate without fixing unrelated failures.",
+    "Because repository inspection was blocked here, Step 1 is a hard gate that may reprioritize individual callers, but not the overall five-PR architecture, unless the audit proves the brief materially wrong."
+  ],
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        []
+
+        Known accepted debt grouped by subsystem:
+        {
+  "agent-chat-rendering": [
+    {
+      "id": "DEBT-007",
+      "concern": "removing the duplicate assistant turn may hide message_user text if the frontend only renders assistant-role turns as chat bubbles.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-ai-timeline-agent-20260326-0157"
+      ]
+    }
+  ],
+  "agent-chat-undo-integration": [
+    {
+      "id": "DEBT-018",
+      "concern": "agent chat edits arrive via query invalidation/realtime polling and will bypass the undo stack because those paths are marked skiphistory.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-undo-redo-history-20260326-2240"
+      ]
+    }
+  ],
+  "agent-tool-utils": [
+    {
+      "id": "DEBT-040",
+      "concern": "agent-tool-utils: step 6 moves `isrecord` out of `llm/messages.ts` without preserving that module's current export surface for `index.ts`, `db.ts`, `tool-calls.ts`, and `selectedclips.ts`, so the refactor plan can break four existing imports unless it adds a re-export or rewires those callers.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    }
+  ],
+  "are-the-proposed-changes-technically-correct": [
+    {
+      "id": "DEBT-041",
+      "concern": "are the proposed changes technically correct?: checked the actual export surface in `supabase/functions/ai-timeline-agent/llm/messages.ts` and its consumers. step 6 says to 'remove local `isrecord`' from `messages.ts` and import it from `utils.ts`, but without also preserving `messages.ts` as an exporter or rewiring `index.ts`, `db.ts`, `tool-calls.ts`, and `selectedclips.ts`, that change would break the module graph immediately.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-055",
+      "concern": "are the proposed changes technically correct?: checked the render-gating cleanup plan against remotion's runtime exports in `node_modules/remotion/dist/cjs/cancel-render.js:46-70`. `cancelrender()` stores an error and throws to abort the render; it is not a benign cleanup for an abandoned `delayrender` handle, so step 2's instruction to call `cancelrender(handle)` on unmount is technically wrong and would abort preview or export with an error.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-056",
+      "concern": "are the proposed changes technically correct?: checked how remotion itself acquires delay handles in `node_modules/remotion/dist/cjs/iframe.js:8-18`. remotion's own components create the handle synchronously with `usestate(() => delayrender(...))`; the plan says 'calls delayrender() on mount', which reads like an effect-time action and leaves the initial-frame blocking behavior underspecified compared with the actual library pattern.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-057",
+      "concern": "are the proposed changes technically correct?: checked the new `useaudioparam()` sketch against `src/tools/video-editor/effects/compileeffect.tsx:1-2`. the plan defines it in terms of `interpolate(audio[binding.source], ...)` but does not explicitly import `interpolate` into the new hook file or simplify it to straight arithmetic, so the helper's implementation contract is still looser than it needs to be.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-070",
+      "concern": "are the proposed changes technically correct?: checked revised step 2.4 against `src/tools/video-editor/hooks/useclipresize.ts:76-100`. the plan still says to clamp audio by writing back to `action.end`, but the current hook treats the callback `action` as input data and then creates fresh row actions from it. mutating that caller-owned object is unnecessary and risks coupling the resize hook to outside references instead of using a local `clampedend` variable.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    },
+    {
+      "id": "DEBT-076",
+      "concern": "are the proposed changes technically correct?: checked the no-duration-fetch decision against `src/tools/travel-between-images/hooks/video/useshotfinalvideos.ts:19-37`, `src/tools/video-editor/lib/config-utils.ts:17-35`, and `src/tools/video-editor/compositions/visualclip.tsx:114-123`. the repository still derives clip length from `to - from`, and the final-video query still provides no duration metadata, so the revised plan still cannot prove that `to: endtime - starttime` is safe for shorter source media; a short final video can still be asked to play longer than its actual content.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    },
+    {
+      "id": "DEBT-077",
+      "concern": "are the proposed changes technically correct?: checked the hand-built replacement clip against the existing insert path in `src/tools/video-editor/hooks/useassetmanagement.ts:201-252,262-271` and serialization in `src/tools/video-editor/hooks/usetimelinecommit.ts:210-216`. the revised `timelineeditor` sketch still bypasses current insertion invariants such as manual-track geometry defaults and explicit `cliporder` updates, so replacement clips on manual visual tracks will not be initialized the same way as other inserted video clips and may serialize in a different per-track order.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    },
+    {
+      "id": "DEBT-089",
+      "concern": "are the proposed changes technically correct?: the new `pinnedshotgroupsoverride` design is still underspecified against `materializedata()`. `assembletimelinedata()` computes `stablesignature` from the config it receives, so if the executor literally follows step 2.4 and overwrites `pinnedshotgroups` on an already-materialized `timelinedata` before `commitdata()`, the saved config and the cached `stablesignature` will diverge unless the data is rebuilt from the updated config.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-090",
+      "concern": "are the proposed changes technically correct?: the revised grouped-drag plan fixes the pointer-down selection regression, but it still leaves `pinnedshotgroup.trackid` stale on cross-track moves. the data model stores `trackid`, and current drag/move helpers only update rows/meta/clip order, so a pinned group dragged to another track would keep pointing at the old track unless the drag commit also patches group metadata.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-105",
+      "concern": "are the proposed changes technically correct?: checked step 2.4 against `materializedata()` in `usetimelinecommit` and `assembletimelinedata()` in `timeline-data.ts`. the plan still says to overwrite `pinnedshotgroups` after `materializedata()` returns, but `assembletimelinedata()` computes `stablesignature` from the config it receives, so mutating the config afterward would leave signature-derived state stale unless the data is rebuilt from the updated config.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-106",
+      "concern": "are the proposed changes technically correct?: checked the grouped-drag plan against `useclipdrag` and `usetimelinetrackmanagement.movecliptorow()`. the plan fixes the pointer-down selection regression, but it still does not say how `pinnedshotgroup.trackid` is updated when a grouped drag or move lands on a different row, so the overlay and menu state can still point at the old track after a successful cross-track move.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-107",
+      "concern": "are the proposed changes technically correct?: checked the cross-track multi-drag new-track branch in `useclipdrag`. that path still commits through `applyedit({ type: 'config', resolvedconfig })` using `buildconfigfromdragresult()`, and the revised plan does not explain how pinned-group metadata is updated atomically on that path, so grouped drags that create a new track are still under-specified even beyond the stale-`trackid` problem.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-128",
+      "concern": "are the proposed changes technically correct?: checked the proposed shared interaction-state location against the actual hook graph in `src/tools/video-editor/components/timelineeditor/timelineeditor.tsx:194`, `src/tools/video-editor/components/timelineeditor/timelineeditor.tsx:479`, `src/tools/video-editor/hooks/usetimelinestate.ts:172-204`, and `src/tools/video-editor/hooks/usetimelinestate.contexts.ts:72-166`. rev 3 says the ref should live in `usetimelinestate.contexts.ts`, but that file only memoizes context values while `useclipdrag`, `timelinecanvas`, and `usepinnedgroupsync` are all coordinated from `timelineeditor`, so the stated location and rationale are still technically off.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-pinned-shot-groups-20260408-0508"
+      ]
+    },
+    {
+      "id": "DEBT-131",
+      "concern": "are the proposed changes technically correct?: step 5.1 claims `updatepinnedgroupwithchildren` is 'currently imported by useswitchtofinalvideo.ts:357'. verified at useswitchtofinalvideo.ts:71-130 that this function is actually **defined locally** in useswitchtofinalvideo.ts, not imported from pinned-group-projection.ts. the real imports from pinned-group-projection at :5-8 are `buildgroupfromchildren` and `replacegroupchildren`, both of which are already in step 5's delete list. the plan's characterization is factually wrong (delete list shouldn't include updatepinnedgroupwithchildren as a pinned-group-projection export), but the substantive intent still works: once `buildgroupfromchildren`/`replacegroupchildren` are deleted, the local helper won't compile and step 11.2's 'inline soft-tag construction' rewrite removes it. minor wording error, not a blocking issue.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "roll-back-the-first-class-20260408-1337"
+      ]
+    },
+    {
+      "id": "DEBT-132",
+      "concern": "are the proposed changes technically correct?: step 11.2 specifies the reverse switch is 'single commit, no `start`/`children`/`offset` reads anywhere' but doesn't state the mutation type explicitly. since the step describes metadeletes + cliporderoverride + pinnedshotgroupsoverride in a single commit, the mutation must be `type: 'rows'` (the only variant carrying all three). self-consistent with step 11.1's restriction on `type: 'pinnedshotgroups'`, but making the mutation type explicit would reduce executor ambiguity.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "roll-back-the-first-class-20260408-1337"
+      ]
+    },
+    {
+      "id": "DEBT-135",
+      "concern": "are the proposed changes technically correct?: checked step 3 against the actual `useselectedmediaclips()` inputs in [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts#l29). that hook currently reads only `selectedclipids` and `resolvedconfig` from editor context, so the plan's literal instruction to join `resolvedconfig.pinnedshotgroups` with `useshots()` data will not compile unless it first switches to `data?.config.pinnedshotgroups` or another real source of pinned groups.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-first-class-shot-20260409-2052"
+      ]
+    }
+  ],
+  "are-the-success-criteria-well-prioritized-and-verifiable": [
+    {
+      "id": "DEBT-035",
+      "concern": "are the success criteria well-prioritized and verifiable?: checked the two user-visible `must` goals for the selection ring and locked-pane chat. they describe the right product outcomes, but they are mostly manual ui behaviors rather than code-review-verifiable gates, so they are not fully testable from the listed automated checks alone.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-039",
+      "concern": "are the success criteria well-prioritized and verifiable?: checked the revised `must` criterion about eliminating duplicated server-side helpers. as written, the plan could satisfy 'all import from utils.ts' for `generation.ts`, `create-task.ts`, and `messages.ts` and still break four existing `messages.ts` consumers, so the criterion is incomplete unless it also requires preserving or updating the `messages.ts` export surface.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-060",
+      "concern": "are the success criteria well-prioritized and verifiable?: checked the `must` criterion 'edge function tests (ai-generate-effect/index.test.ts) pass with updated templates' against the actual test file. since `supabase/functions/ai-generate-effect/index.test.ts` mocks `buildgenerateeffectmessages()`, this criterion can pass without validating the template edits themselves, so it is still a weak `must` gate as written.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-071",
+      "concern": "are the success criteria well-prioritized and verifiable?: checked the remaining `must` criteria against the revised verification plan. criteria like 'existing timelinecanvas.test.tsx tests pass' and 'rowstoconfig serialization ... verified by read-only inspection' are reviewable, but they are still proxy gates rather than direct evidence that resize speed math and live audio clamping behave correctly, so the criteria are improved but not fully outcome-oriented yet.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    },
+    {
+      "id": "DEBT-102",
+      "concern": "are the success criteria well-prioritized and verifiable?: one `must` criterion is still an implementation-detail proxy rather than an outcome: \"new timelineeditmutation variant { type: 'pinnedshotgroups' } compiles and routes correctly in applyedit.\" it is verifiable, but it measures an internal mechanism rather than the user-facing persistence/undo behavior the feature actually needs.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "asset-panel-upload-routing": [
+    {
+      "id": "DEBT-122",
+      "concern": "asset-panel-upload-routing: step 3 names `assetpanel.tsx`, but the actual file-upload behavior is behind the `onuploadfiles` callback and `useassetoperations.uploadfiles()`, which currently sends every file straight through `uploadasset()`. updating `assetpanel` alone will not create generation-backed registry entries for uploaded videos or attach `generationid`; the plan needs to touch the callback plumbing that sits behind the panel upload button.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "register-uploaded-dropped-20260406-2144"
+      ]
+    }
+  ],
+  "audio-clamp-math": [
+    {
+      "id": "DEBT-068",
+      "concern": "audio clamp math: revised step 4.2 still gives conflicting formulas for left-edge `minstart`, and one of them depends on `clipmeta.to`, so the live audio clamp is not fully specified.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    }
+  ],
+  "bulk-panel-tabs": [
+    {
+      "id": "DEBT-010",
+      "concern": "text clip multi-selections would miss the position tab under the plan's stated rule.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "multi-select-feature-parity-20260326-0548"
+      ]
+    }
+  ],
+  "bulk-properties-panel": [
+    {
+      "id": "DEBT-016",
+      "concern": "bulkclippanel still imports customeffecteditor; removing it without updating bulk mode would break the build.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "build-an-llm-powered-custom-20260326-2230"
+      ]
+    }
+  ],
+  "clip-drag-scroll-sync": [
+    {
+      "id": "DEBT-015",
+      "concern": "the plan's step 3 ontick callback only shows coordinator.update() but the full clip-drag state path (snap, lateststart, ghost positions) also needs re-running during stationary-pointer scroll.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-auto-scroll-to-the-20260326-2119"
+      ]
+    }
+  ],
+  "clip-param-schema-evolution": [
+    {
+      "id": "DEBT-019",
+      "concern": "clips with stale or partial params from a previous schema version will not be automatically normalized/backfilled when the effect schema changes.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-tuneable-parameters-to-20260326-2332"
+      ]
+    }
+  ],
+  "clip-resize-math": [
+    {
+      "id": "DEBT-067",
+      "concern": "clip resize math: revised step 1 still leaves the source of `origin.to` under-specified, so the speed formula can be implemented against the wrong `to` value unless the plan explicitly says to use committed clip state or recompute it with `getsourcetime(...)`.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    }
+  ],
+  "conflict-resolution": [
+    {
+      "id": "DEBT-004",
+      "concern": "silently reloading agent-originated timeline updates would discard dirty local edits.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "build-a-turn-based-timeline-20260326-0005"
+      ]
+    },
+    {
+      "id": "DEBT-021",
+      "concern": "if all 3 conflict retries fail, the fallback path risks discarding dirty local edits unless the executor wires it into the existing conflict dialog.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "light-megaplan-fix-the-20260327-0056"
+      ]
+    }
+  ],
+  "context-menu-scope": [
+    {
+      "id": "DEBT-012",
+      "concern": "multi-clip copy is not included despite being mentioned in the original idea.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "multi-select-feature-parity-20260326-0548"
+      ]
+    }
+  ],
+  "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements": [
+    {
+      "id": "DEBT-036",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised step 6 against `supabase/functions/ai-timeline-agent/llm/messages.ts:12`, `supabase/functions/ai-timeline-agent/index.ts:6`, `supabase/functions/ai-timeline-agent/db.ts:2`, `supabase/functions/ai-timeline-agent/tool-calls.ts:1-4`, and `supabase/functions/ai-timeline-agent/selectedclips.ts:1`. the plan still does not account for `isrecord` being part of `messages.ts`'s exported api today, so the utility extraction is incomplete unless it either re-exports `isrecord` from `messages.ts` or updates all four downstream imports.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-062",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised audio-binding ui step against the research note and `src/shared/components/ui/slider.tsx:5-17,31-52`. the plan still says 'a dual-value slider or two number inputs' instead of committing to the supported path, even though the shared slider wrapper is scalar-only, so that important review note is only partially addressed.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-064",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked `src/tools/video-editor/hooks/useclipresize.ts:54-73` against revised step 1. the plan now says to cache `to` in `resizestartref`, but it still never states whether that value must come from committed clip state or from a fresh `getsourcetime(...)` calculation. because the current resize handler computes a transient wrong `to` during left-edge trims before commit-time rematerialization repairs it, leaving `origin.to` implicit is still a correctness-sensitive ambiguity.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    },
+    {
+      "id": "DEBT-065",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked revised step 4.2 against `src/tools/video-editor/components/timelineeditor/timelinecanvas.tsx:483-490` and `src/tools/video-editor/hooks/useclipresize.ts:56-60`. the plan still gives two different formulas for audio `minstart`, and one of them depends on `clipmeta.to`, so the left-edge live-clamp requirement is not fully settled yet.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    },
+    {
+      "id": "DEBT-075",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked `src/tools/video-editor/hooks/usestalevariants.ts` against the proposed `usefinalvideoavailable` state model: stale reminders are dismissed per `assetkey` and can clear when the asset changes, but the plan dismisses by `shotid`, which would hide any newer final video for the same shot for the rest of the session even though `useshotfinalvideos()` exposes a changing final-video `id`.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    },
+    {
+      "id": "DEBT-082",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised dismissal model against `src/tools/video-editor/hooks/usestalevariants.ts:160-166` and `src/tools/travel-between-images/hooks/video/useshotfinalvideos.ts:39-60`. the plan still dismisses by `shotid`, not by final-video generation id, so if a shot gets a newer final output later in the same session the badge would remain suppressed even though `useshotfinalvideos()` would surface a different `id`; that earlier concern is still open.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    },
+    {
+      "id": "DEBT-087",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: the new plan makes phase 6 (shot drop) and phase 7 (auto-sync) explicitly deferrable follow-ups, but those behaviors were part of the original task summary and idea document as first-class functionality. that is a real scope reduction unless the user explicitly approves shipping the two-tier system without those creation/sync paths in the first pass.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-088",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: step 16 resolves the previously-open deletion behavior, but its stated implementation is a post-commit follow-up `applyedit`. in this repository `commitdata()` immediately emits `beforecommit` and schedules a save for each edit, so handling a single delete via a second cleanup edit would create extra history/save churn unless the plan also specifies how that reconcile pass is coalesced or skipped.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-103",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised execution order and assumptions against the approved brief and idea doc. the plan still says phase 6 shot drop and phase 7 auto-sync can be deferred, but those behaviors are part of the requested feature rather than optional polish, so this is still a real scope reduction unless the split is explicitly approved.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-104",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked step 18 against the actual commit pipeline in `usetimelinecommit` and `usetimelinehistory`. the plan still handles deleted pinned-group clips with a post-commit follow-up `applyedit`, which would create a second commit, second save scheduling pass, and likely a second undo boundary for one user action unless it also specifies coalescing or `skiphistory` behavior.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-114",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: the revised plan introduced new todo placeholders for step 13 shot drop and step 14 auto-sync while also keeping later concrete shot-drop and auto-sync phases. that means two first-class behaviors from the brief are still not fully planned in an execution-ready way, even before considering whether they are deferred.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-134",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked step 3 and the accompanying assumptions against [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts) and [types/index.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/types/index.ts#l187). the revision still says timeline-selected clips can resolve shot membership from `resolvedconfig.pinnedshotgroups`, but `resolvedtimelineconfig` does not expose that field, so one of the original review findings remains only partially addressed.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-first-class-shot-20260409-2052"
+      ]
+    }
+  ],
+  "does-the-change-touch-all-locations-and-supporting-infrastructure": [
+    {
+      "id": "DEBT-033",
+      "concern": "does the change touch all locations and supporting infrastructure?: searched all `isrecord` imports from `./llm/messages.ts` under `supabase/functions/ai-timeline-agent/` and found four dependent files: `index.ts`, `db.ts`, `tool-calls.ts`, and `selectedclips.ts`. step 6 still lists only `generation.ts`, `create-task.ts`, and `messages.ts` as update targets, so it does not currently touch all locations that depend on the symbol being moved.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-034",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked `supabase/functions/ai-timeline-agent/selectedclips.test.ts:1` through `supabase/functions/ai-timeline-agent/selectedclips.ts:1`. the supporting test infrastructure exists and would catch one of these export-chain breaks, but only after later refactors because the plan schedules the edge vitest run in step 9 rather than immediately after the step 6 export move.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-058",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the supporting ui infrastructure for audio-binding controls. because `src/shared/components/ui/slider.tsx:5-17,31-52` only supports one thumb and `src/shared/components/ui/number-input.tsx:6-33` already exists as the established numeric input control, the plan should call out either `numberinput` usage or a new range-slider component explicitly; right now the supporting ui work is still incomplete in the plan.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-059",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the planned test location for prompt-template changes against `supabase/functions/ai-generate-effect/index.test.ts`. since that suite mocks `buildgenerateeffectmessages()`, touching only `index.test.ts` still misses the supporting test infrastructure needed to validate `templates.ts` itself.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-093",
+      "concern": "does the change touch all locations and supporting infrastructure?: the move infrastructure is still not fully enumerated for the new `trackid` field on `pinnedshotgroup`. `useclipdrag` can perform cross-track multi-drag and `usetimelinetrackmanagement.movecliptorow()` performs cross-track single-clip moves via rows/meta patches, but the revised plan does not call out updating pinned-group metadata in those move commits.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-094",
+      "concern": "does the change touch all locations and supporting infrastructure?: the supporting test infrastructure remains under-specified for the new mutation branch. `usetimelinecommit`, `timeline-save-utils.test.ts`, and `usetimelinehistory` all exercise config rebuild behavior today, but the validation section still does not add focused tests for the new `type: 'pinnedshotgroups'` path or for `pinnedshotgroupsoverride` on rows edits.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-109",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the move infrastructure that exists today. `useclipdrag` handles grouped moves, `usetimelinetrackmanagement.movecliptorow()` handles single-clip cross-track moves, and the plan still does not call out patching `pinnedshotgroup.trackid` in either commit path, so the new data model is not wired through every location that can change clip rows.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-110",
+      "concern": "does the change touch all locations and supporting infrastructure?: the revised plan now has duplicate shot-drop and auto-sync sections: steps 13-14 contain todo placeholders, while steps 21-24 contain the concrete later-phase versions. that duplication is not just cosmetic; it leaves the supporting infrastructure and file ownership for those phases ambiguous enough that the plan is still not fully actionable.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-124",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the actual ownership of interaction state across the repo. resize liveness currently lives in `timelinecanvas` (`resizesessionref`, `pendingopsref`, `resizeoverrides`) rather than in `usedragcoordinator`, so rev 2 still does not touch all supporting infrastructure needed for a reliable sync-deferral guard.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-pinned-shot-groups-20260408-0508"
+      ]
+    },
+    {
+      "id": "DEBT-125",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked `src/tools/video-editor/hooks/usetimelinestate.contexts.ts:98-161` and confirmed the editor context exports clip-level delete/split/move handlers throughout the tool. if the plan changes selection semantics or reroutes mutations through group-level primitives, this context wiring is part of the supporting infrastructure that also needs updating.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-pinned-shot-groups-20260408-0508"
+      ]
+    },
+    {
+      "id": "DEBT-129",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the supporting infrastructure needed if rev 3 really exposes `interactionstateref` and `isinteractionactive()` through the existing split editor contexts. that change would also require updates in `src/tools/video-editor/hooks/usetimelinestate.types.ts`, `src/tools/video-editor/contexts/timelineeditorcontext.tsx`, `src/tools/video-editor/contexts/videoeditorprovider.tsx`, and likely `src/tools/video-editor/contexts/videoeditorprovider.test.tsx`, but step 7 only names `usetimelinestate.contexts.ts`, `useclipdrag.ts`, and `timelinecanvas.tsx`, so the named wiring is still incomplete.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-pinned-shot-groups-20260408-0508"
+      ]
+    },
+    {
+      "id": "DEBT-133",
+      "concern": "does the change touch all locations and supporting infrastructure?: step 5.1 mentions `updatepinnedgroupwithchildren` in the delete list referencing `pinned-group-projection.ts`, but that function is a local helper in useswitchtofinalvideo.ts, not a pinned-group-projection export. the real pinned-group-projection exports consumed by useswitchtofinalvideo are `buildgroupfromchildren` and `replacegroupchildren` at imports :5-8, both of which are already in step 5's delete list. the plan's list item is misattributed but the file-level coverage is complete.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "roll-back-the-first-class-20260408-1337"
+      ]
+    },
+    {
+      "id": "DEBT-137",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the remaining frontend glue for resolving shot membership in [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts#l29). even with the broader attachment plumbing fixed, the location list is still incomplete because the plan points that hook at `resolvedconfig.pinnedshotgroups`, while the actual pinned-group data lives on `data.config.pinnedshotgroups` and related helper paths such as [usepinnedshotgroups.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/usepinnedshotgroups.ts#l26).",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-first-class-shot-20260409-2052"
+      ]
+    }
+  ],
+  "drop-indicator-plumbing": [
+    {
+      "id": "DEBT-023",
+      "concern": "dropindicator reads position.trackid without it being declared on the dropindicatorposition interface or forwarded by toindicatorposition().",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "two-ux-improvements-1-drop-to-20260327-0520"
+      ]
+    }
+  ],
+  "edit-mode-persistence": [
+    {
+      "id": "DEBT-026",
+      "concern": "legacy persisted 'enhance' values might exist in storage",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-edit-mode-ownership-20260331-1842"
+      ]
+    },
+    {
+      "id": "DEBT-027",
+      "concern": "no-migration assumption for enhance\u2192upscale is under-supported",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-edit-mode-ownership-20260331-1842"
+      ]
+    },
+    {
+      "id": "DEBT-030",
+      "concern": "enhance/upscale only partially resolved \u2014 persisted values not validated",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-edit-mode-ownership-20260331-1842"
+      ]
+    },
+    {
+      "id": "DEBT-032",
+      "concern": "no read-side normalization test for legacy 'enhance' values",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-edit-mode-ownership-20260331-1842"
+      ]
+    }
+  ],
+  "edit-mode-validation": [
+    {
+      "id": "DEBT-028",
+      "concern": "validation grep for 'enhance' will false-fail due to video code",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-edit-mode-ownership-20260331-1842"
+      ]
+    },
+    {
+      "id": "DEBT-029",
+      "concern": "grep scope too broad \u2014 hits video submode code",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-edit-mode-ownership-20260331-1842"
+      ]
+    },
+    {
+      "id": "DEBT-031",
+      "concern": "validation scope reaches unrelated video code",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-edit-mode-ownership-20260331-1842"
+      ]
+    }
+  ],
+  "effect-layer-overlap-enforcement": [
+    {
+      "id": "DEBT-022",
+      "concern": "the plan relies on same-track overlap being forbidden but does not explicitly specify the enforcement call (resolveoverlaps or range rejection) in the drop/create path.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-adjustment-layer-effect-20260327-0358"
+      ]
+    }
+  ],
+  "final-video-availability": [
+    {
+      "id": "DEBT-119",
+      "concern": "plan specifies wrong data source (usevideooutputs/shot_generations) for final video availability check",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "make-the-videogenerationmodal-20260406-1943"
+      ]
+    }
+  ],
+  "final-video-badge-suppression": [
+    {
+      "id": "DEBT-085",
+      "concern": "final-video badge suppression: step 3's proposed `timelinegenerationids` scan over `data.registry.assets` would treat any previously registered final-video asset as 'already on the timeline', even if no current clip is using it.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "clean-up-the-final-video-20260406-0959"
+      ]
+    }
+  ],
+  "final-video-deletion": [
+    {
+      "id": "DEBT-120",
+      "concern": "plan specifies wrong mutation (useremoveimagefromshot) for final video deletion",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "make-the-videogenerationmodal-20260406-1943"
+      ]
+    }
+  ],
+  "final-video-duration-handling": [
+    {
+      "id": "DEBT-074",
+      "concern": "final-video duration handling: `useshotfinalvideos()` does not provide duration and the timeline uses `clip.to - clip.from` as truth, so the proposed in-place trim can overrun shorter source media.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    },
+    {
+      "id": "DEBT-117",
+      "concern": "final-video duration handling: recurring debt: step 4 still swaps in a new final-video asset without any duration source, so a shorter regenerated final video can be asked to play for the old group span and overrun the real media length.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "unify-shot-group-sync-into-a-20260406-1746"
+      ]
+    }
+  ],
+  "final-video-refresh-path": [
+    {
+      "id": "DEBT-118",
+      "concern": "final-video refresh path: the plan assumes `useshotfinalvideos()` refreshes every 30s, but in this repo it does not poll; stale detection only refreshes when some other invalidation fires. the badge/update flow is under-specified unless the implementation explicitly relies on the existing invalidation path or adds refetching.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "unify-shot-group-sync-into-a-20260406-1746"
+      ]
+    }
+  ],
+  "final-video-reminder-state": [
+    {
+      "id": "DEBT-079",
+      "concern": "final-video reminder state: dismissing by `shotid` instead of final-video id still suppresses later final outputs for the same shot during the same session.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    }
+  ],
+  "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them": [
+    {
+      "id": "DEBT-038",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the current callers of `isrecord` from `llm/messages.ts`. `index.ts` uses it to validate `rawsession`, `db.ts` uses it on db rows, `tool-calls.ts` uses it on parsed tool-call payloads and nested `function` objects, and `selectedclips.ts` uses it while normalizing attachments, so preserving that import contract matters to four different call paths.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-095",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: the current `commitdata()` and history pipeline treat each `applyedit()` as its own commit boundary. because step 16 proposes a post-commit reconcile edit after deletions, the actual callers here matter: without `skiphistory` or transaction coalescing, one user action will produce two history events and likely two saves.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-096",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: `handleassetdrop()` and the external-drop wrapper are not pure builders; they immediately mutate editor state and call `applyedit()` per asset. that means the plan cannot literally reuse those callers for atomic shot-drop creation without first extracting a lower-level helper, or it will violate its own \"single applyedit\" requirement.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-111",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the actual commit/history callers around step 18. `commitdata()` emits `beforecommit` and schedules save on every edit, and `usetimelinehistory.onbeforecommit()` pushes undo entries per commit boundary, so a reconcile-after-delete `applyedit` still fragments one user action into multiple history/save operations unless the plan also changes those caller contracts.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-115",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the multi-drag callers in `useclipdrag`. the 'new track' grouped-drag branch still routes through `buildconfigfromdragresult()` and `applyedit({ type: 'config' })`, so the revised plan still does not fully handle every caller shape for grouped moves once pinned-group metadata becomes part of the timeline state.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-130",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the `usepinnedgroupsync()` call site in `src/tools/video-editor/components/timelineeditor/timelineeditor.tsx:479` against the proposed context-based interaction guard. because sync is called directly from `timelineeditor`, routing its guard through new editor-context plumbing is not the most direct fit for the actual caller and depends on extra provider/type changes that the step does not enumerate.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-pinned-shot-groups-20260408-0508"
+      ]
+    },
+    {
+      "id": "DEBT-138",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the caller contract of `useselectedmediaclips()` via [usetimelineeditordata](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts#l29). this hook's caller currently provides `selectedclipids` and `resolvedconfig`, not a resolved config object with `pinnedshotgroups`, so the plan still does not handle the actual arguments passed at that call site and needs to pull pinned groups from editor `data` instead.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-first-class-shot-20260409-2052"
+      ]
+    }
+  ],
+  "grouped-drag-new-track-path": [
+    {
+      "id": "DEBT-112",
+      "concern": "grouped drag new-track path: cross-track grouped drags that create a new track still commit through the resolved-config path, and the revised plan does not explain how pinned-group metadata is updated atomically on that branch.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "immediate-task-feedback": [
+    {
+      "id": "DEBT-084",
+      "concern": "immediate task feedback: the plan does not cover the repo's existing optimistic-pending pattern, so it does not reliably meet the stated 'appear immediately when a task is created' behavior. with only realtime plus 5s polling, spinner appearance still depends on network/realtime latency.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "show-in-progress-spinners-on-20260406-0925"
+      ]
+    }
+  ],
+  "interaction-state-ownership": [
+    {
+      "id": "DEBT-127",
+      "concern": "interaction-state ownership: rev 3 moves the shared drag/resize interaction ref into `usetimelinestate.contexts.ts` and describes that as the only place both paths can write to, but in this repo `useclipdrag`, `timelinecanvas`, and `usepinnedgroupsync` already meet in `timelineeditor`, so the proposed location is broader than necessary and the named file list omits the provider/type plumbing needed to expose it through context cleanly.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-pinned-shot-groups-20260408-0508"
+      ]
+    }
+  ],
+  "issue-detection": [
+    {
+      "id": "DEBT-006",
+      "concern": "mid-sentence-cut detection is not implementable without transcript/profile data that the current provider doesn't expose.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "build-a-turn-based-timeline-20260326-0005"
+      ]
+    }
+  ],
+  "legacy-effect-lifecycle": [
+    {
+      "id": "DEBT-017",
+      "concern": "removing customeffecteditor makes effects-table entries read-only \u2014 users can no longer edit legacy custom effects.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "build-an-llm-powered-custom-20260326-2230"
+      ]
+    }
+  ],
+  "media-insertion-conventions": [
+    {
+      "id": "DEBT-097",
+      "concern": "media insertion conventions: the plan still says to reuse asset-management helpers for shot drop, but the current helpers are side-effectful and commit immediately, so atomic shot-drop creation still needs a lower-level extracted helper rather than direct reuse.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "multi-drag-utils": [
+    {
+      "id": "DEBT-043",
+      "concern": "duplicate of correctness-2 \u2014 multi-drag meta patch accumulation not spelled out",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "restructure-the-video-editor-20260406-0206"
+      ]
+    },
+    {
+      "id": "DEBT-044",
+      "concern": "same merge strategy concern as correctness-2/5 from the caller perspective",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "restructure-the-video-editor-20260406-0206"
+      ]
+    }
+  ],
+  "optimistic-locking": [
+    {
+      "id": "DEBT-002",
+      "concern": "plan only specifies version checking at the db write layer; the ui load/state/save path doesn't carry config_version yet.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "build-a-turn-based-timeline-20260326-0005"
+      ]
+    }
+  ],
+  "pinned-group-track-sync": [
+    {
+      "id": "DEBT-100",
+      "concern": "pinned-group track sync: cross-track drag/move paths must also update `pinnedshotgroup.trackid`, but the revised plan only discusses expanding `draggedclipids` and does not call out metadata updates for the move commits.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "plan-execution": [
+    {
+      "id": "DEBT-113",
+      "concern": "plan execution: the revised plan now contains duplicate shot-drop and auto-sync phases, and the earlier copies still contain todo placeholders, so those parts of the plan are not fully actionable yet.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "properties-panel-scope": [
+    {
+      "id": "DEBT-011",
+      "concern": "crop and transition controls are not included in the bulk panel, narrowing the original idea's scope.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "multi-select-feature-parity-20260326-0548"
+      ]
+    }
+  ],
+  "realtime-subscriptions": [
+    {
+      "id": "DEBT-003",
+      "concern": "the shared realtime system doesn't know about timeline_agent_sessions; step 7 hooks need their own channel subscription.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "build-a-turn-based-timeline-20260326-0005"
+      ]
+    }
+  ],
+  "registry-patch-testing": [
+    {
+      "id": "DEBT-020",
+      "concern": "patchregistry() lacks automated regression tests \u2014 the duplicate-id bug's most likely reproduction path is covered only by pure-function tests on the assembler it delegates to, plus manual smoke testing.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "light-megaplan-consolidate-20260327-0022"
+      ]
+    }
+  ],
+  "resize-hook-mutation": [
+    {
+      "id": "DEBT-069",
+      "concern": "resize hook mutation: revised step 2.4 clamps audio by mutating `action.end`, even though the current resize hook builds new row objects immutably from the callback input.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    }
+  ],
+  "resolve-overlaps": [
+    {
+      "id": "DEBT-045",
+      "concern": "resolve-overlaps.ts entirely lacks tests; plan only adds resolvegroupoverlaps tests",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "restructure-the-video-editor-20260406-0206"
+      ]
+    },
+    {
+      "id": "DEBT-046",
+      "concern": "phase 4 blast radius covers both resolveoverlaps and resolvegroupoverlaps return shapes",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "restructure-the-video-editor-20260406-0206"
+      ]
+    }
+  ],
+  "scope-management": [
+    {
+      "id": "DEBT-101",
+      "concern": "scope management: marking shot drop and auto-sync as deferrable follow-ups narrows the deliverable below the original task brief unless the split is explicitly approved.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader": [
+    {
+      "id": "DEBT-037",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the affected edge-agent surface around `llm/messages.ts`. the `isrecord` extraction is broader than the three files listed in step 6 because `messages.ts` is a shared utility module for `index.ts`, `db.ts`, `tool-calls.ts`, and `selectedclips.ts`; the plan still scopes the edit as if only the local definition sites matter.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "cleanup-and-quality-pass-on-20260404-0138"
+      ]
+    },
+    {
+      "id": "DEBT-063",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the verification scope around the edge function. `supabase/functions/ai-generate-effect/index.test.ts:35-46` mocks `buildgenerateeffectmessages()`, so adding only more `index.test.ts` cases still will not exercise the real `templates.ts` prompt content; the revised plan improves scope on the implementation side, but its test scope is still narrower than the actual risk surface.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    },
+    {
+      "id": "DEBT-066",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked `src/tools/video-editor/lib/resolve-overlaps.ts:139-195` at the `useclipresize` call site. this api only produces `metapatches[clipid]` for the moved clip, so revised step 3's generic 'for each clip id in overlappatches' loop is broader than the actual resize surface and adds complexity the fix does not currently need.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-video-and-audio-clip-20260406-0616"
+      ]
+    },
+    {
+      "id": "DEBT-078",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the existing video-drop paths in `src/tools/video-editor/lib/external-drop-utils.ts:46-55,386-412` and `src/tools/video-editor/hooks/useassetmanagement.ts:198-252`. the broader repository pattern for video assets is not just \u201cregister then insert\u201d; multi-generation video drops also patch `registry.duration` using `getdroppedgenerationduration()`, while `useshotfinalvideos()` in `src/tools/travel-between-images/hooks/video/useshotfinalvideos.ts:19-37` currently fetches no duration metadata. that means final-video replacement is broader than badge wiring alone if the new clip is expected to behave like other video assets in timing ui and resize logic.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    },
+    {
+      "id": "DEBT-081",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked related asset-insertion code in `src/tools/video-editor/hooks/useassetmanagement.ts:150-271` and `src/tools/video-editor/lib/coordinate-utils.ts:24-33`. the broader repository pattern for adding timeline media is centralized there, including track compatibility, manual-track defaults, selection updates, and `cliporder` maintenance, so the revised plan is still broader than a pure menu/ui change and needs either shared helper extraction or a more explicit statement that those invariants are being replicated on purpose.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    },
+    {
+      "id": "DEBT-091",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: cross-track group motion is broader than step 18 currently states. because the pinned-group model now includes `trackid`, every move path that can relocate a grouped clip set across rows has to update pinned-group metadata too; otherwise the overlay and menu logic will still reference the previous track even though the clip actions moved successfully.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-092",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: if phases 6 and 7 are deferred, the shipped work becomes a narrower \"pin existing inferred groups and toggle them\" feature rather than the full brief, which also called out shot-drop creation and shot-image auto-sync. that broader scope tension is still present in the revised plan.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-108",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the movement surface beyond `useclipdrag`. the broader problem is not just drag-threshold expansion; both grouped multi-drag and single-clip cross-track move helpers can relocate clips across rows, so every move path that changes a pinned group's row membership has to update pinned-group metadata too, and the revised plan still scopes that too narrowly.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    },
+    {
+      "id": "DEBT-126",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked where drag, resize, and sync already meet in the live component tree. because `useclipdrag`, `timelinecanvas`, and `usepinnedgroupsync` all already converge in `timelineeditor`, pushing the new interaction state up into shared editor context broadens the implementation surface beyond what this repository structure appears to require.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-pinned-shot-groups-20260408-0508"
+      ]
+    },
+    {
+      "id": "DEBT-136",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the frontend shot-resolution scope in [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts), [timelineeditor.tsx](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/components/timelineeditor/timelineeditor.tsx#l191), and [usepinnedshotgroups.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/usepinnedshotgroups.ts#l26). the revision narrowed away from duplicate canvas work correctly, but it still scopes the timeline clip lookup to a non-existent `resolvedconfig.pinnedshotgroups` surface instead of the actual `data.config.pinnedshotgroups` path used elsewhere in the editor.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "implement-first-class-shot-20260409-2052"
+      ]
+    }
+  ],
+  "selection-save-bridge": [
+    {
+      "id": "DEBT-009",
+      "concern": "the plan specifies passing pruneselection into usetimelinesave but doesn't detail the hook-layer bridge needed because usetimelinesave is instantiated inside usetimelinedata before usetimelinestate runs.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "multi-select-timeline-clips-20260326-0415"
+      ]
+    }
+  ],
+  "shot-group-badge-scope": [
+    {
+      "id": "DEBT-086",
+      "concern": "shot-group badge scope: step 3 suppresses the reminder at shot level, but this repo can render multiple shot groups for the same shot, so switching one group to the final video would hide the badge on other groups of that shot too.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "clean-up-the-final-video-20260406-0959"
+      ]
+    }
+  ],
+  "task-deduplication": [
+    {
+      "id": "DEBT-001",
+      "concern": "server-generated idempotency keys would break retry deduplication because retried requests get fresh keys.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "migrate-all-task-creation-20260325-2354"
+      ]
+    }
+  ],
+  "task-reference-matching": [
+    {
+      "id": "DEBT-083",
+      "concern": "task reference matching: reusing `taskreferencesgeneration` as the only matcher will miss active video-generation tasks for source clips. the helper does not inspect `input_image_generation_ids`, `start_image_generation_id`, or `end_image_generation_id`, even though this repo stores and later reads those fields to identify which timeline generations a travel task is using. that means spinners would fail to appear for at least some travel/video tasks.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "show-in-progress-spinners-on-20260406-0925"
+      ]
+    }
+  ],
+  "task-system-integration": [
+    {
+      "id": "DEBT-005",
+      "concern": "create_generation_task is underspecified against the actual task family system.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "build-a-turn-based-timeline-20260326-0005"
+      ]
+    }
+  ],
+  "timeline-media-duration": [
+    {
+      "id": "DEBT-080",
+      "concern": "timeline media duration: the revised plan still sizes the final-video clip to the shot-group span without any duration source, so shorter final videos can still overrun their real media length.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-a-final-video-available-20260406-0801"
+      ]
+    }
+  ],
+  "timeline-shot-group-cleanup": [
+    {
+      "id": "DEBT-116",
+      "concern": "timeline shot-group cleanup: the plan only updates `useshotgroups.test.ts`, but the repository also has direct test coverage for the removed `resolvefinalvideoshotids()` helper and the `timelinecanvas` suggested-group/finalvideoshotids api. without explicitly updating `timelineeditor.test.ts` and `timelinecanvas.test.tsx`, the plan leaves the supporting test surface behind and the post-change suite will fail on deleted symbols and obsolete expectations.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "remove-inferred-shot-groups-20260406-1532"
+      ]
+    }
+  ],
+  "timeline-signatures": [
+    {
+      "id": "DEBT-098",
+      "concern": "timeline signatures: applying `pinnedshotgroupsoverride` after `materializedata()` would leave `stablesignature` and other config-derived state stale unless the code rebuilds `timelinedata` from the updated config.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "timeline-video-duration": [
+    {
+      "id": "DEBT-121",
+      "concern": "timeline-video-duration: the plan routes dropped videos through a new generation path but does not preserve duration metadata in the asset registry. in this repo, inserted video clips fall back to 5 seconds when `registry.duration` is missing, and the existing multi-generation video path explicitly patches duration from drag metadata before dropping. following the plan as written would still create generation-backed videos that are timed incorrectly on the timeline.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "register-uploaded-dropped-20260406-2144"
+      ]
+    }
+  ],
+  "tool-error-propagation": [
+    {
+      "id": "DEBT-008",
+      "concern": "a blanket catch in executetool would silently downgrade db/persistence failures into ordinary tool results, changing the session error/http 500 behavior.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "refactor-ai-timeline-agent-20260326-0157"
+      ]
+    }
+  ],
+  "track-reorder-accessibility": [
+    {
+      "id": "DEBT-013",
+      "concern": "replacing arrow buttons with drag-only handle removes keyboard-accessible reorder; plan only specifies pointersensor.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-track-reordering-bugs-and-20260326-1856"
+      ]
+    }
+  ],
+  "track-reorder-testing": [
+    {
+      "id": "DEBT-014",
+      "concern": "no automated tests specified for same-kind boundary rules or save/load persistence of reordered tracks.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-track-reordering-bugs-and-20260326-1856"
+      ]
+    }
+  ],
+  "undo-reconciliation": [
+    {
+      "id": "DEBT-099",
+      "concern": "undo reconciliation: step 16's post-commit `reconcilepinnedgroups` would create extra save/history events for a single delete unless it is explicitly coalesced with the triggering edit or marked to skip history.",
+      "occurrence_count": 2,
+      "plan_ids": [
+        "implement-two-tier-shot-20260406-1054"
+      ]
+    }
+  ],
+  "usederivedtimeline": [
+    {
+      "id": "DEBT-042",
+      "concern": "duplicate of correctness-1 \u2014 usememo dep array lint violation in sample code",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "restructure-the-video-editor-20260406-0206"
+      ]
+    }
+  ],
+  "video-editor-effect-preview": [
+    {
+      "id": "DEBT-049",
+      "concern": "preview fps source not exposed via existing context",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-all-5-architectural-20260406-0219"
+      ]
+    },
+    {
+      "id": "DEBT-050",
+      "concern": "same fps gap as flag-004",
+      "occurrence_count": 3,
+      "plan_ids": [
+        "fix-all-5-architectural-20260406-0219"
+      ]
+    }
+  ],
+  "video-editor-effect-registry": [
+    {
+      "id": "DEBT-047",
+      "concern": "replaceeffectregistry() in render mutates module state during react render",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-all-5-architectural-20260406-0219"
+      ]
+    },
+    {
+      "id": "DEBT-048",
+      "concern": "same render-purity concern as correctness-1",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-all-5-architectural-20260406-0219"
+      ]
+    },
+    {
+      "id": "DEBT-051",
+      "concern": "o(n) re-renders during effect initialization",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-all-5-architectural-20260406-0219"
+      ]
+    },
+    {
+      "id": "DEBT-052",
+      "concern": "same batching gap as performance-1",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-all-5-architectural-20260406-0219"
+      ]
+    },
+    {
+      "id": "DEBT-053",
+      "concern": "success criterion hardcodes render-time assignment as implementation detail",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-all-5-architectural-20260406-0219"
+      ]
+    }
+  ],
+  "video-editor-lightbox-tests": [
+    {
+      "id": "DEBT-073",
+      "concern": "video editor lightbox tests: moving `usequery` into `videoeditorprovider` will break the existing provider unit test unless the plan also updates the test harness to supply react query context.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "lift-the-lightbox-handler-out-20260406-0805"
+      ]
+    }
+  ],
+  "video-editor-parameter-controls": [
+    {
+      "id": "DEBT-061",
+      "concern": "video-editor-parameter-controls: the revised plan still suggests a dual-value slider for audio-binding min/max even though the shared slider wrapper is scalar-only; it should commit to two `numberinput` controls or a new range-slider implementation.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    }
+  ],
+  "video-editor-render-pipeline": [
+    {
+      "id": "DEBT-054",
+      "concern": "video-editor-render-pipeline: recurring debt: the revised render-gating plan still uses `cancelrender()` as unmount cleanup and leaves `delayrender()` acquisition described as a mount-time action, which can abort renders or miss initial-frame blocking.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "add-audio-reactive-effects-to-20260406-0440"
+      ]
+    }
+  ],
+  "video-editor-shell": [
+    {
+      "id": "DEBT-072",
+      "concern": "video-editor shell: the plan\u2019s width/aspect-based condensed threshold ignores the existing standard-layout maximize-timeline path, which already fixes the preview row at 180px. in this repo that means portrait timelines could be forced into condensed mode on normal desktop heights, effectively taking away the non-condensed maximize-timeline workflow unless the plan explicitly scopes the new threshold around `istimelinemaximized` or otherwise accepts that behavior change.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "make-the-video-editor-switch-20260406-0741"
+      ]
+    }
+  ],
+  "video-thumbnail-helper-surface": [
+    {
+      "id": "DEBT-123",
+      "concern": "video-thumbnail-helper-surface: the implementation step calls for importing `extractthumbnailfromvideo` from `videothumbnailgenerator.ts`, but that helper is private in this repository. if executed literally, that step will not compile; the public surface today is `extractanduploadthumbnailonly()` or the file-based `extractvideoposterframe()` helper.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "register-uploaded-dropped-20260406-2144"
+      ]
+    }
+  ],
+  "vlm-cold-gpu-diagnostics": [
+    {
+      "id": "DEBT-025",
+      "concern": "the cold-gpu vlm import crash investigation is deferred \u2014 the plan ships the zombie fix without root-causing the specific import failure.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "fix-worker-zombie-bug-when-20260330-2035"
+      ]
+    }
+  ],
+  "workspace-git-hygiene": [
+    {
+      "id": "DEBT-024",
+      "concern": "step 2 discards unstaged edits in 6 files via git checkout head without first confirming the revert was unintentional.",
+      "occurrence_count": 1,
+      "plan_ids": [
+        "two-ux-improvements-1-drop-to-20260327-0520"
+      ]
+    }
+  ]
+}
+
+        Escalated debt subsystems:
+        [
+  {
+    "subsystem": "are-the-proposed-changes-technically-correct",
+    "total_occurrences": 17,
+    "plan_count": 8,
+    "entries": [
+      {
+        "id": "DEBT-041",
+        "concern": "are the proposed changes technically correct?: checked the actual export surface in `supabase/functions/ai-timeline-agent/llm/messages.ts` and its consumers. step 6 says to 'remove local `isrecord`' from `messages.ts` and import it from `utils.ts`, but without also preserving `messages.ts` as an exporter or rewiring `index.ts`, `db.ts`, `tool-calls.ts`, and `selectedclips.ts`, that change would break the module graph immediately.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-055",
+        "concern": "are the proposed changes technically correct?: checked the render-gating cleanup plan against remotion's runtime exports in `node_modules/remotion/dist/cjs/cancel-render.js:46-70`. `cancelrender()` stores an error and throws to abort the render; it is not a benign cleanup for an abandoned `delayrender` handle, so step 2's instruction to call `cancelrender(handle)` on unmount is technically wrong and would abort preview or export with an error.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-056",
+        "concern": "are the proposed changes technically correct?: checked how remotion itself acquires delay handles in `node_modules/remotion/dist/cjs/iframe.js:8-18`. remotion's own components create the handle synchronously with `usestate(() => delayrender(...))`; the plan says 'calls delayrender() on mount', which reads like an effect-time action and leaves the initial-frame blocking behavior underspecified compared with the actual library pattern.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-057",
+        "concern": "are the proposed changes technically correct?: checked the new `useaudioparam()` sketch against `src/tools/video-editor/effects/compileeffect.tsx:1-2`. the plan defines it in terms of `interpolate(audio[binding.source], ...)` but does not explicitly import `interpolate` into the new hook file or simplify it to straight arithmetic, so the helper's implementation contract is still looser than it needs to be.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-070",
+        "concern": "are the proposed changes technically correct?: checked revised step 2.4 against `src/tools/video-editor/hooks/useclipresize.ts:76-100`. the plan still says to clamp audio by writing back to `action.end`, but the current hook treats the callback `action` as input data and then creates fresh row actions from it. mutating that caller-owned object is unnecessary and risks coupling the resize hook to outside references instead of using a local `clampedend` variable.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-video-and-audio-clip-20260406-0616"
+        ]
+      },
+      {
+        "id": "DEBT-076",
+        "concern": "are the proposed changes technically correct?: checked the no-duration-fetch decision against `src/tools/travel-between-images/hooks/video/useshotfinalvideos.ts:19-37`, `src/tools/video-editor/lib/config-utils.ts:17-35`, and `src/tools/video-editor/compositions/visualclip.tsx:114-123`. the repository still derives clip length from `to - from`, and the final-video query still provides no duration metadata, so the revised plan still cannot prove that `to: endtime - starttime` is safe for shorter source media; a short final video can still be asked to play longer than its actual content.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-a-final-video-available-20260406-0801"
+        ]
+      },
+      {
+        "id": "DEBT-077",
+        "concern": "are the proposed changes technically correct?: checked the hand-built replacement clip against the existing insert path in `src/tools/video-editor/hooks/useassetmanagement.ts:201-252,262-271` and serialization in `src/tools/video-editor/hooks/usetimelinecommit.ts:210-216`. the revised `timelineeditor` sketch still bypasses current insertion invariants such as manual-track geometry defaults and explicit `cliporder` updates, so replacement clips on manual visual tracks will not be initialized the same way as other inserted video clips and may serialize in a different per-track order.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-a-final-video-available-20260406-0801"
+        ]
+      },
+      {
+        "id": "DEBT-089",
+        "concern": "are the proposed changes technically correct?: the new `pinnedshotgroupsoverride` design is still underspecified against `materializedata()`. `assembletimelinedata()` computes `stablesignature` from the config it receives, so if the executor literally follows step 2.4 and overwrites `pinnedshotgroups` on an already-materialized `timelinedata` before `commitdata()`, the saved config and the cached `stablesignature` will diverge unless the data is rebuilt from the updated config.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-090",
+        "concern": "are the proposed changes technically correct?: the revised grouped-drag plan fixes the pointer-down selection regression, but it still leaves `pinnedshotgroup.trackid` stale on cross-track moves. the data model stores `trackid`, and current drag/move helpers only update rows/meta/clip order, so a pinned group dragged to another track would keep pointing at the old track unless the drag commit also patches group metadata.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-105",
+        "concern": "are the proposed changes technically correct?: checked step 2.4 against `materializedata()` in `usetimelinecommit` and `assembletimelinedata()` in `timeline-data.ts`. the plan still says to overwrite `pinnedshotgroups` after `materializedata()` returns, but `assembletimelinedata()` computes `stablesignature` from the config it receives, so mutating the config afterward would leave signature-derived state stale unless the data is rebuilt from the updated config.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-106",
+        "concern": "are the proposed changes technically correct?: checked the grouped-drag plan against `useclipdrag` and `usetimelinetrackmanagement.movecliptorow()`. the plan fixes the pointer-down selection regression, but it still does not say how `pinnedshotgroup.trackid` is updated when a grouped drag or move lands on a different row, so the overlay and menu state can still point at the old track after a successful cross-track move.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-107",
+        "concern": "are the proposed changes technically correct?: checked the cross-track multi-drag new-track branch in `useclipdrag`. that path still commits through `applyedit({ type: 'config', resolvedconfig })` using `buildconfigfromdragresult()`, and the revised plan does not explain how pinned-group metadata is updated atomically on that path, so grouped drags that create a new track are still under-specified even beyond the stale-`trackid` problem.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-128",
+        "concern": "are the proposed changes technically correct?: checked the proposed shared interaction-state location against the actual hook graph in `src/tools/video-editor/components/timelineeditor/timelineeditor.tsx:194`, `src/tools/video-editor/components/timelineeditor/timelineeditor.tsx:479`, `src/tools/video-editor/hooks/usetimelinestate.ts:172-204`, and `src/tools/video-editor/hooks/usetimelinestate.contexts.ts:72-166`. rev 3 says the ref should live in `usetimelinestate.contexts.ts`, but that file only memoizes context values while `useclipdrag`, `timelinecanvas`, and `usepinnedgroupsync` are all coordinated from `timelineeditor`, so the stated location and rationale are still technically off.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-pinned-shot-groups-20260408-0508"
+        ]
+      },
+      {
+        "id": "DEBT-131",
+        "concern": "are the proposed changes technically correct?: step 5.1 claims `updatepinnedgroupwithchildren` is 'currently imported by useswitchtofinalvideo.ts:357'. verified at useswitchtofinalvideo.ts:71-130 that this function is actually **defined locally** in useswitchtofinalvideo.ts, not imported from pinned-group-projection.ts. the real imports from pinned-group-projection at :5-8 are `buildgroupfromchildren` and `replacegroupchildren`, both of which are already in step 5's delete list. the plan's characterization is factually wrong (delete list shouldn't include updatepinnedgroupwithchildren as a pinned-group-projection export), but the substantive intent still works: once `buildgroupfromchildren`/`replacegroupchildren` are deleted, the local helper won't compile and step 11.2's 'inline soft-tag construction' rewrite removes it. minor wording error, not a blocking issue.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "roll-back-the-first-class-20260408-1337"
+        ]
+      },
+      {
+        "id": "DEBT-132",
+        "concern": "are the proposed changes technically correct?: step 11.2 specifies the reverse switch is 'single commit, no `start`/`children`/`offset` reads anywhere' but doesn't state the mutation type explicitly. since the step describes metadeletes + cliporderoverride + pinnedshotgroupsoverride in a single commit, the mutation must be `type: 'rows'` (the only variant carrying all three). self-consistent with step 11.1's restriction on `type: 'pinnedshotgroups'`, but making the mutation type explicit would reduce executor ambiguity.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "roll-back-the-first-class-20260408-1337"
+        ]
+      },
+      {
+        "id": "DEBT-135",
+        "concern": "are the proposed changes technically correct?: checked step 3 against the actual `useselectedmediaclips()` inputs in [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts#l29). that hook currently reads only `selectedclipids` and `resolvedconfig` from editor context, so the plan's literal instruction to join `resolvedconfig.pinnedshotgroups` with `useshots()` data will not compile unless it first switches to `data?.config.pinnedshotgroups` or another real source of pinned groups.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-first-class-shot-20260409-2052"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+    "total_occurrences": 16,
+    "plan_count": 6,
+    "entries": [
+      {
+        "id": "DEBT-033",
+        "concern": "does the change touch all locations and supporting infrastructure?: searched all `isrecord` imports from `./llm/messages.ts` under `supabase/functions/ai-timeline-agent/` and found four dependent files: `index.ts`, `db.ts`, `tool-calls.ts`, and `selectedclips.ts`. step 6 still lists only `generation.ts`, `create-task.ts`, and `messages.ts` as update targets, so it does not currently touch all locations that depend on the symbol being moved.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-034",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked `supabase/functions/ai-timeline-agent/selectedclips.test.ts:1` through `supabase/functions/ai-timeline-agent/selectedclips.ts:1`. the supporting test infrastructure exists and would catch one of these export-chain breaks, but only after later refactors because the plan schedules the edge vitest run in step 9 rather than immediately after the step 6 export move.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-058",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked the supporting ui infrastructure for audio-binding controls. because `src/shared/components/ui/slider.tsx:5-17,31-52` only supports one thumb and `src/shared/components/ui/number-input.tsx:6-33` already exists as the established numeric input control, the plan should call out either `numberinput` usage or a new range-slider component explicitly; right now the supporting ui work is still incomplete in the plan.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-059",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked the planned test location for prompt-template changes against `supabase/functions/ai-generate-effect/index.test.ts`. since that suite mocks `buildgenerateeffectmessages()`, touching only `index.test.ts` still misses the supporting test infrastructure needed to validate `templates.ts` itself.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-093",
+        "concern": "does the change touch all locations and supporting infrastructure?: the move infrastructure is still not fully enumerated for the new `trackid` field on `pinnedshotgroup`. `useclipdrag` can perform cross-track multi-drag and `usetimelinetrackmanagement.movecliptorow()` performs cross-track single-clip moves via rows/meta patches, but the revised plan does not call out updating pinned-group metadata in those move commits.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-094",
+        "concern": "does the change touch all locations and supporting infrastructure?: the supporting test infrastructure remains under-specified for the new mutation branch. `usetimelinecommit`, `timeline-save-utils.test.ts`, and `usetimelinehistory` all exercise config rebuild behavior today, but the validation section still does not add focused tests for the new `type: 'pinnedshotgroups'` path or for `pinnedshotgroupsoverride` on rows edits.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-109",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked the move infrastructure that exists today. `useclipdrag` handles grouped moves, `usetimelinetrackmanagement.movecliptorow()` handles single-clip cross-track moves, and the plan still does not call out patching `pinnedshotgroup.trackid` in either commit path, so the new data model is not wired through every location that can change clip rows.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-110",
+        "concern": "does the change touch all locations and supporting infrastructure?: the revised plan now has duplicate shot-drop and auto-sync sections: steps 13-14 contain todo placeholders, while steps 21-24 contain the concrete later-phase versions. that duplication is not just cosmetic; it leaves the supporting infrastructure and file ownership for those phases ambiguous enough that the plan is still not fully actionable.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-124",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked the actual ownership of interaction state across the repo. resize liveness currently lives in `timelinecanvas` (`resizesessionref`, `pendingopsref`, `resizeoverrides`) rather than in `usedragcoordinator`, so rev 2 still does not touch all supporting infrastructure needed for a reliable sync-deferral guard.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-pinned-shot-groups-20260408-0508"
+        ]
+      },
+      {
+        "id": "DEBT-125",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked `src/tools/video-editor/hooks/usetimelinestate.contexts.ts:98-161` and confirmed the editor context exports clip-level delete/split/move handlers throughout the tool. if the plan changes selection semantics or reroutes mutations through group-level primitives, this context wiring is part of the supporting infrastructure that also needs updating.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-pinned-shot-groups-20260408-0508"
+        ]
+      },
+      {
+        "id": "DEBT-129",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked the supporting infrastructure needed if rev 3 really exposes `interactionstateref` and `isinteractionactive()` through the existing split editor contexts. that change would also require updates in `src/tools/video-editor/hooks/usetimelinestate.types.ts`, `src/tools/video-editor/contexts/timelineeditorcontext.tsx`, `src/tools/video-editor/contexts/videoeditorprovider.tsx`, and likely `src/tools/video-editor/contexts/videoeditorprovider.test.tsx`, but step 7 only names `usetimelinestate.contexts.ts`, `useclipdrag.ts`, and `timelinecanvas.tsx`, so the named wiring is still incomplete.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-pinned-shot-groups-20260408-0508"
+        ]
+      },
+      {
+        "id": "DEBT-133",
+        "concern": "does the change touch all locations and supporting infrastructure?: step 5.1 mentions `updatepinnedgroupwithchildren` in the delete list referencing `pinned-group-projection.ts`, but that function is a local helper in useswitchtofinalvideo.ts, not a pinned-group-projection export. the real pinned-group-projection exports consumed by useswitchtofinalvideo are `buildgroupfromchildren` and `replacegroupchildren` at imports :5-8, both of which are already in step 5's delete list. the plan's list item is misattributed but the file-level coverage is complete.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "roll-back-the-first-class-20260408-1337"
+        ]
+      },
+      {
+        "id": "DEBT-137",
+        "concern": "does the change touch all locations and supporting infrastructure?: checked the remaining frontend glue for resolving shot membership in [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts#l29). even with the broader attachment plumbing fixed, the location list is still incomplete because the plan points that hook at `resolvedconfig.pinnedshotgroups`, while the actual pinned-group data lives on `data.config.pinnedshotgroups` and related helper paths such as [usepinnedshotgroups.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/usepinnedshotgroups.ts#l26).",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-first-class-shot-20260409-2052"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+    "total_occurrences": 13,
+    "plan_count": 6,
+    "entries": [
+      {
+        "id": "DEBT-036",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised step 6 against `supabase/functions/ai-timeline-agent/llm/messages.ts:12`, `supabase/functions/ai-timeline-agent/index.ts:6`, `supabase/functions/ai-timeline-agent/db.ts:2`, `supabase/functions/ai-timeline-agent/tool-calls.ts:1-4`, and `supabase/functions/ai-timeline-agent/selectedclips.ts:1`. the plan still does not account for `isrecord` being part of `messages.ts`'s exported api today, so the utility extraction is incomplete unless it either re-exports `isrecord` from `messages.ts` or updates all four downstream imports.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-062",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised audio-binding ui step against the research note and `src/shared/components/ui/slider.tsx:5-17,31-52`. the plan still says 'a dual-value slider or two number inputs' instead of committing to the supported path, even though the shared slider wrapper is scalar-only, so that important review note is only partially addressed.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-064",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked `src/tools/video-editor/hooks/useclipresize.ts:54-73` against revised step 1. the plan now says to cache `to` in `resizestartref`, but it still never states whether that value must come from committed clip state or from a fresh `getsourcetime(...)` calculation. because the current resize handler computes a transient wrong `to` during left-edge trims before commit-time rematerialization repairs it, leaving `origin.to` implicit is still a correctness-sensitive ambiguity.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-video-and-audio-clip-20260406-0616"
+        ]
+      },
+      {
+        "id": "DEBT-065",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked revised step 4.2 against `src/tools/video-editor/components/timelineeditor/timelinecanvas.tsx:483-490` and `src/tools/video-editor/hooks/useclipresize.ts:56-60`. the plan still gives two different formulas for audio `minstart`, and one of them depends on `clipmeta.to`, so the left-edge live-clamp requirement is not fully settled yet.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-video-and-audio-clip-20260406-0616"
+        ]
+      },
+      {
+        "id": "DEBT-075",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked `src/tools/video-editor/hooks/usestalevariants.ts` against the proposed `usefinalvideoavailable` state model: stale reminders are dismissed per `assetkey` and can clear when the asset changes, but the plan dismisses by `shotid`, which would hide any newer final video for the same shot for the rest of the session even though `useshotfinalvideos()` exposes a changing final-video `id`.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-a-final-video-available-20260406-0801"
+        ]
+      },
+      {
+        "id": "DEBT-082",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised dismissal model against `src/tools/video-editor/hooks/usestalevariants.ts:160-166` and `src/tools/travel-between-images/hooks/video/useshotfinalvideos.ts:39-60`. the plan still dismisses by `shotid`, not by final-video generation id, so if a shot gets a newer final output later in the same session the badge would remain suppressed even though `useshotfinalvideos()` would surface a different `id`; that earlier concern is still open.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-a-final-video-available-20260406-0801"
+        ]
+      },
+      {
+        "id": "DEBT-087",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: the new plan makes phase 6 (shot drop) and phase 7 (auto-sync) explicitly deferrable follow-ups, but those behaviors were part of the original task summary and idea document as first-class functionality. that is a real scope reduction unless the user explicitly approves shipping the two-tier system without those creation/sync paths in the first pass.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-088",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: step 16 resolves the previously-open deletion behavior, but its stated implementation is a post-commit follow-up `applyedit`. in this repository `commitdata()` immediately emits `beforecommit` and schedules a save for each edit, so handling a single delete via a second cleanup edit would create extra history/save churn unless the plan also specifies how that reconcile pass is coalesced or skipped.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-103",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the revised execution order and assumptions against the approved brief and idea doc. the plan still says phase 6 shot drop and phase 7 auto-sync can be deferred, but those behaviors are part of the requested feature rather than optional polish, so this is still a real scope reduction unless the split is explicitly approved.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-104",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked step 18 against the actual commit pipeline in `usetimelinecommit` and `usetimelinehistory`. the plan still handles deleted pinned-group clips with a post-commit follow-up `applyedit`, which would create a second commit, second save scheduling pass, and likely a second undo boundary for one user action unless it also specifies coalescing or `skiphistory` behavior.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-114",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: the revised plan introduced new todo placeholders for step 13 shot drop and step 14 auto-sync while also keeping later concrete shot-drop and auto-sync phases. that means two first-class behaviors from the brief are still not fully planned in an execution-ready way, even before considering whether they are deferred.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-134",
+        "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked step 3 and the accompanying assumptions against [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts) and [types/index.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/types/index.ts#l187). the revision still says timeline-selected clips can resolve shot membership from `resolvedconfig.pinnedshotgroups`, but `resolvedtimelineconfig` does not expose that field, so one of the original review findings remains only partially addressed.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-first-class-shot-20260409-2052"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+    "total_occurrences": 12,
+    "plan_count": 7,
+    "entries": [
+      {
+        "id": "DEBT-037",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the affected edge-agent surface around `llm/messages.ts`. the `isrecord` extraction is broader than the three files listed in step 6 because `messages.ts` is a shared utility module for `index.ts`, `db.ts`, `tool-calls.ts`, and `selectedclips.ts`; the plan still scopes the edit as if only the local definition sites matter.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-063",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the verification scope around the edge function. `supabase/functions/ai-generate-effect/index.test.ts:35-46` mocks `buildgenerateeffectmessages()`, so adding only more `index.test.ts` cases still will not exercise the real `templates.ts` prompt content; the revised plan improves scope on the implementation side, but its test scope is still narrower than the actual risk surface.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-066",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked `src/tools/video-editor/lib/resolve-overlaps.ts:139-195` at the `useclipresize` call site. this api only produces `metapatches[clipid]` for the moved clip, so revised step 3's generic 'for each clip id in overlappatches' loop is broader than the actual resize surface and adds complexity the fix does not currently need.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-video-and-audio-clip-20260406-0616"
+        ]
+      },
+      {
+        "id": "DEBT-078",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the existing video-drop paths in `src/tools/video-editor/lib/external-drop-utils.ts:46-55,386-412` and `src/tools/video-editor/hooks/useassetmanagement.ts:198-252`. the broader repository pattern for video assets is not just \u201cregister then insert\u201d; multi-generation video drops also patch `registry.duration` using `getdroppedgenerationduration()`, while `useshotfinalvideos()` in `src/tools/travel-between-images/hooks/video/useshotfinalvideos.ts:19-37` currently fetches no duration metadata. that means final-video replacement is broader than badge wiring alone if the new clip is expected to behave like other video assets in timing ui and resize logic.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-a-final-video-available-20260406-0801"
+        ]
+      },
+      {
+        "id": "DEBT-081",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked related asset-insertion code in `src/tools/video-editor/hooks/useassetmanagement.ts:150-271` and `src/tools/video-editor/lib/coordinate-utils.ts:24-33`. the broader repository pattern for adding timeline media is centralized there, including track compatibility, manual-track defaults, selection updates, and `cliporder` maintenance, so the revised plan is still broader than a pure menu/ui change and needs either shared helper extraction or a more explicit statement that those invariants are being replicated on purpose.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-a-final-video-available-20260406-0801"
+        ]
+      },
+      {
+        "id": "DEBT-091",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: cross-track group motion is broader than step 18 currently states. because the pinned-group model now includes `trackid`, every move path that can relocate a grouped clip set across rows has to update pinned-group metadata too; otherwise the overlay and menu logic will still reference the previous track even though the clip actions moved successfully.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-092",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: if phases 6 and 7 are deferred, the shipped work becomes a narrower \"pin existing inferred groups and toggle them\" feature rather than the full brief, which also called out shot-drop creation and shot-image auto-sync. that broader scope tension is still present in the revised plan.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-108",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the movement surface beyond `useclipdrag`. the broader problem is not just drag-threshold expansion; both grouped multi-drag and single-clip cross-track move helpers can relocate clips across rows, so every move path that changes a pinned group's row membership has to update pinned-group metadata too, and the revised plan still scopes that too narrowly.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-126",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked where drag, resize, and sync already meet in the live component tree. because `useclipdrag`, `timelinecanvas`, and `usepinnedgroupsync` all already converge in `timelineeditor`, pushing the new interaction state up into shared editor context broadens the implementation surface beyond what this repository structure appears to require.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-pinned-shot-groups-20260408-0508"
+        ]
+      },
+      {
+        "id": "DEBT-136",
+        "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the frontend shot-resolution scope in [useselectedmediaclips.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts), [timelineeditor.tsx](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/components/timelineeditor/timelineeditor.tsx#l191), and [usepinnedshotgroups.ts](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/usepinnedshotgroups.ts#l26). the revision narrowed away from duplicate canvas work correctly, but it still scopes the timeline clip lookup to a non-existent `resolvedconfig.pinnedshotgroups` surface instead of the actual `data.config.pinnedshotgroups` path used elsewhere in the editor.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-first-class-shot-20260409-2052"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+    "total_occurrences": 9,
+    "plan_count": 4,
+    "entries": [
+      {
+        "id": "DEBT-038",
+        "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the current callers of `isrecord` from `llm/messages.ts`. `index.ts` uses it to validate `rawsession`, `db.ts` uses it on db rows, `tool-calls.ts` uses it on parsed tool-call payloads and nested `function` objects, and `selectedclips.ts` uses it while normalizing attachments, so preserving that import contract matters to four different call paths.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-095",
+        "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: the current `commitdata()` and history pipeline treat each `applyedit()` as its own commit boundary. because step 16 proposes a post-commit reconcile edit after deletions, the actual callers here matter: without `skiphistory` or transaction coalescing, one user action will produce two history events and likely two saves.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-096",
+        "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: `handleassetdrop()` and the external-drop wrapper are not pure builders; they immediately mutate editor state and call `applyedit()` per asset. that means the plan cannot literally reuse those callers for atomic shot-drop creation without first extracting a lower-level helper, or it will violate its own \"single applyedit\" requirement.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-111",
+        "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the actual commit/history callers around step 18. `commitdata()` emits `beforecommit` and schedules save on every edit, and `usetimelinehistory.onbeforecommit()` pushes undo entries per commit boundary, so a reconcile-after-delete `applyedit` still fragments one user action into multiple history/save operations unless the plan also changes those caller contracts.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-115",
+        "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the multi-drag callers in `useclipdrag`. the 'new track' grouped-drag branch still routes through `buildconfigfromdragresult()` and `applyedit({ type: 'config' })`, so the revised plan still does not fully handle every caller shape for grouped moves once pinned-group metadata becomes part of the timeline state.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      },
+      {
+        "id": "DEBT-130",
+        "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the `usepinnedgroupsync()` call site in `src/tools/video-editor/components/timelineeditor/timelineeditor.tsx:479` against the proposed context-based interaction guard. because sync is called directly from `timelineeditor`, routing its guard through new editor-context plumbing is not the most direct fit for the actual caller and depends on extra provider/type changes that the step does not enumerate.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-pinned-shot-groups-20260408-0508"
+        ]
+      },
+      {
+        "id": "DEBT-138",
+        "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the caller contract of `useselectedmediaclips()` via [usetimelineeditordata](/users/peteromalley/documents/reigh-workspace/reigh-app/src/tools/video-editor/hooks/useselectedmediaclips.ts#l29). this hook's caller currently provides `selectedclipids` and `resolvedconfig`, not a resolved config object with `pinnedshotgroups`, so the plan still does not handle the actual arguments passed at that call site and needs to pull pinned groups from editor `data` instead.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "implement-first-class-shot-20260409-2052"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "are-the-success-criteria-well-prioritized-and-verifiable",
+    "total_occurrences": 8,
+    "plan_count": 4,
+    "entries": [
+      {
+        "id": "DEBT-035",
+        "concern": "are the success criteria well-prioritized and verifiable?: checked the two user-visible `must` goals for the selection ring and locked-pane chat. they describe the right product outcomes, but they are mostly manual ui behaviors rather than code-review-verifiable gates, so they are not fully testable from the listed automated checks alone.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-039",
+        "concern": "are the success criteria well-prioritized and verifiable?: checked the revised `must` criterion about eliminating duplicated server-side helpers. as written, the plan could satisfy 'all import from utils.ts' for `generation.ts`, `create-task.ts`, and `messages.ts` and still break four existing `messages.ts` consumers, so the criterion is incomplete unless it also requires preserving or updating the `messages.ts` export surface.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "cleanup-and-quality-pass-on-20260404-0138"
+        ]
+      },
+      {
+        "id": "DEBT-060",
+        "concern": "are the success criteria well-prioritized and verifiable?: checked the `must` criterion 'edge function tests (ai-generate-effect/index.test.ts) pass with updated templates' against the actual test file. since `supabase/functions/ai-generate-effect/index.test.ts` mocks `buildgenerateeffectmessages()`, this criterion can pass without validating the template edits themselves, so it is still a weak `must` gate as written.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "add-audio-reactive-effects-to-20260406-0440"
+        ]
+      },
+      {
+        "id": "DEBT-071",
+        "concern": "are the success criteria well-prioritized and verifiable?: checked the remaining `must` criteria against the revised verification plan. criteria like 'existing timelinecanvas.test.tsx tests pass' and 'rowstoconfig serialization ... verified by read-only inspection' are reviewable, but they are still proxy gates rather than direct evidence that resize speed math and live audio clamping behave correctly, so the criteria are improved but not fully outcome-oriented yet.",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-video-and-audio-clip-20260406-0616"
+        ]
+      },
+      {
+        "id": "DEBT-102",
+        "concern": "are the success criteria well-prioritized and verifiable?: one `must` criterion is still an implementation-detail proxy rather than an outcome: \"new timelineeditmutation variant { type: 'pinnedshotgroups' } compiles and routes correctly in applyedit.\" it is verifiable, but it measures an internal mechanism rather than the user-facing persistence/undo behavior the feature actually needs.",
+        "occurrence_count": 2,
+        "plan_ids": [
+          "implement-two-tier-shot-20260406-1054"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "video-editor-effect-registry",
+    "total_occurrences": 5,
+    "plan_count": 1,
+    "entries": [
+      {
+        "id": "DEBT-047",
+        "concern": "replaceeffectregistry() in render mutates module state during react render",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-all-5-architectural-20260406-0219"
+        ]
+      },
+      {
+        "id": "DEBT-048",
+        "concern": "same render-purity concern as correctness-1",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-all-5-architectural-20260406-0219"
+        ]
+      },
+      {
+        "id": "DEBT-051",
+        "concern": "o(n) re-renders during effect initialization",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-all-5-architectural-20260406-0219"
+        ]
+      },
+      {
+        "id": "DEBT-052",
+        "concern": "same batching gap as performance-1",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-all-5-architectural-20260406-0219"
+        ]
+      },
+      {
+        "id": "DEBT-053",
+        "concern": "success criterion hardcodes render-time assignment as implementation detail",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-all-5-architectural-20260406-0219"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "edit-mode-persistence",
+    "total_occurrences": 4,
+    "plan_count": 1,
+    "entries": [
+      {
+        "id": "DEBT-026",
+        "concern": "legacy persisted 'enhance' values might exist in storage",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-edit-mode-ownership-20260331-1842"
+        ]
+      },
+      {
+        "id": "DEBT-027",
+        "concern": "no-migration assumption for enhance\u2192upscale is under-supported",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-edit-mode-ownership-20260331-1842"
+        ]
+      },
+      {
+        "id": "DEBT-030",
+        "concern": "enhance/upscale only partially resolved \u2014 persisted values not validated",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-edit-mode-ownership-20260331-1842"
+        ]
+      },
+      {
+        "id": "DEBT-032",
+        "concern": "no read-side normalization test for legacy 'enhance' values",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-edit-mode-ownership-20260331-1842"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "video-editor-effect-preview",
+    "total_occurrences": 4,
+    "plan_count": 1,
+    "entries": [
+      {
+        "id": "DEBT-049",
+        "concern": "preview fps source not exposed via existing context",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "fix-all-5-architectural-20260406-0219"
+        ]
+      },
+      {
+        "id": "DEBT-050",
+        "concern": "same fps gap as flag-004",
+        "occurrence_count": 3,
+        "plan_ids": [
+          "fix-all-5-architectural-20260406-0219"
+        ]
+      }
+    ]
+  },
+  {
+    "subsystem": "edit-mode-validation",
+    "total_occurrences": 3,
+    "plan_count": 1,
+    "entries": [
+      {
+        "id": "DEBT-028",
+        "concern": "validation grep for 'enhance' will false-fail due to video code",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-edit-mode-ownership-20260331-1842"
+        ]
+      },
+      {
+        "id": "DEBT-029",
+        "concern": "grep scope too broad \u2014 hits video submode code",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-edit-mode-ownership-20260331-1842"
+        ]
+      },
+      {
+        "id": "DEBT-031",
+        "concern": "validation scope reaches unrelated video code",
+        "occurrence_count": 1,
+        "plan_ids": [
+          "refactor-edit-mode-ownership-20260331-1842"
+        ]
+      }
+    ]
+  }
+]
+
+        Debt guidance:
+        - These are known accepted limitations. Do not re-flag them unless the current plan makes them worse, broadens them, or fails to contain them.
+        - Prefix every new concern with a subsystem tag followed by a colon, for example `Timeout recovery: retry backoff remains brittle`.
+        - When a concern is recurring debt that still needs to be flagged, prefix it with `Recurring debt:` after the subsystem tag, for example `Timeout recovery: Recurring debt: retry backoff remains brittle`.
+
+        Your output template is at: /workspace/reigh-app/.megaplan/plans/2-week-aggressive-state-20260415-0113/critique_output.json
+Read this file first — it contains 5 checks, each with a question and guidance.
+For each check, investigate the codebase, then add your findings to the `findings` array for that check.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- Every check must end with at least one finding. Never leave a `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for each check.
+
+        Additional guidelines:
+        - Robustness level: standard. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+warning: Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the vendored bubblewrap in the meantime.
+2026-04-15T01:35:36.432123Z ERROR codex_core::tools::router: error=exec_command failed for `/bin/bash -lc "sed -n '1,240p' /workspace/reigh-app/.megaplan/plans/2-week-aggressive-state-20260415-0113/critique_output.json"`: CreateProcess { message: "Codex(Sandbox(Denied { output: ExecToolCallOutput { exit_code: 1, stdout: StreamOutput { text: \"\", truncated_after_lines: None }, stderr: StreamOutput { text: \"bwrap: Creating new namespace failed: Permission denied\\n\", truncated_after_lines: None }, aggregated_output: StreamOutput { text: \"bwrap: Creating new namespace failed: Permission denied\\n\", truncated_after_lines: None }, duration: 0ns, timed_out: false }, network_policy_decision: None }))" }
+2026-04-15T01:35:40.426062Z ERROR codex_core::tools::router: error=exec_command failed for `/bin/bash -c pwd`: CreateProcess { message: "Codex(Sandbox(Denied { output: ExecToolCallOutput { exit_code: 1, stdout: StreamOutput { text: \"\", truncated_after_lines: None }, stderr: StreamOutput { text: \"bwrap: Creating new namespace failed: Permission denied\\n\", truncated_after_lines: None }, aggregated_output: StreamOutput { text: \"bwrap: Creating new namespace failed: Permission denied\\n\", truncated_after_lines: None }, duration: 0ns, timed_out: false }, network_policy_decision: None }))" }
+2026-04-15T01:35:51.135311Z ERROR codex_core::tools::router: error=exec_command failed for `/bin/sh -c ls`: CreateProcess { message: "Codex(Sandbox(Denied { output: ExecToolCallOutput { exit_code: 1, stdout: StreamOutput { text: \"\", truncated_after_lines: None }, stderr: StreamOutput { text: \"bwrap: Creating new namespace failed: Permission denied\\n\", truncated_after_lines: None }, aggregated_output: StreamOutput { text: \"bwrap: Creating new namespace failed: Permission denied\\n\", truncated_after_lines: None }, duration: 0ns, timed_out: false }, network_policy_decision: None }))" }
+Shell access is blocked by the sandbox, so I’m falling back to a repository-derived critique based on the provided brief and plan text, then I’ll write the structured findings directly to the requested JSON file.
+  → Synthesize repository-grounded risks from the brief and plan
+  • Write the critique JSON to the requested output path
+  • Summarize the critique and remaining limitation
+apply patch
+2026-04-15T01:37:28.544939Z ERROR codex_core::tools::router: error={"output":"bwrap: Creating new namespace failed: Permission denied\n","metadata":{"exit_code":1,"duration_seconds":0.0}}
+patch: failed
+/workspace/reigh-app/.megaplan/plans/2-week-aggressive-state-20260415-0113/critique_output.json
+I synthesized the critique, but both shell commands and file edits are blocked by the sandbox (`bwrap: Creating new namespace failed: Permission denied`), so I cannot write the requested JSON file from this environment.
+  ✓ Synthesize repository-grounded risks from the brief and plan
+  • Write the critique JSON to the requested output path
+  → Summarize the critique and remaining limitation
+codex
+{"checks":[{"id":"callers-and-hotspots","question":"Does the plan start from a verified repository map of callers, hotspots, and ownership boundaries?","findings":[{"detail":"Compared the plan against the repository-derived engineering brief and found that the plan still treats caller enumeration as future work rather than an already-verified prerequisite. That is a real gap because the brief explicitly says local inspection was blocked and calls out ShotEditor video hooks, selection contexts, and timeline selection internals as surfaces that still need a concrete caller map before migration sizing is trustworthy.","flagged":true},{"detail":"The plan does correctly elevate the repository hotspots named in the brief, especially `useEditSettingsPersistence`, `useLastUsedEditSettings`, `useShotSettings`, and the ShotEditor video hooks. That alignment reduces the risk of doing the settings rewrite in the wrong order, even though the actual caller inventory is still unresolved.","flagged":false}]},{"id":"settings-store-contract","question":"Does the settings-store design fully preserve the current API and behavior constraints in the repository?","findings":[{"detail":"Checked the plan against the stated API constraints and the plan keeps the `useAutoSaveSettings` public return shape stable, keeps React Query as the one-way server source, and folds debounce/load logic into the Zustand layer. That matches the brief's non-negotiable compatibility boundary.","flagged":false},{"detail":"The plan leaves two behavior-critical repository decisions open in its own metadata: whether keyed stores survive unmount/remount for the same `(toolId, entityId, scope)`, and whether concurrent `useAutoSaveSettings` consumers share one debounce and pending-text queue. Those are not cosmetic details in this codebase because the brief ties the lightbox typing/focus failures to identity churn and multi-layer persistence behavior.","flagged":true},{"detail":"The plan says pending-text protection moves into store persistence, but it does not yet spell out the rebootstrap rules when React Query delivers fresher server data while a keyed store already has unsaved text. In this repository that is a correctness-sensitive edge because the brief explicitly requires preventing refetches from stomping in-flight textarea edits.","flagged":true}]},{"id":"surface-area-and-deletions","question":"Does the plan touch all required repository surfaces, deletions, and migration cleanup?","findings":[{"detail":"Checked the plan against the brief's mandatory deletions and it does schedule same-series removal of `useDebouncedSettingsSave.ts`, `autoSaveSettingsHelpers.ts`, `autoSaveSettingsLoaders.ts`, the four selection contexts, and the timeline contexts. That is consistent with the repository rule that predecessor helpers and contexts should not linger beside their replacements.","flagged":false},{"detail":"The cleanup plan is still broader than the named file list because the brief also requires tracing every importer and unusual consumer of the deleted hooks and contexts. The plan says 'migrate consumers to selectors' and 'migrate every caller found by the audit', but it does not add an explicit no-imports-left gate or grep-based verification step for the removed modules, so repository-wide cleanup is still partly implied rather than enforced.","flagged":true},{"detail":"PR 4 intentionally pulls timeline selection out of `useTimelineState.ts` before PR 5 collapses the remaining timeline contexts, which means the repository will temporarily have split ownership between the new selection store and the old timeline state path. That may be the only practical sequencing, but it is still a real integration risk because the brief identifies internal timeline selection state as part of the same render-storm problem.","flagged":true}]},{"id":"validation-and-evidence","question":"Are the success criteria tied to concrete validation that can prove the repository problems are actually fixed?","findings":[{"detail":"Compared the validation section to the brief's acceptance gates and found the plan is directionally correct: it keeps `useAutoSaveSettings` user-behavior tests, replaces deleted implementation-detail tests with store-level coverage, and adds render-budget instrumentation for lightbox and timeline flows.","flagged":false},{"detail":"The plan still leaves the render-budget mechanism under-specified by asking where `useRenderBudget` should live and whether the numeric limits are enforced in automated tests, a dev harness, or both. Because `ImageLightbox <= 3 renders` and `EditModePanel <= 2 renders` are explicit MUST/SHOULD gates for this repository, that unresolved instrumentation strategy is a real verification gap.","flagged":true},{"detail":"The two most user-visible regressions in the brief, the model `Select` staying open and the prompt textarea accepting uninterrupted typing, are named as milestones but not attached to concrete integration tests or a specific harness file. As written, the plan could pass the hook-level suites and still leave those UI behaviors to manual checking.","flagged":true}]},{"id":"branch-structure-and-revertibility","question":"Does the five-PR structure remain atomic and independently revertible for this repository?","findings":[{"detail":"Checked the branch order against the engineering brief and the plan preserves the required high-level sequence: foundation before core settings, core settings before caller migration, selection before full timeline collapse. That sequencing matches the repository brief's intended rollback boundaries better than a single large refactor would.","flagged":false},{"detail":"The plan also says the Step 1 audit may reprioritize individual callers but not the five-PR architecture unless the brief is materially wrong. That is a tension with the repository state described in the brief, because the caller map is still unverified and the revert surface of PR 3 through PR 5 depends directly on how many hidden consumers and identity-sensitive edge cases the audit uncovers.","flagged":true},{"detail":"The optional oversized-context lint/check is still treated as something that might land in PR 5 if it stays cheap. That weakens the revert boundary for the timeline-store branch because it mixes architectural cleanup with a repo-wide policy change unless the plan explicitly demotes it to follow-up-only.","flagged":true}]}],"flags":[{"id":"FLAG-001","concern":"Settings-store lifecycle: keyed-store disposal, remount persistence, and shared debounce semantics are still unresolved even though lightbox stability depends on them.","category":"correctness","severity_hint":"likely-significant","evidence":"The plan metadata explicitly leaves open whether keyed settings stores persist across unmount/remount and whether concurrent `useAutoSaveSettings` consumers share one debounce/pending-text queue, while the brief ties the current failures to identity churn and persistence layering."},{"id":"FLAG-002","concern":"Validation: render-budget and UI-stability acceptance criteria are not yet bound to a concrete automated verification path.","category":"performance","severity_hint":"likely-significant","evidence":"The plan asks where `useRenderBudget` should live and whether counts are asserted in tests or a dev harness, and it names the model `Select` and prompt textarea milestones without mapping them to a specific integration test surface."},{"id":"FLAG-003","concern":"Migration boundaries: PR 4 introduces temporary split ownership between the new selection store and the old timeline state path, which increases integration and rollback risk unless the intermediate ownership rules are explicit.","category":"completeness","severity_hint":"uncertain","evidence":"The brief identifies internal timeline selection state inside `useTimelineState.ts` as part of the migration surface, while the plan moves shared selection into PR 4 and delays the full timeline-store collapse to PR 5."}],"verified_flag_ids":[],"disputed_flag_ids":[]}
+tokens used
+59,701

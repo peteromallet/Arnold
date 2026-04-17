@@ -1,0 +1,115 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the revised plan against the settled tiebreaker, the current passthrough `useJoinClipsSettings` hook in `src/tools/join-clips/hooks/useJoinClipsSettings.ts:9-18`, and the existing React Query boundary in `src/shared/settings/hooks/useAutoSaveSettings.ts:180-236,590-608`. The plan now consistently keeps `useAutoSaveSettings` as the sole write owner for Join Clips and uses `createEntityStore` only as a synchronized read model, which matches the user note that dropped authoritative lazy loading for RQ-backed settings.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the current public hook surface in `src/shared/settings/hooks/useAutoSaveSettings.ts:123-136,590-608` against Step 5's delegation list. `useJoinClipsSettings` currently exposes more than the plan enumerates, including `entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, `initializeFrom`, and the full error/save surface, so the plan still leaves a real risk that an adapter rewrite could narrow the returned API while believing it preserved the \"public return shape unchanged\" requirement.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked Step 5 against the actual hook signature in `src/shared/state/createEntityStore.ts:39-44,400-449` and the existing null/undefined caller coverage in `src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:64-88`. The plan says \"when `projectId` is truthy, subscribe with `useEntity(projectId)`\" and \"when `projectId` is falsy, do not call `useEntity)`\", but `useEntity` is itself a hook, so that wording still needs a concrete hook-safe adapter strategy or the implementation can violate the Rules of Hooks while trying to preserve the current disabled contract.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the proposed prompt-field rewrite against the real Join Clips schema in `src/shared/lib/vaceDefaults.ts:74`, `src/shared/components/JoinClipsSettingsForm/types.ts:40-41`, and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:94-110`. `enhancePrompt` is a boolean switch, not a textarea-like field, so Step 6's instruction to route `prompt`, `negativePrompt`, and `enhancePrompt` through `updateTextField(...)` and blur plumbing is technically wrong for the third field and would blur the intended text-field semantics.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Checked the broader Join Clips settings surface in `src/tools/join-clips/hooks/useClipManager.ts:119-189`, `src/tools/join-clips/hooks/useJoinClipsGenerate.ts:45-146`, and `src/shared/lib/joinClips/defaults.ts:13-36`. The consumer is broader than the old five-field summary because it persists composite `clips` and `transitionPrompts`, VACE options, and LoRA-related state through the same hook, and the revised plan now correctly keeps that wider payload in scope instead of treating the pilot as a scalar-only migration.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Checked the named blur-save files against the actual shared-form stack in `src/shared/components/JoinClipsSettingsForm/types.ts:17-50`, `src/shared/components/JoinClipsSettingsForm/JoinClipsSettingsForm.tsx:49-155`, and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:6-110`. The revision now explicitly names the intermediary type and prop wiring in addition to the page adapter and prompt leaf, so the previously open shared-form plumbing gap appears addressed.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the supporting unit-test surface for that prop widening in `src/shared/components/JoinClipsSettingsForm/types.test.ts:4-49` and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.test.tsx:61-138`. Those tests directly encode the current prop contract, so even with Step 8's generic \"narrowly affected prompt-component, form-stack, or generate-path test\" language, the implementation steps still leave a minor gap in explicitly naming these supporting test files as part of the required change set.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked the actual setter callers in `src/tools/join-clips/pages/JoinClipsPage.tsx:95-103` and the corresponding prompt-form props in `src/shared/components/JoinClipsSettingsForm/types.ts:27-41`. The proposed changed callers are heterogeneous: `setPrompt` and `setNegativePrompt` pass free-text strings, while `setEnhancePrompt` is a boolean switch callback, so only the first two genuinely fit `updateTextField` plus blur/flush semantics.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked downstream callers that depend on the full hook return shape in `src/tools/join-clips/hooks/useJoinClipsGenerate.ts:25-36`, `src/tools/join-clips/hooks/useClipManager.ts:28-33`, and `src/tools/join-clips/pages/hooks/useJoinClipsPageHelpers.ts:12-16`. These call sites type `joinSettings` as `ReturnType<typeof useJoinClipsSettings>`, so even though most current usages touch only `settings`, `status`, `updateField`, and `updateFields`, preserving the complete hook surface remains part of handling the real caller contract.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-M1-011",
+      "concern": "Join Clips adapter: Step 5 still lacks a hook-safe strategy for the current `null`/`undefined` caller contract because `createEntityStore.useEntity(id)` is a hook but the plan says not to call it when `projectId` is falsy.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/state/createEntityStore.ts:400-449` defines `useEntity` as the hook surface, while `src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts:64-88` requires falsy `projectId` inputs to remain supported."
+    },
+    {
+      "id": "FLAG-M1-012",
+      "concern": "Join Clips prompt plumbing: Step 6 groups `enhancePrompt` with textarea-style fields even though the repository models it as a boolean switch, so blur and `updateTextField(...)` semantics should apply only to `prompt` and `negativePrompt`.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/shared/components/JoinClipsSettingsForm/types.ts:40-41` and `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx:94-110` show `enhancePrompt` as a switch-backed boolean rather than a text field."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 9: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "all_locations",
+    "issue_hints",
+    "correctness",
+    "FLAG-M1-009",
+    "FLAG-M1-010"
+  ],
+  "disputed_flag_ids": []
+}

@@ -1,0 +1,97 @@
+{
+  "output": "Executed batch 4 in `/workspace/reigh-app`: removed the obsolete autosave helper layer, moved lightbox generation seeding onto the store bootstrap path, and replaced ref-backed last-used edit settings with store-backed React-visible state. Focused verification passed: `npx vitest run src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts`, `npx vitest run src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/moduleImportCoverage.test.ts`, and `npx tsc --noEmit`. Checkpoint written to `.megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_4.json`.",
+  "files_changed": [
+    "src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts",
+    "src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+    "src/domains/media-lightbox/hooks/useGenerationEditSettings.ts",
+    "src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts",
+    "src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts",
+    "src/shared/settings/hooks/__tests__/useDebouncedSettingsSave.test.ts",
+    "src/shared/settings/hooks/autoSaveSettingsHelpers.test.ts",
+    "src/shared/settings/hooks/autoSaveSettingsHelpers.ts",
+    "src/shared/settings/hooks/autoSaveSettingsLoaders.test.ts",
+    "src/shared/settings/hooks/autoSaveSettingsLoaders.ts",
+    "src/shared/settings/hooks/useAutoSaveSettings.ts",
+    "src/shared/settings/hooks/useDebouncedSettingsSave.ts",
+    ".megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_4.json"
+  ],
+  "commands_run": [
+    "rg -n \"useDebouncedSettingsSave|autoSaveSettingsHelpers|autoSaveSettingsLoaders|hasInitializedRef|useLastUsedEditSettings|useEditSettingsPersistence\" src",
+    "npx vitest run src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+    "npx vitest run src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/moduleImportCoverage.test.ts",
+    "npx tsc --noEmit",
+    "rg -n \"useDebouncedSettingsSave|autoSaveSettingsHelpers|autoSaveSettingsLoaders\" src"
+  ],
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/execution_batch_4.json",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/shared/state/createEntityStore.test.ts",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitignore, .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/schemas/critique.json, .megaplan/schemas/execution.json, .megaplan/schemas/execution_doc.json, .megaplan/schemas/finalize.json, .megaplan/schemas/gate.json, .megaplan/schemas/plan.json, .megaplan/schemas/review.json, .megaplan/schemas/revise.json, .megaplan/schemas/tiebreaker_challenger.json, .megaplan/schemas/tiebreaker_researcher.json, package-lock.json, package.json, src/app/App.tsx, src/app/main.test.tsx, src/integrations/supabase/__tests__/clientContracts.test.ts, src/moduleImportCoverage.test.ts, src/shared/components/MediaGalleryItem.tsx, src/shared/dev/RenderTelemetryOverlay.tsx, src/shared/dev/useRenderBudget.ts, src/tools/join-clips/hooks/__tests__/useJoinClipsSettings.test.ts, src/tools/join-clips/hooks/useJoinClipsSettings.ts, src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Removed the obsolete autosave helper layer and companion tests after confirming no production imports remained. A final repository-wide `rg` for `useDebouncedSettingsSave|autoSaveSettingsHelpers|autoSaveSettingsLoaders` returned no matches, and `src/moduleImportCoverage.test.ts` still passes with the helper layer gone.",
+      "files_changed": [
+        "src/shared/settings/hooks/__tests__/useDebouncedSettingsSave.test.ts",
+        "src/shared/settings/hooks/autoSaveSettingsHelpers.test.ts",
+        "src/shared/settings/hooks/autoSaveSettingsHelpers.ts",
+        "src/shared/settings/hooks/autoSaveSettingsLoaders.test.ts",
+        "src/shared/settings/hooks/autoSaveSettingsLoaders.ts",
+        "src/shared/settings/hooks/useDebouncedSettingsSave.ts"
+      ],
+      "commands_run": [
+        "rg -n \"useDebouncedSettingsSave|autoSaveSettingsHelpers|autoSaveSettingsLoaders|hasInitializedRef|useLastUsedEditSettings|useEditSettingsPersistence\" src",
+        "rg -n \"useDebouncedSettingsSave|autoSaveSettingsHelpers|autoSaveSettingsLoaders\" src",
+        "npx vitest run src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/moduleImportCoverage.test.ts"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Removed the `hasInitializedRef`/`isReady` coordinator from `useEditSettingsPersistence` and routed no-persisted generation seeding through `useGenerationEditSettings` into `useAutoSaveSettings` bootstrap data so the store factory owns the bootstrap path. Verified with a strict-mode hook test that `useEditSettingsPersistence` now passes `bootstrapSettings` into the generation hook and no longer calls the old imperative `initializeFromLastUsed` path; the targeted lightbox/transitive tests and `npx tsc --noEmit` are clean.",
+      "files_changed": [
+        "src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts",
+        "src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+        "src/domains/media-lightbox/hooks/useGenerationEditSettings.ts",
+        "src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts",
+        "src/shared/settings/hooks/useAutoSaveSettings.ts"
+      ],
+      "commands_run": [
+        "npx vitest run src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+        "npx vitest run src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts src/moduleImportCoverage.test.ts",
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Replaced the ref-backed last-used edit-settings state with a `createEntityStore`-backed store keyed by project, with React-visible state selected from the store and writes flowing through the store save path. The hook now preserves project-local storage -> global storage -> DB sync precedence, keeps writes out of render, and returns a stable updater callback; the added hook test covers precedence, DB merge, and callback stability, and typecheck stays clean.",
+      "files_changed": [
+        "src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+        "src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts"
+      ],
+      "commands_run": [
+        "npx vitest run src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts src/domains/media-lightbox/hooks/useGenerationEditSettings.test.ts",
+        "npx tsc --noEmit"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. The obsolete helper source files and their companion tests were deleted, and a final repository-wide `rg` shows no remaining imports or symbol references to the removed helper layer."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Yes. `useEditSettingsPersistence` no longer mutates generation settings during render or runs the `hasInitializedRef` coordinator; seeding now flows through store bootstrap data, and the strict-mode hook test confirms the old imperative initialization path is no longer invoked."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Yes. `useLastUsedEditSettings` now derives React-visible state from a store/selectors-backed entity store rather than render-read refs, while preserving localStorage/DB precedence and a stable updater callback."
+    }
+  ]
+}

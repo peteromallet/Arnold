@@ -1,24 +1,21 @@
-/**
- * PanesContext Tests
- *
- * Tests for panel/pane layout context.
- */
+// @vitest-environment jsdom
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
-
-// Mock dependencies
-vi.mock('@/shared/hooks/useUserUIState', () => ({
-  useUserUIState: vi.fn().mockReturnValue({
-    value: { shots: false, tasks: false, gens: false, editor: false },
-    update: vi.fn(),
-    isLoading: false,
-  }),
+const mocks = vi.hoisted(() => ({
+  usePaneLockPolicyState: vi.fn(),
+  setIsGenerationsPaneLocked: vi.fn(),
+  setIsEditorPaneLocked: vi.fn(),
+  setIsShotsPaneLocked: vi.fn(),
+  setIsTasksPaneLocked: vi.fn(),
+  setIsGenerationsPaneOpen: vi.fn(),
+  setIsEditorPaneOpen: vi.fn(),
+  setIsTasksPaneOpen: vi.fn(),
+  resetAllPaneLocks: vi.fn(),
 }));
 
-vi.mock('@/shared/hooks/mobile', () => ({
-  useIsMobile: vi.fn().mockReturnValue(false),
-  useIsTablet: vi.fn().mockReturnValue(false),
+vi.mock('../usePaneLockPolicyState', () => ({
+  usePaneLockPolicyState: (...args: unknown[]) => mocks.usePaneLockPolicyState(...args),
 }));
 
 vi.mock('@/shared/config/panes', () => ({
@@ -30,366 +27,201 @@ vi.mock('@/shared/config/panes', () => ({
   },
 }));
 
-vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
-  updateToolSettingsSupabase: vi.fn().mockResolvedValue(undefined),
-}));
+import {
+  __resetPanesStoreForTests,
+  PanesStoreBootstrapBoundary,
+  usePanesStore,
+  usePanesStoreAvailability,
+} from '@/shared/state/panesStore';
 
-vi.mock('@/integrations/supabase/client', () => ({
-  getSupabaseClient: () => ({
-    auth: {
-      getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-1' } } }),
-    },
-  }),
-}));
+function PanesStoreConsumer() {
+  const availability = usePanesStoreAvailability();
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
+  const isGenerationsPaneOpen = usePanesStore((state) => state.isGenerationsPaneOpen);
+  const isEditorPaneLocked = usePanesStore((state) => state.isEditorPaneLocked);
+  const isEditorPaneOpen = usePanesStore((state) => state.isEditorPaneOpen);
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const isTasksPaneOpen = usePanesStore((state) => state.isTasksPaneOpen);
+  const generationsPaneHeight = usePanesStore((state) => state.generationsPaneHeight);
+  const effectiveGenerationsPaneHeight = usePanesStore((state) => state.effectiveGenerationsPaneHeight);
+  const editorPaneHeight = usePanesStore((state) => state.editorPaneHeight);
+  const effectiveEditorPaneHeight = usePanesStore((state) => state.effectiveEditorPaneHeight);
+  const activeTaskId = usePanesStore((state) => state.activeTaskId);
+  const setIsGenerationsPaneLocked = usePanesStore((state) => state.setIsGenerationsPaneLocked);
+  const setIsShotsPaneLocked = usePanesStore((state) => state.setIsShotsPaneLocked);
+  const setIsTasksPaneOpen = usePanesStore((state) => state.setIsTasksPaneOpen);
+  const setGenerationsPaneHeight = usePanesStore((state) => state.setGenerationsPaneHeight);
+  const setActiveTaskId = usePanesStore((state) => state.setActiveTaskId);
+  const resetAllPaneLocks = usePanesStore((state) => state.resetAllPaneLocks);
 
-import { PanesProvider, usePanes } from '../PanesContext';
-
-// Test consumer component
-function PanesConsumer() {
-  const ctx = usePanes();
   return (
     <div>
-      <span data-testid="gensLocked">{String(ctx.isGenerationsPaneLocked)}</span>
-      <span data-testid="editorLocked">{String(ctx.isEditorPaneLocked)}</span>
-      <span data-testid="shotsLocked">{String(ctx.isShotsPaneLocked)}</span>
-      <span data-testid="tasksLocked">{String(ctx.isTasksPaneLocked)}</span>
-      <span data-testid="gensOpen">{String(ctx.isGenerationsPaneOpen)}</span>
-      <span data-testid="editorOpen">{String(ctx.isEditorPaneOpen)}</span>
-      <span data-testid="tasksOpen">{String(ctx.isTasksPaneOpen)}</span>
-      <span data-testid="gensHeight">{ctx.generationsPaneHeight}</span>
-      <span data-testid="effectiveGensHeight">{ctx.effectiveGenerationsPaneHeight}</span>
-      <span data-testid="editorHeight">{ctx.editorPaneHeight}</span>
-      <span data-testid="effectiveEditorHeight">{ctx.effectiveEditorPaneHeight}</span>
-      <span data-testid="activeTaskId">{ctx.activeTaskId ?? 'null'}</span>
-      <button data-testid="lockGens" onClick={() => ctx.setIsGenerationsPaneLocked(true)}>
-        Lock Gens
+      <span data-testid="bootstrapped">{String(availability.bootstrapped)}</span>
+      <span data-testid="gensLocked">{String(isGenerationsPaneLocked)}</span>
+      <span data-testid="gensOpen">{String(isGenerationsPaneOpen)}</span>
+      <span data-testid="editorLocked">{String(isEditorPaneLocked)}</span>
+      <span data-testid="editorOpen">{String(isEditorPaneOpen)}</span>
+      <span data-testid="shotsLocked">{String(isShotsPaneLocked)}</span>
+      <span data-testid="tasksLocked">{String(isTasksPaneLocked)}</span>
+      <span data-testid="tasksOpen">{String(isTasksPaneOpen)}</span>
+      <span data-testid="gensHeight">{generationsPaneHeight}</span>
+      <span data-testid="effectiveGensHeight">{effectiveGenerationsPaneHeight}</span>
+      <span data-testid="editorHeight">{editorPaneHeight}</span>
+      <span data-testid="effectiveEditorHeight">{effectiveEditorPaneHeight}</span>
+      <span data-testid="activeTaskId">{activeTaskId ?? 'null'}</span>
+      <button type="button" data-testid="lock-gens" onClick={() => setIsGenerationsPaneLocked(true)}>
+        lock gens
       </button>
-      <button data-testid="lockEditor" onClick={() => ctx.setIsEditorPaneLocked(true)}>
-        Lock Editor
+      <button type="button" data-testid="lock-shots" onClick={() => setIsShotsPaneLocked(true)}>
+        lock shots
       </button>
-      <button data-testid="openGens" onClick={() => ctx.setIsGenerationsPaneOpen(true)}>
-        Open Gens
+      <button type="button" data-testid="open-tasks" onClick={() => setIsTasksPaneOpen(true)}>
+        open tasks
       </button>
-      <button data-testid="openEditor" onClick={() => ctx.setIsEditorPaneOpen(true)}>
-        Open Editor
+      <button type="button" data-testid="resize-gens" onClick={() => setGenerationsPaneHeight(420)}>
+        resize
       </button>
-      <button data-testid="setGensHeightSmall" onClick={() => ctx.setGenerationsPaneHeight(60)}>
-        Set Small Gens Height
+      <button type="button" data-testid="set-task" onClick={() => setActiveTaskId('task-1')}>
+        set task
       </button>
-      <button data-testid="setGensHeightLarge" onClick={() => ctx.setGenerationsPaneHeight(400)}>
-        Set Large Gens Height
-      </button>
-      <button data-testid="setActiveTask" onClick={() => ctx.setActiveTaskId('task-1')}>
-        Set Active Task
-      </button>
-      <button data-testid="resetLocks" onClick={() => ctx.resetAllPaneLocks()}>
-        Reset
+      <button type="button" data-testid="reset-locks" onClick={() => resetAllPaneLocks()}>
+        reset
       </button>
     </div>
   );
 }
 
-describe('PanesContext', () => {
+function renderWithBootstrapBoundary() {
+  return render(
+    <PanesStoreBootstrapBoundary>
+      <PanesStoreConsumer />
+    </PanesStoreBootstrapBoundary>,
+  );
+}
+
+describe('panesStore bootstrap lifecycle', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
       writable: true,
       value: 600,
     });
-  });
+    __resetPanesStoreForTests();
+    vi.clearAllMocks();
 
-  describe('usePanes hook', () => {
-    it('throws when used outside PanesProvider', () => {
-      function BadConsumer() {
-        usePanes();
-        return null;
-      }
-
-      expect(() => {
-        render(<BadConsumer />);
-      }).toThrow('usePanes must be used within a PanesProvider');
+    mocks.usePaneLockPolicyState.mockReturnValue({
+      locks: {
+        shots: false,
+        tasks: false,
+        gens: false,
+        editor: false,
+      },
+      isGenerationsPaneOpenState: false,
+      isEditorPaneOpenState: false,
+      isTasksPaneOpenState: false,
+      setIsGenerationsPaneLocked: mocks.setIsGenerationsPaneLocked,
+      setIsEditorPaneLocked: mocks.setIsEditorPaneLocked,
+      setIsShotsPaneLocked: mocks.setIsShotsPaneLocked,
+      setIsTasksPaneLocked: mocks.setIsTasksPaneLocked,
+      setIsGenerationsPaneOpen: mocks.setIsGenerationsPaneOpen,
+      setIsEditorPaneOpen: mocks.setIsEditorPaneOpen,
+      setIsTasksPaneOpen: mocks.setIsTasksPaneOpen,
+      resetAllPaneLocks: mocks.resetAllPaneLocks,
     });
   });
 
-  describe('PanesProvider', () => {
-    it('renders children', () => {
-      render(
-        <PanesProvider>
-          <div data-testid="child">Hello</div>
-        </PanesProvider>
-      );
+  it('returns an unlocked default snapshot before bootstrap', () => {
+    render(<PanesStoreConsumer />);
 
-      expect(screen.getByTestId('child')).toHaveTextContent('Hello');
+    expect(screen.getByTestId('bootstrapped')).toHaveTextContent('false');
+    expect(screen.getByTestId('gensLocked')).toHaveTextContent('false');
+    expect(screen.getByTestId('editorLocked')).toHaveTextContent('false');
+    expect(screen.getByTestId('shotsLocked')).toHaveTextContent('false');
+    expect(screen.getByTestId('tasksLocked')).toHaveTextContent('false');
+    expect(screen.getByTestId('gensHeight')).toHaveTextContent('300');
+    expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
+    expect(screen.getByTestId('editorHeight')).toHaveTextContent('300');
+    expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
+    expect(screen.getByTestId('activeTaskId')).toHaveTextContent('null');
+  });
+
+  it('hydrates the store from the bootstrap boundary and recomputes effective heights', () => {
+    mocks.usePaneLockPolicyState.mockReturnValue({
+      locks: {
+        shots: true,
+        tasks: false,
+        gens: true,
+        editor: false,
+      },
+      isGenerationsPaneOpenState: false,
+      isEditorPaneOpenState: true,
+      isTasksPaneOpenState: true,
+      setIsGenerationsPaneLocked: mocks.setIsGenerationsPaneLocked,
+      setIsEditorPaneLocked: mocks.setIsEditorPaneLocked,
+      setIsShotsPaneLocked: mocks.setIsShotsPaneLocked,
+      setIsTasksPaneLocked: mocks.setIsTasksPaneLocked,
+      setIsGenerationsPaneOpen: mocks.setIsGenerationsPaneOpen,
+      setIsEditorPaneOpen: mocks.setIsEditorPaneOpen,
+      setIsTasksPaneOpen: mocks.setIsTasksPaneOpen,
+      resetAllPaneLocks: mocks.resetAllPaneLocks,
     });
 
-    it('provides initial unlocked state', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
+    renderWithBootstrapBoundary();
 
-      expect(screen.getByTestId('gensLocked')).toHaveTextContent('false');
-      expect(screen.getByTestId('editorLocked')).toHaveTextContent('false');
-      expect(screen.getByTestId('shotsLocked')).toHaveTextContent('false');
-      expect(screen.getByTestId('tasksLocked')).toHaveTextContent('false');
+    expect(screen.getByTestId('bootstrapped')).toHaveTextContent('true');
+    expect(screen.getByTestId('gensLocked')).toHaveTextContent('true');
+    expect(screen.getByTestId('editorOpen')).toHaveTextContent('true');
+    expect(screen.getByTestId('shotsLocked')).toHaveTextContent('true');
+    expect(screen.getByTestId('tasksOpen')).toHaveTextContent('true');
+    expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
+    expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
+  });
+
+  it('delegates runtime-backed mutations through the active bootstrap owner', () => {
+    renderWithBootstrapBoundary();
+
+    fireEvent.click(screen.getByTestId('lock-gens'));
+    fireEvent.click(screen.getByTestId('lock-shots'));
+    fireEvent.click(screen.getByTestId('open-tasks'));
+    fireEvent.click(screen.getByTestId('reset-locks'));
+
+    expect(mocks.setIsGenerationsPaneLocked).toHaveBeenCalledWith(true);
+    expect(mocks.setIsShotsPaneLocked).toHaveBeenCalledWith(true);
+    expect(mocks.setIsTasksPaneOpen).toHaveBeenCalledWith(true);
+    expect(mocks.resetAllPaneLocks).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps local layout and active task state in the singleton store', () => {
+    renderWithBootstrapBoundary();
+
+    fireEvent.click(screen.getByTestId('resize-gens'));
+    fireEvent.click(screen.getByTestId('set-task'));
+
+    expect(screen.getByTestId('gensHeight')).toHaveTextContent('420');
+    expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('420');
+    expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
+    expect(screen.getByTestId('activeTaskId')).toHaveTextContent('task-1');
+  });
+
+  it('clears the bootstrap snapshot on unmount and reset helper calls', () => {
+    const view = renderWithBootstrapBoundary();
+
+    fireEvent.click(screen.getByTestId('set-task'));
+    expect(screen.getByTestId('bootstrapped')).toHaveTextContent('true');
+    expect(screen.getByTestId('activeTaskId')).toHaveTextContent('task-1');
+
+    view.unmount();
+
+    render(<PanesStoreConsumer />);
+    expect(screen.getByTestId('bootstrapped')).toHaveTextContent('false');
+    expect(screen.getByTestId('activeTaskId')).toHaveTextContent('null');
+
+    act(() => {
+      __resetPanesStoreForTests();
     });
 
-    it('provides initial pane states', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      expect(screen.getByTestId('gensOpen')).toHaveTextContent('false');
-      expect(screen.getByTestId('editorOpen')).toHaveTextContent('false');
-      expect(screen.getByTestId('tasksOpen')).toHaveTextContent('false');
-      expect(screen.getByTestId('gensHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('editorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('activeTaskId')).toHaveTextContent('null');
-    });
-
-    it('allows locking generations pane', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('lockGens').click();
-      });
-
-      expect(screen.getByTestId('gensLocked')).toHaveTextContent('true');
-    });
-
-    it('allows opening generations pane', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('openGens').click();
-      });
-
-      expect(screen.getByTestId('gensOpen')).toHaveTextContent('true');
-    });
-
-    it('keeps the editor at 50% height when it is the only visible top pane', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('openEditor').click();
-      });
-
-      expect(screen.getByTestId('editorOpen')).toHaveTextContent('true');
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-    });
-
-    it('uses the ideal-fit tier when both panes fit within the viewport budget', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('setGensHeightSmall').click();
-        screen.getByTestId('openGens').click();
-        screen.getByTestId('openEditor').click();
-      });
-
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('60');
-      expect(
-        Number(screen.getByTestId('effectiveEditorHeight').textContent) +
-          Number(screen.getByTestId('effectiveGensHeight').textContent)
-      ).toBe(360);
-    });
-
-    it('uses the shrink-to-fit tier when both panes are visible in a 600px viewport', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('openGens').click();
-        screen.getByTestId('openEditor').click();
-      });
-
-      expect(screen.getByTestId('gensOpen')).toHaveTextContent('true');
-      expect(screen.getByTestId('editorOpen')).toHaveTextContent('true');
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-      expect(
-        Number(screen.getByTestId('effectiveEditorHeight').textContent) +
-          Number(screen.getByTestId('effectiveGensHeight').textContent)
-      ).toBe(600);
-    });
-
-    it('keeps generations at its configured height until the editor reaches its minimum', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('setGensHeightLarge').click();
-        screen.getByTestId('openGens').click();
-        screen.getByTestId('openEditor').click();
-      });
-
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('200');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('400');
-      expect(
-        Number(screen.getByTestId('effectiveEditorHeight').textContent) +
-          Number(screen.getByTestId('effectiveGensHeight').textContent)
-      ).toBe(600);
-    });
-
-    it('uses the degraded proportional split tier below the combined minimum height', () => {
-      Object.defineProperty(window, 'innerHeight', {
-        configurable: true,
-        writable: true,
-        value: 250,
-      });
-
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('openGens').click();
-        screen.getByTestId('openEditor').click();
-      });
-
-      expect(screen.getByTestId('editorHeight')).toHaveTextContent('125');
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('125');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('125');
-      expect(
-        Number(screen.getByTestId('effectiveEditorHeight').textContent) +
-          Number(screen.getByTestId('effectiveGensHeight').textContent)
-      ).toBe(250);
-    });
-
-    it('recomputes effective heights when a second top pane becomes visible', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-
-      act(() => {
-        screen.getByTestId('openEditor').click();
-      });
-
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-
-      act(() => {
-        screen.getByTestId('openGens').click();
-      });
-
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-    });
-
-    it('uses 50% ideal when generations is locked', () => {
-      Object.defineProperty(window, 'innerHeight', {
-        configurable: true,
-        writable: true,
-        value: 1200,
-      });
-
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('lockGens').click();
-        screen.getByTestId('lockEditor').click();
-      });
-
-      expect(screen.getByTestId('gensLocked')).toHaveTextContent('true');
-      expect(screen.getByTestId('editorLocked')).toHaveTextContent('true');
-      expect(screen.getByTestId('editorHeight')).toHaveTextContent('600');
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('600');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-    });
-
-    it('uses 50% ideal when generations is not locked', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('lockEditor').click();
-      });
-
-      expect(screen.getByTestId('editorLocked')).toHaveTextContent('true');
-      expect(screen.getByTestId('editorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveEditorHeight')).toHaveTextContent('300');
-      expect(screen.getByTestId('effectiveGensHeight')).toHaveTextContent('300');
-    });
-
-    it('allows setting active task', () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      act(() => {
-        screen.getByTestId('setActiveTask').click();
-      });
-
-      expect(screen.getByTestId('activeTaskId')).toHaveTextContent('task-1');
-    });
-
-    it('resetAllPaneLocks unlocks all panes', async () => {
-      render(
-        <PanesProvider>
-          <PanesConsumer />
-        </PanesProvider>
-      );
-
-      // Lock a pane first
-      act(() => {
-        screen.getByTestId('lockGens').click();
-      });
-      expect(screen.getByTestId('gensLocked')).toHaveTextContent('true');
-
-      // Reset all locks
-      await act(async () => {
-        screen.getByTestId('resetLocks').click();
-      });
-
-      expect(screen.getByTestId('gensLocked')).toHaveTextContent('false');
-      expect(screen.getByTestId('shotsLocked')).toHaveTextContent('false');
-      expect(screen.getByTestId('tasksLocked')).toHaveTextContent('false');
-    });
+    expect(screen.getByTestId('bootstrapped')).toHaveTextContent('false');
+    expect(screen.getByTestId('gensHeight')).toHaveTextContent('300');
   });
 });

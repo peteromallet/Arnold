@@ -1,0 +1,164 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Re-checked the dependency precondition against the repository and the milestone brief. `src/shared/state/createEntityStore.ts` and `src/shared/state/createEntityStore.test.ts` are still only untracked working-tree files here, and `git show` still fails for `main`, `origin/main`, and `megaplan/m1-foundation-store`; the revised plan now detects that, but Step 1 still says to commit those files onto the M1a branch and continue, which conflicts with the brief's explicit instruction to halt and surface a chain-config error if the factory is missing from `origin/main`.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the manual gate requirements against Phase 6. The revised plan now includes real-browser verification for Model Select and textarea typing, but it still does not require the artifact the brief asks for: either a screen recording or a step-by-step note captured in the PR showing those two manual checks.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the previously-missing baseline and caller-audit requirements against the new steps. The plan now explicitly captures pre-change `ImageLightbox` and `EditModePanel` baselines into `docs/state_management_refactor_baselines.md` and re-runs `rg 'from .*useAutoSaveSettings' src/ --type ts -l` to paste the exact direct-caller list into the PR, so those earlier gaps are now covered in the plan text.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the revised adapter design against the current `createEntityStore` surface and real callers. The plan now spells out how `updateTextFields`, `initializeFrom`, and `saveImmediate(dataToSave?)` are preserved on top of the store API, which matches the current needs of `useGenerationEditSettings`, `useJoinSegmentsSettings`, and `useShotSettings` rather than assuming a 1:1 action forward.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the custom-mode registry ambiguity against actual usage in `src/domains/media-lightbox/hooks/useGenerationEditSettings.ts`. The revised plan fixes the prior callback-identity problem by proposing a stable custom-domain key for the only production custom caller, which is technically consistent with the current repository shape as long as the entity ID remains the generation ID.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Checked related store-factory consumers and broader lightbox persistence surfaces. The revised plan now uses `src/tools/join-clips/hooks/useJoinClipsSettings.ts` as the canonical bridge reference and explicitly schedules `src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts` as a transitive regression surface, which addresses the two broader-scope gaps from the previous critique.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the environment-audit scope against the actual `useImageLightboxEnvironment` inputs. The plan now enumerates the real upstream hooks used there today, including `useProject`, `usePanes`, `useUserUIState`, `usePublicLoras`, `useLoraManager`, `useUpscale`, `useEditSettingsPersistence`, and `useIsMobile`, so it no longer narrows the instability audit to only the persistence path.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Checked the helper-deletion surface under `src/shared/settings/hooks/`. The revised plan now names the three companion test files alongside `useDebouncedSettingsSave.ts`, `autoSaveSettingsHelpers.ts`, and `autoSaveSettingsLoaders.ts`, so it covers the supporting infrastructure that would otherwise keep the suite red after source deletion.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked existing render instrumentation in the repository. `src/domains/media-lightbox/ImageLightbox.tsx` already uses `useRenderBudget('ImageLightbox', 5)` and `src/domains/media-lightbox/components/EditModePanel.tsx` already uses `useRenderBudget('EditModePanel', 3)`, so the plan is correct to reuse current telemetry rather than inventing another render-count mechanism.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Re-ran the direct-caller search and confirmed the current inventory still matches the revised plan's characterization: 12 production callers, plus the internal helper file `src/shared/settings/hooks/useDebouncedSettingsSave.ts` and the hook test `src/shared/hooks/settings/__tests__/useAutoSaveSettings.test.ts`. That means the plan's caller-count correction is grounded in the current checkout rather than guesswork.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked how those callers actually use the returned API. The revised plan correctly preserves the critical behaviors that matter in this repo today: `useGenerationEditSettings` depends on `updateTextField`, `updateTextFields`, and `initializeFrom`, `useJoinSegmentsSettings` and `useShotSettings` depend on `saveImmediate(payload)`, and hooks like `usePersistentPromptSettings` depend on stable returned references for callback dependency arrays.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-M1A-001",
+      "concern": "Settings store rollout: recurring dependency-chain blocker remains in the revised plan because Step 1 says to commit the missing `createEntityStore` substrate onto the M1a branch and continue, but the milestone brief explicitly says to halt and surface a chain-config error if the factory is absent from `origin/main`.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`git status` still shows `src/shared/state/createEntityStore.ts` and `src/shared/state/createEntityStore.test.ts` as untracked, and `git show origin/main:src/shared/state/createEntityStore.ts` still fails in this checkout."
+    },
+    {
+      "id": "manual-evidence-1",
+      "concern": "Verification evidence: the revised plan schedules manual browser checks for the Model Select and textarea gates, but it still omits the brief's explicit requirement to capture a screen recording or step-by-step note in the PR.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "Phase 6 Step 13 lists the real-browser checks but does not mention recording them or adding reproduction notes to the PR."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 1: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 7: requires human verification (inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 8: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-3",
+      "concern": "Criterion 9: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-4",
+      "concern": "Criterion 10: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-5",
+      "concern": "Criterion 11: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-6",
+      "concern": "Criterion 14: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-7",
+      "concern": "Criterion 15: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-M1A-002",
+    "FLAG-M1A-003",
+    "issue_hints-2",
+    "correctness-1",
+    "correctness-2",
+    "correctness-3",
+    "scope-1",
+    "scope-2",
+    "all_locations",
+    "callers-1",
+    "callers-2"
+  ],
+  "disputed_flag_ids": []
+}

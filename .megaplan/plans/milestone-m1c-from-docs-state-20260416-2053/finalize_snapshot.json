@@ -1,0 +1,294 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Freeze milestone preconditions before editing: verify the working branch/base includes the shipped M1b selection migration (`src/shared/state/selectionStore.ts` committed on the actual execution base, not just untracked locally), confirm the three timeline context files and `src/tools/video-editor/hooks/useTimelineState.ts` still exist at the corrected paths, and treat the supplied milestone brief plus `docs/state_management_refactor_baselines.md` as the execution source of truth because `docs/state_management_refactor_plan.md` is absent. If M1b is not actually present on the execution base, halt and surface the chain/base error instead of continuing.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T2",
+      "description": "Audit `src/tools/video-editor/contexts/VideoEditorProvider.tsx` and adjacent integrations before refactoring. Inventory every provider-owned pathway, including AgentChat bridge registration, pending-add/`ADD_GENERATION_QUERY_PARAM` drain, `onDoubleClickAsset`, `navResult`, lightbox state/query/navigation, and any additional provider-local behavior. Extend the inventory to the external nullable-safe consumer in `src/domains/media-lightbox/hooks/useAddToVideoEditor.ts` and classify each pathway explicitly as store-owned, provider-local, or extracted sibling-hook behavior. Preserve the staged-vs-mounted add contract by planning a replacement nullable availability boundary rather than silently switching callers to a global always-present store.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T3",
+      "description": "Build the full migration checklist from real callsites, not the earlier draft list. Grep all imports/usages of `TimelineEditorContext`, `TimelineChromeContext`, `TimelinePlaybackContext`, `useTimelineEditorData(Safe)`, and `useTimelineEditorOps(Safe)` across app code and tests, including `AssetPanel`, `TimelineCanvas`, `VideoEditorShell`, `PreviewPanel`, `CompactPreview`, `PropertiesPanel`, `useSelectedMediaClips`, `VideoEditorProvider.test.tsx`, `TimelineCanvas.test.tsx`, and `components/__tests__/PreviewPersistence.test.tsx`. During the same pass, classify each `editorRef.current`, `dataRef`, `selectedClipIdsRef`, `pendingOpsRef`, and `interactionStateRef` usage as either load-bearing stale-closure protection to keep or context-identity/stability cope that can be removed after store selectors land. Also identify the row-prop fan-out in `TimelineCanvas`/`TrackListRenderer` that must change to satisfy the `SortableRow` render-isolation gate.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T4",
+      "description": "Create `src/tools/video-editor/hooks/timelineStore.ts` using the repo\u2019s existing M1 slice/factory pattern only. Add Data, Ops, Chrome, and Playback slices plus narrow selector hooks built with stable shallow-equality subscriptions. Include stable mutable adapters only where gesture or async flows genuinely need them. Do not introduce middleware or new cross-cutting abstractions. Critically, design the store surface with an explicit mounted/availability boundary so nullable-safe consumers can still distinguish \u201ceditor not mounted\u201d from \u201cmounted with empty/default state.\u201d",
+      "depends_on": [
+        "T2",
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T5",
+      "description": "Port `src/tools/video-editor/hooks/useTimelineState.ts` from context-value assembly into a synchronous store bootstrap/composition root that preserves the current control flow. Keep the existing imperative hooks composed in place, keep M1b selection ownership external, and write/bootstrap store state in a way that avoids both render-time impurity and effect-time staleness for pending-add, AgentChat, lightbox ops wiring, and same-render consumers. Where callers need synchronized latest snapshots such as `dataRef.current` plus selection, provide an adapter that preserves current semantics rather than splitting those reads across unrelated selectors.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T6",
+      "description": "Rewire the high-risk imperative sub-hooks to read/write through the store boundary while keeping their own files and state machines intact: `useClipDrag`, `useClipResizeGesture`, `useAssetManagement`, `useExternalDrop`, `useTimelinePersistence`, and `usePollSync`. Preserve gesture/persistence refs where they guard pointer or async sequences, including the `TimelineCanvas` -> `useClipResizeGesture` `dataRef` path, and remove only ref shims whose sole purpose was compensating for unstable context object identity. Avoid broad store subscriptions inside hot pointer paths.",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T7",
+      "description": "Migrate `VideoEditorProvider`, external safe hooks, and all context consumers/tests onto the new store selectors and availability boundary. Replace the three nested context providers with the store bootstrap pattern, keep provider-local orchestration local unless the audit justified migration, preserve the mounted-vs-staged behavior in `useAddToVideoEditor`, and update all mocks/setup that previously targeted the old contexts. Remove old context assembly helpers once the final import is gone, then delete `TimelineEditorContext.tsx`, `TimelineChromeContext.tsx`, and `TimelinePlaybackContext.tsx` only after the grep checklist is clean.",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T8",
+      "description": "Hand-finish render isolation on the timeline hot path. Refactor `TimelineCanvas`, `TrackListRenderer`, `SortableRow`, and any related prop flow so drag/resize-sensitive shared props are no longer fanned through every row in a way that forces non-dragged rerenders. Keep selectors narrow for `TimelineCanvas`, `TimelineEditor`, and `PreviewPanel`, and preserve synchronized hot-path adapters for keyboard delete, resize, and drag interactions. This task exists specifically to close the known gap that selector narrowing alone will not satisfy the `SortableRow` 0-rerender drag gate.",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T9",
+      "description": "Prepare execution notes for the eventual PR/change summary while the implementation is still fresh. Record the explicit classification decisions for every `VideoEditorProvider` pathway, note which refs were kept vs removed and why, call out the mounted availability boundary used to replace nullable safe hooks, and document any extra runtime instrumentation or harness steps needed because the existing M0 telemetry is interaction-window based rather than strictly per-scroll-event.",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T10",
+      "description": "Run verification end to end and keep iterating until clean. Before broader tests, write a short throwaway reproduction script that exercises the bug-prone store-migration path, run it to confirm the fix behavior, then delete the script. Run `npx tsc --noEmit`, the most relevant existing timeline/provider tests, and then the broader suite until the pass count matches baseline. Re-run M0/M1 telemetry or equivalent harness evidence for `TimelineCanvas` and `SortableRow`, and manually exercise at least 10 minutes of drag, resize, rapid selection, full keyboard shortcut coverage, playback, AgentChat bridge, and pending-add-from-URL flow. If drag/resize still feels janky after one serious revise cycle, stop and revert/surface the milestone instead of accepting a false green.",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Halt immediately if the real execution base does not already contain the committed M1b `selectionStore.ts`; untracked local files do not satisfy the prerequisite.",
+    "Do not replace nullable safe hooks with a global always-available store default; `useAddToVideoEditor` depends on a real mounted-vs-unmounted boundary for staged add behavior.",
+    "Do not rely on selector narrowing alone for drag performance; `TimelineCanvas` and `TrackListRenderer` currently fan shared props through all rows and must be hand-finished for `SortableRow` isolation.",
+    "Store bootstrap must preserve same-render freshness for pending-add drain, AgentChat bridge registration, lightbox ops wiring, and any other `VideoEditorProvider` consumers; an effect-only hydrate path is too stale.",
+    "Preserve load-bearing gesture and async refs such as `dataRef`, `interactionStateRef`, and `pendingOpsRef` where they protect pointer sequences or async saves/polls; remove only context-identity shims.",
+    "Keep imperative sub-hooks in their own files and control flow. This milestone moves shared state access into the store; it does not flatten drag/resize/persistence state machines into Zustand.",
+    "`TimelineCanvas` render telemetry in-repo is interaction-window based, not literally per scroll event; record how gate evidence is derived so reviewers can judge it correctly.",
+    "Update the full consumer and test surface, including `AssetPanel`, `TimelineCanvas`, `VideoEditorShell`, `PreviewPanel`, `CompactPreview`, `PropertiesPanel`, `useSelectedMediaClips`, `VideoEditorProvider.test.tsx`, `TimelineCanvas.test.tsx`, and `components/__tests__/PreviewPersistence.test.tsx`.",
+    "Do not silently migrate provider-local shell behavior into the store. Pending-add URL drain, AgentChat registration, lightbox/navigation state, and `onDoubleClickAsset` must each be explicitly classified and preserved.",
+    "Keep selection migration out of scope beyond consuming M1b outputs; do not re-open settings persistence or selection ownership decisions already settled.",
+    "No Zustand middleware, no new cross-cutting store abstractions, no edits to edge functions/supabase migrations/worker-orchestrator code.",
+    "Do not accept passing tests as sufficient evidence. Manual drag/resize feel is a hard gate, and the branch should be surfaced/reverted if physics remain janky after one serious fix cycle."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Did execution start from a base that actually contains committed M1b selection-store work, and were the milestone-owned files/path corrections re-verified before any edits?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Were all `VideoEditorProvider` responsibilities and the external `useAddToVideoEditor` nullable-safe contract explicitly classified as store-owned, provider-local, or extracted, with no silent pathway removal?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Is there a fresh grep-backed inventory of every context/safe-hook consumer and test, plus a per-callsite ref classification and a concrete note about the row-prop fan-out risk in `TimelineCanvas`/`TrackListRenderer`?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Does `timelineStore.ts` expose narrow shallow-equality selector hooks for Data, Ops, Chrome, and Playback while also preserving an explicit mounted availability boundary for nullable-safe consumers?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Was `useTimelineState.ts` ported into a synchronous bootstrap/composition root that preserves current control flow and same-render freshness without effect-time staleness for pending-add and AgentChat readers?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Do the high-risk sub-hooks still own their original imperative logic while reading/writing through the store, and were only non-load-bearing context-stability refs removed?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Have all app/test consumers moved off the three legacy contexts and nullable safe hooks without breaking mounted-vs-staged add behavior, and were the old context files deleted only after the import surface was truly clean?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Was the row-level prop fan-out reduced enough that non-dragged `SortableRow` instances stay isolated during drag, rather than merely swapping context reads for selectors?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Were provider-pathway decisions, kept-vs-removed refs, mounted-boundary replacement details, and telemetry caveats documented clearly enough for a reviewer to assess the migration?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Did the executor run the throwaway reproduction script, `npx tsc --noEmit`, relevant existing tests, broader suite, telemetry checks, and the required 10-minute manual drag/resize/selection/playback/AgentChat/pending-add validation before accepting the milestone?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "meta_commentary": "This milestone is only safe if the executor treats it as a behavior-preserving state-surface swap plus hot-path hand-finishing, not as a generic context-to-Zustand rewrite. The three biggest traps are already known: losing the nullable mounted boundary used by `useAddToVideoEditor`, introducing bootstrap staleness by hydrating the store too late for same-render provider consumers, and assuming narrow selectors automatically solve row rerenders even though `TimelineCanvas` currently fans shared drag/resize props through every `SortableRow`. Keep provider-local shell orchestration local unless there is clear multi-consumer value, preserve synchronized latest-value adapters where callers currently depend on `dataRef.current` plus selection in the same operation, and do not delete load-bearing refs unless a concrete callsite proves they are only identity-coherence shims. Verification must be evidence-driven and skeptical: use the existing telemetry as a bounded proxy with explicit caveats, update all existing tests rather than adding new ones, and reject the branch if drag/resize feels wrong after one serious repair cycle even when automated checks are green.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Freeze preconditions and branch/base",
+        "finalize_task_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Inventory provider-owned behavior before editing VideoEditorProvider",
+        "finalize_task_ids": [
+          "T2",
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Map context consumers and high-risk ref callsites",
+        "finalize_task_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Introduce timelineStore.ts using the M1 slice/factory pattern",
+        "finalize_task_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Port useTimelineState.ts from context builder to store bootstrapper",
+        "finalize_task_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Rewire high-risk sub-hooks to store-backed state access",
+        "finalize_task_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Shrink VideoEditorProvider to orchestration plus store bootstrap",
+        "finalize_task_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Migrate all consumers to selector hooks from timelineStore.ts",
+        "finalize_task_ids": [
+          "T7",
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Run cheap compile and targeted regression tests first",
+        "finalize_task_ids": [
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Prove render/behavior gates and hand-finish",
+        "finalize_task_ids": [
+          "T8",
+          "T9",
+          "T10"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All 10 approved plan steps are covered. The finalize tasks intentionally fold critique-flag work into the main execution sequence rather than adding a separate analysis phase: T2/T7 cover the nullable safe-hook boundary and provider-pathway preservation, T5 covers synchronous bootstrap correctness, T8 covers the known row-prop fan-out/render-isolation gap, and T9/T10 cover the telemetry caveat plus required PR/runtime evidence. No deliberate scope reductions were introduced.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": null,
+  "baseline_test_command": null,
+  "baseline_test_note": "No supported test runner detected on PATH (looked for: pytest). Configure test_command in state config to specify one."
+}

@@ -4,7 +4,6 @@ import { TasksPane } from '@/features/tasks/components/TasksPane/TasksPane';
 import { GenerationsPane } from '@/features/gallery/components/GenerationsPane/GenerationsPane';
 import { EditorPane } from '@/features/editor/components/EditorPaneTab';
 import { ToolsPane } from '@/shared/components/ToolsPane/ToolsPane';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { ReighLoading } from '@/shared/components/ReighLoading';
 import { SettingsModal } from '@/shared/components/SettingsModal/SettingsModal';
 import { OnboardingModal } from '@/shared/components/modals/OnboardingModal';
@@ -30,6 +29,7 @@ import { useSettingsModal } from './hooks/useSettingsModal';
 import { useOnboardingFlow } from './hooks/useOnboardingFlow';
 import { useResetCurrentShotOnRouteChange } from './hooks/useResetCurrentShotOnRouteChange';
 import { LayoutMainContent } from './components/LayoutMainContent';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 // Scroll to top component
 function ScrollToTop() {
@@ -46,14 +46,12 @@ function ScrollToTop() {
 
 export const Layout: React.FC = () => {
   const { isVideoEditorShellActive } = useVideoEditorRouteState();
-  const {
-    isTasksPaneLocked,
-    tasksPaneWidth,
-    isShotsPaneLocked,
-    shotsPaneWidth,
-    isGenerationsPaneLocked,
-    generationsPaneHeight
-  } = usePanes();
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
+  const generationsPaneHeight = usePanesStore((state) => state.generationsPaneHeight);
 
   // Mobile detection for split-view scroll handling
   const isMobile = useIsMobile();

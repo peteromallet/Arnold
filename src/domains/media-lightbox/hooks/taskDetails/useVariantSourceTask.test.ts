@@ -6,20 +6,13 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  fetchTaskInProject: vi.fn(),
-  taskQuerySingle: vi.fn(),
+  useGetTask: vi.fn(),
   getSourceTaskIdLegacyCompatible: vi.fn(),
   hasOrchestratorDetails: vi.fn(),
 }));
 
-vi.mock('@/integrations/supabase/repositories/taskRepository', () => ({
-  fetchTaskInProject: (...args: unknown[]) => mocks.fetchTaskInProject(...args),
-}));
-
-vi.mock('@/shared/lib/queryKeys/tasks', () => ({
-  taskQueryKeys: {
-    single: (...args: unknown[]) => mocks.taskQuerySingle(...args),
-  },
+vi.mock('@/shared/hooks/tasks/useTasks', () => ({
+  useGetTask: (...args: unknown[]) => mocks.useGetTask(...args),
 }));
 
 vi.mock('@/shared/lib/taskIdHelpers', () => ({
@@ -41,11 +34,6 @@ function createWrapper() {
 describe('useVariantSourceTask', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.taskQuerySingle.mockImplementation((taskId: string, projectId: string | null) => [
-      'tasks',
-      taskId,
-      projectId,
-    ]);
     mocks.getSourceTaskIdLegacyCompatible.mockImplementation(
       (params: Record<string, unknown> | undefined) =>
         typeof params?.source_task_id === 'string' ? params.source_task_id : undefined,
@@ -53,12 +41,21 @@ describe('useVariantSourceTask', () => {
     mocks.hasOrchestratorDetails.mockImplementation(
       (params: Record<string, unknown> | undefined) => Boolean(params?.orchestrator_details),
     );
+    mocks.useGetTask.mockReturnValue({
+      data: undefined,
+      error: null,
+      isLoading: false,
+    });
   });
 
   it('fetches the source task when the active variant references a different task', async () => {
-    mocks.fetchTaskInProject.mockResolvedValueOnce({
-      id: 'source-task',
-      params: { input_image: 'from-source-task.png' },
+    mocks.useGetTask.mockReturnValueOnce({
+      data: {
+        id: 'source-task',
+        params: { input_image: 'from-source-task.png' },
+      },
+      error: null,
+      isLoading: false,
     });
 
     const { result } = renderHook(
@@ -80,11 +77,15 @@ describe('useVariantSourceTask', () => {
 
     expect(result.current.variantSourceTaskId).toBe('source-task');
     expect(result.current.variantHasOrchestratorDetails).toBe(false);
-    expect(mocks.fetchTaskInProject).toHaveBeenCalledWith('source-task', 'project-1');
+    expect(mocks.useGetTask).toHaveBeenCalledWith('source-task', 'project-1');
   });
 
   it('normalizes non-Error query failures into Error instances', async () => {
-    mocks.fetchTaskInProject.mockRejectedValueOnce({ message: 'fetch failed' });
+    mocks.useGetTask.mockReturnValueOnce({
+      data: undefined,
+      error: { message: 'fetch failed' },
+      isLoading: false,
+    });
 
     const { result } = renderHook(
       () =>
@@ -97,7 +98,7 @@ describe('useVariantSourceTask', () => {
     );
 
     await waitFor(() => {
-      expect(result.current.variantSourceTaskError?.message).toBe('fetch failed');
+      expect(result.current.variantSourceTaskError?.message).toBe('Failed to fetch source task');
     });
   });
 
@@ -119,6 +120,6 @@ describe('useVariantSourceTask', () => {
 
     expect(result.current.variantSourceTaskId).toBe('source-task');
     expect(result.current.variantHasOrchestratorDetails).toBe(true);
-    expect(mocks.fetchTaskInProject).not.toHaveBeenCalled();
+    expect(mocks.useGetTask).toHaveBeenCalledWith('', 'project-1');
   });
 });

@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-16T09:35:08Z",
+  "hash": "sha256:ef4500ffb7705440c92f3b760c68600e40454bdeab7737daf4b54d93c6571346",
+  "questions": [
+    "`createEntityStore.ts` exists only as untracked working-tree files right now, not on `main`, `origin/main`, or the local `megaplan/m1-foundation-store` branch. Should M1a planning assume M1 will be committed separately first, or should M1a absorb that dependency commit as part of this branch?",
+    "For custom `useAutoSaveSettings` callers, what should be the stable per-domain registry key when multiple callers can supply different `customLoadSave` functions? The factory needs one shared store per logical domain, but the current API does not expose an explicit domain key separate from `entityId`.",
+    "The brief references `docs/state_management_refactor_plan.md` and `src/features/editor/hooks/...`, but this repo has neither path. Should the PR and branch notes normalize to the actual files under `src/shared/settings/hooks/` and `src/domains/media-lightbox/hooks/`, with the supplied brief treated as authoritative?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`createEntityStore` is available from committed branch history chosen for M1a, not only as untracked working-tree files, and the implementation plan records the actual source branch/base used.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`useAutoSaveSettings` is rewritten over `createEntityStore` while preserving its public return shape for existing callers.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "No imports remain for `useDebouncedSettingsSave.ts`, `autoSaveSettingsHelpers.ts`, or `autoSaveSettingsLoaders.ts`, and those files are removed or left only if an unresolved external consumer is explicitly surfaced.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`useEditSettingsPersistence` no longer performs render-time or multi-transition initialization via `hasInitializedRef`; initialization uses an atomic bootstrap path and passes strict-mode double-invoke verification.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`useLastUsedEditSettings` no longer uses ref-backed render state for `lastUsed`; React-visible state comes from a store/selector path with stable returns.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Every direct `useAutoSaveSettings` consumer is migrated or confirmed compatible, and transitive lightbox paths (`useGenerationEditSettings`, `useEditSettingsPersistence`, `useInlineEditState`, `useImageLightboxEnvironment`) are explicitly re-verified.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Dev-mode ref-equality instrumentation shows that every hook feeding `useImageLightboxEnvironment` returns a stable reference when inputs are unchanged, or any unstable hook is fixed within scope and documented.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "observe_runtime_logs",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "`ImageLightbox` opens with 5 renders or fewer under the agreed telemetry path.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "`EditModePanel` renders 3 times or fewer on lightbox open under the same telemetry path.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "The Model Select stays open and accepts a selection in a real browser session after the ref-stability changes.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "verify_physical_device"
+      ]
+    },
+    {
+      "criterion": "The edit textarea accepts typing without lost keystrokes in a real browser session after the ref-stability changes.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "verify_physical_device"
+      ]
+    },
+    {
+      "criterion": "`npx tsc --noEmit` passes cleanly.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The test suite finishes at the same pass count as the current M0 baseline, with no net regressions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The final diff keeps the scope inside settings persistence and lightbox dependency stability, without touching selection or timeline state.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Store-backed hooks return stable object/function identities whenever logical inputs are unchanged, reducing the need for downstream `useRef` escape hatches.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The PR description includes the exact audited list of direct `useAutoSaveSettings` callers and states whether M2 is required or skipped.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The supplied milestone brief is the authoritative scope document because `docs/state_management_refactor_plan.md` is absent from this repository.",
+    "The real implementation paths are under `src/shared/settings/hooks/` and `src/domains/media-lightbox/hooks/`, and the brief's `src/features/editor/hooks/...` references are path drift rather than separate files.",
+    "The direct-caller audit result of 12 production callers plus 1 helper and 1 test is close enough to the expected '~13 plus tests' that work should proceed unless a larger drift appears during execution.",
+    "`usePanes`, `useUserUIState`, `useLoraManager`, and `useUpscale` are likely already stable enough because they memoize their returns, so the highest-probability instability remains the lightbox persistence path; the audit should still verify rather than assume.",
+    "The simplest acceptable implementation is to centralize persistence behavior in `createEntityStore` and delete the bespoke autosave helper layer rather than wrapping the old reducer/loader/debounce code around the new store.",
+    "Manual browser verification can be performed in the repo's existing development preview flow used for render telemetry, and those checks are required even if automated tests pass."
+  ],
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}

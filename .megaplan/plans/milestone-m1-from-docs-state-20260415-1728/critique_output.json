@@ -1,0 +1,176 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Re-checked the repository docs with `rg --files docs` and confirmed `docs/state_management_refactor_plan.md` is still absent; only `docs/state_management_refactor_baselines.md` and `docs/structure_detail/settings_system.md` exist. The revised plan now explicitly treats the user prompt as the authoritative M1 brief, which resolves the earlier source-of-truth gap instead of pretending the missing doc can still be verified in-repo.",
+          "flagged": false
+        },
+        {
+          "detail": "Cross-checked the revised execution steps against the live Join Clips surface in `src/tools/join-clips/pages/JoinClipsPage.tsx`, `src/tools/join-clips/hooks/useJoinClipsGenerate.ts`, and `src/shared/components/JoinClipsSettingsForm/hooks/useJoinClipsSettingsController.ts`. The earlier prompt-blur plumbing and generate-path flush expansion is gone, so the plan now stays within the approved 'factory plus single-hook port' scope rather than broadening into extra UI behavior changes.",
+          "flagged": false
+        },
+        {
+          "detail": "Compared the milestone brief's 'smallest consumer, 5 fields' framing with the actual settings model in `src/shared/lib/joinClips/defaults.ts`. The live `JoinClipsSettings` shape now includes VACE defaults, `clips`, `transitionPrompts`, LoRA state, and several video toggles, so even this narrowed M1 still has to preserve a materially broader production contract than the brief describes; that mismatch is real and should stay visible during execution.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Re-checked the current Join Clips boundary in `src/tools/join-clips/hooks/useJoinClipsSettings.ts`, `src/shared/state/createEntityStore.ts`, and `docs/structure_detail/settings_system.md`. The revised plan does now honor the settled tiebreaker by keeping `useAutoSaveSettings` as the write owner for this React-Query-backed consumer and treating the Zustand store as a reader/sync layer.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Searched the repository for the milestone source document and there is no `docs/state_management_refactor_plan.md`; `rg --files docs` only finds `docs/state_management_refactor_baselines.md` plus `docs/structure_detail/settings_system.md`. The plan is still framed as 'Milestone M1 from docs/state_management_refactor_plan.md', so the underlying milestone source cannot actually be verified in-repo unless the plan names a replacement source.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Compared the brief's scope against the named execution steps and found that Step 6-7 still widen M1 beyond 'establish the factory and port `useJoinClipsSettings`' by adding prompt-blur plumbing through the shared form stack and a new pre-generate flush path in `useJoinClipsGenerate.ts`. Those are real behavior changes in additional files, not just the smallest-consumer hook port described in the approved milestone.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Checked `src/shared/settings/hooks/useAutoSaveSettings.ts` and confirmed the current public return surface still includes `entityId`, `isDirty`, `hasShotSettings`, `updateTextFields`, `initializeFrom`, and `saveImmediate(dataToSave?: T)`. The revised plan now calls out preserving that broader Join Clips adapter contract explicitly, so the earlier signature-narrowing risk is materially addressed.",
+          "flagged": false
+        },
+        {
+          "detail": "Read the current `src/shared/state/createEntityStore.ts` implementation and verified that `useEntity(entityId)` still unconditionally kicks `ensureEntity(entityId)` from a `useEffect`. The revised plan's reader-mode bypass works around that by introducing eager sentinel registration and a `useLayoutEffect` ordering scheme in the Join Clips adapter, which is technically plausible but still leaves correctness coupled to hook timing rather than to a store-level 'external entities never load' invariant.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked `src/shared/state/createEntityStore.ts` again and confirmed the revised plan now explicitly defines the Join Clips store's mandatory `load` and `save` callbacks as inert compatibility shims returning `{ db: null, lastUsed: null }` and `Promise.resolve()`, with tests that assert reader-mode bypass. That closes the previously-open ambiguity around the current factory contract.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked the current public save API in `src/shared/settings/hooks/useAutoSaveSettings.ts`: `saveImmediate` still has the signature `(dataToSave?: T) => Promise<void>`. The revised plan says the public return shape stays unchanged, but its concrete action descriptions mostly mirror the factory's narrower `saveImmediate(): Promise<void>` contract and never explicitly call out preserving the optional payload parameter in the Join Clips adapter, so an executor could still accidentally narrow that public hook API.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Searched `useJoinClipsSettings` call sites with `rg -n \"useJoinClipsSettings\\(\" src` and confirmed there is still only one production caller: `src/tools/join-clips/pages/JoinClipsPage.tsx`; the other hits are tests. That supports the revised decision to avoid adding new shared-form or generate-flow rewiring just to satisfy hypothetical future consumers.",
+          "flagged": false
+        },
+        {
+          "detail": "Looked beyond the direct hook call and checked the downstream surfaces that actually depend on the returned settings object: `src/tools/join-clips/hooks/useJoinClipsGenerate.ts` reads many nested settings fields, and `src/tools/join-clips/pages/hooks/useJoinClipsPageHelpers.ts` mutates `loras` and `keepBridgingImages` through the hook. The underlying problem is therefore broader than a '5-field smallest consumer' port, and the executor has to preserve composite settings behavior for those helpers even if no extra callers are being migrated in M1.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked the real Join Clips settings surface in `src/shared/lib/joinClips/defaults.ts` and its downstream consumers in `useClipManager`, `useJoinClipsGenerate`, and `useJoinClipsPageHelpers`. The repo no longer resembles a tiny 5-field settings object, so the revised plan is correct to treat composite `clips`, `transitionPrompts`, LoRA state, and VACE fields as part of the pilot rather than optimizing only for scalar prompt fields.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Searched production callers of `useJoinClipsSettings` and found only one live consumer: `src/tools/join-clips/pages/JoinClipsPage.tsx` (the other hits are tests). That means the extra shared-form blur plumbing and generate-path flushing in Step 6-7 are not addressing a broader existing caller surface in the repository; they are new scope added on top of the single planned consumer port.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Checked the workspace state and confirmed `zustand` is already present in `package.json`, while `src/shared/state/createEntityStore.ts` and `src/shared/state/createEntityStore.test.ts` already exist in the worktree. The revised plan is aligned with the actual branch state when it describes M1 as refining an existing first pass rather than introducing the dependency and factory from zero.",
+          "flagged": false
+        },
+        {
+          "detail": "Searched the supporting Join Clips infrastructure and found that `src/tools/join-clips/hooks/useJoinClipsGenerate.ts` and `src/tools/join-clips/pages/hooks/useJoinClipsPageHelpers.ts` are part of the real regression surface even if they do not need source edits. The plan names the hook, store, tests, and settings doc, but it does not explicitly include those helper files in its validation sweep even though they read and write the returned `joinSettings` object extensively.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked the current `JoinClipsSettingsForm` integration chain in `src/tools/join-clips/pages/JoinClipsPage.tsx`, `src/shared/components/JoinClipsSettingsForm/JoinClipsSettingsForm.tsx`, `src/shared/components/JoinClipsSettingsForm/components/JoinClipsPromptSettings.tsx`, `src/shared/components/JoinClipsSettingsForm/types.ts`, and `src/tools/travel-between-images/components/ShotEditor/sections/generation/joinClipsFormProps.ts`. The revised plan does name the real supporting files that would need touching if prompt blur callbacks are introduced.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "That same location search also shows why the plan has drifted wider than the foundation-store brief: once Step 6-7 are included, the required touch set expands into shared form contracts, generate flow, and travel-between-images compatibility fixtures. The file list is grounded in the repo, but it is evidence of broader integration work than the original 'create the store + port the hook' milestone.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Verified the direct caller arguments in `src/tools/join-clips/pages/JoinClipsPage.tsx` and the existing hook tests: `useJoinClipsSettings` is called with a project id that can be a real string, `null`, or `undefined`. The revised plan accounts for those actual caller shapes by preserving the disabled/null path explicitly instead of assuming every mount is loadable.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the broader caller contract around the returned object, not just the hook argument list. `JoinClipsPage` uses `joinSettings.settings` immediately for rendering, `useJoinClipsGenerate.ts` depends on many nested values during task construction and restore-defaults flows, and `useJoinClipsPageHelpers.ts` calls `updateField` for derived synchronization; the plan preserves that API, but its named validation steps still focus mostly on the hook test and factory test, so regressions in these real helper callers could slip unless they are part of the execution check pass.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked the actual prompt callers in `src/tools/join-clips/pages/JoinClipsPage.tsx` and `src/tools/travel-between-images/components/ShotEditor/sections/generation/joinClipsFormProps.ts`. They pass plain string values for `prompt` and `negativePrompt`, while `enhancePrompt` remains a boolean toggle, so the plan is technically right not to route `enhancePrompt` through text-field handling.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Grep'd current Join Clips call sites for `updateTextField`, `updateTextFields`, and `flushTextFields` and found no production usage; the page-level prompt setters currently call `updateField`, and `useJoinClipsGenerate.ts` reads `joinSettings.settings` directly. The revised plan's blur plumbing and explicit pre-generate flush therefore change how callers use the hook rather than simply preserving the current caller contract during the Zustand port.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "reader-mode-load-bypass",
+      "concern": "State store reader-mode: the revised plan still depends on `useLayoutEffect` registration and sentinel preloading to beat `createEntityStore.useEntity()`'s unconditional lazy-load effect for React-Query-backed Join Clips entities, rather than making the external-entity no-load rule authoritative in the factory contract itself.",
+      "category": "correctness",
+      "severity_hint": "uncertain",
+      "evidence": "Current `src/shared/state/createEntityStore.ts` calls `ensureEntity(entityId)` from `useEffect` inside `useEntity`, while the plan's Step 2/5 describes bypassing that path via external registration ordering in the adapter."
+    },
+    {
+      "id": "join-clips-helper-validation-surface",
+      "concern": "Join Clips helper validation surface: the plan preserves the `useJoinClipsSettings` API, but it does not explicitly include helper consumers that rely on that API shape, such as `useJoinClipsGenerate.ts` and `useJoinClipsPageHelpers.ts`, in the named validation sweep.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "Those files read `joinSettings.settings` and invoke `updateField`/`updateFields`, yet the validation section names only the factory test, hook test, docs review, typecheck, and full suite."
+    }
+  ],
+  "verified_flag_ids": [
+    "issue_hints-1",
+    "issue_hints-2",
+    "all_locations",
+    "correctness",
+    "callers",
+    "scope",
+    "scope-join-clips-ui",
+    "verifiability-missing-m1-doc",
+    "correctness-saveImmediate-signature"
+  ],
+  "disputed_flag_ids": []
+}

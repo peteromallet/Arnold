@@ -1,0 +1,97 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [],
+      "prior_findings": [
+        {
+          "detail": "Checked the revised plan against the prior React Query and contract-semantics findings, and it does resolve those specific issues in the repository: `useJoinClipsSettings` is now kept on the existing `useToolSettings` path, `reset()` is pinned to local non-save behavior, and `initializeFrom()` is explicitly preserved as a no-op for this non-custom consumer. Those changes match the current behavior exposed by `src/tools/join-clips/hooks/useJoinClipsSettings.ts` and `src/shared/settings/hooks/useAutoSaveSettings.ts`.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked the revised approach against the milestone deliverable that the factory itself should support lazy `load()` and `save()` while React Query hydration is handled externally. The plan now splits the first consumer across both mechanisms at once \u2014 generic factory lazy load plus hook-local React Query bootstrap and mutation scaffolding \u2014 and does not yet explain which path is authoritative for join-clips. That is still a real tension against the brief because the first consumer is supposed to validate the factory shape, not bypass half of it.",
+          "flagged": true,
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [],
+      "prior_findings": [
+        {
+          "detail": "Checked the revised hydration story against the factory requirements in the brief. The factory is still required to lazy-load on first `useEntity(entityId)` mount, but the join-clips plan also says query data arriving from `useToolSettings` should atomically bootstrap or refresh the same entity from hook-local scaffolding. Without an explicit rule for preventing the store's own `config.load()` path and the hook-local React Query bootstrap path from racing each other, the same entity can be bootstrapped twice with different status transitions or persisted baselines.",
+          "flagged": true,
+          "status": "open"
+        },
+        {
+          "detail": "Checked whether the revised plan keeps current `initializeFrom()` and `reset()` semantics, and it now does. The repository implementation in `src/shared/settings/hooks/useAutoSaveSettings.ts` makes `initializeFrom()` a no-op for non-custom consumers and keeps `reset()` local/non-saving, and the revised plan mirrors both behaviors instead of redefining them.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [],
+      "prior_findings": [
+        {
+          "detail": "Checked the broader settings landscape again and the plan still contains the migration to one consumer, which is appropriate for M1. The repo has many other `useAutoSaveSettings` wrappers, but the revised plan does not widen into them, and that containment remains consistent with the requested scope.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked whether the plan still understates join-clips as a tiny pilot, and it no longer does. The revision now treats `useJoinClipsSettings` as a full-contract port with the real join-clips integration surface, which resolves the earlier scope-underestimation issue rather than making it worse.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [],
+      "prior_findings": [
+        {
+          "detail": "Checked the revised plan against the supporting infrastructure hidden behind `src/shared/hooks/settings/useToolSettings.ts`. Keeping the first consumer on `useToolSettings` does preserve the existing React Query cache and invalidation layer, which addresses the previous gap. The remaining infrastructure risk is not missing files, but that the plan now needs extra store APIs for external bootstrap/baseline refresh in addition to the factory's own lazy `load()` path, and those extra APIs are only sketched generically rather than nailed down as a concrete integration surface.",
+          "flagged": true,
+          "status": "open"
+        },
+        {
+          "detail": "Checked the named join-clips integration files and the plan still correctly keeps `JoinClipsPage`, `useClipManager`, `useJoinClipsGenerate`, `useJoinClipsPageHelpers`, and `JoinClipsGrid` in verification scope. That matches the actual repository touch points around `useJoinClipsSettings` without broadening the milestone into unrelated consumers.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [],
+      "prior_findings": [
+        {
+          "detail": "Checked the direct caller shape again: `JoinClipsPage` passes `selectedProjectId`, so the hook must still handle a real project id at runtime and `null` before selection, while the existing unit test also covers `undefined`. The revised plan still preserves those edge cases by keeping the project-scoped adapter contract and disabled idle/default behavior.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked the caller-visible API against the revised adapter steps, and the plan now explicitly preserves the full public return surface that the current passthrough wrapper exposes. That addresses the earlier omission for `entityId`, `isDirty`, `error`, `hasShotSettings`, `hasPersistedData`, `updateTextField`, `updateTextFields`, `save`, `saveImmediate`, `revert`, `reset`, and `initializeFrom`; the remaining risk is in the dual hydration/write architecture, not in missing caller-facing members.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    }
+  ],
+  "flags": [],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

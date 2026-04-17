@@ -4,8 +4,8 @@ import { toast } from '@/shared/components/ui/runtime/sonner';
 import type { Shot } from '@/domains/generation/types';
 import type { ActiveLora } from '@/domains/lora/types/lora';
 import type { LoraModel } from '@/domains/lora/types/lora';
-import { useProject } from '@/shared/contexts/ProjectContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { useShotSettings } from '../../hooks/settings/useShotSettings';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
@@ -217,11 +217,13 @@ export function useVideoGenerationModalController({ isOpen, onClose, shot }: {
   onClose: () => void;
   shot: Shot;
 }) {
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const queryClient = useQueryClient();
   const invalidateGenerations = useEnqueueGenerationsInvalidation();
   const { navigateToShot } = useShotNavigation();
-  const { isShotsPaneLocked, setIsShotsPaneLocked } = usePanes();
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const setIsShotsPaneLocked = usePanesStore((state) => state.setIsShotsPaneLocked);
   const { updateShotMode } = useProjectGenerationModesCache(selectedProjectId ?? '');
 
   // UI state

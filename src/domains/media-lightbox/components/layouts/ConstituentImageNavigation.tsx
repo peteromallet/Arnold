@@ -140,7 +140,7 @@ export const ConstituentImageNavigation: React.FC<ConstituentImageNavigationProp
         <HoverCardContent
           side="top"
           sideOffset={8}
-          className="p-1 w-auto border-0 bg-background/95 backdrop-blur-sm z-[100001]"
+          className="p-1 w-auto border-0 bg-background/95 backdrop-blur-sm"
         >
           <div className="flex flex-col items-center gap-1">
             <img

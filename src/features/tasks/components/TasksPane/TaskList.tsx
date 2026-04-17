@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { ScrollArea } from '@/shared/components/ui/scroll-area';
 import { type PaginatedTasksResponse } from '@/shared/hooks/tasks/useTasks';
-import { useProject } from '@/shared/contexts/ProjectContext';
 import { useIncomingTasks } from '@/shared/contexts/IncomingTasksContext';
 import { TaskStatus, Task } from '@/types/tasks';
 import { TaskItem } from './TaskItem';
@@ -47,7 +46,6 @@ const TaskListComponent: React.FC<TaskListProps> = ({
   showProjectIndicator = false,
   projectNameMap = {},
 }) => {
-  useProject();
   const { incomingTasks } = useIncomingTasks();
   const tasks = useMemo(() => paginatedData?.tasks ?? [], [paginatedData?.tasks]);
 

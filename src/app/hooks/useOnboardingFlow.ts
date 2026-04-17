@@ -4,13 +4,13 @@ import { getSupabaseClientResult } from '@/integrations/supabase/client';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { useOnboarding } from '@/shared/hooks/useOnboarding';
 import { useUserUIState } from '@/shared/hooks/useUserUIState';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useProductTour } from '@/shared/hooks/useProductTour';
 
 export function useOnboardingFlow() {
   const { showOnboardingModal, closeOnboardingModal } = useOnboarding();
   const navigate = useNavigate();
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const { startTour } = useProductTour();
   const tourStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

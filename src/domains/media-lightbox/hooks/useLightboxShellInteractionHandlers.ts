@@ -3,25 +3,14 @@ import {
   isFloatingOverlayElement,
   shouldAllowTouchThrough,
 } from '@/shared/lib/interactions/elementPolicy';
-import { UI_Z_LAYERS, hasDialogAbove } from '@/shared/lib/uiLayers';
+import { isElementWithinTopmostOverlay } from '@/shared/components/ui/overlay';
 
 interface UseLightboxShellInteractionHandlersArgs {
   hasCanvasOverlay: boolean;
   isRepositionMode: boolean;
   isMobile: boolean;
   onClose: () => void;
-}
-
-function targetHasHigherZIndex(target: EventTarget | null): boolean {
-  let element = target as HTMLElement | null;
-  while (element && element !== document.body) {
-    const zIndex = parseInt(window.getComputedStyle(element).zIndex || '0', 10);
-    if (zIndex > UI_Z_LAYERS.LIGHTBOX_MODAL) {
-      return true;
-    }
-    element = element.parentElement;
-  }
-  return false;
+  popupRef: React.RefObject<HTMLElement | null>;
 }
 
 export function useLightboxShellInteractionHandlers({
@@ -29,14 +18,19 @@ export function useLightboxShellInteractionHandlers({
   isRepositionMode,
   isMobile,
   onClose,
+  popupRef,
 }: UseLightboxShellInteractionHandlersArgs) {
   const pointerDownTargetRef = useRef<EventTarget | null>(null);
   const bgPointerDownTargetRef = useRef<EventTarget | null>(null);
+  const isCurrentLightboxTopmost = () => {
+    const popup = popupRef.current;
+    return !popup || isElementWithinTopmostOverlay(popup);
+  };
 
   const handleOverlayPointerDown = (e: React.PointerEvent) => {
     pointerDownTargetRef.current = e.target;
 
-    if (hasDialogAbove(UI_Z_LAYERS.LIGHTBOX_MODAL) || targetHasHigherZIndex(e.target)) {
+    if (!isCurrentLightboxTopmost()) {
       return;
     }
 
@@ -48,7 +42,7 @@ export function useLightboxShellInteractionHandlers({
   };
 
   const handleOverlayPointerUp = (e: React.PointerEvent) => {
-    if (hasDialogAbove(UI_Z_LAYERS.LIGHTBOX_MODAL) || targetHasHigherZIndex(e.target)) {
+    if (!isCurrentLightboxTopmost()) {
       return;
     }
 
@@ -71,7 +65,7 @@ export function useLightboxShellInteractionHandlers({
   };
 
   const handleOverlayClick = (e: React.MouseEvent) => {
-    if (hasDialogAbove(UI_Z_LAYERS.LIGHTBOX_MODAL) || targetHasHigherZIndex(e.target)) {
+    if (!isCurrentLightboxTopmost()) {
       return;
     }
 
@@ -99,7 +93,7 @@ export function useLightboxShellInteractionHandlers({
     const upTarget = e.target as HTMLElement;
     bgPointerDownTargetRef.current = null;
 
-    if (hasDialogAbove(UI_Z_LAYERS.LIGHTBOX_MODAL) || targetHasHigherZIndex(upTarget)) return;
+    if (!isCurrentLightboxTopmost()) return;
     if (isRepositionMode) return;
 
     if (
@@ -129,7 +123,7 @@ export function useLightboxShellInteractionHandlers({
   };
 
   const handleTouchCancel = (e: React.TouchEvent) => {
-    if (hasDialogAbove(UI_Z_LAYERS.LIGHTBOX_MODAL)) return;
+    if (!isCurrentLightboxTopmost()) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.nativeEvent && typeof e.nativeEvent.stopImmediatePropagation === 'function') {

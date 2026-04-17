@@ -7,7 +7,7 @@ import {
 } from 'react';
 import { GenerationRow } from '@/domains/generation/types';
 import { useIsMobile, useIsTablet } from '@/shared/hooks/mobile';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { Button } from '@/shared/components/ui/button';
 import { VariantSelector } from '@/shared/components/VariantSelector';
 import {
@@ -62,7 +62,7 @@ export function InlineEditVideoView({
   const isTablet = useIsTablet();
   // Use stacked layout for both mobile and tablet - video on top, settings below
   const useStackedLayout = isMobile || isTablet;
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const queryClient = useQueryClient();
 
   // Video edit sub-mode state: 'trim', 'replace', or 'enhance'

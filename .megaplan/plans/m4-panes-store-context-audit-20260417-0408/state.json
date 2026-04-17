@@ -1,0 +1,724 @@
+{
+  "name": "m4-panes-store-context-audit-20260417-0408",
+  "idea": "M4 \u2014 Panes store + context audit. Replace the fat `PanesContext` with a Zustand store, then audit remaining context.Provider usage in the codebase for context-as-pubsub anti-patterns.\n\n## Executor rules\n\nEXECUTOR HARD RULE (authoritative): For any task whose satisfaction requires a browser, runtime app instance, device, or manual human input that the sandboxed executor cannot produce (examples: telemetry overlay capture from a running app, drag/resize smoke checks, keyboard/playback behavior, AgentChat bridge manual test, pending-add URL flow verification, Model Select click behavior, textarea typing verification, any rendering count measured at runtime) \u2014 return status=skipped on FIRST encounter with executor_notes evidence naming the blocker (e.g. \"no browser-driving path available\"). DO NOT return status=blocked. DO NOT retry the task expecting different sandbox capabilities. The review/gate phase already marks these criteria as deferred_human; skipped tasks are first-class evidence that the criterion is deferred to post-milestone human verification. Blocked retries waste iteration budget and do not change outcome.\n\n## Motivation\n\n`PanesContext` is a classic wide-context: consumers subscribe to the whole object when they only need one or two fields. Opening one pane re-renders every other pane. This is the same pattern M1b and M1c killed for selection and timeline; M4 finishes the sweep for panes, and adds an architectural check so new fat contexts don't re-emerge.\n\n## Goal\n\nReplace `PanesContext` with `src/shared/state/panesStore.ts`. Audit remaining `createContext` usages in the codebase; migrate any with >10 field values and >5 consumers. Add an ESLint rule (or repo-level check) that flags fat contexts going forward.\n\n## Scope\n\n### In scope\n\n- `src/shared/state/panesStore.ts` \u2014 Zustand store with slices per pane (or a flat record of pane states if simpler).\n- Delete `PanesContext` + its provider + its hooks after migration.\n- Migrate every consumer of `usePanes()` or `useContext(PanesContext)` to store selectors.\n- Inventory remaining `createContext` calls:\n  `rg 'createContext\\(' src/ --type ts --type tsx -l`\n  For each: count field values in the context type, count direct consumers. Migrate if fields >10 AND consumers >5. Document the rest with a brief rationale.\n- Add an ESLint rule (or eslint-plugin-local rule, or pre-commit check, or just a one-file allowlist + CI grep) that warns on new `createContext` usage with >10 field values in its type. Exact mechanism is author's choice; the gate is that the check exists and runs in CI or pre-commit.\n\n### Out of scope\n\n- Changing pane UX or layout behavior.\n- Mobile-specific pane logic beyond preserving current behavior.\n- Contexts that are thin (<=10 fields, or <5 consumers) \u2014 document, don't migrate.\n\n## Dependencies (technical, not temporal)\n\n- `src/shared/state/createEntityStore.ts` from M1. Verify via `ls src/shared/state/`. (Panes may not need entity-keyed storage; a simpler `createStore` slice from Zustand vanilla is also acceptable.)\n- Current `PanesContext` file and its consumers exist in the worktree \u2014 verify locations at milestone start via grep.\n\n## Implementation approach\n\n1. **Read current `PanesContext`** \u2014 enumerate fields, types, actions.\n2. **Design `panesStore.ts`** \u2014 slice shape should mirror existing context fields so consumer migration is mechanical. Selectors return stable refs via `shallow` for object/array returns.\n3. **Migrate consumers** \u2014 one at a time, keep existing hook signatures (e.g. `usePanes()` stays but returns store selector).\n4. **Delete the context** \u2014 per metaplan Rule #4, same PR.\n5. **Run the context audit** \u2014 grep, classify, migrate/document.\n6. **Add the fat-context check** \u2014 configure ESLint or add a CI grep. Document in README or contributing docs where the rule lives.\n\n## MUST (all automated)\n\n- `npx tsc --noEmit` clean.\n- `npm test` at baseline.\n- No file imports `PanesContext`; verify via grep.\n- `panesStore.ts` exists at the documented path with public API.\n- Context audit report committed as `docs/state_management_context_audit.md` (or equivalent), listing each remaining `createContext` with field count + consumer count + migrate/keep decision + rationale.\n- Fat-context check landed: either an ESLint rule, a pre-commit hook, or a CI grep that fails the build on violation. Mechanism documented in the audit doc or README.\n\n## DEFERRED_HUMAN\n\n- Opening one pane does not visually re-render other panes (verify via M0 telemetry overlay).\n- Mobile exclusive-pane behavior preserved: on small viewport, opening pane B should close pane A as before.\n\n## Non-goals\n\n- Changing URL/routing behavior of panes.\n- Persisting pane state to localStorage (separate concern).\n- Refactoring pane rendering components.\n\n## Risk notes\n\n- PanesContext may have side-effect subscriptions (e.g. opening one pane triggers an analytics event). Audit for these before deletion.\n- Some \"thin\" contexts may have hidden consumers via transitive re-export. Grep for re-exports of context types, not just direct consumers.\n",
+  "current_state": "finalized",
+  "iteration": 7,
+  "created_at": "2026-04-17T04:08:01Z",
+  "config": {
+    "project_dir": "/workspace/reigh-app",
+    "auto_approve": true,
+    "robustness": "standard",
+    "mode": "code",
+    "agent": ""
+  },
+  "sessions": {
+    "codex_planner": {
+      "id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "mode": "persistent",
+      "created_at": "2026-04-17T04:10:59Z",
+      "last_used_at": "2026-04-17T04:57:00Z",
+      "refreshed": false
+    },
+    "codex_gatekeeper": {
+      "id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "mode": "persistent",
+      "created_at": "2026-04-17T04:14:32Z",
+      "last_used_at": "2026-04-17T05:02:32Z",
+      "refreshed": true
+    },
+    "codex_critic": {
+      "id": "019d99ce-57dc-7ba0-8782-c1fb56347a3c",
+      "mode": "persistent",
+      "created_at": "2026-04-17T05:02:00Z",
+      "last_used_at": "2026-04-17T05:02:00Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019d99d1-c31a-7de1-b5b4-8fe70623e34d",
+      "mode": "persistent",
+      "created_at": "2026-04-17T05:03:32Z",
+      "last_used_at": "2026-04-17T05:03:32Z",
+      "refreshed": false
+    },
+    "codex_reviewer": {
+      "id": "019d9a14-a7e1-7a70-a6ef-f9268f1efbe6",
+      "mode": "persistent",
+      "created_at": "2026-04-17T06:19:25Z",
+      "last_used_at": "2026-04-17T06:19:25Z",
+      "refreshed": true
+    },
+    "codex_executor": {
+      "id": "019d9a4c-6273-7283-b614-a7668d185aed",
+      "mode": "persistent",
+      "created_at": "2026-04-17T07:22:51Z",
+      "last_used_at": "2026-04-17T07:22:51Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:26116ec545a95941e6cf6609fbde627b5e215fd830c9f31a1c6e924e30d45834",
+      "timestamp": "2026-04-17T04:10:59Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:937dd124eabef958ded33bd84a9c311fee2e0bd6187d62348ebf3cc51702ec0e",
+      "timestamp": "2026-04-17T04:16:12Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:b0709d3c4262a7b9f802edfbfd915fa6fe21bd928cae1f0dc68083b6f7872576",
+      "timestamp": "2026-04-17T04:24:29Z"
+    },
+    {
+      "version": 4,
+      "file": "plan_v4.md",
+      "hash": "sha256:9a5f9259292203e6e91c957b1342dfbf15f0ee9b602a89803aa9705a0af7065a",
+      "timestamp": "2026-04-17T04:32:11Z"
+    },
+    {
+      "version": 5,
+      "file": "plan_v5.md",
+      "hash": "sha256:1d767d5621a5c5cf481993ed2ece732c0628331853f9c3628b5534e923f6440a",
+      "timestamp": "2026-04-17T04:40:02Z"
+    },
+    {
+      "version": 6,
+      "file": "plan_v6.md",
+      "hash": "sha256:b366b99cfe103da79e131549e1a426ab873fe1a2eb08c094545c5cb668bc5639",
+      "timestamp": "2026-04-17T04:49:51Z"
+    },
+    {
+      "version": 7,
+      "file": "plan_v7.md",
+      "hash": "sha256:a87ffa57ac9ede5cc581c1c9eb73684feefb83d23486b42202f0efd91985aa01",
+      "timestamp": "2026-04-17T04:57:00Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-17T04:08:01Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-17T04:10:59Z",
+      "duration_ms": 178381,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:26116ec545a95941e6cf6609fbde627b5e215fd830c9f31a1c6e924e30d45834"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T04:14:15Z",
+      "duration_ms": 194887,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a2-8ff3-72e1-aa07-27f949e076b5",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:70609d51c9984b799b402e48efa63a5feed16f1caa56192bf67d3daa90a981d7",
+      "flags_count": 19
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T04:14:32Z",
+      "duration_ms": 14290,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:1611f6a8dc753a8cd57a4670848142c301b700f68f8106baf5bb1650e4370759",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T04:16:12Z",
+      "duration_ms": 98818,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:937dd124eabef958ded33bd84a9c311fee2e0bd6187d62348ebf3cc51702ec0e",
+      "flags_addressed": [
+        "FLAG-M4-001",
+        "FLAG-M4-002",
+        "FLAG-M4-003",
+        "issue_hints-1",
+        "issue_hints-2",
+        "issue_hints-3",
+        "correctness-1",
+        "correctness-2",
+        "scope-1",
+        "scope-2",
+        "scope-3",
+        "all_locations-1",
+        "all_locations-2",
+        "callers-1",
+        "callers-2"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T04:22:55Z",
+      "duration_ms": 201669,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99aa-64fc-7473-8141-1772bcd8063e",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:d42bbba896dd8a2dd0d63c9ba029785f31864efb81dfef90f5c2156206839fbe",
+      "flags_count": 10
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T04:23:14Z",
+      "duration_ms": 16436,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:50e2eeacce75e21ecfdae2f89895e42460ab0417c85a7f1393c09e6b4718fa8f",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T04:24:29Z",
+      "duration_ms": 73528,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "agent": "codex",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:b0709d3c4262a7b9f802edfbfd915fa6fe21bd928cae1f0dc68083b6f7872576",
+      "flags_addressed": [
+        "FLAG-M4-004",
+        "FLAG-M4-005",
+        "issue_hints",
+        "correctness",
+        "scope",
+        "callers"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T04:30:36Z",
+      "duration_ms": 166577,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99b1-f63a-7900-9c9c-d8ed264078cd",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:ff97d88dc01e97d7e1cfba9be89aa38c88f64e3164ea299352de60ce1c0fa194",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T04:30:53Z",
+      "duration_ms": 14709,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:3157d551d190f91a24e9811c634289fb5c40e9aa5e088fbfaad2a4dee74f07fa",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T04:32:11Z",
+      "duration_ms": 75960,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "agent": "codex",
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:9a5f9259292203e6e91c957b1342dfbf15f0ee9b602a89803aa9705a0af7065a",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "scope",
+        "FLAG-M4-006"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T04:38:21Z",
+      "duration_ms": 258220,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99b7-a6f5-75b2-bfda-f469bb82d6a0",
+      "agent": "codex",
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:fa3604f4da96dcecf3a1e5fbb4ff7258992d9bec5242a8c6dabd9cffc6400037",
+      "flags_count": 10
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T04:38:43Z",
+      "duration_ms": 19924,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:d0f81fa6d053ec0258ca9fe9f9a6002fb563938957ccb5380a41c8b55f0a56e5",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T04:40:02Z",
+      "duration_ms": 77469,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "agent": "codex",
+      "output_file": "plan_v5.md",
+      "artifact_hash": "sha256:1d767d5621a5c5cf481993ed2ece732c0628331853f9c3628b5534e923f6440a",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "scope",
+        "all_locations-wrapper-hooks-0",
+        "all_locations"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T04:48:11Z",
+      "duration_ms": 290970,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99c0-29f6-7d33-9ab2-9fcdc896378b",
+      "agent": "codex",
+      "output_file": "critique_v5.json",
+      "artifact_hash": "sha256:4161f1b68110e6251ca287c9df7e2ad23865037159aec8e0630e4bb1f651e77a",
+      "flags_count": 9
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T04:48:29Z",
+      "duration_ms": 14892,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:0066c531e3fc95a189e06d64e28232f6004a382b51ff2db6a579fee87394aee8",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T04:49:51Z",
+      "duration_ms": 80500,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "agent": "codex",
+      "output_file": "plan_v6.md",
+      "artifact_hash": "sha256:b366b99cfe103da79e131549e1a426ab873fe1a2eb08c094545c5cb668bc5639",
+      "flags_addressed": [
+        "issue_hints",
+        "correctness",
+        "scope",
+        "all_locations-wrapper-hooks-0",
+        "correctness-counting-rule-0"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T04:55:13Z",
+      "duration_ms": 133606,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99c8-fecb-7003-8add-752943c8ed2c",
+      "agent": "codex",
+      "output_file": "critique_v6.json",
+      "artifact_hash": "sha256:3e59a9716ec2e83339d1023820f0f26bde678657258cc4fe1daf7c3020c5a186",
+      "flags_count": 7
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T04:55:33Z",
+      "duration_ms": 17839,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:3ddc18340bd9aa55e4bb0f3d474fe466bd55fc2581d60f6f2e644e8ca28e0bee",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-17T04:57:00Z",
+      "duration_ms": 85616,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d999f-d238-73b3-b4fc-b3c3ab85b23b",
+      "agent": "codex",
+      "output_file": "plan_v7.md",
+      "artifact_hash": "sha256:a87ffa57ac9ede5cc581c1c9eb73684feefb83d23486b42202f0efd91985aa01",
+      "flags_addressed": [
+        "issue_hints",
+        "scope",
+        "all_locations-wrapper-hooks-1"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-17T05:02:00Z",
+      "duration_ms": 189917,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99ce-57dc-7ba0-8782-c1fb56347a3c",
+      "agent": "codex",
+      "output_file": "critique_v7.json",
+      "artifact_hash": "sha256:e675cbd532e47d4fbdfc2c156a70d80c08fe29d45dae0e27c1187ff3ee61b78c",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-17T05:02:32Z",
+      "duration_ms": 30306,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99a5-9303-7ff0-bc56-58b0b0d111a5",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:8b606c1930dce62f77d78bae261da21c955ee9a9859f7b47daeeb2edf0ac3262",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-17T05:03:32Z",
+      "duration_ms": 58462,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d99d1-c31a-7de1-b5b4-8fe70623e34d",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:0f9e952f20655f32fff2d7e506ee59cb8f75d3e7d912e82fa2d8b917bb44dd3f"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T06:15:34Z",
+      "duration_ms": 718131,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d9a09-a54b-77a3-8d38-60056adf6ab7",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:3dddf43095150672d38fa8e933a3ee02969f01724167cc3f2ad29acfad462c17",
+      "finalize_hash": "sha256:d5e5cdb4ab0c79a406d3e3ad2810e78471fb146f263b0b7afda5a3dcce7141a3",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-17T06:19:25Z",
+      "duration_ms": 227651,
+      "cost_usd": 0.0,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "019d9a14-a7e1-7a70-a6ef-f9268f1efbe6",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:6fc29bf55717a6473ca58eecd0722cb9e5e128b8e03c3107b4008d84ba0cf58b",
+      "finalize_hash": "sha256:8b5ec17d05734cb8018a47fbf16c5a3814275eb2c5fc03cc0756cf49f486f469"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T06:29:02Z",
+      "duration_ms": 575044,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a09-a54b-77a3-8d38-60056adf6ab7",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:f91a9a904736ee753a8341eb6276fbb40a8588982780bebed7bfa3128cade923",
+      "finalize_hash": "sha256:12d4d3e1d3bde7bb71cdb4eeb007c1517ab8c9c067bb738ee7dc5497b2f1b571",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T06:38:22Z",
+      "duration_ms": 354157,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a24-1234-7bc1-9110-e10b80b9c21b",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:6e91934052328fef4db9835186eee5ba23ce405d89755c8a2b9bcbef7d618596",
+      "finalize_hash": "sha256:20fa7c99f41014088796a122eaaf223545e6e4ff55815a7a0d754b3eaaf9e2c2",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T06:45:41Z",
+      "duration_ms": 376324,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a2a-6f94-7ab1-a4fc-ce582ee23fa2",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:860242391244b50be1b70b79b38a1ebb0153c0d36432fe5715ff089c75a8e823",
+      "finalize_hash": "sha256:a622cf10f96169727c7cbf23d1b21912b29441990bd3ca7ebb5bd49216672da1",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T06:52:44Z",
+      "duration_ms": 367193,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a31-0489-7a32-b033-e75e0d017bb5",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:5f926b3ca74b948b40dc4a1dfe17e0126f72043807b0ba4177cf5356d22b210a",
+      "finalize_hash": "sha256:990773f07a0d483c5ac8a014499eedd1adde7f991d1b724d8cd6cdf0367e4e19",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T06:53:15Z",
+      "duration_ms": 30062,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a31-0489-7a32-b033-e75e0d017bb5",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:ffc413ae1b9c642d094cb4d32d3ab815c69645ef037999be71728e979341b481",
+      "finalize_hash": "sha256:990773f07a0d483c5ac8a014499eedd1adde7f991d1b724d8cd6cdf0367e4e19",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T07:00:56Z",
+      "duration_ms": 27894,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a31-0489-7a32-b033-e75e0d017bb5",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:ffc413ae1b9c642d094cb4d32d3ab815c69645ef037999be71728e979341b481",
+      "finalize_hash": "sha256:990773f07a0d483c5ac8a014499eedd1adde7f991d1b724d8cd6cdf0367e4e19",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T07:01:32Z",
+      "duration_ms": 34206,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a31-0489-7a32-b033-e75e0d017bb5",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:ffc413ae1b9c642d094cb4d32d3ab815c69645ef037999be71728e979341b481",
+      "finalize_hash": "sha256:990773f07a0d483c5ac8a014499eedd1adde7f991d1b724d8cd6cdf0367e4e19",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T07:07:27Z",
+      "duration_ms": 273720,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a3f-ec1b-7382-99c3-0bbd8882ec7a",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:3f16475880e8e7538ee6631a90e2a3e8e33fd78806db09ba5da4e2dacaea8347",
+      "finalize_hash": "sha256:b48ad2d2e69730d7e12e2b2bd7e468c5f13e04611baf28c220717a89e279d0fc",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T07:15:04Z",
+      "duration_ms": 377478,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a45-4fa3-7803-8768-d3ca88e062b2",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:6c6525a4d08ef622d09506040cfd4970ae1fed5297d96ad63085a66265ed19ae",
+      "finalize_hash": "sha256:c2344e50b30a7e0d5b60b695d38dc4c221dd5baf4efab7e54b698d963d02f3a0",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-17T07:22:51Z",
+      "duration_ms": 380644,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019d9a4c-6273-7283-b614-a7668d185aed",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:322b38c1173d71a1c4e7cabe76c4e1019366f65881cf00760f2a5221ad7d2f7d",
+      "finalize_hash": "sha256:d73f1275b3fef72b318fb5ffc7564467ef2098ac4f548e76d8c3a26086a271ee",
+      "approval_mode": "auto_approve"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      15,
+      6,
+      5,
+      5,
+      5,
+      3,
+      4
+    ],
+    "weighted_scores": [
+      20.25,
+      10.0,
+      9.0,
+      8.0,
+      4.5,
+      4.5,
+      7.0
+    ],
+    "plan_deltas": [
+      87.83,
+      87.38,
+      18.69,
+      35.72,
+      14.6,
+      14.17
+    ],
+    "recurring_critiques": [
+      [],
+      [],
+      [
+        "criterion 10: requires human verification (subjective_judgment).",
+        "criterion 11: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+        "criterion 12: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+        "criterion 9: requires human verification (subjective_judgment)."
+      ],
+      [
+        "criterion 10: requires human verification (subjective_judgment).",
+        "criterion 11: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+        "criterion 12: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).",
+        "criterion 9: requires human verification (subjective_judgment)."
+      ],
+      [
+        "criterion 10: requires human verification (subjective_judgment)."
+      ],
+      [
+        "criterion 11: requires human verification (subjective_judgment)."
+      ],
+      [
+        "criterion 11: requires human verification (subjective_judgment).",
+        "criterion 12: requires human verification (subjective_judgment).",
+        "criterion 13: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+        "criterion 14: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device)."
+      ]
+    ],
+    "total_cost_usd": 0.0,
+    "overrides": [
+      {
+        "action": "add-note",
+        "timestamp": "2026-04-17T07:00:18Z",
+        "note": "EXECUTOR HARD RULE: browser/runtime-dependent tasks (telemetry overlay capture, drag/resize smoke, keyboard/playback behavior, manual bridge/AgentChat tests, pending or non-reproducible runtime signals) \u2192 return status=skipped on FIRST encounter, never status=blocked. Blocked retries waste iteration budget and have already stalled the chain at iter 31. deferred_human criteria get post-milestone manual verification. Apply to ALL rework items surfacing from review needs_rework at 06:19; if rework cannot be performed in sandboxed executor, mark skipped+deferred."
+      }
+    ],
+    "notes": [
+      {
+        "timestamp": "2026-04-17T07:00:18Z",
+        "note": "EXECUTOR HARD RULE: browser/runtime-dependent tasks (telemetry overlay capture, drag/resize smoke, keyboard/playback behavior, manual bridge/AgentChat tests, pending or non-reproducible runtime signals) \u2192 return status=skipped on FIRST encounter, never status=blocked. Blocked retries waste iteration budget and have already stalled the chain at iter 31. deferred_human criteria get post-milestone manual verification. Apply to ALL rework items surfacing from review needs_rework at 06:19; if rework cannot be performed in sandboxed executor, mark skipped+deferred."
+      }
+    ],
+    "user_approved_gate": true
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "Execution should move forward. The remaining significant flags are all the same underlying critique: the plan narrative still uses the old 'fat `PanesContext`' framing even though the current code already splits panes into three contexts and the broad-subscription problem now lives primarily in `usePanes()` and provider-owned pane state. That wording defect is real, but it is no longer an execution blocker because the concrete steps already target the correct removal surface: repo-wide caller inventory, selector-first `panesStore.ts`, migration of every `usePanes()` caller to narrow selectors, replacement of `PanesProvider` in `AppProviders.tsx`, and deletion of `PanesContext`, `PanesProvider`, and `usePanes()` in the same change. Another planning loop would mostly rewrite prose around a now-settled implementation path rather than materially improving execution readiness.",
+    "reprompted": false,
+    "signals_assessment": "The weighted score rose to 7.0 after previously reaching 4.5, but the open flags are clustered around one repeated wording/interpretation issue rather than new technical gaps. Preflight is clean: the project directory exists, is writable, and required tooling is available. The plan delta is modest at 14.17%, and most earlier audit-completeness and automation-boundary critiques have been resolved. The remaining concern is execution framing, not missing implementation mechanics.",
+    "warnings": [
+      "Iteration 7: high iteration count.",
+      "Iteration count is high at 7; review should avoid reopening the same 'single fat context' framing debate and instead judge execution against the concrete deletion/migration steps.",
+      "During execution, reviewers should evaluate success against removal of `usePanes()` and provider-owned pane state, not against the outdated assumption that there is still one monolithic panes provider value.",
+      "Deferred-human pane render and mobile exclusivity checks still require `skipped` handling if encountered in sandboxed execution."
+    ],
+    "settled_decisions": [
+      {
+        "id": "panes-hotspot",
+        "decision": "Treat `usePanes()` and provider-owned pane bootstrap state as the primary panes anti-pattern to eliminate.",
+        "rationale": "The current code already splits panes across `PaneLockPolicyContext`, `PaneLayoutContext`, and `PaneSelectionContext`; the performance win comes from removing the recomposed broad subscription surface and migrating callers to store selectors."
+      },
+      {
+        "id": "panes-api-end-state",
+        "decision": "Do not preserve a broad panes compatibility facade.",
+        "rationale": "The plan explicitly requires migrating all `usePanes()` callers to narrow selectors or narrow grouped selectors, then deleting `PanesContext`, `PanesProvider`, and `usePanes()` in the same change."
+      },
+      {
+        "id": "fat-context-guard-boundary",
+        "decision": "Keep permanent automation scoped to fat `createContext(...)` declarations, while auditing recomposed wrapper hooks as milestone work rather than permanent lint scope.",
+        "rationale": "That matches the brief and avoids expanding policy/tooling scope beyond the required guard."
+      },
+      {
+        "id": "audit-counting-contract",
+        "decision": "Use repo-wide exported-hook inventory, imported local type expansion, and external-production consumer counts for the context audit.",
+        "rationale": "Those rules were the substantive plan-quality gaps from prior iterations and are now resolved in the execution plan."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting. Recurring critiques (criterion 11: requires human verification (subjective_judgment)., criterion 12: requires human verification (subjective_judgment)., criterion 13: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs)., criterion 14: requires human verification (drive_browser, inspect_runtime_ui, verify_physical_device).); the loop likely can't fix these, so judge if they are real blockers."
+  }
+}

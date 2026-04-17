@@ -9,7 +9,7 @@ import { useExtraLargeModal } from '@/shared/hooks/useModal';
 import { ImageGenerationForm } from '@/shared/components/ImageGenerationForm';
 import { createTask } from '@/shared/lib/taskCreation';
 import { useApiKeys } from '@/shared/hooks/settings/useApiKeys';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/shared/lib/queryKeys';
 import { toast } from '@/shared/components/ui/runtime/sonner';
@@ -34,7 +34,7 @@ export const ImageGenerationModal: React.FC<ImageGenerationModalProps> = ({
 }) => {
   const modal = useExtraLargeModal();
   const footerPortalId = useId();
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const queryClient = useQueryClient();
   const { getApiKey } = useApiKeys();
   const navigate = useNavigate();

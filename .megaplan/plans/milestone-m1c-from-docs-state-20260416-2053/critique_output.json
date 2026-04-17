@@ -1,0 +1,131 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Checked the milestone-start preconditions against the actual worktree with `git branch --show-current`, `git status --short`, and the presence of `src/shared/state/selectionStore.ts`. The repo is still on `megaplan/m1a-settings-store`, the worktree is dirty, and `selectionStore.ts` is untracked here, so the plan's 'rebase onto a base with M1b landed' wording is weaker than the brief's required halt-if-M1b-is-not-shipped gate.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the load-bearing pathways around `VideoEditorProvider.tsx` against the brief's 'do not delete silently' warning. The plan inventories the provider-local AgentChat, pending-add, and lightbox flows, but it does not mention the external safe-hook contract in `src/domains/media-lightbox/hooks/useAddToVideoEditor.ts`, which currently depends on `useTimelineEditorDataSafe()` and `useTimelineEditorOpsSafe()` returning `null` outside a mounted editor.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the render-verification source of truth in `docs/state_management_refactor_baselines.md` and `src/shared/dev/useRenderBudget.ts`. The repo baseline documents a 1-second interaction-window `maxCount` aggregation, not a per-scroll-event probe, so the plan's instruction to 'verify scroll with M0 telemetry' is only partially backed by the actual in-repo instrumentation.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Checked `src/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx` and `src/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx`. `TimelineCanvas` still computes shared `rowResizePreview`, `selectedTrackId`, and other drag-sensitive props centrally and passes them through every `SortableRow`, so moving context reads to narrow Zustand selectors alone will not meet the gate that non-dragged rows stay at 0 rerenders during drag unless the plan also changes this row-prop fan-out.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the staged-vs-mounted add flow in `src/domains/media-lightbox/hooks/useAddToVideoEditor.ts`. That hook decides between immediate in-process drop and staged URL/localStorage fallback by testing whether the safe timeline hooks return `null`, so a global `timelineStore.ts` with default state would change runtime behavior unless the migration preserves an explicit 'editor mounted' availability boundary.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked `src/tools/video-editor/hooks/useTimelineState.ts` and `src/tools/video-editor/contexts/VideoEditorProvider.tsx` together. The current composition is synchronous and consumers like the pending-add drain and AgentChat bridge read fresh `editor` values in the same render pass, so the plan's 'build values and write them into the Zustand store' step is under-specified about whether hydration happens during render or in an effect, and either choice has real correctness risk if not designed carefully.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Searched for timeline-context usage outside the video-editor tree and found `src/domains/media-lightbox/hooks/useAddToVideoEditor.ts` importing the safe timeline hooks. That means the migration surface is broader than the plan's mostly-editor-local inventory: deleting the contexts also affects the media-lightbox add-to-editor flow, not just timeline components.",
+          "flagged": true
+        },
+        {
+          "detail": "Searched the test surface with `rg` and found three current test files that mock the timeline contexts directly: `src/tools/video-editor/contexts/VideoEditorProvider.test.tsx`, `src/tools/video-editor/components/TimelineEditor/TimelineCanvas.test.tsx`, and `src/tools/video-editor/components/__tests__/PreviewPersistence.test.tsx`. The plan mentions the first two patterns but does not explicitly account for `PreviewPersistence.test.tsx`, so the migration checklist is still narrower than the actual break surface.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the supposedly 'high-risk render surfaces' against the actual leaf wiring and found that `TimelineCanvas.tsx` still calls `useTimelineEditorData()` internally just to obtain `dataRef` for `useClipResizeGesture`. This makes the work broader than simply rewiring top-level consumers, because one of the hottest leaf components still has a direct context dependency that must be replaced before the old providers can be deleted.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Searched all imports of `TimelineEditorContext`, `TimelineChromeContext`, and `TimelinePlaybackContext` and found live consumers in `VideoEditorShell.tsx`, `TimelineEditor.tsx`, `PreviewPanel.tsx`, `CompactPreview.tsx`, `PropertiesPanel.tsx`, `AssetPanel.tsx`, `useSelectedMediaClips.ts`, `TimelineCanvas.tsx`, `VideoEditorProvider.test.tsx`, `TimelineCanvas.test.tsx`, and `components/__tests__/PreviewPersistence.test.tsx`. The plan's consumer list is directionally right but not exhaustive enough to safely support deleting the three context files without a fresh grep-driven checklist.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked supporting infrastructure beyond direct context imports and found `src/domains/media-lightbox/hooks/useAddToVideoEditor.ts` consuming `useTimelineEditorDataSafe()` and `useTimelineEditorOpsSafe()`. Those nullable-safe exports are part of the integration surface for pending-add staging, so removing the contexts also requires replacement glue for the safe hooks, not just store selectors for in-editor readers.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked render-budget support files and found that `SortableRow` instrumentation lives in `TrackListRenderer.tsx`, while `TimelineCanvas` telemetry is emitted through `useRenderBudget`'s interaction-window counter. The plan does not yet name the concrete runtime harness or extra instrumentation needed to turn those generic counters into the brief's scroll-event and drag-isolation gate evidence.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Checked the real callers of the safe timeline hooks in `src/domains/media-lightbox/hooks/useAddToVideoEditor.ts`. That code passes through both mounted-editor values and the `null` outside-provider case, then uses `ops.registerGenerationAsset`, `ops.handleAssetDrop`, and `data.resolvedConfig?.clips` when available, so any replacement API has to preserve both nullable access and the current immediate-drop contract rather than only exposing non-null store selectors.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked `src/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx` as a caller of `useTimelineEditorData()`. It only reads `dataRef`, but it passes that mutable ref straight into `useClipResizeGesture`, which relies on latest timeline data during pointer sequences; the plan does not yet say how this exact caller will receive a stable mutable adapter once the context is removed.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked `src/tools/video-editor/components/VideoEditorShell.tsx`, where `handleKeyboardDelete` combines `editorData.dataRef.current` with `editorData.selectedClipIds` to build a mutation before falling back to `handleDeleteClips`. That caller needs synchronized latest-ref and latest-selection semantics, so splitting those reads across unrelated store selectors without an adapter can change behavior even if each field is individually correct.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Timeline store migration: removing the timeline contexts without replacing the nullable safe-hook boundary will break `useAddToVideoEditor`'s staged-vs-mounted control flow.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`src/domains/media-lightbox/hooks/useAddToVideoEditor.ts` branches on `useTimelineEditorDataSafe()` / `useTimelineEditorOpsSafe()` being null and then uses `registerGenerationAsset`, `handleAssetDrop`, and `resolvedConfig?.clips` when mounted."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Timeline render isolation: the plan under-specifies the row-level work needed to keep non-dragged `SortableRow` instances at 0 rerenders during drag.",
+      "category": "performance",
+      "severity_hint": "likely-significant",
+      "evidence": "`TimelineCanvas.tsx` derives shared resize-preview and selection props centrally and `TrackListRenderer.tsx` passes them through every `SortableRow`, so selector narrowing alone does not isolate rows."
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Timeline store bootstrap: the plan does not pin down how `useTimelineState.ts` hydrates the store without either render-time side effects or effect-time staleness for pending-add and AgentChat readers.",
+      "category": "correctness",
+      "severity_hint": "uncertain",
+      "evidence": "`useTimelineState.ts` currently returns composed values synchronously, while `VideoEditorProvider.tsx` reads fresh `editor` values immediately for pending-add draining, lightbox ops wiring, and `AgentChatBridgeRegistration`."
+    },
+    {
+      "id": "FLAG-004",
+      "concern": "Render-budget verification: the plan relies on M0 telemetry for a per-scroll-event gate that the current telemetry system does not directly measure.",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "evidence": "`docs/state_management_refactor_baselines.md` and `src/shared/dev/useRenderBudget.ts` describe 1-second interaction-window `maxCount` aggregation, not scroll-event-specific sampling."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

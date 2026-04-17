@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
 const mockNavigateToShot = vi.fn();
@@ -22,10 +22,16 @@ import { useQuickShotCreate } from '../useQuickShotCreate';
 describe('useQuickShotCreate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     mockCreateShot.mockResolvedValue({
       shotId: 'new-shot-1',
       shotName: 'Shot 1',
     });
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 
   it('returns expected shape', () => {

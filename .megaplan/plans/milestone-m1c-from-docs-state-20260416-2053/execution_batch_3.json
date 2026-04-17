@@ -1,0 +1,62 @@
+{
+  "output": "Implemented `src/tools/video-editor/hooks/timelineStore.ts` as a provider-scoped vanilla Zustand store with explicit `data`, `ops`, `chrome`, and `playback` slices, shallow selector hooks, safe nullable hooks gated by a mounted availability boundary, and a narrow mutable-adapter selector for the load-bearing gesture/async refs. Wrote the batch checkpoint to `.megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/execution_batch_3.json` and verified the new file with `npx tsc --noEmit --pretty false`.",
+  "files_changed": [
+    "/workspace/reigh-app/src/tools/video-editor/hooks/timelineStore.ts",
+    "/workspace/reigh-app/.megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/execution_batch_3.json"
+  ],
+  "commands_run": [
+    "pwd && git branch --show-current && rg -n \"createEntityStore|zustand|shallow\\)|useShallow|createStore\\(|create\\(\" src/shared src/tools/video-editor --glob '!**/node_modules/**' && printf '\\n--- selectionStore ---\\n' && sed -n '1,260p' src/shared/state/selectionStore.ts && printf '\\n--- createEntityStore ---\\n' && sed -n '1,260p' src/shared/state/createEntityStore.ts && printf '\\n--- useTimelineState types ---\\n' && sed -n '1,260p' src/tools/video-editor/hooks/useTimelineState.types.ts && printf '\\n--- timeline contexts ---\\n' && sed -n '1,280p' src/tools/video-editor/contexts/TimelineEditorContext.tsx && printf '\\n--- chrome ---\\n' && sed -n '1,240p' src/tools/video-editor/contexts/TimelineChromeContext.tsx && printf '\\n--- playback ---\\n' && sed -n '1,240p' src/tools/video-editor/contexts/TimelinePlaybackContext.tsx && printf '\\n--- useTimelineState ---\\n' && sed -n '1,320p' src/tools/video-editor/hooks/useTimelineState.ts && printf '\\n--- useTimelineState.contexts ---\\n' && sed -n '1,280p' src/tools/video-editor/hooks/useTimelineState.contexts.ts",
+    "sed -n '260,420p' src/shared/state/createEntityStore.ts",
+    "sed -n '420,820p' src/shared/state/selectionStore.ts",
+    "sed -n '320,520p' src/tools/video-editor/hooks/useTimelineState.ts",
+    "rg -n \"TimelineChromeContextValue|TimelinePlaybackContextValue|UseTimelineStateResult\" src/tools/video-editor/hooks/useTimelineState.types.ts && sed -n '260,520p' src/tools/video-editor/hooks/useTimelineState.types.ts",
+    "sed -n '1,280p' src/tools/video-editor/hooks/timeline-state-types.ts",
+    "sed -n '1,220p' src/tools/video-editor/lib/interaction-state.ts",
+    "sed -n '1,220p' src/tools/video-editor/hooks/useTimelineSelection.ts",
+    "sed -n '1,240p' src/shared/settings/hooks/useAutoSaveSettings.ts",
+    "sed -n '1,260p' src/tools/video-editor/lib/mobile-interaction-model.ts",
+    "rg -n \"export function formatTime|const formatTime|formatTime\" src/tools/video-editor/hooks/useTimelinePlayback.ts && sed -n '1,260p' src/tools/video-editor/hooks/useTimelinePlayback.ts",
+    "rg -n \"type PreviewRef|previewRef|playerContainerRef\" src/tools/video-editor/hooks/useTimelinePlayback.ts src/tools/video-editor/components -g '!**/node_modules/**'",
+    "sed -n '1,180p' src/tools/video-editor/hooks/useTimelineState.types.ts",
+    "sed -n '1,260p' src/tools/video-editor/hooks/useEditorPreferences.ts",
+    "sed -n '1,240p' src/tools/video-editor/hooks/useDragCoordinator.ts",
+    "rg -n \"export type DropPosition|export interface DropPosition\" src/tools/video-editor/lib/drop-position.ts && sed -n '1,140p' src/tools/video-editor/lib/drop-position.ts",
+    "rg -n \"registerGenerationAsset\" src/tools/video-editor/hooks/useAssetManagement.ts src/tools/video-editor/hooks/useAssetManagement.ts",
+    "rg -n \"handleAssetDrop|uploadImageGeneration|uploadVideoGeneration\" src/tools/video-editor/hooks/useAssetManagement.ts",
+    "sed -n '1,260p' src/tools/video-editor/hooks/useAssetManagement.ts",
+    "rg -n \"onActionResizeStart|onClipEdgeResizeEnd\" src/tools/video-editor/hooks/useClipResize.ts src/tools/video-editor/hooks/useClipResizeGesture.ts src/tools/video-editor/components/TimelineEditor -g '!**/node_modules/**'",
+    "sed -n '1,220p' src/tools/video-editor/hooks/useClipResize.ts",
+    "sed -n '1,120p' src/tools/video-editor/settings/useEditorSettings.ts",
+    "npx tsc --noEmit --pretty false"
+  ],
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/execution_batch_3.json",
+    "Advisory quality: src/tools/video-editor/hooks/timelineStore.ts grew by 503 lines (threshold 200).",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitignore, .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/plans/milestone-m1b-from-docs-state-20260416-1226/, .megaplan/schemas/critique.json, .megaplan/schemas/execution.json, .megaplan/schemas/execution_doc.json, .megaplan/schemas/finalize.json, .megaplan/schemas/gate.json, .megaplan/schemas/plan.json, .megaplan/schemas/review.json, .megaplan/schemas/revise.json, .megaplan/schemas/tiebreaker_challenger.json, .megaplan/schemas/tiebreaker_researcher.json, src/app/App.tsx, src/app/hooks/useResetCurrentShotOnRouteChange.test.ts, src/app/hooks/useResetCurrentShotOnRouteChange.ts, src/app/providers/AppProviders.test.tsx, src/app/providers/AppProviders.tsx, src/domains/media-lightbox/hooks/useMagicEditMode.ts, src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.test.tsx, src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.tsx, src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.test.ts, src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.ts, src/features/gallery/components/GenerationsPane/hooks/useLassoSelection.ts, src/features/gallery/hooks/__tests__/useGalleryPageState.test.ts, src/features/gallery/hooks/useGalleryPageState.ts, src/features/tasks/components/TasksPane/TasksPane.tsx, src/features/tasks/components/TasksPane/hooks/useTaskNavigation.ts, src/pages/ShotsPage.tsx, src/shared/components/MediaGallery/MediaGallery.tsx, src/shared/contexts/CurrentShotContext.tsx, src/shared/contexts/GallerySelectionContext.test.tsx, src/shared/contexts/GallerySelectionContext.tsx, src/shared/contexts/LastAffectedShotContext.tsx, src/shared/contexts/ShotAdditionSelectionContext.test.tsx, src/shared/contexts/ShotAdditionSelectionContext.tsx, src/shared/contexts/__tests__/CurrentShotContext.test.tsx, src/shared/hooks/__tests__/useLastAffectedShot.test.ts, src/shared/hooks/__tests__/useShotNavigation.test.ts, src/shared/hooks/gallery/__tests__/useGalleryFilterState.test.ts, src/shared/hooks/gallery/useGalleryFilterState.ts, src/shared/hooks/gallery/useGallerySelectionBridge.ts, src/shared/hooks/shots/useLastAffectedShot.ts, src/shared/hooks/shots/useShotNavigation.ts, src/shared/state/selectionStore.ts, src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts, src/tools/image-generation/pages/ImageGenerationToolPage.tsx, src/tools/travel-between-images/components/ShotEditor/index.test.tsx, src/tools/travel-between-images/components/ShotEditor/useShotEditorController.ts, src/tools/travel-between-images/components/VideoGallery/VideoShotDisplay.test.tsx, src/tools/travel-between-images/components/VideoGallery/VideoShotDisplay.tsx, src/tools/travel-between-images/hooks/workflow/useVideoTravelDropHandlers.ts, src/tools/travel-between-images/pages/ShotEditorView.tsx, src/tools/travel-between-images/pages/VideoTravelToolPage.tsx, src/tools/video-editor/components/AgentChat/AgentChat.test.tsx, src/tools/video-editor/components/AgentChat/AgentChat.tsx, src/tools/video-editor/hooks/useClipDrag.ts, src/tools/video-editor/hooks/useMultiSelect.ts, src/tools/video-editor/hooks/useTimelineCommit.ts, src/tools/video-editor/hooks/useTimelineSelection.ts, src/tools/video-editor/hooks/useTimelineState.ts, src/tools/video-editor/hooks/useTimelineState.types.ts, test-results/",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Implemented `timelineStore.ts` as a provider-scoped vanilla Zustand store so the migration can preserve a real mounted/unmounted boundary instead of falling back to a global always-available singleton. The store now carries explicit `data`, `ops`, `chrome`, and `playback` slices; shallow selector hooks for each slice; safe selector variants that return `null` unless a mounted provider is present; bootstrap/lifecycle actions (`setMounted`, `syncDataSlice`, `syncOpsSlice`, `syncChromeSlice`, `syncPlaybackSlice`, `syncSlices`, `resetSlices`); and a narrow mutable-adapter selector that exposes only the load-bearing refs needed by gesture/poll/persistence flows. Verified with `npx tsc --noEmit --pretty false`.",
+      "files_changed": [
+        "/workspace/reigh-app/src/tools/video-editor/hooks/timelineStore.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit --pretty false"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. `timelineStore.ts` exposes narrow shallow-equality selector hooks for `data`, `ops`, `chrome`, and `playback`, and the safe selector path is guarded by a provider-scoped `mounted` availability boundary so nullable consumers can still distinguish `editor not mounted` from `mounted with empty/default state`."
+    }
+  ]
+}

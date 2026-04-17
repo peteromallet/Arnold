@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/shared/components/ui/alert-dialog";
 import { Search } from 'lucide-react';
 import { useIsMobile } from '@/shared/hooks/mobile';
+import { getClosestOverlayContainer } from '@/shared/components/ui/overlay';
 
 import { CommunityLorasTabProps, LoraModel, ModelFilterCategory, SortOption } from '../types';
 import { getSubFilterOptions, matchesFilters } from '../utils/filter-utils';
@@ -17,7 +18,7 @@ function useSelectPortalContainer<T extends HTMLElement>() {
   const [container, setContainer] = React.useState<HTMLElement | null>(null);
 
   React.useLayoutEffect(() => {
-    const nextContainer = sectionRef.current?.closest('[data-dialog-content]') as HTMLElement | null;
+    const nextContainer = getClosestOverlayContainer(sectionRef.current);
     setContainer(nextContainer ?? null);
   }, []);
 

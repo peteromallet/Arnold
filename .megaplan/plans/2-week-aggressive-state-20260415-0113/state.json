@@ -1,0 +1,133 @@
+{
+  "name": "2-week-aggressive-state-20260415-0113",
+  "idea": "2-week aggressive state-management refactor for reigh-app. Replace the hook-chain / context-as-pubsub architecture with a Zustand-based store pattern for the three cross-cutting state domains that cause the most re-render storms: settings persistence, selection, and timeline editor state.\n\nMotivation: the current architecture causes 15-20 cascading renders on media-lightbox open, stuck focus traps in Base UI overlays (Select flashes closed, textarea rejects typing), pervasive memoization churn, and has five layers of hooks coordinating the same value across refs/state/localStorage/DB. Every time we patch one instability, another surfaces elsewhere \u2014 the render storms are architectural, not incidental. This refactor moves all three domains to subscription-based stores so unrelated state updates stop cascading through the tree.\n\nTech choice (fixed, no alternatives): Zustand. Not Jotai, not Redux, not custom useSyncExternalStore, not Valtio. Keep React Query for server-data fetching; store subscribes to RQ on data arrival, does NOT replicate server state.\n\n# WEEK 1 \u2014 Settings store\n\n## Day 1: Foundation\n- Create src/shared/state/createEntityStore.ts: a generic Zustand factory.\n  - Actions: bootstrapEntity({ entityId, db, lastUsed }), updateField, updateFields, updateTextField (deferred save), flushTextFields, save, saveImmediate, revert, reset, initializeFrom.\n  - State shape: { entityId, status: 'idle' | 'loading' | 'ready' | 'saving' | 'error', settings: T, loadedSettings: T | null, error: Error | null, hasPersistedData: boolean, pendingEntityId: string | null, pendingSettings: T | null, editVersion: number }.\n  - One atomic bootstrapEntity action that computes the final state from db + lastUsed in a single dispatch (not four sequential transitions).\n  - Preserve pending-text-field protection (tracks user edits in flight so refetches don't stomp typing).\n  - Persistence middleware that wraps a user-provided save fn with debounce + flush + beforeunload.\n- Port the smallest caller first (src/tools/join-clips/hooks/useJoinClipsSettings.ts, 5 fields) to validate the shape. Hook signature unchanged.\n\n## Day 2-3: Core settings store\n- Rewrite src/shared/settings/hooks/useAutoSaveSettings.ts as a thin wrapper over createEntityStore. Public return shape IDENTICAL (settings, status, entityId, isDirty, error, hasShotSettings, hasPersistedData, updateField, updateFields, save, saveImmediate, revert, reset, initializeFrom). Internally instantiates / reuses a store keyed on (toolId, entityId, scope).\n- Absorb src/shared/settings/hooks/useDebouncedSettingsSave.ts (pending tracking, edit versioning, beforeunload flush) into the store's persistence middleware. Delete the hook file once absorbed.\n- Kill the render-time state mutation at src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts:110-114 (hasInitializedRef / lastGenerationIdRef / isReady). Store owns readiness now.\n- Kill the ref-based pseudo-state in src/domains/media-lightbox/hooks/useLastUsedEditSettings.ts (currentValueRef used as React state). Move to a real store slice.\n- Collapse useReactQueryModeLoad and useCustomModeLoad into one load path (the distinction was a workaround for two state machines that can now be one).\n\n## Day 4: Migrate loud callers\nMigrate every useAutoSaveSettings caller. No visible behavior change, no API change at the hook boundary:\n- src/domains/media-lightbox/hooks/useGenerationEditSettings.ts\n- src/domains/media-lightbox/hooks/persistence/useEditSettingsPersistence.ts\n- src/tools/travel-between-images/hooks/settings/useShotSettings.ts\n- src/tools/edit-images/hooks/useInlineEditState.ts\n- src/tools/join-clips/hooks/useJoinClipsSettings.ts (already done Day 1)\n- src/tools/character-animate/hooks/useCharacterAnimateSettings.ts\n- src/tools/image-generation/hooks/useImageGenGallery.ts\n- Plus every hook under src/tools/travel-between-images/components/ShotEditor/hooks/video/ that uses useAutoSaveSettings (useStructureVideo, useAudio, etc.).\n\nVerification milestone: open the image lightbox, render counter \u2264 3 (down from 15-20). Click the model Select \u2014 stays open. Type in the prompt textarea \u2014 no lost keystrokes.\n\n## Day 5: Delete dead code + update tests\n- Delete src/shared/settings/hooks/autoSaveSettingsHelpers.ts (reducer helpers \u2014 no reducer now).\n- Delete src/shared/settings/hooks/autoSaveSettingsLoaders.ts (load effects \u2014 store owns them).\n- Delete the pseudo-reducer action types and dispatch wrappers.\n- Update tests: src/shared/settings/hooks/__tests__/useAutoSaveSettings.test.ts, useDebouncedSettingsSave.test.ts, autoSaveSettingsHelpers.test.ts, autoSaveSettingsLoaders.test.ts. Delete implementation-detail tests; keep user-behavior tests; add new store-level tests where appropriate.\n\nEnd-of-week-1 target: ~2000 lines deleted, ~800 added. Storm dies. Model Select + textarea bugs fixed structurally.\n\n# WEEK 2 \u2014 Selection store + Timeline store\n\n## Day 6-7: Unified selection store\nCollapse these contexts into a single src/shared/state/selectionStore.ts with slices:\n- src/shared/contexts/GallerySelectionContext.tsx\n- src/shared/contexts/LastAffectedShotContext.tsx\n- src/shared/contexts/CurrentShotContext.tsx\n- src/shared/contexts/ShotAdditionSelectionContext.tsx\n- Internal selection state inside useTimelineState.ts (selectedClipId, selectedClipIds, selectedTrackId, additiveSelectionRef, etc.).\n\nStore shape:\n{ gallery: { ids: string[], lastSelected: string | null }, timeline: { clipIds: string[], primaryClipId: string | null, trackId: string | null }, shot: { current: string | null, lastAffected: string | null, pendingAddition: string | null } }\n\nCross-cutting actions that were effect-chain glue become single dispatches:\n- selectGalleryItems({ ids, replace }) \u2014 auto-deselects timeline if configured\n- selectClip({ clipId, additive }) \u2014 updates primaryClipId if first\n- setCurrentShot(shotId) \u2014 also sets lastAffected\n- enterShotAdditionMode(imageId) \u2014 mutually exclusive with gallery selection\n\nMigrate every consumer to read specific slices via selectors. Contexts deleted. Effect-chain sync between contexts deleted.\n\n## Day 8-9: Timeline editor state store\nCollapse the four-way context split (a workaround for context-as-pubsub) into a single store at src/tools/video-editor/state/timelineStore.ts:\n- src/tools/video-editor/contexts/TimelineEditorContext.tsx (Data + Ops providers)\n- src/tools/video-editor/contexts/TimelineChromeContext.tsx\n- src/tools/video-editor/contexts/TimelinePlaybackContext.tsx\n\nConsumers subscribe to the specific fields they need via selectors. Components currently reading whole context values get targeted subscriptions (timeline canvas reads scale + clip list; chrome reads deviceClass; playback reads isPlaying; etc.).\n\nKill the editorRef.current / dataRef / clipsRef / interactionStateRef workarounds scattered through VideoEditorProvider.tsx and useTimelineState.ts \u2014 the store is always latest, no ref dance needed for stability.\n\nuseTimelineState.ts target: from ~300 lines to ~150. Most of today's memo plumbing disappears.\n\nVerification milestone: scroll the timeline, render counter on the timeline canvas stays flat except when scale/viewport changes. Drag a clip, only the clip and its row re-render, not the whole editor.\n\n## Day 10: Consolidation + docs\n- Write docs/structure_detail/state_management.md: one page explaining where state lives now (React Query for server data, stores for shared client state, useState for local UI).\n- Add ESLint rule or check: context values with >10 fields should be a store.\n- Delete stragglers: any hooks whose only job was memo plumbing for the dead contexts.\n- Open follow-up GitHub issues for (but do NOT start) weeks 3-4 migrations: realtime task events, panes state.\n\n# RULES DURING THE SPRINT (non-negotiable)\n\n1. One PR per atomic migration. Five PRs total: foundation \u2192 core settings store \u2192 settings callers migration \u2192 selection store \u2192 timeline store. Each must revert cleanly on its own.\n2. Keep hook names at the API boundary. useShotSettings(id) stays; only its implementation swaps. No consumer file changes in the settings migration unless the consumer is literally reading a deleted internal field.\n3. Don't replace React Query. Store subscribes to RQ data on arrival via the existing useToolSettings hook. One-way binding: RQ \u2192 store.\n4. Delete aggressively. If a helper exists only to paper over the old problem, it goes. Predecessor removed in the same PR that adds the successor. No \"leave the old hook for backup\" during this sprint.\n5. No dev-time performance regressions allowed. Add a render counter dev-only hook (useRenderBudget). Instrument ImageLightbox, EditModePanel, LightboxShell, TimelineCanvas, one timeline track row. If their render counts on lightbox-open / drag-clip go up after a migration, the migration regressed.\n6. TypeScript strict throughout. Store actions should be exhaustive; selectors should narrow precisely. No `any`.\n\n# WHAT THIS SPRINT DOES NOT TOUCH\n\n- Realtime task events (RealtimeProvider / useTaskStatus) \u2014 weeks 3-4.\n- Panes state (PanesContext) \u2014 weeks 3-4.\n- Tool registry / per-tool state beyond settings \u2014 later.\n- Modal / overlay stack primitive \u2014 later (weeks 3-4; depends on this work landing).\n- Supabase schema, edge functions, workers \u2014 completely out of scope.\n- Any feature work \u2014 no new features, only refactor.\n\n# REPO CONVENTIONS (from reigh-app/CLAUDE.md)\n\n- Prefer editing existing files; don't create new .md docs unless explicitly requested (state_management.md on Day 10 is the one allowed exception).\n- Toasts are errors-only (no success toasts).\n- Never hardcode colors; use Tailwind theme tokens.\n- Never run `npx supabase db reset --linked`.\n- Use `getGenerationId(media)` from shared/lib/mediaTypeHelpers.ts, not inline `media.generation_id || media.id`.\n\n# WORK SETUP\n\n- Work directory: /workspace/reigh-app.\n- Base branch: main.\n- Each of the five migration PRs lands on its own branch:\n  1. megaplan/state-store-foundation\n  2. megaplan/settings-store-core\n  3. megaplan/settings-callers-migrated\n  4. megaplan/selection-store\n  5. megaplan/timeline-store\n- Merge via fast-forward (or create GitHub PRs for review if GITHUB_TOKEN is available).\n\n# SUCCESS CRITERIA (for the reviewer)\n\n- MUST: ImageLightbox opens with \u2264 3 renders (measured by the new render counter).\n- MUST: Model Select dropdown stays open on click and accepts selection.\n- MUST: Prompt textarea accepts typing without lost keystrokes.\n- MUST: Full test suite passes at no worse rate than pre-refactor (the repo has pre-existing failures in unrelated areas \u2014 match that baseline, don't improve unrelated tests).\n- MUST: Typecheck clean.\n- MUST: All five listed files deleted (useDebouncedSettingsSave, autoSaveSettingsHelpers, autoSaveSettingsLoaders, GallerySelectionContext, one of the timeline contexts).\n- SHOULD: EditModePanel renders \u2264 2 times on lightbox open.\n- SHOULD: Line count net-negative (delete more than you add, measured across the five PRs).\n- SHOULD: docs/structure_detail/state_management.md exists and is accurate.\n- INFO: Selection store has 4+ consumers migrated; timeline store has 8+ consumers migrated.\n\nStart with thorough prep: investigate the existing hook chain, map every caller of useAutoSaveSettings, useShotSettings, useTimelineState, and the five selection contexts. Identify any unique state patterns or unusual consumers that need special handling. Surface any real surprises (e.g., a caller that depends on a specific reference-identity behavior) before planning.",
+  "current_state": "aborted",
+  "iteration": 1,
+  "created_at": "2026-04-15T01:13:52Z",
+  "config": {
+    "project_dir": "/workspace/reigh-app",
+    "auto_approve": true,
+    "robustness": "standard",
+    "agent": ""
+  },
+  "sessions": {
+    "codex_prep": {
+      "id": "019d8eb4-0acd-7bc3-b22e-37ab1d2eadc1",
+      "mode": "persistent",
+      "created_at": "2026-04-15T01:15:30Z",
+      "last_used_at": "2026-04-15T01:15:30Z",
+      "refreshed": false
+    },
+    "codex_planner": {
+      "id": "019d8ebe-997a-7eb2-8bae-4a3f7bb565fd",
+      "mode": "persistent",
+      "created_at": "2026-04-15T01:28:34Z",
+      "last_used_at": "2026-04-15T01:28:34Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:d5b16122c0227931d2dfee0711a10b7932953ecb50e1de84a319860b546ad455",
+      "timestamp": "2026-04-15T01:28:34Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-15T01:13:52Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "prep",
+      "timestamp": "2026-04-15T01:15:30Z",
+      "duration_ms": 73193,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d8eb4-0acd-7bc3-b22e-37ab1d2eadc1",
+      "agent": "codex",
+      "output_file": "prep.json",
+      "artifact_hash": "sha256:723da291fd4805b449cb0368e4c2eafc0dd215b7616960282b0b24c8d600704f"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-15T01:28:34Z",
+      "duration_ms": 165456,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019d8ebe-997a-7eb2-8bae-4a3f7bb565fd",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:d5b16122c0227931d2dfee0711a10b7932953ecb50e1de84a319860b546ad455"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T01:30:54Z",
+      "duration_ms": 138384,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "critique_v1_raw.txt",
+      "message": "Critique output failed check validation: issue_hints, correctness, scope, all_locations, callers, caller-audit, locations-and-infrastructure, requirements-coverage, success-criteria, technical-correctness"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T01:32:33Z",
+      "duration_ms": 98129,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "critique_v1_raw.txt",
+      "message": "Critique output failed check validation: issue_hints, correctness, scope, all_locations, callers"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T01:35:27Z",
+      "duration_ms": 173128,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "critique_v1_raw.txt",
+      "message": "Critique output failed check validation: issue_hints, correctness, scope, all_locations, callers, pr-boundaries, prep-audit, repo-shape, settings-store-semantics, validation-gates"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-15T01:37:58Z",
+      "duration_ms": 149565,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "critique_v1_raw.txt",
+      "message": "Critique output failed check validation: issue_hints, correctness, scope, all_locations, callers, branch-structure-and-revertibility, callers-and-hotspots, settings-store-contract, surface-area-and-deletions, validation-and-evidence"
+    }
+  ],
+  "meta": {
+    "significant_counts": [],
+    "weighted_scores": [],
+    "plan_deltas": [],
+    "recurring_critiques": [],
+    "total_cost_usd": 0.0,
+    "overrides": [
+      {
+        "action": "abort",
+        "timestamp": "2026-04-15T01:40:26Z",
+        "reason": "sense-check surfaced scope errors + safety gaps; re-planning"
+      }
+    ],
+    "notes": []
+  },
+  "last_gate": {},
+  "active_step": {
+    "step": "critique",
+    "agent": "codex",
+    "mode": "persistent",
+    "run_id": "0ac39a81-ca06-490d-b403-9c23a3e13abd",
+    "started_at": "2026-04-15T01:37:59Z"
+  }
+}

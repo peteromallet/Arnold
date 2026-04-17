@@ -3,9 +3,9 @@ import { useUpdateShotImageOrder, useAddImageToShot, useRemoveImageFromShot } fr
 import { useShotCreation } from "@/shared/hooks/shotCreation/useShotCreation";
 import { useIsMobile } from "@/shared/hooks/mobile";
 import { Shot } from '@/domains/generation/types';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { useCurrentShot } from '@/shared/state/selectionStore';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -28,7 +28,7 @@ import {
   useGenerationModeSettings,
   useSteerableMotionSettings,
   useLoraSettings,
-  useVideoTravelSettings,
+  useVideoTravelSettingsStatus,
 } from '@/tools/travel-between-images/providers';
 import { ShotEditorLayoutProps } from './ShotEditorLayout';
 import { useGenerationController } from './controllers/useGenerationController';
@@ -112,7 +112,7 @@ function useShotEditorBootstrap({
   const generationModeSettings = useGenerationModeSettings();
   const steerableMotionSettings = useSteerableMotionSettings();
   const loraSettings = useLoraSettings();
-  const { isLoading: settingsLoadingFromContext } = useVideoTravelSettings();
+  const { isLoading: settingsLoadingFromContext } = useVideoTravelSettingsStatus();
 
   const shotSetup = useShotEditorSetup({
     selectedShotId,
@@ -140,7 +140,7 @@ function useShotEditorBootstrap({
 
   const isMobile = useIsMobile();
   const { isPhone, aspectAdjustedColumns } = useAspectAdjustedColumns(shotSetup.effectiveAspectRatio);
-  const { setIsGenerationsPaneLocked } = usePanes();
+  const setIsGenerationsPaneLocked = usePanesStore((state) => state.setIsGenerationsPaneLocked);
   const lastVideoGeneration = useLastVideoGeneration(selectedShotId);
 
   return {

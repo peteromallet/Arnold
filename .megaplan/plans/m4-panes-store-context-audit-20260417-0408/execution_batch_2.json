@@ -1,0 +1,75 @@
+{
+  "output": "Implemented `src/shared/state/panesStore.ts` as the singleton selector-first panes store. It now mirrors the former panes surface, preserves the existing effective-height calculation and pane lock/open semantics, bootstraps runtime-backed lock policy state through an explicit owner-based idempotent bootstrap path, exposes intentional outside-bootstrap reads via `availability.bootstrapped === false` plus a deterministic unlocked default snapshot, and includes lifecycle/test reset helpers.",
+  "files_changed": [
+    "src/shared/state/panesStore.ts"
+  ],
+  "commands_run": [
+    "sed -n '1,260p' src/shared/contexts/PanesContext.tsx",
+    "sed -n '1,240p' src/shared/contexts/usePaneLockPolicyState.ts",
+    "sed -n '1,240p' src/shared/state/selectionStore.ts",
+    "sed -n '261,420p' src/shared/contexts/PanesContext.tsx",
+    "rg -n \"usePanes\\(|PanesContext|PaneLockPolicyContext|PaneLayoutContext|PaneSelectionContext\" src -g '*.ts' -g '*.tsx'",
+    "sed -n '1,220p' src/shared/config/panes.ts",
+    "rg -n \"bootstrap.*Store|reset.*Store|get.*Store|outside-bootstrap|singleton lifecycle|useStoreWithEqualityFn\\(|createStore\\(\" src/shared/state src -g '*.ts' -g '*.tsx'",
+    "ls src/shared/state && rg -n \"reset.*helper|__reset|bootstrap\" src/shared/state -g '*.ts'",
+    "sed -n '1,220p' src/tools/video-editor/hooks/timelineStore.ts",
+    "sed -n '220,520p' src/tools/video-editor/hooks/timelineStore.ts",
+    "sed -n '780,840p' src/shared/state/selectionStore.ts",
+    "rg --files src/shared/hooks src/shared -g '*mobile*' -g '*Mobile*'",
+    "rg -n \"export function useIsMobile|export const useIsMobile|useIsTablet\" src/shared -g '*.ts' -g '*.tsx'",
+    "sed -n '1,200p' src/shared/hooks/mobile/index.ts",
+    "sed -n '1,220p' src/shared/contexts/usePaneLockPolicyState.test.ts",
+    "sed -n '1,260p' src/shared/contexts/__tests__/PanesContext.test.tsx",
+    "sed -n '260,420p' src/shared/contexts/__tests__/PanesContext.test.tsx",
+    "npx tsc --noEmit",
+    "npx vitest run src/shared/contexts/usePaneLockPolicyState.test.ts src/shared/contexts/__tests__/PanesContext.test.tsx"
+  ],
+  "deviations": [
+    "Advisory quality: src/shared/state/panesStore.ts grew by 513 lines (threshold 200).",
+    "Advisory audit finding: Executor claimed changed files not present in git status: docs/state_management_context_audit.md, src/app/providers/AppProviders.tsx, src/shared/contexts/__tests__/PanesContext.test.tsx",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/m2-overlay-stack-centralize-20260416-2326/, .megaplan/plans/m3-realtime-events-store-20260417-0218/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/plans/milestone-m1b-from-docs-state-20260416-1226/, .megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/, src/domains/generation/hooks/tasks/generationTaskCache.ts, src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx, src/domains/lora/components/LoraSelectorModal/components/CommunityLorasTab.tsx, src/domains/lora/components/LoraSelectorModal/components/MyLorasTab/MyLorasTab.tsx, src/domains/media-lightbox/components/ButtonGroups.tsx, src/domains/media-lightbox/components/LightboxShell.tsx, src/domains/media-lightbox/components/ShotSelectorControls.tsx, src/domains/media-lightbox/components/WorkflowControlsBar.tsx, src/domains/media-lightbox/components/controls/PositionToggleButton.tsx, src/domains/media-lightbox/components/controls/UndoClearButtons.tsx, src/domains/media-lightbox/components/editModes/sharedSections.tsx, src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx, src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx, src/domains/media-lightbox/components/layouts/LightboxLayout.tsx, src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx, src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx, src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts, src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts, src/domains/media-lightbox/hooks/useLightboxNavigation.test.ts, src/domains/media-lightbox/hooks/useLightboxNavigation.ts, src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.test.ts, src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.ts, src/shared/components/MediaGallery/hooks/useMobileInteractions.ts, src/shared/components/ProfitSplitBar.tsx, src/shared/components/VariantSelector/VariantSelector.tsx, src/shared/components/VariantSelector/components/VariantCard.tsx, src/shared/components/selectors/ShotSelector.tsx, src/shared/components/selectors/ShotSelectorWithAdd.tsx, src/shared/components/shots/ShotPrimaryActionButton.tsx, src/shared/components/ui/alert-dialog.tsx, src/shared/components/ui/command.tsx, src/shared/components/ui/dialog.tsx, src/shared/components/ui/dropdown-menu.tsx, src/shared/components/ui/hover-card.tsx, src/shared/components/ui/overlay/, src/shared/components/ui/popover.tsx, src/shared/components/ui/select.tsx, src/shared/components/ui/tooltipPrimitives.test.tsx, src/shared/components/ui/tooltipPrimitives.tsx, src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts, src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts, src/shared/hooks/tasks/__tests__/useTasks.test.ts, src/shared/hooks/tasks/usePendingGenerationTasks.ts, src/shared/hooks/tasks/useTaskPrefetch.ts, src/shared/hooks/tasks/useTasks.ts, src/shared/hooks/useSlidingPane.ts, src/shared/lib/__tests__/generationTaskCache.test.ts, src/shared/lib/interactions/elementPolicy.ts, src/shared/lib/uiLayers.test.ts, src/shared/lib/uiLayers.ts, src/shared/providers/RealtimeProvider.tsx, src/shared/providers/__tests__/RealtimeProvider.test.tsx, src/shared/state/overlayStack.test.ts, src/shared/state/overlayStack.ts, src/shared/state/realtimeStore.test.ts, src/shared/state/realtimeStore.ts, src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts, src/tools/travel-between-images/components/Timeline/GuidanceVideoStrip.tsx, test-results/",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Implemented `src/shared/state/panesStore.ts` as the selector-first singleton panes surface. The store now carries pane lock/open/layout/activeTask state, computes effective heights with the same tiered logic as the former provider, bootstraps from `usePaneLockPolicyState` via an explicit owner-based idempotent bootstrap path, exposes outside-bootstrap reads as a deterministic unlocked default snapshot with `availability.bootstrapped=false`, and includes reset/clear helpers for tests and lifecycle cleanup. Verification: `npx tsc --noEmit` passed; `npx vitest run src/shared/contexts/usePaneLockPolicyState.test.ts src/shared/contexts/__tests__/PanesContext.test.tsx` passed.",
+      "files_changed": [
+        "src/shared/state/panesStore.ts"
+      ],
+      "commands_run": [
+        "sed -n '1,260p' src/shared/contexts/PanesContext.tsx",
+        "sed -n '1,240p' src/shared/contexts/usePaneLockPolicyState.ts",
+        "sed -n '1,240p' src/shared/state/selectionStore.ts",
+        "sed -n '261,420p' src/shared/contexts/PanesContext.tsx",
+        "rg -n \"usePanes\\(|PanesContext|PaneLockPolicyContext|PaneLayoutContext|PaneSelectionContext\" src -g '*.ts' -g '*.tsx'",
+        "sed -n '1,220p' src/shared/config/panes.ts",
+        "rg -n \"bootstrap.*Store|reset.*Store|get.*Store|outside-bootstrap|singleton lifecycle|useStoreWithEqualityFn\\(|createStore\\(\" src/shared/state src -g '*.ts' -g '*.tsx'",
+        "ls src/shared/state && rg -n \"reset.*helper|__reset|bootstrap\" src/shared/state -g '*.ts'",
+        "sed -n '1,220p' src/tools/video-editor/hooks/timelineStore.ts",
+        "sed -n '220,520p' src/tools/video-editor/hooks/timelineStore.ts",
+        "sed -n '780,840p' src/shared/state/selectionStore.ts",
+        "rg --files src/shared/hooks src/shared -g '*mobile*' -g '*Mobile*'",
+        "rg -n \"export function useIsMobile|export const useIsMobile|useIsTablet\" src/shared -g '*.ts' -g '*.tsx'",
+        "sed -n '1,200p' src/shared/hooks/mobile/index.ts",
+        "sed -n '1,220p' src/shared/contexts/usePaneLockPolicyState.test.ts",
+        "sed -n '1,260p' src/shared/contexts/__tests__/PanesContext.test.tsx",
+        "sed -n '260,420p' src/shared/contexts/__tests__/PanesContext.test.tsx",
+        "npx tsc --noEmit",
+        "npx vitest run src/shared/contexts/usePaneLockPolicyState.test.ts src/shared/contexts/__tests__/PanesContext.test.tsx"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Yes. `src/shared/state/panesStore.ts` now provides a selector-first singleton store that preserves the former pane fields and effective-height math, wires runtime-backed lock/open behavior through `usePaneLockPolicyState` bootstrap data, exposes `availability.bootstrapped` plus deterministic default reads before bootstrap, and includes explicit clear/reset helpers for lifecycle cleanup and tests. Typecheck and the relevant panes/pane-lock-policy test modules both passed after the change."
+    }
+  ]
+}

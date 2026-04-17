@@ -1,0 +1,130 @@
+{
+  "output": "Implemented the rework for the context-audit completeness and fat-context guard coverage. The audit document now accounts for the current declaration set, including the split Lightbox/ImageGenerationForm surfaces and the additional test-only `React.createContext(...)` mock declarations. The guard now resolves React `createContext` calls through TypeScript symbols so both imported identifiers and namespaced/default-import forms are covered. Verification passed with the repro script, `npm run check:fat-contexts`, `npx tsc --noEmit`, a clean production grep for the removed panes API, and a full green `npm test` run.",
+  "files_changed": [
+    "docs/state_management_context_audit.md",
+    "scripts/quality/check-fat-contexts.mjs"
+  ],
+  "commands_run": [
+    "node .tmp-m4-rework-repro.cjs",
+    "npm run check:fat-contexts",
+    "npx tsc --noEmit",
+    "rg -n \"PanesContext|PanesProvider|usePanes\\(\" src --glob '!**/*.test.*' --glob '!**/__tests__/**'",
+    "npm test"
+  ],
+  "deviations": [
+    "`/workspace/reigh-app/.megaplan/plans/m4-panes-store-context-audit-20260417-0408/execution_checkpoint.json` was not present, so no best-effort checkpoint file could be updated.",
+    "`docs/state_management_context_audit.md` is matched by `.gitignore` (`*.md`), so the required audit-doc edit exists on disk but does not appear in `git status`.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: docs/state_management_context_audit.md",
+    "Done tasks missing both files_changed and commands_run: T1, T2, T3, T4, T6",
+    "Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): T8",
+    "Advisory audit finding: Executor claimed changed files not present in git status: docs/state_management_context_audit.md",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/m2-overlay-stack-centralize-20260416-2326/, .megaplan/plans/m3-realtime-events-store-20260417-0218/, .megaplan/plans/m4-panes-store-context-audit-20260417-0408/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/plans/milestone-m1b-from-docs-state-20260416-1226/, .megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/, package.json, scripts/quality/fat-context-allowlist.json, src/app/Layout.tsx, src/app/components/LayoutMainContent.test.tsx, src/app/components/LayoutMainContent.tsx, src/app/hooks/useGlobalPaneShortcuts.ts, src/app/hooks/useOnboardingFlow.test.ts, src/app/hooks/useOnboardingFlow.ts, src/app/providers/AppProviders.test.tsx, src/app/providers/AppProviders.tsx, src/domains/generation/hooks/tasks/generationTaskCache.ts, src/domains/lora/components/LoraSelectorModal/LoraSelectorModal.tsx, src/domains/lora/components/LoraSelectorModal/components/CommunityLorasTab.tsx, src/domains/lora/components/LoraSelectorModal/components/MyLorasTab/MyLorasTab.tsx, src/domains/media-lightbox/components/ButtonGroups.tsx, src/domains/media-lightbox/components/LightboxShell.tsx, src/domains/media-lightbox/components/ShotSelectorControls.tsx, src/domains/media-lightbox/components/WorkflowControlsBar.tsx, src/domains/media-lightbox/components/controls/PositionToggleButton.tsx, src/domains/media-lightbox/components/controls/UndoClearButtons.tsx, src/domains/media-lightbox/components/editModes/sharedSections.tsx, src/domains/media-lightbox/components/layouts/AdjacentSegmentNavigation.tsx, src/domains/media-lightbox/components/layouts/ConstituentImageNavigation.tsx, src/domains/media-lightbox/components/layouts/LightboxLayout.tsx, src/domains/media-lightbox/components/layouts/NewImageOverlayButton.tsx, src/domains/media-lightbox/components/layouts/PreviewSequencePill.tsx, src/domains/media-lightbox/contexts/LightboxStateContext.tsx, src/domains/media-lightbox/hooks/__tests__/useImageLightboxEnvironment.test.ts, src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.test.ts, src/domains/media-lightbox/hooks/taskDetails/useVariantSourceTask.ts, src/domains/media-lightbox/hooks/useImageLightboxEnvironment.ts, src/domains/media-lightbox/hooks/useLightboxNavigation.test.ts, src/domains/media-lightbox/hooks/useLightboxNavigation.ts, src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.test.ts, src/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers.ts, src/domains/media-lightbox/hooks/useStarToggle.ts, src/domains/media-lightbox/hooks/videoLightbox/useVideoLightboxEnvironment.ts, src/features/editor/components/EditorPaneTab.tsx, src/features/gallery/components/GenerationsPane/GenerationsPane.test.tsx, src/features/gallery/components/GenerationsPane/GenerationsPane.tsx, src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.test.ts, src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.ts, src/features/layout/hooks/useBottomOffset.test.ts, src/features/shots/components/CreateShotModal.test.tsx, src/features/shots/components/CreateShotModal.tsx, src/features/tasks/components/TasksPane/TaskItem.tsx, src/features/tasks/components/TasksPane/TaskList.tsx, src/features/tasks/components/TasksPane/TasksPane.tsx, src/features/tasks/components/TasksPane/__tests__/TaskItem.test.tsx, src/features/tasks/components/TasksPane/__tests__/TaskList.test.tsx, src/features/tasks/components/TasksPane/hooks/useTaskNavigation.ts, src/pages/ShotsPage.tsx, src/shared/components/GlobalHeader/CreateProjectModal.tsx, src/shared/components/GlobalHeader/useGlobalHeaderController.ts, src/shared/components/GlobalHeader/useGlobalHeaderProject.ts, src/shared/components/ImageGenerationForm/ImageGenerationFormContext.token.ts, src/shared/components/ImageGenerationForm/ImageGenerationFormContext.tsx, src/shared/components/ImageGenerationForm/hooks/useImageGenerationFormContexts.ts, src/shared/components/MediaGallery/hooks/useMobileInteractions.ts, src/shared/components/MediaGalleryItem.behavior.test.tsx, src/shared/components/MediaSelectionPanel.tsx, src/shared/components/ProductTour/ProductTour.tsx, src/shared/components/ProfitSplitBar.tsx, src/shared/components/ShotImageManager/ShotImageManagerMobile.tsx, src/shared/components/ShotImageManager/components/SelectionActionBar.tsx, src/shared/components/ShotImageManager/hooks/useExternalGenerations.ts, src/shared/components/TaskDetails/TaskDetailsModal.tsx, src/shared/components/ToolsPane/ToolsPane.tsx, src/shared/components/VariantSelector/VariantSelector.tsx, src/shared/components/VariantSelector/components/VariantCard.tsx, src/shared/components/VariantSelector/components/VariantDetails.tsx, src/shared/components/VariantSelector/hooks/useVariantActions.ts, src/shared/components/modals/ImageGenerationModal.tsx, src/shared/components/modals/LineageGifModal.tsx, src/shared/components/modals/ProjectSettingsModal.tsx, src/shared/components/selectors/ShotSelector.tsx, src/shared/components/selectors/ShotSelectorWithAdd.tsx, src/shared/components/shots/ShotPrimaryActionButton.tsx, src/shared/components/ui/alert-dialog.tsx, src/shared/components/ui/command.tsx, src/shared/components/ui/dialog.tsx, src/shared/components/ui/dropdown-menu.tsx, src/shared/components/ui/hover-card.tsx, src/shared/components/ui/overlay/, src/shared/components/ui/popover.tsx, src/shared/components/ui/select.tsx, src/shared/components/ui/tooltipPrimitives.test.tsx, src/shared/components/ui/tooltipPrimitives.tsx, src/shared/contexts/PanesContext.tsx, src/shared/contexts/ProjectContext.tsx, src/shared/contexts/ShotsContext.tsx, src/shared/contexts/__tests__/PanesContext.test.tsx, src/shared/contexts/__tests__/ProjectContext.test.tsx, src/shared/contexts/__tests__/ShotsContext.test.tsx, src/shared/hooks/__tests__/usePendingGenerationTasks.test.ts, src/shared/hooks/__tests__/useQuickShotCreate.test.ts, src/shared/hooks/__tests__/useShotCreation.test.ts, src/shared/hooks/__tests__/useToolSettings.test.ts, src/shared/hooks/gallery/__tests__/useVideoGalleryPreloader.test.ts, src/shared/hooks/gallery/useVideoGalleryPreloader.ts, src/shared/hooks/layout/useBottomOffset.ts, src/shared/hooks/projects/useProjectContextDebug.ts, src/shared/hooks/shotCreation/useShotCreation.ts, src/shared/hooks/tasks/__tests__/useTaskPrefetch.test.ts, src/shared/hooks/tasks/__tests__/useTasks.test.ts, src/shared/hooks/tasks/usePendingGenerationTasks.ts, src/shared/hooks/tasks/useTaskPrefetch.ts, src/shared/hooks/tasks/useTasks.ts, src/shared/hooks/useHomeNavigation.ts, src/shared/hooks/useSlidingPane.ts, src/shared/lib/__tests__/generationTaskCache.test.ts, src/shared/lib/interactions/elementPolicy.ts, src/shared/lib/uiLayers.test.ts, src/shared/lib/uiLayers.ts, src/shared/providers/RealtimeProvider.tsx, src/shared/providers/__tests__/RealtimeProvider.test.tsx, src/shared/state/overlayStack.test.ts, src/shared/state/overlayStack.ts, src/shared/state/panesStore.ts, src/shared/state/realtimeStore.test.ts, src/shared/state/realtimeStore.ts, src/tools/character-animate/pages/hooks/useCharacterAnimateBaseState.ts, src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts, src/tools/edit-images/hooks/useInlineEditState.ts, src/tools/edit-images/pages/EditImagesPage.tsx, src/tools/edit-video/components/InlineEditVideoView.tsx, src/tools/edit-video/hooks/useReplaceMode.ts, src/tools/edit-video/pages/EditVideoPage.tsx, src/tools/image-generation/pages/ImageGenerationToolPage.tsx, src/tools/image-generation/pages/__tests__/ImageGenerationToolPage.test.tsx, src/tools/join-clips/pages/JoinClipsPage.tsx, src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.provider.tsx, src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.tsx, src/tools/travel-between-images/components/ShotEditor/hooks/actions/__tests__/useDropActions.test.ts, src/tools/travel-between-images/components/ShotEditor/hooks/actions/useDropActions.ts, src/tools/travel-between-images/components/ShotEditor/hooks/editor-state/useShotEditorSetup.ts, src/tools/travel-between-images/components/ShotEditor/index.test.tsx, src/tools/travel-between-images/components/ShotEditor/sections/GenerationSection.tsx, src/tools/travel-between-images/components/ShotEditor/sections/HeaderSection.test.tsx, src/tools/travel-between-images/components/ShotEditor/sections/HeaderSection.tsx, src/tools/travel-between-images/components/ShotEditor/sections/ModalsSection.tsx, src/tools/travel-between-images/components/ShotEditor/sections/TimelineSection.tsx, src/tools/travel-between-images/components/ShotEditor/sections/generation/BatchModeContent.test.tsx, src/tools/travel-between-images/components/ShotEditor/sections/generation/BatchModeContent.tsx, src/tools/travel-between-images/components/ShotEditor/sections/generation/JoinModeContent.tsx, src/tools/travel-between-images/components/ShotEditor/useShotEditorController.ts, src/tools/travel-between-images/components/ShotImagesEditor/hooks/useLightboxTransition.ts, src/tools/travel-between-images/components/Timeline/GuidanceVideoStrip.tsx, src/tools/travel-between-images/components/Timeline/PairRegion.tsx, src/tools/travel-between-images/components/Timeline/TimelineContainer/TimelineContainer.tsx, src/tools/travel-between-images/components/Timeline/TimelineContainer/components/TimelineBottomControls.tsx, src/tools/travel-between-images/components/Timeline/TimelineContainer/components/TimelineTrackPrelude.tsx, src/tools/travel-between-images/components/Timeline/TimelineItem.tsx, src/tools/travel-between-images/components/Timeline/TimelineMediaContext.tsx, src/tools/travel-between-images/components/Timeline/TimelineRuler.tsx, src/tools/travel-between-images/components/Timeline/TrailingEndpoint.tsx, src/tools/travel-between-images/components/VideoGallery/VideoShotDisplay.test.tsx, src/tools/travel-between-images/components/VideoGallery/VideoShotDisplay.tsx, src/tools/travel-between-images/components/VideoGallery/hooks/useShotListDisplayController.test.tsx, src/tools/travel-between-images/components/VideoGallery/hooks/useShotListDisplayController.ts, src/tools/travel-between-images/components/VideoGenerationModalSections.test.tsx, src/tools/travel-between-images/components/VideoGenerationModalSections.tsx, src/tools/travel-between-images/components/hooks/useVideoGenerationModalController.test.tsx, src/tools/travel-between-images/components/hooks/useVideoGenerationModalController.ts, src/tools/travel-between-images/pages/ShotEditorView.tsx, src/tools/travel-between-images/pages/VideoTravelToolPage.tsx, src/tools/travel-between-images/providers/VideoTravelSettingsProvider.tsx, src/tools/travel-between-images/providers/index.ts, src/tools/video-editor/components/AgentChat/AgentChat.test.tsx, src/tools/video-editor/components/AgentChat/AgentChat.tsx, src/tools/video-editor/components/VideoEditorShell.tsx, src/tools/video-editor/components/__tests__/PreviewPersistence.test.tsx, test-results/"
+  ],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "executor_notes": "No new inventory scope changes were needed. The rework reused the existing repo-wide context and hook inventory, then revalidated the final declaration list against the updated audit document.",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "The panes store lifecycle contract and selector-first API were unchanged by this pass. No regression was introduced while fixing the audit and guard follow-up items.",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "No panes consumer or provider-tree changes were needed. Production panes access remains selector-based and the bootstrap slot remains in the established provider position.",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "The legacy panes API stayed removed from production usage throughout this pass. Verification later in T8 reconfirmed there are no production `PanesContext`, `PanesProvider`, or `usePanes()` imports.",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Updated the audit document to reflect the current declaration-by-declaration inventory instead of the older umbrella summaries. The document now records 53 total declarations, including the split Lightbox/ImageGenerationForm contexts and four test-only declarations (`TabsContext`, `SegmentContext`, and the two existing `SelectContext` mocks), so the appendix and grouped tables reconcile to the same current snapshot.",
+      "files_changed": [
+        "docs/state_management_context_audit.md"
+      ],
+      "commands_run": [
+        "node .tmp-m4-rework-repro.cjs"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "No additional non-pane migrations were required on this pass. The previously narrowed over-threshold non-pane surfaces remain the audited end state.",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Hardened the fat-context guard so identifier callees are resolved through TypeScript import symbols rather than literal identifier text. That keeps named-import aliases and `React.createContext(...)` namespace/default-import forms covered under the same counting rule documented in the audit.",
+      "files_changed": [
+        "scripts/quality/check-fat-contexts.mjs"
+      ],
+      "commands_run": [
+        "node .tmp-m4-rework-repro.cjs",
+        "npm run check:fat-contexts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Ran and deleted a short repro script to confirm the two review failures were addressed, then reran the required verification suite. `npm run check:fat-contexts`, `npx tsc --noEmit`, the production grep for removed panes APIs, and the full `npm test` suite all passed after the fixes.",
+      "files_changed": [],
+      "commands_run": [
+        "node .tmp-m4-rework-repro.cjs",
+        "npm run check:fat-contexts",
+        "npx tsc --noEmit",
+        "rg -n \"PanesContext|PanesProvider|usePanes\\(\" src --glob '!**/*.test.*' --glob '!**/__tests__/**'",
+        "npm test"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "The original broad inventory remained sufficient for this rework. The updated audit doc now reconciles against the current declaration snapshot instead of older umbrella summaries."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "No panes-store changes were required; the existing bootstrap/reset lifecycle contract remains intact."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "No panes consumer migration changes were needed on this pass, and provider-tree mount order was left untouched."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "The legacy panes API remained deleted from production usage; later grep verification still returned no production matches."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Confirmed by updating the document to a declaration-by-declaration 53-entry inventory with matching grouped tables and descriptor snapshot entries, including the split Lightbox/ImageGenerationForm declarations and the additional test-only mock contexts."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "No over-threshold non-pane migration regressed on this pass; the previously narrowed/split surfaces remain the audited state."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Confirmed by updating the checker to resolve React `createContext` calls through TypeScript symbols for imported identifiers and namespace/default-import receivers, then rerunning `npm run check:fat-contexts` successfully."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Confirmed by running a throwaway repro script and deleting it afterward, then passing `npm run check:fat-contexts`, `npx tsc --noEmit`, the production grep for removed panes APIs, and the full `npm test` suite."
+    }
+  ]
+}

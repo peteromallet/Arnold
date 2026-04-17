@@ -1,0 +1,313 @@
+{
+  "review_verdict": "needs_rework",
+  "checks": [
+    {
+      "id": "audit_doc_completeness",
+      "question": "Does the committed audit document enumerate each remaining `createContext` declaration and recomposed access hook with counts, decision, and rationale?",
+      "guidance": "Verify the final document against current declarations in `src/**`; grouped retrospective notes are not enough if the brief requires per-usage inventory.",
+      "findings": [
+        {
+          "detail": "`docs/state_management_context_audit.md` still describes pre-split surfaces as single declarations, e.g. it refers to a single `ImageGenerationFormContext` and a single `LightboxStateContext`, while the current code has multiple live declarations such as `ImageGenerationFormUIContext`/`Core`/`Prompts`/`References`/`Loras` and `LightboxCoreContext`/`Media`/`Variants`/`Navigation`. The doc therefore does not list each remaining `createContext` usage as required.",
+          "flagged": true,
+          "status": "fail",
+          "evidence_file": "docs/state_management_context_audit.md"
+        },
+        {
+          "detail": "The audit doc states `Current declaration count: 36 total`, but the current tree contains substantially more `createContext` declarations, including multiple split contexts added in T6. That mismatch indicates the final inventory is not a declaration-by-declaration accounting of the current codebase.",
+          "flagged": true,
+          "status": "fail",
+          "evidence_file": "docs/state_management_context_audit.md"
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "The plan originally risked an incomplete context inventory.",
+          "flagged": true,
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "fat_context_guard_coverage",
+      "question": "Does the permanent guard cover new over-threshold `createContext(...)` declarations across the repository's actual declaration forms?",
+      "guidance": "The guard should catch both imported `createContext(...)` and namespaced `React.createContext(...)` declarations if those forms exist in the repo.",
+      "findings": [
+        {
+          "detail": "`scripts/quality/check-fat-contexts.mjs` only matches call expressions where the callee is an identifier named `createContext`. It does not match `React.createContext(...)`, so namespaced declarations such as `src/shared/contexts/AIInputModeContext.tsx` and several UI/overlay contexts would bypass the guard.",
+          "flagged": true,
+          "status": "fail",
+          "evidence_file": "scripts/quality/check-fat-contexts.mjs"
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "The critique flagged incomplete `createContext` inventory/guard coverage.",
+          "flagged": true,
+          "status": "verified"
+        }
+      ]
+    }
+  ],
+  "pre_check_flags": [
+    {
+      "id": "PRECHECK-DIFF_SIZE_SANITY",
+      "check": "diff_size_sanity",
+      "detail": "Diff size looks larger than expected: changed_lines=8971, expected\u224810, ratio=897.10, files=191, hunks=440.",
+      "severity": "significant",
+      "evidence_file": "package.json"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-M4-002",
+    "FLAG-M4-003",
+    "issue_hints-1",
+    "issue_hints-3",
+    "correctness-1",
+    "correctness-2",
+    "scope-1",
+    "scope-2",
+    "scope-3",
+    "all_locations-1",
+    "all_locations-2",
+    "callers-1",
+    "callers-2",
+    "FLAG-M4-004",
+    "FLAG-M4-005",
+    "callers",
+    "FLAG-M4-006",
+    "scope-automation-0",
+    "all_locations-wrapper-hooks-0",
+    "all_locations",
+    "correctness-counting-rule-0",
+    "all_locations-wrapper-hooks-1"
+  ],
+  "disputed_flag_ids": [
+    "verifiability-0",
+    "verifiability-1",
+    "verifiability-2",
+    "verifiability-3"
+  ],
+  "criteria": [
+    {
+      "name": "`src/shared/state/panesStore.ts` exists and exports selector-based panes state APIs used by production consumers.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Confirmed in `src/shared/state/panesStore.ts`: the file exports `usePanesStore`, `usePanesStoreApi`, `PanesStoreBootstrapBoundary`, bootstrap/reset helpers, and production consumers such as `src/tools/video-editor/components/AgentChat/AgentChat.tsx` and `src/features/tasks/components/TasksPane/TasksPane.tsx` read pane state through store selectors."
+    },
+    {
+      "name": "No production file imports `PanesContext`, `PanesProvider`, or `usePanes()` after the migration.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Production grep returned no matches for `PanesContext|PanesProvider|usePanes\\(` under `src` after excluding tests. `src/shared/contexts/PanesContext.tsx` is deleted and `src/app/providers/AppProviders.tsx` now mounts `PanesStoreBootstrapBoundary` instead."
+    },
+    {
+      "name": "All former `usePanes()` call sites are migrated to dedicated selector hooks or explicit narrow grouped selectors, with no broad panes compatibility facade left behind.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "No production `usePanes()` call sites remain. High-level readers now use store selectors directly: `AgentChat.tsx` uses a narrow grouped selector with `shallow`; `ShotEditorView.tsx`, `TasksPane.tsx`, and `useVideoLightboxEnvironment.ts` read only the specific pane fields they need from `usePanesStore`."
+    },
+    {
+      "name": "The panes store has an explicit singleton lifecycle contract for tests and bootstrap behavior, including a reset path that prevents cross-test state leakage.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "`src/shared/state/panesStore.ts` documents the singleton lifecycle contract, implements `bootstrap`, `clearBootstrap`, `resetStore`, and exports `__resetPanesStoreForTests()`. `PanesStoreBootstrapBoundary` owns bootstrap wiring and cleanup."
+    },
+    {
+      "name": "`docs/state_management_context_audit.md` is committed and covers both remaining `createContext` provider declarations and exported recomposed wrapper hooks, including field count, external production consumer count, decision, and rationale.",
+      "priority": "must",
+      "pass": "fail",
+      "evidence": "The document exists, but it is not a complete declaration-by-declaration inventory of the final code. It still summarizes now-split surfaces as single declarations, e.g. `ImageGenerationFormContext` and `LightboxStateContext`, instead of listing the current individual declarations in `src/shared/components/ImageGenerationForm/ImageGenerationFormContext.token.ts` and `src/domains/media-lightbox/contexts/LightboxStateContext.tsx`."
+    },
+    {
+      "name": "The audit inventory method uses a repo-wide exported-hook search and is broad enough to catch context-access families outside the original context/provider directories, including `useProject`, media-lightbox safe hooks, travel-between-images hooks, and the ImageGenerationForm context-access hooks.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "The repo-wide exported-hook artifact exists at `.megaplan/plans/m4-panes-store-context-audit-20260417-0408/artifacts/exported_hook_inventory.txt` and includes `useProject` plus ImageGenerationForm hook-family entries. The audit doc also discusses `useProject`, lightbox hooks, travel-between-images surfaces, and ImageGenerationForm hooks."
+    },
+    {
+      "name": "The audit field-count rule expands imported local repository types used in context declarations, so contexts like `ShotSettingsContextValue` are counted by their actual value shape rather than treated as opaque.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "`scripts/quality/check-fat-contexts.mjs` recursively counts leaves with the TypeScript checker rather than treating imported local types as opaque; `docs/state_management_context_audit.md` documents the same recursive local-type expansion rule and 50-leaf cutoff."
+    },
+    {
+      "name": "Every audited non-pane surface that exceeds both thresholds under the imported-type expansion rule and the explicit external-production consumer rule is migrated or narrowed within the same milestone branch.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "The diff narrows the over-threshold surfaces named in the audit: `ProjectContext.tsx`, `LightboxStateContext.tsx`, `VideoTravelSettingsProvider.tsx`, `ShotSettingsContext.provider.tsx`, `TimelineMediaContext.tsx`, and the ImageGenerationForm context files. Production grep shows no production callers of `useProject()`, and only declaration-site exports remain for `useVideoTravelSettings()`, `useShotSettingsContext()`, and `useTimelineMedia()`."
+    },
+    {
+      "name": "An automated guard exists for new over-threshold `createContext(...)` declarations, uses the same documented field-count rule as the audit, and is wired into an automated repo check.",
+      "priority": "must",
+      "pass": "fail",
+      "evidence": "The guard is wired into `package.json` (`check:fat-contexts`, `test:arch`, and `quality:check`), but `scripts/quality/check-fat-contexts.mjs` only matches identifier callees named `createContext`. It does not inspect `React.createContext(...)`, so the guard does not fully cover the declaration forms used in this repo."
+    },
+    {
+      "name": "`npx tsc --noEmit` passes cleanly after the migration and any required test updates.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Executor evidence shows repeated clean `npx tsc --noEmit` runs after the migration and follow-up test fixes."
+    },
+    {
+      "name": "`npm test` passes at baseline after the panes migration and any additional required audit-driven migrations.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Executor evidence reports `npm test` passing cleanly after follow-up fixes: 886 files and 4562 tests."
+    },
+    {
+      "name": "High-level panes consumers such as `AgentChat.tsx`, `ShotEditorView.tsx`, `TasksPane.tsx`, `useImageLightboxEnvironment.ts`, and `useVideoLightboxEnvironment.ts` are migrated without recreating a broad grouped panes facade.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Automated review confirms direct store-selector usage in those files, but the final quality judgment about whether every grouped selector remains acceptably narrow is a subjective architectural call."
+    },
+    {
+      "name": "The audit keeps scope tight by documenting framework/local UI token contexts and below-threshold wrapper-hook surfaces as `out-of-scope`, `keep`, or `narrow` instead of migrating them unnecessarily.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "The audit doc does classify UI/overlay contexts as `out-of-scope` and thin contexts as `keep`, but whether that scope trimming is exactly right is a subjective review judgment."
+    },
+    {
+      "name": "Opening one pane does not visually re-render unrelated panes when checked with the telemetry overlay in a running app.",
+      "priority": "info",
+      "pass": "deferred_human",
+      "evidence": "Requires browser/runtime telemetry overlay verification, which is not available in this container review."
+    },
+    {
+      "name": "Mobile exclusive-pane behavior remains unchanged on a small viewport: opening pane B closes pane A as before.",
+      "priority": "info",
+      "pass": "deferred_human",
+      "evidence": "Requires viewport/device-level runtime validation, which is not available in this container review."
+    }
+  ],
+  "issues": [
+    "`docs/state_management_context_audit.md` is not a complete final per-declaration audit of current `createContext` usages; it still summarizes some now-split surfaces as single declarations and its declaration count no longer matches the codebase.",
+    "`scripts/quality/check-fat-contexts.mjs` does not inspect `React.createContext(...)`, so the permanent fat-context guard can miss new over-threshold namespaced context declarations."
+  ],
+  "rework_items": [
+    {
+      "task_id": "T5",
+      "issue": "The final audit document is incomplete as a declaration-by-declaration inventory of the current codebase.",
+      "expected": "`docs/state_management_context_audit.md` should list each remaining `createContext` usage in the final tree with field count, external production consumer count, decision, and rationale, including split contexts introduced in T6.",
+      "actual": "The doc still summarizes some split surfaces as single declarations, such as `ImageGenerationFormContext` and `LightboxStateContext`, and its stated declaration count does not reflect the current set of declarations.",
+      "evidence_file": "docs/state_management_context_audit.md",
+      "flag_id": "issue_hints-2",
+      "source": "review_flag_reverify"
+    },
+    {
+      "task_id": "T7",
+      "issue": "The permanent fat-context guard does not cover all repository declaration forms.",
+      "expected": "`scripts/quality/check-fat-contexts.mjs` should flag over-threshold declarations for both imported `createContext(...)` and namespaced `React.createContext(...)` calls, using the same counting rule and allowlist model.",
+      "actual": "The script only matches call expressions whose callee is an identifier named `createContext`, so `React.createContext(...)` declarations bypass the check.",
+      "evidence_file": "scripts/quality/check-fat-contexts.mjs",
+      "flag_id": "FLAG-M4-001",
+      "source": "review_flag_reverify"
+    }
+  ],
+  "summary": "Needs rework. The panes migration itself looks complete and the test/typecheck evidence is clean, but two must-gate items are still short: the committed audit document is not a complete final per-declaration inventory of current contexts, and the permanent fat-context guard misses `React.createContext(...)` declarations.",
+  "task_verdicts": [
+    {
+      "task_id": "T1",
+      "reviewer_verdict": "Pass. The inventory artifacts and grep commands support a broad initial repo scan for panes callers, context declarations, and exported hooks.",
+      "evidence_files": [
+        ".megaplan/plans/m4-panes-store-context-audit-20260417-0408/artifacts/create_context_inventory.txt",
+        ".megaplan/plans/m4-panes-store-context-audit-20260417-0408/artifacts/exported_hook_inventory.txt"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "reviewer_verdict": "Pass. `panesStore.ts` implements the promised selector-first store, bootstrap path, and reset helpers.",
+      "evidence_files": [
+        "src/shared/state/panesStore.ts"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "reviewer_verdict": "Pass. `AppProviders.tsx` preserves the panes bootstrap slot and production consumers now read from the store instead of `usePanes()`.",
+      "evidence_files": [
+        "src/app/providers/AppProviders.tsx",
+        "src/tools/video-editor/components/AgentChat/AgentChat.tsx",
+        "src/features/tasks/components/TasksPane/TasksPane.tsx"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "reviewer_verdict": "Pass. The legacy panes context file is deleted and production grep confirms the old surface is gone.",
+      "evidence_files": [
+        "src/shared/contexts/PanesContext.tsx",
+        "src/shared/state/panesStore.ts"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "reviewer_verdict": "Needs follow-up. The audit document exists but is not a complete final per-declaration inventory of the current `createContext` set.",
+      "evidence_files": [
+        "docs/state_management_context_audit.md",
+        "src/shared/components/ImageGenerationForm/ImageGenerationFormContext.token.ts",
+        "src/domains/media-lightbox/contexts/LightboxStateContext.tsx"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "reviewer_verdict": "Pass. The over-threshold non-pane surfaces identified by the audit were narrowed or split in code, and production broad-hook callers were removed.",
+      "evidence_files": [
+        "src/shared/contexts/ProjectContext.tsx",
+        "src/domains/media-lightbox/contexts/LightboxStateContext.tsx",
+        "src/tools/travel-between-images/providers/VideoTravelSettingsProvider.tsx",
+        "src/tools/travel-between-images/components/ShotEditor/ShotSettingsContext.provider.tsx",
+        "src/tools/travel-between-images/components/Timeline/TimelineMediaContext.tsx",
+        "src/shared/components/ImageGenerationForm/hooks/useImageGenerationFormContexts.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "reviewer_verdict": "Needs follow-up. The guard is wired into repo scripts, but its matcher misses `React.createContext(...)` declarations.",
+      "evidence_files": [
+        "scripts/quality/check-fat-contexts.mjs",
+        "package.json",
+        "src/shared/contexts/AIInputModeContext.tsx"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "reviewer_verdict": "Pass. Verification evidence covers the reproduction script, clean typecheck, clean test suite, and production grep cleanup; deferred-human runtime checks were handled appropriately.",
+      "evidence_files": [
+        "src/shared/state/panesStore.ts",
+        "package.json"
+      ]
+    }
+  ],
+  "sense_check_verdicts": [
+    {
+      "sense_check_id": "SC1",
+      "verdict": "Confirmed. The artifact set shows a broad initial inventory pass."
+    },
+    {
+      "sense_check_id": "SC2",
+      "verdict": "Confirmed. The panes store exports explicit bootstrap/reset lifecycle hooks and helpers."
+    },
+    {
+      "sense_check_id": "SC3",
+      "verdict": "Confirmed. Production panes consumers now use store selectors and `AppProviders.tsx` mounts the bootstrap boundary in the prior slot."
+    },
+    {
+      "sense_check_id": "SC4",
+      "verdict": "Confirmed. The legacy panes API is removed from production code."
+    },
+    {
+      "sense_check_id": "SC5",
+      "verdict": "Not confirmed. The audit document is present, but it does not enumerate the final declaration set declaration-by-declaration."
+    },
+    {
+      "sense_check_id": "SC6",
+      "verdict": "Confirmed. The named over-threshold non-pane surfaces were narrowed or split in code."
+    },
+    {
+      "sense_check_id": "SC7",
+      "verdict": "Not confirmed. The guard exists and is wired, but it does not cover `React.createContext(...)` declarations."
+    },
+    {
+      "sense_check_id": "SC8",
+      "verdict": "Confirmed. Verification evidence covers the scripted repro, clean typecheck/test runs, and production grep cleanup; runtime-only checks remain deferred human work."
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "output": "Implemented T5. `useTimelineState.ts` now acts as the timeline-store bootstrap/composition root instead of leaving `editorData`/`editorOps` assembly in `VideoEditorProvider`. It now:\n- assembles `editorData` and `editorOps` inside the hook,\n- returns a provider-scoped `store` alongside the legacy `editor` bundle,\n- seeds `timelineStore` synchronously on first render,\n- syncs the data/ops/chrome/playback slices via `useLayoutEffect` to avoid an effect-only initial hydrate.\n\nI also extended `createTimelineStore()` to accept an initial bootstrap payload so the first mounted render starts with live slices, and updated `UseTimelineStateResult` to expose the store plus split data/ops slices. TypeScript is clean with `npx tsc --noEmit --pretty false`.\n\nCheckpoint file written to `.megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/execution_batch_4.json`.",
+  "files_changed": [
+    "/workspace/reigh-app/src/tools/video-editor/hooks/timelineStore.ts",
+    "/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts",
+    "/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.types.ts",
+    "/workspace/reigh-app/.megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/execution_batch_4.json"
+  ],
+  "commands_run": [
+    "npx tsc --noEmit --pretty false"
+  ],
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .megaplan/plans/milestone-m1c-from-docs-state-20260416-2053/execution_batch_4.json",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitignore, .megaplan/debt.json, .megaplan/plans/2-week-aggressive-state-20260415-0113/, .megaplan/plans/milestone-m0-from-docs-state-20260415-0217/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1011/, .megaplan/plans/milestone-m1-from-docs-state-20260415-1728/, .megaplan/plans/milestone-m1-from-docs-state-20260415-2100/, .megaplan/plans/milestone-m1-from-docs-state-20260416-0927/, .megaplan/plans/milestone-m1a-from-docs-state-20260416-0928/, .megaplan/plans/milestone-m1b-from-docs-state-20260416-1226/, .megaplan/schemas/critique.json, .megaplan/schemas/execution.json, .megaplan/schemas/execution_doc.json, .megaplan/schemas/finalize.json, .megaplan/schemas/gate.json, .megaplan/schemas/plan.json, .megaplan/schemas/review.json, .megaplan/schemas/revise.json, .megaplan/schemas/tiebreaker_challenger.json, .megaplan/schemas/tiebreaker_researcher.json, src/app/App.tsx, src/app/hooks/useResetCurrentShotOnRouteChange.test.ts, src/app/hooks/useResetCurrentShotOnRouteChange.ts, src/app/providers/AppProviders.test.tsx, src/app/providers/AppProviders.tsx, src/domains/media-lightbox/hooks/useMagicEditMode.ts, src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.test.tsx, src/features/gallery/components/GenerationsPane/components/GenerationsPaneGallery.tsx, src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.test.ts, src/features/gallery/components/GenerationsPane/hooks/useGenerationsPaneController.ts, src/features/gallery/components/GenerationsPane/hooks/useLassoSelection.ts, src/features/gallery/hooks/__tests__/useGalleryPageState.test.ts, src/features/gallery/hooks/useGalleryPageState.ts, src/features/tasks/components/TasksPane/TasksPane.tsx, src/features/tasks/components/TasksPane/hooks/useTaskNavigation.ts, src/pages/ShotsPage.tsx, src/shared/components/MediaGallery/MediaGallery.tsx, src/shared/contexts/CurrentShotContext.tsx, src/shared/contexts/GallerySelectionContext.test.tsx, src/shared/contexts/GallerySelectionContext.tsx, src/shared/contexts/LastAffectedShotContext.tsx, src/shared/contexts/ShotAdditionSelectionContext.test.tsx, src/shared/contexts/ShotAdditionSelectionContext.tsx, src/shared/contexts/__tests__/CurrentShotContext.test.tsx, src/shared/hooks/__tests__/useLastAffectedShot.test.ts, src/shared/hooks/__tests__/useShotNavigation.test.ts, src/shared/hooks/gallery/__tests__/useGalleryFilterState.test.ts, src/shared/hooks/gallery/useGalleryFilterState.ts, src/shared/hooks/gallery/useGallerySelectionBridge.ts, src/shared/hooks/shots/useLastAffectedShot.ts, src/shared/hooks/shots/useShotNavigation.ts, src/shared/state/selectionStore.ts, src/tools/edit-images/hooks/__tests__/useInlineEditState.test.ts, src/tools/image-generation/pages/ImageGenerationToolPage.tsx, src/tools/travel-between-images/components/ShotEditor/index.test.tsx, src/tools/travel-between-images/components/ShotEditor/useShotEditorController.ts, src/tools/travel-between-images/components/VideoGallery/VideoShotDisplay.test.tsx, src/tools/travel-between-images/components/VideoGallery/VideoShotDisplay.tsx, src/tools/travel-between-images/hooks/workflow/useVideoTravelDropHandlers.ts, src/tools/travel-between-images/pages/ShotEditorView.tsx, src/tools/travel-between-images/pages/VideoTravelToolPage.tsx, src/tools/video-editor/components/AgentChat/AgentChat.test.tsx, src/tools/video-editor/components/AgentChat/AgentChat.tsx, src/tools/video-editor/hooks/useClipDrag.ts, src/tools/video-editor/hooks/useMultiSelect.ts, src/tools/video-editor/hooks/useTimelineCommit.ts, src/tools/video-editor/hooks/useTimelineSelection.ts, test-results/",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Ported `useTimelineState.ts` into the timeline-store bootstrap root. The hook now assembles `editorData` and `editorOps` itself, exposes a provider-scoped `store`, seeds that store synchronously on first render, and uses `useLayoutEffect` to refresh the four store slices without relying on an effect-only initial hydrate. This preserves same-render freshness for provider-local readers such as pending-add, AgentChat bridge registration, and later lightbox ops wiring because those paths can still read the direct hook return in the same render while the mounted store stays aligned for downstream consumers. Verified with `npx tsc --noEmit --pretty false`.",
+      "files_changed": [
+        "/workspace/reigh-app/src/tools/video-editor/hooks/timelineStore.ts",
+        "/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.ts",
+        "/workspace/reigh-app/src/tools/video-editor/hooks/useTimelineState.types.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit --pretty false"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. `useTimelineState.ts` now owns the timeline-store bootstrap/composition work: it builds `editorData` and `editorOps` inside the hook, seeds a provider-scoped Zustand store synchronously on first render, and refreshes slices in `useLayoutEffect` so the store is not born from an effect-only hydrate. Pending-add and AgentChat readers still receive same-render-fresh values from the direct hook result during this transition, which avoids the staleness trap while preserving the existing control flow."
+    }
+  ]
+}
