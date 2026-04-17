@@ -1,4 +1,0 @@
-src/app/providers/AppProviders.test.tsx
-src/app/providers/AppProviders.tsx
-src/shared/contexts/PanesContext.tsx
-src/shared/contexts/__tests__/PanesContext.test.tsx

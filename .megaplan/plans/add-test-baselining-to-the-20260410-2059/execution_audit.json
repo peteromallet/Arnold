@@ -1,7 +1,0 @@
-{
-  "findings": [],
-  "files_in_diff": [],
-  "files_claimed": [],
-  "skipped": true,
-  "reason": "Project directory is not a git repository."
-}
