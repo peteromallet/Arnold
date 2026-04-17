@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { getTopmostKnownOverlayType } from '@/shared/components/ui/overlay';
+import { getTopmostKnownModalOverlayType } from '@/shared/components/ui/overlay';
 
 interface UseLightboxNavigationProps {
   onNext?: () => void;
@@ -86,8 +86,13 @@ export const useLightboxNavigation = ({
      * the keydown event during the bubble phase.
      */
     const handleKeyDown = (e: KeyboardEvent) => {
-      const topOverlayType = getTopmostKnownOverlayType();
-      if (topOverlayType && topOverlayType !== 'lightbox') return;
+      // Only bail when an *actually-open modal* overlay above the lightbox wants the keys.
+      // Non-modal overlays (tooltip, hover-card) must never suppress arrow/Escape here,
+      // and stale modal entries that registered but haven't opened (e.g. Base-UI Select
+      // mounting without data-state="open") must not either — those leave `getTopOverlay`
+      // pointing at them and previously dead-locked the lightbox.
+      const topModalOverlayType = getTopmostKnownModalOverlayType();
+      if (topModalOverlayType && topModalOverlayType !== 'lightbox') return;
 
       // Don't intercept arrow keys when user is in a text field
       const active = document.activeElement;

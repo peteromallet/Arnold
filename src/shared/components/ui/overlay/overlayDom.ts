@@ -78,6 +78,16 @@ export function getTopmostKnownOverlayType(): string | null {
   return useOverlayStackApi().getState().getTopOverlay()?.type ?? null;
 }
 
+/**
+ * Returns the topmost *actually-open modal* overlay type, or null when no modal overlay is open.
+ * Use this (not `getTopmostKnownOverlayType`) for keyboard/focus gating: non-modal overlays
+ * (tooltips, hover-cards) and stale/unopened modal entries should never suppress key handling
+ * on the underlying surface.
+ */
+export function getTopmostKnownModalOverlayType(): string | null {
+  return useOverlayStackApi().getState().getTopModalOverlay()?.type ?? null;
+}
+
 /** Returns true when a registered modal overlay is currently active. */
 export function hasKnownModalOverlay(): boolean {
   return useOverlayStackApi().getState().getTopModalOverlay() !== null;
