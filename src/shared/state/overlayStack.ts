@@ -53,8 +53,6 @@ export interface OverlayStackState {
 
 type OverlayStackSnapshot = Pick<OverlayStackState, 'overlays'>;
 
-let bodyPointerEventsSnapshot: string | null = null;
-
 function isBrowser(): boolean {
   return typeof document !== 'undefined';
 }
@@ -133,47 +131,17 @@ function restoreFocus(element: HTMLElement | null): void {
   });
 }
 
+// Base UI's Dialog/Popup primitive manages `document.body.style.pointerEvents`
+// natively (including on close-animation completion and unmount). We used to
+// manage it here too, but double-management caused close-timing races where
+// body stayed locked after a modal closed. This function is kept as a no-op
+// for call-site compatibility; the stack continues to track ordering and
+// focus, but body pointer-events is Base UI's responsibility alone.
 function syncBodyPointerEvents(
-  previousOverlays: readonly OverlayStackEntry[],
-  nextOverlays: readonly OverlayStackEntry[],
+  _previousOverlays: readonly OverlayStackEntry[],
+  _nextOverlays: readonly OverlayStackEntry[],
 ): void {
-  if (!isBrowser()) {
-    return;
-  }
-
-  const previousTopModal = getTopModalOverlay(previousOverlays);
-  const nextTopModal = getTopModalOverlay(nextOverlays);
-
-  if (!previousTopModal && nextTopModal) {
-    bodyPointerEventsSnapshot = document.body.style.pointerEvents;
-    document.body.style.pointerEvents = 'none';
-    console.warn('[OverlayStack] body pointer-events LOCKED (none)', {
-      modalId: nextTopModal.id,
-      modalType: nextTopModal.type,
-      totalOverlays: nextOverlays.length,
-      snapshot: bodyPointerEventsSnapshot,
-    });
-    return;
-  }
-
-  if (previousTopModal && !nextTopModal) {
-    document.body.style.pointerEvents = bodyPointerEventsSnapshot ?? '';
-    console.log('[OverlayStack] body pointer-events RELEASED', {
-      prevModalId: previousTopModal.id,
-      restoredTo: bodyPointerEventsSnapshot ?? '(empty)',
-      totalOverlays: nextOverlays.length,
-    });
-    bodyPointerEventsSnapshot = null;
-    return;
-  }
-
-  if (nextTopModal) {
-    document.body.style.pointerEvents = 'none';
-    console.log('[OverlayStack] body stays LOCKED (modal swap)', {
-      modalId: nextTopModal.id,
-      modalType: nextTopModal.type,
-    });
-  }
+  // intentionally no-op; see comment above.
 }
 
 function createOverlayEntry(input: OverlayStackOpenInput): OverlayStackEntry {
@@ -201,7 +169,6 @@ const overlayStackStore = createStore<OverlayStackState>((set, get) => ({
   overlays: [],
 
   pushOverlay: (input) => {
-    console.log('[OverlayStack] PUSH', { id: input.id, type: input.type, modal: input.modal, stackSizeBefore: get().overlays.length });
     const nextEntry = createOverlayEntry(input);
     set((state) => {
       const nextOverlays = [
@@ -243,10 +210,8 @@ const overlayStackStore = createStore<OverlayStackState>((set, get) => ({
     const previousOverlays = get().overlays;
     const removedOverlay = previousOverlays.find((overlay) => overlay.id === id);
     if (!removedOverlay) {
-      console.log('[OverlayStack] POP skipped (id not found)', { id });
       return;
     }
-    console.log('[OverlayStack] POP', { id, type: removedOverlay.type, modal: removedOverlay.modal, stackSizeBefore: previousOverlays.length });
 
     const previousTopModal = getTopModalOverlay(previousOverlays);
     const nextOverlays = previousOverlays.filter((overlay) => overlay.id !== id);
@@ -353,5 +318,4 @@ export function __resetOverlayStackForTests(): void {
   if (isBrowser()) {
     document.body.style.pointerEvents = '';
   }
-  bodyPointerEventsSnapshot = null;
 }
