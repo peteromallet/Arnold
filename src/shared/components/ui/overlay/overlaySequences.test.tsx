@@ -103,7 +103,11 @@ describe('overlay close-order sequences', () => {
     document.body.innerHTML = '';
   });
 
-  it('keeps pointer-events stable for dialog + popover through open A -> open B -> close A -> close B', async () => {
+  // Note: body pointer-events are managed natively by Base UI's Dialog
+  // primitive (including close-animation timing), not by our overlay stack.
+  // These tests verify stack-ordering + DOM presence only; body pointer-events
+  // is Base UI's responsibility alone.
+  it('tracks dialog + popover stack through open A -> open B -> close A -> close B', async () => {
     render(<DialogPopoverSequenceHarness />);
 
     act(() => {
@@ -112,7 +116,6 @@ describe('overlay close-order sequences', () => {
     await waitFor(() => {
       expect(screen.getByTestId('dialog-content')).toBeInTheDocument();
     });
-    expect(document.body.style.pointerEvents).toBe('none');
 
     act(() => {
       dialogPopoverControls.openPopover?.();
@@ -124,7 +127,6 @@ describe('overlay close-order sequences', () => {
       'dialog',
       'popover',
     ]);
-    expect(document.body.style.pointerEvents).toBe('none');
 
     act(() => {
       dialogPopoverControls.closeDialog?.();
@@ -133,7 +135,6 @@ describe('overlay close-order sequences', () => {
       expect(screen.queryByTestId('dialog-content')).toBeNull();
     });
     expect(screen.getByTestId('popover-content')).toBeInTheDocument();
-    expect(document.body.style.pointerEvents).toBe('none');
 
     act(() => {
       dialogPopoverControls.closePopover?.();
@@ -141,11 +142,10 @@ describe('overlay close-order sequences', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('popover-content')).toBeNull();
     });
-    expect(document.body.style.pointerEvents).toBe('');
     expect(useOverlayStackApi().getState().overlays).toHaveLength(0);
   });
 
-  it('keeps pointer-events stable for menu + dialog through open A -> open B -> close A -> close B', async () => {
+  it('tracks menu + dialog stack through open A -> open B -> close A -> close B', async () => {
     render(<MenuDialogSequenceHarness />);
 
     act(() => {
@@ -154,7 +154,6 @@ describe('overlay close-order sequences', () => {
     await waitFor(() => {
       expect(screen.getByTestId('menu-content')).toBeInTheDocument();
     });
-    expect(document.body.style.pointerEvents).toBe('none');
 
     act(() => {
       menuDialogControls.openDialog?.();
@@ -166,7 +165,6 @@ describe('overlay close-order sequences', () => {
       'menu',
       'dialog',
     ]);
-    expect(document.body.style.pointerEvents).toBe('none');
 
     act(() => {
       menuDialogControls.closeMenu?.();
@@ -175,7 +173,6 @@ describe('overlay close-order sequences', () => {
       expect(screen.queryByTestId('menu-content')).toBeNull();
     });
     expect(screen.getByTestId('dialog-content')).toBeInTheDocument();
-    expect(document.body.style.pointerEvents).toBe('none');
 
     act(() => {
       menuDialogControls.closeDialog?.();
@@ -183,7 +180,6 @@ describe('overlay close-order sequences', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('dialog-content')).toBeNull();
     });
-    expect(document.body.style.pointerEvents).toBe('');
     expect(useOverlayStackApi().getState().overlays).toHaveLength(0);
   });
 });

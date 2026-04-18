@@ -40,7 +40,7 @@ export const WorkflowControlsBar: React.FC<WorkflowControlsBarProps> = ({
   return (
     <>
       {core.onAddToVideoEditor && (
-        <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 flex items-center z-[70] pointer-events-auto">
+        <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 flex items-center z-[70]">
           <div className="bg-black/50 backdrop-blur-sm rounded-lg px-1.5 py-1 flex items-center">
             <Tooltip>
               <TooltipTrigger asChild>

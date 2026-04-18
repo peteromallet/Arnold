@@ -48,7 +48,7 @@ import {
   resolveGenerationPolicy,
   type SelectedModel,
 } from '../settings';
-import type { LoraModel } from '@/domains/lora/types/lora';
+import type { ActiveLora, LoraModel } from '@/domains/lora/types/lora';
 import { TOOL_IDS } from '@/shared/lib/tooling/toolIds';
 import { queryKeys } from '@/shared/lib/queryKeys';
 
@@ -533,11 +533,57 @@ export function useLoraSettings() {
   const settings = useVideoTravelSettingsData();
   const handlers = useVideoTravelSettingsHandlers();
   const availableLoras = useVideoTravelSettingsLoras();
-  return useMemo(() => ({
-    selectedLoras: settings.loras || [],
-    availableLoras,
-    setSelectedLoras: handlers.handleSelectedLorasChange,
-  }), [settings.loras, availableLoras, handlers]);
+  return useMemo(() => {
+    const handleAddLora = (lora: LoraModel) => {
+      const newLora: ActiveLora = {
+        id: (lora['Model ID'] || '') as string,
+        name: (lora.Name || '') as string,
+        path: (lora.link || '') as string,
+        strength: 1,
+        previewImageUrl: lora['Preview Image URL'] as string | undefined,
+        trigger_word: lora['Trigger Word'] as string | undefined,
+      };
+
+      const currentLoras = settings.loras || [];
+      if (!currentLoras.some((existingLora) => existingLora.id === newLora.id)) {
+        handlers.updateField('loras', [...currentLoras, newLora]);
+      }
+    };
+
+    const handleRemoveLora = (loraId: string) => {
+      handlers.updateField(
+        'loras',
+        (settings.loras || []).filter((lora) => lora.id !== loraId),
+      );
+    };
+
+    const handleLoraStrengthChange = (loraId: string, strength: number) => {
+      handlers.updateField(
+        'loras',
+        (settings.loras || []).map((lora) =>
+          lora.id === loraId ? { ...lora, strength } : lora,
+        ),
+      );
+    };
+
+    const handleAddTriggerWord = (word: string) => {
+      const currentPrompt = settings.prompt || '';
+      if (!currentPrompt.includes(word)) {
+        const newPrompt = currentPrompt ? `${currentPrompt}, ${word}` : word;
+        handlers.updateField('prompt', newPrompt);
+      }
+    };
+
+    return {
+      selectedLoras: settings.loras || [],
+      availableLoras,
+      setSelectedLoras: handlers.handleSelectedLorasChange,
+      handleAddLora,
+      handleRemoveLora,
+      handleLoraStrengthChange,
+      handleAddTriggerWord,
+    };
+  }, [settings.loras, settings.prompt, availableLoras, handlers]);
 }
 
 /**

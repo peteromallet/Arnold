@@ -232,6 +232,7 @@ export const SegmentSlotFormView: React.FC<SegmentSlotFormViewProps> = ({
         {/* Wrapper to position navigation arrows closer to the form */}
         <div className="relative max-w-2xl w-full flex items-center justify-center">
         {/* Floating Navigation Arrows - positioned relative to this wrapper */}
+        {/* Required because SegmentSlotFormView.tsx:231 makes the content container pointer-events-none. */}
         <div className="pointer-events-auto">
           <NavigationArrows
             showNavigation={true}
@@ -244,6 +245,7 @@ export const SegmentSlotFormView: React.FC<SegmentSlotFormViewProps> = ({
           />
         </div>
 
+        {/* Required because SegmentSlotFormView.tsx:231 makes the content container pointer-events-none. */}
         <div className="bg-background rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto overscroll-none relative pointer-events-auto touch-auto">
         {/* Header */}
         <div className="sticky top-0 bg-background border-b px-4 py-3 flex items-center justify-center z-10">

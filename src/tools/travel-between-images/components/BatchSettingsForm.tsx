@@ -161,6 +161,39 @@ export const BatchSettingsForm: React.FC<BatchSettingsFormProps> = ({
     // State for clear enhanced prompts success feedback
     const [clearSuccess, setClearSuccess] = React.useState(false);
 
+    // Dev-only: warn when the model spec says a field should render but the
+    // required handler prop wasn't passed. Without this, the field silently
+    // disappears at the callsite — no error, no render — and the bug is hard
+    // to spot. Warnings are stripped in production via import.meta.env.DEV.
+    React.useEffect(() => {
+      if (!import.meta.env.DEV) return;
+      const missing: string[] = [];
+      if (canShowSmoothContinuations && !onSmoothContinuationsChange) {
+        missing.push(
+          `[BatchSettingsForm] Model "${selectedModel}" supports smoothContinuations but no onSmoothContinuationsChange handler was passed — the Continue toggle will not render. Check the callsite.`
+        );
+      }
+      if (spec.ui.guidanceScale && !onGuidanceScaleChange) {
+        missing.push(
+          `[BatchSettingsForm] Model "${selectedModel}" supports guidanceScale but no onGuidanceScaleChange handler was passed — the guidance scale slider will not render. Check the callsite.`
+        );
+      }
+      if (spec.resolutionTier === 'hd' && !onLtxHdResolutionChange) {
+        missing.push(
+          `[BatchSettingsForm] Model "${selectedModel}" supports HD resolution but no onLtxHdResolutionChange handler was passed — the HD Resolution toggle will not render. Check the callsite.`
+        );
+      }
+      for (const msg of missing) console.warn(msg);
+    }, [
+      selectedModel,
+      canShowSmoothContinuations,
+      spec.ui.guidanceScale,
+      spec.resolutionTier,
+      onSmoothContinuationsChange,
+      onGuidanceScaleChange,
+      onLtxHdResolutionChange,
+    ]);
+
     // Validation: Check for phaseConfig inconsistencies and warn
     React.useEffect(() => {
       if (phaseConfig && advancedMode) {

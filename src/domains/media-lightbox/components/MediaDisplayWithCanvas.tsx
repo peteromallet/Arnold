@@ -322,6 +322,7 @@ export const MediaDisplayWithCanvas: React.FC<MediaDisplayWithCanvasProps> = ({
                   ? repositionTransformStyle.transform
                   : (isFlippedHorizontally ? 'scaleX(-1)' : 'none'),
                 transformOrigin: editMode === 'reposition' ? 'center center' : undefined,
+                // Required because MediaDisplayWithCanvas.tsx:272, :301, and :314 disable pointer events in this branch.
                 pointerEvents: isInpaintMode ? 'none' : 'auto',
                 // Keep image below settings panel during reposition (z-80 is the panel)
                 zIndex: editMode === 'reposition' ? 40 : undefined,

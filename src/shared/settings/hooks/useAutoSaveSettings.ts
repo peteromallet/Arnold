@@ -55,6 +55,7 @@ interface AutoSaveStoreRuntime<T extends object> {
   loadRef: { current: ((entityId: string) => Promise<T | null>) | null };
   saveRef: { current: ((entityId: string, data: T) => Promise<void>) | null };
   updateRef: { current: ((scope: 'shot' | 'project', settings: Partial<T>) => Promise<void>) | null };
+  reactQuerySeedRef: { current: Map<string, { seed: T; hasPersistedData: boolean }> };
   scopeRef: { current: 'shot' | 'project' };
   onSaveSuccessRef: { current: (() => void) | undefined };
   onSaveErrorRef: { current: ((error: Error) => void) | undefined };
@@ -108,6 +109,7 @@ function getStoreForDomain<T extends object>(
     loadRef: { current: null },
     saveRef: { current: null },
     updateRef: { current: null },
+    reactQuerySeedRef: { current: new Map() },
     scopeRef: { current: 'shot' },
     onSaveSuccessRef: { current: undefined },
     onSaveErrorRef: { current: undefined },
@@ -136,7 +138,14 @@ function getStoreForDomain<T extends object>(
         };
       }
 
-      return { db: null, lastUsed: null };
+      const reactQuerySeed = runtime.reactQuerySeedRef.current.get(entityId);
+      if (!reactQuerySeed) {
+        return { db: null, lastUsed: null };
+      }
+
+      return reactQuerySeed.hasPersistedData
+        ? { db: cloneValue(reactQuerySeed.seed), lastUsed: null }
+        : { db: null, lastUsed: cloneValue(reactQuerySeed.seed) };
     },
     save: async (entityId, data) => {
       if (entityId === DISABLED_ENTITY_ID) {
@@ -219,6 +228,12 @@ export function useAutoSaveSettings<T extends object>(
   });
 
   runtime.updateRef.current = updateSettings;
+  if (!isCustomMode && isEntityValid && !authoritativeIsLoading && !authoritativeError) {
+    runtime.reactQuerySeedRef.current.set(activeEntityId, {
+      seed: cloneValue(authoritativeSettings ?? defaults),
+      hasPersistedData: hasShotSettings,
+    });
+  }
 
   const localEntity = store.useEntity(activeEntityId);
   const storeState = store.getState();

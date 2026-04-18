@@ -27,11 +27,11 @@ export interface OverlayStackEntry {
 
 export interface OverlayStackState {
   overlays: OverlayStackEntry[];
-  /** Registers or re-registers an overlay at the top of the ordering stack. */
+  /** Tracks overlay ordering/focus restoration only; Base UI Dialog/Popup primitives own body pointer-events after a5909c871. */
   pushOverlay: (input: OverlayStackOpenInput) => void;
-  /** Updates a registered overlay without changing its ordering position. */
+  /** Tracks overlay metadata within the ordering/focus stack only; Base UI Dialog/Popup primitives own body pointer-events after a5909c871. */
   updateOverlay: (id: string, patch: OverlayStackUpdateInput) => void;
-  /** Unregisters an overlay and applies any pending cleanup side effects. */
+  /** Tracks overlay removal/focus restoration only; Base UI Dialog/Popup primitives own body pointer-events after a5909c871. */
   popOverlay: (id: string) => void;
   /** Returns the current topmost overlay, regardless of modality. */
   getTopOverlay: () => OverlayStackEntry | null;
@@ -52,10 +52,6 @@ export interface OverlayStackState {
 }
 
 type OverlayStackSnapshot = Pick<OverlayStackState, 'overlays'>;
-
-function isBrowser(): boolean {
-  return typeof document !== 'undefined';
-}
 
 function isHTMLElement(value: unknown): value is HTMLElement {
   return value instanceof HTMLElement;
@@ -131,19 +127,6 @@ function restoreFocus(element: HTMLElement | null): void {
   });
 }
 
-// Base UI's Dialog/Popup primitive manages `document.body.style.pointerEvents`
-// natively (including on close-animation completion and unmount). We used to
-// manage it here too, but double-management caused close-timing races where
-// body stayed locked after a modal closed. This function is kept as a no-op
-// for call-site compatibility; the stack continues to track ordering and
-// focus, but body pointer-events is Base UI's responsibility alone.
-function syncBodyPointerEvents(
-  _previousOverlays: readonly OverlayStackEntry[],
-  _nextOverlays: readonly OverlayStackEntry[],
-): void {
-  // intentionally no-op; see comment above.
-}
-
 function createOverlayEntry(input: OverlayStackOpenInput): OverlayStackEntry {
   return {
     id: input.id,
@@ -175,7 +158,6 @@ const overlayStackStore = createStore<OverlayStackState>((set, get) => ({
         ...state.overlays.filter((overlay) => overlay.id !== input.id),
         nextEntry,
       ];
-      syncBodyPointerEvents(state.overlays, nextOverlays);
       return { overlays: nextOverlays };
     });
   },
@@ -201,7 +183,6 @@ const overlayStackStore = createStore<OverlayStackState>((set, get) => ({
       };
       const nextOverlays = [...state.overlays];
       nextOverlays[index] = nextOverlay;
-      syncBodyPointerEvents(state.overlays, nextOverlays);
       return { overlays: nextOverlays };
     });
   },
@@ -216,10 +197,7 @@ const overlayStackStore = createStore<OverlayStackState>((set, get) => ({
     const previousTopModal = getTopModalOverlay(previousOverlays);
     const nextOverlays = previousOverlays.filter((overlay) => overlay.id !== id);
 
-    set(() => {
-      syncBodyPointerEvents(previousOverlays, nextOverlays);
-      return { overlays: nextOverlays };
-    });
+    set({ overlays: nextOverlays });
 
     if (previousTopModal?.id === id && removedOverlay.modal) {
       restoreFocus(removedOverlay.restoreFocusTo);
@@ -312,10 +290,7 @@ export function useTopmostOverlayContainingElement(
   return useOverlayStack((state) => state.getTopmostOverlayContainingElement(element));
 }
 
-/** Resets overlay ordering and global side effects for isolated tests. */
+/** Resets overlay ordering for isolated tests. */
 export function __resetOverlayStackForTests(): void {
   overlayStackStore.setState({ overlays: [] });
-  if (isBrowser()) {
-    document.body.style.pointerEvents = '';
-  }
 }

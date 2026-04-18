@@ -64,26 +64,6 @@ export function useLightboxShellInteractionHandlers({
     }
   };
 
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (!isCurrentLightboxTopmost()) {
-      return;
-    }
-
-    if (isRepositionMode) {
-      pointerDownTargetRef.current = null;
-      return;
-    }
-
-    const clickStartedOnOverlay = pointerDownTargetRef.current === e.currentTarget;
-    const clickEndedOnOverlay = e.target === e.currentTarget;
-
-    if (clickStartedOnOverlay && clickEndedOnOverlay) {
-      onClose();
-    }
-
-    pointerDownTargetRef.current = null;
-  };
-
   const handleBgPointerDownCapture = (e: React.PointerEvent) => {
     bgPointerDownTargetRef.current = e.target;
   };
@@ -134,7 +114,6 @@ export function useLightboxShellInteractionHandlers({
   return {
     handleOverlayPointerDown,
     handleOverlayPointerUp,
-    handleOverlayClick,
     handleBgPointerDownCapture,
     handleBgClickCapture,
     handleContentPointerDown,

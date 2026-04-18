@@ -89,7 +89,7 @@ describe('useLightboxShellInteractionHandlers', () => {
     expect(upEvent.nativeEvent.stopImmediatePropagation).toHaveBeenCalledTimes(1);
   });
 
-  it('does not close on overlay click while in reposition mode', () => {
+  it('does not close on overlay pointer up while in reposition mode', () => {
     const onClose = vi.fn();
     const popupRef = { current: document.createElement('div') };
     const { result } = renderHook(() =>
@@ -104,11 +104,11 @@ describe('useLightboxShellInteractionHandlers', () => {
 
     const overlay = document.createElement('div');
     const downEvent = createPointerEvent(overlay, overlay);
-    const clickEvent = createMouseEvent(overlay, overlay);
+    const upEvent = createPointerEvent(overlay, overlay);
 
     act(() => {
       result.current.handleOverlayPointerDown(downEvent);
-      result.current.handleOverlayClick(clickEvent);
+      result.current.handleOverlayPointerUp(upEvent);
     });
 
     expect(onClose).not.toHaveBeenCalled();

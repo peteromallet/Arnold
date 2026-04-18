@@ -6,6 +6,12 @@ import {
   useOverlayStackApi,
 } from './overlayStack';
 
+function createOpenElement(): HTMLDivElement {
+  const element = document.createElement('div');
+  element.setAttribute('data-state', 'open');
+  return element;
+}
+
 describe('overlayStack', () => {
   beforeEach(() => {
     __resetOverlayStackForTests();
@@ -15,36 +21,44 @@ describe('overlayStack', () => {
     vi.restoreAllMocks();
   });
 
-  it('keeps modal pointer-events ownership until the last modal overlay closes', () => {
+  it('tracks modal-overlay ordering through push/pop until the last modal overlay closes', () => {
     const store = useOverlayStackApi();
+    const dialogAElement = createOpenElement();
+    const dialogCElement = createOpenElement();
 
-    document.body.style.pointerEvents = 'auto';
-
-    store.getState().pushOverlay({ id: 'dialog-a', type: 'dialog', modal: true });
-    expect(document.body.style.pointerEvents).toBe('none');
+    store.getState().pushOverlay({
+      id: 'dialog-a',
+      type: 'dialog',
+      modal: true,
+      elements: [dialogAElement],
+    });
     expect(store.getState().isTopmostModalOverlay('dialog-a')).toBe(true);
 
     store.getState().pushOverlay({ id: 'popover-b', type: 'popover', modal: false });
-    expect(document.body.style.pointerEvents).toBe('none');
     expect(store.getState().isOverlayTopmost('popover-b')).toBe(true);
     expect(store.getState().isTopmostModalOverlay('dialog-a')).toBe(true);
 
-    store.getState().pushOverlay({ id: 'dialog-c', type: 'dialog', modal: true });
-    expect(document.body.style.pointerEvents).toBe('none');
+    store.getState().pushOverlay({
+      id: 'dialog-c',
+      type: 'dialog',
+      modal: true,
+      elements: [dialogCElement],
+    });
     expect(store.getState().isTopmostModalOverlay('dialog-c')).toBe(true);
 
     store.getState().popOverlay('dialog-a');
-    expect(document.body.style.pointerEvents).toBe('none');
     expect(store.getState().isTopmostModalOverlay('dialog-c')).toBe(true);
 
     store.getState().popOverlay('dialog-c');
-    expect(document.body.style.pointerEvents).toBe('auto');
+    expect(store.getState().getTopModalOverlay()).toBeNull();
   });
 
   it('restores focus only when the closing overlay is the current topmost modal', async () => {
     const store = useOverlayStackApi();
     const openerA = document.createElement('button');
     const openerB = document.createElement('button');
+    const dialogAElement = createOpenElement();
+    const dialogBElement = createOpenElement();
     document.body.append(openerA, openerB);
 
     const focusSpyA = vi.spyOn(openerA, 'focus');
@@ -55,12 +69,14 @@ describe('overlayStack', () => {
       type: 'dialog',
       modal: true,
       restoreFocusTo: openerA,
+      elements: [dialogAElement],
     });
     store.getState().pushOverlay({
       id: 'dialog-b',
       type: 'dialog',
       modal: true,
       restoreFocusTo: openerB,
+      elements: [dialogBElement],
     });
 
     store.getState().popOverlay('dialog-a');
@@ -102,9 +118,15 @@ describe('overlayStack', () => {
   it('updates tracked overlay fields without changing stack order', () => {
     const store = useOverlayStackApi();
     const nextElement = document.createElement('div');
+    const dialogElement = createOpenElement();
 
     store.getState().pushOverlay({ id: 'menu-a', type: 'menu' });
-    store.getState().pushOverlay({ id: 'dialog-b', type: 'dialog', modal: true });
+    store.getState().pushOverlay({
+      id: 'dialog-b',
+      type: 'dialog',
+      modal: true,
+      elements: [dialogElement],
+    });
 
     store.getState().updateOverlay('menu-a', {
       modal: true,

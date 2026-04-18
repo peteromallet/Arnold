@@ -403,7 +403,6 @@ function CenteredLayoutView({ props }: { props: LightboxLayoutProps }) {
         data-lightbox-bg
         className={cn(
           'relative flex items-center justify-center max-w-full my-auto',
-          core.isMobile && imageEdit.isInpaintMode && 'pointer-events-auto',
           'touch-none'
         )}
         style={{

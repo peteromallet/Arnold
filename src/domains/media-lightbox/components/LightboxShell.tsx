@@ -76,7 +76,6 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
   const {
     handleOverlayPointerDown,
     handleOverlayPointerUp,
-    handleOverlayClick,
     handleBgPointerDownCapture,
     handleBgClickCapture,
     handleContentPointerDown,
@@ -108,7 +107,7 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
       onOpenChange={(_open, eventDetails) => {
         // Prevent Base UI from updating internal state (which corrupts controlled open={true})
         // and from calling stopPropagation on the native event (which blocks our custom handlers).
-        // Our own handlers in useLightboxNavigation (Escape) and handleOverlayClick (outside press)
+        // Our own handlers in useLightboxNavigation (Escape) and our overlay dismissal handlers
         // manage all closing logic.
         eventDetails.cancel();
         eventDetails.allowPropagation();
@@ -124,7 +123,6 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
           )}
           onPointerDown={handleOverlayPointerDown}
           onPointerUp={handleOverlayPointerUp}
-          onClick={handleOverlayClick}
           onTouchStart={handleTouchEvent}
           onTouchMove={handleTouchEvent}
           onTouchEnd={handleTouchEvent}

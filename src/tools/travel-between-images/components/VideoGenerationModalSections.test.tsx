@@ -9,6 +9,9 @@ import {
 
 const mocks = vi.hoisted(() => ({
   useVideoTravelSettingsHandlers: vi.fn(),
+  useMotionSettings: vi.fn(),
+  useModelSettings: vi.fn(),
+  useSettingsSave: vi.fn(),
   handleGenerationTypeModeChange: vi.fn(),
   handlePhaseConfigChange: vi.fn(),
   handlePhasePresetRemove: vi.fn(),
@@ -103,6 +106,9 @@ vi.mock('@/shared/components/ui/skeleton', () => ({
 
 vi.mock('@/tools/travel-between-images/providers', () => ({
   useVideoTravelSettingsHandlers: (...args: unknown[]) => mocks.useVideoTravelSettingsHandlers(...args),
+  useMotionSettings: (...args: unknown[]) => mocks.useMotionSettings(...args),
+  useModelSettings: (...args: unknown[]) => mocks.useModelSettings(...args),
+  useSettingsSave: (...args: unknown[]) => mocks.useSettingsSave(...args),
 }));
 
 vi.mock('@/tools/travel-between-images/components/BatchSettingsForm', () => ({
@@ -125,6 +131,20 @@ describe('VideoGenerationModalSections', () => {
       handlePhaseConfigChange: mocks.handlePhaseConfigChange,
       handlePhasePresetRemove: mocks.handlePhasePresetRemove,
       handlePhasePresetSelect: mocks.handlePhasePresetSelect,
+    });
+    mocks.useMotionSettings.mockReturnValue({
+      smoothContinuations: false,
+      setSmoothContinuations: vi.fn(),
+    });
+    mocks.useModelSettings.mockReturnValue({
+      guidanceScale: undefined,
+      setGuidanceScale: vi.fn(),
+      ltxHdResolution: true,
+      setLtxHdResolution: vi.fn(),
+      setSelectedModel: vi.fn(),
+    });
+    mocks.useSettingsSave.mockReturnValue({
+      onBlurSave: vi.fn(),
     });
   });
 
