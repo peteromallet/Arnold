@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { OverlayInstanceProvider, useOverlayBridge } from '@/shared/components/ui/overlay/overlayBridge';
 import { useOverlayLayer } from '@/shared/state/overlayStack';
-import { composeRefs, getOverlayLayerStyle } from './shared';
+import { composeRefs, getOverlayLayerStyle, LIGHTBOX_BASE_Z_INDEX } from './shared';
 
 const LightboxDialogModalContext = React.createContext(true);
 
@@ -66,7 +66,7 @@ const LightboxDialogBackdrop = React.forwardRef<
   return (
     <DialogPrimitive.Backdrop
       ref={backdropRef}
-      style={getOverlayLayerStyle(layer, 'backdrop', style)}
+      style={getOverlayLayerStyle(layer, 'backdrop', style, { baseZIndex: LIGHTBOX_BASE_Z_INDEX })}
       {...props}
     />
   );
@@ -86,7 +86,7 @@ const LightboxDialogPopup = React.forwardRef<
   return (
     <DialogPrimitive.Popup
       ref={popupRef}
-      style={getOverlayLayerStyle(layer, 'popup', style)}
+      style={getOverlayLayerStyle(layer, 'popup', style, { baseZIndex: LIGHTBOX_BASE_Z_INDEX })}
       {...props}
     />
   );

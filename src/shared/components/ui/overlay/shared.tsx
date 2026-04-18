@@ -1,6 +1,11 @@
 import * as React from 'react';
 
-const OVERLAY_BASE_Z_INDEX = 1000;
+// Regular modals (Dialog, AlertDialog, Popover, Select, etc.) must render above
+// locked panes (GenerationsPane at ~100013, TasksPane at 100001, pane tab at
+// 100014). The lightbox is the sole exception — it renders below panes so users
+// can interact with locked panes while media is open.
+export const OVERLAY_BASE_Z_INDEX = 110000;
+export const LIGHTBOX_BASE_Z_INDEX = 1000;
 const OVERLAY_LAYER_STEP = 10;
 
 const OVERLAY_LAYER_SLOT_OFFSET = {
@@ -29,13 +34,15 @@ export function getOverlayLayerStyle(
   layer: number | null,
   slot: OverlayLayerSlot,
   style?: React.CSSProperties,
+  options?: { baseZIndex?: number },
 ): React.CSSProperties {
   const resolvedLayer = Math.max(layer ?? 1, 1);
+  const base = options?.baseZIndex ?? OVERLAY_BASE_Z_INDEX;
 
   return {
     ...(style ?? {}),
     zIndex:
-      OVERLAY_BASE_Z_INDEX +
+      base +
       resolvedLayer * OVERLAY_LAYER_STEP +
       OVERLAY_LAYER_SLOT_OFFSET[slot],
   };
