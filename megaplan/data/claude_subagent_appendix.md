@@ -15,6 +15,7 @@ When subagent mode is active, the outer skill becomes a launcher plus breakpoint
 - `run_in_background: true` when `{AUTO_APPROVE}` is true; otherwise foreground is fine
 - Expand `{AUTO_APPROVE_FLAG}` to an empty string when `raw_config.execution.auto_approve` is explicitly set; otherwise expand it to `--auto-approve` for auto-approve runs and an empty string for review runs.
 - Expand `{ROBUSTNESS_FLAG}` to an empty string when `raw_config.execution.robustness` is explicitly set; otherwise expand it to `--robustness {ROBUSTNESS}`.
+- For doc-mode runs, also append `--mode doc --output <relative/path>` to the `megaplan init` call in the subagent's Startup step. Everything else in the template applies unchanged; the workflow phases and breakpoints are identical in doc mode.
 - After editing this source file, rerun `megaplan setup --force` so installed `SKILL.md` files pick up the refreshed appendix.
 
 ### Outer Skill Handling
