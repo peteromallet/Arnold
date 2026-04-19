@@ -151,6 +151,16 @@ function deriveLayout(params: {
   const generationsVisible = isGenerationsPaneLocked || isGenerationsPaneOpen;
   const editorPaneHeight = Math.round(viewportHeight * 0.5);
 
+  // When both panes are LOCKED, split the viewport 50/50 so they meet in the
+  // middle instead of leaving a gap when their preferred heights fall short.
+  if (isEditorPaneLocked && isGenerationsPaneLocked) {
+    return {
+      editorPaneHeight,
+      effectiveEditorPaneHeight: editorPaneHeight,
+      effectiveGenerationsPaneHeight: viewportHeight - editorPaneHeight,
+    };
+  }
+
   if (!(editorVisible && generationsVisible)) {
     return {
       editorPaneHeight,
