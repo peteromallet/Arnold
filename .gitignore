@@ -49,6 +49,7 @@ temp/
 !docs/quality/*.md
 !docs/state_management_refactor_baselines.md
 !docs/state_management_context_audit.md
+!docs/design/*.md
 !tasks/*.md
 !CLAUDE.md
 
