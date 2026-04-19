@@ -115,6 +115,34 @@ def test_assemble_doc_creates_parent_directory(tmp_path: Path) -> None:
     assert output_path.read_text(encoding="utf-8") == "X"
 
 
+def test_assemble_doc_preserves_executor_written_file(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    output_path = tmp_path / "out.md"
+    output_path.write_text("# Real document\n\nAuthored content here.", encoding="utf-8")
+    _write_batch(plan_dir, 1, {
+        "task_updates": [
+            {"task_id": "T1", "status": "done",
+             "executor_notes": "Verification prose, not content", "sections_written": ["s1"]},
+        ]
+    })
+    assemble_doc(plan_dir, output_path, _finalize_with_tasks("T1"))
+    assert output_path.read_text(encoding="utf-8") == "# Real document\n\nAuthored content here."
+
+
+def test_assemble_doc_falls_back_when_file_empty(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    output_path = tmp_path / "out.md"
+    output_path.write_text("", encoding="utf-8")
+    _write_batch(plan_dir, 1, {
+        "task_updates": [
+            {"task_id": "T1", "status": "done",
+             "executor_notes": "Fallback body", "sections_written": ["s1"]},
+        ]
+    })
+    assemble_doc(plan_dir, output_path, _finalize_with_tasks("T1"))
+    assert output_path.read_text(encoding="utf-8") == "Fallback body"
+
+
 def test_extract_sections_duplicate_section_id_last_wins(tmp_path: Path) -> None:
     """Document current behavior: when two tasks claim the same section_id,
     the later batch wins. This locks the contract so any future change is

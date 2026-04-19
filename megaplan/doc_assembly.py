@@ -67,12 +67,25 @@ def assemble_doc(
     output_path: Path,
     finalize_data: dict[str, Any],
 ) -> Path:
-    """Read per-batch executor outputs and assemble the final document.
+    """Fallback document assembly from per-batch executor notes.
 
-    Sections are ordered by their owning task's position in finalize_data.
-    The file is written atomically (temp file + rename). Running twice
-    replaces the file completely (idempotent).
+    The executor is the primary author: per `prompts/execute_doc.py`, it writes
+    the document directly to `output_path` during each task, and keeps
+    `executor_notes` verification-focused (not section content). When the
+    executor wrote the file successfully, this function preserves that file
+    and does nothing else.
+
+    Fallback path — only if the output file is missing or empty — assembles
+    text from `executor_notes` in `execution_batch_*.json`, ordered by the
+    owning task's position in `finalize_data`. This is a degraded best-effort
+    output for the sandbox-blocked case; callers should treat its content as
+    verification prose rather than authored sections.
+
+    The file is written atomically (temp file + rename).
     """
+    if output_path.exists() and output_path.stat().st_size > 0:
+        return output_path
+
     batch_payloads: list[dict[str, Any]] = []
     batch_index = 1
     while True:
