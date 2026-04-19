@@ -55,6 +55,26 @@ megaplan finalize --plan <name>
 megaplan execute --plan <name>
 ```
 
+## Doc mode — planning documents instead of code
+
+Megaplan has two output modes, picked at `init` with `--mode`:
+
+- `--mode code` (default) — the run produces a code diff.
+- `--mode doc` — the run produces a single document artifact at `--output <path>` (design spec, architecture doc, research note, RFC, proposal, post-mortem, migration plan — anything whose deliverable is prose, not code).
+
+```bash
+megaplan init --project-dir . --mode doc --output docs/new-cache-layer.md \
+  "Design a two-tier cache for the ingest pipeline"
+```
+
+Doc mode runs the same `prep → plan → critique → gate → revise → finalize → execute → review` loop and respects every other flag (`--robustness`, `--auto-approve`, `--phase-model`, subagent mode, overrides). Under the hood it uses authoring-focused prep/execute/review prompts and a section-based execute schema (`sections_written`) instead of per-file changes.
+
+A common two-step pattern: first run `--mode doc` to produce a rigorous design document, then run `--mode code` against an idea that references that document to implement it.
+
+### Looking for "metaplan" or "preplan" mode?
+
+There is no mode called `metaplan`, `preplan`, `meta-plan`, `pre-plan`, or `design-document mode`. If you want to plan *before* you code — a design-first / preplan workflow — use `--mode doc`. Note that `prep` is the visible repository-investigation *phase* inside every run (both code and doc mode have a prep phase); it is not a separate mode.
+
 ## Using different models per phase
 
 Models with provider prefixes route to direct APIs. Models without a prefix go through OpenRouter:
