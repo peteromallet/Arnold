@@ -1,0 +1,37 @@
+# Example chain spec consumed by `megaplan chain --spec /workspace/chain.yaml`.
+# Copy to /workspace/chain.yaml on the container (or mount it via volume) and
+# edit as needed. Progress is persisted to chain_state.json next to this file.
+
+seed:
+  # Plan that was kicked off manually before the chain took over. If its state
+  # is already done/aborted/failed, the chain skips it; otherwise it is driven
+  # under the same auto-loop as chained milestones.
+  plan: milestone-m0-from-docs-state-20260415-0217
+
+milestones:
+  - label: m1
+    idea: /workspace/ideas/M1-foundation-store.txt
+    branch: megaplan/m1-foundation-store
+  - label: m1a
+    idea: /workspace/ideas/M1a-settings-store.txt
+    branch: megaplan/m1a-settings-store
+  - label: m1b
+    idea: /workspace/ideas/M1b-selection-store.txt
+    branch: megaplan/m1b-selection-store
+  - label: m1c
+    idea: /workspace/ideas/M1c-timeline-store.txt
+    branch: megaplan/m1c-timeline-store
+  # M2 (overlay stack) is CONDITIONAL on M1a's gate — do NOT auto-queue.
+
+on_failure:
+  abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
+on_escalate:
+  abort: stop_chain
+
+driver:
+  stall_threshold: 5
+  max_iterations: 100
+  phase_timeout: 3600
+  on_escalate: force-proceed  # force-proceed | abort | fail
+  robustness: standard
+  auto_approve: true

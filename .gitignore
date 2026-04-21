@@ -7,3 +7,4 @@ __pycache__/
 dist/
 *.egg-info/
 activity-summary-*.md
+megaplan/cloud/_reference/
