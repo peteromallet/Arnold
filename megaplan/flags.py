@@ -159,7 +159,7 @@ def update_flags_after_critique(plan_dir: Path, critique: dict[str, Any], *, ite
 
 
 def update_flags_after_review(plan_dir: Path, review_payload: dict[str, Any], *, iteration: int) -> FlagRegistry:
-    from megaplan.review_checks import build_check_category_map, get_check_by_id
+    from megaplan.review.checks import build_check_category_map, get_check_by_id
 
     payload_for_registry = dict(review_payload)
     payload_for_registry["flags"] = [*list(review_payload.get("flags", [])), *(

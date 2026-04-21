@@ -9,8 +9,8 @@ from types import ModuleType
 import pytest
 
 from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
-from megaplan.parallel_review import _run_check, _run_criteria_verdict, run_parallel_review
-from megaplan.review_checks import checks_for_robustness
+from megaplan.review.parallel import _run_check, _run_criteria_verdict, run_parallel_review
+from megaplan.review.checks import checks_for_robustness
 from megaplan.types import PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, _build_mock_payload
 
@@ -125,8 +125,8 @@ def test_run_parallel_review_merges_check_results_in_original_order(
         call_counts["criteria"] += 1
         return criteria_payload, 0.5, 0, 0, 0
 
-    monkeypatch.setattr("megaplan.parallel_review._run_check", fake_run_check)
-    monkeypatch.setattr("megaplan.parallel_review._run_criteria_verdict", fake_run_criteria_verdict)
+    monkeypatch.setattr("megaplan.review.parallel._run_check", fake_run_check)
+    monkeypatch.setattr("megaplan.review.parallel._run_criteria_verdict", fake_run_criteria_verdict)
 
     result = run_parallel_review(
         state,
@@ -199,16 +199,16 @@ def test_run_check_uses_single_check_prompt_and_review_toolset(
     monkeypatch.setitem(sys.modules, "hermes_state", ModuleType("hermes_state"))
     sys.modules["run_agent"].AIAgent = FakeAIAgent
     sys.modules["hermes_state"].SessionDB = FakeSessionDB
-    monkeypatch.setattr("megaplan.parallel_review._resolve_model", lambda model: ("mock-model", {}))
+    monkeypatch.setattr("megaplan.review.parallel._resolve_model", lambda model: ("mock-model", {}))
     monkeypatch.setattr(
-        "megaplan.parallel_review.single_check_review_prompt",
+        "megaplan.review.parallel.single_check_review_prompt",
         lambda state, plan_dir, root, check, output_path, pre_check_flags: prompt_calls.append(
             (check.id, pre_check_flags)
         )
         or "focused-review-prompt",
     )
     monkeypatch.setattr(
-        "megaplan.parallel_review._toolsets_for_phase",
+        "megaplan.review.parallel._toolsets_for_phase",
         lambda phase: toolset_calls.append(phase) or ["file-tools"],
     )
 
@@ -282,13 +282,13 @@ def test_run_criteria_verdict_uses_parallel_review_prompt_and_review_toolset(
     monkeypatch.setitem(sys.modules, "hermes_state", ModuleType("hermes_state"))
     sys.modules["run_agent"].AIAgent = FakeAIAgent
     sys.modules["hermes_state"].SessionDB = FakeSessionDB
-    monkeypatch.setattr("megaplan.parallel_review._resolve_model", lambda model: ("mock-model", {}))
+    monkeypatch.setattr("megaplan.review.parallel._resolve_model", lambda model: ("mock-model", {}))
     monkeypatch.setattr(
-        "megaplan.parallel_review.parallel_criteria_review_prompt",
+        "megaplan.review.parallel.parallel_criteria_review_prompt",
         lambda state, plan_dir, root, output_path: prompt_calls.append(output_path.name) or "criteria-review-prompt",
     )
     monkeypatch.setattr(
-        "megaplan.parallel_review._toolsets_for_phase",
+        "megaplan.review.parallel._toolsets_for_phase",
         lambda phase: toolset_calls.append(phase) or ["file-tools"],
     )
 
