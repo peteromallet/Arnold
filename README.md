@@ -146,4 +146,4 @@ megaplan config reset
 
 ## License
 
-MIT
+[Open Source Native License (OSNL) 0.2](LICENSE). Free for internal use by anyone, including commercial companies. Redistribution inside a product or service is free for entities that open-source their own primary assets; otherwise requires a separate commercial license. See [LICENSE](LICENSE) for the full terms.
