@@ -51,22 +51,18 @@ megaplan finalize --plan <name>
 megaplan execute --plan <name>
 ```
 
-## Doc mode — planning documents instead of code
+## Metaplan mode — planning documents instead of code
 
-Pick the output mode at `init` with `--mode`: `--mode code` (default) produces a code diff; `--mode doc` produces a single document artifact at `--output <path>` (design spec, architecture doc, research note, RFC, proposal, post-mortem, migration plan — anything whose deliverable is prose, not code).
+Metaplan mode produces a single document artifact — design spec, architecture doc, research note, RFC, proposal, post-mortem, migration plan — instead of a code diff. Pick it at `init` with `--mode metaplan` (or `--mode doc`, the original flag name kept as an alias) and `--output <path>`:
 
 ```bash
-megaplan init --project-dir . --mode doc --output docs/new-cache-layer.md \
+megaplan init --project-dir . --mode metaplan --output docs/new-cache-layer.md \
   "Design a two-tier cache for the ingest pipeline"
 ```
 
-Doc mode respects every other flag (`--robustness`, `--auto-approve`, `--phase-model`, subagent mode, overrides) and uses authoring-focused prep/execute/review prompts plus a section-based execute schema (`sections_written`) instead of per-file changes.
+It respects every other flag (`--robustness`, `--auto-approve`, `--phase-model`, subagent mode, overrides) and uses authoring-focused prep/execute/review prompts plus a section-based execute schema (`sections_written`) instead of per-file changes. A common pattern is to run metaplan mode first, then `--mode code` against an idea that references the resulting document.
 
-A common pattern is to run `--mode doc` first, then `--mode code` against an idea that references that document.
-
-### Looking for "metaplan" or "preplan" mode?
-
-There is no `metaplan`, `preplan`, `meta-plan`, `pre-plan`, or `design-document mode`. For a design-first / preplan workflow, use `--mode doc`; `prep` is the visible repository-investigation *phase* inside every run, not a separate mode.
+Note: `prep` is a visible repository-investigation *phase* inside every run, not a separate mode.
 
 ## Using different models per phase
 
@@ -143,13 +139,6 @@ megaplan config set execution.worker_timeout_seconds 3600
 megaplan config set agents.critique hermes
 megaplan config reset
 ```
-
-## SWE-bench Experiment
-
-Megaplan is being tested live against Claude 4.5 Opus on SWE-bench Verified:
-
-- **[Live dashboard](https://peteromallet.github.io/swe-bench-challenge/)** — watch the experiment in real time
-- **[hermes-megaplan](https://github.com/peteromallet/hermes-megaplan)** — experiment orchestration code
 
 ## Code Health
 
