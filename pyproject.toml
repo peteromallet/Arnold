@@ -27,6 +27,7 @@ megaplan = "megaplan.cli:cli_entry"
 
 [tool.hatch.build.targets.wheel]
 packages = ["megaplan"]
+exclude = ["megaplan/cloud/_reference/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

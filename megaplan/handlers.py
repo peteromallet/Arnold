@@ -730,8 +730,16 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists() or not project_dir.is_dir():
         raise CliError("invalid_project_dir", f"Project directory does not exist: {project_dir}")
-    mode = getattr(args, "mode", "code") or "code"
+    explicit_mode = getattr(args, "mode", None)
     raw_output_path = getattr(args, "output", None)
+    mode = explicit_mode or "code"
+
+    if mode == "code" and raw_output_path:
+        raise CliError(
+            "invalid_args",
+            "--output is only valid with --mode doc. For code-mode runs, remove "
+            "--output; for design-document runs, also pass --mode doc.",
+        )
     normalized_output_path: str | None = None
     if mode == "doc" and not raw_output_path:
         raise CliError("invalid_args", "--output is required when --mode doc is selected")

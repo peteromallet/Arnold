@@ -1,0 +1,78 @@
+# Cloud runner spec for `megaplan cloud`.
+#
+# provider:
+#   Sprint 1 only supports Railway. Sprint 2 will add fly, ssh, and local.
+provider: railway
+
+# repo:
+#   url      Git repository cloned into the persistent workspace volume.
+#   branch   Branch checked out on first boot.
+#   workspace
+#            Absolute path inside the container where the repo lives.
+repo:
+  url: https://github.com/example/app.git
+  branch: main
+  workspace: /workspace/app
+
+# agents:
+#   `default` applies to every megaplan step. Add per-step overrides only when
+#   a specific phase should use a different agent.
+agents:
+  default: codex
+  # execute: codex
+  # review: codex
+
+# codex:
+#   Written to /root/.codex/config.toml on every boot.
+codex:
+  model: gpt-5.4
+  reasoning: high
+
+# mode behavior:
+#   | mode  | agent session boot action                                  | required fields                    |
+#   | auto  | init plan if missing, then run `megaplan auto --plan ...` | auto.plan_name, auto.idea_file     |
+#   | chain | run `megaplan chain --spec ...`                            | chain.spec                         |
+#   | idle  | start `bash -l` only                                       | none                               |
+#   Missing auto.idea_file or chain.spec is a warning path in sprint 1: the
+#   container drops to idle instead of crashing so you can upload files manually.
+mode: idle
+
+# auto:
+#   Required only when mode=auto.
+auto:
+  plan_name: my-plan
+  idea_file: /workspace/idea.txt
+  robustness: standard
+
+# chain:
+#   Required only when mode=chain.
+chain:
+  spec: /workspace/chain.yaml
+
+# megaplan:
+#   Branch/tag/SHA used for the boot-time `pip install --upgrade` of megaplan.
+megaplan:
+  ref: main
+
+# resources:
+#   volume  Provider-specific persistent volume name. `destroy` deletes it.
+#   port    Health server port exposed by the container.
+resources:
+  volume: agent-volume
+  port: 8080
+
+# railway:
+#   service  Railway service name used by deploy/logs/down.
+#   session  Railway ssh session name used for interactive attaches.
+#   project  Optional Railway project ID/name for `railway link --project ...`.
+railway:
+  service: agent
+  session: agent
+  # project: your-railway-project-id
+
+# secrets:
+#   Names of environment variables read locally during `megaplan cloud deploy`
+#   and uploaded to the provider before boot. OPENAI_API_KEY is the minimum
+#   viable secret; add GITHUB_TOKEN / ANTHROPIC_API_KEY as needed.
+secrets:
+  - OPENAI_API_KEY

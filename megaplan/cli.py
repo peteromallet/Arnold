@@ -837,8 +837,13 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
-    init_parser.add_argument("--mode", choices=["code", "doc"], default="code")
-    init_parser.add_argument("--output")
+    init_parser.add_argument("--mode", choices=["code", "doc"], default=None,
+                             help="Deliverable type: 'code' (source changes) or 'doc' (design/spec artifact). "
+                                  "Defaults to 'code' unless the idea strongly suggests a design document, "
+                                  "in which case --mode must be passed explicitly.")
+    init_parser.add_argument("--output", default=None,
+                             help="Relative path where the doc artifact will be written. "
+                                  "Required with --mode doc; rejected with --mode code.")
     init_parser.add_argument("--hermes", nargs="?", const="", default=None,
                              help="Use Hermes agent for all phases. Optional: specify default model")
     init_parser.add_argument("--phase-model", action="append", default=[],
@@ -997,6 +1002,9 @@ def build_parser() -> argparse.ArgumentParser:
     from megaplan.chain import build_chain_parser
     build_chain_parser(subparsers)
 
+    from megaplan.cloud.cli import build_cloud_parser
+    build_cloud_parser(subparsers)
+
     from megaplan.tiebreaker import build_tiebreaker_parser
     build_tiebreaker_parser(subparsers)
 
@@ -1088,9 +1096,22 @@ def _find_git_root(start: Path) -> Path | None:
         current = parent
 
 
+def _auto_sync_installed_skills() -> None:
+    try:
+        for target in _GLOBAL_TARGETS:
+            agent_dir = Path.home() / target["detect"]
+            if not agent_dir.is_dir():
+                continue
+            _install_owned_file(Path.home() / target["path"], bundled_global_file(target["data"]), force=False)
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
+    if args.command != "setup":
+        _auto_sync_installed_skills()
     try:
         if args.command == "setup":
             return render_response(handle_setup(args))
@@ -1121,6 +1142,13 @@ def main(argv: list[str] | None = None) -> int:
         from megaplan.chain import run_chain_cli
         try:
             return run_chain_cli(root, args)
+        except CliError as error:
+            return error_response(error, root=root)
+
+    if args.command == "cloud":
+        from megaplan.cloud.cli import run_cloud_cli
+        try:
+            return run_cloud_cli(root, args)
         except CliError as error:
             return error_response(error, root=root)
 

@@ -8,7 +8,7 @@ Launcher resolution order:
 4. If that fails, try a version-selected shim such as `PYENV_VERSION=3.11.11 megaplan config show`.
 5. Only use bare `megaplan ...` if that exact form already succeeded during this check.
 ## Triage
-Pick the right level based on the task:
+A single megaplan can cover as much as 2 weeks of work — don't reflexively split large efforts into multiple plans. Pick the right level based on the task:
 - **Skip megaplan**: single-file fixes, bug fixes with clear cause, simple refactors, config changes, adding tests for existing code. Just do it.
 - **Light**: multi-file changes with clear scope, well-understood features, straightforward additions. One critique pass, no gate, no review.
 - **Standard** (default for megaplan): cross-cutting changes touching many subsystems, unfamiliar codebase areas, ambiguous requirements, changes with high breakage risk, or anything where the plan itself needs debate.
@@ -23,6 +23,8 @@ Megaplan has two output modes, picked with `--mode` at `init`:
 All other flags (`--robustness`, `--auto-approve`, `--phase-model`, `--hermes`, subagent mode, overrides, step editing) behave identically in both modes. The workflow phases are the same: `prep → plan → critique → gate → revise → finalize → execute → review`.
 
 A common pattern is two runs: first `--mode doc` to produce a rigorous design document, then `--mode code` on a new idea that references that document to implement it.
+
+**`--mode` and `--output` go together.** `init` rejects `--output` without `--mode doc` (error `invalid_args`), and rejects `--mode doc` without `--output`. Don't try to pass one without the other.
 
 ### Looking for "metaplan" or "preplan" mode?
 There is no mode called `metaplan`, `preplan`, `meta-plan`, `pre-plan`, or `design-document mode`. If you want to plan the plan — produce a design spec, RFC, or architecture document before writing code — use `--mode doc`. That is the "design-first / preplan" workflow. Note that `prep` is the visible repository-investigation *phase* inside every workflow (both code and doc mode have a prep phase); it is not a mode and is not something you select at `init`.

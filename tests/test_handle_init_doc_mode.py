@@ -96,13 +96,11 @@ def test_doc_mode_accepts_relative_output(tmp_path: Path, monkeypatch: pytest.Mo
     assert state["config"]["output_path"] == "docs/result.md"
 
 
-def test_code_mode_with_output_normalizes_but_does_not_require(
+def test_code_mode_without_output_succeeds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """In code mode --output is optional. Providing it should not error;
-    the path validation rules still apply if given."""
+    """Code mode without --output is the common case and must keep working."""
     root, project_dir = _bootstrap(tmp_path, monkeypatch)
-    # Code mode without --output: succeeds.
     response = megaplan.handle_init(
         root,
         _args(project_dir, name="code-plan", mode="code", output=None),
@@ -112,3 +110,19 @@ def test_code_mode_with_output_normalizes_but_does_not_require(
     state = _json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state["config"]["mode"] == "code"
     assert "output_path" not in state["config"]
+
+
+def test_code_mode_with_output_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--output is meaningless in code mode; accepting it silently has
+    historically masked dropped --mode doc flags. Reject it loudly."""
+    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(
+            root,
+            _args(project_dir, mode="code", output="docs/foo.md"),
+        )
+    assert info.value.code == "invalid_args"
+    assert "--output" in str(info.value)
+    assert "--mode doc" in str(info.value)

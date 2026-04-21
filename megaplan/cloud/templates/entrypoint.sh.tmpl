@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOG=/var/log/entrypoint.log
+exec > >(tee -a "$$LOG") 2>&1
+
+echo "=== $$(date -Iseconds) entrypoint starting ==="
+
+mkdir -p /workspace /root/.ssh /root/.config/megaplan /root/.codex
+chmod 700 /root/.ssh
+
+REPO_URL="$${REPO_URL:-${REPO_URL}}"
+REPO_BRANCH="$${REPO_BRANCH:-${REPO_BRANCH}}"
+WORKSPACE_PATH="${WORKSPACE_PATH}"
+REPO_DIR="$$WORKSPACE_PATH"
+MODE="${MODE}"
+IDEA_FILE="${IDEA_FILE}"
+CHAIN_SPEC="${CHAIN_SPEC}"
+AUTO_PLAN_NAME="${AUTO_PLAN_NAME}"
+
+# Git identity
+git config --global user.email "$${GIT_EMAIL:-${CODEX_EMAIL}}"
+git config --global user.name "$${GIT_NAME:-Codex Agent}"
+git config --global init.defaultBranch main
+git config --global pull.rebase false
+git config --global --add safe.directory "$$REPO_DIR"
+
+# GitHub credential helper if token present
+if [[ -n "$${GITHUB_TOKEN:-}" ]]; then
+  echo "GITHUB_TOKEN present — configuring git credentials"
+  git config --global credential.helper store
+  cat > /root/.git-credentials <<EOF
+https://x-access-token:$${GITHUB_TOKEN}@github.com
+EOF
+  chmod 600 /root/.git-credentials
+fi
+
+# Clone repo if missing (volume may already have it from a prior boot)
+if [[ ! -d "$$REPO_DIR/.git" ]]; then
+  echo "Cloning $$REPO_URL into $$REPO_DIR (branch: $$REPO_BRANCH)"
+  if git clone --branch "$$REPO_BRANCH" "$$REPO_URL" "$$REPO_DIR" 2>&1 | tail -10; then
+    echo "Clone complete."
+  else
+    echo "Clone failed — set GITHUB_TOKEN or clone manually."
+  fi
+else
+  echo "$$REPO_DIR already present — skipping clone."
+fi
+
+# Codex auth from env
+if [[ -n "$${OPENAI_API_KEY:-}" ]] && [[ ! -f /root/.codex/auth.json ]]; then
+  echo "Authenticating codex with OPENAI_API_KEY"
+  printf '%s' "$$OPENAI_API_KEY" | codex login --with-api-key 2>&1 | tail -3 || true
+fi
+
+${CLAUDE_AUTH_BLOCK}
+
+# Codex model + reasoning config — always overwrite on boot so new tiers propagate.
+# sandbox_mode = "danger-full-access" stays on because the container is the sandbox.
+cat > /root/.codex/config.toml <<EOF
+model = "${CODEX_MODEL}"
+model_reasoning_effort = "${CODEX_REASONING}"
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+EOF
+echo "Codex model: ${CODEX_MODEL}, reasoning: ${CODEX_REASONING}, sandbox: danger-full-access (container-sandboxed)"
+
+# Megaplan install: always re-pull on boot so entrypoint restarts pick up the
+# requested ref without rebuilding the base image.
+MEGAPLAN_REF="$${MEGAPLAN_REF:-${MEGAPLAN_REF}}"
+echo "Installing/upgrading megaplan from github:$$MEGAPLAN_REF"
+pip install --upgrade --no-cache-dir "git+https://github.com/peteromallet/megaplan.git@$$MEGAPLAN_REF" 2>&1 | tail -3
+
+echo "Configuring megaplan agent routing and execution defaults"
+${AGENT_ROUTING_BLOCK}
+megaplan config set execution.auto_approve true >/dev/null 2>&1 || true
+megaplan config set execution.robustness "${ROBUSTNESS}" >/dev/null 2>&1 || true
+
+echo "Runner mode: $$MODE"
+
+# Launch heartbeat in its own tmux session.
+if ! tmux has-session -t heartbeat 2>/dev/null; then
+  tmux new-session -d -s heartbeat -c /workspace "bash -lc '/usr/local/bin/mp-heartbeat'"
+  echo "heartbeat watchdog running in tmux session 'heartbeat'"
+fi
+
+# Tiny health server so Railway keeps container alive
+python3 /usr/local/bin/healthserver.py &
+HEALTH_PID=$$!
+echo "healthserver.py running as pid $$HEALTH_PID"
+
+# Ensure tmux session 'agent' exists. The renderer injects the mode-specific
+# launch block here so auto/chain can warn-and-drop-to-idle on missing inputs.
+if ! tmux has-session -t agent 2>/dev/null; then
+${RUNNER_LAUNCH_BLOCK}
+fi
+echo "tmux 'agent' session ready — attach: railway ssh --session agent"
+
+echo "=== entrypoint idle ==="
+wait "$$HEALTH_PID"
