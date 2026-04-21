@@ -145,7 +145,7 @@ def _apply_flag_updates(
 
 
 def update_flags_after_critique(plan_dir: Path, critique: dict[str, Any], *, iteration: int) -> FlagRegistry:
-    from megaplan.checks import build_check_category_map, get_check_by_id
+    from megaplan.audits.robustness import build_check_category_map, get_check_by_id
 
     critique.setdefault("flags", []).extend(
         _synthesize_flags_from_checks(

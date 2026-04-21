@@ -59,8 +59,8 @@ def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
         v["criterion_idx"] for v in verifications if v.get("verdict") == "pass"
     }
 
-    from megaplan.capabilities import get_worker_capabilities
-    from megaplan.verifiability import classify_criteria
+    from megaplan.audits.capabilities import get_worker_capabilities
+    from megaplan.audits.verifiability import classify_criteria
 
     worker_caps = get_worker_capabilities(state)
     _, human_deferred = classify_criteria(success_criteria, worker_caps)
@@ -94,8 +94,8 @@ def handle_audit_verifiability(root: Path, args: argparse.Namespace) -> StepResp
     plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
     success_criteria = plan_meta.get("success_criteria", [])
 
-    from megaplan.capabilities import get_worker_capabilities
-    from megaplan.verifiability import audit_criteria, validate_requires
+    from megaplan.audits.capabilities import get_worker_capabilities
+    from megaplan.audits.verifiability import audit_criteria, validate_requires
 
     worker_caps = get_worker_capabilities(state)
     audits = audit_criteria(success_criteria, worker_caps)

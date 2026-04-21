@@ -5,9 +5,9 @@ import json
 import pytest
 
 import megaplan
-import megaplan.execution
+import megaplan.execute.core
 import megaplan.handlers
-import megaplan.merge
+import megaplan.execute.merge
 import megaplan.workers
 from megaplan.workers import WorkerResult
 
@@ -15,7 +15,7 @@ from tests.conftest import PlanFixture, load_state, read_json
 
 
 def test_validate_merge_inputs_filters_malformed_entries() -> None:
-    valid = megaplan.merge._validate_merge_inputs(
+    valid = megaplan.execute.merge._validate_merge_inputs(
         [
             {
                 "task_id": "T1",
@@ -33,7 +33,7 @@ def test_validate_merge_inputs_filters_malformed_entries() -> None:
         array_fields=("files_changed", "commands_run"),
         label="task_updates",
     )
-    empty = megaplan.merge._validate_merge_inputs(
+    empty = megaplan.execute.merge._validate_merge_inputs(
         [],
         required_fields=("task_id", "reviewer_verdict"),
         label="task_verdicts",
@@ -53,7 +53,7 @@ def test_validate_merge_inputs_filters_malformed_entries() -> None:
 
 def test_validate_merge_inputs_rejects_empty_required_content() -> None:
     deviations: list[str] = []
-    valid = megaplan.merge._validate_merge_inputs(
+    valid = megaplan.execute.merge._validate_merge_inputs(
         [
             {"task_id": "T1", "status": "done", "executor_notes": "  "},
             {"task_id": "T2", "status": "done", "executor_notes": "\t"},
@@ -75,7 +75,7 @@ def test_validate_merge_inputs_rejects_empty_required_content() -> None:
 
 def test_validate_merge_inputs_accepts_array_fields() -> None:
     deviations: list[str] = []
-    valid = megaplan.merge._validate_merge_inputs(
+    valid = megaplan.execute.merge._validate_merge_inputs(
         [
             {
                 "task_id": "T1",
@@ -116,7 +116,7 @@ def test_validate_merge_inputs_accepts_array_fields() -> None:
 
 def test_validate_merge_inputs_rejects_empty_reviewer_verdict() -> None:
     deviations: list[str] = []
-    valid = megaplan.merge._validate_merge_inputs(
+    valid = megaplan.execute.merge._validate_merge_inputs(
         [
             {"task_id": "T1", "reviewer_verdict": ""},
             {"task_id": "T2", "reviewer_verdict": "   "},
@@ -137,7 +137,7 @@ def test_validate_merge_inputs_rejects_empty_reviewer_verdict() -> None:
 
 def test_validate_merge_inputs_rejects_empty_sense_check_verdict() -> None:
     deviations: list[str] = []
-    valid = megaplan.merge._validate_merge_inputs(
+    valid = megaplan.execute.merge._validate_merge_inputs(
         [
             {"sense_check_id": "SC1", "verdict": ""},
             {"sense_check_id": "SC2", "verdict": "Confirmed."},
@@ -157,7 +157,7 @@ def test_validate_merge_inputs_rejects_empty_sense_check_verdict() -> None:
 def test_duplicate_sense_check_verdict_dedup() -> None:
     """Two verdicts for SC1, zero for SC2 — should count 1 unique, not 2."""
     deviations: list[str] = []
-    valid = megaplan.merge._validate_merge_inputs(
+    valid = megaplan.execute.merge._validate_merge_inputs(
         [
             {"sense_check_id": "SC1", "verdict": "First pass."},
             {"sense_check_id": "SC1", "verdict": "Second pass."},
@@ -214,7 +214,7 @@ def test_review_flags_incomplete_verdicts(plan_fixture: PlanFixture) -> None:
 def test_validate_merge_inputs_tracks_deviations() -> None:
     """Verify that _validate_merge_inputs populates the deviations list for malformed input."""
     deviations: list[str] = []
-    megaplan.merge._validate_merge_inputs(
+    megaplan.execute.merge._validate_merge_inputs(
         [
             "not-a-dict",
             {"task_id": "T1"},  # missing required fields
@@ -233,12 +233,12 @@ def test_validate_merge_inputs_tracks_deviations() -> None:
 
 def test_validate_merge_inputs_non_list_returns_empty() -> None:
     """Non-list input returns empty with no crash."""
-    assert megaplan.merge._validate_merge_inputs(
+    assert megaplan.execute.merge._validate_merge_inputs(
         "not-a-list",
         required_fields=("task_id",),
         label="test",
     ) == []
-    assert megaplan.merge._validate_merge_inputs(
+    assert megaplan.execute.merge._validate_merge_inputs(
         None,
         required_fields=("task_id",),
         label="test",
@@ -590,7 +590,7 @@ def test_review_works_after_batch_by_batch_execution(
         raise AssertionError(f"Unexpected batch prompt: {prompt_override}")
 
     _local_setup_two_batch_plan()
-    monkeypatch.setattr(megaplan.execution, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: ({}, None))
 
     original_run_step = megaplan.workers.run_step_with_worker
 
@@ -628,7 +628,7 @@ def test_validate_merge_inputs_accepts_blocked_status() -> None:
     """`status=blocked` must be accepted (not silently discarded) so workers
     can signal a poisoned/broken environment without megaplan dropping it."""
     deviations: list[str] = []
-    valid = megaplan.merge._validate_merge_inputs(
+    valid = megaplan.execute.merge._validate_merge_inputs(
         [
             {
                 "task_id": "T1",
@@ -654,7 +654,7 @@ def test_execution_merge_config_includes_blocked_status() -> None:
     """The enum_fields passed to the execute merge path must include blocked."""
     # Import source to sanity-check the constant survives future edits.
     import inspect
-    import megaplan.execution as execution_module
+    import megaplan.execute.core as execution_module
 
     source = inspect.getsource(execution_module._merge_batch_results)
     assert '"blocked"' in source, (

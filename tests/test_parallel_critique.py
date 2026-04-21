@@ -10,7 +10,7 @@ from types import ModuleType
 import pytest
 
 from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
-from megaplan.checks import checks_for_robustness
+from megaplan.audits.robustness import checks_for_robustness
 from megaplan.hermes_worker import parse_agent_output
 from megaplan.parallel_critique import _run_check, run_parallel_critique
 from megaplan.prompts.critique import write_single_check_template

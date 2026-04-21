@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import megaplan.workers as worker_module
-from megaplan.execution import build_monitor_hint
+from megaplan.execute.core import build_monitor_hint
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.step_edit import next_plan_artifact_name
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse

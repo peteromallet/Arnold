@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.checks import checks_for_robustness, validate_critique_checks
+from megaplan.audits.robustness import checks_for_robustness, validate_critique_checks
 from megaplan.evaluation import build_gate_artifact, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
 from megaplan.parallel_critique import run_parallel_critique
 from megaplan.types import (
@@ -45,8 +45,8 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         state["last_gate"] = {}
         critique_filename = f"critique_v{iteration}.json"
         if robustness == "tiny":
-            from megaplan.capabilities import get_worker_capabilities
-            from megaplan.verifiability import audit_criteria, validate_requires
+            from megaplan.audits.capabilities import get_worker_capabilities
+            from megaplan.audits.verifiability import audit_criteria, validate_requires
 
             plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
             success_criteria = plan_meta.get("success_criteria", [])
@@ -138,8 +138,8 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         if invalid_checks:
             _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
 
-        from megaplan.capabilities import get_worker_capabilities
-        from megaplan.verifiability import audit_criteria, validate_requires
+        from megaplan.audits.capabilities import get_worker_capabilities
+        from megaplan.audits.verifiability import audit_criteria, validate_requires
 
         plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
         success_criteria = plan_meta.get("success_criteria", [])
@@ -264,7 +264,7 @@ def _validate_tiebreaker(
     root: Path,
 ) -> tuple[str, str, str]:
     """Validate a TIEBREAKER gate recommendation. Returns (result, next_step, summary)."""
-    from megaplan.iteration_pressure import compute_iteration_pressure, has_mechanical_recurrence
+    from megaplan.audits.iteration import compute_iteration_pressure, has_mechanical_recurrence
 
     config = state.get("config", {})
     summary_base = f"Gate recommendation TIEBREAKER: {gate_summary['rationale']}"

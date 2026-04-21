@@ -87,8 +87,8 @@ def _build_verifiability_flags(
     success_criteria: list[dict[str, Any]],
     worker_caps: dict[str, set[str]],
 ) -> list[dict[str, Any]]:
-    from megaplan.capabilities import ALL_CAPABILITIES
-    from megaplan.verifiability import audit_criteria, validate_requires
+    from megaplan.audits.capabilities import ALL_CAPABILITIES
+    from megaplan.audits.verifiability import audit_criteria, validate_requires
 
     flags: list[dict[str, Any]] = []
     issues = validate_requires(success_criteria)

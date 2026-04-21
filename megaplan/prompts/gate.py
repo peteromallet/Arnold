@@ -16,7 +16,7 @@ from megaplan._core import (
     read_json,
     unresolved_significant_flags,
 )
-from megaplan.iteration_pressure import compute_iteration_pressure, render_pressure_table
+from megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
 from megaplan.types import FlagRegistry, PlanState
 
 from ._shared import _gate_debt_block

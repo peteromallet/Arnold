@@ -439,7 +439,7 @@ def run_hermes_step(
             return None
         if step == "critique":
             from megaplan._core import configured_robustness
-            from megaplan.checks import checks_for_robustness
+            from megaplan.audits.robustness import checks_for_robustness
             from megaplan.prompts import _write_critique_template
 
             return _write_critique_template(
@@ -775,7 +775,7 @@ def _normalize_nested_aliases(payload: dict, schema: dict) -> None:
     "concern", "detail" instead of "evidence"). This applies the alias mapping
     from merge._FIELD_ALIASES to nested objects in arrays.
     """
-    from megaplan.merge import _FIELD_ALIASES
+    from megaplan.execute.merge import _FIELD_ALIASES
 
     properties = schema.get("properties", {})
     for field, prop in properties.items():

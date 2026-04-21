@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan.checks import build_empty_template, checks_for_robustness
+from megaplan.audits.robustness import build_empty_template, checks_for_robustness
 from megaplan.schemas import SCHEMAS, get_execution_schema_key
 from megaplan.types import (
     CliError,

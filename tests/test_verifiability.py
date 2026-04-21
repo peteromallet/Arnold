@@ -1,4 +1,4 @@
-"""Tests for megaplan.capabilities and megaplan.verifiability modules."""
+"""Tests for megaplan.audits.capabilities and megaplan.audits.verifiability modules."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import warnings
 
 import pytest
 
-from megaplan.capabilities import (
+from megaplan.audits.capabilities import (
     ALL_CAPABILITIES,
     CONTAINER_CAPABILITIES,
     DEFAULT_CONTAINER_CAPABILITIES,
@@ -16,7 +16,7 @@ from megaplan.capabilities import (
     union_verifies,
     validate_capabilities,
 )
-from megaplan.verifiability import (
+from megaplan.audits.verifiability import (
     CriterionAudit,
     audit_criteria,
     classify_criteria,

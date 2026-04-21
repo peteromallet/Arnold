@@ -1,4 +1,4 @@
-"""Tests for megaplan.iteration_pressure — flag history, fuzzy grouping, pressure computation."""
+"""Tests for megaplan.audits.iteration — flag history, fuzzy grouping, pressure computation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.iteration_pressure import (
+from megaplan.audits.iteration import (
     IterationPressureEntry,
     compute_flag_history,
     compute_fuzzy_groups,

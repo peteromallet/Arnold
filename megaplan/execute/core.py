@@ -27,19 +27,19 @@ from megaplan._core import (
     store_raw_worker_output,
 )
 from megaplan.evaluation import validate_execution_evidence
-from megaplan.execution_quality import (
+from megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _check_done_task_evidence,
     _collect_quality_deviations,
     _observe_git_changes,
 )
-from megaplan.execution_timeout import (
+from megaplan.execute.timeout import (
     _recover_execute_timeout,
     _resolve_execute_approval_mode,
 )
-from megaplan.merge import _validate_and_merge_batch
+from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import _execute_batch_prompt
-from megaplan.quality import capture_before_line_counts
+from megaplan.audits.quality_gates import capture_before_line_counts
 from megaplan.types import (
     CliError,
     PlanState,

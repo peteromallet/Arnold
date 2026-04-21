@@ -47,7 +47,7 @@ from megaplan._core import (
     subsystem_occurrence_total,
     humanize_seconds,
 )
-from megaplan.execution import build_monitor_hint
+from megaplan.execute.core import build_monitor_hint
 from megaplan.handlers import (
     handle_audit_verifiability,
     handle_critique,
@@ -1024,7 +1024,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cloud_parser.add_argument("cloud_args", nargs=argparse.REMAINDER)
 
-    from megaplan.tiebreaker import build_tiebreaker_parser
+    from megaplan.prompts.tiebreaker_orchestrator import build_tiebreaker_parser
     build_tiebreaker_parser(subparsers)
 
     # tiebreaker-run is a top-level command because auto.py:_phase_command
@@ -1180,7 +1180,7 @@ def main(argv: list[str] | None = None) -> int:
             return error_response(error, root=root)
 
     if args.command == "tiebreaker":
-        from megaplan.tiebreaker import run_tiebreaker_cli
+        from megaplan.prompts.tiebreaker_orchestrator import run_tiebreaker_cli
         try:
             return run_tiebreaker_cli(root, args)
         except CliError as error:

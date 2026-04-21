@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan.evaluation import _parse_git_status_paths
-from megaplan.quality import run_quality_checks
+from megaplan.audits.quality_gates import run_quality_checks
 
 
 def _check_done_task_evidence(

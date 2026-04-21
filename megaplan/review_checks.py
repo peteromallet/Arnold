@@ -1,6 +1,6 @@
 """Review check registry and helpers.
 
-This largely mirrors :mod:`megaplan.checks`; the shared helper body is an
+This largely mirrors :mod:`megaplan.audits.robustness`; the shared helper body is an
 extraction candidate once critique and review settle on the same abstraction.
 """
 

@@ -51,7 +51,7 @@ def handle_tiebreaker_run(root: Path, args: argparse.Namespace) -> StepResponse:
             persist=getattr(args, "persist", False),
             ephemeral=getattr(args, "ephemeral", False),
         )
-        from megaplan.tiebreaker import _run_tiebreaker
+        from megaplan.prompts.tiebreaker_orchestrator import _run_tiebreaker
         exit_code = _run_tiebreaker(root, plan_dir, state, tb_args)
         transition = workflow_transition(state, "tiebreaker-run")
         state["current_state"] = transition.next_state
@@ -115,7 +115,7 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
         existing.append(decision)
         atomic_write_json(decisions_path, existing)
 
-        from megaplan.audit import record_tiebreaker_audit
+        from megaplan.audits.audit_engine import record_tiebreaker_audit
         record_tiebreaker_audit(plan_dir, decision, researcher_data, challenger_data)
 
         if action == "pick" and flag_ids:
