@@ -107,6 +107,15 @@ megaplan status --plan <name>
 
 Use `status` to monitor `active_step`, `last_step`, notes, cost, execute progress, and next-step runtime guidance (`watch` remains a backward-compatible alias).
 
+## Cloud runs
+
+`megaplan cloud` deploys a plan to a remote runner backed by a persistent workspace volume. Sprint 1 ships the `railway` provider only; `ssh` and `local` providers are planned. See [docs/cloud.md](docs/cloud.md) for `cloud.yaml` fields, secrets handling, and the manual-upload workflow for idea/chain files.
+
+```bash
+megaplan cloud init       # scaffold cloud.yaml
+megaplan cloud deploy     # upload secrets and launch the runner
+```
+
 ## Subagent mode (Claude Code / Codex)
 
 Subagent mode delegates the full workflow to an autonomous agent and returns control only at defined breakpoints. It is the default orchestration mode for Claude Code and Codex; Cursor continues to run inline.

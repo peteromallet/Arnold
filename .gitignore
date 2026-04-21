@@ -3,6 +3,9 @@ __pycache__/
 .megaplan/
 .desloppify/
 .doubledip/
+.env
+.env.*
+*.env
 .DS_Store
 dist/
 *.egg-info/

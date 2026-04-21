@@ -118,6 +118,11 @@ Each edit writes a new same-iteration plan artifact, preserves the latest plan m
 View current defaults with `megaplan config show`. Override with `megaplan config set <key> <value>`. Reset with `megaplan config reset`.
 When routing or behavior depends on config, check `megaplan config show` and respect user overrides instead of assuming defaults.
 Settable execution keys: `execution.auto_approve`, `execution.robustness`.
+## Cloud Mode
+`megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Suggest it for long-running plans that would outlast a local session or when the user wants an isolated persistent sandbox. Sprint 1 ships the `railway` provider only; `ssh` and `local` are planned.
+Subcommands: `init`, `build`, `deploy`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
+Typical flow: `megaplan cloud init` scaffolds `cloud.yaml`; edit it; export the secrets it lists; `megaplan cloud deploy`; then use `status`, `logs`, and `attach` to observe.
+See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), secret handling, and troubleshooting.
 ## Commands
 ```bash
 megaplan status --plan <name>
