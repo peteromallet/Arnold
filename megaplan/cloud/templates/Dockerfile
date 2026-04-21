@@ -61,7 +61,7 @@ RUN . "$NVM_DIR/nvm.sh" \
 # Megaplan from source
 RUN pip install --no-cache-dir git+https://github.com/peteromallet/megaplan.git \
     && megaplan --help > /dev/null
-
+${TOOLCHAIN_BLOCK}
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY healthserver.py /usr/local/bin/healthserver.py
 COPY wrappers/ /usr/local/bin/

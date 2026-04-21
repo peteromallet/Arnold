@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.20.0 — 2026-04-21
+
+### Sprint 2 cloud — chain commands, local + ssh providers, toolchain extensibility
+
+Second sprint of the built-in cloud runner. Core megaplan gains chain ergonomics; cloud grows new providers and thin wrappers; the ad-hoc `~/Documents/reigh-megaplan-dev/` external folder is retired.
+
+- **Core `megaplan chain start --spec <path>`**: validates the spec, resolves referenced idea files, kicks the auto-loop per milestone. Replaces the separate `init + auto` pair for chained milestones. Works locally without any cloud dependency.
+- **Core `megaplan chain status --spec <path>`**: reads `chain_state.json`, prints `current_milestone`, `completed`, `remaining`, and per-milestone status. Human-readable block plus structured JSON `summary`.
+- **Core `megaplan init --idea-file <path>`**: read the plan idea from a file instead of the positional CLI arg. Pairs with optional `--auto-start` to kick `auto` immediately after init.
+- **Cloud wrappers (thin)**: `megaplan cloud chain <spec>` uploads the spec and invokes core `chain start` remotely; `megaplan cloud bootstrap <idea-file>` uploads an idea and invokes `init --idea-file --auto-start` remotely; `megaplan cloud status --chain` fetches the remote `chain_state.json` and runs the core formatter.
+- **Local provider** (`provider: local`): docker-compose-backed runner for fast iteration and CI smoke tests. No Railway CLI, no cloud account. Template at `megaplan/cloud/templates/docker-compose.yaml.tmpl`.
+- **SSH provider** (`provider: ssh`): plain docker-over-ssh. "Any host with docker + ssh" story. Supports persistent deploy dirs per-host.
+- **Toolchain extensibility**: `toolchains:` block in `cloud.yaml` accepts named recipes (rust, go, java, or `custom` with a user-supplied install snippet). Template renderer appends matching Dockerfile stages so the baked image carries only what the target repo needs.
+- **Secret redaction**: `megaplan cloud logs` output is passed through `megaplan/cloud/redact.py`, which masks values of declared `secrets:` keys as `***REDACTED***`. Follow-mode (`-f`) streams with the same redaction applied line-by-line.
+- **`Provider.supports_session` capability**: session gating is now a capability flag on the provider ABC rather than a hardcoded `provider == "railway"` check in the CLI.
+- **Reigh parity migration**: `docs/cloud-migration-from-reigh.md` documents the one-to-one field mapping between the old `~/Documents/reigh-megaplan-dev/` env vars and the new `cloud.yaml`. The external folder can be retired after running the parity deploy.
+
+Concurrent refactors landing alongside sprint 2:
+- `megaplan/handlers.py` (~6k lines) split into a `megaplan/handlers/` package by phase.
+- `tests/test_megaplan.py` split into per-phase `test_critique.py`, `test_execute.py`, `test_finalize.py`, `test_gate.py`, `test_init_plan.py`, `test_prep.py`, `test_revise.py`.
+- `--from-doc <path>` flag on `megaplan init` imports `## Settled Decisions` from a prior doc artifact into the new plan's success criteria.
+
 ## v0.19.0 — 2026-04-21
 
 ### Built-in cloud runner via `megaplan cloud`

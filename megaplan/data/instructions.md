@@ -20,17 +20,42 @@ Megaplan has two output modes, picked with `--mode` at `init`:
 - **`--mode code`** (default): the run produces a code diff. Execute workers emit per-task file changes. Use for features, refactors, bug fixes, migrations — anything whose deliverable is source code.
 - **`--mode metaplan`** (alias: `--mode doc`): the run produces a single document artifact at `--output <relative/path>` (e.g. `docs/design.md`). The prep, execute, and review phases use authoring-specific prompts; the execute schema uses `sections_written` instead of file changes; auditing reasons about section delivery. Use for design docs, architecture specs, research notes, RFCs, proposals, post-mortems, migration plans — anything whose deliverable is prose, not code. This is the "design-first / preplan" workflow; `prep` is the visible repository-investigation *phase* inside every run (both modes have it), not a separate mode.
 
+`--from-doc <relative/path>` works with either mode. The path must be relative to `--project-dir`, must stay inside that directory, and must point to an existing file. When present, `init` imports any `## Settled Decisions` section from that prior doc artifact and stores the source path for later planning and execution context.
+
 All other flags (`--robustness`, `--auto-approve`, `--phase-model`, `--hermes`, subagent mode, overrides, step editing) behave identically in both modes. The workflow phases are the same: `prep → plan → critique → gate → revise → finalize → execute → review`.
 
-A common pattern is two runs: first `--mode metaplan` to produce a rigorous design document, then `--mode code` on a new idea that references that document to implement it.
+A common pattern is two runs: first `--mode metaplan` to produce a rigorous design document, then `--mode code --from-doc docs/design.md` on a new idea that references that document to implement it.
 
 **`--mode` and `--output` go together.** `init` rejects `--output` without `--mode metaplan` (error `invalid_args`), and rejects `--mode metaplan` without `--output`. Don't try to pass one without the other.
 ## Start
 Run `<launcher> config show` before `init`. If `raw_config.execution.auto_approve` is explicitly present, do not ask the execution-mode question and honor that configured override, including configured `false`. If that raw key is absent, ask execution mode (auto-approve or review) before `init`. In the same config check, respect `execution.robustness` as a settable override when it is configured; otherwise pick robustness yourself per the triage guidance above.
 ```bash
-<launcher> init --project-dir "$PROJECT_DIR" [--auto-approve] [--robustness light|standard|robust|superrobust] [--mode code|metaplan] [--output docs/foo.md] "$IDEA"
+<launcher> init --project-dir "$PROJECT_DIR" [--auto-approve] [--robustness light|standard|robust|superrobust] [--mode code|metaplan] [--output docs/foo.md] [--from-doc docs/prior.md] "$IDEA"
 ```
 For metaplan-mode runs, pass `--mode metaplan --output <relative/path>` (the path is where the final document artifact is written, relative to the project dir). Everything else is identical to code mode.
+Pass `--from-doc <relative/path>` when the new run should inherit decisions from a prior doc artifact. The path must be relative to the project dir, must exist as a file, and can be used with either `--mode code` or `--mode metaplan`. When the source doc contains a `## Settled Decisions` section, megaplan imports those decisions and automatically promotes them into success criteria for the new plan: `load_bearing: true` decisions become `must` criteria and `load_bearing: false` decisions become `info` criteria.
+## Settled Decisions Section Format
+When authoring a doc artifact that makes design decisions, use either of these canonical markdown shapes (the parser accepts both):
+
+Bold-dash inline shape (preferred for short decisions):
+```md
+## Settled Decisions
+
+- **SD-001** \u2014 Keep the current storage model. _load_bearing: true_
+  Rationale: External integrations depend on it.
+- **SD-002** \u2014 Default model is claude-sonnet-4-6. _load_bearing: false_
+  Rationale: Balance of speed and capability.
+```
+
+YAML-ish shape (preferred when decisions need more fields):
+```md
+## Settled Decisions
+- id: SD-001
+  load_bearing: true
+  decision: Keep the current storage model
+  rationale: External integrations depend on it.
+```
+Use one list item per decision. Keep the `SD-NNN` convention (`SD-` prefix plus a number), store `load_bearing` as `true` or `false`, and indent continuation lines by two spaces beneath the list-item marker.
 Report the plan name, execution mode, robustness, mode (and `--output` path when metaplan mode), current state, and next step.
 ## Workflow
 Run the loop in this order:

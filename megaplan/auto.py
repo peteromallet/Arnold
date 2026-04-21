@@ -94,7 +94,7 @@ def _run_megaplan(
     """
     try:
         proc = subprocess.run(
-            ["megaplan", *args],
+            [sys.executable, "-m", "megaplan", *args],
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,

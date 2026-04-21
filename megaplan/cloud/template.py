@@ -8,7 +8,7 @@ from importlib import resources
 from pathlib import Path
 from string import Template
 
-from megaplan.cloud.spec import CloudSpec
+from megaplan.cloud.spec import CloudSpec, ToolchainSpec
 from megaplan.types import DEFAULT_AGENT_ROUTING
 
 
@@ -29,6 +29,20 @@ PLACEHOLDERS = (
     "CLAUDE_AUTH_BLOCK",
     "RUNNER_LAUNCH_BLOCK",
 )
+
+_TOOLCHAIN_RECIPES = {
+    "rust": """# Toolchain: rust
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+ENV PATH=/root/.cargo/bin:${PATH}""",
+    "go": """# Toolchain: go
+RUN curl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz | tar -C /usr/local -xz
+ENV PATH=/usr/local/go/bin:${PATH}""",
+    "java": """# Toolchain: java
+RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk \
+    && rm -rf /var/lib/apt/lists/*
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    PATH=${JAVA_HOME}/bin:${PATH}""",
+}
 
 _AUTO_RUNNER = Template(
     """if [ ! -f "$IDEA_FILE" ]; then
@@ -59,6 +73,11 @@ def _entrypoint_template() -> Template:
 def _render_resource_template(name: str, values: dict[str, str]) -> str:
     text = resources.files("megaplan.cloud.templates").joinpath(name).read_text(encoding="utf-8")
     return Template(text).safe_substitute(values)
+
+
+def _dockerfile_template() -> Template:
+    text = resources.files("megaplan.cloud.templates").joinpath("Dockerfile").read_text(encoding="utf-8")
+    return Template(text)
 
 
 def _quoted(script: str) -> str:
@@ -148,6 +167,41 @@ def render_entrypoint(spec: CloudSpec) -> str:
     return rendered
 
 
+def _toolchain_block(toolchains: list[ToolchainSpec] | None) -> str:
+    if not toolchains:
+        return ""
+    blocks: list[str] = []
+    for toolchain in toolchains:
+        if toolchain.install in _TOOLCHAIN_RECIPES:
+            blocks.append(_TOOLCHAIN_RECIPES[toolchain.install])
+            continue
+        blocks.append(f"# Toolchain: {toolchain.name}\n{toolchain.install}")
+    return "\n\n".join(blocks)
+
+
+def render_dockerfile(spec: CloudSpec) -> str:
+    rendered = _dockerfile_template().safe_substitute(
+        {"TOOLCHAIN_BLOCK": _toolchain_block(spec.toolchains)}
+    )
+    if "${TOOLCHAIN_BLOCK}" in rendered:
+        raise RuntimeError("Unreplaced Dockerfile placeholders: TOOLCHAIN_BLOCK")
+    return rendered
+
+
+def render_docker_compose(spec: CloudSpec) -> str:
+    local = spec.local
+    if local is None:
+        raise RuntimeError("docker-compose rendering requires spec.local")
+    return _render_resource_template(
+        "docker-compose.yaml.tmpl",
+        {
+            "WORKSPACE_PATH": spec.repo.workspace,
+            "LOCAL_WORKDIR": local.workdir,
+            "PORT": str(spec.resources.port),
+        },
+    )
+
+
 def _write_text(path: Path, content: str, *, executable: bool = False) -> None:
     path.write_text(content, encoding="utf-8")
     if executable:
@@ -162,13 +216,16 @@ def materialize_deploy_dir(spec: CloudSpec, dest: Path) -> None:
     templates = resources.files("megaplan.cloud.templates")
     wrappers = resources.files("megaplan.cloud.wrappers")
 
-    _write_text(dest / "Dockerfile", templates.joinpath("Dockerfile").read_text(encoding="utf-8"))
+    _write_text(dest / "Dockerfile", render_dockerfile(spec))
     _write_text(dest / "entrypoint.sh", render_entrypoint(spec), executable=True)
     _write_text(dest / "healthserver.py", templates.joinpath("healthserver.py").read_text(encoding="utf-8"))
     _write_text(
         dest / "railway.toml",
         _render_resource_template("railway.toml.tmpl", {}),
     )
+    if spec.provider == "local" and spec.local is not None:
+        _write_text(dest / "docker-compose.yaml", render_docker_compose(spec))
+        (dest / spec.local.workdir).mkdir(parents=True, exist_ok=True)
 
     for name in ("mp-run", "mp-supervise", "mp-heartbeat", "mp-chain"):
         _write_text(

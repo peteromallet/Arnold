@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,139 @@ def extract_sections(batch_payloads: list[dict[str, Any]]) -> dict[str, str]:
                 if isinstance(section_id, str) and section_id.strip():
                     sections[section_id] = notes
     return sections
+
+
+_BOLD_DASH_HEADER_RE = re.compile(
+    r"^\*\*(?P<id>[^*]+?)\*\*\s*[\u2014\-:]\s*(?P<rest>.*)$"
+)
+_INLINE_LOAD_BEARING_RE = re.compile(
+    r"_load_bearing\s*:\s*(?P<value>true|false)_", re.IGNORECASE
+)
+
+
+def extract_settled_decisions(doc_text: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Extract settled decisions from a doc-mode artifact.
+
+    Two primary markdown shapes are accepted so doc authors can pick whichever
+    reads more naturally:
+
+    Bold-dash shape (preferred for inline prose):
+        - **SD-001** — One-sentence decision summary. _load_bearing: true_
+          Rationale: Brief why.
+
+    YAML-ish shape (preferred when many fields per entry):
+        - id: SD-001
+          load_bearing: true
+          decision: One-sentence decision summary
+          rationale: Brief why.
+
+    Both forms coexist within the same section. Missing `load_bearing`
+    defaults to ``false``. Malformed entries are dropped with a warning
+    but never raise.
+    """
+    lines = doc_text.splitlines()
+    start_index: int | None = None
+    for index, line in enumerate(lines):
+        if line.strip() == "## Settled Decisions":
+            start_index = index + 1
+            break
+    if start_index is None:
+        return [], []
+
+    section_lines: list[str] = []
+    for line in lines[start_index:]:
+        if line.strip().startswith("## "):
+            break
+        section_lines.append(line)
+
+    decisions: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    current: dict[str, str] | None = None
+    allowed_keys = {"id", "decision", "rationale", "load_bearing"}
+
+    def flush_current() -> None:
+        nonlocal current
+        if current is None:
+            return
+        decision_id = current.get("id", "").strip()
+        decision_text = current.get("decision", "").strip()
+        if not decision_id or not decision_text:
+            missing = []
+            if not decision_id:
+                missing.append("id")
+            if not decision_text:
+                missing.append("decision")
+            warnings.append(
+                f"Dropped malformed settled decision entry missing {', '.join(missing)}"
+            )
+            current = None
+            return
+        decisions.append(
+            {
+                "id": decision_id,
+                "decision": decision_text,
+                "rationale": current.get("rationale", "").strip(),
+                "load_bearing": current.get("load_bearing", "").strip().lower() == "true",
+            }
+        )
+        current = None
+
+    def try_parse_bold_dash_header(entry: str) -> dict[str, str] | None:
+        """Match `**SD-NNN** — summary. _load_bearing: true_` and return fields."""
+        match = _BOLD_DASH_HEADER_RE.match(entry)
+        if not match:
+            return None
+        rest = match.group("rest").strip()
+        fields: dict[str, str] = {"id": match.group("id").strip()}
+        lb_match = _INLINE_LOAD_BEARING_RE.search(rest)
+        if lb_match:
+            fields["load_bearing"] = lb_match.group("value")
+            rest = _INLINE_LOAD_BEARING_RE.sub("", rest).strip()
+        fields["decision"] = rest.rstrip().rstrip(".").strip() or rest.strip()
+        return fields
+
+    for line in section_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("- "):
+            flush_current()
+            entry = stripped[2:].strip()
+
+            bold_dash = try_parse_bold_dash_header(entry)
+            if bold_dash is not None:
+                current = bold_dash
+                continue
+
+            current = {}
+            if ":" not in entry:
+                warnings.append(f"Ignored malformed settled decision line: {stripped}")
+                continue
+            key, value = entry.split(":", 1)
+            key = key.strip().lower()
+            if key in allowed_keys:
+                current[key] = value.strip()
+            else:
+                warnings.append(f"Ignored malformed settled decision line: {stripped}")
+            continue
+        if line.startswith("  ") and current is not None:
+            if ":" not in stripped:
+                warnings.append(f"Ignored malformed settled decision line: {stripped}")
+                continue
+            key, value = stripped.split(":", 1)
+            key = key.strip().lower()
+            if key in allowed_keys:
+                # Don't overwrite a non-empty value already populated by the header line.
+                existing = current.get(key, "").strip()
+                if not existing:
+                    current[key] = value.strip()
+            else:
+                warnings.append(f"Ignored malformed settled decision line: {stripped}")
+            continue
+        warnings.append(f"Ignored malformed settled decision line: {stripped}")
+
+    flush_current()
+    return decisions, warnings
 
 
 def _task_order_index(finalize_data: dict[str, Any]) -> dict[str, int]:

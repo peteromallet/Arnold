@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.doc_assembly import assemble_doc, extract_sections
+from megaplan.doc_assembly import assemble_doc, extract_sections, extract_settled_decisions
 
 
 def _write_batch(plan_dir: Path, index: int, payload: dict) -> None:
@@ -159,3 +159,177 @@ def test_extract_sections_duplicate_section_id_last_wins(tmp_path: Path) -> None
     ]
     sections = extract_sections(payloads)
     assert sections == {"dup": "second"}
+
+
+def test_extract_settled_decisions_empty_doc() -> None:
+    decisions, warnings = extract_settled_decisions("")
+    assert decisions == []
+    assert warnings == []
+
+
+def test_extract_settled_decisions_missing_section() -> None:
+    decisions, warnings = extract_settled_decisions("# Title\n\nNo settled decisions here.")
+    assert decisions == []
+    assert warnings == []
+
+
+def test_extract_settled_decisions_parses_three_entries() -> None:
+    doc_text = """# Plan
+
+## Settled Decisions
+- id: SD-001
+  load_bearing: true
+  decision: Keep SQLite for local state
+  rationale: Existing workflows depend on it.
+- id: SD-002
+  load_bearing: false
+  decision: Use markdown bullets for docs
+  rationale: Easier to review in diffs.
+- id: SD-9
+  decision: Preserve IDs verbatim
+  rationale: Parser should be tolerant.
+
+## Next Section
+Body
+"""
+    decisions, warnings = extract_settled_decisions(doc_text)
+    assert warnings == []
+    assert decisions == [
+        {
+            "id": "SD-001",
+            "load_bearing": True,
+            "decision": "Keep SQLite for local state",
+            "rationale": "Existing workflows depend on it.",
+        },
+        {
+            "id": "SD-002",
+            "load_bearing": False,
+            "decision": "Use markdown bullets for docs",
+            "rationale": "Easier to review in diffs.",
+        },
+        {
+            "id": "SD-9",
+            "load_bearing": False,
+            "decision": "Preserve IDs verbatim",
+            "rationale": "Parser should be tolerant.",
+        },
+    ]
+
+
+def test_extract_settled_decisions_drops_malformed_entry_with_warning() -> None:
+    doc_text = """## Settled Decisions
+- id: SD-001
+  decision: Keep the adapter layer
+  rationale: It isolates storage changes.
+- decision: Missing an ID should be dropped
+  rationale: This line is intentionally malformed.
+- id: SD-002
+  load_bearing: false
+  decision: Keep the current CLI nouns
+"""
+    decisions, warnings = extract_settled_decisions(doc_text)
+    assert decisions == [
+        {
+            "id": "SD-001",
+            "decision": "Keep the adapter layer",
+            "rationale": "It isolates storage changes.",
+            "load_bearing": False,
+        },
+        {
+            "id": "SD-002",
+            "decision": "Keep the current CLI nouns",
+            "rationale": "",
+            "load_bearing": False,
+        },
+    ]
+    assert warnings == ["Dropped malformed settled decision entry missing id"]
+
+
+def test_extract_settled_decisions_heading_without_entries() -> None:
+    decisions, warnings = extract_settled_decisions("## Settled Decisions\n\n## Later\nbody")
+    assert decisions == []
+    assert warnings == []
+
+
+def test_extract_settled_decisions_load_bearing_is_case_insensitive() -> None:
+    doc_text = """## Settled Decisions
+- id: SD-003
+  load_bearing: TRUE
+  decision: Promote must-level constraints from docs
+"""
+    decisions, warnings = extract_settled_decisions(doc_text)
+    assert warnings == []
+    assert decisions == [
+        {
+            "id": "SD-003",
+            "decision": "Promote must-level constraints from docs",
+            "rationale": "",
+            "load_bearing": True,
+        }
+    ]
+
+
+def test_extract_settled_decisions_bold_dash_shape() -> None:
+    """The bold-dash inline shape from the spec must also parse."""
+    doc_text = """# Parent Design
+
+## Settled Decisions
+
+- **SD-001** \u2014 Use UUIDv4 for file IDs. _load_bearing: true_
+  Rationale: Needed for cross-session stability.
+- **SD-002** \u2014 Default model is claude-sonnet-4-6. _load_bearing: false_
+  Rationale: Balance of speed and capability.
+
+## Other content
+"""
+    decisions, warnings = extract_settled_decisions(doc_text)
+    assert warnings == []
+    assert decisions == [
+        {
+            "id": "SD-001",
+            "decision": "Use UUIDv4 for file IDs",
+            "rationale": "Needed for cross-session stability.",
+            "load_bearing": True,
+        },
+        {
+            "id": "SD-002",
+            "decision": "Default model is claude-sonnet-4-6",
+            "rationale": "Balance of speed and capability.",
+            "load_bearing": False,
+        },
+    ]
+
+
+def test_extract_settled_decisions_bold_dash_without_load_bearing_defaults_false() -> None:
+    doc_text = """## Settled Decisions
+
+- **SD-010** \u2014 Keep IDs stable across runs.
+  Rationale: Stability prevents breakage.
+"""
+    decisions, warnings = extract_settled_decisions(doc_text)
+    assert warnings == []
+    assert decisions == [
+        {
+            "id": "SD-010",
+            "decision": "Keep IDs stable across runs",
+            "rationale": "Stability prevents breakage.",
+            "load_bearing": False,
+        }
+    ]
+
+
+def test_extract_settled_decisions_mixed_shapes_in_same_section() -> None:
+    doc_text = """## Settled Decisions
+
+- **SD-100** \u2014 Bold-dash line form. _load_bearing: true_
+  Rationale: It reads naturally inline.
+- id: SD-101
+  load_bearing: false
+  decision: YAML-ish form still works
+  rationale: Authors pick whichever shape fits.
+"""
+    decisions, warnings = extract_settled_decisions(doc_text)
+    assert warnings == []
+    assert [d["id"] for d in decisions] == ["SD-100", "SD-101"]
+    assert decisions[0]["load_bearing"] is True
+    assert decisions[1]["load_bearing"] is False

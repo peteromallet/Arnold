@@ -30,6 +30,9 @@ from megaplan.prompts.review import (
 )
 from megaplan.prompts import (
     _execute_batch_prompt,
+    _execute_doc_batch_prompt,
+    _execute_doc_prompt,
+    _plan_prompt,
     _prep_prompt,
     _render_prep_block,
     create_claude_prompt,
@@ -1066,6 +1069,89 @@ def test_plan_prompt_includes_notes_when_present(tmp_path: Path) -> None:
     state["meta"]["notes"] = [{"note": "Keep it simple", "timestamp": "2026-03-20T00:00:00Z"}]
     prompt = create_claude_prompt("plan", state, plan_dir)
     assert "Keep it simple" in prompt
+
+
+def test_execute_doc_prompt_renders_from_doc_path_even_without_imported_decisions(
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"]["mode"] = "doc"
+    state["config"]["output_path"] = "docs/design.md"
+    state["config"]["from_doc"] = "docs/prior.md"
+    state["meta"]["imported_decisions"] = []
+
+    prompt = _execute_doc_prompt(state, plan_dir)
+
+    assert "Prior doc imported via --from-doc:" in prompt
+    assert "docs/prior.md" in prompt
+    assert "Imported decisions (from the source doc's ## Settled Decisions section): 0" in prompt
+    assert "## Settled Decisions" in prompt
+    assert "Downstream plans can import these via `megaplan init --from-doc`." in prompt
+
+
+def test_execute_doc_batch_prompt_lists_imported_decisions_when_present(
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"]["mode"] = "doc"
+    state["config"]["output_path"] = "docs/design.md"
+    state["config"]["from_doc"] = "docs/prior.md"
+    state["meta"]["imported_decisions"] = [
+        {
+            "id": "SD-001",
+            "decision": "Keep SQLite",
+            "rationale": "Existing workflows depend on it.",
+            "load_bearing": True,
+        }
+    ]
+
+    prompt = _execute_doc_batch_prompt(state, plan_dir, ["T1"])
+
+    assert "Prior doc imported via --from-doc:" in prompt
+    assert "docs/prior.md" in prompt
+    assert "Imported decisions (from the source doc's ## Settled Decisions section): 1" in prompt
+    assert "- SD-001: Keep SQLite" in prompt
+    assert "load_bearing: True" in prompt
+    assert "Downstream plans can import these via `megaplan init --from-doc`." in prompt
+
+
+def test_plan_prompt_includes_prior_doc_fallback_when_no_decisions(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"]["from_doc"] = "docs/prior.md"
+    state["meta"]["imported_decisions"] = []
+
+    prompt = _plan_prompt(state, plan_dir)
+
+    assert "Prior doc imported via --from-doc:" in prompt
+    assert "docs/prior.md" in prompt
+    assert "No ## Settled Decisions section found — path stored for reference only." in prompt
+
+
+def test_plan_prompt_includes_imported_decision_guidance(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"]["from_doc"] = "docs/prior.md"
+    state["meta"]["imported_decisions"] = [
+        {
+            "id": "SD-001",
+            "decision": "Keep SQLite",
+            "rationale": "Existing workflows depend on it.",
+            "load_bearing": True,
+        },
+        {
+            "id": "SD-002",
+            "decision": "Keep docs flat",
+            "rationale": "Reviewers expect it.",
+            "load_bearing": False,
+        },
+    ]
+
+    prompt = _plan_prompt(state, plan_dir)
+
+    assert "Prior doc imported via --from-doc:" in prompt
+    assert "- SD-001: Keep SQLite" in prompt
+    assert "- SD-002: Keep docs flat" in prompt
+    assert "include a success criterion with priority: 'must' referencing the SD-NNN id." in prompt
+    assert "include a success criterion with priority: 'info' referencing the SD-NNN id." in prompt
 
 
 def test_unsupported_step_raises(tmp_path: Path) -> None:

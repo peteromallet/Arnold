@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 import yaml
 
-from megaplan.cloud.spec import RailwaySpec, load_spec
+from megaplan.cloud.spec import LocalSpec, RailwaySpec, SshSpec, ToolchainSpec, load_spec
 from megaplan.types import CliError, DEFAULT_AGENT_ROUTING
 
 
@@ -116,9 +117,18 @@ def test_load_spec_rejects_chain_with_relative_spec(tmp_path: Path) -> None:
 
 def test_load_spec_rejects_unknown_provider(tmp_path: Path) -> None:
     payload = _base_spec()
-    payload["provider"] = "fly"
-    with pytest.raises(CliError, match="fly, ssh, local"):
+    payload["provider"] = "bogus"
+    with pytest.raises(CliError, match="railway, local, ssh, fly"):
         load_spec(_write_spec(tmp_path, payload))
+
+
+def test_load_spec_rejects_future_provider_with_distinct_error(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["provider"] = "fly"
+    with pytest.raises(CliError) as excinfo:
+        load_spec(_write_spec(tmp_path, payload))
+    assert excinfo.value.code == "future_provider"
+    assert "future release" in excinfo.value.message
 
 
 def test_load_spec_rejects_unknown_agents_key(tmp_path: Path) -> None:
@@ -147,3 +157,72 @@ def test_load_spec_defaults_railway_block_when_omitted(tmp_path: Path) -> None:
     payload = _base_spec()
     spec = load_spec(_write_spec(tmp_path, payload))
     assert spec.railway == RailwaySpec(service="agent", session="agent", project=None)
+
+
+def test_load_spec_accepts_local_provider(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["provider"] = "local"
+    payload["local"] = {"compose_project": "mp-local", "workdir": "workspace-cache"}
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.provider == "local"
+    assert spec.local == LocalSpec(compose_project="mp-local", workdir="workspace-cache")
+    assert spec.ssh is None
+
+
+def test_load_spec_accepts_ssh_provider(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["provider"] = "ssh"
+    payload["ssh"] = {
+        "host": "deploy.example.com",
+        "user": "root",
+        "port": 2222,
+        "identity_file": "~/.ssh/id_ed25519",
+        "remote_dir": "/srv/megaplan",
+        "container": "agent-box",
+    }
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.provider == "ssh"
+    assert spec.ssh == SshSpec(
+        host="deploy.example.com",
+        user="root",
+        port=2222,
+        identity_file="~/.ssh/id_ed25519",
+        remote_dir="/srv/megaplan",
+        container="agent-box",
+    )
+    assert spec.local is None
+
+
+def test_load_spec_accepts_toolchain_aliases_and_custom_entries(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["toolchains"] = [
+        "rust",
+        {"name": "my-tool", "install": "RUN echo install-my-tool"},
+    ]
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.toolchains == [
+        ToolchainSpec(name="rust", install="rust"),
+        ToolchainSpec(name="my-tool", install="RUN echo install-my-tool"),
+    ]
+
+
+def test_load_spec_rejects_unknown_toolchain_alias(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["toolchains"] = ["zig"]
+    with pytest.raises(CliError, match="Unknown toolchain alias"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
+def test_v0190_specs_still_load_with_same_existing_fields(tmp_path: Path) -> None:
+    payload = _base_spec(mode="chain")
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert asdict(spec)["provider"] == "railway"
+    assert spec.repo.url == "https://github.com/example/app.git"
+    assert spec.repo.workspace == "/workspace/app"
+    assert spec.mode == "chain"
+    assert spec.chain is not None
+    assert spec.chain.spec == "/workspace/chain.yaml"
+    assert spec.railway == RailwaySpec(service="agent", session="agent", project=None)
+    assert spec.local is None
+    assert spec.ssh is None
+    assert spec.toolchains == []

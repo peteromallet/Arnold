@@ -39,6 +39,7 @@ class PlanConfig(TypedDict, total=False):
     robustness: str
     mode: str
     output_path: str
+    from_doc: str
     agents: dict[str, str]
     workers: NotRequired[dict[str, Any]]
     max_tiebreakers_per_plan: int
@@ -56,6 +57,7 @@ class PlanMeta(TypedDict, total=False):
     total_cost_usd: float
     overrides: list[dict[str, Any]]
     notes: list[dict[str, Any]]
+    imported_decisions: list["SettledDecisionFromDoc"]
     user_approved_gate: bool
 
 
@@ -171,6 +173,13 @@ class SettledDecision(TypedDict, total=False):
     id: str
     decision: str
     rationale: str
+
+
+class SettledDecisionFromDoc(TypedDict, total=False):
+    id: str
+    decision: str
+    rationale: str
+    load_bearing: bool
 
 
 class TiebreakerDecision(TypedDict, total=False):

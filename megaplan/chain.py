@@ -268,7 +268,7 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
     """
     try:
         proc = subprocess.run(
-            ["megaplan", "status", "--plan", plan],
+            [sys.executable, "-m", "megaplan", "status", "--plan", plan],
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -318,12 +318,11 @@ def _init_plan(
     auto_approve: bool,
     writer,
 ) -> str:
-    """Run `megaplan init` with the idea file's contents, return the plan name."""
-    idea_text = Path(idea_path).read_text(encoding="utf-8")
-    args = ["megaplan", "init", "--project-dir", str(root)]
+    """Run `megaplan init --idea-file ...` and return the plan name."""
+    args = [sys.executable, "-m", "megaplan", "init", "--project-dir", str(root)]
     if auto_approve:
         args.append("--auto-approve")
-    args.extend(["--robustness", robustness, idea_text])
+    args.extend(["--robustness", robustness, "--idea-file", str(idea_path)])
     writer(f"[chain] initializing plan from {idea_path}\n")
     proc = subprocess.run(
         args, cwd=str(root), capture_output=True, text=True, check=False, timeout=300
@@ -520,6 +519,71 @@ def _result(
     }
 
 
+def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
+    completed_labels = {
+        entry.get("label")
+        for entry in state.completed
+        if isinstance(entry, dict) and isinstance(entry.get("label"), str)
+    }
+    current_milestone: dict[str, Any] | None = None
+    if 0 <= state.current_milestone_index < len(spec.milestones):
+        milestone = spec.milestones[state.current_milestone_index]
+        current_milestone = {
+            "label": milestone.label,
+            "index": state.current_milestone_index,
+        }
+
+    per_milestone: list[dict[str, Any]] = []
+    completed: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
+    for index, milestone in enumerate(spec.milestones):
+        if milestone.label in completed_labels:
+            status = "completed"
+        elif index == state.current_milestone_index and state.current_plan_name:
+            status = "in_progress"
+        else:
+            status = "pending"
+        entry = {"label": milestone.label, "index": index, "status": status}
+        per_milestone.append(entry)
+        if status == "completed":
+            completed.append({"label": milestone.label, "index": index})
+        else:
+            remaining.append({"label": milestone.label, "index": index})
+
+    return {
+        "current_milestone": current_milestone,
+        "completed": completed,
+        "remaining": remaining,
+        "per_milestone": per_milestone,
+        "seed_plan": spec.seed_plan,
+        "current_plan_name": state.current_plan_name,
+        "last_state": state.last_state,
+    }
+
+
+def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
+    current = summary.get("current_milestone")
+    current_label = "none"
+    if isinstance(current, dict):
+        current_label = f"{current['label']} (index {current['index']})"
+    completed = summary.get("completed") or []
+    remaining = summary.get("remaining") or []
+    completed_labels = ", ".join(item["label"] for item in completed) if completed else "none"
+    remaining_labels = ", ".join(item["label"] for item in remaining) if remaining else "none"
+    writer(f"Current milestone: {current_label}\n")
+    writer(f"Completed: {completed_labels}\n")
+    writer(f"Remaining: {remaining_labels}\n")
+    if summary.get("seed_plan"):
+        writer(f"Seed plan: {summary['seed_plan']}\n")
+    if summary.get("current_plan_name"):
+        writer(f"Current plan: {summary['current_plan_name']}\n")
+    if summary.get("last_state"):
+        writer(f"Last state: {summary['last_state']}\n")
+    writer("Per-milestone:\n")
+    for item in summary.get("per_milestone") or []:
+        writer(f"  - [{item['status']}] {item['label']} (index {item['index']})\n")
+
+
 # ---------------------------------------------------------------------------
 # CLI plumbing
 # ---------------------------------------------------------------------------
@@ -531,7 +595,8 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Drive a pipeline of milestone plans described by a YAML spec",
     )
     chain_sub = chain_parser.add_subparsers(dest="chain_action")
-    # No action == run. `status` is the explicit subcommand.
+    # No action == run. `start` is the explicit spelling, kept in sync with the
+    # backcompat top-level alias.
     chain_parser.add_argument(
         "--spec",
         required=False,
@@ -549,13 +614,24 @@ def build_chain_parser(subparsers: Any) -> None:
         ),
     )
 
+    start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
+    start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    start_parser.add_argument(
+        "--no-git-refresh",
+        action="store_true",
+        help=(
+            "Skip the automatic `git checkout main && git pull` that runs "
+            "before each milestone."
+        ),
+    )
+
     status_parser = chain_sub.add_parser(
         "status", help="Show persisted chain progress without driving"
     )
     status_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
 
 
-def run_chain_cli(root: Path, args: argparse.Namespace) -> int:
+def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.write) -> int:
     action = getattr(args, "chain_action", None)
     spec_arg = getattr(args, "spec", None)
     if not spec_arg:
@@ -566,20 +642,25 @@ def run_chain_cli(root: Path, args: argparse.Namespace) -> int:
     if action == "status":
         try:
             spec = load_spec(spec_path)
+            chain_state = load_chain_state(spec_path)
         except CliError as exc:
             return _emit_error(exc)
-        chain_state = load_chain_state(spec_path)
+        summary = format_chain_status(spec, chain_state)
+        _write_chain_status_pretty(summary, writer=writer)
         payload = {
             "success": True,
             "spec": str(spec_path),
             "milestone_count": len(spec.milestones),
             "seed_plan": spec.seed_plan,
             "chain_state": chain_state.to_dict(),
+            "summary": summary,
         }
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
-    # Default action: run.
+    if action not in (None, "start"):
+        return _emit_error(CliError("invalid_args", f"Unknown chain action: {action}"))
+
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))
     try:
         result = run_chain(spec_path, root, no_git_refresh=no_git_refresh)

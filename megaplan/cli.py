@@ -845,11 +845,25 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--output", default=None,
                              help="Relative path where the doc artifact will be written. "
                                   "Required with --mode doc; rejected with --mode code.")
+    init_parser.add_argument("--from-doc", default=None,
+                             help="Relative path to a prior doc-mode artifact whose ## Settled "
+                                  "Decisions section should be imported. Valid with --mode "
+                                  "code or --mode doc.")
+    init_parser.add_argument(
+        "--idea-file",
+        default=None,
+        help="Read the idea text from a UTF-8 file instead of the positional CLI argument.",
+    )
+    init_parser.add_argument(
+        "--auto-start",
+        action="store_true",
+        help="Immediately run the in-process auto driver after initializing the plan.",
+    )
     init_parser.add_argument("--hermes", nargs="?", const="", default=None,
                              help="Use Hermes agent for all phases. Optional: specify default model")
     init_parser.add_argument("--phase-model", action="append", default=[],
                              help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
-    init_parser.add_argument("idea")
+    init_parser.add_argument("idea", nargs="?")
 
     list_parser = subparsers.add_parser("list")
     list_parser.add_argument("--all", action="store_true",
@@ -1003,8 +1017,12 @@ def build_parser() -> argparse.ArgumentParser:
     from megaplan.chain import build_chain_parser
     build_chain_parser(subparsers)
 
-    from megaplan.cloud.cli import build_cloud_parser
-    build_cloud_parser(subparsers)
+    cloud_parser = subparsers.add_parser(
+        "cloud",
+        add_help=False,
+        help="Manage provider-backed megaplan cloud runners",
+    )
+    cloud_parser.add_argument("cloud_args", nargs=argparse.REMAINDER)
 
     from megaplan.tiebreaker import build_tiebreaker_parser
     build_tiebreaker_parser(subparsers)
@@ -1109,6 +1127,21 @@ def _auto_sync_installed_skills() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "cloud":
+        from megaplan.cloud.cli import _register_cloud_subcommands, run_cloud_cli
+
+        cloud_parser = argparse.ArgumentParser(prog="megaplan cloud")
+        _register_cloud_subcommands(cloud_parser)
+        cloud_args = cloud_parser.parse_args(argv[1:])
+        root = _find_megaplan_root(Path.cwd())
+        ensure_runtime_layout(root)
+        try:
+            return run_cloud_cli(root, cloud_args)
+        except CliError as error:
+            return error_response(error, root=root)
+
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
     if args.command != "setup":
@@ -1143,13 +1176,6 @@ def main(argv: list[str] | None = None) -> int:
         from megaplan.chain import run_chain_cli
         try:
             return run_chain_cli(root, args)
-        except CliError as error:
-            return error_response(error, root=root)
-
-    if args.command == "cloud":
-        from megaplan.cloud.cli import run_cloud_cli
-        try:
-            return run_cloud_cli(root, args)
         except CliError as error:
             return error_response(error, root=root)
 

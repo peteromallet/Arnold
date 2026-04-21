@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec megaplan chain --spec "$1"
+exec megaplan chain start --spec "$1"
