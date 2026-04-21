@@ -837,8 +837,9 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
-    init_parser.add_argument("--mode", choices=["code", "doc"], default=None,
-                             help="Deliverable type: 'code' (source changes) or 'doc' (design/spec artifact). "
+    init_parser.add_argument("--mode", choices=["code", "doc", "metaplan"], default=None,
+                             help="Deliverable type: 'code' (source changes) or 'doc' / 'metaplan' "
+                                  "(design/spec artifact — 'metaplan' is an alias for 'doc'). "
                                   "Defaults to 'code' unless the idea strongly suggests a design document, "
                                   "in which case --mode must be passed explicitly.")
     init_parser.add_argument("--output", default=None,

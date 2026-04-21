@@ -733,6 +733,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     explicit_mode = getattr(args, "mode", None)
     raw_output_path = getattr(args, "output", None)
     mode = explicit_mode or "code"
+    if mode == "metaplan":
+        mode = "doc"
 
     if mode == "code" and raw_output_path:
         raise CliError(

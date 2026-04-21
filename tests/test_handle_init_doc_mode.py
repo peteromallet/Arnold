@@ -126,3 +126,20 @@ def test_code_mode_with_output_is_rejected(
     assert info.value.code == "invalid_args"
     assert "--output" in str(info.value)
     assert "--mode doc" in str(info.value)
+
+
+def test_metaplan_mode_is_alias_for_doc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--mode metaplan is a user-facing alias for --mode doc; state should
+    record 'doc' so all downstream `mode == 'doc'` checks keep working."""
+    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    response = megaplan.handle_init(
+        root,
+        _args(project_dir, name="metaplan-alias", mode="metaplan", output="docs/design.md"),
+    )
+    plan_dir = megaplan.plans_root(root) / response["plan"]
+    import json as _json
+    state = _json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["config"]["mode"] == "doc"
+    assert state["config"]["output_path"] == "docs/design.md"

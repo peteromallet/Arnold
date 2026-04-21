@@ -18,23 +18,20 @@ Default to standard unless the task is clearly simple enough for light. Do not a
 ## Modes
 Megaplan has two output modes, picked with `--mode` at `init`:
 - **`--mode code`** (default): the run produces a code diff. Execute workers emit per-task file changes. Use for features, refactors, bug fixes, migrations — anything whose deliverable is source code.
-- **`--mode doc`**: the run produces a single document artifact at `--output <relative/path>` (e.g. `docs/design.md`). The prep, execute, and review phases use authoring-specific prompts; the execute schema uses `sections_written` instead of file changes; auditing reasons about section delivery. Use for design docs, architecture specs, research notes, RFCs, proposals, post-mortems, migration plans — anything whose deliverable is prose, not code.
+- **`--mode metaplan`** (alias: `--mode doc`): the run produces a single document artifact at `--output <relative/path>` (e.g. `docs/design.md`). The prep, execute, and review phases use authoring-specific prompts; the execute schema uses `sections_written` instead of file changes; auditing reasons about section delivery. Use for design docs, architecture specs, research notes, RFCs, proposals, post-mortems, migration plans — anything whose deliverable is prose, not code. This is the "design-first / preplan" workflow; `prep` is the visible repository-investigation *phase* inside every run (both modes have it), not a separate mode.
 
 All other flags (`--robustness`, `--auto-approve`, `--phase-model`, `--hermes`, subagent mode, overrides, step editing) behave identically in both modes. The workflow phases are the same: `prep → plan → critique → gate → revise → finalize → execute → review`.
 
-A common pattern is two runs: first `--mode doc` to produce a rigorous design document, then `--mode code` on a new idea that references that document to implement it.
+A common pattern is two runs: first `--mode metaplan` to produce a rigorous design document, then `--mode code` on a new idea that references that document to implement it.
 
-**`--mode` and `--output` go together.** `init` rejects `--output` without `--mode doc` (error `invalid_args`), and rejects `--mode doc` without `--output`. Don't try to pass one without the other.
-
-### Looking for "metaplan" or "preplan" mode?
-There is no mode called `metaplan`, `preplan`, `meta-plan`, `pre-plan`, or `design-document mode`. If you want to plan the plan — produce a design spec, RFC, or architecture document before writing code — use `--mode doc`. That is the "design-first / preplan" workflow. Note that `prep` is the visible repository-investigation *phase* inside every workflow (both code and doc mode have a prep phase); it is not a mode and is not something you select at `init`.
+**`--mode` and `--output` go together.** `init` rejects `--output` without `--mode metaplan` (error `invalid_args`), and rejects `--mode metaplan` without `--output`. Don't try to pass one without the other.
 ## Start
 Run `<launcher> config show` before `init`. If `raw_config.execution.auto_approve` is explicitly present, do not ask the execution-mode question and honor that configured override, including configured `false`. If that raw key is absent, ask execution mode (auto-approve or review) before `init`. In the same config check, respect `execution.robustness` as a settable override when it is configured; otherwise pick robustness yourself per the triage guidance above.
 ```bash
-<launcher> init --project-dir "$PROJECT_DIR" [--auto-approve] [--robustness light|standard|robust|superrobust] [--mode code|doc] [--output docs/foo.md] "$IDEA"
+<launcher> init --project-dir "$PROJECT_DIR" [--auto-approve] [--robustness light|standard|robust|superrobust] [--mode code|metaplan] [--output docs/foo.md] "$IDEA"
 ```
-For doc-mode runs, pass `--mode doc --output <relative/path>` (the path is where the final document artifact is written, relative to the project dir). Everything else is identical to code mode.
-Report the plan name, execution mode, robustness, mode (and `--output` path when doc mode), current state, and next step.
+For metaplan-mode runs, pass `--mode metaplan --output <relative/path>` (the path is where the final document artifact is written, relative to the project dir). Everything else is identical to code mode.
+Report the plan name, execution mode, robustness, mode (and `--output` path when metaplan mode), current state, and next step.
 ## Workflow
 Run the loop in this order:
 1. `prep`
