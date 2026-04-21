@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-import megaplan.review_checks as review_checks
+from megaplan.review import checks as review_checks
 from megaplan.execute.core import _check_done_task_evidence, build_monitor_hint
 from megaplan.evaluation import is_rubber_stamp
 from megaplan.execute.merge import _validate_and_merge_batch

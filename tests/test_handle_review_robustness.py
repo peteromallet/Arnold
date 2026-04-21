@@ -9,6 +9,7 @@ import pytest
 
 import megaplan
 import megaplan.handlers
+import megaplan.review.checks
 from megaplan._core import json_dump, load_plan, read_json, save_flag_registry, save_state
 from megaplan.workers import WorkerResult, _build_mock_payload
 
@@ -106,7 +107,7 @@ def _load_executed_plan(fixture: PlanFixture) -> tuple[Path, dict[str, object]]:
 
 
 def _adjacent_calls_review_checks(*, include_status: bool = True, status: str = "blocking") -> list[dict[str, object]]:
-    adjacent_calls = megaplan.review_checks.get_check_by_id("adjacent_calls")
+    adjacent_calls = megaplan.review.checks.get_check_by_id("adjacent_calls")
     assert adjacent_calls is not None
     finding: dict[str, object] = {
         "detail": (
@@ -293,7 +294,7 @@ def test_handle_review_superrobust_path_merges_parallel_review_and_creates_revie
     fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")
     _advance_to_executed(fixture)
     _plan_dir, state = load_plan(fixture.root, fixture.plan_name)
-    coverage = megaplan.review_checks.get_check_by_id("coverage")
+    coverage = megaplan.review.checks.get_check_by_id("coverage")
     assert coverage is not None
 
     pre_check_flags = [
@@ -494,7 +495,7 @@ def test_handle_review_superrobust_iteration_two_marks_verified_review_flags(
             ]
         },
     )
-    coverage = megaplan.review_checks.get_check_by_id("coverage")
+    coverage = megaplan.review.checks.get_check_by_id("coverage")
     assert coverage is not None
     criteria_payload = _build_mock_payload("review", state, fixture.plan_dir, review_verdict="approved")
     parallel_result = WorkerResult(

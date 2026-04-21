@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from megaplan.review_mechanical import run_pre_checks
+from megaplan.review.mechanical import run_pre_checks
 
 
 def _git_init(repo: Path) -> None:
