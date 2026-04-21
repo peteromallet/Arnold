@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.19.0 — 2026-04-21
+
+### Built-in cloud runner via `megaplan cloud`
+
+Generalises the ad-hoc Railway container setup (previously external, at `~/Documents/reigh-megaplan-dev/`) into a built-in subcommand. Sprint 1 of two; scope is operational parity with the existing Railway flow.
+
+- **New subcommand group**: `megaplan cloud {init,build,deploy,status,attach,logs,exec,resume,down,destroy}` covers the full lifecycle of a provider-backed run.
+- **Subpackage layout** under `megaplan/cloud/`: `spec.py` (cloud.yaml loader + schema validation), `template.py` (renders `entrypoint.sh` / `railway.toml` / `cloud.yaml`), `cli.py` (argparse wiring, dispatched from `megaplan.cli`).
+- **Provider plugin model**: `providers/` ships a `Provider` ABC plus a Railway plugin that wraps the `railway` CLI. Non-Railway providers (ssh, local) are explicit non-goals for this sprint.
+- **Bundled templates**: `megaplan/cloud/templates/` ships `Dockerfile`, `entrypoint.sh.tmpl`, `healthserver.py`, `railway.toml.tmpl`, `cloud.yaml.tmpl`, and `chain.yaml.example`.
+- **Extracted run wrappers**: `megaplan/cloud/wrappers/` ships `mp-run`, `mp-supervise`, `mp-heartbeat`, and `mp-chain` bash scripts, lifted out of the old entrypoint heredocs so they are versioned and editable.
+- **`handle_init` strictness**: `--output` on a code-mode plan now raises `invalid_args` instead of being silently accepted. The only legitimate use of `--output` was a dropped `--mode doc` flag, which is now an explicit error.
+- **Discoverability**: README gains a short "Cloud runs" section, `megaplan/data/instructions.md` gains a "Cloud Mode" block so the skill teaches Claude Code / Codex when to suggest `megaplan cloud`, and `.gitignore` now covers `.env` / `.env.*` / `*.env` since the cloud flow encourages `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GITHUB_TOKEN` secrets.
+- **Out of scope for sprint 1**: ssh/local providers, `cloud init-plan` bootstrap, toolchain extensibility block, retiring the external reference folder. The existing `~/Documents/reigh-megaplan-dev/` keeps running unchanged.
+
+### `--mode metaplan` alias for doc mode
+
+- **CLI**: `megaplan init --mode metaplan` is now the preferred name for design/document runs. Internally it normalizes to `mode == "doc"`, so all existing state files, prompts, schemas, and downstream checks are untouched. `--mode doc` remains a valid alias.
+- **Docs**: README section renamed to "Metaplan mode," with the defensive "Looking for metaplan/preplan?" subsection merged in now that metaplan is the real name. The SWE-bench Experiment section was dropped. Skill instructions updated to match.
+
+### Doc-mode aggregator preserves executor output
+
+- **Bug**: `assemble_doc` was overwriting the executor-authored output file with `executor_notes` (verification prose), so every doc-mode run ended with status-summary text instead of the intended deliverable. The executor is the authoritative author — the aggregator's only job is to fall back when the executor couldn't write to disk.
+- **Fix**: `assemble_doc` now returns untouched if the output file exists with non-empty content. Empty or missing files still fall through to the degraded notes-based path; a docstring callout flags that its content is verification prose, not authored sections. Regression tests cover both branches.
+
+### Misc
+
+- Doc-mode / metaplan pointer landed pre-alias: README "Doc mode" section, `instructions.md` Modes block with a keyword-loaded "Looking for metaplan or preplan mode?" subsection, and `claude_subagent_appendix.md` note about the `--mode doc --output` flags the outer skill appends.
+- README prose cleanup (light-megaplan run; no factual or code-example changes).
+- License correction: README had claimed MIT; actual license per `LICENSE` and `pyproject.toml` is Open Source Native License (OSNL) 0.2.
+
 ## v0.18.1 — 2026-04-16
 
 ### Rework-cycle-aware stall detection in `megaplan auto`
