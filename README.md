@@ -1,10 +1,10 @@
 # Megaplan
 
-A planning and execution harness that helps LLMs solve complex tasks through structured phases — plan, critique, gate, revise, finalize, execute, and review. Instead of one-shot attempts, Megaplan gives any model a rigorous process with independent critique and gating.
+A planning and execution harness for structured phases — plan, critique, gate, revise, finalize, execute, and review — with independent critique and gating instead of one-shot attempts.
 
-## Quick Start — Claude Code / Codex
+## Quick Start
 
-Copy and give this to your agent:
+Claude Code / Codex:
 
 ```
 Please install megaplan and set it up for this project:
@@ -15,9 +15,7 @@ megaplan setup
 Once you're done, ask me what I need megaplan for.
 ```
 
-## Quick Start — Open Models via OpenRouter
-
-Copy and give this to your agent:
+OpenRouter / open models:
 
 ```
 Please install megaplan with the open-model backend and set it up:
@@ -32,9 +30,7 @@ Then run: megaplan setup
 Once you're done, ask me what I need megaplan for.
 ```
 
-Get an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys). Any model on OpenRouter works — Qwen, Llama, Mistral, DeepSeek, etc.
-
----
+Get an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys). Any model on OpenRouter works.
 
 ## How it works
 
@@ -42,9 +38,9 @@ Get an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys). Any m
 plan → critique → gate → [revise → critique → gate]* → finalize → execute → review
 ```
 
-Each phase can use a different model. The critique phase uses an independent model to review the plan and raise flags. The gate decides whether to proceed or iterate. This prevents models from rubber-stamping their own work. Planning now goes through a visible `prep` phase so repository investigation is observable instead of hidden inside `plan`.
+Each phase can use a different model. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`.
 
-## Running manually
+Run the phases manually with:
 
 ```bash
 megaplan init --project-dir . "Fix the authentication bug in login.py"
@@ -57,23 +53,20 @@ megaplan execute --plan <name>
 
 ## Doc mode — planning documents instead of code
 
-Megaplan has two output modes, picked at `init` with `--mode`:
-
-- `--mode code` (default) — the run produces a code diff.
-- `--mode doc` — the run produces a single document artifact at `--output <path>` (design spec, architecture doc, research note, RFC, proposal, post-mortem, migration plan — anything whose deliverable is prose, not code).
+Pick the output mode at `init` with `--mode`: `--mode code` (default) produces a code diff; `--mode doc` produces a single document artifact at `--output <path>` (design spec, architecture doc, research note, RFC, proposal, post-mortem, migration plan — anything whose deliverable is prose, not code).
 
 ```bash
 megaplan init --project-dir . --mode doc --output docs/new-cache-layer.md \
   "Design a two-tier cache for the ingest pipeline"
 ```
 
-Doc mode runs the same `prep → plan → critique → gate → revise → finalize → execute → review` loop and respects every other flag (`--robustness`, `--auto-approve`, `--phase-model`, subagent mode, overrides). Under the hood it uses authoring-focused prep/execute/review prompts and a section-based execute schema (`sections_written`) instead of per-file changes.
+Doc mode respects every other flag (`--robustness`, `--auto-approve`, `--phase-model`, subagent mode, overrides) and uses authoring-focused prep/execute/review prompts plus a section-based execute schema (`sections_written`) instead of per-file changes.
 
-A common two-step pattern: first run `--mode doc` to produce a rigorous design document, then run `--mode code` against an idea that references that document to implement it.
+A common pattern is to run `--mode doc` first, then `--mode code` against an idea that references that document.
 
 ### Looking for "metaplan" or "preplan" mode?
 
-There is no mode called `metaplan`, `preplan`, `meta-plan`, `pre-plan`, or `design-document mode`. If you want to plan *before* you code — a design-first / preplan workflow — use `--mode doc`. Note that `prep` is the visible repository-investigation *phase* inside every run (both code and doc mode have a prep phase); it is not a separate mode.
+There is no `metaplan`, `preplan`, `meta-plan`, `pre-plan`, or `design-document mode`. For a design-first / preplan workflow, use `--mode doc`; `prep` is the visible repository-investigation *phase* inside every run, not a separate mode.
 
 ## Using different models per phase
 
@@ -112,12 +105,11 @@ GEMINI_API_KEY=...         # for google: prefix
 megaplan status --plan <name>
 ```
 
-`status` is the single monitoring command. It exposes lifecycle fields such as `active_step`, `last_step`, notes, cost, execute progress, and next-step runtime guidance.
-`watch` remains as a backward-compatible alias to `status`.
+Use `status` to monitor `active_step`, `last_step`, notes, cost, execute progress, and next-step runtime guidance (`watch` remains a backward-compatible alias).
 
 ## Subagent mode (Claude Code / Codex)
 
-Subagent mode delegates the full workflow to an autonomous agent, returning control only at defined breakpoints. It is the default orchestration mode for Claude Code and Codex. Cursor continues to run inline.
+Subagent mode delegates the full workflow to an autonomous agent and returns control only at defined breakpoints. It is the default orchestration mode for Claude Code and Codex; Cursor continues to run inline.
 
 ```bash
 megaplan config set orchestration.mode subagent   # default
