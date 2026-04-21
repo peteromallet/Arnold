@@ -1,7 +1,7 @@
 # Cloud runner spec for `megaplan cloud`.
 #
 # provider:
-#   Sprint 1 only supports Railway. Sprint 2 will add fly, ssh, and local.
+#   Supported providers: railway, local, ssh. `fly` is reserved for a future release.
 provider: railway
 
 # repo:
@@ -31,7 +31,7 @@ codex:
 # mode behavior:
 #   | mode  | agent session boot action                                  | required fields                    |
 #   | auto  | init plan if missing, then run `megaplan auto --plan ...` | auto.plan_name, auto.idea_file     |
-#   | chain | run `megaplan chain --spec ...`                            | chain.spec                         |
+#   | chain | run `megaplan chain start --spec ...`                      | chain.spec                         |
 #   | idle  | start `bash -l` only                                       | none                               |
 #   Missing auto.idea_file or chain.spec is a warning path in sprint 1: the
 #   container drops to idle instead of crashing so you can upload files manually.
@@ -48,6 +48,15 @@ auto:
 #   Required only when mode=chain.
 chain:
   spec: /workspace/chain.yaml
+
+# toolchains:
+#   Optional extra language toolchains layered into the cloud image.
+#   Use built-in aliases (`rust`, `go`, `java`) or a custom install snippet.
+# toolchains:
+#   - rust
+#   - name: custom
+#     install: |
+#       RUN curl -fsSL https://example.com/tool/install.sh | bash
 
 # megaplan:
 #   Branch/tag/SHA used for the boot-time `pip install --upgrade` of megaplan.
@@ -69,6 +78,28 @@ railway:
   service: agent
   session: agent
   # project: your-railway-project-id
+
+# local:
+#   compose_project  Docker Compose project name used by the local provider.
+#   workdir          Bind-mounted subdirectory inside the persistent deploy dir.
+# local:
+#   compose_project: megaplan-cloud
+#   workdir: workspace
+
+# ssh:
+#   host           Required when provider=ssh.
+#   user           Optional SSH username.
+#   port           SSH port.
+#   identity_file  Optional SSH identity file.
+#   remote_dir     Remote directory that receives the synced deploy context.
+#   container      Remote Docker container/image name.
+# ssh:
+#   host: docker-host.example.com
+#   user: deployer
+#   port: 22
+#   # identity_file: ~/.ssh/id_ed25519
+#   remote_dir: /tmp/megaplan-cloud
+#   container: megaplan-cloud-agent
 
 # secrets:
 #   Names of environment variables read locally during `megaplan cloud deploy`

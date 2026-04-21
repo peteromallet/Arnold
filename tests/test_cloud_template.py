@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,14 @@ from megaplan.cloud.spec import (
     RailwaySpec,
     RepoSpec,
     ResourcesSpec,
+    ToolchainSpec,
 )
-from megaplan.cloud.template import PLACEHOLDERS, materialize_deploy_dir, render_entrypoint
+from megaplan.cloud.template import (
+    PLACEHOLDERS,
+    materialize_deploy_dir,
+    render_dockerfile,
+    render_entrypoint,
+)
 
 
 def _spec(mode: str) -> CloudSpec:
@@ -45,6 +52,7 @@ def _spec(mode: str) -> CloudSpec:
         auto=auto,
         chain=chain,
         railway=RailwaySpec(service="agent", session="agent", project="proj-123"),
+        toolchains=[],
     )
 
 
@@ -115,3 +123,38 @@ def test_materialize_deploy_dir_creates_expected_layout(tmp_path: Path) -> None:
     dockerfile = (deploy_dir / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY wrappers/ /usr/local/bin/" in dockerfile
     assert "megaplan/cloud/wrappers" not in dockerfile
+
+
+def test_render_dockerfile_matches_v0190_baseline_when_toolchains_omitted() -> None:
+    spec = replace(_spec("idle"), toolchains=[])
+    golden = (
+        Path(__file__).parent / "fixtures" / "cloud" / "Dockerfile.v0.19.0"
+    ).read_text(encoding="utf-8")
+    assert render_dockerfile(spec) == golden
+
+
+def test_render_dockerfile_adds_alias_toolchain_recipes() -> None:
+    spec = replace(
+        _spec("idle"),
+        toolchains=[
+            ToolchainSpec(name="rust", install="rust"),
+            ToolchainSpec(name="go", install="go"),
+        ],
+    )
+    rendered = render_dockerfile(spec)
+    assert "# Toolchain: rust" in rendered
+    assert "rustup.rs" in rendered
+    assert "ENV PATH=/root/.cargo/bin:${PATH}" in rendered
+    assert "# Toolchain: go" in rendered
+    assert "go1.22.5.linux-amd64.tar.gz" in rendered
+    assert "ENV PATH=/usr/local/go/bin:${PATH}" in rendered
+
+
+def test_render_dockerfile_adds_custom_toolchain_snippet() -> None:
+    spec = replace(
+        _spec("idle"),
+        toolchains=[ToolchainSpec(name="custom", install="RUN echo custom-toolchain")],
+    )
+    rendered = render_dockerfile(spec)
+    assert "# Toolchain: custom" in rendered
+    assert "RUN echo custom-toolchain" in rendered

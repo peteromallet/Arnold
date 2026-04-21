@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -200,3 +201,25 @@ def test_get_review_marker_returns_none_when_review_missing(
     marker = auto._get_review_marker(plan_dir)
     assert marker is not None
     assert isinstance(marker, float)
+
+
+def test_run_megaplan_uses_module_launcher(tmp_path: Path) -> None:
+    proc = auto.subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="{}",
+        stderr="",
+    )
+
+    with patch.object(auto.subprocess, "run", return_value=proc) as mock_run:
+        code, out, err = auto._run_megaplan(["status", "--plan", "demo"], cwd=tmp_path, timeout=5)
+
+    assert (code, out, err) == (0, "{}", "")
+    assert mock_run.call_args.args[0] == [
+        sys.executable,
+        "-m",
+        "megaplan",
+        "status",
+        "--plan",
+        "demo",
+    ]

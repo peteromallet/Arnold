@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
-from megaplan.cloud.providers.base import Provider
+from megaplan.cloud.providers.base import Provider, _logs_follow, _missing_cli_error, _write_redacted_output
 from megaplan.cloud.spec import CloudSpec, RailwaySpec
 from megaplan.types import CliError
 
@@ -19,6 +21,8 @@ INSTALL_LINK = "Install: https://docs.railway.app/develop/cli"
 class RailwayProvider(Provider):
     """Thin wrapper around the Railway CLI for sprint-1 cloud flows."""
 
+    supports_session = True
+
     def __init__(self, spec: CloudSpec) -> None:
         self._spec = spec
         self._railway = spec.railway or RailwaySpec()
@@ -26,7 +30,7 @@ class RailwayProvider(Provider):
         self._volume = spec.resources.volume
         self._binary = shutil.which("railway")
         if self._binary is None:
-            raise CliError("provider_unavailable", INSTALL_LINK)
+            _missing_cli_error("railway", INSTALL_LINK.removeprefix("Install: "))
 
     @property
     def image_tag(self) -> str:
@@ -38,14 +42,20 @@ class RailwayProvider(Provider):
         *,
         cwd: Path | None = None,
         capture_output: bool = True,
+        input: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         try:
+            kwargs: dict[str, object] = {
+                "cwd": cwd,
+                "capture_output": capture_output,
+                "text": True,
+                "check": False,
+            }
+            if input is not None:
+                kwargs["input"] = input
             result = subprocess.run(
                 argv,
-                cwd=cwd,
-                capture_output=capture_output,
-                text=True,
-                check=False,
+                **kwargs,
             )
         except FileNotFoundError as exc:
             raise CliError("provider_failed", str(exc)) from exc
@@ -110,6 +120,35 @@ class RailwayProvider(Provider):
             )
         )
 
+    def upload_file(self, src: Path, dest: str) -> None:
+        payload = base64.b64encode(src.read_bytes()).decode("ascii")
+        self._run(
+            self._railway_cmd(
+                "ssh",
+                "--service",
+                self._railway.service,
+                "--session",
+                self._railway.session,
+                "--",
+                f"base64 -d > {shlex.quote(dest)}",
+            ),
+            input=payload,
+        )
+
+    def read_remote_file(self, path: str) -> str:
+        result = self._run(
+            self._railway_cmd(
+                "ssh",
+                "--service",
+                self._railway.service,
+                "--session",
+                self._railway.session,
+                "--",
+                f"cat {shlex.quote(path)}",
+            )
+        )
+        return result.stdout
+
     def attach(self) -> int:
         self._run(
             self._railway_cmd(
@@ -125,9 +164,11 @@ class RailwayProvider(Provider):
 
     def logs(self, *, follow: bool = True) -> int:
         argv = self._railway_cmd("logs", "--service", self._railway.service)
-        if not follow:
-            argv.extend(["--lines", "200"])
-        self._run(argv, capture_output=False)
+        if follow:
+            return _logs_follow(argv, secret_names=self._spec.secrets, env=os.environ)
+        argv.extend(["--lines", "200"])
+        result = self._run(argv)
+        _write_redacted_output(result, secret_names=self._spec.secrets, env=os.environ)
         return 0
 
     def status_payload(self, *, plan: str | None, workspace: str) -> dict:

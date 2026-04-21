@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -104,6 +105,7 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
 
 def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
+    follow_calls: list[list[str]] = []
 
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append((argv, kwargs))
@@ -118,6 +120,10 @@ def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytes
 
     monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
     monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "megaplan.cloud.providers.railway._logs_follow",
+        lambda argv, *, cwd=None, secret_names=(), env=None: follow_calls.append(argv) or 0,
+    )
 
     provider = RailwayProvider(_spec())
     provider.ssh_exec("pwd")
@@ -130,12 +136,84 @@ def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytes
     assert [argv for argv, _kwargs in calls] == [
         ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses", "--", "pwd"],
         ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses"],
-        ["/usr/bin/railway", "logs", "--service", "svc"],
         ["/usr/bin/railway", "logs", "--service", "svc", "--lines", "200"],
         ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses", "--", "cd /workspace/foo && megaplan status"],
         ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses", "--", "cd /workspace/foo && megaplan status --plan P"],
     ]
+    assert follow_calls == [["/usr/bin/railway", "logs", "--service", "svc"]]
     assert calls[1][1]["capture_output"] is False
+
+
+def test_upload_file_streams_base64_over_railway_ssh(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+
+    source = tmp_path / "idea.txt"
+    source.write_text("ship it\n", encoding="utf-8")
+
+    provider = RailwayProvider(_spec())
+    provider.upload_file(source, "/workspace/idea.txt")
+
+    assert calls == [
+        (
+            [
+                "/usr/bin/railway",
+                "ssh",
+                "--service",
+                "svc",
+                "--session",
+                "ses",
+                "--",
+                "base64 -d > /workspace/idea.txt",
+            ],
+            {
+                "cwd": None,
+                "capture_output": True,
+                "text": True,
+                "check": False,
+                "input": base64.b64encode(source.read_bytes()).decode("ascii"),
+            },
+        )
+    ]
+
+
+def test_read_remote_file_uses_cat_over_railway_ssh(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="remote body\n", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+
+    provider = RailwayProvider(_spec())
+    assert provider.read_remote_file("/workspace/chain_state.json") == "remote body\n"
+
+    assert calls == [
+        (
+            [
+                "/usr/bin/railway",
+                "ssh",
+                "--service",
+                "svc",
+                "--session",
+                "ses",
+                "--",
+                "cat /workspace/chain_state.json",
+            ],
+            {"cwd": None, "capture_output": True, "text": True, "check": False},
+        )
+    ]
 
 
 def test_down_and_destroy_use_expected_argv(monkeypatch: pytest.MonkeyPatch) -> None:

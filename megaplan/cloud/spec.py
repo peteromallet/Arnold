@@ -17,8 +17,9 @@ from megaplan.types import CliError, DEFAULT_AGENT_ROUTING, KNOWN_AGENTS
 
 
 VALID_MODES = ("auto", "chain", "idle")
-SUPPORTED_PROVIDER = "railway"
-SPRINT_TWO_PROVIDERS = ("fly", "ssh", "local")
+VALID_PROVIDERS = ("railway", "local", "ssh")
+FUTURE_PROVIDERS = ("fly",)
+KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,28 @@ class RailwaySpec:
 
 
 @dataclass(frozen=True)
+class LocalSpec:
+    compose_project: str = "megaplan-cloud"
+    workdir: str = "workspace"
+
+
+@dataclass(frozen=True)
+class SshSpec:
+    host: str
+    user: str | None = None
+    port: int = 22
+    identity_file: str | None = None
+    remote_dir: str = "/tmp/megaplan-cloud"
+    container: str = "megaplan-cloud-agent"
+
+
+@dataclass(frozen=True)
+class ToolchainSpec:
+    name: str
+    install: str
+
+
+@dataclass(frozen=True)
 class CloudSpec:
     provider: str
     repo: RepoSpec
@@ -77,6 +100,9 @@ class CloudSpec:
     auto: AutoSpec | None = None
     chain: ChainSubSpec | None = None
     railway: RailwaySpec | None = None
+    local: LocalSpec | None = None
+    ssh: SshSpec | None = None
+    toolchains: list[ToolchainSpec] | None = None
 
 
 def _invalid(message: str) -> CliError:
@@ -138,6 +164,14 @@ def _port(raw: Any) -> int:
     return raw
 
 
+def _positive_port(raw: Any, label: str, *, default: int) -> int:
+    if raw is None:
+        return default
+    if not isinstance(raw, int) or raw <= 0:
+        raise _invalid(f"`{label}` must be a positive integer")
+    return raw
+
+
 def _agents(raw: Any) -> dict[str, str]:
     mapping = _mapping(raw, "agents")
     if not mapping:
@@ -161,14 +195,40 @@ def _secrets(raw: Any) -> list[str]:
     return list(raw)
 
 
+def _toolchains(raw: Any) -> list[ToolchainSpec]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise _invalid("`toolchains` must be a list")
+    toolchains: list[ToolchainSpec] = []
+    for index, item in enumerate(raw):
+        if isinstance(item, str):
+            if item not in KNOWN_TOOLCHAIN_ALIASES:
+                known = ", ".join(KNOWN_TOOLCHAIN_ALIASES)
+                raise _invalid(f"Unknown toolchain alias {item!r}; expected one of: {known}")
+            toolchains.append(ToolchainSpec(name=item, install=item))
+            continue
+        if not isinstance(item, dict):
+            raise _invalid(f"`toolchains[{index}]` must be a string alias or mapping")
+        name = _string(item.get("name"), f"toolchains[{index}].name")
+        install = _string(item.get("install"), f"toolchains[{index}].install")
+        toolchains.append(ToolchainSpec(name=name, install=install))
+    return toolchains
+
+
 def load_spec(path: Path) -> CloudSpec:
     raw = _load_yaml(path)
 
-    provider = _string(raw.get("provider"), "provider", default=SUPPORTED_PROVIDER)
-    if provider != SUPPORTED_PROVIDER:
-        future = ", ".join(SPRINT_TWO_PROVIDERS)
+    provider = _string(raw.get("provider"), "provider", default="railway")
+    if provider in FUTURE_PROVIDERS:
+        future = ", ".join(FUTURE_PROVIDERS)
+        raise CliError(
+            "future_provider",
+            f"provider {provider!r} is reserved for a future release; future providers: {future}",
+        )
+    if provider not in VALID_PROVIDERS:
         raise _invalid(
-            f"provider must be '{SUPPORTED_PROVIDER}' for sprint 1; sprint-2 providers: {future}"
+            f"provider must be one of {', '.join((*VALID_PROVIDERS, *FUTURE_PROVIDERS))}; got {provider!r}"
         )
 
     repo_raw = _mapping(raw.get("repo"), "repo")
@@ -206,6 +266,33 @@ def load_spec(path: Path) -> CloudSpec:
         project=_optional_string(railway_raw.get("project"), "railway.project"),
     )
 
+    local_raw = _mapping(raw.get("local"), "local")
+    local = LocalSpec(
+        compose_project=_string(
+            local_raw.get("compose_project"),
+            "local.compose_project",
+            default="megaplan-cloud",
+        ),
+        workdir=_string(local_raw.get("workdir"), "local.workdir", default="workspace"),
+    ) if provider == "local" or local_raw else None
+
+    ssh_raw = _mapping(raw.get("ssh"), "ssh")
+    ssh = SshSpec(
+        host=_string(ssh_raw.get("host"), "ssh.host"),
+        user=_optional_string(ssh_raw.get("user"), "ssh.user"),
+        port=_positive_port(ssh_raw.get("port"), "ssh.port", default=22),
+        identity_file=_optional_string(ssh_raw.get("identity_file"), "ssh.identity_file"),
+        remote_dir=_absolute_posix(
+            ssh_raw.get("remote_dir", "/tmp/megaplan-cloud"),
+            "ssh.remote_dir",
+        ),
+        container=_string(
+            ssh_raw.get("container"),
+            "ssh.container",
+            default="megaplan-cloud-agent",
+        ),
+    ) if provider == "ssh" or ssh_raw else None
+
     auto_spec: AutoSpec | None = None
     if mode == "auto":
         auto_raw = _mapping(raw.get("auto"), "auto")
@@ -234,4 +321,7 @@ def load_spec(path: Path) -> CloudSpec:
         auto=auto_spec,
         chain=chain_spec,
         railway=railway,
+        local=local,
+        ssh=ssh,
+        toolchains=_toolchains(raw.get("toolchains")),
     )

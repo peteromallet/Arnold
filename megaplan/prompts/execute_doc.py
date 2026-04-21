@@ -81,10 +81,50 @@ _EXECUTE_DOC_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     - `task_updates[].status` must be either `done` or `skipped`. Never return `pending` in execute output.
     - Return `sense_check_acknowledgments` with one object per sense check.
     - Keep `executor_notes` verification-focused: explain why the section content is correct and complete.
+    - When the document contains design decisions, emit a top-level `## Settled Decisions` section. Either shape below is accepted; prefer the bold-dash inline form for short decisions:
+      ```md
+      ## Settled Decisions
+
+      - **SD-001** \u2014 Keep the current storage model. _load_bearing: true_
+        Rationale: External integrations depend on it.
+      ```
+      Or the YAML-ish shape:
+      ```md
+      ## Settled Decisions
+      - id: SD-001
+        load_bearing: true
+        decision: Keep the current storage model
+        rationale: External integrations depend on it.
+      ```
+    - Downstream plans can import these via `megaplan init --from-doc`.
     - Follow this JSON shape exactly:
     {output_shape}
     """
 ).strip()
+
+
+def _prior_doc_context_block(state: PlanState) -> str:
+    from_doc = state["config"].get("from_doc")
+    if not from_doc:
+        return ""
+    imported_decisions = state["meta"].get("imported_decisions", [])
+    lines = [
+        "Prior doc context:",
+        "Prior doc imported via --from-doc:",
+        str(from_doc),
+        f"Imported decisions (from the source doc's ## Settled Decisions section): {len(imported_decisions)}",
+    ]
+    if imported_decisions:
+        lines.append("Imported decision details:")
+        for decision in imported_decisions:
+            lines.extend(
+                [
+                    f"- {decision.get('id', '')}: {decision.get('decision', '')}",
+                    f"  rationale: {decision.get('rationale', '')}",
+                    f"  load_bearing: {decision.get('load_bearing', False)}",
+                ]
+            )
+    return "\n".join(lines)
 
 
 def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
@@ -100,6 +140,7 @@ def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = No
     rerun_guidance = _execute_rerun_guidance(plan_dir, finalize_data)
     approval_note = _execute_approval_note(state)
     execution_nudges = _execute_nudges(finalize_data, plan_dir, root)
+    prior_doc_block = _prior_doc_context_block(state)
     requirements_block = _EXECUTE_DOC_REQUIREMENTS_TEMPLATE.format(
         checkpoint_path=checkpoint_path,
         output_shape=_EXECUTE_DOC_OUTPUT_SHAPE_EXAMPLE,
@@ -138,6 +179,8 @@ def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = No
 
         {approval_note}
         Robustness level: {robustness}.
+
+        {prior_doc_block}
 
         {requirements_block}
 
@@ -205,6 +248,7 @@ def _execute_doc_batch_prompt(
                 if deviations:
                     prior_batch_deviations = json_dump(deviations).strip()
     approval_note = _execute_approval_note(state)
+    prior_doc_block = _prior_doc_context_block(state)
     debt_watch_items = _debt_watch_lines(plan_dir, root)
     debt_watch_block = (
         "\n".join(
@@ -253,6 +297,8 @@ def _execute_doc_batch_prompt(
         {approval_note}
         Robustness level: {configured_robustness(state)}.
 
+        {prior_doc_block}
+
         Requirements:
         - You are an author. Write document sections to the configured output path.
         - Execute only the actionable tasks in this batch.
@@ -264,6 +310,22 @@ def _execute_doc_batch_prompt(
         - Keep `executor_notes` verification-focused.
         - Best-effort progress checkpointing: if `{checkpoint_path}` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
         - `sections_written` replaces `files_changed` in task_updates. List the section IDs you authored, not file paths.
+        - When the document contains design decisions, emit a top-level `## Settled Decisions` section. Either shape below is accepted; prefer the bold-dash inline form for short decisions:
+          ```md
+          ## Settled Decisions
+
+          - **SD-001** \u2014 Keep the current storage model. _load_bearing: true_
+            Rationale: External integrations depend on it.
+          ```
+          Or the YAML-ish shape:
+          ```md
+          ## Settled Decisions
+          - id: SD-001
+            load_bearing: true
+            decision: Keep the current storage model
+            rationale: External integrations depend on it.
+          ```
+        - Downstream plans can import these via `megaplan init --from-doc`.
         - Follow this JSON shape:
         {_EXECUTE_DOC_OUTPUT_SHAPE_EXAMPLE}
         """

@@ -1,8 +1,10 @@
 """Tests for megaplan.chain — the chain driver subcommand."""
 from __future__ import annotations
 
+import argparse
 import json
-from dataclasses import replace
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,12 +13,13 @@ import yaml
 
 from megaplan.auto import DriverOutcome
 from megaplan.chain import (
-    ChainSpec,
     ChainState,
     MilestoneSpec,
+    format_chain_status,
     load_chain_state,
     load_spec,
     run_chain,
+    run_chain_cli,
     save_chain_state,
 )
 from megaplan.types import CliError
@@ -138,6 +141,42 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     assert loaded.completed == [{"label": "m1", "plan": "m1-x", "status": "done"}]
 
 
+def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    spec_path = _setup_three_milestones(tmp_path, seed_plan="seed-plan-20260421")
+    spec = load_spec(spec_path)
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name="plan-for-m2",
+        last_state="done",
+        completed=[{"label": "m1", "plan": "plan-for-m1", "status": "done"}],
+    )
+    save_chain_state(spec_path, state)
+
+    summary = format_chain_status(spec, state)
+    assert summary == {
+        "current_milestone": {"label": "m2", "index": 1},
+        "completed": [{"label": "m1", "index": 0}],
+        "remaining": [{"label": "m2", "index": 1}, {"label": "m3", "index": 2}],
+        "per_milestone": [
+            {"label": "m1", "index": 0, "status": "completed"},
+            {"label": "m2", "index": 1, "status": "in_progress"},
+            {"label": "m3", "index": 2, "status": "pending"},
+        ],
+        "seed_plan": "seed-plan-20260421",
+        "current_plan_name": "plan-for-m2",
+        "last_state": "done",
+    }
+
+    args = argparse.Namespace(chain_action="status", spec=str(spec_path), no_git_refresh=False)
+    assert run_chain_cli(tmp_path, args, writer=lambda msg: sys.stderr.write(msg)) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["summary"] == summary
+    assert "Current milestone: m2 (index 1)" in captured.err
+    assert "Seed plan: seed-plan-20260421" in captured.err
+    assert "[in_progress] m2 (index 1)" in captured.err
+
+
 # ---------------------------------------------------------------------------
 # Driver orchestration (auto.drive is mocked)
 # ---------------------------------------------------------------------------
@@ -155,6 +194,22 @@ def _setup_two_milestones(tmp_path: Path) -> Path:
             ]
         },
     )
+
+
+def _setup_three_milestones(tmp_path: Path, *, seed_plan: str | None = None) -> Path:
+    i1 = _touch_idea(tmp_path, "m1.txt", "idea one")
+    i2 = _touch_idea(tmp_path, "m2.txt", "idea two")
+    i3 = _touch_idea(tmp_path, "m3.txt", "idea three")
+    payload: dict[str, object] = {
+        "milestones": [
+            {"label": "m1", "idea": str(i1)},
+            {"label": "m2", "idea": str(i2)},
+            {"label": "m3", "idea": str(i3)},
+        ]
+    }
+    if seed_plan is not None:
+        payload["seed"] = {"plan": seed_plan}
+    return _write_spec(tmp_path, payload)
 
 
 def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
@@ -184,6 +239,43 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
     saved = load_chain_state(spec_path)
     assert saved.current_milestone_index == 2
     assert [c["label"] for c in saved.completed] == ["m1", "m1a"]
+
+
+def test_chain_start_invokes_driver(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec_path = _setup_two_milestones(tmp_path)
+    calls: list[tuple[Path, Path, bool]] = []
+
+    def fake_run_chain(spec_path_arg: Path, root: Path, *, no_git_refresh: bool = False, writer=None):
+        del writer
+        calls.append((spec_path_arg, root, no_git_refresh))
+        return {"status": "done", "reason": "", "chain_state": {}, "events": []}
+
+    with patch("megaplan.chain.run_chain", side_effect=fake_run_chain):
+        start_args = argparse.Namespace(
+            chain_action="start",
+            spec=str(spec_path),
+            no_git_refresh=True,
+        )
+        alias_args = argparse.Namespace(
+            chain_action=None,
+            spec=str(spec_path),
+            no_git_refresh=False,
+        )
+
+        assert run_chain_cli(tmp_path, start_args) == 0
+        start_payload = json.loads(capsys.readouterr().out)
+        assert run_chain_cli(tmp_path, alias_args) == 0
+        alias_payload = json.loads(capsys.readouterr().out)
+
+    assert calls == [
+        (spec_path.resolve(), tmp_path, True),
+        (spec_path.resolve(), tmp_path, False),
+    ]
+    assert start_payload["status"] == "done"
+    assert alias_payload["status"] == "done"
 
 
 def test_run_chain_stops_on_failure(tmp_path: Path) -> None:
@@ -316,6 +408,61 @@ def test_refresh_main_default_invokes_git(tmp_path: Path) -> None:
     assert cmds[0][:2] == ["git", "fetch"]
     assert cmds[1] == ["git", "checkout", "main"]
     assert cmds[2][:2] == ["git", "pull"]
+
+
+def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
+    class _Proc:
+        returncode = 0
+        stdout = '{"state": "planned"}'
+
+    with patch("megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
+        from megaplan.chain import _plan_state
+
+        assert _plan_state(tmp_path, "demo-plan", timeout=5) == "planned"
+
+    assert mock_run.call_args.args[0] == [
+        sys.executable,
+        "-m",
+        "megaplan",
+        "status",
+        "--plan",
+        "demo-plan",
+    ]
+
+
+def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
+    idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
+    proc = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"plan": "demo-plan"}',
+        stderr="",
+    )
+
+    with patch("megaplan.chain.subprocess.run", return_value=proc) as mock_run:
+        from megaplan.chain import _init_plan
+
+        assert _init_plan(
+            tmp_path,
+            str(idea_path),
+            robustness="standard",
+            auto_approve=True,
+            writer=lambda _m: None,
+        ) == "demo-plan"
+
+    assert mock_run.call_args.args[0] == [
+        sys.executable,
+        "-m",
+        "megaplan",
+        "init",
+        "--project-dir",
+        str(tmp_path),
+        "--auto-approve",
+        "--robustness",
+        "standard",
+        "--idea-file",
+        str(idea_path),
+    ]
 
 
 def test_run_chain_no_git_refresh_skips_refresh(tmp_path: Path) -> None:

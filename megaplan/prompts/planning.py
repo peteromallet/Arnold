@@ -85,6 +85,8 @@ PLAN_TEMPLATE = textwrap.dedent(
 def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     prep_block, prep_instruction = _render_prep_block(plan_dir)
+    from_doc = state["config"].get("from_doc")
+    imported_decisions = state["meta"].get("imported_decisions", [])
     clarification = state.get("clarification", {})
     if clarification:
         clarification_block = textwrap.dedent(
@@ -95,6 +97,38 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
         ).strip()
     else:
         clarification_block = "No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output."
+    if from_doc:
+        prior_doc_lines = [
+            "Prior doc context:",
+            "Prior doc imported via --from-doc:",
+            str(from_doc),
+        ]
+        if imported_decisions:
+            prior_doc_lines.extend(
+                [
+                    "Imported decisions:",
+                    *[
+                        "\n".join(
+                            [
+                                f"- {decision.get('id', '')}: {decision.get('decision', '')}",
+                                f"  rationale: {decision.get('rationale', '')}",
+                                f"  load_bearing: {decision.get('load_bearing', False)}",
+                            ]
+                        )
+                        for decision in imported_decisions
+                    ],
+                    "Planning guidance for imported decisions:",
+                    "- For each imported decision with load_bearing: true, include a success criterion with priority: 'must' referencing the SD-NNN id.",
+                    "- For each imported decision with load_bearing: false, include a success criterion with priority: 'info' referencing the SD-NNN id.",
+                ]
+            )
+        else:
+            prior_doc_lines.append(
+                "No ## Settled Decisions section found — path stored for reference only."
+            )
+        prior_doc_block = "\n".join(prior_doc_lines)
+    else:
+        prior_doc_block = ""
     return textwrap.dedent(
         f"""
         You are creating an implementation plan for the following idea.
@@ -107,6 +141,8 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
 
         Project directory:
         {project_dir}
+
+        {prior_doc_block}
 
         {clarification_block}
 
@@ -190,4 +226,3 @@ def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
 
         """
     ).strip()
-

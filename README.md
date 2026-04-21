@@ -105,11 +105,12 @@ Use `status` to monitor `active_step`, `last_step`, notes, cost, execute progres
 
 ## Cloud runs
 
-`megaplan cloud` deploys a plan to a remote runner backed by a persistent workspace volume. Sprint 1 ships the `railway` provider only; `ssh` and `local` providers are planned. See [docs/cloud.md](docs/cloud.md) for `cloud.yaml` fields, secrets handling, and the manual-upload workflow for idea/chain files.
+`megaplan cloud` deploys a plan to a remote runner backed by a persistent workspace volume. Sprint 2 adds `local` and `ssh` providers plus thin wrapper workflows for `megaplan cloud bootstrap <idea-file>`, `megaplan cloud chain <spec>`, and `megaplan cloud status --chain`. See [docs/cloud.md](docs/cloud.md) for `cloud.yaml` fields, provider notes, file-staging workflows, marker behavior, and log-redaction scope.
 
 ```bash
 megaplan cloud init       # scaffold cloud.yaml
 megaplan cloud deploy     # upload secrets and launch the runner
+megaplan cloud bootstrap ideas/tiny.txt
 ```
 
 ## Subagent mode (Claude Code / Codex)
