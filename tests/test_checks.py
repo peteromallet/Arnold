@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from megaplan.checks import (
+from megaplan.audits.robustness import (
     build_empty_template,
     checks_for_robustness,
     get_check_by_id,

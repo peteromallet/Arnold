@@ -13,7 +13,7 @@ import pytest
 import megaplan
 import megaplan._core
 import megaplan.cli
-import megaplan.execution
+import megaplan.execute.core
 import megaplan.handlers
 import megaplan.workers
 from megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, set_active_step, workflow_next
@@ -517,7 +517,7 @@ def test_handle_plan_includes_next_step_runtime(plan_fixture: PlanFixture) -> No
 
 
 def test_build_monitor_hint_references_status(plan_fixture: PlanFixture) -> None:
-    hint = megaplan.execution.build_monitor_hint(plan_fixture.plan_dir)
+    hint = megaplan.execute.core.build_monitor_hint(plan_fixture.plan_dir)
 
     assert "status" in hint
     assert "watch" not in hint

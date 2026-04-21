@@ -1,4 +1,4 @@
-"""Tests for megaplan.tiebreaker — prompts, schemas, synthesis, version suffix, status."""
+"""Tests for megaplan.prompts.tiebreaker_orchestrator — prompts, schemas, synthesis, version suffix, status."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from megaplan.schemas import SCHEMAS
 from megaplan.prompts.tiebreaker_researcher import researcher_prompt
 from megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from megaplan.prompts.tiebreaker_synthesis import render_synthesis
-from megaplan.tiebreaker import _next_version_suffix, _run_tiebreaker_status
+from megaplan.prompts.tiebreaker_orchestrator import _next_version_suffix, _run_tiebreaker_status
 from megaplan.types import PlanState
 
 

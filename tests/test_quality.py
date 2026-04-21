@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import megaplan.quality as quality
+import megaplan.audits.quality_gates as quality
 
 
 def _write_lines(path: Path, count: int, *, prefix: str = "line") -> None:

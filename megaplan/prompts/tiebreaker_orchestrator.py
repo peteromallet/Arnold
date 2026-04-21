@@ -271,18 +271,18 @@ def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
 
 def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
     try:
-        from megaplan.audit import (
+        from megaplan.audits.audit_engine import (
             aggregate_tiebreaker_audit,
             load_tiebreaker_audit,
             render_audit_report,
         )
     except ImportError:
-        sys.stdout.write("Tiebreaker audit requires megaplan.audit (introduced in v0.18.0).\n")
+        sys.stdout.write("Tiebreaker audit requires megaplan.audits.audit_engine (introduced in v0.18.0).\n")
         return 1
     if plan_name:
         plan_dir = resolve_plan_dir(root, plan_name)
         records = load_tiebreaker_audit(plan_dir)
-        from megaplan.audit import _compute_totals
+        from megaplan.audits.audit_engine import _compute_totals
         data = {"plans": [{"plan_dir": plan_dir.name, "tiebreaker_count": len(records),
                            "tokens_spent": sum(r.get("tokens_spent", 0) for r in records),
                            "time_seconds": sum(r.get("time_seconds", 0) for r in records),

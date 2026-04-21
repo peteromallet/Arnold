@@ -19,11 +19,11 @@ from megaplan._core import (
     store_raw_worker_output,
 )
 from megaplan.evaluation import validate_execution_evidence
-from megaplan.execution_quality import (
+from megaplan.execute.quality import (
     _check_done_task_evidence,
     _normalize_execute_claimed_path,
 )
-from megaplan.merge import _validate_and_merge_batch
+from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.types import CliError, PlanState, STATE_FINALIZED, StepResponse
 from megaplan.workers import WorkerResult
 

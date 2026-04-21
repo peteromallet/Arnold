@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from megaplan.checks import checks_for_robustness
+from megaplan.audits.robustness import checks_for_robustness
 from megaplan._core import (
     configured_robustness,
     intent_and_notes_block,

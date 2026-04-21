@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from megaplan.execution import (
+from megaplan.execute.core import (
     handle_execute_auto_loop as dispatch_execute_auto_loop,
     handle_execute_one_batch as dispatch_execute_one_batch,
 )
@@ -102,8 +102,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             assemble_doc(plan_dir, output_path, finalize_data)
         robustness = configured_robustness(state)
         if not workflow_includes_step(robustness, "review") and response.get("state") == STATE_EXECUTED:
-            from megaplan.capabilities import get_worker_capabilities
-            from megaplan.verifiability import classify_criteria
+            from megaplan.audits.capabilities import get_worker_capabilities
+            from megaplan.audits.verifiability import classify_criteria
 
             plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
             success_criteria = plan_meta.get("success_criteria", [])

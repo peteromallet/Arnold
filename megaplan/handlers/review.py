@@ -7,9 +7,9 @@ from typing import Any
 
 from megaplan import handlers as _pkg
 import megaplan.review_checks as review_checks
-from megaplan.execution import _check_done_task_evidence, build_monitor_hint
+from megaplan.execute.core import _check_done_task_evidence, build_monitor_hint
 from megaplan.evaluation import is_rubber_stamp
-from megaplan.merge import _validate_and_merge_batch
+from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.types import (
     MOCK_ENV_VAR,
