@@ -88,6 +88,7 @@ const buildLinuxCommand = (config: CommandConfig, mode: 'install' | 'run'): stri
   lines.push('export PATH="$HOME/.local/bin:$PATH" &&');
   lines.push(`${buildBackupPreludeLinux()} &&`);
   lines.push('git pull --ff-only &&');
+  lines.push('git submodule update --init --recursive &&');
   lines.push(`${uvCommand} sync --locked --python 3.10 --extra ${cudaExtra} &&`);
   lines.push('touch .uv-migrated &&');
   lines.push(buildUvRunLine(uvCommand, cudaExtra, config));
@@ -113,6 +114,7 @@ const buildWindowsPowerShellCommand = (config: CommandConfig, mode: 'install' | 
   }
   lines.push(buildBackupPreludePowerShell());
   lines.push('git pull --ff-only');
+  lines.push('git submodule update --init --recursive');
   lines.push(`${uvCommand} sync --locked --python 3.10 --extra ${cudaExtra}`);
   lines.push(`New-Item -ItemType File -Force -Path '.uv-migrated' | Out-Null`);
   lines.push(buildUvRunLine(uvCommand, cudaExtra, config));
@@ -135,6 +137,7 @@ const buildWindowsCmdCommand = (config: CommandConfig, mode: 'install' | 'run'):
 
   parts.push(buildBackupPreludeCmd());
   parts.push('git pull --ff-only');
+  parts.push('git submodule update --init --recursive');
   parts.push(`${uvCommand} sync --locked --python 3.10 --extra ${cudaExtra}`);
   parts.push('type nul > .uv-migrated');
   parts.push(buildUvRunLine(uvCommand, cudaExtra, config));
