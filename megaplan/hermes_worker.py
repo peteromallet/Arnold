@@ -20,33 +20,20 @@ from megaplan._core import read_json, schemas_root
 from megaplan.prompts import create_hermes_prompt
 
 
-def check_hermes_available() -> tuple[bool, str]:
-    """Check if Hermes Agent is importable and has API credentials."""
+def _import_hermes_runtime():
+    import megaplan.agent  # noqa: F401
+
     try:
-        from run_agent import AIAgent  # noqa: F401
-    except ImportError:
-        return (False, "hermes-agent not installed. Install with: pip install hermes-agent")
+        from run_agent import AIAgent
+        from hermes_state import SessionDB
+    except ImportError as exc:
+        from megaplan.types import CliError
 
-    # Check for API key — Hermes stores keys in ~/.hermes/.env, loaded via dotenv.
-    # After dotenv load, the key is available as an env var.
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        # Try loading from Hermes .env file directly
-        try:
-            from hermes_cli.config import get_env_path
-            env_path = get_env_path()
-            if env_path and env_path.exists():
-                for line in env_path.read_text().splitlines():
-                    line = line.strip()
-                    if line.startswith("OPENROUTER_API_KEY="):
-                        api_key = line.split("=", 1)[1].strip().strip("'\"")
-                        break
-        except (ImportError, Exception):
-            pass
-
-    if not api_key:
-        return (False, "OPENROUTER_API_KEY not set. Configure via env var or ~/.hermes/.env")
-    return (True, "")
+        raise CliError(
+            "agent_deps_missing",
+            "hermes backend requires: pip install 'megaplan-harness[agent]'",
+        ) from exc
+    return AIAgent, SessionDB
 
 
 def _toolsets_for_phase(phase: str) -> list[str] | None:
@@ -287,8 +274,7 @@ def run_hermes_step(
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override)
 
-    from run_agent import AIAgent
-    from hermes_state import SessionDB
+    AIAgent, SessionDB = _import_hermes_runtime()
 
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")

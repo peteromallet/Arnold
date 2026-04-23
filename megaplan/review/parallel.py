@@ -77,8 +77,9 @@ def _run_check(
     project_dir: Path,
     pre_check_flags: list[dict[str, Any]],
 ) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
-    from hermes_state import SessionDB
-    from run_agent import AIAgent
+    from megaplan.hermes_worker import _import_hermes_runtime
+
+    AIAgent, SessionDB = _import_hermes_runtime()
 
     check_id = check["id"] if isinstance(check, dict) else getattr(check, "id")
     output_path = _write_single_check_review_template(plan_dir, state, check, f"review_check_{check_id}.json")
@@ -206,8 +207,9 @@ def _run_criteria_verdict(
     schema: dict[str, Any],
     project_dir: Path,
 ) -> tuple[dict[str, Any], float, int, int, int]:
-    from hermes_state import SessionDB
-    from run_agent import AIAgent
+    from megaplan.hermes_worker import _import_hermes_runtime
+
+    AIAgent, SessionDB = _import_hermes_runtime()
 
     output_path = _write_criteria_verdict_review_template(plan_dir, state, "review_criteria_verdict.json")
     prompt = parallel_criteria_review_prompt(state, plan_dir, root, output_path)

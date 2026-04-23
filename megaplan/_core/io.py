@@ -265,12 +265,8 @@ def detect_available_agents() -> list[str]:
     import megaplan._core as _core_pkg
     _shutil_ref = _core_pkg.shutil
     available = [a for a in KNOWN_AGENTS if a != "hermes" and _shutil_ref.which(a)]
-    # Hermes is a Python library, not a CLI binary
-    try:
-        import run_agent  # noqa: F401
+    if (Path(__file__).resolve().parents[1] / "agent" / "run_agent.py").is_file():
         available.append("hermes")
-    except ImportError:
-        pass
     return available
 
 
