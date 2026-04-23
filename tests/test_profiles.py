@@ -186,6 +186,28 @@ def test_apply_profile_expansion_preserves_ad_hoc_precedence_and_is_idempotent(
     assert model == "glm-5.1"
 
 
+def test_apply_profile_expansion_falls_back_to_state_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+
+    args = _worker_args(profile=None, phase_model=[])
+    state = {"config": {"project_dir": str(tmp_path), "profile": "all-open"}}
+
+    apply_profile_expansion(args, None, state=state)
+
+    with patch("megaplan.workers._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
+    assert agent == "hermes"
+    assert model == "glm-5.1"
+    assert args.profile == "all-open"
+
+
 def test_apply_profile_expansion_unknown_profile_lists_known_profiles(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

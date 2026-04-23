@@ -151,7 +151,7 @@ def _run_worker(
     failure_iteration = state["iteration"] if iteration is None else iteration
     from megaplan import handlers as _handlers_pkg
 
-    apply_profile_expansion(args, Path(state["config"]["project_dir"]))
+    apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
     agent, mode, refreshed, model = resolved or _handlers_pkg.resolve_agent_mode(step, args)
     run_id = set_active_step(state, step=step, agent=agent, mode=mode, model=model)
     _emit_phase_notice(step)

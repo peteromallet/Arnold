@@ -495,7 +495,7 @@ def run_loop_worker(
 ) -> WorkerResult:
     ensure_runtime_layout(root)
     normalized = _normalized_args(args)
-    apply_profile_expansion(normalized, Path(state["config"]["project_dir"]))
+    apply_profile_expansion(normalized, Path(state["config"]["project_dir"]), state=state)
     prompt = build_loop_prompt(
         step,
         state,

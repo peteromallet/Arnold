@@ -274,7 +274,7 @@ def _merge_resolution_tradeoffs_into_payload(gate_summary: dict[str, Any], worke
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="gate") as (plan_dir, state):
         require_state(state, "gate", {STATE_CRITIQUED})
-        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         iteration = state["iteration"]
         gate_signals, signals_filename, signals_artifact = _build_gate_signals_artifact(plan_dir, state, iteration=iteration, root=root)
         resolved = _pkg.resolve_agent_mode("gate", args)

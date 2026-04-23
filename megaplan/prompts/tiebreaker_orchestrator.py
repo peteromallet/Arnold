@@ -54,7 +54,7 @@ def _run_tiebreaker(
     args: argparse.Namespace,
 ) -> int:
     question = _resolve_question(args)
-    apply_profile_expansion(args, Path(state["config"]["project_dir"]))
+    apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
     suffix = _next_version_suffix(plan_dir)
 
     researcher_file = f"tiebreaker_researcher{suffix}.json"
