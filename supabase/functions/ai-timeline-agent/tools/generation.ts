@@ -41,7 +41,7 @@ const IMAGE_GENERATION_MODELS = new Set([
 const TRAVEL_MODEL_NAME_BY_ID: Record<string, string> = {
   "wan-2.2": "wan_2_2_i2v_lightning_baseline_2_2_2",
   "ltx-2.3": "ltx2_22B",
-  "ltx-2.3-fast": "ltx2_22B_distilled",
+  "ltx-2.3-fast": "ltx2_22B_distilled_1_1",
 };
 
 const TASK_LABELS: Record<string, string> = {
