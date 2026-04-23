@@ -29,7 +29,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     critique_history = _collect_critique_summaries(plan_dir, state["iteration"])
     debt_block = _finalize_debt_block(plan_dir, root)
     plan_mode = state.get("config", {}).get("mode", "code")
-    if plan_mode == "doc":
+    if plan_mode in {"doc", "joke"}:
         task_field_guidance = textwrap.dedent(
             """
             - Each task represents a document section or group of sections to author.

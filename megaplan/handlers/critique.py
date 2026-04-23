@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.audits.robustness import checks_for_robustness, validate_critique_checks
+from megaplan.audits.robustness import (
+    checks_for_robustness,
+    joke_checks_for_robustness,
+    validate_critique_checks,
+)
 from megaplan.evaluation import build_gate_artifact, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
 from megaplan.parallel_critique import run_parallel_critique
 from megaplan.types import (
@@ -34,7 +38,7 @@ from megaplan._core import (
 )
 
 from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
-from .shared import _append_to_meta, _finish_step, _raise_step_validation_error, _run_worker, _write_plan_version
+from .shared import _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
 from .tiebreaker import _build_tiebreaker_reprompt
 
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -108,7 +112,12 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 },
                 history_fields={"flags_count": len(verifiability_flags)},
             )
-        active_checks = checks_for_robustness(robustness)
+        mode = state["config"].get("mode", "code")
+        active_checks = (
+            joke_checks_for_robustness(robustness)
+            if mode == "joke"
+            else checks_for_robustness(robustness)
+        )
         expected_ids = [check["id"] for check in active_checks]
         agent_type, mode, refreshed, model = _pkg.resolve_agent_mode("critique", args)
         if len(active_checks) > 1 and agent_type == "hermes":
@@ -117,7 +126,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 agent, mode, refreshed = "hermes", "persistent", True
             except Exception as exc:
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
-                worker, agent, mode, refreshed = _run_worker(
+                worker, agent, mode, refreshed = _pkg._run_worker(
                     "critique",
                     state,
                     plan_dir,
@@ -126,7 +135,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     resolved=(agent_type, mode, refreshed, model),
                 )
         else:
-            worker, agent, mode, refreshed = _run_worker(
+            worker, agent, mode, refreshed = _pkg._run_worker(
                 "critique",
                 state,
                 plan_dir,
@@ -198,7 +207,14 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         require_state(state, "revise", {STATE_CRITIQUED})
         has_gate, revise_transition = _resolve_revise_transition(state)
         previous_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
-        worker, agent, mode, refreshed = _run_worker("revise", state, plan_dir, args, root=root, iteration=state["iteration"] + 1)
+        worker, agent, mode, refreshed = _pkg._run_worker(
+            "revise",
+            state,
+            plan_dir,
+            args,
+            root=root,
+            iteration=state["iteration"] + 1,
+        )
         payload = worker.payload
         validate_payload("revise", payload)
         payload["success_criteria"] = _merge_imported_decision_criteria(
@@ -308,7 +324,7 @@ def _validate_tiebreaker(
     entries = compute_iteration_pressure(plan_dir, state)
     if not has_mechanical_recurrence(entries):
         reprompt_prompt = _build_tiebreaker_reprompt(agent, state, plan_dir, root=root)
-        retry_worker, _, _, _ = _run_worker(
+        retry_worker, _, _, _ = _pkg._run_worker(
             "gate", state, plan_dir, args, root=root,
             resolved=resolved, prompt_override=reprompt_prompt,
         )

@@ -296,8 +296,8 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     summary = f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
-    if plan_mode == "doc":
-        summary += f" Mode: doc. Output: {plan_output_path}."
+    if plan_mode in {"doc", "joke"}:
+        summary += f" Mode: {plan_mode}. Output: {plan_output_path}."
     if active_step:
         summary = (
             summary
@@ -837,18 +837,25 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
-    init_parser.add_argument("--mode", choices=["code", "doc", "metaplan"], default=None,
-                             help="Deliverable type: 'code' (source changes) or 'doc' / 'metaplan' "
-                                  "(design/spec artifact — 'metaplan' is an alias for 'doc'). "
+    init_parser.add_argument("--mode", choices=["code", "doc", "metaplan", "joke"], default=None,
+                             help="Deliverable type: 'code' (source changes), 'doc' / 'metaplan' "
+                                  "(design/spec artifact — 'metaplan' is an alias for 'doc'), or "
+                                  "'joke' (film scene script; requires --output). "
                                   "Defaults to 'code' unless the idea strongly suggests a design document, "
                                   "in which case --mode must be passed explicitly.")
     init_parser.add_argument("--output", default=None,
-                             help="Relative path where the doc artifact will be written. "
-                                  "Required with --mode doc; rejected with --mode code.")
+                             help="Relative path where the doc or joke artifact will be written. "
+                                  "Required with --mode doc or --mode joke; rejected with --mode code.")
+    init_parser.add_argument(
+        "--primary-criterion",
+        default=None,
+        help="Declare the joke-mode primary criterion (for example: 'weirdest coherent'). "
+             "Valid only with --mode joke.",
+    )
     init_parser.add_argument("--from-doc", default=None,
                              help="Relative path to a prior doc-mode artifact whose ## Settled "
                                   "Decisions section should be imported. Valid with --mode "
-                                  "code or --mode doc.")
+                                  "code, --mode doc, or --mode joke.")
     init_parser.add_argument(
         "--idea-file",
         default=None,

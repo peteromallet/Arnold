@@ -29,6 +29,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["plan", "questions", "success_criteria", "assumptions"],
     },
     "prep.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "skip": {"type": "boolean"},
@@ -70,6 +71,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "constraints": {"type": "array", "items": {"type": "string"}},
+            "primary_criterion": {"type": "string"},
             "suggested_approach": {"type": "string"},
         },
         "required": [
@@ -87,7 +89,23 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "plan": {"type": "string"},
             "changes_summary": {"type": "string"},
-            "flags_addressed": {"type": "array", "items": {"type": "string"}},
+            "flags_addressed": {
+                "type": "array",
+                "items": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "resolution": {"type": "string", "enum": ["addressed", "rejected"]},
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["id", "resolution", "reason"],
+                        },
+                    ]
+                },
+            },
             "assumptions": {"type": "array", "items": {"type": "string"}},
             "success_criteria": {
                 "type": "array",
@@ -627,7 +645,7 @@ SCHEMAS["execution_doc.json"] = _build_execution_doc_schema()
 
 
 def get_execution_schema_key(mode: str) -> str:
-    return "execution_doc.json" if mode == "doc" else "execution.json"
+    return "execution_doc.json" if mode in {"doc", "joke"} else "execution.json"
 
 
 def _preserve_explicit_required(path: tuple[str, ...]) -> bool:
@@ -639,9 +657,12 @@ def _preserve_explicit_required(path: tuple[str, ...]) -> bool:
 def strict_schema(schema: Any, _path: tuple[str, ...] = ()) -> Any:
     if isinstance(schema, dict):
         updated = {key: strict_schema(value, _path + (key,)) for key, value in schema.items()}
+        preserve_explicit_required = bool(updated.pop("x-preserve-explicit-required", False))
         if updated.get("type") == "object":
             updated.setdefault("additionalProperties", False)
-            if "properties" in updated and not _preserve_explicit_required(_path):
+            if "properties" in updated and not (
+                preserve_explicit_required or _preserve_explicit_required(_path)
+            ):
                 updated["required"] = list(updated["properties"].keys())
         return updated
     if isinstance(schema, list):

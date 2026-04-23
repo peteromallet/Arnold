@@ -6,7 +6,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 import fcntl
 
@@ -308,7 +308,7 @@ def make_history_entry(
     raw_output_file: str | None = None,
     message: str | None = None,
     flags_count: int | None = None,
-    flags_addressed: list[str] | None = None,
+    flags_addressed: list[Any] | None = None,
     recommendation: str | None = None,
     approval_mode: str | None = None,
     environment: dict[str, bool] | None = None,

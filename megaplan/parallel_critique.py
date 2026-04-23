@@ -13,6 +13,7 @@ from typing import Any
 from megaplan._core import get_effective, read_json, schemas_root
 from megaplan.hermes_worker import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
 from megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
+from megaplan.prompts.critique_joke import single_check_critique_joke_prompt
 from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
@@ -52,7 +53,12 @@ def _run_check(
     from run_agent import AIAgent
 
     output_path = write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json")
-    prompt = single_check_critique_prompt(state, plan_dir, root, check, output_path)
+    prompt_builder = (
+        single_check_critique_joke_prompt
+        if state.get("config", {}).get("mode", "code") == "joke"
+        else single_check_critique_prompt
+    )
+    prompt = prompt_builder(state, plan_dir, root, check, output_path)
     resolved_model, agent_kwargs = _resolve_model(model)
 
     _model_lower = (resolved_model or "").lower()

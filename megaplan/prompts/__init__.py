@@ -23,9 +23,11 @@ from .critique import (
     _revise_prompt,
     _write_critique_template,
 )
+from .critique_joke import _critique_joke_prompt
+from .revise_joke import _revise_joke_prompt
 from .execute import (
     _execute_approval_note,
-    _execute_batch_prompt,
+    _execute_batch_prompt as _execute_code_batch_prompt,
     _execute_nudges,
     _execute_prompt,
     _execute_rerun_guidance,
@@ -34,8 +36,10 @@ from .execute import (
 from .finalize import _finalize_prompt
 from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt
 from .execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
+from .execute_joke import _execute_joke_batch_prompt, _execute_joke_prompt
 from .planning import PLAN_TEMPLATE, _plan_prompt, _prep_prompt
 from .prep_doc import _prep_doc_prompt
+from .prep_joke import _prep_joke_prompt
 from .review import (
     _review_prompt,
     _settled_decisions_block,
@@ -43,6 +47,7 @@ from .review import (
     _write_review_template,
 )
 from .review_doc import _review_doc_prompt
+from .review_joke import _review_joke_prompt
 
 _PromptBuilder = Callable[..., str]
 
@@ -110,10 +115,42 @@ def _prepend_harness_guard(prompt: str) -> str:
     return f"{_NESTED_HARNESS_GUARD}\n\n{prompt}"
 
 
+def _execute_batch_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    batch_task_ids: list[str],
+    completed_task_ids: set[str] | None = None,
+    root: Path | None = None,
+) -> str:
+    mode = state.get("config", {}).get("mode", "code")
+    if mode == "doc":
+        return _execute_doc_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
+    if mode == "joke":
+        return _execute_joke_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
+    return _execute_code_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
+
+
 def _resolve_builder(
     builders: dict[str, _PromptBuilder], step: str, state: PlanState, agent_label: str
 ) -> _PromptBuilder:
     mode = state.get("config", {}).get("mode", "code")
+    if mode == "joke":
+        if step == "prep":
+            return _prep_joke_prompt
+        if step == "critique":
+            return _critique_joke_prompt
+        if step == "revise":
+            return _revise_joke_prompt
+        if step == "execute":
+            return _execute_joke_prompt
+        if step == "review":
+            return partial(
+                _review_joke_prompt,
+                review_intro="Review the scene critically against the brief, the declared primary criterion, and the approved scene canvas.",
+                criteria_guidance="Judge first against the declared primary criterion, then against the remaining success criteria and scene-canvas commitments.",
+                task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output scene prose.",
+                sense_check_guidance="Review every sense check explicitly. Confirm concise executor acknowledgments when they are specific; dig deeper only when they are perfunctory or contradicted by the scene text.",
+            )
     if mode == "doc":
         if step == "prep":
             return _prep_doc_prompt
@@ -173,12 +210,15 @@ __all__ = [
     "_HERMES_PROMPT_BUILDERS",
     "_collect_critique_summaries",
     "_critique_prompt",
+    "_critique_joke_prompt",
     "_debt_watch_lines",
     "_escalated_debt_for_prompt",
     "_execute_approval_note",
     "_execute_batch_prompt",
     "_execute_doc_batch_prompt",
     "_execute_doc_prompt",
+    "_execute_joke_batch_prompt",
+    "_execute_joke_prompt",
     "_execute_nudges",
     "_execute_prompt",
     "_execute_rerun_guidance",
@@ -192,13 +232,16 @@ __all__ = [
     "_plan_prompt",
     "_planning_debt_block",
     "_prep_doc_prompt",
+    "_prep_joke_prompt",
     "_prep_prompt",
     "_review_doc_prompt",
+    "_review_joke_prompt",
     "_write_critique_template",
     "_render_prep_block",
     "_resolve_prompt_root",
     "_review_prompt",
     "_revise_prompt",
+    "_revise_joke_prompt",
     "_settled_decisions_block",
     "_settled_decisions_instruction",
     "_write_review_template",

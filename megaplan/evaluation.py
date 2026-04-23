@@ -121,7 +121,7 @@ def _is_perfunctory_ack(note: str) -> bool:
 
 
 def validate_execution_evidence(finalize_data: dict[str, Any], project_dir: Path, *, mode: str = "code") -> dict[str, Any]:
-    if mode == "doc":
+    if mode in {"doc", "joke"}:
         return _validate_execution_evidence_doc(finalize_data, project_dir)
     return _validate_execution_evidence_code(finalize_data, project_dir)
 

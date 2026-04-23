@@ -17,7 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan.audits.robustness import build_empty_template, checks_for_robustness
+from megaplan.audits.robustness import (
+    build_empty_template,
+    checks_for_robustness,
+    joke_checks_for_robustness,
+)
 from megaplan.schemas import SCHEMAS, get_execution_schema_key
 from megaplan.types import (
     CliError,
@@ -753,7 +757,13 @@ def _default_mock_loop_execute_payload(
 def _default_mock_critique_payload(state: PlanState, plan_dir: Path) -> dict[str, Any]:
     iteration = state["iteration"] or 1
     del plan_dir
-    active_checks = checks_for_robustness(configured_robustness(state))
+    mode = state["config"].get("mode", "code")
+    robustness = configured_robustness(state)
+    active_checks = (
+        joke_checks_for_robustness(robustness)
+        if mode == "joke"
+        else checks_for_robustness(robustness)
+    )
     checks = build_empty_template(active_checks)
     if iteration == 1:
         return {

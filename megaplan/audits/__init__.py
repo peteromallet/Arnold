@@ -50,12 +50,14 @@ from megaplan.audits.quality_gates import (
 from megaplan.audits.robustness import (
     CRITIQUE_CHECKS,
     CritiqueCheckSpec,
+    JOKE_CRITIQUE_CHECKS,
     VALID_SEVERITY_HINTS,
     build_check_category_map,
     build_empty_template,
     checks_for_robustness,
     get_check_by_id,
     get_check_ids,
+    joke_checks_for_robustness,
     validate_critique_checks,
 )
 from megaplan.audits.capabilities import (
@@ -100,12 +102,14 @@ __all__ = [
     # robustness
     "CRITIQUE_CHECKS",
     "CritiqueCheckSpec",
+    "JOKE_CRITIQUE_CHECKS",
     "VALID_SEVERITY_HINTS",
     "build_check_category_map",
     "build_empty_template",
     "checks_for_robustness",
     "get_check_by_id",
     "get_check_ids",
+    "joke_checks_for_robustness",
     "validate_critique_checks",
     # capabilities
     "ALL_CAPABILITIES",

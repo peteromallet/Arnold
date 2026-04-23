@@ -16,9 +16,9 @@ import megaplan.cli
 import megaplan.execute.core
 import megaplan.handlers
 import megaplan.workers
-from megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, set_active_step, workflow_next
+from megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, save_state, set_active_step, workflow_next
 from megaplan.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
-from megaplan.types import STATE_PREPPED
+from megaplan.types import STATE_PREPPED, CliError
 from megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import (
     PlanFixture,
@@ -724,6 +724,65 @@ def test_handle_plan_stores_nonblocking_structure_warnings(plan_fixture: PlanFix
 
     assert response["success"] is True
     assert meta["structure_warnings"] == ["Plan should include a `## Overview` section."]
+
+
+def test_handle_prep_harvests_primary_criterion_for_joke_mode(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["mode"] = "joke"
+    state["config"]["output_path"] = "scenes/test.md"
+    save_state(plan_fixture.plan_dir, state)
+
+    worker = WorkerResult(
+        payload={
+            "skip": False,
+            "task_summary": "Write a cafe return scene.",
+            "primary_criterion": "weirdest coherent",
+            "key_evidence": [],
+            "relevant_code": [],
+            "test_expectations": [],
+            "constraints": [],
+            "suggested_approach": "Escalate through prop logic.",
+        },
+        raw_output="prep output",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="prep-primary-criterion",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    response = megaplan.handlers.handle_prep(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name),
+    )
+    updated = load_state(plan_fixture.plan_dir)
+
+    assert response["state"] == STATE_PREPPED
+    assert updated["config"]["primary_criterion"] == "weirdest coherent"
+
+
+def test_handle_plan_rejects_joke_mode_without_primary_criterion(
+    plan_fixture: PlanFixture,
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["mode"] = "joke"
+    state["config"]["output_path"] = "scenes/test.md"
+    state["config"].pop("primary_criterion", None)
+    save_state(plan_fixture.plan_dir, state)
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_plan(
+            plan_fixture.root,
+            plan_fixture.make_args(plan=plan_fixture.plan_name),
+        )
+
+    assert info.value.code == "invalid_state"
+    assert "primary_criterion" in str(info.value)
 
 
 def test_handle_plan_rejects_zero_step_structure_error(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:

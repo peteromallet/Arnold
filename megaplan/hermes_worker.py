@@ -439,13 +439,17 @@ def run_hermes_step(
             return None
         if step == "critique":
             from megaplan._core import configured_robustness
-            from megaplan.audits.robustness import checks_for_robustness
+            from megaplan.audits.robustness import checks_for_robustness, joke_checks_for_robustness
             from megaplan.prompts import _write_critique_template
 
+            mode = state["config"].get("mode", "code")
+            robustness = configured_robustness(state)
             return _write_critique_template(
                 plan_dir,
                 state,
-                checks_for_robustness(configured_robustness(state)),
+                joke_checks_for_robustness(robustness)
+                if mode == "joke"
+                else checks_for_robustness(robustness),
             )
         if step == "review":
             from megaplan.prompts.review import _write_review_template
