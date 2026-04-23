@@ -1,0 +1,75 @@
+{
+  "instance_id": "astropy__astropy-7166",
+  "resolved": true,
+  "cost_usd": 0.0,
+  "duration_seconds": 620.155,
+  "patch_lines": 14,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 147963,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 62543,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 61998,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 50899,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 136362,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 92275,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 58439,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "revise",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "verify",
+      "cost_usd": 0.0,
+      "duration_ms": 5234,
+      "model": "swebench-harness"
+    },
+    {
+      "phase": "verify",
+      "cost_usd": 0.0,
+      "duration_ms": 4442,
+      "model": "swebench-harness"
+    }
+  ]
+}

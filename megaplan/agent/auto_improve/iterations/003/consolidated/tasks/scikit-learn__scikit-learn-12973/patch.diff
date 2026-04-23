@@ -1,0 +1,66 @@
+diff --git a/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py b/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
+index bf92569c1e..64c039ee7f 100644
+--- a/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
++++ b/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
+@@ -144,7 +144,30 @@ def _make_cell_set_template_code():
+             co.co_cellvars,  # this is the trickery
+             (),
+         )
++    elif hasattr(co, 'co_exceptiontable'):
++        # Python 3.11+
++        return types.CodeType(
++            co.co_argcount,
++            co.co_posonlyargcount,
++            co.co_kwonlyargcount,
++            co.co_nlocals,
++            co.co_stacksize,
++            co.co_flags,
++            co.co_code,
++            co.co_consts,
++            co.co_names,
++            co.co_varnames,
++            co.co_filename,
++            co.co_name,
++            co.co_qualname,
++            co.co_firstlineno,
++            co.co_linetable,
++            co.co_exceptiontable,
++            co.co_cellvars,  # this is the trickery
++            (),
++        )
+     else:
++        # Python 3.8-3.10
+         return types.CodeType(
+             co.co_argcount,
+             co.co_kwonlyargcount,
+diff --git a/sklearn/linear_model/least_angle.py b/sklearn/linear_model/least_angle.py
+index 03b34a0dc0..6c257eaea5 100644
+--- a/sklearn/linear_model/least_angle.py
++++ b/sklearn/linear_model/least_angle.py
+@@ -1479,7 +1479,7 @@ class LassoLarsIC(LassoLars):
+         self.eps = eps
+         self.fit_path = True
+ 
+-    def fit(self, X, y, copy_X=True):
++    def fit(self, X, y, copy_X=None):
+         """Fit the model using X, y as training data.
+ 
+         Parameters
+@@ -1490,7 +1490,7 @@ class LassoLarsIC(LassoLars):
+         y : array-like, shape (n_samples,)
+             target values. Will be cast to X's dtype if necessary
+ 
+-        copy_X : boolean, optional, default True
++        copy_X : boolean, optional, default None
+             If ``True``, X will be copied; else, it may be overwritten.
+ 
+         Returns
+@@ -1498,6 +1498,8 @@ class LassoLarsIC(LassoLars):
+         self : object
+             returns an instance of self.
+         """
++        if copy_X is None:
++            copy_X = self.copy_X
+         X, y = check_X_y(X, y, y_numeric=True)
+ 
+         X, y, Xmean, ymean, Xstd = LinearModel._preprocess_data(

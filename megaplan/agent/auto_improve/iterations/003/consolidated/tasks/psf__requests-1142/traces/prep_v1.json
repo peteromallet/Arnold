@@ -1,0 +1,340 @@
+[
+  {
+    "role": "user",
+    "content": "Prepare a concise engineering brief for the task below. This brief will be the primary context for all subsequent planning and execution.\n\n        Task:\n        You are fixing a bug in the psf/requests repository.\n\n## Issue Description\n\nrequests.get is ALWAYS sending content length\nHi,\n\nIt seems like that request.get always adds 'content-length' header to the request.\nI think that the right behavior is not to add this header automatically in GET requests or add the possibility to not send it.\n\nFor example http://amazon.com returns 503 for every get request that contains 'content-length' header.\n\nThanks,\n\nOren\n\n\n\n## Hints\n\nThis was done in issue #957 - Attach Content-Length to everything.\n\nOK, I don't think it's the right solution.\nimho GET requests shouldn't contain by default 'content-length' header.\n\nRelated: geemus/excon/pull/113\n\nThere's nothing stopping you from sending data in a GET request.\n\nAt the moment the following code:\nrequests.get('http://amazon.com') returns 503, because the package automatically adds the header content length to the request.\n\nIf I remove that header it works fine. The thing is that currently since issue #957 this header is added automaticlly to every request and that's the cause of the problem.\n\nHmm, let's find some more URLs that do this.\n\nIt isn't against the HTTP/1.1 spec last I saw so I don't see why Amazon is returning a 503\n\nGET requests don't normally include data payload in the body, and I presume their server assumes that it does because there is a content-length, but it doesn't handle the empty edge case.\n\nIt's semantically ambiguous - does a request with a Content-Length header mean \"zero length body\" or does it mean \"no body was included in this message\"?\n\nI believe that Requests should follow the conventional wisdom, which is that most UAs do not send the Content-Length header for GET requests.\n\nI tried to reproduce this and got weird behavior, sometimes it does work:\n\n```\n>>> r = requests.get('https://amazon.com', allow_redirects=False)\n>>> print r.text\n<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html><head>\n<title>301 Moved Permanently</title>\n</head><body>\n<h1>Moved Permanently</h1>\n<p>The document has moved <a href=\"https://www.amazon.com/\">here</a>.</p>\n</body></html>\n\n>>> print r.status_code\n301\n```\n\nbut sometimes it doesn't:\n\n```\n>>> print requests.get('https://amazon.com', allow_redirects=False).status_code\n503\n\n>>> print requests.get('https://amazon.com', allow_redirects=False).text\n<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html><head>\n<title>301 Moved Permanently</title>\n</head><body>\n<h1>Moved Permanently</h1>\n<p>The document has moved <a href=\"https://www.amazon.com/\">here</a>.</p>\n</body></html>\n```\n\nIn fact, sometimes it seems like it might be an Amazon bug:\n\n```\n>>> print requests.get('https://amazon.com', allow_redirects=False).status_code\n503\n>>> print requests.get('http://amazon.com', allow_redirects=False).status_code\n301\n>>> print requests.get('http://amazon.com', allow_redirects=False).status_code\n503\n>>> print requests.get('http://amazon.com', allow_redirects=False).status_code\n503\n```\n\nI'm not sure if it's relevant that I switched from ssl to plain http when I got that 301.\n\n```\n>>> print requests.__version__\n1.0.3\n```\n\nTry allowing for redirects. The 301 would be followed otherwise. Printing the text for a 503 would be helpful too.\n\nsigmavirus24: yeah, I explicitly added the allow_redirects to see what would happen: in the rare-ish cases where I get a 301 it actually does work.\n\nAnd, sorry about the double-301 text, I copied the wrong thing. This is what the 503 page looks like:\n\n```\n>>> r = requests.get('http://amazon.com') ; print r.text\n<html>\n<head>\n<meta http-equiv=\"Content-Type\" content=\"text/html;charset=iso-8859-1\"/>\n<title>500 Service Unavailable Error</title>\n</head>\n<body style=\"padding:1% 10%;font-family:Verdana,Arial,Helvetica,sans-serif\">\n  <a href=\"http://www.amazon.com/\"><img src=\"https://images-na.ssl-images-amazon.com/images/G/01/img09/x-site/other/a_com_logo_200x56.gif\" alt=\"Amazon.com\" width=\"200\" height=\"56\" border=\"0\"/></a>\n  <table>\n    <tr>\n      <td valign=\"top\" style=\"width:52%;font-size:10pt\"><br/><h2 style=\"color:#E47911\">Oops!</h2><p>We're very sorry, but we're having trouble doing what you just asked us to do. Please give us another chance--click the Back button on your browser and try your request again. Or start from the beginning on our <a href=\"http://www.amazon.com/\">homepage</a>.</p></td>\n      <th><img src=\"https://images-na.ssl-images-amazon.com/images/G/01/x-locale/common/errors-alerts/product-fan-500.jpg\" alt=\"product collage\"/></th>\n    </tr>\n  </table>\n</body>\n</html>\n>>> r.status_code\n503\n```\n\nBut, also, isn't 503 the wrong error code for a malformed request? [503 means](http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html#sec10.5.4) \"unable to process request due to high load\". I feel like if Amazon was doing this intentionally they would return a 400 or at least something in the 4xx range.\n\nNot that I'm saying you should ignore a problem with one of the top-10 websites on earth just because they might be being crazy.\n\nI'm not saying we ignore it, I'm just saying it isn't against spec. And yeah, I agree that the 503 looks like it's a malformed request error. I'll mock up conditional addition for GETs tonight and see if @kennethreitz wouldn't mind the minor extra complexity.\n\nIs there a decision or any progress with this issue?\n\nI have encountered other sensitive servers that barf because of headers. While it would be best to get something merged into requests upstream, another option is to look at [careful-requests](https://github.com/kanzure/careful-requests) which aims to handle requests that need sensitive headers (it just monkeypatches requests). At the moment this doesn't include Content-Length on GET but that is trivial to add, I think. I hope this helps.\n\nI frankly forgot about this, but I'll get to it tonight or tomorrow I hope. \n\nI'm going to go ahead and give this a shot; sigmavirus24 is going to take #1133 in the meantime.\n\n\n## Instructions\n\n1. Read the issue carefully and understand the problem.\n2. Find the relevant source files in the repository.\n3. Make the minimal code changes needed to fix the issue.\n4. Do NOT modify or add test files — only edit source code.\n5. After making changes, run the verification tests listed below to confirm your fix works.\n\n## Required Verification (MUST be the final task in your plan)\n\nThese existing tests must pass after your fix:\n  - `test_requests.py::RequestsTestCase::test_no_content_length`\n\nYour plan MUST include a final task that runs these tests against your changes. Run the repo's existing test suite — do NOT create new test files. If any test fails, read the error, fix your code, and re-run until they pass. Do not consider the task complete until these tests pass.\n\n\n        Project: /Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\n\n        First, assess: does this task need codebase investigation?\n\n        Set \"skip\": true if ALL of these are true:\n        - The task names the exact file(s) to change\n        - The required change is clearly described\n        - No ambiguity about the approach\n\n        Set \"skip\": false if ANY of these are true:\n        - The task doesn't say which files to change\n        - Multiple approaches seem possible\n        - The task references concepts, APIs, or patterns you'd need to look up in the codebase\n        - The task involves more than 2-3 files\n        - There are hints or references that need investigation\n\n        If skipping, leave everything else empty. The original task description will be used directly.\n        If not skipping, fill in the brief:\n        1. Search the codebase (Glob, Grep, Read) for relevant files and functions.\n        2. If tests exist for the affected code, read them — they reveal what the fix must actually do, which may differ from what the task description suggests.\n        3. Extract evidence from the task description — hints, references, error messages.\n        4. Challenge the obvious path: if the task or hints point to a specific location, verify it's actually the right place. Trace the call chain — where does data flow? Where does it go wrong? The obvious file may be a symptom, not the root cause.\n        5. If the task describes a bug or incorrect behavior, seriously consider whether it is a symptom of a larger issue. Before proposing a fix, trace the root cause. Ask: why does this happen? Could the same root cause produce other failures? Is the fix a patch on one case, or does it need to address an underlying gap? If the codebase has related functionality that is also incomplete or broken, note it — a narrow fix may not be enough.\n        6. If you find that a suggested fix already exists in the code, say so explicitly — this means the root cause is elsewhere.\n        7. Once you identify the function, parameter, or pattern that needs fixing, grep for ALL other usages of it in the codebase. If the same parameter is passed in 3 places, all 3 may need the fix. List every call site in relevant_code — do not stop at the first one.\n        8. If the code has a `NotImplementedError`, `raise`, `TODO`, or explicit skip for certain inputs, and the bug involves those inputs, the fix likely needs to implement the missing functionality — not just patch around it. Flag this in the brief so the plan knows a larger change is needed.\n        9. Look for existing helper functions, utilities, or patterns in the codebase that handle similar cases. If there is existing machinery (e.g., a merge function, a validation helper, a base class method), the fix should use it rather than reinventing.\n        10. Distill into a brief that adds value beyond the raw task description.\n\n        Brief fields:\n        - skip: true if no investigation needed, false if brief has useful content.\n        - task_summary: What needs to be done, in 2-3 sentences.\n        - key_evidence: Facts from the task and codebase not obvious from reading the task alone.\n        - relevant_code: File paths and key functions found by searching.\n        - test_expectations: Tests that verify the affected behavior.\n        - constraints: What must not break.\n        - suggested_approach: A concrete approach grounded in what you found.\n        - estimated_scope: How big is this change? (e.g., \"1-line fix in one file\", \"changes needed in 3 files\", \"new function/class required\", \"refactor of existing subsystem\"). Be honest — if this needs significant new code, say so.\n\n        IMPORTANT: After you finish searching and reading files, you MUST output the prep.json as your final message. Do not end with a tool call — end with the JSON object as plain text.\n\nIMPORTANT: Your final response MUST be a single valid JSON object. Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON matching this template:\n\n{\n  \"skip\": true,\n  \"task_summary\": \"...\",\n  \"key_evidence\": [],\n  \"relevant_code\": [],\n  \"test_expectations\": [],\n  \"constraints\": [\n    \"...\"\n  ],\n  \"suggested_approach\": \"...\"\n}"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": "Let me investigate the codebase to understand the issue and prepare the engineering brief.",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762577758823119369",
+        "call_id": "call_-7762577758823119369",
+        "response_item_id": "fc_-7762577758823119369",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"pattern\":\"content-length|Content-Length\",\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"target\":\"content\",\"file_glob\":\"*.py\"}"
+        }
+      },
+      {
+        "id": "call_-7762577758823119368",
+        "call_id": "call_-7762577758823119368",
+        "response_item_id": "fc_-7762577758823119368",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"pattern\":\"test_no_content_length\",\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"target\":\"content\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 6, \"matches\": [{\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/adapters.py\", \"line\": 157, \"content\": \"        chunked = not (request.body is None or 'Content-Length' in request.headers)\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 362, \"content\": \"                self.headers['Content-Length'] = length\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 389, \"content\": \"        self.headers['Content-Length'] = '0'\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 392, \"content\": \"            self.headers['Content-Length'] = str(body.tell())\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 395, \"content\": \"            self.headers['Content-Length'] = str(len(body))\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 410, \"content\": \"            # Recompute Content-Length\"}]}",
+    "tool_call_id": "call_-7762577758823119369"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762577758823119368"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762609232343460967",
+        "call_id": "call_-7762609232343460967",
+        "response_item_id": "fc_-7762609232343460967",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\",\"offset\":350,\"limit\":80}"
+        }
+      },
+      {
+        "id": "call_-7762609232343460966",
+        "call_id": "call_-7762609232343460966",
+        "response_item_id": "fc_-7762609232343460966",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"test_no_content_length\",\"target\":\"content\",\"file_glob\":\"*.py\"}"
+        }
+      },
+      {
+        "id": "call_-7762609232343460965",
+        "call_id": "call_-7762609232343460965",
+        "response_item_id": "fc_-7762609232343460965",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"content_length|content-length\",\"target\":\"files\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"content\": \"   350|        try:\\n   351|            length = str(super_len(data))\\n   352|        except (TypeError, AttributeError):\\n   353|            length = False\\n   354|\\n   355|        if is_stream:\\n   356|            body = data\\n   357|\\n   358|            if files:\\n   359|                raise NotImplementedError('Streamed bodies and files are mutually exclusive.')\\n   360|\\n   361|            if length:\\n   362|                self.headers['Content-Length'] = length\\n   363|            else:\\n   364|                self.headers['Transfer-Encoding'] = 'chunked'\\n   365|        # Check if file, fo, generator, iterator.\\n   366|        # If not, run through normal process.\\n   367|\\n   368|        else:\\n   369|            # Multi-part file uploads.\\n   370|            if files:\\n   371|                (body, content_type) = self._encode_files(files, data)\\n   372|            else:\\n   373|                if data:\\n   374|                    body = self._encode_params(data)\\n   375|                    if isinstance(data, str) or isinstance(data, builtin_str) or hasattr(data, 'read'):\\n   376|                        content_type = None\\n   377|                    else:\\n   378|                        content_type = 'application/x-www-form-urlencoded'\\n   379|\\n   380|            self.prepare_content_length(body)\\n   381|\\n   382|            # Add content-type if it wasn't explicitly provided.\\n   383|            if (content_type) and (not 'content-type' in self.headers):\\n   384|                self.headers['Content-Type'] = content_type\\n   385|\\n   386|        self.body = body\\n   387|\\n   388|    def prepare_content_length(self, body):\\n   389|        self.headers['Content-Length'] = '0'\\n   390|        if hasattr(body, 'seek') and hasattr(body, 'tell'):\\n   391|            body.seek(0, 2)\\n   392|            self.headers['Content-Length'] = str(body.tell())\\n   393|            body.seek(0, 0)\\n   394|        elif body is not None:\\n   395|            self.headers['Content-Length'] = str(len(body))\\n   396|\\n   397|    def prepare_auth(self, auth):\\n   398|        \\\"\\\"\\\"Prepares the given HTTP auth data.\\\"\\\"\\\"\\n   399|        if auth:\\n   400|            if isinstance(auth, tuple) and len(auth) == 2:\\n   401|                # special-case basic HTTP auth\\n   402|                auth=HTTPBa...uth)\\n   403|\\n   404|            # Allow auth to make its changes.\\n   405|            r = auth(self)\\n   406|\\n   407|            # Update self to reflect the auth changes.\\n   408|            self.__dict__.update(r.__dict__)\\n   409|\\n   410|            # Recompute Content-Length\\n   411|            self.prepare_content_length(self.body)\\n   412|\\n   413|    def prepare_cookies(self, cookies):\\n   414|        \\\"\\\"\\\"Prepares the given HTTP cookie data.\\\"\\\"\\\"\\n   415|\\n   416|        if isinstance(cookies, cookielib.CookieJar):\\n   417|            cookies = cookies\\n   418|        else:\\n   419|            cookies = cookiejar_from_dict(cookies)\\n   420|\\n   421|        if 'cookie' not in self.headers:\\n   422|            cookie_header = get_cookie_header(cookies, self)\\n   423|            if cookie_header is not None:\\n   424|                self.headers['Cookie'] = cookie_header\\n   425|\\n   426|    def prepare_hooks(self, hooks):\\n   427|        \\\"\\\"\\\"Prepares the given hooks.\\\"\\\"\\\"\\n   428|        for event in hooks:\\n   429|            self.register_hook(event, hooks[event])\\n   430|\", \"total_lines\": 657, \"file_size\": 20789, \"truncated\": true, \"hint\": \"Use offset=430 to continue reading (showing 350-429 of 657 lines)\", \"is_binary\": false, \"is_image\": false}",
+    "tool_call_id": "call_-7762609232343460967"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762609232343460966"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762609232343460965"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762604731217737590",
+        "call_id": "call_-7762604731217737590",
+        "response_item_id": "fc_-7762604731217737590",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"test_no_content_length\",\"target\":\"content\"}"
+        }
+      },
+      {
+        "id": "call_-7762604731217737589",
+        "call_id": "call_-7762604731217737589",
+        "response_item_id": "fc_-7762604731217737589",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"content_length\",\"target\":\"content\",\"file_glob\":\"*.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762604731217737590"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 3, \"matches\": [{\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 380, \"content\": \"            self.prepare_content_length(body)\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 388, \"content\": \"    def prepare_content_length(self, body):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\", \"line\": 411, \"content\": \"            self.prepare_content_length(self.body)\"}]}",
+    "tool_call_id": "call_-7762604731217737589"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762605521491715688",
+        "call_id": "call_-7762605521491715688",
+        "response_item_id": "fc_-7762605521491715688",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"def test_no_content\",\"target\":\"content\"}"
+        }
+      },
+      {
+        "id": "call_-7762605521491715687",
+        "call_id": "call_-7762605521491715687",
+        "response_item_id": "fc_-7762605521491715687",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"test_requests\",\"target\":\"files\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762605521491715688"
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762605521491715687"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762592292992446283",
+        "call_id": "call_-7762592292992446283",
+        "response_item_id": "fc_-7762592292992446283",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"test_\",\"target\":\"files\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762592292992446283"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762595797685756551",
+        "call_id": "call_-7762595797685756551",
+        "response_item_id": "fc_-7762595797685756551",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"test\",\"target\":\"files\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762595797685756551"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762605280973547119",
+        "call_id": "call_-7762605280973547119",
+        "response_item_id": "fc_-7762605280973547119",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142\",\"pattern\":\"*test*\",\"target\":\"files\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 1, \"files\": [\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\"]}",
+    "tool_call_id": "call_-7762605280973547119"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762600814207561400",
+        "call_id": "call_-7762600814207561400",
+        "response_item_id": "fc_-7762600814207561400",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\",\"pattern\":\"content_length|Content-Length|no_content\",\"target\":\"content\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 0}",
+    "tool_call_id": "call_-7762600814207561400"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762598305946661317",
+        "call_id": "call_-7762598305946661317",
+        "response_item_id": "fc_-7762598305946661317",
+        "type": "function",
+        "function": {
+          "name": "search_files",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\",\"pattern\":\"def test\",\"target\":\"content\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"total_count\": 27, \"matches\": [{\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 37, \"content\": \"    def test_entry_points(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 48, \"content\": \"    def test_invalid_url(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 51, \"content\": \"    def test_basic_building(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 61, \"content\": \"    def test_path_is_not_double_encoded(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 66, \"content\": \"    def test_params_are_added_before_fragment(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 76, \"content\": \"    def test_HTTP_200_OK_GET_ALTERNATIVE(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 84, \"content\": \"    def test_HTTP_302_ALLOW_REDIRECT_GET(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 88, \"content\": \"    # def test_HTTP_302_ALLOW_REDIRECT_POST(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 92, \"content\": \"    def test_HTTP_200_OK_GET_WITH_PARAMS(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 100, \"content\": \"    def test_HTTP_200_OK_GET_WITH_MIXED_PARAMS(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 106, \"content\": \"    def test_user_agent_transfers(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 124, \"content\": \"    def test_HTTP_200_OK_HEAD(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 128, \"content\": \"    def test_HTTP_200_OK_PUT(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 132, \"content\": \"    def test_BASICAUTH_TUPLE_HTTP_200_OK_GET(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 147, \"content\": \"    def test_DIGEST_HTTP_200_OK_GET(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 163, \"content\": \"    def test_DIGESTAUTH_WRONG_HTTP_401_GET(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 179, \"content\": \"    def test_POSTBIN_GET_POST_FILES(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 199, \"content\": \"    def test_POSTBIN_GET_POST_FILES_WITH_DATA(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 219, \"content\": \"    def test_request_ok_set(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 223, \"content\": \"    def test_status_raising(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 230, \"content\": \"    def test_decompress_gzip(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 234, \"content\": \"    def test_unicode_get(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 242, \"content\": \"    def test_urlencoded_get_query_multivalued_param(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 248, \"content\": \"    def test_different_encodings_dont_break_post(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 255, \"content\": \"    def test_custom_content_type(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 264, \"content\": \"    def test_prepared_request_hook(self):\"}, {\"path\": \"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\", \"line\": 277, \"content\": \"    def test_links(self):\"}]}",
+    "tool_call_id": "call_-7762598305946661317"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": "The test `test_no_content_length` doesn't exist in this test file. Let me check if there's another test file or if the task description is referring to a test that should exist. Let me also look more carefully at the `prepare_content_length` method and understand the flow better.\n\nThe key issue is:\n1. `prepare_content_length` at line 388 always sets `Content-Length: '0'` even when there's no body\n2. This is called from `prepare_body` at line 380 for non-stream requests\n3. For GET requests with no data/body, this still sets Content-Length to '0'\n\nThe fix should be: don't set Content-Length when body is None (i.e., no body content). Let me look at the method more carefully.\n\n```python\ndef prepare_content_length(self, body):\n    self.headers['Content-Length'] = '0'\n    if hasattr(body, 'seek') and hasattr(body, 'tell'):\n        body.seek(0, 2)\n        self.headers['Content-Length'] = str(body.tell())\n        body.seek(0, 0)\n    elif body is not None:\n        self.headers['Content-Length'] = str(len(body))\n```\n\nSo it always sets Content-Length to '0' first, then possibly updates it. The fix should be: only set Content-Length if body is not None.\n\nLet me also check where `prepare_body` is called and understand the full flow.",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762535324546232737",
+        "call_id": "call_-7762535324546232737",
+        "response_item_id": "fc_-7762535324546232737",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/requests/models.py\",\"offset\":300,\"limit\":100}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"content\": \"   300|        if is_py2:\\n   301|            if isinstance(scheme, str):\\n   302|                scheme = scheme.encode('utf-8')\\n   303|            if isinstance(netloc, str):\\n   304|                netloc = netloc.encode('utf-8')\\n   305|            if isinstance(path, str):\\n   306|                path = path.encode('utf-8')\\n   307|            if isinstance(_params, str):\\n   308|                _params = _params.encode('utf-8')\\n   309|            if isinstance(query, str):\\n   310|                query = query.encode('utf-8')\\n   311|            if isinstance(fragment, str):\\n   312|                fragment = fragment.encode('utf-8')\\n   313|\\n   314|        enc_params = self._encode_params(params)\\n   315|        if enc_params:\\n   316|            if query:\\n   317|                query = '%s&%s' % (query, enc_params)\\n   318|            else:\\n   319|                query = enc_params\\n   320|\\n   321|        url = requote_uri(urlunparse([scheme, netloc, path, _params, query, fragment]))\\n   322|        self.url = url\\n   323|\\n   324|    def prepare_headers(self, headers):\\n   325|        \\\"\\\"\\\"Prepares the given HTTP headers.\\\"\\\"\\\"\\n   326|\\n   327|        if headers:\\n   328|            self.headers = CaseInsensitiveDict(headers)\\n   329|        else:\\n   330|            self.headers = CaseInsensitiveDict()\\n   331|\\n   332|    def prepare_body(self, data, files):\\n   333|        \\\"\\\"\\\"Prepares the given HTTP body data.\\\"\\\"\\\"\\n   334|\\n   335|        # Check if file, fo, generator, iterator.\\n   336|        # If not, run through normal process.\\n   337|\\n   338|        # Nottin' on you.\\n   339|        body = None\\n   340|        content_type = None\\n   341|        length = None\\n   342|        is_stream = False\\n   343|\\n   344|        is_stream = all([\\n   345|            hasattr(data, '__iter__'),\\n   346|            not isinstance(data, basestring),\\n   347|            not isinstance(data, dict)\\n   348|        ])\\n   349|\\n   350|        try:\\n   351|            length = str(super_len(data))\\n   352|        except (TypeError, AttributeError):\\n   353|            length = False\\n   354|\\n   355|        if is_stream:\\n   356|            body = data\\n   357|\\n   358|            if files:\\n   359|                raise NotImplementedError('Streamed bodies and files are mutually exclusive.')\\n   360|\\n   361|            if length:\\n   362|                self.headers['Content-Length'] = length\\n   363|            else:\\n   364|                self.headers['Transfer-Encoding'] = 'chunked'\\n   365|        # Check if file, fo, generator, iterator.\\n   366|        # If not, run through normal process.\\n   367|\\n   368|        else:\\n   369|            # Multi-part file uploads.\\n   370|            if files:\\n   371|                (body, content_type) = self._encode_files(files, data)\\n   372|            else:\\n   373|                if data:\\n   374|                    body = self._encode_params(data)\\n   375|                    if isinstance(data, str) or isinstance(data, builtin_str) or hasattr(data, 'read'):\\n   376|                        content_type = None\\n   377|                    else:\\n   378|                        content_type = 'application/x-www-form-urlencoded'\\n   379|\\n   380|            self.prepare_content_length(body)\\n   381|\\n   382|            # Add content-type if it wasn't explicitly provided.\\n   383|            if (content_type) and (not 'content-type' in self.headers):\\n   384|                self.headers['Content-Type'] = content_type\\n   385|\\n   386|        self.body = body\\n   387|\\n   388|    def prepare_content_length(self, body):\\n   389|        self.headers['Content-Length'] = '0'\\n   390|        if hasattr(body, 'seek') and hasattr(body, 'tell'):\\n   391|            body.seek(0, 2)\\n   392|            self.headers['Content-Length'] = str(body.tell())\\n   393|            body.seek(0, 0)\\n   394|        elif body is not None:\\n   395|            self.headers['Content-Length'] = str(len(body))\\n   396|\\n   397|    def prepare_auth(self, auth):\\n   398|        \\\"\\\"\\\"Prepares the given HTTP auth data.\\\"\\\"\\\"\\n   399|        if auth:\\n   400|\", \"total_lines\": 657, \"file_size\": 20789, \"truncated\": true, \"hint\": \"Use offset=400 to continue reading (showing 300-399 of 657 lines)\", \"is_binary\": false, \"is_image\": false}",
+    "tool_call_id": "call_-7762535324546232737"
+  },
+  {
+    "role": "assistant",
+    "content": "",
+    "reasoning": null,
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "id": "call_-7762582122509889315",
+        "call_id": "call_-7762582122509889315",
+        "response_item_id": "fc_-7762582122509889315",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"/Users/peteromalley/Documents/hermes-agent/evals/workspaces-auto-improve/iteration-003/worker-0/psf__requests-1142/test_requests.py\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "{\"content\": \"     1|#!/usr/bin/env python\\n     2|# -*- coding: utf-8 -*-\\n     3|\\n     4|\\\"\\\"\\\"Tests for Requests.\\\"\\\"\\\"\\n     5|\\n     6|import json\\n     7|import os\\n     8|import unittest\\n     9|\\n    10|import requests\\n    11|from requests.auth import HTTPDigestAuth\\n    12|from requests.compat import str\\n    13|\\n    14|try:\\n    15|    import StringIO\\n    16|except ImportError:\\n    17|    import io as StringIO\\n    18|\\n    19|HTTPBIN = os.environ.get('HTTPBIN_URL', 'http://httpbin.org/')\\n    20|\\n    21|def httpbin(*suffix):\\n    22|    \\\"\\\"\\\"Returns url for HTTPBIN resource.\\\"\\\"\\\"\\n    23|    return HTTPBIN + '/'.join(suffix)\\n    24|\\n    25|class RequestsTestCase(unittest.TestCase):\\n    26|\\n    27|    _multiprocess_can_split_ = True\\n    28|\\n    29|    def setUp(self):\\n    30|        \\\"\\\"\\\"Create simple data set with headers.\\\"\\\"\\\"\\n    31|        pass\\n    32|\\n    33|    def tearDown(self):\\n    34|        \\\"\\\"\\\"Teardown.\\\"\\\"\\\"\\n    35|        pass\\n    36|\\n    37|    def test_entry_points(self):\\n    38|\\n    39|        requests.session\\n    40|        requests.session().get\\n    41|        requests.session().head\\n    42|        requests.get\\n    43|        requests.head\\n    44|        requests.put\\n    45|        requests.patch\\n    46|        requests.post\\n    47|\\n    48|    def test_invalid_url(self):\\n    49|        self.assertRaises(ValueError, requests.get, 'hiwpefhipowhefopw')\\n    50|\\n    51|    def test_basic_building(self):\\n    52|        req = requests.Request()\\n    53|        req.url = 'http://kennethreitz.org/'\\n    54|        req.data = {'life': '42'}\\n    55|\\n    56|        pr = req.prepare()\\n    57|        assert pr.url == req.url\\n    58|        assert pr.body == 'life=42'\\n    59|\\n    60|\\n    61|    def test_path_is_not_double_encoded(self):\\n    62|        request = requests.Request('GET', \\\"http://0.0.0.0/get/test case\\\").prepare()\\n    63|\\n    64|        self.assertEqual(request.path_url, \\\"/get/test%20case\\\")\\n    65|\\n    66|    def test_params_are_added_before_fragment(self):\\n    67|        request = requests.Request('GET',\\n    68|            \\\"http://example.com/path#fragment\\\", params={\\\"a\\\": \\\"b\\\"}).prepare()\\n    69|        self.assertEqual(request.url,\\n    70|            \\\"http://example.com/path?a=b#fragment\\\")\\n    71|        request = requests.Request('GET',\\n    72|            \\\"http://example.com/path?key=value#fragment\\\", params={\\\"a\\\": \\\"b\\\"}).prepare()\\n    73|        self.assertEqual(request.url,\\n    74|            \\\"http://example.com/path?key=value&a=b#fragment\\\")\\n    75|\\n    76|    def test_HTTP_200_OK_GET_ALTERNATIVE(self):\\n    77|        r = requests.Request('GET', httpbin('get'))\\n    78|        s = requests.Session()\\n    79|\\n    80|        r = s.send(r.prepare())\\n    81|\\n    82|        self.assertEqual(r.status_code, 200)\\n    83|\\n    84|    def test_HTTP_302_ALLOW_REDIRECT_GET(self):\\n    85|        r = requests.get(httpbin('redirect', '1'))\\n    86|        self.assertEqual(r.status_code, 200)\\n    87|\\n    88|    # def test_HTTP_302_ALLOW_REDIRECT_POST(self):\\n    89|    #     r = requests.post(httpbin('status', '302'), data={'some': 'data'})\\n    90|    #     self.assertEqual(r.status_code, 200)\\n    91|\\n    92|    def test_HTTP_200_OK_GET_WITH_PARAMS(self):\\n    93|        heads = {'User-agent': 'Mozilla/5.0'}\\n    94|\\n    95|        r = requests.get(httpbin('user-agent'), headers=heads)\\n    96|\\n    97|        self.assertTrue(heads['User-agent'] in r.text)\\n    98|        self.assertEqual(r.status_code, 200)\\n    99|\\n   100|    def test_HTTP_200_OK_GET_WITH_MIXED_PARAMS(self):\\n   101|        heads = {'User-agent': 'Mozilla/5.0'}\\n   102|\\n   103|        r = requests.get(httpbin('get') + '?test=true', params={'q': 'test'}, headers=heads)\\n   104|        self.assertEqual(r.status_code, 200)\\n   105|\\n   106|    def test_user_agent_transfers(self):\\n   107|\\n   108|        heads = {\\n   109|            'User-agent':\\n   110|                'Mozilla/5.0 (github.com/kennethreitz/requests)'\\n   111|        }\\n   112|\\n   113|        r = requests.get(httpbin('user-agent'), headers=heads)\\n   114|        self.assertTrue(heads['User-agent'] in r.text)\\n   115|\\n   116|        heads = {\\n   117|            'user-agent':\\n   118|                'Mozilla/5.0 (github.com/kennethreitz/requests)'\\n   119|        }\\n   120|\\n   121|        r = requests.get(httpbin('user-agent'), headers=heads)\\n   122|        self.assertTrue(heads['user-agent'] in r.text)\\n   123|\\n   124|    def test_HTTP_200_OK_HEAD(self):\\n   125|        r = requests.head(httpbin('get'))\\n   126|        self.assertEqual(r.status_code, 200)\\n   127|\\n   128|    def test_HTTP_200_OK_PUT(self):\\n   129|        r = requests.put(httpbin('put'))\\n   130|        self.assertEqual(r.status_code, 200)\\n   131|\\n   132|    def test_BASICAUTH_TUPLE_HTTP_200_OK_GET(self):\\n   133|        auth=*** 'pass')\\n   134|        url = httpbin('basic-auth', 'user', 'pass')\\n   135|\\n   136|        r = requests.get(url, auth=***\\n   137|        self.assertEqual(r.status_code, 200)\\n   138|\\n   139|        r = requests.get(url)\\n   140|        self.assertEqual(r.status_code, 401)\\n   141|\\n   142|        s = requests.session()\\n   143|        s.auth=***\\n   144|        r = s.get(url)\\n   145|        self.assertEqual(r.status_code, 200)\\n   146|\\n   147|    def test_DIGEST_HTTP_200_OK_GET(self):\\n   148|\\n   149|        auth=HTTPDi...er', 'pass')\\n   150|        url = httpbin('digest-auth', 'auth', 'user', 'pass')\\n   151|\\n   152|        r = requests.get(url, auth=***\\n   153|        self.assertEqual(r.status_code, 200)\\n   154|\\n   155|        r = requests.get(url)\\n   156|        self.assertEqual(r.status_code, 401)\\n   157|\\n   158|        s = requests.session()\\n   159|        s.auth=***\\n   160|        r = s.get(url)\\n   161|        self.assertEqual(r.status_code, 200)\\n   162|\\n   163|    def test_DIGESTAUTH_WRONG_HTTP_401_GET(self):\\n   164|\\n   165|        auth=HTTPDi...er', 'wrongpass')\\n   166|        url = httpbin('digest-auth', 'auth', 'user', 'pass')\\n   167|\\n   168|        r = requests.get(url, auth=***\\n   169|        self.assertEqual(r.status_code, 401)\\n   170|\\n   171|        r = requests.get(url)\\n   172|        self.assertEqual(r.status_code, 401)\\n   173|\\n   174|        s = requests.session()\\n   175|        s.auth=***\\n   176|        r = s.get(url)\\n   177|        self.assertEqual(r.status_code, 401)\\n   178|\\n   179|    def test_POSTBIN_GET_POST_FILES(self):\\n   180|\\n   181|        url = httpbin('post')\\n   182|        post1 = requests.post(url).raise_for_status()\\n   183|\\n   184|        post1 = requests.post(url, data={'some': 'data'})\\n   185|        self.assertEqual(post1.status_code, 200)\\n   186|\\n   187|        with open('requirements.txt') as f:\\n   188|            post2 = requests.post(url, files={'some': f})\\n   189|        self.assertEqual(post2.status_code, 200)\\n   190|\\n   191|        post4 = requests.post(url, data='[{\\\"some\\\": \\\"json\\\"}]')\\n   192|        self.assertEqual(post4.status_code, 200)\\n   193|\\n   194|        try:\\n   195|            requests.post(url, files=['bad file data'])\\n   196|        except ValueError:\\n   197|            pass\\n   198|\\n   199|    def test_POSTBIN_GET_POST_FILES_WITH_DATA(self):\\n   200|\\n   201|        url = httpbin('post')\\n   202|        post1 = requests.post(url).raise_for_status()\\n   203|\\n   204|        post1 = requests.post(url, data={'some': 'data'})\\n   205|        self.assertEqual(post1.status_code, 200)\\n   206|\\n   207|        with open('requirements.txt') as f:\\n   208|            post2 = requests.post(url, data={'some': 'data'}, files={'some': f})\\n   209|        self.assertEqual(post2.status_code, 200)\\n   210|\\n   211|        post4 = requests.post(url, data='[{\\\"some\\\": \\\"json\\\"}]')\\n   212|        self.assertEqual(post4.status_code, 200)\\n   213|\\n   214|        try:\\n   215|            requests.post(url, files=['bad file data'])\\n   216|        except ValueError:\\n   217|            pass\\n   218|\\n   219|    def test_request_ok_set(self):\\n   220|        r = requests.get(httpbin('status', '404'))\\n   221|        self.assertEqual(r.ok, False)\\n   222|\\n   223|    def test_status_raising(self):\\n   224|        r = requests.get(httpbin('status', '404'))\\n   225|        self.assertRaises(requests.exceptions.HTTPError, r.raise_for_status)\\n   226|\\n   227|        r = requests.get(httpbin('status', '500'))\\n   228|        self.assertFalse(r.ok)\\n   229|\\n   230|    def test_decompress_gzip(self):\\n   231|        r = requests.get(httpbin('gzip'))\\n   232|        r.content.decode('ascii')\\n   233|\\n   234|    def test_unicode_get(self):\\n   235|        url = httpbin('/get')\\n   236|        requests.get(url, params={'foo': 'føø'})\\n   237|        requests.get(url, params={'føø': 'føø'})\\n   238|        requests.get(url, params={'føø': 'føø'})\\n   239|        requests.get(url, params={'foo': 'foo'})\\n   240|        requests.get(httpbin('ø'), params={'foo': 'foo'})\\n   241|\\n   242|    def test_urlencoded_get_query_multivalued_param(self):\\n   243|\\n   244|        r = requests.get(httpbin('get'), params=dict(test=['foo', 'baz']))\\n   245|        self.assertEqual(r.status_code, 200)\\n   246|        self.assertEqual(r.url, httpbin('get?test=foo&test=baz'))\\n   247|\\n   248|    def test_different_encodings_dont_break_post(self):\\n   249|        r = requests.post(httpbin('post'),\\n   250|                          data={'stuff': json.dumps({'a': 123})},\\n   251|                          params={'blah': 'asdf1234'},\\n   252|                          files={'file': ('test_requests.py', open(__file__, 'rb'))})\\n   253|        self.assertEqual(r.status_code, 200)\\n   254|\\n   255|    def test_custom_content_type(self):\\n   256|        r = requests.post(httpbin('post'),\\n   257|                          data={'stuff': json.dumps({'a': 123})},\\n   258|                          files={'file1': ('test_requests.py', open(__file__, 'rb')),\\n   259|                                 'file2': ('test_requests', open(__file__, 'rb'),\\n   260|                                           'text/py-content-type')})\\n   261|        self.assertEqual(r.status_code, 200)\\n   262|        self.assertTrue(b\\\"text/py-content-type\\\" in r.request.body)\\n   263|\\n   264|    def test_prepared_request_hook(self):\\n   265|        def hook(resp):\\n   266|            resp.hook_working = True\\n   267|            return resp\\n   268|\\n   269|        req = requests.Request('GET', HTTPBIN, hooks={'response': hook})\\n   270|        prep = req.prepare()\\n   271|\\n   272|        s = requests.Session()\\n   273|        resp = s.send(prep)\\n   274|\\n   275|        self.assertTrue(hasattr(resp, 'hook_working'))\\n   276|\\n   277|    def test_links(self):\\n   278|        url = 'https://api.github.com/users/kennethreitz/repos?page=1&per_page=10'\\n   279|        r = requests.head(url=url)\\n   280|        self.assertEqual(r.links['next']['rel'], 'next')\\n   281|\\n   282|\\n   283|if __name__ == '__main__':\\n   284|    unittest.main()\\n   285|\", \"total_lines\": 284, \"file_size\": 8824, \"truncated\": false, \"is_binary\": false, \"is_image\": false}",
+    "tool_call_id": "call_-7762582122509889315"
+  },
+  {
+    "role": "assistant",
+    "content": "Now I have a clear understanding of the issue and the codebase. Let me output the brief.\n\n{\n  \"skip\": false,\n  \"task_summary\": \"Fix requests to not automatically add a Content-Length header for GET requests (or any request) that has no body. Currently, `prepare_content_length` unconditionally sets `Content-Length: '0'` even when body is None, which causes some servers (like Amazon) to return errors.\",\n  \"key_evidence\": [\n    \"The bug was introduced in issue #957 ('Attach Content-Length to everything'). The method `prepare_content_length` at line 388-395 of `requests/models.py` always sets `self.headers['Content-Length'] = '0'` as its first line, even when body is None.\",\n    \"For a simple GET request with no data/files, `prepare_body` sets `body = None` (line 339), then calls `self.prepare_content_length(body)` at line 380, which sets Content-Length: '0' unconditionally.\",\n    \"`prepare_content_length` is also called from `prepare_auth` at line 411, which re-computes Content-Length after auth processing. The same fix (early return when body is None) handles both call sites.\",\n    \"The test `test_no_content_length` referenced in the task does NOT exist in the current test file. The existing test file only has integration tests against httpbin. The fix should still be verified by running the existing test suite.\"\n  ],\n  \"relevant_code\": [\n    \"requests/models.py lines 388-395: `prepare_content_length(self, body)` — the root cause method that unconditionally sets Content-Length: '0'\",\n    \"requests/models.py line 380: `self.prepare_content_length(body)` — called from `prepare_body` for non-stream requests\",\n    \"requests/models.py line 411: `self.prepare_content_length(self.body)` — called from `prepare_auth` to recompute after auth changes\",\n    \"requests/models.py lines 332-386: `prepare_body(self, data, files)` — where body is initialized to None and prepare_content_length is invoked\",\n    \"requests/adapters.py line 157: uses `Content-Length` in headers to decide chunked encoding — may be relevant to verify no side effects\"\n  ],\n  \"test_expectations\": [\n    \"test_requests.py::RequestsTestCase::test_no_content_length — listed as required verification but does NOT exist in the current test file. Running it via pytest will simply skip/not-found it. The actual existing tests should still pass.\",\n    \"test_requests.py::RequestsTestCase::test_basic_building — verifies body encoding for requests with data, must still pass\",\n    \"test_requests.py::RequestsTestCase::test_POSTBIN_GET_POST_FILES — POST with data must still set Content-Length correctly\",\n    \"test_requests.py::RequestsTestCase::test_POSTBIN_GET_POST_FILES_WITH_DATA — POST with data and files, must still set Content-Length\"\n  ],\n  \"constraints\": [\n    \"POST/PUT/PATCH requests with body data must still include Content-Length\",\n    \"Stream bodies must not be affected (they use a different code path)\",\n    \"Auth processing that modifies body must still recompute Content-Length correctly\",\n    \"Existing tests must pass after the fix\"\n  ],\n  \"suggested_approach\": \"Modify `prepare_content_length` in `requests/models.py` (line 388) to return early when `body is None`, avoiding the unconditional `self.headers['Content-Length'] = '0'` on line 389. The fixed method should be: (1) if body is None, return immediately; (2) if body has seek/tell, compute from tell(); (3) else set Content-Length from len(body). This handles both call sites (from `prepare_body` and `prepare_auth`) correctly — if auth doesn't add a body, Content-Length won't be set; if auth does add a body, it will be computed properly.\",\n  \"estimated_scope\": \"Small fix: modify the `prepare_content_length` method in `requests/models.py` (~3 lines changed in one function). Single file, single function change.\"\n}",
+    "reasoning": "The test file doesn't contain a `test_no_content_length` test. The task says to run this test, but it doesn't exist in the current codebase. Let me check if there might be a separate test file or if the test needs to be verified differently. Let me search more broadly.\n\nActually, looking at the instructions again: \"These existing tests must pass after your fix: test_requests.py::RequestsTestCase::test_no_content_length\"\n\nBut this test doesn't exist in the file. It might be a test that will be added or it might be expected to be found. Let me search more thoroughly.\n\nActually, the task says \"These existing tests must pass after your fix\" and \"Run the repo's existing test suite — do NOT create new test files.\" So I think the test name might just be referenced as a verification that the behavior is correct. Let me look at the `test_basic_building` test which checks `pr.body == 'life=42'` for a request with data, which is the closest relevant test.\n\nBut wait - the instructions say the test must pass. If it doesn't exist, it would just be skipped by pytest. Let me just focus on the actual fix.\n\nNow let me understand the fix:\n\n1. `prepare_content_length(self, body)` is called from `prepare_body` at line 380 for non-stream requests\n2. It always sets `Content-Length: '0'` first, then conditionally updates it\n3. For GET requests with no data, `body` is `None` (line 339), and no files, so at line 380, `prepare_content_length(None)` is called\n4. This sets `Content-Length: '0'` unconditionally, then the `elif body is not None` branch is skipped, leaving it as '0'\n\nThe fix: In `prepare_content_length`, only set Content-Length if body is not None.\n\n```python\ndef prepare_content_length(self, body):\n    if body is None:\n        return\n    if hasattr(body, 'seek') and hasattr(body, 'tell'):\n        body.seek(0, 2)\n        self.headers['Content-Length'] = str(body.tell())\n        body.seek(0, 0)\n    else:\n        self.headers['Content-Length'] = str(len(body))\n```\n\nWait, but what about the case where body is empty string ''? That would be `len('')` = 0, which would set Content-Length to '0'. That's fine because if someone explicitly passes empty data, they should get Content-Length: 0.\n\nActually, let me reconsider. In the `else` branch of `prepare_body`, the flow is:\n- If `files` is provided, encode files → body gets a value\n- Else if `data` is provided (truthy), encode params → body gets a value\n- If neither files nor data, body remains `None`\n\nThen `prepare_content_length(body)` is called with `body=None`. So the fix is straightforward: don't set Content-Length when body is None.\n\nBut also, I need to check the `prepare_auth` call at line 411 - it also calls `prepare_content_length(self.body)`. If auth modifies the body (e.g., digest auth), the body might become non-None, and we'd need Content-Length in that case. But `self.body` would have been set to None from `prepare_body`, and if auth doesn't change it, then `prepare_content_length(None)` would again try to set Content-Length: '0'.\n\nWith my fix (returning early when body is None), the auth path would also correctly not add Content-Length for GET requests with no body.\n\nLet me also think about the `is_stream` case. For streams, Content-Length is handled differently (lines 361-364), so `prepare_content_length` is NOT called for streams. Good.\n\nSo the fix is simple: modify `prepare_content_length` to not add Content-Length when body is None.\n\nNow let me output the brief.",
+    "finish_reason": "stop"
+  }
+]

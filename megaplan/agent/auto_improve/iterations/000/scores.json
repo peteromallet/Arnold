@@ -1,0 +1,92 @@
+{
+  "iteration": 0,
+  "timestamp": "2026-03-30T00:00:00+00:00",
+  "total": 20,
+  "resolved": 2,
+  "failed": 17,
+  "errors": 1,
+  "pass_rate": 0.1,
+  "tasks": {
+    "django__django-11099": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-11179": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "django__django-13230": {
+      "resolved": false,
+      "status": "error",
+      "error": "mock infra failure"
+    },
+    "django__django-14016": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-16139": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sympy__sympy-20590": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sympy__sympy-13146": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sympy__sympy-18199": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "matplotlib__matplotlib-23314": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "matplotlib__matplotlib-25311": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "scikit-learn__scikit-learn-13241": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "scikit-learn__scikit-learn-25570": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "pytest-dev__pytest-5692": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "pytest-dev__pytest-7373": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sphinx-doc__sphinx-8282": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "astropy__astropy-12907": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "psf__requests-2317": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "pylint-dev__pylint-7114": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "pydata__xarray-4094": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "pallets__flask-4992": {
+      "resolved": false,
+      "status": "failed"
+    }
+  }
+}

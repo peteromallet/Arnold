@@ -1,0 +1,56 @@
+diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py
+index 800a25c92..b569903ad 100644
+--- a/src/_pytest/mark/structures.py
++++ b/src/_pytest/mark/structures.py
+@@ -357,12 +357,36 @@ class MarkDecorator:
+ 
+ def get_unpacked_marks(obj: object) -> Iterable[Mark]:
+     """Obtain the unpacked marks that are stored on an object."""
++    if inspect.isclass(obj):
++        return _get_unpacked_marks_from_class(obj)
+     mark_list = getattr(obj, "pytestmark", [])
+     if not isinstance(mark_list, list):
+         mark_list = [mark_list]
+     return normalize_mark_list(mark_list)
+ 
+ 
++def _get_unpacked_marks_from_class(cls: type) -> Iterable[Mark]:
++    """Obtain marks from a class by walking its MRO.
++
++    This ensures that multiple inheritance correctly collects marks from
++    all base classes, not just the first one found via Python's default
++    attribute resolution. Marks with the same name are deduplicated,
++    keeping the one from the class closer in the MRO.
++    """
++    mark_list: List[Mark] = []
++    seen_names: Set[str] = set()
++    for base_cls in cls.__mro__:
++        pytestmark = base_cls.__dict__.get("pytestmark", [])
++        if not isinstance(pytestmark, list):
++            pytestmark = [pytestmark]
++        base_marks = list(normalize_mark_list(pytestmark))
++        for mark in base_marks:
++            if mark.name not in seen_names:
++                mark_list.append(mark)
++        seen_names.update(mark.name for mark in base_marks)
++    return mark_list
++
++
+ def normalize_mark_list(
+     mark_list: Iterable[Union[Mark, MarkDecorator]]
+ ) -> Iterable[Mark]:
+@@ -388,7 +412,13 @@ def store_mark(obj, mark: Mark) -> None:
+     assert isinstance(mark, Mark), mark
+     # Always reassign name to avoid updating pytestmark in a reference that
+     # was only borrowed.
+-    obj.pytestmark = [*get_unpacked_marks(obj), mark]
++    # Note: we only look at the object's own __dict__ for pytestmark, not
++    # inherited marks via MRO. MRO marks are collected at read time by
++    # get_unpacked_marks, not stored on the class.
++    mark_list = obj.__dict__.get("pytestmark", []) if isinstance(obj, type) else getattr(obj, "pytestmark", [])
++    if not isinstance(mark_list, list):
++        mark_list = [mark_list]
++    obj.pytestmark = [*normalize_mark_list(mark_list), mark]
+ 
+ 
+ # Typing for builtin pytest marks. This is cheating; it gives builtin marks

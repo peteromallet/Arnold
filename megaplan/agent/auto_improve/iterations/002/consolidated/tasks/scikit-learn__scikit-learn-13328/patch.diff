@@ -1,0 +1,44 @@
+diff --git a/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py b/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
+index bf92569c1e..448e63bff3 100644
+--- a/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
++++ b/sklearn/externals/joblib/externals/cloudpickle/cloudpickle.py
+@@ -145,22 +145,9 @@ def _make_cell_set_template_code():
+             (),
+         )
+     else:
+-        return types.CodeType(
+-            co.co_argcount,
+-            co.co_kwonlyargcount,
+-            co.co_nlocals,
+-            co.co_stacksize,
+-            co.co_flags,
+-            co.co_code,
+-            co.co_consts,
+-            co.co_names,
+-            co.co_varnames,
+-            co.co_filename,
+-            co.co_name,
+-            co.co_firstlineno,
+-            co.co_lnotab,
+-            co.co_cellvars,  # this is the trickery
+-            (),
++        return co.replace(
++            co_cellvars=('cell',),
++            co_freevars=(),
+         )
+ 
+ 
+diff --git a/sklearn/linear_model/huber.py b/sklearn/linear_model/huber.py
+index 65c6864007..6c95666931 100644
+--- a/sklearn/linear_model/huber.py
++++ b/sklearn/linear_model/huber.py
+@@ -251,7 +251,8 @@ class HuberRegressor(LinearModel, RegressorMixin, BaseEstimator):
+         self : object
+         """
+         X, y = check_X_y(
+-            X, y, copy=False, accept_sparse=['csr'], y_numeric=True)
++            X, y, copy=False, accept_sparse=['csr'], y_numeric=True,
++            dtype=np.float64)
+         if sample_weight is not None:
+             sample_weight = np.array(sample_weight)
+             check_consistent_length(y, sample_weight)

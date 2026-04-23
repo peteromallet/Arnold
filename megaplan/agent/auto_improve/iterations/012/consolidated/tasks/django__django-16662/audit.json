@@ -1,0 +1,57 @@
+{
+  "instance_id": "django__django-16662",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 1824.19,
+  "patch_lines": 15,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 414534,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 98127,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 49334,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 23893,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 39137,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 1151411,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 47754,
+      "model": "MiniMax-M2.7"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
+index ae82d263401..8c046f891d3 100644
+--- a/django/db/models/deletion.py
++++ b/django/db/models/deletion.py
+@@ -1,4 +1,4 @@
+-from collections import Counter
++from collections import Counter, defaultdict
+ from itertools import chain
+ from operator import attrgetter
+ 
+@@ -310,9 +310,15 @@ class Collector:
+                     )
+ 
+             # fast deletes
++            fast_delete_qs = defaultdict(list)
+             for qs in self.fast_deletes:
++                fast_delete_qs[qs.model].append(qs)
++            for model, qs_list in fast_delete_qs.items():
++                qs = qs_list[0]
++                for other_qs in qs_list[1:]:
++                    qs = qs | other_qs
+                 count = qs._raw_delete(using=self.using)
+-                deleted_counter[qs.model._meta.label] += count
++                deleted_counter[model._meta.label] += count
+ 
+             # update fields
+             for model, instances_for_fieldvalues in self.field_updates.items():
+diff --git a/tests/delete/tests.py b/tests/delete/tests.py
+index 505fd843d7c..42d42940058 100644
+--- a/tests/delete/tests.py
++++ b/tests/delete/tests.py
+@@ -332,12 +332,9 @@ class DeletionTests(TestCase):
+         objs = [Avatar() for i in range(0, TEST_SIZE)]
+         Avatar.objects.bulk_create(objs)
+         # Calculate the number of queries needed.
+-        batch_size = connection.ops.bulk_batch_size(['pk'], objs)
+-        # The related fetches are done in batches.
+-        batches = ceil(len(objs) / batch_size)
+-        # One query for Avatar.objects.all() and then one related fast delete for
+-        # each batch.
+-        fetches_to_mem = 1 + batches
++        # One query for Avatar.objects.all() and then one combined fast delete
++        # for all related objects (fast deletes are combined per model).
++        fetches_to_mem = 1 + 1
+         # The Avatar objects are going to be deleted in batches of GET_ITERATOR_CHUNK_SIZE
+         queries = fetches_to_mem + TEST_SIZE // GET_ITERATOR_CHUNK_SIZE
+         self.assertNumQueries(queries, Avatar.objects.all().delete)
+@@ -349,14 +346,11 @@ class DeletionTests(TestCase):
+         for i in range(TEST_SIZE):
+             T.objects.create(s=s)
+ 
+-        batch_size = max(connection.ops.bulk_batch_size(['pk'], range(TEST_SIZE)), 1)
+-
+-        # TEST_SIZE / batch_size (select related `T` instances)
+-        # + 1 (select related `U` instances)
++        # 1 (select related `T` instances)
++        # + 1 (combined fast delete of related `U` instances)
+         # + TEST_SIZE / GET_ITERATOR_CHUNK_SIZE (delete `T` instances in batches)
+         # + 1 (delete `s`)
+-        expected_num_queries = ceil(TEST_SIZE / batch_size)
+-        expected_num_queries += ceil(TEST_SIZE / GET_ITERATOR_CHUNK_SIZE) + 2
++        expected_num_queries = ceil(TEST_SIZE / GET_ITERATOR_CHUNK_SIZE) + 3
+ 
+         self.assertNumQueries(expected_num_queries, s.delete)
+         self.assertFalse(S.objects.exists())

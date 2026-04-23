@@ -1,0 +1,93 @@
+{
+  "iteration": 3,
+  "timestamp": "2026-03-30T17:32:30.232473+00:00",
+  "total": 20,
+  "resolved": 7,
+  "failed": 11,
+  "errors": 2,
+  "pass_rate": 0.35,
+  "tasks": {
+    "astropy__astropy-12907": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-11179": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-11603": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-11749": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-16139": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-16938": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "matplotlib__matplotlib-23314": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "matplotlib__matplotlib-25311": {
+      "resolved": false,
+      "status": "error"
+    },
+    "matplotlib__matplotlib-26291": {
+      "resolved": false,
+      "status": "error",
+      "error": "run_evaluation timed out after 1800s",
+      "error_category": "timeout"
+    },
+    "psf__requests-1142": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "psf__requests-2317": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "pylint-dev__pylint-4970": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "pytest-dev__pytest-10051": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "scikit-learn__scikit-learn-12973": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "scikit-learn__scikit-learn-13328": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sphinx-doc__sphinx-10435": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sphinx-doc__sphinx-7454": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sphinx-doc__sphinx-7889": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sympy__sympy-14976": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sympy__sympy-20590": {
+      "resolved": false,
+      "status": "failed"
+    }
+  }
+}

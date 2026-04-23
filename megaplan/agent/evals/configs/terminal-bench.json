@@ -1,0 +1,24 @@
+{
+  "benchmark": "terminal-bench",
+  "models": {
+    "plan": "qwen/qwen3.5-27b",
+    "research": "qwen/qwen3.5-27b",
+    "critique": "qwen/qwen3.5-27b",
+    "revise": "qwen/qwen3.5-27b",
+    "gate": "qwen/qwen3.5-27b",
+    "finalize": "qwen/qwen3.5-27b",
+    "execute": "z-ai/glm-5",
+    "review": "qwen/qwen3.5-27b"
+  },
+  "max_gate_iterations": 3,
+  "eval_timeout_seconds": 900,
+  "evals_to_run": [],
+  "terminal_bench_repo": "/Users/peteromalley/Documents/terminal-bench",
+  "terminal_bench_ref": "main",
+  "docker_timeout": 600,
+  "test_timeout": 300,
+  "robustness": "heavy",
+  "megaplan_bin": "megaplan",
+  "workspace_dir": "evals/workspaces",
+  "results_dir": "results"
+}

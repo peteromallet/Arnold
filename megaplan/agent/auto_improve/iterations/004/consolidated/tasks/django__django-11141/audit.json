@@ -1,0 +1,21 @@
+{
+  "instance_id": "django__django-11141",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 0.0,
+  "patch_lines": 0,
+  "phases": [
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "instance_id": "scikit-learn__scikit-learn-25232",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 277.578,
+  "patch_lines": 0,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 178809,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 98769,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

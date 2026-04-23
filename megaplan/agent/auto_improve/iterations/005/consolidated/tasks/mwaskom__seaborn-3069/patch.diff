@@ -1,0 +1,89 @@
+diff --git a/seaborn/_core/plot.py b/seaborn/_core/plot.py
+index 4f0290a4..f2cfb402 100644
+--- a/seaborn/_core/plot.py
++++ b/seaborn/_core/plot.py
+@@ -25,7 +25,7 @@ from seaborn._marks.base import Mark
+ from seaborn._stats.base import Stat
+ from seaborn._core.data import PlotData
+ from seaborn._core.moves import Move
+-from seaborn._core.scales import Scale
++from seaborn._core.scales import Nominal, Scale
+ from seaborn._core.subplots import Subplots
+ from seaborn._core.groupby import GroupBy
+ from seaborn._core.properties import PROPERTIES, Property
+@@ -1475,7 +1475,12 @@ class Plotter:
+ 
+                 axes_df = self._filter_subplot_data(df, view)
+ 
+-                with pd.option_context("mode.use_inf_as_null", True):
++                try:
++                    ctx = pd.option_context("mode.use_inf_as_null", True)
++                    ctx.__enter__()
++                except pd._config.config.OptionError:
++                    ctx = None
++                try:
+                     if keep_na:
+                         # The simpler thing to do would be x.dropna().reindex(x.index).
+                         # But that doesn't work with the way that the subset iteration
+@@ -1490,6 +1495,9 @@ class Plotter:
+                         axes_df = axes_df.assign(**nulled)
+                     else:
+                         axes_df = axes_df.dropna()
++                finally:
++                    if ctx is not None:
++                        ctx.__exit__(None, None, None)
+ 
+                 subplot_keys = {}
+                 for dim in ["col", "row"]:
+@@ -1644,6 +1652,24 @@ class Plotter:
+                         hi = cast(float, hi) + 0.5
+                     ax.set(**{f"{axis}lim": (lo, hi)})
+ 
++        # Nominal scale axis tweaks: set margins to +/-0.5, disable grid, invert y
++        for sub in self._subplots:
++            ax = sub["ax"]
++            for axis in "xy":
++                axis_key = sub[axis]
++                if axis_key in p._limits:
++                    continue
++                scale = self._scales.get(axis_key)
++                if not isinstance(scale, Nominal):
++                    continue
++                n = len(getattr(ax, f"get_{axis}ticks")())
++                if axis == "x":
++                    ax.xaxis.grid(False)
++                    ax.set_xlim(-.5, n - .5, auto=None)
++                else:
++                    ax.yaxis.grid(False)
++                    ax.set_ylim(n - .5, -.5, auto=None)
++
+         engine_default = None if p._target is not None else "tight"
+         layout_engine = p._layout_spec.get("engine", engine_default)
+         set_layout_engine(self._figure, layout_engine)
+diff --git a/tests/_core/test_plot.py b/tests/_core/test_plot.py
+index 03a64917..7b45f591 100644
+--- a/tests/_core/test_plot.py
++++ b/tests/_core/test_plot.py
+@@ -645,6 +645,23 @@ class TestScaling:
+         with pytest.raises(RuntimeError, match=err):
+             p.plot()
+ 
++    def test_nominal_x_axis_tweaks(self):
++
++        p = Plot(x=["a", "b", "c"], y=[1, 2, 3]).add(MockMark()).plot()
++        ax = p._figure.axes[0]
++        assert ax.get_xlim() == (-0.5, 2.5)
++        assert ax.xaxis._major_tick_kw["gridOn"] is False
++        # y-axis should not be inverted
++        ylim = ax.get_ylim()
++        assert ylim[0] < ylim[1]
++
++    def test_nominal_y_axis_tweaks(self):
++
++        p = Plot(x=[1, 2, 3], y=["a", "b", "c"]).add(MockMark()).plot()
++        ax = p._figure.axes[0]
++        assert ax.get_ylim() == (2.5, -0.5)
++        assert ax.yaxis._major_tick_kw["gridOn"] is False
++
+ 
+ class TestPlotting:

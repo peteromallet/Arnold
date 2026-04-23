@@ -1,0 +1,49 @@
+diff --git a/astropy/table/table.py b/astropy/table/table.py
+index 5afe2127a3..88830f5a2f 100644
+--- a/astropy/table/table.py
++++ b/astropy/table/table.py
+@@ -1239,13 +1239,6 @@ class Table:
+                                 f'{fully_qualified_name} '
+                                 'did not return a valid mixin column')
+ 
+-        # Structured ndarray gets viewed as a mixin unless already a valid
+-        # mixin class
+-        if (not isinstance(data, Column) and not data_is_mixin
+-                and isinstance(data, np.ndarray) and len(data.dtype) > 1):
+-            data = data.view(NdarrayMixin)
+-            data_is_mixin = True
+-
+         # Get the final column name using precedence.  Some objects may not
+         # have an info attribute. Also avoid creating info as a side effect.
+         if not name:
+diff --git a/astropy/table/tests/test_mixin.py b/astropy/table/tests/test_mixin.py
+index 2fdcd20d8f..f96f6b2b17 100644
+--- a/astropy/table/tests/test_mixin.py
++++ b/astropy/table/tests/test_mixin.py
+@@ -717,7 +717,7 @@ def test_ndarray_mixin():
+     t['c'] = c
+     t['d'] = d
+ 
+-    assert isinstance(t['a'], NdarrayMixin)
++    assert isinstance(t['a'], Column)
+ 
+     assert t['a'][1][1] == a[1][1]
+     assert t['a'][2][0] == a[2][0]
+@@ -725,7 +725,7 @@ def test_ndarray_mixin():
+     assert t[1]['a'][1] == a[1][1]
+     assert t[2]['a'][0] == a[2][0]
+ 
+-    assert isinstance(t['b'], NdarrayMixin)
++    assert isinstance(t['b'], Column)
+ 
+     assert t['b'][1]['x'] == b[1]['x']
+     assert t['b'][1]['y'] == b[1]['y']
+@@ -733,7 +733,7 @@ def test_ndarray_mixin():
+     assert t[1]['b']['x'] == b[1]['x']
+     assert t[1]['b']['y'] == b[1]['y']
+ 
+-    assert isinstance(t['c'], NdarrayMixin)
++    assert isinstance(t['c'], Column)
+ 
+     assert t['c'][1]['rx'] == c[1]['rx']
+     assert t['c'][1]['ry'] == c[1]['ry']

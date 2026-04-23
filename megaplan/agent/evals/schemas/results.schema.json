@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "next-evals-oss result.json",
+  "description": "Reverse-engineered from 889 sampled next-evals-oss result.json files plus a full scan of the 21 current EVAL.ts files. Current EVAL.ts assertions do not read result.json directly; this schema is for framework compatibility and downstream scoring/export.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "duration",
+    "model"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed"
+      ],
+      "description": "Overall run verdict from the harness.",
+      "x-tier": "tier2"
+    },
+    "duration": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total run duration in seconds.",
+      "x-tier": "tier2"
+    },
+    "model": {
+      "type": "string",
+      "description": "Display model name recorded by the harness.",
+      "x-tier": "tier2"
+    },
+    "error": {
+      "type": "string",
+      "description": "Failure string for infra/runtime failures that do not emit observability payloads.",
+      "x-tier": "tier2"
+    },
+    "transcriptPath": {
+      "type": "string",
+      "description": "Relative path to normalized transcript output.",
+      "x-tier": "tier2"
+    },
+    "transcriptRawPath": {
+      "type": "string",
+      "description": "Relative path to raw transcript output.",
+      "x-tier": "tier2"
+    },
+    "outputPaths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eval",
+        "scripts"
+      ],
+      "properties": {
+        "eval": {
+          "type": "string",
+          "description": "Relative path to eval runner output.",
+          "x-tier": "tier2"
+        },
+        "scripts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "build"
+          ],
+          "properties": {
+            "build": {
+              "type": "string",
+              "description": "Relative path to build script output.",
+              "x-tier": "tier2"
+            }
+          }
+        }
+      }
+    },
+    "o11y": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "errors",
+        "filesModified",
+        "filesRead",
+        "shellCommands",
+        "thinkingBlocks",
+        "toolCalls",
+        "totalToolCalls",
+        "totalTurns",
+        "webFetches"
+      ],
+      "properties": {
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Captured tool/runtime error strings.",
+          "x-tier": "tier2"
+        },
+        "filesModified": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Absolute or sandbox-relative file paths modified during the run.",
+          "x-tier": "tier1"
+        },
+        "filesRead": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Absolute or sandbox-relative file paths read during the run.",
+          "x-tier": "tier2"
+        },
+        "shellCommands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "command"
+            ],
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "success": {
+                "type": "boolean"
+              },
+              "exitCode": {
+                "type": "integer"
+              }
+            }
+          },
+          "description": "Executed shell commands with coarse success metadata.",
+          "x-tier": "tier2"
+        },
+        "thinkingBlocks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of assistant reasoning/thinking blocks.",
+          "x-tier": "tier2"
+        },
+        "toolCalls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "agent_task",
+            "file_edit",
+            "file_read",
+            "file_write",
+            "glob",
+            "grep",
+            "list_dir",
+            "shell",
+            "unknown",
+            "web_fetch",
+            "web_search"
+          ],
+          "properties": {
+            "agent_task": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "file_edit": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "file_read": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "file_write": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "glob": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "grep": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "list_dir": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "shell": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "unknown": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "web_fetch": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            },
+            "web_search": {
+              "type": "integer",
+              "minimum": 0,
+              "x-tier": "tier2"
+            }
+          }
+        },
+        "totalToolCalls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total tool call count after bucket aggregation.",
+          "x-tier": "tier2"
+        },
+        "totalTurns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total assistant/user/tool turn count recorded by the harness.",
+          "x-tier": "tier2"
+        },
+        "webFetches": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
+            ]
+          },
+          "description": "Reserved list for fetched URLs or fetch metadata. Samples in the current corpus are empty arrays.",
+          "x-tier": "tier2"
+        }
+      }
+    }
+  }
+}
