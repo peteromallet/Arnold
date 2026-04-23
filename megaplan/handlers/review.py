@@ -11,6 +11,7 @@ from megaplan.execute.core import _check_done_task_evidence, build_monitor_hint
 from megaplan.evaluation import is_rubber_stamp
 from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
+from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
     MOCK_ENV_VAR,
     CliError,
@@ -250,6 +251,7 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
 def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="review") as (plan_dir, state):
         require_state(state, "review", {STATE_EXECUTED})
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
         robustness = configured_robustness(state)
         plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []

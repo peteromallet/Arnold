@@ -69,6 +69,11 @@ from megaplan.loop.handlers import (
     handle_loop_run,
     handle_loop_status,
 )
+from megaplan.profiles import (
+    load_profile_sources,
+    load_profiles,
+    resolve_profile,
+)
 from megaplan.step_edit import handle_step
 
 
@@ -811,6 +816,39 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
             )
         save_config(config)
         return {"success": True, "step": "config", "action": "set", "key": key, "value": config[section][setting]}
+    if action == "profiles":
+        project_dir = Path.cwd()
+        profiles_action = args.profiles_action
+        if profiles_action == "list":
+            profiles = [
+                {
+                    "source": source_label,
+                    "name": profile_name,
+                    "phases": phase_map,
+                }
+                for source_label, profile_name, phase_map in load_profile_sources(project_dir=project_dir)
+            ]
+            return {
+                "success": True,
+                "step": "config",
+                "action": "profiles",
+                "profiles_action": "list",
+                "project_dir": str(project_dir),
+                "profiles": profiles,
+            }
+        if profiles_action == "show":
+            profiles = load_profiles(project_dir=project_dir)
+            resolved = resolve_profile(args.name, profiles)
+            return {
+                "success": True,
+                "step": "config",
+                "action": "profiles",
+                "profiles_action": "show",
+                "project_dir": str(project_dir),
+                "name": args.name,
+                "profile": resolved,
+            }
+        raise CliError("invalid_args", f"Unknown profiles action: {profiles_action}")
     if action == "reset":
         path = config_dir() / "config.json"
         if path.exists():
@@ -870,6 +908,8 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Use Hermes agent for all phases. Optional: specify default model")
     init_parser.add_argument("--phase-model", action="append", default=[],
                              help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
+    init_parser.add_argument("--profile", default=None,
+                             help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
     init_parser.add_argument("idea", nargs="?")
 
     list_parser = subparsers.add_parser("list")
@@ -899,6 +939,8 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Use Hermes agent for all phases. Optional: specify default model (e.g. --hermes anthropic/claude-sonnet-4.6)")
         step_parser.add_argument("--phase-model", action="append", default=[],
                                  help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
+        step_parser.add_argument("--profile", default=None,
+                                 help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
         step_parser.add_argument("--fresh", action="store_true")
         step_parser.add_argument("--persist", action="store_true")
         step_parser.add_argument("--ephemeral", action="store_true")
@@ -920,6 +962,15 @@ def build_parser() -> argparse.ArgumentParser:
     set_parser.add_argument("key")
     set_parser.add_argument("value")
     config_sub.add_parser("reset")
+    profiles_parser = config_sub.add_parser("profiles", help="Inspect model profiles from built-in, user, and project layers")
+    profiles_sub = profiles_parser.add_subparsers(dest="profiles_action", required=True)
+    profiles_sub.add_parser(
+        "list",
+        help="List profiles from all layers",
+        description="List profiles from all layers. Project-layer profiles are only visible when run from that project directory.",
+    )
+    profiles_show_parser = profiles_sub.add_parser("show", help="Show the fully resolved phase map for one profile")
+    profiles_show_parser.add_argument("name")
 
     step_parser = subparsers.add_parser("step", help="Edit plan step sections without hand-editing markdown")
     step_subparsers = step_parser.add_subparsers(dest="step_action", required=True)
@@ -986,6 +1037,8 @@ def build_parser() -> argparse.ArgumentParser:
                                   help="Use Hermes agent for loop phases. Optional: specify default model")
     loop_init_parser.add_argument("--phase-model", action="append", default=[],
                                   help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5")
+    loop_init_parser.add_argument("--profile", default=None,
+                                  help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
     loop_init_parser.add_argument("--fresh", action="store_true")
     loop_init_parser.add_argument("--persist", action="store_true")
     loop_init_parser.add_argument("--ephemeral", action="store_true")
@@ -1003,6 +1056,8 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Use Hermes agent for loop phases. Optional: specify default model")
     loop_run_parser.add_argument("--phase-model", action="append", default=[],
                                  help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5")
+    loop_run_parser.add_argument("--profile", default=None,
+                                 help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
     loop_run_parser.add_argument("--fresh", action="store_true")
     loop_run_parser.add_argument("--persist", action="store_true")
     loop_run_parser.add_argument("--ephemeral", action="store_true")
@@ -1044,6 +1099,8 @@ def build_parser() -> argparse.ArgumentParser:
     tb_run_parser.add_argument("--agent", choices=["claude", "codex", "hermes"], default=None)
     tb_run_parser.add_argument("--hermes", nargs="?", const="", default=None)
     tb_run_parser.add_argument("--phase-model", action="append", default=[])
+    tb_run_parser.add_argument("--profile", default=None,
+                               help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
     tb_run_parser.add_argument("--fresh", action="store_true")
     tb_run_parser.add_argument("--persist", action="store_true")
     tb_run_parser.add_argument("--ephemeral", action="store_true")

@@ -1,0 +1,13 @@
+[profiles.standard]
+plan = "claude"
+prep = "claude"
+critique = "codex"
+revise = "claude"
+gate = "claude"
+finalize = "claude"
+execute = "codex"
+loop_plan = "claude"
+loop_execute = "codex"
+review = "codex"
+tiebreaker_researcher = "codex"
+tiebreaker_challenger = "codex"

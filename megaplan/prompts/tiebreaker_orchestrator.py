@@ -17,6 +17,7 @@ from megaplan._core import (
     read_json,
     resolve_plan_dir,
 )
+from megaplan.profiles import apply_profile_expansion
 from megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from megaplan.prompts.tiebreaker_researcher import researcher_prompt
 from megaplan.prompts.tiebreaker_synthesis import render_synthesis
@@ -53,6 +54,7 @@ def _run_tiebreaker(
     args: argparse.Namespace,
 ) -> int:
     question = _resolve_question(args)
+    apply_profile_expansion(args, Path(state["config"]["project_dir"]))
     suffix = _next_version_suffix(plan_dir)
 
     researcher_file = f"tiebreaker_researcher{suffix}.json"
@@ -206,6 +208,11 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=[],
         help="Per-step model override, e.g. --phase-model tiebreaker_researcher=hermes:openai/gpt-5",
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
     )
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--persist", action="store_true")
