@@ -183,7 +183,7 @@ def test_apply_profile_expansion_preserves_ad_hoc_precedence_and_is_idempotent(
     with patch("megaplan.workers._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", profile_only)
     assert agent == "hermes"
-    assert model == "deepseek/deepseek-v3"
+    assert model == "glm-5.1"
 
 
 def test_apply_profile_expansion_unknown_profile_lists_known_profiles(
@@ -269,5 +269,5 @@ def test_handle_config_profiles_list_and_show(tmp_path: Path, monkeypatch: pytes
     assert shown["action"] == "profiles"
     assert shown["profiles_action"] == "show"
     assert shown["name"] == "all-open"
-    assert shown["profile"]["execute"] == "hermes:deepseek/deepseek-v3"
-    assert shown["profile"]["review"] == "hermes:qwen/qwen-2.5-72b"
+    assert shown["profile"]["execute"] == "hermes:glm-5.1"
+    assert shown["profile"]["review"] == "hermes:glm-5.1"

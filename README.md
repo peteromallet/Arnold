@@ -68,26 +68,35 @@ Note: `prep` is a visible repository-investigation *phase* inside every run, not
 
 ## Using different models per phase
 
-Models with provider prefixes route to direct APIs. Models without a prefix go through OpenRouter:
-
-```json
-{
-  "models": {
-    "prep": "zhipu:glm-5.1",
-    "plan": "zhipu:glm-5.1",
-    "critique": "minimax:MiniMax-M2.7-highspeed",
-    "execute": "zhipu:glm-5.1",
-    "review": "minimax:MiniMax-M2.7-highspeed"
-  }
-}
-```
-
-Configure direct provider keys in `~/.hermes/.env`:
+Every phase can run on a different model. Pick a named **profile** or override phases one at a time.
 
 ```bash
-ZHIPU_API_KEY=...          # for zhipu: prefix
-MINIMAX_API_KEY=...        # for minimax: prefix
-GEMINI_API_KEY=...         # for google: prefix
+megaplan init --profile all-open "your idea"                    # all phases on open-source models
+megaplan init --profile all-open --phase-model execute=claude "your idea"   # override one phase
+```
+
+Built-in profiles:
+
+- **standard** — Claude for planning/revision, Codex for execution and critique (mirrors the default routing)
+- **all-open** — `moonshotai/kimi-k2.6` for planning/revision, `glm-5.1` for execution and critique (via Hermes)
+
+Define your own in `.megaplan/profiles.toml` (per-project) or `~/.config/megaplan/profiles.toml` (user-wide):
+
+```toml
+[profiles.my-mix]
+plan     = "hermes:moonshotai/kimi-k2.6"
+execute  = "hermes:glm-5.1"
+review   = "codex"
+```
+
+Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
+
+Model strings take the form `<agent>[:<model>]`. Agents are `claude`, `codex`, or `hermes`. After `hermes:`, a slug with a slash (`moonshotai/kimi-k2.6`) routes via OpenRouter; a bare name (`glm-5.1`) uses the matching direct provider. Direct-provider keys live in `~/.hermes/.env`:
+
+```bash
+OPENROUTER_API_KEY=...
+ZHIPU_API_KEY=...          # for glm-* direct
+MINIMAX_API_KEY=...        # for MiniMax-* direct
 ```
 
 ## Robustness levels
