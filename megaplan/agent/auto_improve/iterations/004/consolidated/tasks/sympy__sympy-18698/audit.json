@@ -1,0 +1,57 @@
+{
+  "instance_id": "sympy__sympy-18698",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 2106.793,
+  "patch_lines": 25,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 775465,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 147076,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 53293,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 27413,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 535277,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 517507,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 50762,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

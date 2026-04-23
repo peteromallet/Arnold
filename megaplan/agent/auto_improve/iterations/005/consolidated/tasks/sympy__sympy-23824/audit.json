@@ -1,0 +1,63 @@
+{
+  "instance_id": "sympy__sympy-23824",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 683.791,
+  "patch_lines": 14,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 164876,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 142171,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 90223,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 18657,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 139640,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 63021,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 60582,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "verify",
+      "cost_usd": 0.0,
+      "duration_ms": 4621,
+      "model": "swebench-harness"
+    }
+  ]
+}

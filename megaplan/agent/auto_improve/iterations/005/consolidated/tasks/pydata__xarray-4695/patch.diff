@@ -1,0 +1,29 @@
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index 32b24ef1..6316afd5 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -196,7 +196,7 @@ class _LocIndexer:
+             # expand the indexer so we can handle Ellipsis
+             labels = indexing.expanded_indexer(key, self.data_array.ndim)
+             key = dict(zip(self.data_array.dims, labels))
+-        return self.data_array.sel(**key)
++        return self.data_array.sel(key)
+ 
+     def __setitem__(self, key, value) -> None:
+         if not utils.is_dict_like(key):
+diff --git a/xarray/core/indexing.py b/xarray/core/indexing.py
+index 843feb04..123f594a 100644
+--- a/xarray/core/indexing.py
++++ b/xarray/core/indexing.py
+@@ -188,7 +188,10 @@ def convert_label_indexer(index, label, index_name="", method=None, tolerance=No
+                     )
+                 indexer = index.get_loc(label_value)
+             else:
+-                indexer = index.get_loc(label_value, method=method, tolerance=tolerance)
++                if method is None and tolerance is None:
++                    indexer = index.get_loc(label_value)
++                else:
++                    indexer = index.get_loc(label_value, method=method, tolerance=tolerance)
+         elif label.dtype.kind == "b":
+             indexer = label
+         else:

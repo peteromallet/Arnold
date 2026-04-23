@@ -1,0 +1,75 @@
+{
+  "instance_id": "matplotlib__matplotlib-25311",
+  "resolved": true,
+  "cost_usd": 0.0,
+  "duration_seconds": 3135.204,
+  "patch_lines": 45,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 964985,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 210297,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 618069,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 96708,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 40390,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 24814,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 267962,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 90203,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 149621,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "revise",
+      "cost_usd": 0.0,
+      "duration_ms": 672155,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "instance_id": "pytest-dev__pytest-10051",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 1761.755,
+  "patch_lines": 14,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 160276,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 433778,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 98745,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 277141,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 27693,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 35285,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 55422,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 24165,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 74055,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 104816,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 163334,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "revise",
+      "cost_usd": 0.0,
+      "duration_ms": 155397,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "revise",
+      "cost_usd": 0.0,
+      "duration_ms": 151648,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

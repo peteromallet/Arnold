@@ -1,0 +1,75 @@
+{
+  "instance_id": "sphinx-doc__sphinx-8035",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 1725.557,
+  "patch_lines": 43,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 353205,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 284822,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 112942,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 48850,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 34092,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 29985,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 183750,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 181575,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 254033,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "revise",
+      "cost_usd": 0.0,
+      "duration_ms": 242303,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

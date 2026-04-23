@@ -1,0 +1,87 @@
+{
+  "instance_id": "django__django-15503",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 2002.854,
+  "patch_lines": 84,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 262219,
+      "model": "minimax:MiniMax-M2.7-highspeed"
+    },
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 375036,
+      "model": "minimax:MiniMax-M2.7-highspeed"
+    },
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 209166,
+      "model": "minimax:MiniMax-M2.7-highspeed"
+    },
+    {
+      "phase": "execute",
+      "cost_usd": 0.0,
+      "duration_ms": 324050,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "finalize",
+      "cost_usd": 0.0,
+      "duration_ms": 63559,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 28234,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 27232,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 39290,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 394720,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "review",
+      "cost_usd": 0.0,
+      "duration_ms": 88718,
+      "model": "minimax:MiniMax-M2.7-highspeed"
+    },
+    {
+      "phase": "revise",
+      "cost_usd": 0.0,
+      "duration_ms": 98372,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "revise",
+      "cost_usd": 0.0,
+      "duration_ms": 92258,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

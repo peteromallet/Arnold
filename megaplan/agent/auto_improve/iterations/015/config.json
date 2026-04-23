@@ -1,0 +1,36 @@
+{
+  "benchmark": "swe-bench",
+  "models": {
+    "prep": "zhipu:glm-5.1",
+    "plan": "zhipu:glm-5.1",
+    "critique": "minimax:MiniMax-M2.7",
+    "revise": "zhipu:glm-5.1",
+    "gate": "zhipu:glm-5.1",
+    "finalize": "zhipu:glm-5.1",
+    "execute": "zhipu:glm-5.1",
+    "review": "minimax:MiniMax-M2.7"
+  },
+  "max_gate_iterations": 3,
+  "eval_timeout_seconds": 1200,
+  "evals_to_run": [
+    "pylint-dev__pylint-7080",
+    "django__django-11734",
+    "astropy__astropy-14508",
+    "scikit-learn__scikit-learn-26323",
+    "django__django-14034",
+    "django__django-13741",
+    "django__django-13417",
+    "django__django-12125",
+    "scikit-learn__scikit-learn-25973",
+    "django__django-11532"
+  ],
+  "swebench_dataset": "princeton-nlp/SWE-bench_Verified",
+  "test_timeout": 900,
+  "max_verify_attempts": 3,
+  "workers": 3,
+  "megaplan_bin": "megaplan",
+  "robustness": "heavy",
+  "workspace_dir": "evals/workspaces-auto-improve/iteration-015",
+  "results_dir": "results/auto-improve",
+  "run_name": "iteration-015"
+}

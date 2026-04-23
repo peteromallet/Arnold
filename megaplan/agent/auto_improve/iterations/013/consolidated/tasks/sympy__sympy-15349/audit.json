@@ -1,0 +1,33 @@
+{
+  "instance_id": "sympy__sympy-15349",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 534.295,
+  "patch_lines": 0,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "minimax:MiniMax-M2.7"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 200971,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 333324,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

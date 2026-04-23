@@ -1,0 +1,144 @@
+diff --git a/requests/cookies.py b/requests/cookies.py
+index 831c49c6..cd0081ed 100644
+--- a/requests/cookies.py
++++ b/requests/cookies.py
+@@ -7,7 +7,10 @@ requests.utils imports from here, so be careful with imports.
+ """
+ 
+ import time
+-import collections
++try:
++    from collections.abc import MutableMapping as _MutableMapping
++except ImportError:
++    from collections import MutableMapping as _MutableMapping
+ from .compat import cookielib, urlparse, urlunparse, Morsel
+ 
+ try:
+@@ -156,7 +159,7 @@ class CookieConflictError(RuntimeError):
+     Use .get and .set and include domain and path args in order to be more specific."""
+ 
+ 
+-class RequestsCookieJar(cookielib.CookieJar, collections.MutableMapping):
++class RequestsCookieJar(cookielib.CookieJar, _MutableMapping):
+     """Compatibility class; is a cookielib.CookieJar, but exposes a dict interface.
+ 
+     This is the CookieJar we create by default for requests and sessions that
+diff --git a/requests/models.py b/requests/models.py
+index 3f6a4f92..63b64b47 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -8,6 +8,10 @@ This module contains the primary objects that power Requests.
+ """
+ 
+ import collections
++try:
++    from collections.abc import Callable as _Callable
++except ImportError:
++    from collections import Callable as _Callable
+ import datetime
+ 
+ from io import BytesIO, UnsupportedOperation
+@@ -166,10 +170,10 @@ class RequestHooksMixin(object):
+         if event not in self.hooks:
+             raise ValueError('Unsupported event specified, with event name "%s"' % (event))
+ 
+-        if isinstance(hook, collections.Callable):
++        if isinstance(hook, _Callable):
+             self.hooks[event].append(hook)
+         elif hasattr(hook, '__iter__'):
+-            self.hooks[event].extend(h for h in hook if isinstance(h, collections.Callable))
++            self.hooks[event].extend(h for h in hook if isinstance(h, _Callable))
+ 
+     def deregister_hook(self, event, hook):
+         """Deregister a previously registered hook.
+diff --git a/requests/packages/urllib3/_collections.py b/requests/packages/urllib3/_collections.py
+index d77ebb8d..2b0c9a0f 100644
+--- a/requests/packages/urllib3/_collections.py
++++ b/requests/packages/urllib3/_collections.py
+@@ -1,4 +1,7 @@
+-from collections import Mapping, MutableMapping
++try:
++    from collections.abc import Mapping, MutableMapping
++except ImportError:
++    from collections import Mapping, MutableMapping
+ try:
+     from threading import RLock
+ except ImportError: # Platform-specific: No threads available
+diff --git a/requests/sessions.py b/requests/sessions.py
+index d701ff2e..07a90d67 100644
+--- a/requests/sessions.py
++++ b/requests/sessions.py
+@@ -9,7 +9,10 @@ requests (cookies, auth, proxies).
+ 
+ """
+ import os
+-from collections import Mapping
++try:
++    from collections.abc import Mapping
++except ImportError:
++    from collections import Mapping
+ from datetime import datetime
+ 
+ from .auth import _basic_auth_str
+@@ -425,7 +428,7 @@ class Session(SessionRedirectMixin):
+             If Tuple, ('cert', 'key') pair.
+         """
+ 
+-        method = builtin_str(method)
++        method = to_native_string(method)
+ 
+         # Create the Request.
+         req = Request(
+diff --git a/requests/structures.py b/requests/structures.py
+index 3e5f2faa..268fbcb1 100644
+--- a/requests/structures.py
++++ b/requests/structures.py
+@@ -8,10 +8,13 @@ Data structures that power Requests.
+ 
+ """
+ 
+-import collections
++try:
++    from collections.abc import MutableMapping, Mapping
++except ImportError:
++    from collections import MutableMapping, Mapping
+ 
+ 
+-class CaseInsensitiveDict(collections.MutableMapping):
++class CaseInsensitiveDict(MutableMapping):
+     """
+     A case-insensitive ``dict``-like object.
+ 
+@@ -71,7 +74,7 @@ class CaseInsensitiveDict(collections.MutableMapping):
+         )
+ 
+     def __eq__(self, other):
+-        if isinstance(other, collections.Mapping):
++        if isinstance(other, Mapping):
+             other = CaseInsensitiveDict(other)
+         else:
+             return NotImplemented
+diff --git a/requests/utils.py b/requests/utils.py
+index 182348da..edb5cac1 100644
+--- a/requests/utils.py
++++ b/requests/utils.py
+@@ -12,6 +12,10 @@ that are also useful for external consumption.
+ import cgi
+ import codecs
+ import collections
++try:
++    from collections.abc import Mapping as _Mapping
++except ImportError:
++    from collections import Mapping as _Mapping
+ import io
+ import os
+ import platform
+@@ -160,7 +164,7 @@ def to_key_val_list(value):
+     if isinstance(value, (str, bytes, bool, int)):
+         raise ValueError('cannot encode objects that are not 2-tuples')
+ 
+-    if isinstance(value, collections.Mapping):
++    if isinstance(value, _Mapping):
+         value = value.items()
+ 
+     return list(value)

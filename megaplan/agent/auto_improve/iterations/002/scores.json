@@ -1,0 +1,102 @@
+{
+  "iteration": 2,
+  "timestamp": "2026-03-30T12:40:00.504386+00:00",
+  "total": 20,
+  "resolved": 5,
+  "failed": 3,
+  "errors": 12,
+  "pass_rate": 0.25,
+  "tasks": {
+    "astropy__astropy-12907": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-11099": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-11179": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "django__django-11603": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "django__django-11749": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "django__django-16139": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "matplotlib__matplotlib-23314": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "matplotlib__matplotlib-25311": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "pallets__flask-5014": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "psf__requests-2317": {
+      "resolved": true,
+      "status": "resolved"
+    },
+    "pydata__xarray-4094": {
+      "resolved": false,
+      "status": "error"
+    },
+    "pylint-dev__pylint-4970": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "pytest-dev__pytest-10051": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "scikit-learn__scikit-learn-12973": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "scikit-learn__scikit-learn-13328": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sphinx-doc__sphinx-7454": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "sphinx-doc__sphinx-7889": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "sphinx-doc__sphinx-8035": {
+      "resolved": false,
+      "status": "error",
+      "error": "missing or unparseable SWE-bench report"
+    },
+    "sympy__sympy-18199": {
+      "resolved": false,
+      "status": "failed"
+    },
+    "sympy__sympy-20590": {
+      "resolved": false,
+      "status": "failed"
+    }
+  }
+}

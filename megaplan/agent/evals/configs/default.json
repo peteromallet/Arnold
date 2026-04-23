@@ -1,0 +1,25 @@
+{
+  "benchmark": "next-evals",
+  "models": {
+    "plan": "anthropic/claude-opus-4.6",
+    "critique": "anthropic/claude-opus-4.6",
+    "revise": "anthropic/claude-opus-4.6",
+    "gate": "anthropic/claude-opus-4.6",
+    "finalize": "anthropic/claude-opus-4.6",
+    "execute": "anthropic/claude-opus-4.6",
+    "review": "anthropic/claude-opus-4.6"
+  },
+  "max_gate_iterations": 3,
+  "eval_timeout_seconds": 600,
+  "evals_to_run": [],
+  "next_evals_repo": "https://github.com/vercel/next-evals-oss",
+  "next_evals_ref": "main",
+  "openrouter_params": {
+    "_note": "Recorded for reproducibility only. Hermes and megaplan do not currently apply these parameters at runtime.",
+    "temperature": 0,
+    "top_p": 1
+  },
+  "megaplan_bin": "megaplan",
+  "workspace_dir": "evals/workspaces",
+  "results_dir": "results"
+}

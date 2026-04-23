@@ -1,0 +1,39 @@
+{
+  "instance_id": "astropy__astropy-13398",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 1362.288,
+  "patch_lines": 0,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 393996,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "gate",
+      "cost_usd": 0.0,
+      "duration_ms": 30769,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 407111,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 530412,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

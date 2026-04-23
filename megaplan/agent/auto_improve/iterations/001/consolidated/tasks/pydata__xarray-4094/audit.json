@@ -1,0 +1,15 @@
+{
+  "instance_id": "pydata__xarray-4094",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 0.0,
+  "patch_lines": 0,
+  "phases": [
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "instance_id": "sphinx-doc__sphinx-8593",
+  "resolved": null,
+  "cost_usd": 0.0,
+  "duration_seconds": 472.617,
+  "patch_lines": 0,
+  "phases": [
+    {
+      "phase": "critique",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "MiniMax-M2.7"
+    },
+    {
+      "phase": "init",
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "model": "hermes"
+    },
+    {
+      "phase": "plan",
+      "cost_usd": 0.0,
+      "duration_ms": 249348,
+      "model": "zhipu:glm-5.1"
+    },
+    {
+      "phase": "prep",
+      "cost_usd": 0.0,
+      "duration_ms": 223269,
+      "model": "zhipu:glm-5.1"
+    }
+  ]
+}

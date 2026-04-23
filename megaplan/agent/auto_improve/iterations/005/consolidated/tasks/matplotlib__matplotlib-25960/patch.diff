@@ -1,0 +1,55 @@
+diff --git a/lib/matplotlib/figure.py b/lib/matplotlib/figure.py
+index dab2bc4a5a..b03afc41d9 100644
+--- a/lib/matplotlib/figure.py
++++ b/lib/matplotlib/figure.py
+@@ -2274,12 +2274,46 @@ class SubFigure(FigureBase):
+             return
+         # need to figure out *where* this subplotspec is.
+         gs = self._subplotspec.get_gridspec()
++        nrows, ncols = gs.get_geometry()
+         wr = np.asarray(gs.get_width_ratios())
+         hr = np.asarray(gs.get_height_ratios())
+-        dx = wr[self._subplotspec.colspan].sum() / wr.sum()
+-        dy = hr[self._subplotspec.rowspan].sum() / hr.sum()
+-        x0 = wr[:self._subplotspec.colspan.start].sum() / wr.sum()
+-        y0 = 1 - hr[:self._subplotspec.rowspan.stop].sum() / hr.sum()
++
++        # Get wspace/hspace, defaulting to 0 for subfigures to preserve
++        # backward compatibility (e.g. when subplots and subfigures share
++        # a gridspec with the default wspace=None).
++        wspace = getattr(gs, 'wspace', None)
++        if wspace is None:
++            wspace = 0
++        hspace = getattr(gs, 'hspace', None)
++        if hspace is None:
++            hspace = 0
++
++        # Calculate cell positions with spacing, replicating
++        # GridSpec.get_grid_positions() but with left=0, right=1,
++        # bottom=0, top=1.
++        cell_w = 1.0 / (ncols + wspace * (ncols - 1))
++        sep_w = wspace * cell_w
++        norm = cell_w * ncols / wr.sum()
++        cell_widths = wr * norm
++        sep_widths = [0] + ([sep_w] * (ncols - 1))
++        cell_ws = np.cumsum(np.column_stack([sep_widths, cell_widths]).flat)
++        fig_lefts, fig_rights = cell_ws.reshape(-1, 2).T
++
++        cell_h = 1.0 / (nrows + hspace * (nrows - 1))
++        sep_h = hspace * cell_h
++        norm = cell_h * nrows / hr.sum()
++        cell_heights = hr * norm
++        sep_heights = [0] + ([sep_h] * (nrows - 1))
++        cell_hs = np.cumsum(np.column_stack([sep_heights, cell_heights]).flat)
++        fig_tops, fig_bottoms = (1 - cell_hs).reshape(-1, 2).T
++
++        x0 = fig_lefts[self._subplotspec.colspan.start]
++        x1 = fig_rights[self._subplotspec.colspan.stop - 1]
++        y0 = fig_bottoms[self._subplotspec.rowspan.stop - 1]
++        y1 = fig_tops[self._subplotspec.rowspan.start]
++        dx = x1 - x0
++        dy = y1 - y0
++
+         if self.bbox_relative is None:
+             self.bbox_relative = Bbox.from_bounds(x0, y0, dx, dy)
+         else:

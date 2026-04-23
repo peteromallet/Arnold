@@ -1,0 +1,46 @@
+diff --git a/sympy/codegen/ast.py b/sympy/codegen/ast.py
+index a02714b174..94b9304306 100644
+--- a/sympy/codegen/ast.py
++++ b/sympy/codegen/ast.py
+@@ -895,14 +895,39 @@ class String(Token):
+ 
+     """
+     __slots__ = ('text',)
+-    not_in_args = ['text']
++    not_in_args = []
+     is_Atom = True
+ 
+     @classmethod
+     def _construct_text(cls, text):
++        from sympy.core.symbol import Str
++        if isinstance(text, Str):
++            return text
+         if not isinstance(text, str):
+             raise TypeError("Argument text is not a string type.")
+-        return text
++        return Str(text)
++
++    def __new__(cls, *args_, **kwargs):
++        from sympy.core.symbol import Str
++        # Extract the raw text value before _construct_text wraps it in Str
++        raw_text = None
++        if args_ and len(args_) <= len(cls.__slots__):
++            raw_text = args_[0]
++        elif 'text' in kwargs:
++            raw_text = kwargs['text']
++
++        obj = Token.__new__(cls, *args_, **kwargs)
++
++        # Token.__new__ stores Str(text) in both _args and the text slot.
++        # Fix the slot: replace Str with the plain string for backward compat
++        # (self.text must remain a plain str, not a Str instance).
++        if raw_text is not None:
++            if isinstance(raw_text, Str):
++                object.__setattr__(obj, 'text', raw_text.name)
++            elif isinstance(raw_text, str):
++                object.__setattr__(obj, 'text', raw_text)
++
++        return obj
+ 
+     def _sympystr(self, printer, *args, **kwargs):
+         return self.text
