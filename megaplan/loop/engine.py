@@ -23,6 +23,7 @@ from megaplan._core import (
 from megaplan.loop.git import git_commit, git_revert, parse_metric
 from megaplan.loop.prompts import build_loop_prompt
 from megaplan.loop.types import IterationResult, LoopSpec, LoopState, Observation
+from megaplan.profiles import apply_profile_expansion
 from megaplan.workers import WorkerResult, resolve_agent_mode, run_step_with_worker, update_session_state
 _DEFAULT_ALLOWED_CHANGES = ["."]
 _COMMAND_OUTPUT_LIMIT = 12000
@@ -34,6 +35,8 @@ def _state_path(project_dir: str | Path, name: str) -> Path:
     return _loop_dir(project_dir, name) / "state.json"
 def _normalized_args(args: argparse.Namespace | None) -> argparse.Namespace:
     values = vars(args).copy() if args is not None else {}
+    if "phase_model" in values:
+        values["phase_model"] = list(values["phase_model"] or [])
     normalized = argparse.Namespace(**values)
     defaults = {
         "agent": None,
@@ -492,6 +495,7 @@ def run_loop_worker(
 ) -> WorkerResult:
     ensure_runtime_layout(root)
     normalized = _normalized_args(args)
+    apply_profile_expansion(normalized, Path(state["config"]["project_dir"]))
     prompt = build_loop_prompt(
         step,
         state,

@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 import megaplan.workers as worker_module
 from megaplan.execute.core import build_monitor_hint
+from megaplan.profiles import apply_profile_expansion
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.step_edit import next_plan_artifact_name
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
@@ -150,6 +151,7 @@ def _run_worker(
     failure_iteration = state["iteration"] if iteration is None else iteration
     from megaplan import handlers as _handlers_pkg
 
+    apply_profile_expansion(args, Path(state["config"]["project_dir"]))
     agent, mode, refreshed, model = resolved or _handlers_pkg.resolve_agent_mode(step, args)
     run_id = set_active_step(state, step=step, agent=agent, mode=mode, model=model)
     _emit_phase_notice(step)

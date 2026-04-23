@@ -6,6 +6,7 @@ from typing import Any
 
 from megaplan import handlers as _pkg
 from megaplan.evaluation import build_gate_artifact, build_gate_signals, build_orchestrator_guidance, is_rubber_stamp, run_gate_checks
+from megaplan.profiles import apply_profile_expansion
 from megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, STATE_CRITIQUED, STATE_GATED, StepResponse
 from megaplan.workers import WorkerResult
 from megaplan._core import (
@@ -273,6 +274,7 @@ def _merge_resolution_tradeoffs_into_payload(gate_summary: dict[str, Any], worke
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="gate") as (plan_dir, state):
         require_state(state, "gate", {STATE_CRITIQUED})
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
         iteration = state["iteration"]
         gate_signals, signals_filename, signals_artifact = _build_gate_signals_artifact(plan_dir, state, iteration=iteration, root=root)
         resolved = _pkg.resolve_agent_mode("gate", args)

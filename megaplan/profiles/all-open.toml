@@ -1,0 +1,13 @@
+[profiles.all-open]
+plan = "hermes:meta-llama/llama-3.1-405b"
+prep = "hermes:meta-llama/llama-3.1-405b"
+critique = "hermes:qwen/qwen-2.5-72b"
+revise = "hermes:meta-llama/llama-3.1-405b"
+gate = "hermes:qwen/qwen-2.5-72b"
+finalize = "hermes:qwen/qwen-2.5-72b"
+execute = "hermes:deepseek/deepseek-v3"
+loop_plan = "hermes:meta-llama/llama-3.1-405b"
+loop_execute = "hermes:deepseek/deepseek-v3"
+review = "hermes:qwen/qwen-2.5-72b"
+tiebreaker_researcher = "hermes:qwen/qwen-2.5-72b"
+tiebreaker_challenger = "hermes:qwen/qwen-2.5-72b"

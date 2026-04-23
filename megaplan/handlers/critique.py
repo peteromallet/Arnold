@@ -13,6 +13,7 @@ from megaplan.audits.robustness import (
 )
 from megaplan.evaluation import build_gate_artifact, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
 from megaplan.parallel_critique import run_parallel_critique
+from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
     FLAG_BLOCKING_STATUSES,
     PlanState,
@@ -44,6 +45,7 @@ from .tiebreaker import _build_tiebreaker_reprompt
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="critique") as (plan_dir, state):
         require_state(state, "critique", {STATE_PLANNED})
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
         iteration = state["iteration"]
         robustness = configured_robustness(state)
         state["last_gate"] = {}
@@ -205,6 +207,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
 def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="revise") as (plan_dir, state):
         require_state(state, "revise", {STATE_CRITIQUED})
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
         has_gate, revise_transition = _resolve_revise_transition(state)
         previous_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
         worker, agent, mode, refreshed = _pkg._run_worker(

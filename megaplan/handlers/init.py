@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan.doc_assembly import extract_settled_decisions
+from megaplan.profiles import apply_profile_expansion
 from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse
 from megaplan._core import (
     append_history,
@@ -27,6 +28,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists() or not project_dir.is_dir():
         raise CliError("invalid_project_dir", f"Project directory does not exist: {project_dir}")
+    apply_profile_expansion(args, project_dir)
     positional_idea = getattr(args, "idea", None)
     idea_file = getattr(args, "idea_file", None)
     if positional_idea and idea_file:
@@ -123,6 +125,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         },
         "last_gate": {},
     }
+    if getattr(args, "profile", None):
+        state["config"]["profile"] = args.profile
     if normalized_output_path is not None:
         state["config"]["output_path"] = normalized_output_path
     if normalized_primary_criterion is not None:
