@@ -101,7 +101,7 @@ class HistoryEntry(TypedDict, total=False):
     raw_output_file: str
     message: str
     flags_count: int
-    flags_addressed: list[str]
+    flags_addressed: list[Any]
     recommendation: str
     approval_mode: str
     environment: dict[str, bool]

@@ -69,6 +69,7 @@ _EXECUTE_DOC_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     Requirements:
     - You are an author, not a coder. Your deliverable is document text, not code changes.
     - Write each assigned section to the configured output path. This is the only file you should create or modify.
+    - The configured output path shown above under "Output path" is AUTHORITATIVE. If the plan's per-step instructions name a different filename (for example, a kebab-cased variant of the title), ignore that filename and write to the configured output path instead. Report the discrepancy in `executor_notes` so the plan can be corrected, but do not write to the alternate path.
     - Adapt if the document structure needs adjustment — report deviations explicitly.
     - Do not over-engineer beyond what the plan prescribes.
     - Output concrete sections written per task. `sections_written` means section IDs you authored — not sections you read or referenced.

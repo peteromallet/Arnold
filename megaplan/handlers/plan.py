@@ -4,13 +4,13 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED, StepResponse
+from megaplan import handlers as _pkg
+from megaplan.types import CliError, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED, StepResponse
 from megaplan._core import load_plan_locked, require_state
 
 from .shared import (
     _finish_step,
     _merge_imported_decision_criteria,
-    _run_worker,
     _write_json_artifact,
     _write_plan_version,
 )
@@ -18,9 +18,21 @@ from .shared import (
 def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="plan") as (plan_dir, state):
         require_state(state, "plan", {STATE_INITIALIZED, STATE_PREPPED, STATE_PLANNED})
+        if state["config"].get("mode") == "joke" and not state["config"].get("primary_criterion"):
+            raise CliError(
+                "invalid_state",
+                "joke mode requires a primary_criterion — declare via --primary-criterion or in the prep brief",
+            )
         rerun = state["current_state"] == STATE_PLANNED
         version = state["iteration"] if rerun else state["iteration"] + 1
-        worker, agent, mode, refreshed = _run_worker("plan", state, plan_dir, args, root=root, iteration=version)
+        worker, agent, mode, refreshed = _pkg._run_worker(
+            "plan",
+            state,
+            plan_dir,
+            args,
+            root=root,
+            iteration=version,
+        )
         payload = worker.payload
         payload["success_criteria"] = _merge_imported_decision_criteria(
             state,
@@ -66,9 +78,13 @@ def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
 def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="prep") as (plan_dir, state):
         require_state(state, "prep", {STATE_INITIALIZED})
-        worker, agent, mode, refreshed = _run_worker("prep", state, plan_dir, args, root=root)
+        worker, agent, mode, refreshed = _pkg._run_worker("prep", state, plan_dir, args, root=root)
         prep_filename = "prep.json"
         artifact_hash = _write_json_artifact(plan_dir, prep_filename, worker.payload)
+        if state["config"].get("mode") == "joke" and not state["config"].get("primary_criterion"):
+            primary_criterion = worker.payload.get("primary_criterion")
+            if isinstance(primary_criterion, str) and primary_criterion.strip():
+                state["config"]["primary_criterion"] = primary_criterion.strip()
         code_refs = len(worker.payload.get("relevant_code", []))
         test_refs = len(worker.payload.get("test_expectations", []))
         state["current_state"] = STATE_PREPPED

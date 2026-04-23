@@ -46,7 +46,7 @@ def _reset_timeout_invalid_tasks(
     mode: str = "code",
 ) -> list[str]:
     reset_reasons: dict[str, list[str]] = {}
-    if mode == "doc":
+    if mode in {"doc", "joke"}:
         missing_task_ids = _check_done_task_evidence(
             finalize_data.get("tasks", []),
             issues=issues,
@@ -67,14 +67,14 @@ def _reset_timeout_invalid_tasks(
             advisory_message="Advisory: done tasks rely on commands_run without files_changed during timeout recovery: ",
         )
     for task_id in missing_task_ids:
-        if mode == "doc":
+        if mode in {"doc", "joke"}:
             reset_reasons.setdefault(task_id, []).append("missing sections_written")
         else:
             reset_reasons.setdefault(task_id, []).append(
                 "missing both files_changed and commands_run"
             )
 
-    if mode != "doc" and not execution_audit.get("skipped"):
+    if mode not in {"doc", "joke"} and not execution_audit.get("skipped"):
         files_in_diff = {
             _normalize_execute_claimed_path(path)
             for path in execution_audit.get("files_in_diff", [])
@@ -135,7 +135,7 @@ def _merge_timeout_checkpoint(
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     }
-    if mode == "doc":
+    if mode in {"doc", "joke"}:
         required_fields = ("task_id", "status", "executor_notes", "sections_written")
         merge_fields = ("status", "executor_notes", "sections_written")
         array_fields = ("sections_written",)
@@ -294,7 +294,7 @@ def _recover_execute_timeout(
     completed_tasks = [
         task for task in tasks if task.get("status") in {"done", "skipped"}
     ]
-    if plan_mode == "doc":
+    if plan_mode in {"doc", "joke"}:
         files_changed = sorted(
             {
                 section

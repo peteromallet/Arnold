@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from megaplan.audits.robustness import checks_for_robustness
+from megaplan.audits.robustness import checks_for_robustness, joke_checks_for_robustness
 from megaplan._core import (
     configured_robustness,
     intent_and_notes_block,
@@ -296,7 +296,12 @@ def write_single_check_template(
 
 def _critique_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
     context = _critique_context(state, plan_dir, root)
-    active_checks = checks_for_robustness(context["robustness"])
+    mode = state["config"].get("mode", "code")
+    active_checks = (
+        joke_checks_for_robustness(context["robustness"])
+        if mode == "joke"
+        else checks_for_robustness(context["robustness"])
+    )
     # Write the template file — this is both the guide and the output
     output_path = _write_critique_template(plan_dir, state, active_checks)
     iteration = state.get("iteration", 1)

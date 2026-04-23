@@ -82,7 +82,7 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
     if not isinstance(settled_decisions, list):
         settled_decisions = []
     plan_mode = state["config"].get("mode", "code")
-    if plan_mode == "doc":
+    if plan_mode in {"doc", "joke"}:
         output_path = Path(state["config"]["output_path"])
         if not output_path.is_absolute():
             output_path = project_dir / output_path

@@ -46,7 +46,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         require_state(state, "execute", {STATE_FINALIZED})
         plan_mode = state["config"].get("mode", "code")
-        if plan_mode != "doc" and not args.confirm_destructive:
+        if plan_mode not in {"doc", "joke"} and not args.confirm_destructive:
             raise CliError("missing_confirmation", "Execute requires --confirm-destructive")
         auto_approve = bool(state["config"].get("auto_approve", False))
         if getattr(args, "user_approved", False):
@@ -95,7 +95,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             save_state(plan_dir, state)
             raise
         clear_active_step(state, run_id=run_id)
-        if plan_mode == "doc" and response.get("state") == STATE_EXECUTED:
+        if plan_mode in {"doc", "joke"} and response.get("state") == STATE_EXECUTED:
             from megaplan.doc_assembly import assemble_doc
             output_path = Path(state["config"]["project_dir"]) / state["config"]["output_path"]
             finalize_data = read_json(plan_dir / "finalize.json")

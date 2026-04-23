@@ -253,7 +253,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
         robustness = configured_robustness(state)
         plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []
-        if robustness in {"standard", "robust", "superrobust"} and plan_mode != "doc":
+        if robustness in {"standard", "robust", "superrobust"} and plan_mode not in {"doc", "joke"}:
             pre_check_flags = _pkg.run_pre_checks(plan_dir, state, Path(state["config"]["project_dir"]))
         if robustness in {"standard", "light", "robust"}:
             resolved = None

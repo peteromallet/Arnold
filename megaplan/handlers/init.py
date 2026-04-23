@@ -45,21 +45,29 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         raise CliError("invalid_args", "Provide an idea argument or --idea-file <path>")
     explicit_mode = getattr(args, "mode", None)
     raw_output_path = getattr(args, "output", None)
+    raw_primary_criterion = getattr(args, "primary_criterion", None)
     mode = explicit_mode or "code"
     if mode == "metaplan":
         mode = "doc"
+    if raw_primary_criterion and mode != "joke":
+        raise CliError("invalid_args", "--primary-criterion is only valid with --mode joke")
 
     if mode == "code" and raw_output_path:
         raise CliError(
             "invalid_args",
-            "--output is only valid with --mode doc. For code-mode runs, remove "
-            "--output; for design-document runs, also pass --mode doc.",
+            "--output is only valid with --mode doc or --mode joke. For code-mode runs, remove "
+            "--output; for prose artifact runs, also pass --mode doc or --mode joke.",
         )
     normalized_output_path: str | None = None
-    if mode == "doc" and not raw_output_path:
-        raise CliError("invalid_args", "--output is required when --mode doc is selected")
+    if mode in {"doc", "joke"} and not raw_output_path:
+        raise CliError("invalid_args", f"--output is required when --mode {mode} is selected")
     if raw_output_path:
         normalized_output_path = _validate_relative_path(project_dir, raw_output_path, "--output")
+    normalized_primary_criterion: str | None = None
+    if raw_primary_criterion is not None:
+        normalized_primary_criterion = str(raw_primary_criterion).strip()
+        if not normalized_primary_criterion:
+            raise CliError("invalid_args", "--primary-criterion must be non-empty when provided")
     raw_from_doc = getattr(args, "from_doc", None)
     from_doc_rel: str | None = None
     imported_decisions: list[dict[str, Any]] = []
@@ -117,6 +125,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     }
     if normalized_output_path is not None:
         state["config"]["output_path"] = normalized_output_path
+    if normalized_primary_criterion is not None:
+        state["config"]["primary_criterion"] = normalized_primary_criterion
     if from_doc_rel is not None:
         state["config"]["from_doc"] = from_doc_rel
         state["meta"]["imported_decisions"] = imported_decisions

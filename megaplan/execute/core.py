@@ -147,13 +147,13 @@ def _build_aggregate_execution_payload(
     deviations: list[str] = []
     task_updates: list[dict[str, Any]] = []
     sense_check_acknowledgments: list[dict[str, Any]] = []
-    if mode == "doc":
+    if mode in {"doc", "joke"}:
         sections_written: list[str] = []
     else:
         files_changed: list[str] = []
     commands_run: list[str] = []
     for payload in batch_payloads:
-        if mode == "doc":
+        if mode in {"doc", "joke"}:
             sections_written.extend(
                 [s for s in payload.get("sections_written", []) if isinstance(s, str)]
             )
@@ -193,7 +193,7 @@ def _build_aggregate_execution_payload(
         "task_updates": task_updates,
         "sense_check_acknowledgments": sense_check_acknowledgments,
     }
-    if mode == "doc":
+    if mode in {"doc", "joke"}:
         result["sections_written"] = _stable_unique_strings(sections_written)
     else:
         result["files_changed"] = _stable_unique_strings(files_changed)
@@ -292,7 +292,7 @@ def _merge_batch_results(
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     }
-    if mode == "doc":
+    if mode in {"doc", "joke"}:
         required_fields = ("task_id", "status", "executor_notes", "sections_written")
         merge_fields = ("status", "executor_notes", "sections_written")
         array_fields = ("sections_written",)
@@ -385,7 +385,7 @@ def _run_and_merge_batch(
 ) -> BatchResult:
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
-    if plan_mode == "doc":
+    if plan_mode in {"doc", "joke"}:
         before_snapshot: dict[str, str] = {}
         before_error: str | None = None
         before_line_counts: dict[str, int] = {}
@@ -404,7 +404,7 @@ def _run_and_merge_batch(
     payload = dict(worker.payload)
     deviations = list(payload.get("deviations", []))
     batch_task_id_set = set(batch_task_ids)
-    if plan_mode != "doc":
+    if plan_mode not in {"doc", "joke"}:
         deviations.extend(
             _observe_git_changes(
                 project_dir=project_dir,
@@ -435,7 +435,7 @@ def _run_and_merge_batch(
             mode=plan_mode,
         )
     )
-    if plan_mode == "doc":
+    if plan_mode in {"doc", "joke"}:
         missing_task_evidence = _check_done_task_evidence(
             finalize_data.get("tasks", []),
             issues=deviations,
@@ -760,13 +760,23 @@ def handle_execute_auto_loop(
         for task in tasks
         if task.get("status") in {"done", "skipped"} and isinstance(task.get("id"), str)
     }
+    blocked_task_ids = {
+        task["id"]
+        for task in tasks
+        if task.get("status") == "blocked" and isinstance(task.get("id"), str)
+    }
     pending_tasks = [
         task
         for task in tasks
         if task.get("status") == "pending" and isinstance(task.get("id"), str)
     ]
+    # Treat blocked tasks as "satisfied" for batching only so pending tasks
+    # that depend on them can still be scheduled; without this, compute_task_batches
+    # raises "Unknown dependency ID" because blocked tasks are neither in the
+    # filtered pending list nor in completed. The actual blockage is surfaced
+    # to supervisors via warnings below.
     pending_batches = compute_task_batches(
-        pending_tasks, completed_ids=completed_task_ids
+        pending_tasks, completed_ids=completed_task_ids | blocked_task_ids
     )
     single_batch_mode = len(pending_batches) <= 1
     global_batches = compute_global_batches(finalize_data)
@@ -937,6 +947,12 @@ def handle_execute_auto_loop(
         deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
     for finding in execution_audit["findings"]:
         deviations.append(f"Advisory audit finding: {finding}")
+    if blocked_task_ids:
+        deviations.append(
+            f"Pre-existing blocked tasks treated as satisfied for scheduling: "
+            f"{sorted(blocked_task_ids)}. Downstream tasks ran assuming the blocked "
+            f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
+        )
     aggregate_payload["deviations"] = deviations
     atomic_write_json(plan_dir / "execution.json", aggregate_payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
@@ -953,7 +969,7 @@ def handle_execute_auto_loop(
             active_sense_check_ids=active_sense_check_ids,
         )
     )
-    if plan_mode == "doc":
+    if plan_mode in {"doc", "joke"}:
         missing_task_evidence = _check_done_task_evidence(
             finalize_data.get("tasks", []),
             issues=deviations,

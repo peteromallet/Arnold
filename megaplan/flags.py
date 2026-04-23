@@ -175,14 +175,26 @@ def update_flags_after_review(plan_dir: Path, review_payload: dict[str, Any], *,
 
 def update_flags_after_revise(
     plan_dir: Path,
-    flags_addressed: list[str],
+    flags_addressed: list[Any],
     *,
     plan_file: str,
     summary: str,
 ) -> FlagRegistry:
+    addressed_ids: set[str] = set()
+    for item in flags_addressed:
+        if isinstance(item, str) and item:
+            addressed_ids.add(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        flag_id = item.get("id")
+        resolution = item.get("resolution", "addressed")
+        if isinstance(flag_id, str) and flag_id and resolution != "rejected":
+            addressed_ids.add(flag_id)
+
     registry = load_flag_registry(plan_dir)
     for flag in registry["flags"]:
-        if flag["id"] in flags_addressed:
+        if flag["id"] in addressed_ids:
             flag["status"] = "addressed"
             flag["addressed_in"] = plan_file
             flag["evidence"] = summary

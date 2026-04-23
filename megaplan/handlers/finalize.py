@@ -203,7 +203,7 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
     }
 
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
-    if state["config"].get("mode") == "doc":
+    if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
         payload["baseline_test_command"] = None
         payload["baseline_test_note"] = "Test baseline not applicable in doc mode."

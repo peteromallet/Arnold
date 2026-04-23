@@ -88,6 +88,29 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
     from_doc = state["config"].get("from_doc")
     imported_decisions = state["meta"].get("imported_decisions", [])
     clarification = state.get("clarification", {})
+    mode = state["config"].get("mode", "code")
+    output_path = state["config"].get("output_path")
+    primary_criterion = state["config"].get("primary_criterion", "[missing primary criterion]")
+    if mode == "doc" and output_path:
+        output_path_block = textwrap.dedent(
+            f"""
+            Doc-mode output contract (LOAD-BEARING):
+            The final document artifact for this run MUST be written to exactly this path:
+              {output_path}
+            Every plan step that authors, edits, or verifies document sections MUST reference this exact path. Do NOT invent an alternate filename based on the document title or a kebab-case normalization. The executor will only write to the path above; any step instructing it to write elsewhere will produce a file that review cannot verify.
+            """
+        ).strip()
+    elif mode == "joke" and output_path:
+        output_path_block = textwrap.dedent(
+            f"""
+            Joke-mode output contract (LOAD-BEARING):
+            Produce a scene canvas (`premise`, `tone_anchor`, `characters`, `objective`, `obstacle`, `turn`, `button`), not a task list.
+            The final artifact written to `{output_path}` MUST be scene prose (screenplay-style OR short story per the brief).
+            The primary criterion for this scene is **{primary_criterion}** — every design choice must serve it.
+            """
+        ).strip()
+    else:
+        output_path_block = ""
     if clarification:
         clarification_block = textwrap.dedent(
             f"""
@@ -141,6 +164,8 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
 
         Project directory:
         {project_dir}
+
+        {output_path_block}
 
         {prior_doc_block}
 

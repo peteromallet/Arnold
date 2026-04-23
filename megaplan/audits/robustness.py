@@ -118,6 +118,73 @@ CRITIQUE_CHECKS: Final[tuple[CritiqueCheckSpec, ...]] = (
     },
 )
 
+
+def _joke_check(check_id: str, lens_quality: str, persona_guidance: str) -> CritiqueCheckSpec:
+    return {
+        "id": check_id,
+        "question": (
+            f"What is the most {lens_quality} move this scene could make while still "
+            "serving the declared primary criterion?"
+        ),
+        "guidance": (
+            f"{persona_guidance} Propose and commit to ONE FLAG with a concrete named "
+            "proposal (specific beat, line, prop, reveal, turn, or button). Do not hedge, "
+            "do not offer multiple alternatives, and do not write 'consider'."
+        ),
+        "category": "generative",
+        "default_severity": "likely-minor",
+        "tier": "core",
+    }
+
+
+JOKE_CRITIQUE_CHECKS: Final[tuple[CritiqueCheckSpec, ...]] = (
+    _joke_check(
+        "absurdist",
+        "absurdist",
+        "You are the absurdist lens: push the scene into boldly illogical but still playable behavior.",
+    ),
+    _joke_check(
+        "twist_ending",
+        "twist-ending",
+        "You are the twist-ending lens: force a late reveal or reversal that recontextualizes the scene's final beat.",
+    ),
+    _joke_check(
+        "hyper_specific_detail",
+        "hyper-specific-detail",
+        "You are the hyper-specific-detail lens: make the comedy land through oddly precise, concrete particulars.",
+    ),
+    _joke_check(
+        "genre_swap",
+        "genre-swap",
+        "You are the genre-swap lens: make the scene suddenly obey the logic, tone, or stakes of a different genre.",
+    ),
+    _joke_check(
+        "subtext_inversion",
+        "subtext-inversion",
+        "You are the subtext-inversion lens: flip what the scene is secretly about without changing the surface action.",
+    ),
+    _joke_check(
+        "prop_as_character",
+        "prop-as-character",
+        "You are the prop-as-character lens: turn an object into an active comic presence with intention or status.",
+    ),
+    _joke_check(
+        "bathos",
+        "bathos",
+        "You are the bathos lens: crash lofty emotion, stakes, or rhetoric into something humiliatingly mundane.",
+    ),
+    _joke_check(
+        "scale_shift",
+        "scale-shift",
+        "You are the scale-shift lens: distort the scene by making the stakes or framing wildly too big or too small.",
+    ),
+    _joke_check(
+        "narrator_reveal",
+        "narrator_reveal",
+        "You are the narrator-reveal lens: add a telling frame, hidden storyteller, or point-of-view reveal that snaps the scene into a stranger shape.",
+    ),
+)
+
 _CHECK_BY_ID: Final[dict[str, CritiqueCheckSpec]] = {check["id"]: check for check in CRITIQUE_CHECKS}
 _CORE_CRITIQUE_CHECKS: Final[tuple[CritiqueCheckSpec, ...]] = tuple(
     check for check in CRITIQUE_CHECKS if check["tier"] == "core"
@@ -142,6 +209,12 @@ def checks_for_robustness(robustness: str) -> tuple[CritiqueCheckSpec, ...]:
     if robustness in {"light", "tiny"}:
         return ()
     return _CORE_CRITIQUE_CHECKS
+
+
+def joke_checks_for_robustness(robustness: str) -> tuple[CritiqueCheckSpec, ...]:
+    if robustness == "tiny":
+        return ()
+    return JOKE_CRITIQUE_CHECKS
 
 
 def build_empty_template(checks: tuple[CritiqueCheckSpec, ...] | None = None) -> list[dict[str, Any]]:
@@ -226,11 +299,13 @@ def validate_critique_checks(
 
 __all__ = [
     "CRITIQUE_CHECKS",
+    "JOKE_CRITIQUE_CHECKS",
     "VALID_SEVERITY_HINTS",
     "build_check_category_map",
     "build_empty_template",
     "checks_for_robustness",
     "get_check_by_id",
     "get_check_ids",
+    "joke_checks_for_robustness",
     "validate_critique_checks",
 ]
