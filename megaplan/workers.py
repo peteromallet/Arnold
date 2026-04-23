@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import textwrap
 import time
@@ -130,21 +131,30 @@ def resolve_work_dir(state: PlanState) -> Path:
     """Return the source-code working directory for worker subprocesses.
 
     Precedence:
-    1. Explicit override set via :func:`set_work_dir_override`.
-    2. Current working directory (``Path.cwd()``).
+    1. Explicit override set via :func:`set_work_dir_override` (e.g. from the
+       CLI ``--work-dir`` flag).
+    2. The plan's stored ``project_dir`` (persisted at ``megaplan init``).
+    3. Current working directory (``Path.cwd()``) as a last-resort fallback
+       when the plan has no ``project_dir`` recorded.
 
     If the resolved path differs from the plan's stored ``project_dir``, a
-    one-time warning is printed so operators notice worktree divergence.
+    one-time informational line is printed so operators notice worktree
+    divergence. (Callers that want a visually-loud operator warning should
+    invoke :func:`warn_if_work_dir_differs_from_project_dir` from the phase
+    entry point — this function keeps the log terse because it fires on every
+    worker invocation.)
     """
     global _WORK_DIR_WARNED
-    if _WORK_DIR_OVERRIDE is not None:
-        work_dir = _WORK_DIR_OVERRIDE
-    else:
-        work_dir = Path.cwd()
     try:
         project_dir = Path(state["config"]["project_dir"]).resolve()
     except Exception:
         project_dir = None
+    if _WORK_DIR_OVERRIDE is not None:
+        work_dir = _WORK_DIR_OVERRIDE
+    elif project_dir is not None:
+        work_dir = project_dir
+    else:
+        work_dir = Path.cwd()
     try:
         resolved_work = work_dir.resolve()
     except Exception:
@@ -155,12 +165,53 @@ def resolve_work_dir(state: PlanState) -> Path:
         and resolved_work != project_dir
     ):
         print(
-            f"[megaplan] Plan was created in {project_dir}; current run is in "
-            f"{resolved_work}. Using current CWD for subprocess --add-dir.",
+            f"[megaplan] Using plan's project_dir ({project_dir}) for "
+            f"subprocess --add-dir. Override with --work-dir if needed.",
             flush=True,
         )
         _WORK_DIR_WARNED = True
     return work_dir
+
+
+def warn_if_work_dir_differs_from_project_dir(state: PlanState) -> None:
+    """Emit a visible WARNING if the resolved work_dir is narrower than the
+    plan's stored ``project_dir``.
+
+    Intended to be called at the top of any phase that spawns sandboxed
+    subprocess workers (execute, review, etc.). The warning alerts the
+    operator that codex will be sandboxed to a subset of the project tree,
+    which silently breaks writes to sibling subrepos.
+    """
+    try:
+        project_dir = Path(state["config"]["project_dir"]).resolve()
+    except Exception:
+        return
+    work_dir = resolve_work_dir(state)
+    try:
+        resolved_work = work_dir.resolve()
+    except Exception:
+        resolved_work = work_dir
+    if resolved_work == project_dir:
+        return
+    try:
+        cwd = Path.cwd().resolve()
+    except Exception:
+        cwd = Path.cwd()
+    # ANSI bold yellow + warning emoji for visual distinction. Printed to
+    # stderr so it is not swallowed by output redirection of the primary
+    # response payload.
+    prefix = "\033[1;33m" if sys.stderr.isatty() else ""
+    suffix = "\033[0m" if sys.stderr.isatty() else ""
+    message = (
+        f"{prefix}⚠️  WARNING: codex will be sandboxed to {resolved_work}, "
+        f"but the plan's project_dir is {project_dir}. File writes outside "
+        f"{resolved_work} will fail. Pass --work-dir {project_dir} or cd to "
+        f"{project_dir} to match the plan.{suffix}"
+    )
+    # CWD context helps the operator see *why* work_dir ended up narrower.
+    if cwd != project_dir and cwd != resolved_work:
+        message += f"\n[megaplan] (current shell cwd: {cwd})"
+    print(message, file=sys.stderr, flush=True)
 
 
 def run_command(
