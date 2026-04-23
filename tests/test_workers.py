@@ -1910,6 +1910,58 @@ def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
     assert Path(command[add_dir_idx]) == plan_dir
 
 
+def test_resolve_work_dir_defaults_to_project_dir_when_no_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: without --work-dir and without any override set,
+    resolve_work_dir() should return the plan's stored project_dir rather
+    than falling back to the shell's CWD. This prevents codex from being
+    sandboxed to an arbitrary subdirectory when the operator cd's around
+    between ``megaplan init`` and ``megaplan execute``.
+    """
+    from megaplan.workers import resolve_work_dir, set_work_dir_override
+
+    _plan_dir, state = _mock_state(tmp_path)
+    project_dir = Path(state["config"]["project_dir"])
+
+    # Simulate the shell being somewhere else (a child directory of the
+    # project) when execute fires. Without fix 1, resolve_work_dir would
+    # return this narrower CWD.
+    narrower_cwd = project_dir / "child-subdir"
+    narrower_cwd.mkdir()
+    monkeypatch.chdir(narrower_cwd)
+
+    set_work_dir_override(None)
+    try:
+        resolved = resolve_work_dir(state)
+    finally:
+        set_work_dir_override(None)
+
+    assert resolved == project_dir, (
+        "resolve_work_dir must default to the plan's project_dir when no "
+        f"--work-dir override is set (got {resolved})"
+    )
+
+
+def test_resolve_work_dir_explicit_override_still_wins(tmp_path: Path) -> None:
+    """Fix 1 must remain backward-compatible with --work-dir: an explicit
+    override should still beat the project_dir default.
+    """
+    from megaplan.workers import resolve_work_dir, set_work_dir_override
+
+    _plan_dir, state = _mock_state(tmp_path)
+    forced = tmp_path / "forced"
+    forced.mkdir()
+
+    set_work_dir_override(forced)
+    try:
+        resolved = resolve_work_dir(state)
+    finally:
+        set_work_dir_override(None)
+
+    assert resolved == forced
+
+
 # ---------------------------------------------------------------------------
 # Poisoned-session detection + recovery (v0.14.6)
 # ---------------------------------------------------------------------------
