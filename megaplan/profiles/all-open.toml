@@ -1,3 +1,4 @@
+# kimi-k2.6: plan/prep/revise/gate/finalize/loop_plan - glm-5.1: critique/execute/review/loop_execute/tiebreakers
 [profiles.all-open]
 plan     = "hermes:moonshotai/kimi-k2.6"
 prep     = "hermes:moonshotai/kimi-k2.6"

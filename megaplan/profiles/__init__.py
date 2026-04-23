@@ -140,17 +140,24 @@ def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
     return [f"{phase}={spec}" for phase, spec in profile.items()]
 
 
-def apply_profile_expansion(args: argparse.Namespace, project_dir: Path | None) -> argparse.Namespace:
+def apply_profile_expansion(
+    args: argparse.Namespace,
+    project_dir: Path | None,
+    state: dict | None = None,
+) -> argparse.Namespace:
     if getattr(args, "_profile_applied", False):
         return args
 
     profile_name = getattr(args, "profile", None)
+    if profile_name is None and state is not None:
+        profile_name = (state.get("config") or {}).get("profile")
     phase_models = list(getattr(args, "phase_model", None) or [])
 
     if profile_name:
         profiles = load_profiles(project_dir=project_dir)
         resolved = resolve_profile(profile_name, profiles)
         phase_models.extend(profile_to_phase_models(resolved))
+        args.profile = profile_name
 
     args.phase_model = phase_models
     args._profile_applied = True

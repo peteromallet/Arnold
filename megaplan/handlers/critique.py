@@ -45,7 +45,7 @@ from .tiebreaker import _build_tiebreaker_reprompt
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="critique") as (plan_dir, state):
         require_state(state, "critique", {STATE_PLANNED})
-        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         iteration = state["iteration"]
         robustness = configured_robustness(state)
         state["last_gate"] = {}
@@ -207,7 +207,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
 def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="revise") as (plan_dir, state):
         require_state(state, "revise", {STATE_CRITIQUED})
-        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         has_gate, revise_transition = _resolve_revise_transition(state)
         previous_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
         worker, agent, mode, refreshed = _pkg._run_worker(

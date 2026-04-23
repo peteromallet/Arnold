@@ -46,7 +46,7 @@ def _is_rework_reexecution(state: PlanState) -> bool:
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         require_state(state, "execute", {STATE_FINALIZED})
-        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         plan_mode = state["config"].get("mode", "code")
         if plan_mode not in {"doc", "joke"} and not args.confirm_destructive:
             raise CliError("missing_confirmation", "Execute requires --confirm-destructive")

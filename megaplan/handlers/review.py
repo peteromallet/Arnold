@@ -251,7 +251,7 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
 def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="review") as (plan_dir, state):
         require_state(state, "review", {STATE_EXECUTED})
-        apply_profile_expansion(args, Path(state["config"]["project_dir"]))
+        apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         robustness = configured_robustness(state)
         plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []
