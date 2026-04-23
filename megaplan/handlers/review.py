@@ -22,7 +22,11 @@ from megaplan.types import (
     STATE_FINALIZED,
     StepResponse,
 )
-from megaplan.workers import WorkerResult, validate_payload
+from megaplan.workers import (
+    WorkerResult,
+    validate_payload,
+    warn_if_work_dir_differs_from_project_dir,
+)
 from megaplan._core import (
     append_history,
     apply_session_update,
@@ -252,6 +256,10 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="review") as (plan_dir, state):
         require_state(state, "review", {STATE_EXECUTED})
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
+        # Mirror the execute-phase sandbox-divergence warning so reviewers
+        # notice when codex is pinned to a narrower tree than the plan's
+        # project_dir.
+        warn_if_work_dir_differs_from_project_dir(state)
         robustness = configured_robustness(state)
         plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []
