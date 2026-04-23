@@ -1943,6 +1943,57 @@ def test_resolve_work_dir_defaults_to_project_dir_when_no_override(
     )
 
 
+def test_warn_if_work_dir_differs_from_project_dir_prints_on_divergence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fix 2: a divergent work_dir must surface a stderr WARNING, not a
+    buried info line. The message must identify both directories and offer
+    a concrete remediation.
+    """
+    from megaplan.workers import (
+        set_work_dir_override,
+        warn_if_work_dir_differs_from_project_dir,
+    )
+
+    _plan_dir, state = _mock_state(tmp_path)
+    project_dir = Path(state["config"]["project_dir"])
+    narrower = project_dir / "subdir"
+    narrower.mkdir()
+
+    set_work_dir_override(narrower)
+    try:
+        warn_if_work_dir_differs_from_project_dir(state)
+    finally:
+        set_work_dir_override(None)
+
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert str(project_dir) in captured.err
+    assert str(narrower) in captured.err
+    assert "--work-dir" in captured.err
+
+
+def test_warn_if_work_dir_differs_from_project_dir_silent_when_matching(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from megaplan.workers import (
+        set_work_dir_override,
+        warn_if_work_dir_differs_from_project_dir,
+    )
+
+    _plan_dir, state = _mock_state(tmp_path)
+    project_dir = Path(state["config"]["project_dir"])
+
+    set_work_dir_override(project_dir)
+    try:
+        warn_if_work_dir_differs_from_project_dir(state)
+    finally:
+        set_work_dir_override(None)
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
 def test_resolve_work_dir_explicit_override_still_wins(tmp_path: Path) -> None:
     """Fix 1 must remain backward-compatible with --work-dir: an explicit
     override should still beat the project_dir default.

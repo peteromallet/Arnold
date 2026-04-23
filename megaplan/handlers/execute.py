@@ -30,7 +30,7 @@ from megaplan._core import (
     set_active_step,
     workflow_includes_step,
 )
-from megaplan.workers import validate_payload
+from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
 
 from .shared import _emit_phase_notice, attach_agent_fallback, worker_module
 
@@ -47,6 +47,11 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         require_state(state, "execute", {STATE_FINALIZED})
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
+        # Loud operator warning if the resolved sandbox root is narrower than
+        # the plan's stored project_dir. Silent divergence here cost entire
+        # execute runs in the past (codex sandboxed to a subdirectory, writes
+        # to sibling subrepos failed silently).
+        warn_if_work_dir_differs_from_project_dir(state)
         plan_mode = state["config"].get("mode", "code")
         if plan_mode not in {"doc", "joke"} and not args.confirm_destructive:
             raise CliError("missing_confirmation", "Execute requires --confirm-destructive")
