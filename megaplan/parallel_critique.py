@@ -49,8 +49,9 @@ def _run_check(
     schema: dict[str, Any],
     project_dir: Path,
 ) -> tuple[int, dict[str, Any], list[str], list[str], float]:
-    from hermes_state import SessionDB
-    from run_agent import AIAgent
+    from megaplan.hermes_worker import _import_hermes_runtime
+
+    AIAgent, SessionDB = _import_hermes_runtime()
 
     output_path = write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json")
     prompt_builder = (

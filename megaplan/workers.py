@@ -1584,13 +1584,9 @@ def run_codex_step(
 
 
 def _is_agent_available(agent: str) -> bool:
-    """Check if an agent is available (CLI binary or importable for hermes)."""
+    """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
-        try:
-            import run_agent  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        return (Path(__file__).resolve().parent / "agent" / "run_agent.py").is_file()
     return bool(shutil.which(agent))
 
 
@@ -1656,22 +1652,23 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
         # If explicitly requested (via --agent), fail immediately
         if explicit_agent and not any(pm.startswith(f"{step}=") for pm in (getattr(args, "phase_model", None) or [])):
             if agent == "hermes":
-                from megaplan.hermes_worker import check_hermes_available
-                ok, msg = check_hermes_available()
-                raise CliError("agent_not_found", msg if not ok else f"Agent '{agent}' not found")
+                raise CliError(
+                    "agent_deps_missing",
+                    "hermes backend requires: pip install 'megaplan-harness[agent]'",
+                )
             raise CliError("agent_not_found", f"Agent '{agent}' not found on PATH")
         # For hermes via --hermes flag, give a specific error
         if getattr(args, "hermes", None) is not None or agent == "hermes":
-            from megaplan.hermes_worker import check_hermes_available
-            ok, msg = check_hermes_available()
-            if not ok:
-                raise CliError("agent_not_found", msg)
+            raise CliError(
+                "agent_deps_missing",
+                "hermes backend requires: pip install 'megaplan-harness[agent]'",
+            )
         # Try fallback
         available = detect_available_agents()
         if not available:
             raise CliError(
                 "agent_not_found",
-                "No supported agents found. Install claude, codex, or hermes-agent.",
+                "No supported agents found. Install claude or codex, or pip install 'megaplan-harness[agent]' for hermes.",
             )
         fallback = available[0]
         args._agent_fallback = {

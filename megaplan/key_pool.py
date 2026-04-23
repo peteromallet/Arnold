@@ -66,7 +66,6 @@ class KeyPool:
         repo_root = Path(__file__).resolve().parents[1]
         candidates = (
             repo_root / "auto_improve" / "api_keys.json",
-            repo_root.parent / "hermes-agent" / "auto_improve" / "api_keys.json",
         )
         for path in candidates:
             if path.exists():

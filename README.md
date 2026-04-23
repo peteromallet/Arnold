@@ -20,7 +20,7 @@ OpenRouter / open models:
 ```
 Please install megaplan with the open-model backend and set it up:
 
-pip install megaplan-harness hermes-agent
+pip install 'megaplan-harness[agent]'
 
 Then create ~/.hermes/.env with:
 OPENROUTER_API_KEY=<my key>
@@ -29,6 +29,8 @@ Then run: megaplan setup
 
 Once you're done, ask me what I need megaplan for.
 ```
+
+The `[agent]` extra installs the vendored Hermes backend dependencies.
 
 Get an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys). Any model on OpenRouter works.
 

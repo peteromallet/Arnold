@@ -71,6 +71,17 @@ from megaplan.audits.capabilities import (
     union_verifies,
     validate_capabilities,
 )
+from megaplan.audits.hermes_vendoring import (
+    CONDITIONAL_RETENTION_DIRS,
+    DEAD_WEIGHT_PATTERNS,
+    JOB_B_SCOPE_FENCE_ENTRIES,
+    RUNTIME_REQUIRED_ENTRIES,
+    VendoredAgentHistoryAudit,
+    VendoredAgentTreeAudit,
+    audit_vendored_agent_history,
+    audit_vendored_agent_tree,
+    find_retention_import_sites,
+)
 
 __all__ = [
     # audit_engine
@@ -121,4 +132,14 @@ __all__ = [
     "get_worker_capabilities",
     "union_verifies",
     "validate_capabilities",
+    # hermes_vendoring
+    "CONDITIONAL_RETENTION_DIRS",
+    "DEAD_WEIGHT_PATTERNS",
+    "JOB_B_SCOPE_FENCE_ENTRIES",
+    "RUNTIME_REQUIRED_ENTRIES",
+    "VendoredAgentHistoryAudit",
+    "VendoredAgentTreeAudit",
+    "audit_vendored_agent_history",
+    "audit_vendored_agent_tree",
+    "find_retention_import_sites",
 ]
