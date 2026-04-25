@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -15,6 +16,7 @@ from megaplan._core import (
     build_next_step_runtime,
     compute_global_batches,
     compute_task_batches,
+    configured_robustness,
     get_effective,
     list_batch_artifacts,
     load_config,
@@ -23,6 +25,7 @@ from megaplan._core import (
     read_json,
     render_final_md,
     save_state,
+    save_state_merge_meta,
     sha256_file,
     store_raw_worker_output,
 )
@@ -30,6 +33,7 @@ from megaplan.evaluation import validate_execution_evidence
 from megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _check_done_task_evidence,
+    _collect_execute_claimed_paths,
     _collect_quality_deviations,
     _observe_git_changes,
 )
@@ -40,6 +44,10 @@ from megaplan.execute.timeout import (
 from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import _execute_batch_prompt
 from megaplan.audits.quality_gates import capture_before_line_counts
+from megaplan.receipts import build_receipt
+from megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
+from megaplan.receipts.extractors import execute_metrics
+from megaplan.receipts.writer import write_receipt
 from megaplan.types import (
     CliError,
     PlanState,
@@ -48,6 +56,8 @@ from megaplan.types import (
     StepResponse,
 )
 from megaplan.workers import WorkerResult
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -497,6 +507,35 @@ def _append_trace_output(plan_dir: Path, trace_output: str | None) -> bool:
     return True
 
 
+def _compute_execute_scope_drift(project_dir: Path, aggregate_payload: dict[str, Any]):
+    files_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    try:
+        observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
+    except Exception:
+        observed_snapshot = {}
+        observed_error = "snapshot unavailable"
+    files_in_diff = set(observed_snapshot.keys()) if observed_error is None else set()
+    loc_by_file = collect_loc_by_file(project_dir, files_in_diff)
+    return compute_scope_drift(
+        files_claimed=files_claimed,
+        files_in_diff=files_in_diff,
+        loc_by_file=loc_by_file,
+    )
+
+
+def _append_scope_drift_blocker(
+    blocking_reasons: list[str],
+    state: PlanState,
+    drift: Any,
+) -> None:
+    robustness = configured_robustness(state)
+    if drift.severity == "high" and robustness in {"robust", "superrobust"}:
+        blocking_reasons.append(
+            f"scope_drift_severity=high: unclaimed files {sorted(drift.files_added)} "
+            f"with {drift.loc_added_outside_claimed} LOC outside the claimed set"
+        )
+
+
 def handle_execute_one_batch(
     *,
     root: Path,
@@ -513,6 +552,7 @@ def handle_execute_one_batch(
     finalize_data = read_json(plan_dir / "finalize.json")
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
+    project_dir = Path(state["config"]["project_dir"])
     global_batches = compute_global_batches(finalize_data)
     batches_total = len(global_batches)
 
@@ -598,7 +638,6 @@ def handle_execute_one_batch(
         total_checks=result.total_sense_check_count,
         missing_task_evidence=result.missing_task_evidence,
     )
-    blocked = bool(blocking_reasons)
 
     all_tasks = finalize_data.get("tasks", [])
     is_final_batch = batch_number == batches_total
@@ -608,7 +647,10 @@ def handle_execute_one_batch(
         if isinstance(task.get("id"), str)
     )
 
-    if is_final_batch and all_tracked and not blocked:
+    aggregate_payload: dict[str, Any] | None = None
+    batch_payloads: list[dict[str, Any]] = []
+    drift = None
+    if is_final_batch and all_tracked:
         plan_mode = state["config"].get("mode", "code")
         batch_payloads = [read_json(path) for path in list_batch_artifacts(plan_dir)]
         aggregate_payload = _build_aggregate_execution_payload(
@@ -618,6 +660,11 @@ def handle_execute_one_batch(
             mode=plan_mode,
         )
         atomic_write_json(plan_dir / "execution.json", aggregate_payload)
+        drift = _compute_execute_scope_drift(project_dir, aggregate_payload)
+        _append_scope_drift_blocker(blocking_reasons, state, drift)
+
+    blocked = bool(blocking_reasons)
+    if is_final_batch and all_tracked and not blocked:
         state["current_state"] = STATE_EXECUTED
 
     user_approved_gate = bool(state["meta"].get("user_approved_gate", False))
@@ -625,17 +672,18 @@ def handle_execute_one_batch(
         auto_approve=auto_approve,
         user_approved_gate=user_approved_gate,
     )
+    result_value = (
+        "blocked"
+        if blocked
+        else "success" if (is_final_batch and all_tracked) else "partial"
+    )
     append_history(
         state,
         make_history_entry(
             "execute",
             duration_ms=result.worker.duration_ms,
             cost_usd=result.worker.cost_usd,
-            result=(
-                "blocked"
-                if blocked
-                else "success" if (is_final_batch and all_tracked) else "partial"
-            ),
+            result=result_value,
             worker=result.worker,
             agent=result.agent,
             mode=result.mode,
@@ -645,7 +693,40 @@ def handle_execute_one_batch(
             approval_mode=approval_mode,
         ),
     )
-    save_state(plan_dir, state)
+    if aggregate_payload is not None and drift is not None:
+        receipt_worker = WorkerResult(
+            payload=aggregate_payload,
+            raw_output="",
+            duration_ms=result.worker.duration_ms,
+            cost_usd=result.worker.cost_usd,
+            session_id=result.worker.session_id,
+            trace_output=result.worker.trace_output,
+            prompt_tokens=result.worker.prompt_tokens,
+            completion_tokens=result.worker.completion_tokens,
+            total_tokens=result.worker.total_tokens,
+        )
+        receipt_metrics = execute_metrics(aggregate_payload, drift)
+        receipt_metrics["batches"] = batch_payloads
+        receipt_worker.receipt_metrics = receipt_metrics
+        try:
+            artifact_hash = sha256_file(plan_dir / "execution.json")
+            receipt = build_receipt(
+                phase="execute",
+                state=state,
+                plan_dir=plan_dir,
+                args=args,
+                worker=receipt_worker,
+                agent=result.agent,
+                mode=result.mode,
+                output_file="execution.json",
+                artifact_hash=artifact_hash,
+                verdict=result_value,
+                drift=drift,
+            )
+            write_receipt(plan_dir, receipt, project_dir=project_dir)
+        except Exception:
+            log.warning("Execute receipt emission failed", exc_info=True)
+    save_state_merge_meta(plan_dir, state)
 
     batches_remaining = batches_total - batch_number
     tracking_note = _format_execute_tracking_note(
@@ -660,7 +741,7 @@ def handle_execute_one_batch(
         "finalize.json",
         "final.md",
     ]
-    if is_final_batch and all_tracked and not blocked:
+    if aggregate_payload is not None and not blocked:
         artifacts.insert(0, "execution.json")
     if trace_written:
         artifacts.append("execution_trace.jsonl")
@@ -684,6 +765,8 @@ def handle_execute_one_batch(
         )
         next_step = "execute"
         response_state = STATE_FINALIZED
+    if drift is not None and drift.severity != "none":
+        summary = f"[scope_drift={drift.severity}] {summary}"
 
     # Surface worker-reported `status=blocked` tasks prominently. Merged
     # task_updates have already been written into finalize_data; count tasks
@@ -955,6 +1038,7 @@ def handle_execute_auto_loop(
         )
     aggregate_payload["deviations"] = deviations
     atomic_write_json(plan_dir / "execution.json", aggregate_payload)
+    drift = _compute_execute_scope_drift(project_dir, aggregate_payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     atomic_write_json(plan_dir / "finalize.json", finalize_data)
     atomic_write_text(
@@ -1001,6 +1085,7 @@ def handle_execute_auto_loop(
             else None
         ),
     )
+    _append_scope_drift_blocker(blocking_reasons, state, drift)
 
     blocked = bool(blocking_reasons)
     if not blocked and timeout_error is None:
@@ -1024,6 +1109,17 @@ def handle_execute_auto_loop(
             plan_dir, "execute", state["iteration"], raw_output
         )
         message = timeout_error.message
+    receipt_worker = WorkerResult(
+        payload=aggregate_payload,
+        raw_output="",
+        duration_ms=total_duration_ms,
+        cost_usd=total_cost_usd,
+        session_id=latest_session_id,
+        trace_output="".join(trace_chunks) if trace_chunks else None,
+    )
+    receipt_metrics = execute_metrics(aggregate_payload, drift)
+    receipt_metrics["batches"] = batch_payloads
+    receipt_worker.receipt_metrics = receipt_metrics
     append_history(
         state,
         make_history_entry(
@@ -1033,14 +1129,7 @@ def handle_execute_auto_loop(
             result=result_value,
             agent=agent,
             mode=mode,
-            worker=WorkerResult(
-                payload=aggregate_payload,
-                raw_output="",
-                duration_ms=total_duration_ms,
-                cost_usd=total_cost_usd,
-                session_id=latest_session_id,
-                trace_output="".join(trace_chunks) if trace_chunks else None,
-            ),
+            worker=receipt_worker,
             output_file="execution.json",
             artifact_hash=sha256_file(plan_dir / "execution.json"),
             finalize_hash=finalize_hash,
@@ -1049,7 +1138,25 @@ def handle_execute_auto_loop(
             approval_mode=approval_mode,
         ),
     )
-    save_state(plan_dir, state)
+    try:
+        artifact_hash = sha256_file(plan_dir / "execution.json")
+        receipt = build_receipt(
+            phase="execute",
+            state=state,
+            plan_dir=plan_dir,
+            args=args,
+            worker=receipt_worker,
+            agent=agent,
+            mode=mode,
+            output_file="execution.json",
+            artifact_hash=artifact_hash,
+            verdict=result_value,
+            drift=drift,
+        )
+        write_receipt(plan_dir, receipt, project_dir=project_dir)
+    except Exception:
+        log.warning("Execute receipt emission failed", exc_info=True)
+    save_state_merge_meta(plan_dir, state)
 
     artifacts = ["execution.json", "execution_audit.json", "finalize.json", "final.md"]
     if trace_chunks:
@@ -1073,6 +1180,8 @@ def handle_execute_auto_loop(
         )
     else:
         summary = aggregate_payload["output"] + tracking_note
+    if drift.severity != "none":
+        summary = f"[scope_drift={drift.severity}] {summary}"
     response: StepResponse = {
         "success": not blocked and timeout_error is None,
         "step": "execute",

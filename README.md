@@ -124,6 +124,32 @@ megaplan cloud deploy     # upload secrets and launch the runner
 megaplan cloud bootstrap ideas/tiny.txt
 ```
 
+## Bake-off runs
+
+`megaplan bakeoff` runs the same idea through multiple profiles concurrently, one detached git worktree per profile, then archives all evaluation data while merging only the human-selected winner's code changes.
+
+```bash
+megaplan bakeoff run --idea-file ideas/cache.md --profiles standard all-open all-kimi --exp-id cache-bakeoff
+megaplan bakeoff status --exp cache-bakeoff
+megaplan bakeoff tail --exp cache-bakeoff --profile standard
+megaplan bakeoff compare --exp cache-bakeoff
+megaplan bakeoff pick --exp cache-bakeoff --profile standard --rationale "Best review result and smallest diff."
+megaplan bakeoff merge --exp cache-bakeoff
+```
+
+The comparison step is explicit and re-runnable. It writes `.megaplan/bakeoffs/<exp-id>/comparison.json` and `comparison.md`; `pick` records the final human decision; `merge` applies the winner patch to the main tree and copies every profile's audit archive. Use `resume` to relaunch only non-terminal profiles, and `abandon` to remove retained worktrees while keeping the bake-off archive:
+
+```bash
+megaplan bakeoff resume --exp cache-bakeoff
+megaplan bakeoff abandon --exp cache-bakeoff
+```
+
+Judge contract:
+
+- Omit `--judge` -> skip (no paid call).
+- `--judge auto` -> first free of `claude`/`codex`/`gpt-5` with canonical agent+model comparison.
+- `--judge <model>` -> explicit.
+
 ## Subagent mode (Claude Code / Codex)
 
 Subagent mode delegates the full workflow to an autonomous agent and returns control only at defined breakpoints. It is the default orchestration mode for Claude Code and Codex; Cursor continues to run inline.

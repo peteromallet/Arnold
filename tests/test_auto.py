@@ -7,6 +7,7 @@ artifacts indicate real forward progress.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from megaplan import auto
-from megaplan.auto import drive
+from megaplan.auto import DriverOutcome, drive
 
 
 def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
@@ -223,3 +224,62 @@ def test_run_megaplan_uses_module_launcher(tmp_path: Path) -> None:
         "--plan",
         "demo",
     ]
+
+
+def _auto_args(plan: str, outcome_file: str | None = None) -> argparse.Namespace:
+    return argparse.Namespace(
+        plan=plan,
+        stall_threshold=1,
+        max_iterations=1,
+        max_review_rework_cycles=1,
+        on_escalate="force-proceed",
+        poll_sleep=0,
+        phase_timeout=1,
+        status_timeout=1,
+        outcome_file=outcome_file,
+    )
+
+
+def test_run_auto_writes_outcome_file_matching_stdout(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = DriverOutcome(
+        status="done",
+        plan="demo",
+        final_state="done",
+        iterations=2,
+        reason="complete",
+        last_phase="review",
+        events=[{"msg": "finished"}],
+    )
+    outcome_path = tmp_path / "nested" / "outcome.json"
+
+    with patch.object(auto, "drive", return_value=outcome):
+        rc = auto.run_auto(tmp_path, _auto_args("demo", str(outcome_path)))
+
+    stdout = capsys.readouterr().out
+    outcome_json = outcome.to_json()
+    assert rc == 0
+    assert outcome_path.read_text(encoding="utf-8") == outcome_json
+    assert stdout == outcome_json + "\n"
+
+
+def test_run_auto_without_outcome_file_preserves_stdout_only_behavior(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = DriverOutcome(
+        status="stalled",
+        plan="demo",
+        final_state="finalized",
+        iterations=3,
+        reason="stalled",
+    )
+
+    with patch.object(auto, "drive", return_value=outcome):
+        rc = auto.run_auto(tmp_path, _auto_args("demo"))
+
+    stdout = capsys.readouterr().out
+    assert rc == 2
+    assert stdout == outcome.to_json() + "\n"

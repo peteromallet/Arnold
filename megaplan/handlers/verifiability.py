@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan.types import CliError, STATE_AWAITING_HUMAN, STATE_DONE, StepResponse
-from megaplan._core import atomic_write_json, latest_plan_meta_path, load_plan, now_utc, read_json, save_state
+from megaplan._core import atomic_write_json, latest_plan_meta_path, load_plan, now_utc, read_json, save_state_merge_meta
 
 def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
     from megaplan._core import plans_root, resolve_plan_dir
@@ -72,7 +72,9 @@ def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
     all_verified = deferred_must_idxs <= verified_idxs
     if all_verified:
         state["current_state"] = STATE_DONE
-        save_state(plan_dir, state)
+        # ``verify-human`` uses ``load_plan`` (no lock); merge meta to avoid
+        # clobbering concurrent override appends.
+        save_state_merge_meta(plan_dir, state)
         summary = "All deferred must criteria verified. Plan transitioned to done."
     else:
         remaining = deferred_must_idxs - verified_idxs

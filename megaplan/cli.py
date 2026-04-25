@@ -78,6 +78,9 @@ from megaplan.step_edit import handle_step
 
 
 def render_response(response: StepResponse, *, exit_code: int = 0) -> int:
+    if isinstance(response, str):
+        print(response, end="")
+        return exit_code
     print(json_dump(response), end="")
     return exit_code
 
@@ -373,6 +376,10 @@ def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
 
 
 def handle_audit(root: Path, args: argparse.Namespace) -> StepResponse:
+    if getattr(args, "audit_action", None) == "query":
+        from megaplan.receipts.query import handle_audit_query
+
+        return handle_audit_query(root, args)
     plan_dir, state = load_plan(root, args.plan)
     return {
         "success": True,
@@ -924,12 +931,24 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--summary", action="store_true",
                              help="Show count breakdown by state")
 
-    for name in ["status", "audit", "progress", "watch"]:
+    for name in ["status", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
         step_parser.add_argument("--plan")
         if name == "status":
             step_parser.add_argument("--pending-human", action="store_true",
                                      help="List plans awaiting human verification")
+
+    audit_parser = subparsers.add_parser("audit")
+    audit_parser.add_argument("--plan")
+    audit_sub = audit_parser.add_subparsers(dest="audit_action", required=False)
+    audit_query_parser = audit_sub.add_parser("query", help="Query step receipts across plans")
+    audit_query_parser.add_argument("--model")
+    audit_query_parser.add_argument("--phase")
+    audit_query_parser.add_argument("--profile")
+    audit_query_parser.add_argument("--since")
+    audit_query_parser.add_argument("--agg", default="")
+    audit_query_parser.add_argument("--json", action="store_true")
+    audit_query_parser.add_argument("--audit-dir", default=None)
 
     for name in ["plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"]:
         step_parser = subparsers.add_parser(name)
@@ -1086,6 +1105,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cloud_parser.add_argument("cloud_args", nargs=argparse.REMAINDER)
 
+    bakeoff_parser = subparsers.add_parser(
+        "bakeoff",
+        add_help=False,
+        help="Run concurrent multi-profile bake-offs",
+    )
+    bakeoff_parser.add_argument("bakeoff_args", nargs=argparse.REMAINDER)
+
     from megaplan.prompts.tiebreaker_orchestrator import build_tiebreaker_parser
     build_tiebreaker_parser(subparsers)
 
@@ -1203,6 +1229,18 @@ def main(argv: list[str] | None = None) -> int:
         ensure_runtime_layout(root)
         try:
             return run_cloud_cli(root, cloud_args)
+        except CliError as error:
+            return error_response(error, root=root)
+    if argv and argv[0] == "bakeoff":
+        from megaplan.bakeoff.cli import _register_bakeoff_subcommands, run_bakeoff_cli
+
+        bakeoff_parser = argparse.ArgumentParser(prog="megaplan bakeoff")
+        _register_bakeoff_subcommands(bakeoff_parser)
+        bakeoff_args = bakeoff_parser.parse_args(argv[1:])
+        root = _find_megaplan_root(Path.cwd())
+        ensure_runtime_layout(root)
+        try:
+            return run_bakeoff_cli(root, bakeoff_args)
         except CliError as error:
             return error_response(error, root=root)
 

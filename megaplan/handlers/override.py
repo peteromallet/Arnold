@@ -30,6 +30,7 @@ from megaplan._core import (
     now_utc,
     save_debt_registry,
     save_state,
+    save_state_merge_meta,
     unresolved_significant_flags,
     workflow_next,
 )
@@ -41,7 +42,9 @@ def _override_add_note(root: Path, plan_dir: Path, state: PlanState, args: argpa
     note = args.note
     _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": note})
     _append_to_meta(state, "overrides", {"action": "add-note", "timestamp": now_utc(), "note": note})
-    save_state(plan_dir, state)
+    # Merge so a phase that saves between our load and write doesn't clobber
+    # this note (and so we don't clobber any concurrent-override appends).
+    save_state_merge_meta(plan_dir, state)
     next_steps = infer_next_steps(state)
     response: StepResponse = {
         "success": True,
@@ -56,7 +59,7 @@ def _override_add_note(root: Path, plan_dir: Path, state: PlanState, args: argpa
 def _override_abort(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
     state["current_state"] = STATE_ABORTED
     _append_to_meta(state, "overrides", {"action": "abort", "timestamp": now_utc(), "reason": args.reason})
-    save_state(plan_dir, state)
+    save_state_merge_meta(plan_dir, state)
     return {
         "success": True,
         "step": "override",
@@ -70,7 +73,7 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
         # Force-proceed from review loop: mark as done despite review issues
         _append_to_meta(state, "overrides", {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason})
         state["current_state"] = STATE_DONE
-        save_state(plan_dir, state)
+        save_state_merge_meta(plan_dir, state)
         return {
             "success": True,
             "step": "override",
@@ -124,7 +127,7 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
     state["meta"].pop("user_approved_gate", None)
     state["last_gate"] = {}
     _append_to_meta(state, "overrides", {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason})
-    save_state(plan_dir, state)
+    save_state_merge_meta(plan_dir, state)
     response: StepResponse = {
         "success": True,
         "step": "override",
@@ -152,7 +155,7 @@ def _override_replan(root: Path, plan_dir: Path, state: PlanState, args: argpars
     _append_to_meta(state, "overrides", {"action": "replan", "timestamp": now_utc(), "reason": reason})
     if args.note:
         _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": args.note})
-    save_state(plan_dir, state)
+    save_state_merge_meta(plan_dir, state)
     next_steps = workflow_next(state)
     response: StepResponse = {
         "success": True,
@@ -191,7 +194,7 @@ def _override_set_robustness(root: Path, plan_dir: Path, state: PlanState, args:
             "reason": args.reason,
         },
     )
-    save_state(plan_dir, state)
+    save_state_merge_meta(plan_dir, state)
     next_steps = infer_next_steps(state)
     summary = (
         f"Robustness unchanged at '{new_level}'."

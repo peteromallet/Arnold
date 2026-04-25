@@ -45,7 +45,12 @@ from megaplan._core import (
     read_json,
     schemas_root,
 )
-from megaplan.prompts import create_claude_prompt, create_codex_prompt
+from megaplan.prompts import (
+    create_claude_prompt,
+    create_codex_prompt,
+    create_hermes_prompt,
+    _resolve_prompt_root,
+)
 
 
 _EXECUTE_STEPS = {"execute", "loop_execute"}
@@ -93,6 +98,8 @@ class WorkerResult:
     cost_usd: float
     session_id: str | None = None
     trace_output: str | None = None
+    rendered_prompt: str | None = None
+    model_actual: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -329,12 +336,9 @@ def _codex_timeout_for_step(step: str) -> int:
 
 
 def _codex_exec_mode_flags(step: str) -> list[str]:
-    if step in _EXECUTE_STEPS or step in _CODEX_TEMPLATE_WRITE_STEPS:
-        # In trusted-container mode we pass --dangerously-bypass-approvals-and-sandbox
-        # elsewhere in the invocation, and Codex rejects the combination of
-        # --full-auto + --dangerously-bypass-approvals-and-sandbox (they both
-        # configure approval/sandbox and conflict). Skip --full-auto here;
-        # the bypass flag already grants the auto-approval behavior needed.
+    if step in _CODEX_TEMPLATE_WRITE_STEPS:
+        return ["--full-auto"]
+    if step in _EXECUTE_STEPS:
         if _trusted_container():
             return []
         return ["--full-auto"]
@@ -1207,8 +1211,23 @@ def mock_worker_output(
     if handler is None:
         raise CliError("unsupported_step", f"Mock worker does not support '{step}'")
     if step in _EXECUTE_STEPS:
-        return handler(state, plan_dir, prompt_override=prompt_override)
-    return handler(state, plan_dir)
+        result = handler(state, plan_dir, prompt_override=prompt_override)
+    else:
+        result = handler(state, plan_dir)
+    try:
+        root = _resolve_prompt_root(plan_dir, None)
+        side_effect_paths = (
+            plan_dir / "critique_output.json",
+            plan_dir / "review_output.json",
+        )
+        preexisting_paths = {path for path in side_effect_paths if path.exists()}
+        result.rendered_prompt = create_hermes_prompt(step, state, plan_dir, root=root)
+        for path in side_effect_paths:
+            if path.exists() and path not in preexisting_paths:
+                path.unlink()
+    except Exception:
+        result.rendered_prompt = prompt_override
+    return result
 
 
 def session_key_for(step: str, agent: str, model: str | None = None) -> str:
@@ -1352,6 +1371,7 @@ def run_claude_step(
         duration_ms=result.duration_ms,
         cost_usd=float(envelope.get("total_cost_usd", 0.0) or 0.0),
         session_id=str(envelope.get("session_id") or session_id),
+        rendered_prompt=prompt,
     )
 
 
@@ -1412,7 +1432,7 @@ def run_codex_step(
             "--add-dir",
             str(plan_dir),
         ]
-        if _trusted_container():
+        if _trusted_container() and step in _EXECUTE_STEPS:
             # In a trusted container the surrounding runtime is the sandbox.
             # Skip the workspace-write sandbox (which requires user namespaces
             # that most container runtimes don't grant) and let Codex run
@@ -1520,6 +1540,7 @@ def run_codex_step(
                     cost_usd=0.0,
                     session_id=timeout_session_id,
                     trace_output=str(error.extra.get("raw_output", "")) if json_trace else None,
+                    rendered_prompt=prompt,
                 )
             timeout_session_id = session.get("id") if persistent else None
             if timeout_session_id is None:
@@ -1631,6 +1652,7 @@ def run_codex_step(
         cost_usd=0.0,
         session_id=session_id,
         trace_output=trace_output,
+        rendered_prompt=prompt,
     )
 
 

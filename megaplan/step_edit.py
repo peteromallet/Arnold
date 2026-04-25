@@ -16,7 +16,7 @@ from megaplan._core import (
     now_utc,
     read_json,
     require_state,
-    save_state,
+    save_state_merge_meta,
     sha256_text,
     workflow_next,
 )
@@ -154,7 +154,9 @@ def _commit_step_edit(
             message=action_summary,
         ),
     )
-    save_state(plan_dir, state)
+    # Step edit holds the plan lock for non-trivial work; merge meta to avoid
+    # clobbering concurrent ``override add-note`` / ``override`` appends.
+    save_state_merge_meta(plan_dir, state)
     return plan_filename, meta_filename, structure_warnings
 
 
