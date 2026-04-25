@@ -269,6 +269,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},
+                        "auto_attributed_files": {"type": "boolean"},
                         "evidence_files": {"type": "array", "items": {"type": "string"}},
                         "reviewer_verdict": {"type": "string"},
                     },
@@ -283,6 +284,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "evidence_files",
                         "reviewer_verdict",
                     ],
+                    "x-preserve-explicit-required": True,
                 },
             },
             "watch_items": {"type": "array", "items": {"type": "string"}},
@@ -358,8 +360,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},
+                        "auto_attributed_files": {"type": "boolean"},
                     },
                     "required": ["task_id", "status", "executor_notes", "files_changed", "commands_run"],
+                    "x-preserve-explicit-required": True,
                 },
             },
             "sense_check_acknowledgments": {
@@ -629,6 +633,7 @@ def _build_execution_doc_schema() -> dict[str, Any]:
     task_update_schema = schema["properties"]["task_updates"]["items"]
     task_update_schema["properties"]["sections_written"] = task_update_schema["properties"].pop("files_changed")
     task_update_schema["properties"].pop("commands_run", None)
+    task_update_schema["properties"].pop("auto_attributed_files", None)
     task_update_schema["required"] = ["task_id", "status", "executor_notes", "sections_written"]
     schema["required"] = [
         "output",
