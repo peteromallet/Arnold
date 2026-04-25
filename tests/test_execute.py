@@ -13,6 +13,12 @@ import megaplan.execute.core
 import megaplan.handlers
 import megaplan.workers
 from megaplan._core import load_plan
+from megaplan.execute.quality import (
+    _auto_attribute_unclaimed_paths,
+    _capture_git_status_snapshot,
+    _capture_git_status_snapshot_recursive,
+    _check_done_task_evidence,
+)
 from megaplan.workers import WorkerResult
 from tests.conftest import (
     PlanFixture,
@@ -22,6 +28,546 @@ from tests.conftest import (
     make_args_factory,
     read_json,
 )
+
+
+def _missing_code_task_evidence(tasks: list[dict[str, object]]) -> list[str]:
+    issues: list[str] = []
+    return _check_done_task_evidence(
+        tasks,
+        issues=issues,
+        should_classify=lambda task: True,
+        has_evidence=lambda task: bool(task.get("files_changed")),
+        has_advisory_evidence=lambda task: bool(task.get("commands_run")),
+        missing_message="missing: ",
+        advisory_message="advisory: ",
+    )
+
+
+def test_auto_attribute_single_done_task_with_unclaimed_changes(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": [],
+                "commands_run": [],
+            }
+        ]
+    }
+    payload = {
+        "files_changed": [],
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "done",
+                "executor_notes": "done",
+                "files_changed": [],
+                "commands_run": [],
+            }
+        ],
+    }
+    deviations: list[str] = []
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=lambda _p: ({"new.py": "<hash>"}, None),
+    )
+
+    task = finalize_data["tasks"][0]
+    update = payload["task_updates"][0]
+    assert task["files_changed"] == ["new.py"]
+    assert task["auto_attributed_files"] is True
+    assert update["files_changed"] == ["new.py"]
+    assert update["auto_attributed_files"] is True
+    assert payload["files_changed"] == ["new.py"]
+    assert result.records == [
+        {"task_id": "T1", "files": ["new.py"], "ambiguous": False}
+    ]
+    assert result.recursive_snapshot == {"new.py": "<hash>"}
+    assert _missing_code_task_evidence(finalize_data["tasks"]) == []
+
+
+def test_auto_attribute_multiple_done_tasks_share_unclaimed_paths(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": [], "commands_run": []},
+            {"id": "T2", "status": "done", "files_changed": [], "commands_run": []},
+        ]
+    }
+    payload = {
+        "files_changed": [],
+        "task_updates": [
+            {"task_id": "T1", "files_changed": [], "commands_run": []},
+            {"task_id": "T2", "files_changed": [], "commands_run": []},
+        ],
+    }
+    deviations: list[str] = []
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1", "T2"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=lambda _p: (
+            {"b.py": "<hash-b>", "a.py": "<hash-a>"},
+            None,
+        ),
+    )
+
+    assert finalize_data["tasks"][0]["files_changed"] == ["a.py", "b.py"]
+    assert finalize_data["tasks"][1]["files_changed"] == ["a.py", "b.py"]
+    assert payload["task_updates"][0]["auto_attributed_files"] is True
+    assert payload["task_updates"][1]["auto_attributed_files"] is True
+    assert len(
+        [
+            deviation
+            for deviation in deviations
+            if deviation.startswith("Auto-attributed 2 unclaimed file(s) to task")
+        ]
+    ) == 2
+    assert (
+        deviations.count("Auto-attribution ambiguous: 2 done tasks shared 2 unclaimed files")
+        == 1
+    )
+    assert result.records == [
+        {"task_id": "T1", "files": ["a.py", "b.py"], "ambiguous": True},
+        {"task_id": "T2", "files": ["a.py", "b.py"], "ambiguous": True},
+    ]
+
+
+def test_auto_attribute_clean_worktree_keeps_missing_evidence(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": [], "commands_run": []}
+        ]
+    }
+    payload = {
+        "files_changed": [],
+        "task_updates": [{"task_id": "T1", "files_changed": [], "commands_run": []}],
+    }
+    deviations: list[str] = []
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=lambda _p: ({}, None),
+    )
+
+    assert finalize_data["tasks"][0]["files_changed"] == []
+    assert "auto_attributed_files" not in finalize_data["tasks"][0]
+    assert payload["task_updates"][0]["files_changed"] == []
+    assert result.records == []
+    assert result.recursive_snapshot == {}
+    assert _missing_code_task_evidence(finalize_data["tasks"]) == ["T1"]
+
+
+def test_auto_attribute_populated_files_changed_short_circuits(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": ["claimed.py"],
+                "commands_run": [],
+            }
+        ]
+    }
+    payload = {
+        "files_changed": [],
+        "task_updates": [
+            {"task_id": "T1", "files_changed": ["claimed.py"], "commands_run": []}
+        ],
+    }
+    deviations: list[str] = []
+    calls = 0
+
+    def snapshot(_project_dir: Path) -> tuple[dict[str, str], str | None]:
+        nonlocal calls
+        calls += 1
+        return {"new.py": "<hash>"}, None
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=snapshot,
+    )
+
+    assert calls == 0
+    assert finalize_data["tasks"][0]["files_changed"] == ["claimed.py"]
+    assert payload["task_updates"][0]["files_changed"] == ["claimed.py"]
+    assert deviations == []
+    assert result.records == []
+    assert result.recursive_snapshot is None
+
+
+def test_auto_attribute_skipped_tasks_ignored(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "skipped", "files_changed": [], "commands_run": []}
+        ]
+    }
+    payload = {
+        "files_changed": [],
+        "task_updates": [{"task_id": "T1", "files_changed": [], "commands_run": []}],
+    }
+    deviations: list[str] = []
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=lambda _p: ({"new.py": "<hash>"}, None),
+    )
+
+    assert finalize_data["tasks"][0]["files_changed"] == []
+    assert payload["task_updates"][0]["files_changed"] == []
+    assert deviations == []
+    assert result.records == []
+    assert result.recursive_snapshot is None
+
+
+def test_auto_attribute_excludes_files_claimed_by_other_tasks(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": ["a.py"], "commands_run": []},
+            {"id": "T2", "status": "done", "files_changed": [], "commands_run": []},
+        ]
+    }
+    payload = {
+        "files_changed": ["existing.py"],
+        "task_updates": [
+            {"task_id": "T1", "files_changed": ["a.py"], "commands_run": []},
+            {"task_id": "T2", "files_changed": [], "commands_run": []},
+        ],
+    }
+    deviations: list[str] = []
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1", "T2"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=lambda _p: (
+            {"a.py": "<hash-a>", "b.py": "<hash-b>"},
+            None,
+        ),
+    )
+
+    assert finalize_data["tasks"][0]["files_changed"] == ["a.py"]
+    assert finalize_data["tasks"][1]["files_changed"] == ["b.py"]
+    assert payload["task_updates"][1]["files_changed"] == ["b.py"]
+    assert payload["files_changed"] == ["existing.py", "b.py"]
+    assert result.records == [
+        {"task_id": "T2", "files": ["b.py"], "ambiguous": False}
+    ]
+
+
+def test_snapshot_recursive_expands_untracked_directory(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "tracked.py").write_text("print('tracked')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    (tmp_path / "newpkg").mkdir()
+    (tmp_path / "newpkg" / "file.py").write_text("print('new')\n", encoding="utf-8")
+
+    snapshot, error = _capture_git_status_snapshot_recursive(tmp_path)
+
+    assert error is None
+    assert "newpkg/file.py" in snapshot
+    assert "newpkg/" not in snapshot
+
+
+def test_snapshot_recursive_default_does_not_recurse_into_untracked_directory(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "tracked.py").write_text("print('tracked')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    (tmp_path / "newpkg").mkdir()
+    (tmp_path / "newpkg" / "file.py").write_text("print('new')\n", encoding="utf-8")
+
+    snapshot, error = _capture_git_status_snapshot(tmp_path)
+
+    assert error is None
+    assert "newpkg/file.py" not in snapshot
+    assert "newpkg/" in snapshot
+
+
+def _setup_single_auto_attribute_plan(plan_fixture: PlanFixture) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"] = [
+        {
+            "id": "T1",
+            "description": "Implement the new package file.",
+            "depends_on": [],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        }
+    ]
+    finalize_data["sense_checks"] = [
+        {
+            "id": "SC1",
+            "task_id": "T1",
+            "question": "Was the new package file implemented?",
+            "executor_note": "",
+            "verdict": "",
+        }
+    ]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _stub_auto_attribute_git_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    scope_snapshot: dict[str, str] | None = None,
+) -> None:
+    snapshots = iter(
+        [
+            ({}, None),
+            ({"newpkg/": "<dir-marker>"}, None),
+            (scope_snapshot or {"newpkg/": "<dir-marker>"}, None),
+        ]
+    )
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot",
+        lambda *_: next(snapshots),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot_recursive",
+        lambda *_: ({"newpkg/file.py": "<hash>"}, None),
+    )
+
+
+def _hermes_style_worker(project_dir: Path):
+    def worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        del step, state, plan_dir, args, root, resolved, prompt_override
+        new_file = project_dir / "newpkg" / "file.py"
+        new_file.parent.mkdir(exist_ok=True)
+        _write_lines(new_file, 25, prefix="generated")
+        payload = {
+            "output": "Hermes-style execution completed.",
+            "files_changed": [],
+            "commands_run": [],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "executor_notes": "Implemented the new package file on disk while leaving structured file evidence empty for attribution recovery.",
+                    "files_changed": [],
+                    "commands_run": [],
+                }
+            ],
+            "sense_check_acknowledgments": [
+                {
+                    "sense_check_id": "SC1",
+                    "executor_note": "Confirmed the new package file was created during execution.",
+                }
+            ],
+        }
+        return (
+            WorkerResult(
+                payload=payload,
+                raw_output="hermes-style",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="hermes-style",
+            ),
+            "codex",
+            "persistent",
+            False,
+        )
+
+    return worker
+
+
+def _execute_auto_loop_direct(plan_fixture: PlanFixture) -> dict:
+    state = load_state(plan_fixture.plan_dir)
+    return megaplan.execute.core.handle_execute_auto_loop(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+    )
+
+
+def test_auto_attribute_auto_loop_hermes_style_reaches_executed(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+
+    response = _execute_auto_loop_direct(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    batch = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    execution = read_json(plan_fixture.plan_dir / "execution.json")
+    audit = read_json(plan_fixture.plan_dir / "execution_audit.json")
+    deviations = execution["deviations"]
+
+    assert response["success"] is True
+    assert response["state"] == megaplan.STATE_EXECUTED
+    task = finalize_data["tasks"][0]
+    assert task["auto_attributed_files"] is True
+    assert task["files_changed"] == ["newpkg/file.py"]
+    update = batch["task_updates"][0]
+    assert update["auto_attributed_files"] is True
+    assert update["files_changed"] == ["newpkg/file.py"]
+    assert "newpkg/file.py" in execution["files_changed"]
+    assert audit["auto_attribution"] == [
+        {"task_id": "T1", "files": ["newpkg/file.py"], "ambiguous": False}
+    ]
+    assert any(
+        "Auto-attributed 1 unclaimed file(s) to task T1" in deviation
+        for deviation in deviations
+    )
+    assert not any(
+        "Advisory observation mismatch:" in deviation and "newpkg/" in deviation
+        for deviation in deviations
+    )
+    assert not any(
+        "executor claimed files not observed in git status" in deviation
+        and "newpkg/file.py" in deviation
+        for deviation in deviations
+    )
+
+
+def test_auto_attribute_robust_auto_loop_avoids_scope_drift_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_fixture = _make_plan_fixture_with_robustness(
+        tmp_path, monkeypatch, robustness="robust"
+    )
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(
+        monkeypatch,
+        scope_snapshot={"newpkg/file.py": "<hash>"},
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+
+    response = _execute_auto_loop_direct(plan_fixture)
+    execution = read_json(plan_fixture.plan_dir / "execution.json")
+
+    assert response["success"] is True
+    assert response["state"] == megaplan.STATE_EXECUTED
+    assert "newpkg/file.py" in execution["files_changed"]
+    assert not any("scope_drift_severity=high" in warning for warning in response["warnings"])
+    assert not any("scope_drift_severity=high" in deviation for deviation in response["deviations"])
+
+
+def test_auto_attribute_one_batch_handler_persists_per_batch_audit(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+    )
+    audit = read_json(plan_fixture.plan_dir / "execution_audit.json")
+
+    assert response["success"] is True
+    assert response["state"] == megaplan.STATE_EXECUTED
+    assert audit["auto_attribution"] == [
+        {"task_id": "T1", "files": ["newpkg/file.py"], "ambiguous": False}
+    ]
 
 
 def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

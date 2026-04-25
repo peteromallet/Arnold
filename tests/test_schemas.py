@@ -192,6 +192,18 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
         "executor_notes",
         "files_changed",
         "commands_run",
+        "auto_attributed_files",
+        "evidence_files",
+        "reviewer_verdict",
+    }
+    assert set(task_schema["required"]) == {
+        "id",
+        "description",
+        "depends_on",
+        "status",
+        "executor_notes",
+        "files_changed",
+        "commands_run",
         "evidence_files",
         "reviewer_verdict",
     }
@@ -219,6 +231,14 @@ def test_execution_schema_requires_task_updates() -> None:
     assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "blocked"]
     assert "files_changed" in item_schema["properties"]
     assert "commands_run" in item_schema["properties"]
+    assert "auto_attributed_files" in item_schema["properties"]
+    assert "auto_attributed_files" not in item_schema["required"]
+
+
+def test_execution_doc_schema_strips_auto_attributed_files() -> None:
+    execution_doc = SCHEMAS["execution_doc.json"]
+    item_schema = execution_doc["properties"]["task_updates"]["items"]
+    assert "auto_attributed_files" not in item_schema["properties"]
 
 
 def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
@@ -466,6 +486,8 @@ def test_strict_schema_new_tracking_objects_are_strict() -> None:
     schema = strict_schema(SCHEMAS["finalize.json"])
     task_schema = schema["properties"]["tasks"]["items"]
     sense_check_schema = schema["properties"]["sense_checks"]["items"]
+    execution_schema = strict_schema(SCHEMAS["execution.json"])
+    task_update_schema = execution_schema["properties"]["task_updates"]["items"]
     assert task_schema["additionalProperties"] is False
     assert set(task_schema["required"]) == {
         "id",
@@ -477,6 +499,13 @@ def test_strict_schema_new_tracking_objects_are_strict() -> None:
         "commands_run",
         "evidence_files",
         "reviewer_verdict",
+    }
+    assert set(task_update_schema["required"]) == {
+        "task_id",
+        "status",
+        "executor_notes",
+        "files_changed",
+        "commands_run",
     }
     assert sense_check_schema["additionalProperties"] is False
     assert set(sense_check_schema["required"]) == {"id", "task_id", "question", "executor_note", "verdict"}

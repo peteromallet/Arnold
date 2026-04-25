@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from megaplan.evaluation import _parse_git_status_paths
 from megaplan.audits.quality_gates import run_quality_checks
+
+
+AUTO_ATTRIBUTION_PATH_LIST_LIMIT = 8
+
+
+@dataclass
+class AttributionResult:
+    records: list[dict[str, Any]]
+    recursive_snapshot: dict[str, str] | None
 
 
 def _check_done_task_evidence(
@@ -37,6 +47,101 @@ def _check_done_task_evidence(
     return missing_task_ids
 
 
+def _format_auto_attributed_paths(paths: list[str]) -> str:
+    displayed = paths[:AUTO_ATTRIBUTION_PATH_LIST_LIMIT]
+    if len(paths) > AUTO_ATTRIBUTION_PATH_LIST_LIMIT:
+        displayed = [*displayed, "…"]
+    return ", ".join(displayed)
+
+
+def _auto_attribute_unclaimed_paths(
+    *,
+    project_dir: Path,
+    finalize_data: dict[str, Any],
+    payload: dict[str, Any],
+    batch_task_ids: list[str],
+    issues: list[str],
+    capture_recursive_snapshot_fn: Callable[[Path], tuple[dict[str, str], str | None]],
+) -> AttributionResult:
+    batch_id_set = set(batch_task_ids)
+    tasks = finalize_data.get("tasks") or []
+    unattributed_done_tasks = [
+        task
+        for task in tasks
+        if task.get("id") in batch_id_set
+        and task.get("status") == "done"
+        and not (task.get("files_changed") or [])
+        and not (task.get("commands_run") or [])
+    ]
+    if not unattributed_done_tasks:
+        return AttributionResult(records=[], recursive_snapshot=None)
+
+    snapshot, error = capture_recursive_snapshot_fn(project_dir)
+    if error is not None:
+        return AttributionResult(records=[], recursive_snapshot=None)
+
+    git_paths = {path for path in snapshot if not path.endswith("/")}
+    claimed = {
+        _normalize_execute_claimed_path(path, project_dir)
+        for task in tasks
+        for path in (task.get("files_changed") or [])
+        if isinstance(path, str) and path.strip()
+    }
+    unclaimed_paths = sorted(git_paths - claimed)
+    if not unclaimed_paths:
+        return AttributionResult(records=[], recursive_snapshot=snapshot)
+
+    task_updates_by_id = {
+        update.get("task_id"): update
+        for update in (payload.get("task_updates") or [])
+        if isinstance(update, dict)
+    }
+    existing_payload_files = [
+        path for path in (payload.get("files_changed") or []) if isinstance(path, str)
+    ]
+    seen_payload_files = {
+        _normalize_execute_claimed_path(path, project_dir)
+        for path in existing_payload_files
+        if path.strip()
+    }
+    merged_payload_files = list(existing_payload_files)
+    for path in unclaimed_paths:
+        normalized = _normalize_execute_claimed_path(path, project_dir)
+        if normalized not in seen_payload_files:
+            merged_payload_files.append(path)
+            seen_payload_files.add(normalized)
+    payload["files_changed"] = merged_payload_files
+
+    ambiguous = len(unattributed_done_tasks) > 1
+    truncated_list = _format_auto_attributed_paths(unclaimed_paths)
+    records: list[dict[str, Any]] = []
+    for task in unattributed_done_tasks:
+        task_id = task.get("id")
+        task["files_changed"] = list(unclaimed_paths)
+        task["auto_attributed_files"] = True
+        update = task_updates_by_id.get(task_id)
+        if update is not None:
+            update["files_changed"] = list(unclaimed_paths)
+            update["auto_attributed_files"] = True
+        issues.append(
+            f"Auto-attributed {len(unclaimed_paths)} unclaimed file(s) to task {task_id} "
+            f"(worker reported empty files_changed): {truncated_list}"
+        )
+        records.append(
+            {
+                "task_id": task_id,
+                "files": list(unclaimed_paths),
+                "ambiguous": ambiguous,
+            }
+        )
+    if ambiguous:
+        issues.append(
+            f"Auto-attribution ambiguous: {len(unattributed_done_tasks)} done tasks shared "
+            f"{len(unclaimed_paths)} unclaimed files"
+        )
+    return AttributionResult(records=records, recursive_snapshot=snapshot)
+
+
 def _normalize_execute_claimed_path(path: str, project_dir: Path | None = None) -> str:
     p = Path(path.strip())
     if project_dir is not None and p.is_absolute():
@@ -56,14 +161,19 @@ def _repo_path_hash(project_dir: Path, relative_path: str) -> str:
     return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
-def _capture_git_status_snapshot(
+def _run_git_status_snapshot(
     project_dir: Path,
+    *,
+    untracked_mode: str,
 ) -> tuple[dict[str, str], str | None]:
     if not (project_dir / ".git").exists():
         return {}, "Project directory is not a git repository."
+    command = ["git", "status", "--short"]
+    if untracked_mode == "all":
+        command.append("--untracked-files=all")
     try:
         process = subprocess.run(
-            ["git", "status", "--short"],
+            command,
             cwd=str(project_dir),
             text=True,
             capture_output=True,
@@ -80,6 +190,18 @@ def _capture_git_status_snapshot(
         )
     paths = _parse_git_status_paths(process.stdout)
     return {path: _repo_path_hash(project_dir, path) for path in paths}, None
+
+
+def _capture_git_status_snapshot(
+    project_dir: Path,
+) -> tuple[dict[str, str], str | None]:
+    return _run_git_status_snapshot(project_dir, untracked_mode="normal")
+
+
+def _capture_git_status_snapshot_recursive(
+    project_dir: Path,
+) -> tuple[dict[str, str], str | None]:
+    return _run_git_status_snapshot(project_dir, untracked_mode="all")
 
 
 def _observed_batch_paths(

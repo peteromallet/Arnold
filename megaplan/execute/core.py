@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,14 +24,16 @@ from megaplan._core import (
     record_step_failure,
     read_json,
     render_final_md,
-    save_state,
     save_state_merge_meta,
     sha256_file,
     store_raw_worker_output,
 )
 from megaplan.evaluation import validate_execution_evidence
 from megaplan.execute.quality import (
+    AttributionResult,
+    _auto_attribute_unclaimed_paths,
     _capture_git_status_snapshot,
+    _capture_git_status_snapshot_recursive,
     _check_done_task_evidence,
     _collect_execute_claimed_paths,
     _collect_quality_deviations,
@@ -77,6 +79,7 @@ class BatchResult:
     missing_task_evidence: list[str]
     execution_audit: dict[str, Any]
     finalize_hash: str
+    attribution_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_monitor_hint(plan_dir: Path) -> str:
@@ -416,17 +419,6 @@ def _run_and_merge_batch(
     batch_task_id_set = set(batch_task_ids)
     if plan_mode not in {"doc", "joke"}:
         deviations.extend(
-            _observe_git_changes(
-                project_dir=project_dir,
-                payload=payload,
-                before_snapshot=before_snapshot,
-                before_error=before_error,
-                batch_number=batch_number,
-                batches_total=batches_total,
-                capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
-            )
-        )
-        deviations.extend(
             _collect_quality_deviations(
                 project_dir=project_dir,
                 before_snapshot=before_snapshot,
@@ -445,6 +437,34 @@ def _run_and_merge_batch(
             mode=plan_mode,
         )
     )
+    attribution_result = AttributionResult(records=[], recursive_snapshot=None)
+    if plan_mode not in {"doc", "joke"}:
+        attribution_result = _auto_attribute_unclaimed_paths(
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            payload=payload,
+            batch_task_ids=batch_task_ids,
+            issues=deviations,
+            capture_recursive_snapshot_fn=_capture_git_status_snapshot_recursive,
+        )
+        observation_snapshot_fn = capture_git_status_snapshot_fn
+        if (
+            attribution_result.records
+            and attribution_result.recursive_snapshot is not None
+        ):
+            cached_snapshot = attribution_result.recursive_snapshot
+            observation_snapshot_fn = lambda _p, _snap=cached_snapshot: (_snap, None)
+        deviations.extend(
+            _observe_git_changes(
+                project_dir=project_dir,
+                payload=payload,
+                before_snapshot=before_snapshot,
+                before_error=before_error,
+                batch_number=batch_number,
+                batches_total=batches_total,
+                capture_git_status_snapshot_fn=observation_snapshot_fn,
+            )
+        )
     if plan_mode in {"doc", "joke"}:
         missing_task_evidence = _check_done_task_evidence(
             finalize_data.get("tasks", []),
@@ -466,6 +486,8 @@ def _run_and_merge_batch(
             advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
         )
     execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode)
+    if attribution_result.records:
+        execution_audit["auto_attribution"] = list(attribution_result.records)
     if execution_audit["skipped"]:
         deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
     for finding in execution_audit["findings"]:
@@ -493,6 +515,7 @@ def _run_and_merge_batch(
         missing_task_evidence=missing_task_evidence,
         execution_audit=execution_audit,
         finalize_hash=sha256_file(plan_dir / "finalize.json"),
+        attribution_records=list(attribution_result.records),
     )
 
 
@@ -659,6 +682,8 @@ def handle_execute_one_batch(
             total_batches=batches_total,
             mode=plan_mode,
         )
+        # _run_and_merge_batch already wrote execution_audit.json; this handler
+        # only writes the aggregate execution.json after the batch returns.
         atomic_write_json(plan_dir / "execution.json", aggregate_payload)
         drift = _compute_execute_scope_drift(project_dir, aggregate_payload)
         _append_scope_drift_blocker(blocking_reasons, state, drift)
@@ -878,6 +903,7 @@ def handle_execute_auto_loop(
     )
 
     batch_payloads: list[dict[str, Any]] = []
+    all_attribution_records: list[dict[str, Any]] = []
     trace_chunks: list[str] = []
     total_duration_ms = 0
     total_cost_usd = 0.0
@@ -973,6 +999,7 @@ def handle_execute_auto_loop(
             refreshed=result.refreshed,
         )
         batch_payloads.append(result.payload)
+        all_attribution_records.extend(result.attribution_records)
         if result.worker.trace_output is not None:
             trace_chunks.append(result.worker.trace_output)
         completed_task_ids.update(
@@ -1030,6 +1057,8 @@ def handle_execute_auto_loop(
         deviations.append(f"Advisory audit skip: {execution_audit['reason']}")
     for finding in execution_audit["findings"]:
         deviations.append(f"Advisory audit finding: {finding}")
+    if all_attribution_records:
+        execution_audit["auto_attribution"] = all_attribution_records
     if blocked_task_ids:
         deviations.append(
             f"Pre-existing blocked tasks treated as satisfied for scheduling: "
