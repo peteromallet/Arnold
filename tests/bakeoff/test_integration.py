@@ -341,3 +341,66 @@ def test_bakeoff_resume_relaunches_only_nonterminal_profile(
             encoding="utf-8"
         )
     )["current_state"] == "done"
+
+
+def test_bakeoff_run_robustness_propagation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = _prepare_repo(tmp_path, monkeypatch)
+    init_calls: list[list[str]] = []
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> FakeProcess:
+        cmd = list(args)
+        if "init" in cmd:
+            init_calls.append(cmd)
+            worktree = kwargs.get("cwd")
+            if worktree and "--name" in cmd:
+                plan_id = cmd[cmd.index("--name") + 1]
+                plan_dir = Path(worktree) / ".megaplan" / "plans" / plan_id
+                plan_dir.mkdir(parents=True, exist_ok=True)
+                plan_dir.joinpath("state.json").write_text(
+                    json.dumps({"current_state": "initialized", "history": [], "meta": {}}),
+                    encoding="utf-8",
+                )
+            return FakeProcess(0)
+        return FakeProcess(0)
+
+    monkeypatch.setattr(
+        "megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    _install_fake_spawn(monkeypatch, calls=[])
+
+    asyncio.run(
+        orchestrator.run_bakeoff(
+            root,
+            root / "idea.md",
+            ["standard"],
+            "code",
+            "exp-robust",
+            robustness="light",
+        )
+    )
+
+    assert len(init_calls) == 1
+    cmd = init_calls[0]
+    assert "--robustness" in cmd
+    rob_idx = cmd.index("--robustness")
+    assert cmd[rob_idx + 1] == "light"
+
+    init_calls.clear()
+
+    asyncio.run(
+        orchestrator.run_bakeoff(
+            root,
+            root / "idea.md",
+            ["standard"],
+            "code",
+            "exp-no-robust",
+        )
+    )
+
+    assert len(init_calls) == 1
+    cmd = init_calls[0]
+    assert "--robustness" not in cmd

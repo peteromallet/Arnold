@@ -39,6 +39,7 @@ async def run_bakeoff(
     *,
     allow_dirty: bool = False,
     detach: bool = False,
+    robustness: str | None = None,
 ) -> BakeoffState:
     if mode != "code":
         raise CliError(
@@ -80,6 +81,7 @@ async def run_bakeoff(
                 experiment_id,
                 base_sha,
                 idea,
+                robustness=robustness,
             )
             created_worktrees.append(Path(record["worktree"]))
             state["profiles"].append(record)
@@ -127,6 +129,8 @@ async def _init_profile(
     experiment_id: str,
     base_sha: str,
     idea: Path,
+    *,
+    robustness: str | None = None,
 ) -> BakeoffProfileRecord:
     worktree = worktree_root(root, experiment_id) / profile
     profile_archive = bakeoff_root(root, experiment_id) / profile
@@ -140,23 +144,28 @@ async def _init_profile(
         dst_profiles = worktree / ".megaplan" / "profiles.toml"
         dst_profiles.parent.mkdir(parents=True, exist_ok=True)
         dst_profiles.write_bytes(src_profiles.read_bytes())
+    cmd = [
+        sys.executable,
+        "-m",
+        "megaplan",
+        "init",
+        "--project-dir",
+        str(worktree),
+        "--name",
+        experiment_id,
+        "--idea-file",
+        str(idea),
+        "--profile",
+        profile,
+        "--mode",
+        "code",
+    ]
+    if robustness is not None:
+        cmd.extend(["--robustness", robustness])
     init_log = profile_archive / "init.log"
     with init_log.open("ab") as log:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "megaplan",
-            "init",
-            "--project-dir",
-            str(worktree),
-            "--name",
-            experiment_id,
-            "--idea-file",
-            str(idea),
-            "--profile",
-            profile,
-            "--mode",
-            "code",
+            *cmd,
             cwd=worktree,
             stdout=log,
             stderr=log,
@@ -268,6 +277,7 @@ def run_bakeoff_run_handler(root: Path, args: Any) -> int:
 
 async def _run_with_optional_status(root: Path, args: Any, exp_id: str) -> BakeoffState:
     detach = bool(getattr(args, "detach", False))
+    robustness = getattr(args, "robustness", None)
     task = asyncio.create_task(
         run_bakeoff(
             root,
@@ -277,6 +287,7 @@ async def _run_with_optional_status(root: Path, args: Any, exp_id: str) -> Bakeo
             exp_id,
             allow_dirty=bool(getattr(args, "allow_dirty", False)),
             detach=detach,
+            robustness=robustness,
         )
     )
     if detach:

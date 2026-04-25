@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan.types import CliError
+from megaplan.types import CliError, ROBUSTNESS_LEVELS
 
 
 BAKEOFF_UNSUPPORTED_MODE_MESSAGE = (
@@ -39,6 +39,12 @@ def _register_bakeoff_subcommands(bakeoff_parser: argparse.ArgumentParser) -> No
         "--detach",
         action="store_true",
         help="Launch and return without streaming live status",
+    )
+    run_parser.add_argument(
+        "--robustness",
+        default=None,
+        choices=list(ROBUSTNESS_LEVELS),
+        help="Robustness level passed to each profile's megaplan init",
     )
     run_parser.add_argument(
         "--allow-dirty",
