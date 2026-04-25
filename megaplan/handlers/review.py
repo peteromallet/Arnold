@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,8 @@ from megaplan.evaluation import is_rubber_stamp
 from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.profiles import apply_profile_expansion
+from megaplan.receipts import build_receipt
+from megaplan.receipts.writer import write_receipt
 from megaplan.types import (
     MOCK_ENV_VAR,
     CliError,
@@ -42,6 +45,7 @@ from megaplan._core import (
     render_final_md,
     require_state,
     save_state,
+    save_state_merge_meta,
     set_active_step,
     sha256_file,
 )
@@ -54,6 +58,9 @@ from .shared import (
     attach_agent_fallback,
     worker_module,
 )
+
+log = logging.getLogger(__name__)
+
 
 def _build_review_blocked_message(
     *,
@@ -348,7 +355,28 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                         finalize_hash=finalize_hash,
                     ),
                 )
-                save_state(plan_dir, state)
+                try:
+                    artifact_hash = sha256_file(plan_dir / "review.json")
+                    receipt = build_receipt(
+                        phase="review",
+                        state=state,
+                        plan_dir=plan_dir,
+                        args=args,
+                        worker=worker,
+                        agent=agent,
+                        mode=mode,
+                        output_file="review.json",
+                        artifact_hash=artifact_hash,
+                        verdict=review_verdict,
+                    )
+                    write_receipt(
+                        plan_dir,
+                        receipt,
+                        project_dir=Path(state["config"]["project_dir"]),
+                    )
+                except Exception:
+                    log.warning("Review receipt emission failed", exc_info=True)
+                save_state_merge_meta(plan_dir, state)
 
                 passed = sum(1 for c in worker.payload.get("criteria", []) if c.get("pass") in (True, "pass"))
                 total = len(worker.payload.get("criteria", []))
@@ -382,7 +410,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             try:
                 run_id = set_active_step(state, step="review", agent=agent_type, mode=mode, model=model)
                 _emit_phase_notice("review")
-                save_state(plan_dir, state)
+                save_state_merge_meta(plan_dir, state)
                 checks = review_checks.checks_for_robustness("superrobust")
                 parallel_result = _pkg.run_parallel_review(
                     state,
@@ -433,7 +461,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 raise
             except Exception:
                 clear_active_step(state, run_id=run_id)
-                save_state(plan_dir, state)
+                save_state_merge_meta(plan_dir, state)
                 raise
 
         issues = list(worker.payload.get("issues", []))
@@ -478,7 +506,28 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 finalize_hash=finalize_hash,
             ),
         )
-        save_state(plan_dir, state)
+        try:
+            artifact_hash = sha256_file(plan_dir / "review.json")
+            receipt = build_receipt(
+                phase="review",
+                state=state,
+                plan_dir=plan_dir,
+                args=args,
+                worker=worker,
+                agent=agent,
+                mode=mode,
+                output_file="review.json",
+                artifact_hash=artifact_hash,
+                verdict=review_verdict,
+            )
+            write_receipt(
+                plan_dir,
+                receipt,
+                project_dir=Path(state["config"]["project_dir"]),
+            )
+        except Exception:
+            log.warning("Review receipt emission failed", exc_info=True)
+        save_state_merge_meta(plan_dir, state)
 
         passed = sum(1 for c in worker.payload.get("criteria", []) if c.get("pass") in (True, "pass"))
         total = len(worker.payload.get("criteria", []))

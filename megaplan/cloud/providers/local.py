@@ -69,6 +69,14 @@ class LocalProvider(Provider):
             result = subprocess.run(argv, **kwargs)
         except FileNotFoundError as exc:
             raise CliError("provider_failed", str(exc)) from exc
+        if result.returncode != 0 and _is_missing_compose_subcommand(argv, result):
+            compose_binary = shutil.which("docker-compose")
+            if compose_binary is not None:
+                fallback_argv = [compose_binary, *argv[2:]]
+                try:
+                    result = subprocess.run(fallback_argv, **kwargs)
+                except FileNotFoundError as exc:
+                    raise CliError("provider_failed", str(exc)) from exc
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             raise CliError("provider_failed", stderr or f"Command failed: {' '.join(argv)}")
@@ -138,3 +146,13 @@ class LocalProvider(Provider):
         del volume
         self._run(self._compose_argv("down", "--volumes", "--remove-orphans"))
         return 0
+
+
+def _is_missing_compose_subcommand(
+    argv: list[str],
+    result: subprocess.CompletedProcess[str],
+) -> bool:
+    if len(argv) < 2 or argv[1] != "compose":
+        return False
+    output = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+    return "unknown shorthand flag" in output or "docker: 'compose' is not a docker command" in output

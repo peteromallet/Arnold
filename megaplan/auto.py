@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -556,6 +558,28 @@ def build_auto_parser(subparsers: Any) -> None:
             "hitting this indicates serious trouble."
         ),
     )
+    auto_parser.add_argument(
+        "--outcome-file",
+        default=None,
+        help="Write the final DriverOutcome JSON to this path atomically before stdout.",
+    )
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        tmp_path = Path(handle.name)
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
 
 
 def run_auto(root: Path, args: argparse.Namespace) -> int:
@@ -571,7 +595,10 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         phase_timeout=args.phase_timeout,
         status_timeout=args.status_timeout,
     )
-    sys.stdout.write(outcome.to_json() + "\n")
+    outcome_json = outcome.to_json()
+    if args.outcome_file:
+        _atomic_write_text(Path(args.outcome_file), outcome_json)
+    sys.stdout.write(outcome_json + "\n")
     if outcome.status == "done":
         return 0
     if outcome.status == "aborted":

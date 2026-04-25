@@ -14,7 +14,7 @@ from megaplan._core import (
     make_history_entry,
     read_json,
     render_final_md,
-    save_state,
+    save_state_merge_meta,
     sha256_file,
     store_raw_worker_output,
 )
@@ -288,7 +288,9 @@ def _recover_execute_timeout(
                 approval_mode=approval_mode,
             ),
         )
-        save_state(plan_dir, state)
+        # Execute timeout recovery runs while the execute lock is held; merge
+        # meta to avoid clobbering concurrent override appends.
+        save_state_merge_meta(plan_dir, state)
 
     tasks = finalize_data.get("tasks", [])
     completed_tasks = [

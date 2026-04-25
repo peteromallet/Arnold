@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 import fcntl
 
@@ -219,6 +221,168 @@ def save_state(plan_dir: Path, state: PlanState) -> None:
     atomic_write_json(plan_dir / "state.json", state)
 
 
+# ---------------------------------------------------------------------------
+# Merge-on-save for append-only meta fields
+# ---------------------------------------------------------------------------
+#
+# Workflow phases (revise/critique/gate/plan/finalize/execute/review) hold a
+# non-blocking ``plan_lock`` for the entire 5–15 minute duration of a worker
+# run. Override commands (``override add-note``, ``override abort``,
+# ``override replan``, ``override set-robustness``, ``override force-proceed``)
+# intentionally bypass the lock so the user is not blocked for many minutes
+# while a phase runs.
+#
+# This creates a window where an override can write to ``state.json`` while
+# a phase has already loaded its in-memory ``state`` snapshot. When the phase
+# eventually calls ``save_state``, it would overwrite the override's append
+# with stale data — silently losing the operator's note or override record.
+#
+# The two append-only meta fields are ``meta.notes`` and ``meta.overrides``.
+# Everything else in state.json is only mutated by the lock-holder. So the
+# fix is targeted: when saving from the lock-holding side, re-read the
+# on-disk ``meta.notes`` and ``meta.overrides``, take the union with the
+# in-memory copies (de-duped by content), and only then write.
+
+_DEFAULT_MERGE_FIELDS: tuple[str, ...] = ("notes", "overrides")
+
+
+def _note_merge_key(entry: Any) -> tuple[str, str]:
+    """Stable de-dup key for a ``meta.notes`` entry.
+
+    Notes are ``{"timestamp": str, "note": str}``. The hash digest of the note
+    body collapses literal duplicates while still distinguishing notes that
+    happen to share a timestamp.
+    """
+    if not isinstance(entry, dict):
+        encoded = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
+        return ("", hashlib.sha256(encoded).hexdigest()[:16])
+    timestamp = entry.get("timestamp", "")
+    note = entry.get("note", "")
+    if not isinstance(timestamp, str):
+        timestamp = str(timestamp)
+    if not isinstance(note, str):
+        note = json.dumps(note, sort_keys=True, default=str)
+    digest = hashlib.sha256(note.encode("utf-8")).hexdigest()[:16]
+    return (timestamp, digest)
+
+
+def _override_merge_key(entry: Any) -> tuple[str, str, str]:
+    """Stable de-dup key for a ``meta.overrides`` entry.
+
+    Overrides are ``{"timestamp": str, "action": str, ...}`` with optional
+    ``note`` / ``reason`` payload. We dedupe by ``(timestamp, action,
+    hash(note + reason))`` so two distinct override invocations sharing only
+    a timestamp still survive.
+    """
+    if not isinstance(entry, dict):
+        encoded = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
+        return ("", "", hashlib.sha256(encoded).hexdigest()[:16])
+    timestamp = entry.get("timestamp", "")
+    action = entry.get("action", "")
+    note = entry.get("note", "")
+    reason = entry.get("reason", "")
+    if not isinstance(timestamp, str):
+        timestamp = str(timestamp)
+    if not isinstance(action, str):
+        action = str(action)
+    if not isinstance(note, str):
+        note = json.dumps(note, sort_keys=True, default=str)
+    if not isinstance(reason, str):
+        reason = json.dumps(reason, sort_keys=True, default=str)
+    digest = hashlib.sha256((note + "|" + reason).encode("utf-8")).hexdigest()[:16]
+    return (timestamp, action, digest)
+
+
+_FIELD_KEY_FUNCS: dict[str, Any] = {
+    "notes": _note_merge_key,
+    "overrides": _override_merge_key,
+}
+
+
+def _timestamp_sort_key(entry: Any) -> str:
+    if isinstance(entry, dict):
+        timestamp = entry.get("timestamp", "")
+        if isinstance(timestamp, str):
+            return timestamp
+        return str(timestamp)
+    return ""
+
+
+def _merge_meta_lists(
+    on_disk: Any,
+    in_memory: Any,
+    *,
+    key_func: Any,
+) -> list[Any]:
+    """Union two append-only lists, de-duped by ``key_func`` and sorted by
+    timestamp ascending. Insertion order of unique entries is otherwise
+    preserved when timestamps collide."""
+
+    def _coerce(value: Any) -> list[Any]:
+        if isinstance(value, list):
+            return value
+        return []
+
+    seen: set[Any] = set()
+    merged: list[Any] = []
+    # On-disk first so concurrent writes by a short-hold writer (e.g. an
+    # override invocation) take precedence as the canonical record. Then
+    # add anything new from the in-memory copy.
+    for entry in _coerce(on_disk) + _coerce(in_memory):
+        key = key_func(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    merged.sort(key=_timestamp_sort_key)
+    return merged
+
+
+def save_state_merge_meta(
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    merge_fields: Iterable[str] = _DEFAULT_MERGE_FIELDS,
+) -> None:
+    """Save ``state`` to ``state.json``, merging append-only meta fields with
+    whatever is currently on disk.
+
+    Use this from any code path where another process (typically an
+    ``override`` command) might have appended to ``meta.notes`` or
+    ``meta.overrides`` between the time ``state`` was loaded and now.
+
+    For fields not in ``merge_fields``, the in-memory value wins as usual.
+    """
+    state_path = plan_dir / "state.json"
+    on_disk_meta: dict[str, Any] = {}
+    if state_path.exists():
+        try:
+            existing = read_json(state_path)
+        except Exception:
+            existing = None
+        if isinstance(existing, dict):
+            disk_meta = existing.get("meta")
+            if isinstance(disk_meta, dict):
+                on_disk_meta = disk_meta
+
+    state.setdefault("meta", {})
+    for field in merge_fields:
+        key_func = _FIELD_KEY_FUNCS.get(field)
+        if key_func is None:
+            # Unknown merge field: skip rather than guess at semantics.
+            continue
+        in_memory_value = state["meta"].get(field, [])
+        on_disk_value = on_disk_meta.get(field, [])
+        merged = _merge_meta_lists(
+            on_disk_value,
+            in_memory_value,
+            key_func=key_func,
+        )
+        state["meta"][field] = merged
+
+    atomic_write_json(state_path, state)
+
+
 def apply_session_update(
     state: PlanState,
     step: str,
@@ -382,7 +546,9 @@ def record_step_failure(
             message=error.message,
         ),
     )
-    save_state(plan_dir, state)
+    # Phases hold the lock for many minutes; merge meta to avoid clobbering
+    # concurrent ``override add-note`` / ``override`` appends.
+    save_state_merge_meta(plan_dir, state)
 
 
 # ---------------------------------------------------------------------------

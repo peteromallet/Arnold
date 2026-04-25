@@ -75,6 +75,7 @@ from .state import (
     record_step_failure,
     resolve_plan_dir,
     save_state,
+    save_state_merge_meta,
     set_active_step,
     store_raw_worker_output,
 )
@@ -177,6 +178,7 @@ __all__ = [
     "record_step_failure",
     "resolve_plan_dir",
     "save_state",
+    "save_state_merge_meta",
     "set_active_step",
     "store_raw_worker_output",
     # registries

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import socket
 import subprocess
 
 import pytest
@@ -33,7 +34,13 @@ if _docker_info.returncode != 0:  # pragma: no cover - environment-dependent
     )
 
 
-def _spec() -> CloudSpec:
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _spec(*, port: int = 8080) -> CloudSpec:
     return CloudSpec(
         provider="local",
         repo=RepoSpec(
@@ -45,7 +52,7 @@ def _spec() -> CloudSpec:
         codex=CodexSpec(model="ops-model", reasoning="medium"),
         mode="idle",
         megaplan=MegaplanSpec(ref="main"),
-        resources=ResourcesSpec(volume="agent-volume", port=8080),
+        resources=ResourcesSpec(volume="agent-volume", port=port),
         secrets=[],
         local=LocalSpec(compose_project="megaplan-local-smoke", workdir="workspace"),
         toolchains=[],
@@ -58,7 +65,7 @@ def test_local_provider_lifecycle_smoke(tmp_path, monkeypatch) -> None:
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
-    spec = _spec()
+    spec = _spec(port=_free_port())
     provider = LocalProvider(spec)
 
     with _materialized_deploy_dir(spec) as deploy_dir:

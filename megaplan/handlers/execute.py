@@ -27,6 +27,7 @@ from megaplan._core import (
     read_json,
     require_state,
     save_state,
+    save_state_merge_meta,
     set_active_step,
     workflow_includes_step,
 )
@@ -58,7 +59,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         auto_approve = bool(state["config"].get("auto_approve", False))
         if getattr(args, "user_approved", False):
             state["meta"]["user_approved_gate"] = True
-            save_state(plan_dir, state)
+            save_state_merge_meta(plan_dir, state)
         if not auto_approve and not state["meta"].get("user_approved_gate", False):
             raise CliError(
                 "missing_approval",
@@ -70,7 +71,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             refreshed = True
         run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
         _emit_phase_notice("execute")
-        save_state(plan_dir, state)
+        save_state_merge_meta(plan_dir, state)
         try:
             if getattr(args, "batch", None) is not None:
                 response = dispatch_execute_one_batch(
@@ -99,7 +100,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
         except CliError:
             clear_active_step(state, run_id=run_id)
-            save_state(plan_dir, state)
+            save_state_merge_meta(plan_dir, state)
             raise
         clear_active_step(state, run_id=run_id)
         if plan_mode in {"doc", "joke"} and response.get("state") == STATE_EXECUTED:
@@ -155,11 +156,11 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             if isinstance(artifacts, list) and "review.json" not in artifacts:
                 artifacts.append("review.json")
             state["current_state"] = next_state
-            save_state(plan_dir, state)
+            save_state_merge_meta(plan_dir, state)
             response["state"] = next_state
             response["next_step"] = None
             response.pop("next_step_runtime", None)
         else:
-            save_state(plan_dir, state)
+            save_state_merge_meta(plan_dir, state)
         attach_agent_fallback(response, args)
         return response

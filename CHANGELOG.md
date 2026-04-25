@@ -2,6 +2,14 @@
 
 ## v0.20.0 — 2026-04-21
 
+### Sprint 2 bake-off — multi-profile worktree comparison
+
+Adds `megaplan bakeoff {run,status,tail,compare,pick,merge,resume,abandon}` for running one idea through multiple profiles concurrently in isolated detached worktrees. `compare` produces the schema-versioned dataset, `pick` records the human selection, and `merge` applies only the chosen profile's code patch while archiving every profile's evaluation artifacts.
+
+- **Judge contract**: omit `--judge` -> skip (no paid call); `--judge auto` -> first free of `claude`/`codex`/`gpt-5` with canonical agent+model comparison; `--judge <model>` -> explicit.
+- **Sprint 1 caveat**: until receipts, canonical prompt hashes, and first-class scope drift fully land, `scope_drift_severity_by_phase` emits phase keys with `null` values plus `sprint1_pending: true`.
+- **Forward-compatible schema**: bake-off comparison output uses `schema_version=1`; future receipt-derived fields arrive additively, with no schema bump.
+
 ### Sprint 2 cloud — chain commands, local + ssh providers, toolchain extensibility
 
 Second sprint of the built-in cloud runner. Core megaplan gains chain ergonomics; cloud grows new providers and thin wrappers; the ad-hoc `~/Documents/reigh-megaplan-dev/` external folder is retired.

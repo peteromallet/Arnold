@@ -370,6 +370,8 @@ def run_hermes_step(
             "matching this template:\n\n" + template
         )
 
+    rendered_prompt = prompt
+
     # Redirect stdout to stderr before creating the agent.  Hermes's
     # KawaiiSpinner captures sys.stdout at __init__ time and writes
     # directly to it (bypassing _print_fn).  By swapping stdout to
@@ -578,6 +580,8 @@ def run_hermes_step(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        rendered_prompt=rendered_prompt,
+        model_actual=result.get("model"),
     )
 
 

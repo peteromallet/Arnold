@@ -13,6 +13,8 @@ import megaplan.workers as worker_module
 from megaplan.execute.core import build_monitor_hint
 from megaplan.profiles import apply_profile_expansion
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
+from megaplan.receipts import build_receipt
+from megaplan.receipts.writer import write_receipt
 from megaplan.step_edit import next_plan_artifact_name
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from megaplan._core import (
@@ -29,6 +31,7 @@ from megaplan._core import (
     now_utc,
     record_step_failure,
     save_state,
+    save_state_merge_meta,
     set_active_step,
     sha256_file,
     sha256_text,
@@ -155,7 +158,9 @@ def _run_worker(
     agent, mode, refreshed, model = resolved or _handlers_pkg.resolve_agent_mode(step, args)
     run_id = set_active_step(state, step=step, agent=agent, mode=mode, model=model)
     _emit_phase_notice(step)
-    save_state(plan_dir, state)
+    # Phases hold the lock for many minutes; merge meta to avoid clobbering
+    # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
+    save_state_merge_meta(plan_dir, state)
     try:
         run_step_kwargs: dict[str, Any] = {
             "root": root,
@@ -177,7 +182,7 @@ def _run_worker(
         raise
     except Exception:
         clear_active_step(state, run_id=run_id)
-        save_state(plan_dir, state)
+        save_state_merge_meta(plan_dir, state)
         raise
 
 
@@ -255,7 +260,25 @@ def _finish_step(
             **(history_fields or {}),
         ),
     )
-    save_state(plan_dir, state)
+    if step not in {"execute", "review"}:
+        project_dir = Path(state["config"]["project_dir"])
+        try:
+            receipt = build_receipt(
+                phase=step,
+                state=state,
+                plan_dir=plan_dir,
+                args=args,
+                worker=worker,
+                agent=agent,
+                mode=mode,
+                output_file=output_file,
+                artifact_hash=artifact_hash,
+                verdict=(history_fields or {}).get("verdict"),
+            )
+            write_receipt(plan_dir, receipt, project_dir=project_dir)
+        except Exception:
+            log.warning("Receipt emission failed for step %s", step, exc_info=True)
+    save_state_merge_meta(plan_dir, state)
     resolved_next = next_step
     if resolved_next is _AUTO_NEXT_STEP:
         next_steps = workflow_next(state)
