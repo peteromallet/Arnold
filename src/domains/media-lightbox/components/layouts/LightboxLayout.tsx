@@ -211,6 +211,8 @@ function OverlayElements({ topCenterClassName, showFloatingTools, props }: {
         />
       )}
 
+      {props.customOverlay}
+
       <WorkflowControlsBar {...props.workflowBar} />
     </>
   );

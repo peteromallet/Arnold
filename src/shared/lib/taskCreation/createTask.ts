@@ -1,7 +1,10 @@
 import { getSupabasePublishableKey, getSupabaseUrl } from '@/integrations/supabase/config/env';
+import { fetchGenerationRecordById } from '@/integrations/supabase/repositories/generationRepository';
+import { toast } from '@/shared/components/ui/runtime/sonner';
 import { isAbortError } from '@/shared/lib/errorHandling/errorUtils';
 import { normalizeAndPresentAndRethrow } from '@/shared/lib/errorHandling/runtimeError';
 import { AuthError, NetworkError, ServerError } from '@/shared/lib/errorHandling/errors';
+import { materializeLocalGeneration } from '@/shared/lib/media/materializeLocalGeneration';
 import { readAccessTokenFromStorage } from '@/shared/lib/supabaseSession';
 import { generateUUID } from './ids';
 import { parseTaskCreationResponse } from './parseTaskCreationResponse';
@@ -9,6 +12,30 @@ import type { BaseTaskParams, TaskCreationResult } from './types';
 
 const ATTEMPT_TIMEOUT_MS = 15_000;
 const MAX_ATTEMPTS = 2;
+const DIRECT_GENERATION_ID_KEYS = new Set([
+  'based_on',
+  'source_generation_id',
+  'generation_id',
+  'input_generation_id',
+  'parent_generation_id',
+  'start_image_generation_id',
+  'end_image_generation_id',
+  'pair_shot_generation_id',
+]);
+const ARRAY_GENERATION_ID_KEYS = new Set([
+  'input_image_generation_ids',
+  'pair_shot_generation_ids',
+]);
+
+interface CreateTaskOptions {
+  signal?: AbortSignal;
+  onMaterializeProgress?: (event: {
+    generationId: string;
+    progress: number;
+    index: number;
+    total: number;
+  }) => void;
+}
 
 function getNetworkDiagnostics(): Record<string, unknown> {
   const diag: Record<string, unknown> = {
@@ -28,8 +55,14 @@ async function attemptCreateTask(
   headers: Record<string, string>,
   body: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const controller = new AbortController();
+  const handleAbort = () => controller.abort();
+  if (signal?.aborted) {
+    controller.abort();
+  }
+  signal?.addEventListener('abort', handleAbort);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
@@ -40,6 +73,93 @@ async function attemptCreateTask(
     });
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', handleAbort);
+  }
+}
+
+function addGenerationId(target: Set<string>, value: unknown): void {
+  if (typeof value !== 'string') {
+    return;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed) {
+    target.add(trimmed);
+  }
+}
+
+function addGenerationIdsFromArray(target: Set<string>, value: unknown): void {
+  if (!Array.isArray(value)) {
+    return;
+  }
+
+  value.forEach((item) => addGenerationId(target, item));
+}
+
+function collectGenerationIds(value: unknown, target: Set<string>): void {
+  if (!value) {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectGenerationIds(item, target));
+    return;
+  }
+
+  if (typeof value !== 'object') {
+    return;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const [key, nestedValue] of Object.entries(record)) {
+    if (DIRECT_GENERATION_ID_KEYS.has(key)) {
+      addGenerationId(target, nestedValue);
+      continue;
+    }
+
+    if (ARRAY_GENERATION_ID_KEYS.has(key)) {
+      addGenerationIdsFromArray(target, nestedValue);
+      continue;
+    }
+
+    collectGenerationIds(nestedValue, target);
+  }
+}
+
+async function materializeTaskInputGenerations(
+  input: Record<string, unknown>,
+  options?: CreateTaskOptions,
+): Promise<void> {
+  const generationIds = new Set<string>();
+  collectGenerationIds(input, generationIds);
+
+  if (generationIds.size === 0) {
+    return;
+  }
+
+  let announcedUpload = false;
+  const ids = Array.from(generationIds);
+
+  for (const [index, generationId] of ids.entries()) {
+    const record = await fetchGenerationRecordById(generationId) as Record<string, unknown> | null;
+    if (record?.storage_mode === 'remote' || !record?.storage_mode) {
+      continue;
+    }
+
+    if (!announcedUpload) {
+      toast.info('Uploading original before sending to worker…');
+      announcedUpload = true;
+    }
+
+    await materializeLocalGeneration(generationId, {
+      signal: options?.signal,
+      onProgress: (progress) => options?.onMaterializeProgress?.({
+        generationId,
+        progress,
+        index,
+        total: ids.length,
+      }),
+    });
   }
 }
 
@@ -47,7 +167,10 @@ async function attemptCreateTask(
  * Creates a task using the unified create-task edge function.
  * Retries once on timeout since the server typically responds in <2s.
  */
-export async function createTask(taskParams: BaseTaskParams): Promise<TaskCreationResult> {
+export async function createTask(
+  taskParams: BaseTaskParams,
+  options?: CreateTaskOptions,
+): Promise<TaskCreationResult> {
   const accessToken = readAccessTokenFromStorage();
 
   if (!accessToken) {
@@ -67,6 +190,7 @@ export async function createTask(taskParams: BaseTaskParams): Promise<TaskCreati
   // deduplicates if the first attempt actually landed.
   const idempotency_key = generateUUID();
   const url = `${getSupabaseUrl()}/functions/v1/create-task`;
+  await materializeTaskInputGenerations(taskParams.input, options);
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${accessToken}`,
@@ -83,7 +207,7 @@ export async function createTask(taskParams: BaseTaskParams): Promise<TaskCreati
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const response = await attemptCreateTask(url, headers, body, ATTEMPT_TIMEOUT_MS);
+      const response = await attemptCreateTask(url, headers, body, ATTEMPT_TIMEOUT_MS, options?.signal);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');

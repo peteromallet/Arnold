@@ -93,6 +93,7 @@ interface ImageLightboxBehaviorProps {
   shotWorkflow?: LightboxShotWorkflowProps;
   features?: LightboxFeatureFlags;
   actions?: LightboxActionHandlers;
+  customOverlay?: React.ReactNode;
 }
 
 interface ImageLightboxProps
@@ -303,12 +304,13 @@ function useImageLightboxRenderModel(
         handleDownload, handleDelete,
       },
     },
+    customOverlay: props.customOverlay,
     adjacentSegments,
   } satisfies LightboxLayoutProps), [
     showPanel, sharedState.layout.shouldShowSidePanel,
     env.effectiveTasksPaneOpen, env.effectiveTasksPaneWidth, workflowBar,
     sharedState.buttonGroupProps.bottomLeft, sharedState.buttonGroupProps.bottomRight,
-    sharedState.buttonGroupProps.topRight, handleDownload, handleDelete, adjacentSegments,
+    sharedState.buttonGroupProps.topRight, handleDownload, handleDelete, props.customOverlay, adjacentSegments,
   ]);
 
   return {

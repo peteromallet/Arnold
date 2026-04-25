@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(projectRoot, 'src'),
+      'fake-indexeddb': path.resolve(projectRoot, 'vendor/fake-indexeddb/index.js'),
     },
   },
   esbuild: {

@@ -24,7 +24,7 @@ type DragState = {
 function toSelectionItem(image: GeneratedImageWithMetadata): GallerySelectionItem {
   return {
     id: image.id,
-    url: image.url,
+    url: image.url ?? image.thumbUrl ?? '',
     type: image.type ?? image.contentType ?? (image.isVideo ? 'video/mp4' : 'image/png'),
     generationId: image.generation_id ?? image.id,
   };

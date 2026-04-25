@@ -23,7 +23,7 @@ import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
 import { findClosestAspectRatio } from '@/shared/lib/media/aspectRatios';
 import { VARIANT_TYPE } from '@/shared/constants/variantTypes';
 import { enqueueVariantInvalidation } from '@/shared/hooks/invalidation/useGenerationInvalidation';
-import { uploadImageForVariant } from '@/shared/hooks/shots/externalImageDrop';
+import { uploadImageForVariant } from '@/shared/lib/media/createGenerationFromFile';
 import type { VariantDropParams } from '@/shared/hooks/dnd/useImageVariantDrop';
 import type { ShotEditorActions } from '../../state/useShotEditorState';
 

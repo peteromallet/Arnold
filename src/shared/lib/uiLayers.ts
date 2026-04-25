@@ -6,7 +6,8 @@ export const UI_Z_LAYERS = {
   // which render at OVERLAY_BASE_Z_INDEX = 110000+, see shared.tsx).
   GENERATIONS_PANE_BACKDROP: 100012,
   GENERATIONS_PANE: 100013,
-  TASKS_PANE_TAB_ABOVE_LIGHTBOX: 100014,
+  GENERATIONS_DROP_CHIP: 100014,
+  TASKS_PANE_TAB_ABOVE_LIGHTBOX: 100015,
   // Toasts must clear non-lightbox modals (110000+), so keep this above 110020
   // (the highest practical modal popup z at layer ~2).
   TOAST_VIEWPORT: 120000,

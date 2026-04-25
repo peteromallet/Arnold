@@ -12,6 +12,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 import {
+  LOCAL_GENERATION_MEDIA_SENTINEL_URL,
   transformGeneration,
   transformForTimeline,
   transformVariant,
@@ -171,6 +172,28 @@ describe('transformGeneration', () => {
       metadata: { custom: 'value' },
     });
     expect(result.metadata?.custom).toBe('value');
+  });
+
+  it('preserves local-generation metadata while nulling resolved media location', () => {
+    const result = transformGeneration(makeRaw({
+      location: null,
+      thumbnail_url: 'https://example.com/thumb.png',
+      storage_mode: 'local',
+      local_handle_id: 'handle-1',
+      local_file_name: 'clip.mov',
+      local_file_size: 123456789,
+      local_file_mime: 'video/quicktime',
+      type: 'video',
+    }));
+
+    expect(result.url).toBe(LOCAL_GENERATION_MEDIA_SENTINEL_URL);
+    expect(result.location).toBeNull();
+    expect(result.thumbUrl).toBe('https://example.com/thumb.png');
+    expect(result.storage_mode).toBe('local');
+    expect(result.local_handle_id).toBe('handle-1');
+    expect(result.local_file_name).toBe('clip.mov');
+    expect(result.local_file_size).toBe(123456789);
+    expect(result.local_file_mime).toBe('video/quicktime');
   });
 });
 

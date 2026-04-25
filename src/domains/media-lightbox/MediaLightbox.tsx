@@ -36,6 +36,7 @@ interface MediaLightboxBehaviorProps {
   features?: LightboxFeatureFlags;
   actions?: LightboxActionHandlers;
   videoProps?: VideoLightboxVideoProps;
+  customOverlay?: React.ReactNode;
 }
 
 interface MediaLightboxTaskDetailsProps {

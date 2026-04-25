@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { GenerationRow, Shot, ShotOption } from '@/domains/generation/types';
 import type {
   TaskDetailsData,
@@ -259,6 +260,7 @@ export interface VideoLightboxProps {
   features?: LightboxFeatureFlags;
   actions?: LightboxActionHandlers;
   videoProps?: VideoLightboxVideoProps;
+  customOverlay?: ReactNode;
 }
 
 export type VideoLightboxPropsWithMedia = VideoLightboxProps & {

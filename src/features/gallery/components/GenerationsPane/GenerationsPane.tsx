@@ -6,6 +6,7 @@ import { DeleteGenerationConfirmDialog } from '@/shared/components/dialogs/Delet
 import { PaneControlTab } from '@/shared/components/PaneControlTab';
 import { GenerationsPaneControls } from './components/GenerationsPaneControls';
 import { GenerationsPaneGallery } from './components/GenerationsPaneGallery';
+import { GenerationsDropChip } from './components/GenerationsDropChip';
 import { useGenerationsPaneController } from './hooks/useGenerationsPaneController';
 import { UI_Z_LAYERS } from '@/shared/lib/uiLayers';
 import { usePanesStore } from '@/shared/state/panesStore';
@@ -191,6 +192,7 @@ const GenerationsPaneComponent: React.FC = () => {
   return (
     <>
       <GenerationsPaneBackdrop controller={controller} />
+      <GenerationsDropChip controller={controller} />
       <GenerationsPaneTab controller={controller} />
       <GenerationsPaneSurface controller={controller} />
 

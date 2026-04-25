@@ -89,7 +89,7 @@ export function GenerationsPaneGallery({
   });
 
   const buildSelectionMeta = React.useCallback((image: MediaGalleryProps['images'][number]) => ({
-    url: image.url,
+    url: image.url ?? image.thumbUrl ?? '',
     type: image.type ?? image.contentType ?? (image.isVideo ? 'video/mp4' : 'image/png'),
     generationId: image.generation_id ?? image.id,
     variantId: image.primary_variant_id,

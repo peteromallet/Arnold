@@ -31,6 +31,8 @@ import { parseGenerationTaskId } from '@/shared/lib/tasks/generationTaskIdParser
 import { filterUuidStrings } from '@/shared/lib/uuid';
 import { asRecord, asString, firstString } from '@/shared/lib/jsonNarrowing';
 
+export const LOCAL_GENERATION_MEDIA_SENTINEL_URL = 'local://pending-materialization';
+
 /**
  * Result type for calculateDerivedCounts
  */
@@ -145,13 +147,18 @@ export interface RawVariant {
  */
 export interface RawGeneration {
   id: string;
-  location: string;
+  location: string | null;
   thumbnail_url?: string | null;
   primary_variant_id?: string | null;
   primary_variant?: {
     location?: string | null;
     thumbnail_url?: string | null;
   } | null;
+  storage_mode?: 'remote' | 'local' | 'uploading' | null;
+  local_handle_id?: string | null;
+  local_file_name?: string | null;
+  local_file_size?: number | null;
+  local_file_mime?: string | null;
   type?: string | null;
   created_at: string;
   updated_at?: string | null;
@@ -224,7 +231,7 @@ function extractPrompt(params: Record<string, unknown> | null | undefined): stri
  * Extract thumbnail URL with fallback logic
  * Handles special case for travel-between-images videos where thumbnail might be in params
  */
-function extractThumbnailUrl(item: RawGeneration, mainUrl: string): string {
+function extractThumbnailUrl(item: RawGeneration, mainUrl: string | null): string | null {
   // Start with database thumbnail_url field
   let thumbnailUrl = item.primary_variant?.thumbnail_url || item.thumbnail_url;
   const toolType = item.params?.tool_type;
@@ -269,7 +276,11 @@ export function transformGeneration(
   item: RawGeneration,
   options: TransformOptions = {}
 ): GeneratedImageWithMetadata {
-  const mainUrl = item.primary_variant?.location || item.location;
+  const isLocalGeneration = item.storage_mode === 'local';
+  const resolvedMediaUrl = item.primary_variant?.location || item.location;
+  const mainUrl = isLocalGeneration
+    ? null
+    : resolvedMediaUrl;
   const thumbnailUrl = extractThumbnailUrl(item, mainUrl);
   const taskIdParse = parseGenerationTaskId(item.tasks);
   const taskId = taskIdParse.taskId;
@@ -292,15 +303,18 @@ export function transformGeneration(
   // Supabase URLs have rotating tokens but the file path is stable
   const urlIdentity = stripQueryParameters(mainUrl);
   const thumbUrlIdentity = stripQueryParameters(thumbnailUrl);
+  const url = isLocalGeneration
+    ? LOCAL_GENERATION_MEDIA_SENTINEL_URL
+    : mainUrl;
 
   // Base transformation - fields common to all generations
   const baseItem: GeneratedImageWithMetadata = {
     id: item.id,
-    url: mainUrl,
+    url,
     location: mainUrl,
     thumbUrl: thumbnailUrl,
-    urlIdentity,
-    thumbUrlIdentity,
+    urlIdentity: urlIdentity || undefined,
+    thumbUrlIdentity: thumbUrlIdentity || undefined,
     prompt,
     metadata: {
       ...(item.params || {}),
@@ -324,6 +338,11 @@ export function transformGeneration(
     hasUnviewedVariants: item.hasUnviewedVariants || false, // For NEW badge display
     unviewedVariantCount: item.unviewedVariantCount || 0, // Count for tooltip
     primary_variant_id: item.primary_variant_id ?? null,
+    storage_mode: item.storage_mode ?? 'remote',
+    local_handle_id: item.local_handle_id ?? null,
+    local_file_name: item.local_file_name ?? null,
+    local_file_size: item.local_file_size ?? null,
+    local_file_mime: item.local_file_mime ?? null,
     // Parent/child relationship fields
     is_child: item.is_child ?? undefined,
     parent_generation_id: item.parent_generation_id ?? undefined,

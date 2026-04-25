@@ -213,7 +213,9 @@ export default function VideoEditorPage() {
       return;
     }
 
-    void update('project', { lastTimelineId: undefined });
+    // Invalid id — just clear the URL. We can't clear settings.lastTimelineId
+    // here because deepMerge drops `undefined` patches; the restore effect
+    // below is responsible for validating the persisted id against the list.
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.delete('timeline');
@@ -226,19 +228,24 @@ export default function VideoEditorPage() {
       return;
     }
 
-    if (settings?.lastTimelineId) {
-      setSearchParams((current) => {
-        const next = new URLSearchParams(current);
-        next.set('timeline', settings.lastTimelineId!);
-        return next;
-      }, { replace: true });
+    // Wait for the list before restoring or auto-picking — otherwise we'd
+    // restore a stale lastTimelineId that no longer exists (which the strip
+    // effect above would immediately delete, causing an infinite URL loop)
+    // or create a duplicate "Main timeline".
+    if (timelines.isLoading || timelines.error || !timelines.data) {
       return;
     }
 
-    // Wait for the timelines list before deciding to auto-create — otherwise
-    // we'd race the network and create a duplicate "Main timeline" on every
-    // first visit to a project that already has timelines.
-    if (timelines.isLoading || timelines.error || !timelines.data) {
+    const persistedId = settings?.lastTimelineId;
+    const persistedIsValid = persistedId
+      && timelines.data.some((timeline: { id: string }) => timeline.id === persistedId);
+
+    if (persistedIsValid) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set('timeline', persistedId);
+        return next;
+      }, { replace: true });
       return;
     }
 

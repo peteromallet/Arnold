@@ -36,6 +36,22 @@ describe("executeCreateTask", () => {
     ...timelineState,
     config: { clips },
   }) as never;
+  const createSupabaseAdminWithGenerationRows = (
+    rows: Array<{ id: string; storage_mode: string }>,
+  ) => ({
+    from: vi.fn((table: string) => {
+      if (table !== "generations") {
+        throw new Error(`Unexpected table ${table}`);
+      }
+
+      return {
+        select: vi.fn(() => ({
+          in: vi.fn(async () => ({ data: rows, error: null })),
+        })),
+      };
+    }),
+  }) as never;
+  const emptySupabaseAdmin = () => createSupabaseAdminWithGenerationRows([]);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -78,7 +94,7 @@ describe("executeCreateTask", () => {
       },
       timelineState,
       undefined,
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -105,7 +121,7 @@ describe("executeCreateTask", () => {
       },
       timelineState,
       undefined,
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -133,7 +149,7 @@ describe("executeCreateTask", () => {
       },
       timelineState,
       undefined,
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -165,7 +181,7 @@ describe("executeCreateTask", () => {
       },
       timelineState,
       undefined,
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -192,7 +208,7 @@ describe("executeCreateTask", () => {
         generation_id: "gen-1",
         shot_id: "shot-1",
       }],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -203,6 +219,39 @@ describe("executeCreateTask", () => {
       shot_id: "shot-1",
       reference_image_url: "https://example.com/reference.png",
     }));
+  });
+
+  it("rejects local-mode input generations with a structured error before task creation", async () => {
+    const supabaseAdmin = createSupabaseAdminWithGenerationRows([
+      { id: "gen-local", storage_mode: "local" },
+    ]);
+
+    const result = await executeCreateTask(
+      {
+        task_type: "image-to-image",
+        prompt: "warm cinematic grade",
+        reference_image_urls: ["https://example.com/reference.png"],
+        strength: 0.45,
+      },
+      timelineState,
+      [{
+        clip_id: "gallery-gen-local",
+        url: "https://example.com/reference.png",
+        media_type: "image",
+        generation_id: "gen-local",
+        variant_id: "variant-1",
+      }],
+      supabaseAdmin,
+      generationContext,
+      "timeline-1",
+    );
+
+    expect(JSON.parse(result.result)).toEqual({
+      code: "generation_not_materialized",
+      generation_id: "gen-local",
+      message: "This generation still lives on the user's device. Open the gallery and let it upload before running a task.",
+    });
+    expect(mocks.createGenerationTask).not.toHaveBeenCalled();
   });
 
   it("keeps selected-image edits on the image-to-image path without forcing transfer mode", async () => {
@@ -225,7 +274,7 @@ describe("executeCreateTask", () => {
         generation_id: "gen-1",
         shot_id: "shot-1",
       }],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -274,7 +323,7 @@ describe("executeCreateTask", () => {
         generation_id: "gen-1",
         shot_id: "shot-1",
       }],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -300,7 +349,7 @@ describe("executeCreateTask", () => {
         generation_id: "gen-1",
         shot_id: "shot-1",
       }],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -330,7 +379,7 @@ describe("executeCreateTask", () => {
         generation_id: "gen-1",
         variant_id: "variant-1",
       }],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -370,7 +419,7 @@ describe("executeCreateTask", () => {
         generation_id: "gen-1",
         variant_id: "variant-1",
       }],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -407,7 +456,7 @@ describe("executeCreateTask", () => {
         generation_id: "gen-1",
         variant_id: "variant-1",
       }],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );
@@ -468,7 +517,7 @@ describe("executeCreateTask", () => {
           variant_id: "variant-2",
         },
       ],
-      {} as never,
+      emptySupabaseAdmin(),
       generationContext,
       "timeline-1",
     );

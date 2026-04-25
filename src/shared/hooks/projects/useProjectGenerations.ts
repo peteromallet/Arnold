@@ -264,7 +264,7 @@ async function fetchGenerationsForProject(
   // Only include generations with valid output URLs - UNLESS fetching children of a specific parent
   // (children may still be processing and need to show as placeholders)
   if (!filters?.parentGenerationId) {
-    countQuery = countQuery.not('location', 'is', null);
+    countQuery = countQuery.or('location.not.is.null,storage_mode.eq.local');
   }
 
   // Parent/Child filtering (count query specific)
@@ -290,6 +290,11 @@ async function fetchGenerationsForProject(
       location,
       thumbnail_url,
       primary_variant_id,
+      storage_mode,
+      local_handle_id,
+      local_file_name,
+      local_file_size,
+      local_file_mime,
       primary_variant:generation_variants!generations_primary_variant_id_fkey (
         location,
         thumbnail_url
@@ -315,7 +320,7 @@ async function fetchGenerationsForProject(
     dataQuery = dataQuery.eq('parent_generation_id', filters.parentGenerationId);
     dataQuery = dataQuery.order('child_order', { ascending: true });
   } else {
-    dataQuery = dataQuery.not('location', 'is', null);
+    dataQuery = dataQuery.or('location.not.is.null,storage_mode.eq.local');
     if (!filters?.includeChildren) {
       dataQuery = dataQuery.eq('is_child', false);
     }

@@ -127,6 +127,50 @@ function buildPlacementIntent(
   };
 }
 
+function formatGenerationNotMaterializedError(generationId: string): string {
+  return JSON.stringify({
+    code: "generation_not_materialized",
+    generation_id: generationId,
+    message: "This generation still lives on the user's device. Open the gallery and let it upload before running a task.",
+  });
+}
+
+async function findNonRemoteInputGeneration(
+  supabaseAdmin: SupabaseAdmin,
+  generationIds: Array<string | undefined>,
+): Promise<string | null> {
+  const uniqueGenerationIds = Array.from(new Set(
+    generationIds.filter((generationId): generationId is string => Boolean(generationId && generationId.trim())),
+  ));
+
+  if (!uniqueGenerationIds.length) {
+    return null;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("generations")
+    .select("id, storage_mode")
+    .in("id", uniqueGenerationIds);
+
+  if (error) {
+    throw new Error(`Failed to load generation storage modes: ${error.message}`);
+  }
+
+  for (const row of Array.isArray(data) ? data : []) {
+    if (!isRecord(row)) {
+      continue;
+    }
+
+    const generationId = asTrimmedString(row.id);
+    const storageMode = asTrimmedString(row.storage_mode);
+    if (generationId && storageMode && storageMode !== "remote") {
+      return generationId;
+    }
+  }
+
+  return null;
+}
+
 function withPlacementIntent(
   params: Record<string, unknown> | undefined,
   placementIntent: PlacementIntent | undefined,
@@ -411,6 +455,15 @@ export async function executeCreateTask(
   const generationId = taskType === "image-upscale"
     ? selectedReferenceEntries[0]?.resolvedContext?.generation_id
     : undefined;
+  const nonRemoteGenerationId = await findNonRemoteInputGeneration(supabaseAdmin, [
+    ...selectedReferenceEntries.map(({ resolvedContext }) => resolvedContext?.generation_id),
+    selectedVideoEntry?.resolvedContext?.generation_id,
+    basedOn,
+    generationId,
+  ]);
+  if (nonRemoteGenerationId) {
+    return { result: formatGenerationNotMaterializedError(nonRemoteGenerationId) };
+  }
   const defaultModelName = taskType === "image-to-video"
     ? travelContext?.selectedModel
     : (taskType === "text-to-image" || Boolean(TASK_TYPE_TO_REFERENCE_MODE[taskType]))

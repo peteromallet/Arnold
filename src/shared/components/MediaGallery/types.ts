@@ -27,9 +27,9 @@ export interface GeneratedImageWithMetadata {
   shot_generation_id?: string;
   /** Alias used by some optimistic cache paths; kept for compatibility. */
   shotImageEntryId?: string;
-  url: string;
-  location?: string;
-  thumbUrl?: string;
+  url: string | null;
+  location?: string | null;
+  thumbUrl?: string | null;
   /** Stable URL identity (URL without query params) for caching/comparison - tokens change but file doesn't */
   urlIdentity?: string;
   /** Stable thumbnail URL identity for caching/comparison */
@@ -52,6 +52,11 @@ export interface GeneratedImageWithMetadata {
   timeline_frame?: number | null;
   name?: string; // Variant name for the generation
   primary_variant_id?: string | null;
+  storage_mode?: 'remote' | 'local' | 'uploading' | null;
+  local_handle_id?: string | null;
+  local_file_name?: string | null;
+  local_file_size?: number | null;
+  local_file_mime?: string | null;
   all_shot_associations?: Array<{ shot_id: string; position: number | null; timeline_frame?: number | null }>;
   based_on?: string | null; // ID of source generation for lineage tracking (magic edits, variations)
   derivedCount?: number; // Number of generations based on this one

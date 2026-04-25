@@ -89,6 +89,7 @@ describe('videoTravelSettings', () => {
   it('maps worker model names back to the UI model selector ids', () => {
     expect(resolveSelectedModelFromModelName('wan_2_2_i2v_lightning_baseline_2_2_2')).toBe('wan-2.2');
     expect(resolveSelectedModelFromModelName('ltx2_22B')).toBe('ltx-2.3');
+    expect(resolveSelectedModelFromModelName('ltx2_22B_distilled_1_1')).toBe('ltx-2.3-fast');
     expect(resolveSelectedModelFromModelName('ltx2_22B_distilled')).toBe('ltx-2.3-fast');
     expect(resolveSelectedModelFromModelName('unknown-model')).toBe('wan-2.2');
   });

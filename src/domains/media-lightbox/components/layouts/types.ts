@@ -16,6 +16,7 @@ export interface LightboxLayoutProps extends LayoutPanelProps {
   workflowBar: WorkflowControlsBarProps;
   buttonGroups: LayoutButtonGroupProps;
   controlsPanelContent?: ReactNode;
+  customOverlay?: ReactNode;
   adjacentSegments?: AdjacentSegmentsData;
   segmentSlotMode?: SegmentSlotModeData;
 }

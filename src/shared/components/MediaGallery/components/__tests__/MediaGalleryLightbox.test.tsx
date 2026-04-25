@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
-import { MediaGalleryLightbox } from '../MediaGalleryLightbox';
 import type { GeneratedImageWithMetadata } from '../../types';
 import type { GenerationRow } from '@/domains/generation/types';
 
 const mediaLightboxSpy = vi.fn();
+const useLocalMediaUrlMock = vi.fn();
 
 vi.mock('@/domains/media-lightbox/MediaLightbox', () => ({
   MediaLightbox: (props: unknown) => {
@@ -13,9 +13,19 @@ vi.mock('@/domains/media-lightbox/MediaLightbox', () => ({
   },
 }));
 
+vi.mock('@/shared/media/localMediaResolver', () => ({
+  useLocalMediaUrl: (media: unknown) => useLocalMediaUrlMock(media),
+}));
+
 vi.mock('@/shared/components/TaskDetails/TaskDetailsModal', () => ({
   TaskDetailsModal: () => null,
 }));
+
+vi.mock('@/domains/generation/components/GenerationDetails', () => ({
+  GenerationDetails: () => null,
+}));
+
+let MediaGalleryLightbox: typeof import('../MediaGalleryLightbox').MediaGalleryLightbox;
 
 function buildMedia(overrides: Partial<GeneratedImageWithMetadata>): GeneratedImageWithMetadata {
   return {
@@ -82,8 +92,16 @@ function renderLightbox({
 }
 
 describe('MediaGalleryLightbox', () => {
+  beforeAll(async () => {
+    ({ MediaGalleryLightbox } = await import('../MediaGalleryLightbox'));
+  });
+
   beforeEach(() => {
     mediaLightboxSpy.mockClear();
+    useLocalMediaUrlMock.mockReturnValue({
+      url: 'https://example.com/resolved.png',
+      state: 'ready',
+    });
   });
 
   it('uses session-owned lightbox media while preserving auto-enter edit mode from active metadata', () => {
@@ -107,6 +125,7 @@ describe('MediaGalleryLightbox', () => {
     expect(props.actions?.starred).toBe(true);
     expect(props.features?.initialEditActive).toBe(true);
     expect(props.media?.metadata).toEqual({ source: 'session' });
+    expect(props.media?.location).toBe('https://example.com/resolved.png');
   });
 
   it('disables image edit tools for video media and forwards mobile task details callbacks', () => {

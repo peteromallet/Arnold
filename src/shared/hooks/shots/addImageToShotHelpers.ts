@@ -10,6 +10,8 @@ export interface AddImageToShotVariables {
   imageUrl?: string;
   thumbUrl?: string;
   timelineFrame?: number | null;
+  abortSignal?: AbortSignal;
+  onMaterializeProgress?: (progress: number) => void;
 }
 
 export const withVariableMetadata = (data: Record<string, unknown>, variables: AddImageToShotVariables) => ({

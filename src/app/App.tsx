@@ -20,6 +20,7 @@ import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { AppProviders } from '@/app/providers/AppProviders';
 import { useAppDndOverlay } from '@/app/hooks/useAppDndOverlay';
 import { useAppExternalDrop } from '@/app/hooks/useAppExternalDrop';
+import { useGlobalFileDragDetection } from '@/app/hooks/useGlobalFileDragDetection';
 import { AgentChat } from '@/tools/video-editor/components/AgentChat';
 import { isRenderBudgetRuntimeEnabled } from '@/shared/dev/useRenderBudget';
 import { useLastAffectedShot } from '@/shared/state/selectionStore';
@@ -37,6 +38,7 @@ const AppInternalContent: React.FC = () => {
   const addImageToShotMutation = useAddImageToShot();
   const handleExternalImageDropMutation = useHandleExternalImageDrop();
   const { handleDragStart, handleDragCancel, finalizeDropAnimation, overlayContent } = useAppDndOverlay();
+  useGlobalFileDragDetection();
 
   const handleDragEnd = useAppExternalDrop({
     selectedProjectId,

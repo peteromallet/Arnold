@@ -2,14 +2,9 @@ import { getSupabaseClient as supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/databasePublicTypes';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { uploadImageToStorage } from '@/shared/lib/media/imageUploader';
-import {
-  generateClientThumbnail,
-  uploadImageWithThumbnail,
-} from '@/shared/media/clientThumbnailGenerator';
 import { cropImageToProjectAspectRatio } from '@/shared/lib/media/imageCropper';
 import { parseRatio } from '@/shared/lib/media/aspectRatios';
-import { VARIANT_TYPE } from '@/shared/constants/variantTypes';
+import { createGenerationForUploadedImage } from '@/shared/lib/media/createGenerationFromFile';
 
 export interface ExternalImageDropVariables {
   imageFiles: File[];
@@ -65,16 +60,6 @@ interface ProcessDroppedImagesInput {
   createGeneration?: typeof createGenerationForUploadedImage;
 }
 
-interface UploadImageForVariantOptions {
-  onProgress?: (progress: number) => void;
-}
-
-interface CreateGenerationForUploadedImageInput {
-  imageFile: File;
-  projectId: string;
-  onProgress?: (progress: number) => void;
-}
-
 const buildProgressHandler = (
   onProgress: ExternalImageDropVariables['onProgress'],
   fileIndex: number,
@@ -87,70 +72,6 @@ const buildProgressHandler = (
       }
     : undefined;
 
-export async function uploadImageForVariant(
-  imageFile: File,
-  _projectId: string,
-  options: UploadImageForVariantOptions = {},
-): Promise<{ imageUrl: string; thumbnailUrl: string }> {
-  void _projectId;
-  const { onProgress } = options;
-  try {
-    const thumbnailResult = await generateClientThumbnail(imageFile, 300, 0.8);
-    return await uploadImageWithThumbnail(imageFile, thumbnailResult.thumbnailBlob, {
-      onProgress,
-    });
-  } catch (error) {
-    normalizeAndPresentError(error, { context: `useShotCreation:thumbnail:${imageFile.name}`, showToast: false });
-    const imageUrl = await uploadImageToStorage(imageFile, 3, onProgress);
-    return {
-      imageUrl,
-      thumbnailUrl: imageUrl,
-    };
-  }
-}
-
-const createGenerationForUploadedImage = async ({
-  imageFile,
-  projectId,
-  onProgress,
-}: CreateGenerationForUploadedImageInput): Promise<Database['public']['Tables']['generations']['Row']> => {
-  const { imageUrl, thumbnailUrl } = await uploadImageForVariant(imageFile, projectId, {
-    onProgress,
-  });
-  const generationParams = {
-    source: 'upload',
-    original_filename: imageFile.name,
-    file_type: imageFile.type,
-    file_size: imageFile.size,
-  };
-
-  const { data, error } = await supabase().from('generations')
-    .insert({
-      project_id: projectId,
-      type: 'image',
-      location: imageUrl,
-      thumbnail_url: thumbnailUrl || imageUrl,
-      params: generationParams,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  await supabase().from('generation_variants').insert({
-    generation_id: data.id,
-    location: imageUrl,
-    thumbnail_url: thumbnailUrl || imageUrl,
-    is_primary: true,
-    variant_type: VARIANT_TYPE.ORIGINAL,
-    name: 'Original',
-    params: generationParams,
-  });
-
-  return data;
-};
 
 async function getCropConfig(projectId: string, shotId: string | null): Promise<CropConfig> {
   const config: CropConfig = {
@@ -387,7 +308,6 @@ async function processSingleDroppedImage(input: {
     timeline_frame: attachment.timeline_frame,
   };
 }
-
 export async function processDroppedImages(
   input: ProcessDroppedImagesInput,
 ): Promise<{ shotId: string; generationIds: string[]; generationMetadata: UploadedGenerationMetadata[] } | null> {

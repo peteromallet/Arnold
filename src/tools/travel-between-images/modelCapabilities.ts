@@ -135,7 +135,7 @@ export const MODEL_SPEC_REGISTRY: Record<SelectedModel, ModelSpec> = {
   'ltx-2.3-fast': {
     id: 'ltx-2.3-fast',
     modelFamily: 'ltx',
-    defaultWorkerModelName: 'ltx2_22B_distilled',
+    defaultWorkerModelName: 'ltx2_22B_distilled_1_1',
     frameStep: 8,
     fps: 24,
     defaultFrames: 97,
@@ -173,6 +173,10 @@ export function getModelSpec(modelId?: SelectedModel | null): ModelSpec {
   return MODEL_SPEC_REGISTRY[coerceSelectedModel(modelId)];
 }
 
+const LEGACY_WORKER_MODEL_ALIASES: Record<string, SelectedModel> = {
+  ltx2_22B_distilled: 'ltx-2.3-fast',
+};
+
 export function resolveSelectedModelFromModelName(modelName?: string | null): SelectedModel {
   if (!modelName) {
     return 'wan-2.2';
@@ -181,7 +185,11 @@ export function resolveSelectedModelFromModelName(modelName?: string | null): Se
   const matchedEntry = (Object.entries(MODEL_SPEC_REGISTRY) as Array<[SelectedModel, ModelSpec]>)
     .find(([, spec]) => spec.defaultWorkerModelName === modelName);
 
-  return matchedEntry?.[0] ?? 'wan-2.2';
+  if (matchedEntry) {
+    return matchedEntry[0];
+  }
+
+  return LEGACY_WORKER_MODEL_ALIASES[modelName] ?? 'wan-2.2';
 }
 
 export function getInferenceStepRange(model: SelectedModel): { min: number; max: number } {
