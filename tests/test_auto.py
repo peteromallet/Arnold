@@ -298,6 +298,7 @@ def _auto_args(plan: str, outcome_file: str | None = None) -> argparse.Namespace
         outcome_file=outcome_file,
         max_cost_usd=None,
         max_context_retries=2,
+        max_blocked_retries=1,
     )
 
 
@@ -670,5 +671,122 @@ def test_auto_help_surfaces_cost_and_context_retry_flags() -> None:
     assert proc.returncode == 0
     assert "--max-context-retries" in proc.stdout
     assert "--max-cost-usd" in proc.stdout
+    assert "--max-blocked-retries" in proc.stdout
     assert "context" in proc.stdout
     assert "cost" in proc.stdout
+
+
+def _write_blocked_execute_history(plan_dir: Path, deviations: list[str] | None = None) -> None:
+    """Stamp a history entry that mimics the executor finishing with result=blocked."""
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data.setdefault("history", []).append({"step": "execute", "result": "blocked", "cost_usd": 0.16})
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+    if deviations is not None:
+        (plan_dir / "execution_batch_1.json").write_text(
+            json.dumps({"deviations": deviations}),
+            encoding="utf-8",
+        )
+
+
+def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) -> None:
+    plan = "worker-blocked-cap"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_blocked_execute_history(
+        plan_dir,
+        deviations=[
+            "done tasks missing both files_changed and commands_run: T1, T2",
+            "Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): T3",
+        ],
+    )
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(args, cwd=None, timeout=None):
+        # Worker exits 0; the result=blocked is observable via history.
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_blocked_retries=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "worker_blocked"
+    assert outcome.blocked_retries_used == 1
+    # Only the BLOCKING deviations surface, not the FLAG-006 advisory.
+    assert any("missing both files_changed" in r for r in outcome.blocking_reasons)
+    assert not any("FLAG-006 softening" in r for r in outcome.blocking_reasons)
+
+
+def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:
+    plan = "worker-blocked-zero"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_blocked_execute_history(plan_dir)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_blocked_retries=0,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "worker_blocked"
+    assert outcome.blocked_retries_used == 0
+
+
+def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_path: Path) -> None:
+    """A clean execute (result=success) must NOT trigger the worker_blocked path."""
+    plan = "execute-success-no-blocked"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state_data.setdefault("history", []).append({"step": "execute", "result": "success", "cost_usd": 0.5})
+    (plan_dir / "state.json").write_text(json.dumps(state_data), encoding="utf-8")
+    statuses = [_execute_status(plan), _done_status(plan)]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+    assert outcome.status == "done"
+    assert outcome.blocked_retries_used == 0
+
+
+def test_last_history_step_result_handles_missing_and_corrupt(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    assert auto._last_history_step_result(plan_dir, "execute") is None
+    (plan_dir / "state.json").write_text("{bad json", encoding="utf-8")
+    assert auto._last_history_step_result(plan_dir, "execute") is None
+    (plan_dir / "state.json").write_text(
+        json.dumps({"history": [
+            {"step": "plan", "result": "success"},
+            {"step": "execute", "result": "blocked"},
+            {"step": "review", "result": "approved"},
+            {"step": "execute", "result": "success"},
+        ]}),
+        encoding="utf-8",
+    )
+    # Most recent execute wins; intervening review is ignored for the execute query.
+    assert auto._last_history_step_result(plan_dir, "execute") == "success"
+    assert auto._last_history_step_result(plan_dir, "review") == "approved"

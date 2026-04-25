@@ -41,6 +41,11 @@ DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
 DEFAULT_STATUS_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_CONTEXT_RETRIES = 2
 CONTEXT_EXHAUSTION_FRAGMENT = "ran out of room in the model's context"
+# When execute exits 0 but state.json's latest execute entry is `result=blocked`,
+# the executor reported success-with-evidence-gaps (e.g. done tasks missing
+# files_changed/commands_run). Retrying the same execute is structurally pointless
+# — the model returned that shape — so we cap retries low and fail fast.
+DEFAULT_MAX_BLOCKED_RETRIES = 1
 # Cap on review→rework cycles before the driver bails. This mirrors the
 # `execution.max_review_rework_cycles` config the review handler enforces
 # internally (default 3); the auto-driver applies its own cap so that an
@@ -54,7 +59,7 @@ PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "stalled" | "escalated" | "failed" | "aborted" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted"
+    status: str  # "done" | "stalled" | "escalated" | "failed" | "aborted" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked"
     plan: str
     final_state: str
     iterations: int
@@ -65,6 +70,9 @@ class DriverOutcome:
     cost_cap_usd: float | None = None
     context_retries_used: int = 0
     max_context_retries: int | None = None
+    blocked_retries_used: int = 0
+    max_blocked_retries: int | None = None
+    blocking_reasons: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(
@@ -80,6 +88,9 @@ class DriverOutcome:
                 "cost_cap_usd": self.cost_cap_usd,
                 "context_retries_used": self.context_retries_used,
                 "max_context_retries": self.max_context_retries,
+                "blocked_retries_used": self.blocked_retries_used,
+                "max_blocked_retries": self.max_blocked_retries,
+                "blocking_reasons": self.blocking_reasons,
             },
             indent=2,
         )
@@ -183,6 +194,75 @@ def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
     return None
 
 
+def _last_history_step_result(plan_dir: Path | None, step: str) -> str | None:
+    """Return the `result` field on the most recent history entry whose step matches.
+
+    Used to detect when a phase completed successfully at the subprocess level
+    but recorded `result: "blocked"` in state.json — the worker shipped output
+    but the executor's own quality checks rejected it (e.g. done tasks missing
+    files_changed). Returns None when state.json is missing/malformed or no
+    matching entry exists.
+    """
+    if plan_dir is None:
+        return None
+    try:
+        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
+            state_data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(state_data, dict):
+        return None
+    history = state_data.get("history") or []
+    for entry in reversed(history):
+        if isinstance(entry, dict) and entry.get("step") == step:
+            result = entry.get("result")
+            return result if isinstance(result, str) else None
+    return None
+
+
+def _read_execute_blocking_deviations(plan_dir: Path | None) -> list[str]:
+    """Return the most recent execute-batch's blocking deviations (best-effort).
+
+    The auto-driver uses these to surface *why* execute was blocked when the
+    final history entry's `result` is `blocked`. Reads the highest-numbered
+    execution_batch_<n>.json and pulls the `deviations` array, filtering for
+    the strings that build_blocking_reasons emits (advisory deviations are
+    excluded from the surfaced reason list).
+    """
+    if plan_dir is None:
+        return []
+    try:
+        batches = sorted(
+            (p for p in plan_dir.iterdir() if p.name.startswith("execution_batch_") and p.suffix == ".json"),
+            key=lambda p: p.name,
+        )
+    except OSError:
+        return []
+    if not batches:
+        return []
+    try:
+        with batches[-1].open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    deviations = payload.get("deviations") or []
+    if not isinstance(deviations, list):
+        return []
+    blocking_prefixes = (
+        "tasks have no executor update",
+        "sense checks have no executor acknowledgment",
+        "done tasks missing both files_changed and commands_run",
+        "Done tasks missing sections_written",
+    )
+    return [
+        str(d)
+        for d in deviations
+        if isinstance(d, str) and any(prefix in d for prefix in blocking_prefixes)
+    ]
+
+
 def _sum_history_cost_usd(plan_dir: Path | None) -> float:
     if plan_dir is None:
         return 0.0
@@ -238,6 +318,7 @@ def drive(
     max_review_rework_cycles: int = DEFAULT_MAX_REVIEW_REWORK_CYCLES,
     max_cost_usd: float | None = None,
     max_context_retries: int = DEFAULT_MAX_CONTEXT_RETRIES,
+    max_blocked_retries: int = DEFAULT_MAX_BLOCKED_RETRIES,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
@@ -258,6 +339,7 @@ def drive(
     stall_count = 0
     last_phase: str | None = None
     context_retry_count = 0
+    blocked_retry_count = 0
 
     # Rework-cycle tracking. When review returns `needs_rework`, the plan
     # ping-pongs `finalized ↔ executed ↔ finalized` while execute re-runs
@@ -280,6 +362,7 @@ def drive(
         iterations: int,
         reason: str = "",
         last_phase: str | None = None,
+        blocking_reasons: list[str] | None = None,
     ) -> DriverOutcome:
         return DriverOutcome(
             status=status,
@@ -293,6 +376,9 @@ def drive(
             cost_cap_usd=max_cost_usd,
             context_retries_used=context_retry_count,
             max_context_retries=max_context_retries,
+            blocked_retries_used=blocked_retry_count,
+            max_blocked_retries=max_blocked_retries,
+            blocking_reasons=list(blocking_reasons or []),
         )
 
     for iteration in range(1, max_iterations + 1):
@@ -575,6 +661,45 @@ def drive(
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
             log(f"phase '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+
+        # Worker-blocked detection: execute exited 0 (or returned partial work)
+        # but state.json's latest execute history entry has `result: "blocked"`.
+        # Without this guard the driver would re-run execute every iteration
+        # (state stays `finalized`) until stall-threshold finally kills it —
+        # which we observed in IRL bake-offs with hermes-based executors.
+        if next_step == "execute" and code in (0, None) and max_blocked_retries >= 0:
+            execute_result = _last_history_step_result(plan_dir, "execute")
+            if execute_result == "blocked":
+                deviations = _read_execute_blocking_deviations(plan_dir)
+                if blocked_retry_count >= max_blocked_retries:
+                    log(
+                        f"execute blocked by quality gates and retry cap reached "
+                        f"({max_blocked_retries}) — bailing",
+                        blocked_retries_used=blocked_retry_count,
+                        max_blocked_retries=max_blocked_retries,
+                        blocking_reasons=deviations,
+                    )
+                    return _outcome(
+                        "worker_blocked",
+                        final_state=state,
+                        iterations=iteration,
+                        reason=(
+                            "execute returned result=blocked from quality gates "
+                            f"after {blocked_retry_count + 1} attempt(s); "
+                            f"retry cap {max_blocked_retries} reached"
+                        ),
+                        last_phase=last_phase,
+                        blocking_reasons=deviations,
+                    )
+                blocked_retry_count += 1
+                log(
+                    f"execute blocked by quality gates — retrying "
+                    f"({blocked_retry_count}/{max_blocked_retries})",
+                    blocked_retries_used=blocked_retry_count,
+                    max_blocked_retries=max_blocked_retries,
+                    blocking_reasons=deviations,
+                )
+
         if poll_sleep > 0:
             time.sleep(poll_sleep)
 
@@ -640,6 +765,16 @@ def build_auto_parser(subparsers: Any) -> None:
         help=(
             f"Fresh execute retries to allow after Codex context-window "
             f"exhaustion (default {DEFAULT_MAX_CONTEXT_RETRIES}; 0 disables)."
+        ),
+    )
+    auto_parser.add_argument(
+        "--max-blocked-retries",
+        type=_non_negative_int,
+        default=DEFAULT_MAX_BLOCKED_RETRIES,
+        help=(
+            f"How many times to retry execute after the worker reports "
+            f"result=blocked (e.g. done tasks missing files_changed) before "
+            f"bailing with worker_blocked (default {DEFAULT_MAX_BLOCKED_RETRIES})."
         ),
     )
     auto_parser.add_argument(
@@ -716,6 +851,7 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         max_review_rework_cycles=args.max_review_rework_cycles,
         max_cost_usd=args.max_cost_usd,
         max_context_retries=args.max_context_retries,
+        max_blocked_retries=args.max_blocked_retries,
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
@@ -726,7 +862,8 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         _atomic_write_text(Path(args.outcome_file), outcome_json)
     sys.stdout.write(outcome_json + "\n")
     # Exit codes: 0 done/aborted, 1 failed/unknown, 2 stalled, 3 escalated,
-    # 4 iteration cap, 5 blocked, 6 cost cap exceeded, 7 context retry exhausted.
+    # 4 iteration cap, 5 blocked, 6 cost cap exceeded, 7 context retry exhausted,
+    # 8 worker_blocked.
     if outcome.status == "done":
         return 0
     if outcome.status == "aborted":
@@ -743,4 +880,6 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         return 6
     if outcome.status == "context_retry_exhausted":
         return 7
+    if outcome.status == "worker_blocked":
+        return 8
     return 1
