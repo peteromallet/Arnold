@@ -930,7 +930,8 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._trusted_container", return_value=False), \
+         patch("megaplan.workers.run_command", side_effect=fake_run_command):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
@@ -2163,4 +2164,3 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
                     persistent=False,
                     fresh=True,
                 )
-
