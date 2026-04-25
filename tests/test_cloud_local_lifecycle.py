@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -61,6 +63,12 @@ def _spec(*, port: int = 8080) -> CloudSpec:
 
 @pytest.mark.slow
 def test_local_provider_lifecycle_smoke(tmp_path, monkeypatch) -> None:
+    docker_config = os.environ.get("DOCKER_CONFIG")
+    if docker_config is None:
+        default_docker_config = Path.home() / ".docker"
+        if default_docker_config.exists():
+            monkeypatch.setenv("DOCKER_CONFIG", str(default_docker_config))
+
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

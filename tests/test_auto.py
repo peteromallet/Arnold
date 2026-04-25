@@ -11,10 +11,9 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 from unittest.mock import patch
-
-import pytest
 
 from megaplan import auto
 from megaplan.auto import DriverOutcome, drive
@@ -43,6 +42,66 @@ def _finalized_status(plan: str) -> dict:
         "next_step": "review",
         "valid_next": ["review"],
     }
+
+
+def _execute_status(plan: str, state: str = "finalized") -> dict:
+    return {
+        "success": True,
+        "step": "status",
+        "plan": plan,
+        "state": state,
+        "iteration": 1,
+        "summary": f"Plan is in state '{state}'.",
+        "next_step": "execute",
+        "valid_next": ["execute"],
+    }
+
+
+def _phase_status(plan: str, state: str = "planning", next_step: str = "prep") -> dict:
+    return {
+        "success": True,
+        "step": "status",
+        "plan": plan,
+        "state": state,
+        "iteration": 1,
+        "summary": f"Plan is in state '{state}'.",
+        "next_step": next_step,
+        "valid_next": [next_step],
+    }
+
+
+def _done_status(plan: str) -> dict:
+    return {
+        "success": True,
+        "step": "status",
+        "plan": plan,
+        "state": "done",
+        "iteration": 1,
+        "summary": "Plan is in state 'done'.",
+        "next_step": None,
+        "valid_next": [],
+    }
+
+
+def _write_history(plan_dir: Path, costs: list[object]) -> None:
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_dir.name,
+                "current_state": "finalized",
+                "history": [{"cost_usd": cost} for cost in costs],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _append_history_cost(plan_dir: Path, cost: float) -> None:
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    history = state_data.setdefault("history", [])
+    history.append({"cost_usd": cost})
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
 
 
 def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> None:
@@ -237,6 +296,8 @@ def _auto_args(plan: str, outcome_file: str | None = None) -> argparse.Namespace
         phase_timeout=1,
         status_timeout=1,
         outcome_file=outcome_file,
+        max_cost_usd=None,
+        max_context_retries=2,
     )
 
 
@@ -283,3 +344,331 @@ def test_run_auto_without_outcome_file_preserves_stdout_only_behavior(
     stdout = capsys.readouterr().out
     assert rc == 2
     assert stdout == outcome.to_json() + "\n"
+def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> None:
+    plan = "context-retry-success"
+    _make_plan_dir(tmp_path, plan)
+    statuses = [_execute_status(plan), _done_status(plan)]
+    calls: list[list[str]] = []
+    fragment = "Codex ran out of room in the model's context window."
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        if len(calls) == 1:
+            return 1, "", fragment
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+    assert outcome.status == "done"
+    assert outcome.context_retries_used == 1
+    assert len(calls) == 2
+    assert "--fresh" not in calls[0]
+    assert "--fresh" in calls[1]
+
+
+def test_context_retry_exhaustion_stops_after_max_retries(tmp_path: Path) -> None:
+    plan = "context-retry-exhausted"
+    _make_plan_dir(tmp_path, plan)
+    calls: list[list[str]] = []
+    fragment = "Codex ran out of room in the model's context window."
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        return 1, fragment, ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_context_retries=2,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "context_retry_exhausted"
+    assert outcome.context_retries_used == 2
+    assert len(calls) == 3
+    assert "--fresh" not in calls[0]
+    assert "--fresh" in calls[1]
+    assert "--fresh" in calls[2]
+
+
+def test_context_retry_zero_disables_context_handling(tmp_path: Path) -> None:
+    plan = "context-retry-disabled"
+    _make_plan_dir(tmp_path, plan)
+    calls: list[list[str]] = []
+    fragment = "Codex ran out of room in the model's context window."
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        return 1, "", fragment
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_context_retries=0,
+            stall_threshold=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert outcome.status != "context_retry_exhausted"
+    assert outcome.context_retries_used == 0
+    assert len(calls) == 1
+    assert all("--fresh" not in call for call in calls)
+
+
+def test_generic_execute_failure_uses_stall_path_not_fresh_retry(tmp_path: Path) -> None:
+    plan = "generic-execute-failure"
+    _make_plan_dir(tmp_path, plan)
+    calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        return 1, "", "ordinary execute failure"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert outcome.context_retries_used == 0
+    assert len(calls) == 1
+    assert all("--fresh" not in call for call in calls)
+
+
+def test_cli_rejects_negative_max_context_retries() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "megaplan",
+            "auto",
+            "--plan",
+            "x",
+            "--max-context-retries",
+            "-1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode != 0
+    assert "--max-context-retries" in proc.stderr
+    assert "non-negative" in proc.stderr
+
+
+def test_cost_cap_aborts_after_cumulative_cost_exceeds_cap(tmp_path: Path) -> None:
+    plan = "cost-cap-cumulative"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_history(plan_dir, [])
+    calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _phase_status(plan, state="planning", next_step="prep")
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        _append_history_cost(plan_dir, 1.0)
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_cost_usd=2.5,
+            stall_threshold=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "cost_cap_exceeded"
+    assert outcome.total_cost_usd == 3.0
+    assert outcome.cost_cap_usd == 2.5
+    assert len(calls) == 3
+
+
+def test_cost_cap_equal_boundary_does_not_abort(tmp_path: Path) -> None:
+    plan = "cost-cap-boundary"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_history(plan_dir, [])
+    calls: list[list[str]] = []
+    statuses = [_phase_status(plan, state="planning", next_step="prep"), _done_status(plan)]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        _append_history_cost(plan_dir, 2.5)
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_cost_usd=2.5,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status != "cost_cap_exceeded"
+    assert outcome.status == "done"
+    assert outcome.total_cost_usd == 2.5
+    assert len(calls) == 1
+
+
+def test_cost_cap_single_expensive_phase_finishes_before_abort(tmp_path: Path) -> None:
+    plan = "cost-cap-single-expensive"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_history(plan_dir, [])
+    calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _phase_status(plan, state="planning", next_step="prep")
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        _append_history_cost(plan_dir, 10.0)
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_cost_usd=5.0,
+            stall_threshold=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "cost_cap_exceeded"
+    assert outcome.total_cost_usd == 10.0
+    assert outcome.cost_cap_usd == 5.0
+    assert len(calls) == 1
+
+
+def test_unset_cost_cap_does_not_terminate_on_high_cost(tmp_path: Path) -> None:
+    plan = "cost-cap-unset"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_history(plan_dir, [])
+    calls: list[list[str]] = []
+    statuses = [_phase_status(plan, state="planning", next_step="prep"), _done_status(plan)]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        _append_history_cost(plan_dir, 9999.0)
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_cost_usd=None,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done"
+    assert outcome.status != "cost_cap_exceeded"
+    assert outcome.total_cost_usd == 9999.0
+    assert len(calls) == 1
+
+
+def test_cli_rejects_negative_max_cost_usd() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "megaplan",
+            "auto",
+            "--plan",
+            "x",
+            "--max-cost-usd",
+            "-1.0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode != 0
+    assert "--max-cost-usd" in proc.stderr
+    assert "non-negative" in proc.stderr
+
+
+def test_sum_history_cost_usd_handles_missing_corrupt_and_bad_entries(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    assert auto._sum_history_cost_usd(plan_dir) == 0.0
+
+    (plan_dir / "state.json").write_text("{bad json", encoding="utf-8")
+    assert auto._sum_history_cost_usd(plan_dir) == 0.0
+
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "history": [
+                    {"cost_usd": "1.25"},
+                    {"cost_usd": None},
+                    {"cost_usd": "not-a-number"},
+                    {"cost_usd": 2},
+                    {"other": 99},
+                    "not-a-dict",
+                ],
+                "meta": {"total_cost_usd": 9999},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert auto._sum_history_cost_usd(plan_dir) == 3.25
+
+
+def test_auto_help_surfaces_cost_and_context_retry_flags() -> None:
+    proc = subprocess.run(
+        [sys.executable, "-m", "megaplan", "auto", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0
+    assert "--max-context-retries" in proc.stdout
+    assert "--max-cost-usd" in proc.stdout
+    assert "context" in proc.stdout
+    assert "cost" in proc.stdout
