@@ -1,5 +1,87 @@
 # Changelog
 
+## v0.21.0 — 2026-04-25
+
+This release lands the full **Sprint 1 (step receipts + scope-drift hardening)** and **Sprint 2 (multi-profile bake-off)** features that v0.20.0's bakeoff caveat (`sprint1_pending: true`) was waiting on, plus a coordinated reliability pass on the auto-driver and executor caught by running the bake-off against itself.
+
+### Sprint 1 — Step receipts + scope-drift hardening
+
+Per-phase auditable records that make model-vs-model comparison and longitudinal queries possible.
+
+- **Receipt artifact** per `(plan_id, phase, iteration, attempt)`: `step_receipt_<phase>_v<iter>.json` in the plan dir, also appended as a single line to a global append-only log at `~/.megaplan/audit/receipts.jsonl`. Plan-dir copy wins on divergence; jsonl is rebuildable from plan dirs.
+- **Canonical prompt hash**: every receipt records both `prompt_hash_raw` (sha256 of the full rendered prompt) and `prompt_hash_canonical` (sha256 after redacting timestamps, plan-id, abs paths, env fingerprints). Canonicalization function lives in `megaplan/receipts/canonical.py` with a versioned `canonicalization_version: 1`. Two runs of the same plan-phase produce identical canonical hashes — the contract everything else rides on.
+- **Phase-specific extractors** (`megaplan/receipts/extractors.py`): pure functions that turn already-written artifacts into per-phase metrics dicts. Plan emits `step_count`, `task_count`, `oos_file_count`, `success_criteria_count`, etc. Critique emits `findings_per_check`, `severity_distribution`, `rubber_stamp_ratio`. Execute emits `files_claimed`, `files_in_diff`, `scope_drift_files_added`, `loc_added_outside_claimed`, plus the same fields for blocking. Review emits verdict + per-task verdict counts. Trivially testable; can backfill historical plans.
+- **Scope drift as a first-class metric**: `scope_drift_files_added`, `scope_drift_files_missing`, `loc_added_outside_claimed` with a `benign_set` allow-list. Severity tier (`none` / `low` / `high`) surfaces in StepResponse and as a top-level receipt field.
+- **Blocking promotion**: at `robust` and `superrobust` robustness, `high` severity scope drift hard-blocks execute (`megaplan/execute/quality.py`). `standard` robustness still advises only — no behavior change there.
+- **`megaplan audit query` subcommand**: filter the global jsonl by `--model`, `--phase`, `--profile`, `--since`; aggregate via `--agg avg,p50,p95`; output as table or `--json`. Sprint 1's read API.
+
+### Sprint 2 — Multi-profile bake-off (full implementation)
+
+`megaplan bakeoff {run,status,tail,compare,pick,merge,resume,abandon}` runs the same idea concurrently across N profiles, each in its own worktree, so you can compare profile output on identical inputs.
+
+- **Worktree lifecycle**: `git worktree add --detach <path> <base-sha>` per profile, sibling to the repo at `<repo-parent>/.megaplan-worktrees/<exp-id>/<profile>/`. Base SHA captured once at bakeoff start; every profile demonstrably starts from the same commit. Detached HEADs deliberately. Cleanup is explicit: `bakeoff merge` removes worktrees on success, crashes leave a `BAKEOFF_CRASHED` marker for forensic diffs, `bakeoff abandon <exp-id>` is the explicit cleanup later.
+- **Concurrent execution**: `asyncio.create_subprocess_exec` per profile, per-profile log files, no interleaving. Standard isolation invariants hold under load — main repo `git status` stays clean while N worktrees grow independent diffs.
+- **Comparison schema** (versioned, `schema_version: 1`): `experiment_id`, `base_sha`, `idea_hash`, per-profile `outcome_status`, `metrics` (duration_s, cost_usd, rework_cycles, escalations, review_verdict, diff_lines, tests_added, scope_drift_severity_by_phase), `judge_verdict` (rank, rationale_per_profile, scope_drift_flags, concerns), `human_decision`. Failed profiles get null fields, never missing keys.
+- **Three-tier decision**: auto-computed metrics (always), LLM judge (advisory, optional via `--judge`), human pick (authoritative via `bakeoff pick`).
+- **LLM judge contract**: omit `--judge` → skip (no paid call); `--judge auto` → first free of `claude`/`codex`/`gpt-5` *not* present as an executor in any profile being compared, with canonical agent+model comparison; `--judge <model>` → explicit. Output: `comparison.json` (structured) + `comparison.md` (readable).
+- **Asymmetric merge**: `git diff base..chosen-worktree-HEAD` piped to `git apply` (not `git merge` — no throwaway-branch history); copies all profiles' archive bundles (plan dir + auto.log + outcome.json + init.log) into `.megaplan/bakeoffs/<exp-id>/<profile>/`; copies the chosen profile's plan dir into `.megaplan/plans/` for follow-up reference.
+- **Crash isolation**: profile failures (init crash, model 404, codex context exhaustion mid-run) don't kill the bakeoff. Crashed profiles still surface in `compare` as evaluation data ("this profile can't even plan this kind of idea").
+- **`--detach`**: launches per-profile autos and returns immediately. Subprocesses continue as independent OS processes. User polls outcomes via `bakeoff status`. (Earlier behavior of awaiting completion regardless of `--detach` is fixed in this release.)
+- **`--robustness {tiny,light,standard,robust,superrobust}`**: passed through to each profile's `megaplan init`. Default-None preserves prior behavior when omitted.
+- **Project-layer profiles in worktrees**: orchestrator copies `<repo>/.megaplan/profiles.toml` into each worktree before init, so project-only profiles like `all-kimi` resolve from the worktree's gitignored `.megaplan/`.
+- **Resume** (`bakeoff resume`) only relaunches non-terminal profiles — winners are left alone.
+
+### Auto-driver reliability
+
+A coordinated set of failure-mode-specific retry caps and graceful aborts. Each can be tuned independently and surfaces a distinct terminal status in the outcome.
+
+- **`--max-context-retries N` (default 2)** with new `context_retry_exhausted` outcome status (exit code 7). When codex execute returns the fragment `"ran out of room in the model's context"`, auto-driver re-runs execute with `--fresh` appended (idempotent guard against double-append). Counts as a separate retry category from the stall threshold so it can't compound. Hit IRL during sprint 2's own execute (40 min in, batch 14/16) — without this, six retry iterations all immediately fail before stalling.
+- **`--max-cost-usd N`** with new `cost_cap_exceeded` outcome status (exit code 6). After every phase, sums `cost_usd` across `state["history"]`; aborts the loop if cumulative spend exceeds N. The check runs *after* each phase so a single expensive phase finishes; the *next* phase doesn't launch. Default unset = no cap (existing behavior). Argparse rejects negative or non-numeric values.
+- **`--max-blocked-retries N` (default 1)** with new `worker_blocked` outcome status (exit code 8). Detects when execute exits 0 but the latest history entry has `result: "blocked"` (e.g. done tasks missing `files_changed`/`commands_run` from hermes-style workers) and bails after N retries with the deviation reasons surfaced in the outcome. Without this, the auto-driver retries execute every iteration until stall-threshold catches it 5 iterations later — which two profiles in the reliability bake-off hit live.
+- **DriverOutcome additions**: `total_cost_usd`, `cost_cap_usd`, `context_retries_used`, `max_context_retries`, `blocked_retries_used`, `max_blocked_retries`, `blocking_reasons[]`. All emitted in `to_json()` and the `--outcome-file` write.
+
+### Executor — auto-attribute evidence
+
+Closes the root cause of `worker_blocked` for hermes/glm-style workers that mark done with empty arrays.
+
+- **`_auto_attribute_unclaimed_paths`** (`megaplan/execute/quality.py`): runs after `_merge_batch_results` and before `_check_done_task_evidence`. Captures the worktree's git-status snapshot, identifies paths not claimed by any task, finds done tasks in the current batch with empty `files_changed` AND empty `commands_run`, and attributes the unclaimed paths to those tasks. Marks each such task with `auto_attributed_files: true` so audits distinguish system-inferred from model-reported. Mirrors the marker into `payload["task_updates"]` so `execution_batch_<n>.json` reflects attribution.
+- **Multi-task ambiguity**: when several done tasks share an unclaimed pool, all get the full pool (permissive) plus a single `Auto-attribution ambiguous: N done tasks shared K unclaimed files` deviation so users can disambiguate.
+- **Recursive snapshot helper** (`_capture_git_status_snapshot_recursive`): expands untracked directories (which `git status --porcelain` lists as bare `dir/` entries) so newly-created dirs aren't lost during attribution.
+- **Schema additions**: `auto_attributed_files: boolean` on the finalize-task and execute-task-update schemas, doc/joke-mode excluded.
+
+### Profiles system
+
+- **`--profile <name>`** flag on every megaplan subcommand that accepts agent/model overrides. Expands a named TOML preset into per-phase `--phase-model` arguments before argparse-driven dispatch.
+- **Three-layer profile resolution**: built-in (`megaplan/profiles/*.toml`) → user (`~/.megaplan/profiles.toml`) → project (`.megaplan/profiles.toml`). Last layer wins per profile name.
+- **State fallback**: handlers recover the profile name from `state['config']['profile']` when the auto-driver invokes a fresh subprocess that doesn't propagate `--profile`. Documented in the function's docstring.
+- **`all-open` retuned**: plan/prep/revise/gate/finalize/loop_plan use `hermes:moonshotai/kimi-k2.6`; critique/execute/review/loop_execute/tiebreakers use `hermes:glm-5.1`. README profile section cleaned up.
+
+### Hermes integration
+
+- **Vendored `megaplan/agent/`** subtree (~5MB) — workers no longer rely on a parallel-installed hermes/agent CLI. Subtree imported from upstream commit `980e6b1c`.
+- **Worker imports rewired** through the vendored subtree (`megaplan/hermes_worker.py`, `megaplan/workers.py`).
+- **`megaplan/agent/__init__.py` sys.path shim**: ensures the vendored subtree's internal imports resolve regardless of the parent megaplan import context.
+
+### Work directory handling
+
+- **`workers.py`** defaults `work_dir` to the plan's `project_dir`, not the parent process's CWD. Stops cross-contamination when megaplan is invoked from outside the project dir.
+- **Loud warning** when `work_dir` diverges from `project_dir` — surfaces a misconfiguration class that previously caused silent execute drift.
+
+### Other
+
+- **`--mode joke`** on `megaplan init`: tuned for film-scene scripts; uses `sections_written` evidence semantics rather than `files_changed`.
+- **`--from-doc <path>`** on `megaplan init`: imports `## Settled Decisions` from a prior doc artifact into the new plan's success criteria. (Originally cut from v0.20.0 release notes; landing here for completeness.)
+- **Module reorganization**: review-phase code grouped into `megaplan/review/` subpackage; audit/execute modules split into `megaplan/audits/` and `megaplan/execute/` subpackages; legacy `tests/test_megaplan.py` removed in favor of per-phase test files.
+- **CHANGELOG and README**: updated alongside the diff for each major feature.
+
+### Migration notes
+
+- Receipts are **additive** — existing plans continue to function. No schema bump required.
+- `bakeoff compare` schema stays at `schema_version: 1`. Sprint-1 receipt-derived fields (per-phase scope drift severity) populate live now where v0.20.0's caveat emitted nulls.
+- New auto-driver flags default to safe values (`--max-context-retries 2`, `--max-blocked-retries 1`, `--max-cost-usd unset`). Existing scripts that run `megaplan auto` without these flags get a strictly better failure surface — no regression.
+- New outcome statuses (`cost_cap_exceeded`, `context_retry_exhausted`, `worker_blocked`) and exit codes (6/7/8) — callers that switch on `outcome.status` should add cases.
+- `auto_attributed_files: boolean` field is optional in finalize/execute schemas; absent means model-reported, present means system-inferred.
+
 ## v0.20.0 — 2026-04-21
 
 ### Sprint 2 bake-off — multi-profile worktree comparison
