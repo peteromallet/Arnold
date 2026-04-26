@@ -1,5 +1,8 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "openssl"]
+# nodejs_22 = current LTS (22.x). nodejs_20 in the pinned nixpkgs snapshot
+# resolves to 20.6.1, below package.json's `engines.node >=20.9.0` and below
+# the >=20.19.0 several @csstools/* deps require. Node 22 satisfies both.
+nixPkgs = ["nodejs_22", "openssl"]
 
 [phases.install]
 cmds = ["npm ci"]
