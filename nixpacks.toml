@@ -1,8 +1,12 @@
 [phases.setup]
-# nodejs_22 = current LTS (22.x). nodejs_20 in the pinned nixpkgs snapshot
-# resolves to 20.6.1, below package.json's `engines.node >=20.9.0` and below
-# the >=20.19.0 several @csstools/* deps require. Node 22 satisfies both.
-nixPkgs = ["nodejs_22", "openssl"]
+# Don't pin nodejs in nixPkgs — the pinned nixpkgs snapshot's `nodejs_20`
+# resolves to 20.6.1 (below package.json engines.node >=20.9.0 and below
+# >=20.19.0 several @csstools/* deps want), and `nodejs_22` isn't present in
+# that snapshot (the last build failed at nix-env -if). Letting nixpacks
+# auto-detect picks Node from .nvmrc (currently 20.18.0) without depending
+# on which Node version is shipped in the snapshot. openssl stays explicit
+# because some native deps need it at build time.
+nixPkgs = ["openssl"]
 
 [phases.install]
 cmds = ["npm ci"]
