@@ -90,10 +90,6 @@ function AgentChatBridgeRegistration() {
   const stableReplace = useCallback((nextClips: AgentChatContextValue['timelineClips']) => {
     const nextClipIds = nextClips.map((clip) => clip.clipId);
     const ops = opsRef.current;
-    if (typeof ops.replaceTimelineSelection === 'function') {
-      ops.replaceTimelineSelection(nextClipIds);
-      return;
-    }
     ops.selectClips(nextClipIds);
   }, []);
 
@@ -299,11 +295,9 @@ function InnerProvider({
     setPrecisionEnabled: editor.setPrecisionEnabled,
     setContextTarget: editor.setContextTarget,
     setInspectorTarget: editor.setInspectorTarget,
-    setSelectedClipId: editor.setSelectedClipId,
     isClipSelected: editor.isClipSelected,
     selectClip: editor.selectClip,
     selectClips: editor.selectClips,
-    replaceTimelineSelection: editor.replaceTimelineSelection,
     addToSelection: editor.addToSelection,
     clearSelection: editor.clearSelection,
     setSelectedTrackId: editor.setSelectedTrackId,

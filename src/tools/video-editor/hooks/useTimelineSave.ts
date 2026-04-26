@@ -76,7 +76,6 @@ export function useTimelineSave(
     selectedClipId: commit.selectedClipId,
     selectedTrackId: commit.selectedTrackId,
     saveStatus: persistence.saveStatus,
-    setSelectedClipId: commit.setSelectedClipId,
     setSelectedTrackId: commit.setSelectedTrackId,
     applyEdit: commit.applyEdit,
     patchRegistry: commit.patchRegistry,

@@ -30,7 +30,6 @@ function PropertiesPanelComponent() {
   } = useTimelineEditorData();
   const {
     clearSelection,
-    setSelectedClipId,
     handleUpdateClips,
     handleUpdateClipsDeep,
     handleDeleteClip,
@@ -262,7 +261,7 @@ function PropertiesPanelComponent() {
             hasPredecessor={selectedClipHasPredecessor}
             onChange={handleSelectedClipChange}
             onResetPosition={handleResetClipPosition}
-            onClose={() => setSelectedClipId(null)}
+            onClose={clearSelection}
             onDelete={selectedClip ? () => handleDeleteClip(selectedClip.id) : undefined}
             onToggleMute={handleToggleMute}
             onDetachAudio={selectedClip ? () => handleDetachAudioClip(selectedClip.id) : undefined}

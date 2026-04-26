@@ -150,7 +150,6 @@ function createInitialOpsSlice(): TimelineEditorOpsContextValue {
   const setPrecisionEnabled: TimelineEditorOpsContextValue['setPrecisionEnabled'] = noop;
   const setContextTarget: TimelineEditorOpsContextValue['setContextTarget'] = noop;
   const setInspectorTarget: TimelineEditorOpsContextValue['setInspectorTarget'] = noop;
-  const setSelectedClipId: TimelineEditorOpsContextValue['setSelectedClipId'] = noopSetState;
   const setSelectedTrackId: TimelineEditorOpsContextValue['setSelectedTrackId'] = noopSetState;
   const selectClip: TimelineEditorOpsContextValue['selectClip'] = noop;
   const selectClips: TimelineEditorOpsContextValue['selectClips'] = noop;
@@ -202,11 +201,9 @@ function createInitialOpsSlice(): TimelineEditorOpsContextValue {
     setPrecisionEnabled,
     setContextTarget,
     setInspectorTarget,
-    setSelectedClipId,
     isClipSelected: () => false,
     selectClip,
     selectClips,
-    replaceTimelineSelection: selectClips,
     addToSelection,
     clearSelection,
     setSelectedTrackId,

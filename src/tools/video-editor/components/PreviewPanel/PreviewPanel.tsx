@@ -41,7 +41,8 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
     precisionEnabled: timeline.precisionEnabled,
   }), shallow);
   const {
-    setSelectedClipId,
+    selectClip,
+    clearSelection,
     onOverlayChange,
     onDoubleClickAsset,
     setInputModalityFromPointerType,
@@ -49,7 +50,8 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
     setContextTarget,
     setInspectorTarget,
   } = useTimelineOpsSelector((ops) => ({
-    setSelectedClipId: ops.setSelectedClipId,
+    selectClip: ops.selectClip,
+    clearSelection: ops.clearSelection,
     onOverlayChange: ops.onOverlayChange,
     onDoubleClickAsset: ops.onDoubleClickAsset,
     setInputModalityFromPointerType: ops.setInputModalityFromPointerType,
@@ -105,7 +107,7 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
             if (gestureOwner === 'preview') {
               setGestureOwner('none');
             }
-            setSelectedClipId(null);
+            clearSelection();
           }}
         >
           <div className="sr-only" aria-live="polite" aria-atomic="true">
@@ -128,7 +130,13 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
             inputModality={inputModality}
             interactionMode={interactionMode}
             gestureOwner={gestureOwner}
-            onSelectClip={setSelectedClipId}
+            onSelectClip={(clipId) => {
+              if (clipId === null) {
+                clearSelection();
+                return;
+              }
+              selectClip(clipId);
+            }}
             onOverlayChange={onOverlayChange}
             setInputModalityFromPointerType={setInputModalityFromPointerType}
             setGestureOwner={setGestureOwner}

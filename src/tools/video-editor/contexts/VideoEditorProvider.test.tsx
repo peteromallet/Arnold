@@ -47,9 +47,7 @@ const mocks = {
   setInspectorTarget: vi.fn(),
   selectClip: vi.fn(),
   selectClips: vi.fn(),
-  replaceTimelineSelection: vi.fn(),
 };
-let hasReplaceTimelineSelection = true;
 
 vi.mock('@/tools/video-editor/hooks/useEffects', () => ({
   useEffects: () => ({ data: [] }),
@@ -151,11 +149,9 @@ vi.mock('@/tools/video-editor/hooks/useTimelineState', () => ({
       setPrecisionEnabled: mocks.setPrecisionEnabled,
       setContextTarget: mocks.setContextTarget,
       setInspectorTarget: mocks.setInspectorTarget,
-      setSelectedClipId: vi.fn(),
       isClipSelected: vi.fn(() => true),
       selectClip: mocks.selectClip,
       selectClips: mocks.selectClips,
-      replaceTimelineSelection: hasReplaceTimelineSelection ? mocks.replaceTimelineSelection : undefined,
       addToSelection: vi.fn(),
       clearSelection: vi.fn(),
       setSelectedTrackId: vi.fn(),
@@ -267,7 +263,7 @@ function Consumer() {
       <span>{String(editorData.interactionStateRef.current.drag)}</span>
       <span>{typeof editorData.additiveSelectionRef?.current}</span>
       <span>{typeof editorOps.selectClip}</span>
-      <span>{typeof editorOps.replaceTimelineSelection}</span>
+      <span>{typeof editorOps.selectClips}</span>
       <span>{chrome.saveStatus}</span>
       <span>{playback.currentTime}</span>
       <span data-testid="agent-chat-timeline-id">{agentChatBridge.timelineId}</span>
@@ -332,7 +328,6 @@ function AddToVideoEditorConsumer() {
 
 describe('VideoEditorProvider', () => {
   beforeEach(() => {
-    hasReplaceTimelineSelection = true;
     navigateMock.mockReset();
     localStorage.clear();
     Object.values(mocks).forEach((mock) => mock.mockClear());
@@ -412,42 +407,6 @@ describe('VideoEditorProvider', () => {
     expect(mocks.setPrecisionEnabled).toHaveBeenCalledWith(true);
     expect(mocks.setContextTarget).toHaveBeenCalledWith({ kind: 'clip', clipId: 'clip-1' });
     expect(mocks.setInspectorTarget).toHaveBeenCalledWith({ kind: 'selection', clipIds: ['clip-1'] });
-    expect(mocks.replaceTimelineSelection).toHaveBeenCalledWith(['clip-2']);
-    expect(mocks.selectClips).not.toHaveBeenCalled();
-  });
-
-  it('falls back to selectClips when replaceTimelineSelection is unavailable', () => {
-    hasReplaceTimelineSelection = false;
-
-    const provider: DataProvider = {
-      loadTimeline: vi.fn(),
-      saveTimeline: vi.fn(),
-      loadAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(),
-    };
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-        },
-      },
-    });
-
-    render(
-      <MemoryRouter>
-        <QueryClientProvider client={queryClient}>
-          <AgentChatProvider>
-            <VideoEditorProvider dataProvider={provider} timelineId="timeline-2" userId="user-1">
-              <Consumer />
-            </VideoEditorProvider>
-          </AgentChatProvider>
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'replace timeline clips' }));
-
-    expect(mocks.replaceTimelineSelection).not.toHaveBeenCalled();
     expect(mocks.selectClips).toHaveBeenCalledWith(['clip-2']);
   });
 

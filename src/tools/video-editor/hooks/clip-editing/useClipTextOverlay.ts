@@ -12,7 +12,7 @@ export function useClipTextOverlay(ctx: ClipEditingContext) {
     dataRef,
     selectedTrack,
     currentTimeRef,
-    setSelectedClipId,
+    selectClip,
     setSelectedTrackId,
   } = ctx;
 
@@ -65,9 +65,9 @@ export function useClipTextOverlay(ctx: ClipEditingContext) {
         opacity: 1,
       },
     }, undefined, nextClipOrder);
-    setSelectedClipId(clipId);
+    selectClip(clipId);
     setSelectedTrackId(visualTrack.id);
-  }, [applyRowsEdit, dataRef, selectedTrack, setSelectedClipId, setSelectedTrackId]);
+  }, [applyRowsEdit, dataRef, selectedTrack, selectClip, setSelectedTrackId]);
 
   const handleAddTextAt = useCallback((trackId: string, time: number) => {
     const current = dataRef.current;
@@ -119,9 +119,9 @@ export function useClipTextOverlay(ctx: ClipEditingContext) {
         opacity: 1,
       },
     }, undefined, nextClipOrder);
-    setSelectedClipId(clipId);
+    selectClip(clipId);
     setSelectedTrackId(visualTrack.id);
-  }, [applyRowsEdit, dataRef, setSelectedClipId, setSelectedTrackId]);
+  }, [applyRowsEdit, dataRef, selectClip, setSelectedTrackId]);
 
   return { handleAddText, handleAddTextAt };
 }

@@ -76,22 +76,56 @@ interface SelectionStoreState {
     options?: { append?: boolean },
   ) => void;
   deselectGalleryItems: (ids: Iterable<string>) => void;
+  /**
+   * Clears timeline clip selection and preserves the selected track.
+   *
+   * Note: opposite gallery default from `selectTimelineClip` and
+   * `selectTimelineClips`. Gallery selection is preserved by default; pass
+   * `{ clearGallery: true }` only when the caller intentionally wants to clear
+   * gallery selection too.
+   */
   clearTimelineSelection: (options?: { clearGallery?: boolean }) => void;
+  /**
+   * Selects one timeline clip.
+   *
+   * Without `options.toggle`, this replaces the timeline clip set with the
+   * single clip and makes it primary. With `options.toggle`, the clip is added
+   * or removed from the existing timeline selection and the primary clip is
+   * recomputed. Gallery selection clears by default; pass
+   * `{ clearGallery: false }` for editor-internal timeline mutations that must
+   * preserve gallery selection.
+   */
   selectTimelineClip: (
     clipId: string,
     options?: SelectClipOptions,
     syncOptions?: { clearGallery?: boolean },
   ) => void;
+  /**
+   * Replaces the entire timeline clip selection with `clipIds`.
+   *
+   * The primary clip is derived from the replacement set and additive selection
+   * is enabled when more than one clip remains selected. Gallery selection
+   * clears by default; pass `{ clearGallery: false }` for editor-internal
+   * timeline mutations that must preserve gallery selection.
+   */
   selectTimelineClips: (
     clipIds: Iterable<string>,
     syncOptions?: { clearGallery?: boolean },
   ) => void;
+  /**
+   * Adds clips to the existing timeline selection without clearing existing
+   * selected clips or gallery selection.
+   *
+   * The primary clip is preserved when possible and recomputed only if needed.
+   */
   addTimelineClips: (clipIds: Iterable<string>) => void;
+  /**
+   * Removes selected timeline clips that are not present in `validIds`.
+   *
+   * Preserves the selected track and gallery selection, and recomputes the
+   * primary clip from the remaining valid selection.
+   */
   pruneTimelineSelection: (validIds: Set<string>) => void;
-  setTimelineSelectedClipId: (
-    updater: SetStateAction<string | null>,
-    options?: { clearGallery?: boolean },
-  ) => void;
   setTimelineSelectedTrackId: (trackId: string | null) => void;
   resetTimelineSelection: () => void;
   setCurrentShotId: (shotId: string | null) => void;
@@ -551,20 +585,6 @@ const selectionStore = createStore<SelectionStoreState>((set, get) => ({
     });
   },
 
-  setTimelineSelectedClipId: (updater, options) => {
-    const current = get().timeline.primaryClipId;
-    const nextClipId = typeof updater === 'function'
-      ? updater(current)
-      : updater;
-
-    if (nextClipId === null) {
-      get().clearTimelineSelection(options);
-      return;
-    }
-
-    get().selectTimelineClip(nextClipId, undefined, options);
-  },
-
   setTimelineSelectedTrackId: (trackId) => {
     set((state) => (
       state.timeline.selectedTrackId === trackId
@@ -724,7 +744,6 @@ export function useTimelineSelectionStore() {
     selectedClipIds: state.timeline.selectedClipIds,
     primaryClipId: state.timeline.primaryClipId,
     additiveSelection: state.timeline.additiveSelection,
-    setSelectedClipId: state.setTimelineSelectedClipId,
     setSelectedTrackId: state.setTimelineSelectedTrackId,
     clearSelection: state.clearTimelineSelection,
     selectClip: state.selectTimelineClip,
@@ -748,6 +767,15 @@ export interface UseTimelineMultiSelectResult {
   pruneSelection: (validIds: Set<string>) => void;
 }
 
+/**
+ * Timeline-editor multi-select adapter.
+ *
+ * Editor-internal mutations preserve gallery selection by passing
+ * `{ clearGallery: false }` to `selectTimelineClip` and `selectTimelineClips`.
+ * The wrapped `clearSelection` calls
+ * `clearTimelineSelection({ clearGallery: false })`, which is functionally
+ * equivalent to the store default but kept explicit for parallelism.
+ */
 export function useTimelineMultiSelect(): UseTimelineMultiSelectResult {
   const {
     selectedClipIds,

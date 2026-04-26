@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useIsMobile, useIsTablet } from '@/shared/hooks/mobile';
-import { useTimelineSelectionStore } from '@/shared/state/selectionStore';
+import { useTimelineMultiSelect, useTimelineSelectionStore } from '@/shared/state/selectionStore';
 import { createInteractionState, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
 import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
@@ -45,6 +45,7 @@ export type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState';
 export type { SaveStatus } from '@/tools/video-editor/hooks/useTimelineSave';
 
 type SelectionHook = ReturnType<typeof useTimelineSelection>;
+type MultiSelectHook = ReturnType<typeof useTimelineMultiSelect>;
 type DragCoordinatorHook = ReturnType<typeof useDragCoordinator>;
 type TimelinePlaybackHook = ReturnType<typeof useTimelinePlayback>;
 type TimelineTrackManagementHook = ReturnType<typeof useTimelineTrackManagement>;
@@ -59,6 +60,7 @@ function useTimelineEditorContextValue({
   data,
   interactionPolicy,
   selection,
+  multiSelect,
   selectedTrackId,
   compositionSize,
   trackScaleMap,
@@ -95,6 +97,7 @@ function useTimelineEditorContextValue({
   data: TimelineData | null;
   interactionPolicy: ReturnType<typeof createMobileInteractionPolicy>;
   selection: SelectionHook;
+  multiSelect: MultiSelectHook;
   selectedTrackId: string | null;
   compositionSize: { width: number; height: number };
   trackScaleMap: Record<string, number>;
@@ -172,13 +175,11 @@ function useTimelineEditorContextValue({
     setPrecisionEnabled,
     setContextTarget,
     setInspectorTarget,
-    setSelectedClipId: selection.setSelectedClipId,
-    isClipSelected: selection.isClipSelected,
-    selectClip: selection.selectClip,
-    selectClips: selection.selectClips,
-    replaceTimelineSelection: selection.replaceTimelineSelection,
-    addToSelection: selection.addToSelection,
-    clearSelection: selection.clearSelection,
+    isClipSelected: multiSelect.isClipSelected,
+    selectClip: multiSelect.selectClip,
+    selectClips: multiSelect.selectClips,
+    addToSelection: multiSelect.addToSelection,
+    clearSelection: multiSelect.clearSelection,
     setSelectedTrackId,
     setActiveClipTab,
     setAssetPanelState,
@@ -248,6 +249,11 @@ function useTimelineEditorContextValue({
     interactionPolicy,
     interactionStateRef,
     isLoading,
+    multiSelect.addToSelection,
+    multiSelect.clearSelection,
+    multiSelect.isClipSelected,
+    multiSelect.selectClip,
+    multiSelect.selectClips,
     onActionResizeStart,
     onClipEdgeResizeEnd,
     patchRegistry,
@@ -260,21 +266,14 @@ function useTimelineEditorContextValue({
     scale,
     scaleWidth,
     selectedTrackId,
-    selection.addToSelection,
     selection.additiveSelectionRef,
-    selection.clearSelection,
-    selection.isClipSelected,
     selection.primaryClipId,
-    selection.replaceTimelineSelection,
     selection.resolvedConfig,
-    selection.selectClip,
-    selection.selectClips,
     selection.selectedClip,
     selection.selectedClipHasPredecessor,
     selection.selectedClipIds,
     selection.selectedClipIdsRef,
     selection.selectedTrack,
-    selection.setSelectedClipId,
     setActiveClipTab,
     setAssetPanelState,
     setContextTarget,
@@ -460,7 +459,6 @@ export function useTimelineState(): UseTimelineStateResult {
     selectedClipId,
     selectedTrackId,
     saveStatus,
-    setSelectedClipId,
     setSelectedTrackId,
     applyEdit,
     patchRegistry,
@@ -514,8 +512,8 @@ export function useTimelineState(): UseTimelineStateResult {
   const selection = useTimelineSelection({
     data,
     selectedTrackId,
-    setSelectedClipId,
   });
+  const multiSelect = useTimelineMultiSelect();
 
   useEffect(() => {
     resetSelection();
@@ -581,7 +579,7 @@ export function useTimelineState(): UseTimelineStateResult {
     dataRef,
     selectedTrackId,
     selectedProjectId,
-    setSelectedClipId: selection.setSelectedClipId,
+    selectClip: multiSelect.selectClip,
     setSelectedTrackId,
     applyEdit,
     patchRegistry,
@@ -603,7 +601,7 @@ export function useTimelineState(): UseTimelineStateResult {
     selectedClipId: selection.primaryClipId,
     selectedTrack: selection.selectedTrack,
     currentTime: playback.currentTime,
-    setSelectedClipId: selection.setSelectedClipId,
+    selectClip: multiSelect.selectClip,
     setSelectedTrackId,
     applyEdit,
   });
@@ -642,6 +640,7 @@ export function useTimelineState(): UseTimelineStateResult {
     data,
     interactionPolicy,
     selection,
+    multiSelect,
     selectedTrackId,
     compositionSize,
     trackScaleMap,
@@ -723,11 +722,9 @@ export function useTimelineState(): UseTimelineStateResult {
     setPrecisionEnabled: editor.setPrecisionEnabled,
     setContextTarget: editor.setContextTarget,
     setInspectorTarget: editor.setInspectorTarget,
-    setSelectedClipId: editor.setSelectedClipId,
     isClipSelected: editor.isClipSelected,
     selectClip: editor.selectClip,
     selectClips: editor.selectClips,
-    replaceTimelineSelection: editor.replaceTimelineSelection,
     addToSelection: editor.addToSelection,
     clearSelection: editor.clearSelection,
     setSelectedTrackId: editor.setSelectedTrackId,

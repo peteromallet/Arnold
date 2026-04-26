@@ -81,7 +81,6 @@ export interface UseTimelineCommitResult {
   dataRef: MutableRefObject<TimelineData | null>;
   selectedClipId: string | null;
   selectedTrackId: string | null;
-  setSelectedClipId: Dispatch<SetStateAction<string | null>>;
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
   applyEdit: (mutation: TimelineEditMutation, options?: ApplyEditOptions) => void;
   patchRegistry: (assetId: string, entry: AssetRegistryEntry, src?: string) => void;
@@ -114,9 +113,6 @@ export function useTimelineCommit({
     selectedClipId,
     selectedTrackId,
   } = useTimelineSelectionStore();
-  const setSelectedClipId = useCallback<Dispatch<SetStateAction<string | null>>>((updater) => {
-    selectionStore.getState().setTimelineSelectedClipId(updater, { clearGallery: false });
-  }, [selectionStore]);
   const setSelectedTrackId = useCallback<Dispatch<SetStateAction<string | null>>>((updater) => {
     const nextTrackId = typeof updater === 'function'
       ? updater(selectionStore.getState().timeline.selectedTrackId)
@@ -184,10 +180,18 @@ export function useTimelineCommit({
 
     if (options?.selectedClipId !== undefined) {
       selectedClipIdRef.current = options.selectedClipId;
-      selectionStore.getState().setTimelineSelectedClipId(options.selectedClipId, { clearGallery: false });
+      if (options.selectedClipId === null) {
+        selectionStore.getState().clearTimelineSelection({ clearGallery: false });
+      } else {
+        selectionStore.getState().selectTimelineClip(
+          options.selectedClipId,
+          undefined,
+          { clearGallery: false },
+        );
+      }
     } else if (selectedClipIdRef.current && !nextData.meta[selectedClipIdRef.current]) {
       selectedClipIdRef.current = null;
-      selectionStore.getState().setTimelineSelectedClipId(null, { clearGallery: false });
+      selectionStore.getState().clearTimelineSelection({ clearGallery: false });
     }
 
     eventBus.emit('pruneSelection', new Set(Object.keys(nextData.meta)));
@@ -410,7 +414,6 @@ export function useTimelineCommit({
     dataRef,
     selectedClipId,
     selectedTrackId,
-    setSelectedClipId,
     setSelectedTrackId,
     applyEdit,
     patchRegistry,

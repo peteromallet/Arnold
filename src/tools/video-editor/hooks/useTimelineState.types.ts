@@ -22,7 +22,6 @@ import type {
   TimelineSelectedClip,
   TimelineSelectedTrack,
   TimelineSetScaleWidth,
-  TimelineSetSelectedClipId,
   TimelineSetSelectedTrackId,
   TimelineStartRender,
   TimelineUnpatchRegistry,
@@ -98,12 +97,9 @@ export interface TimelineEditorOpsContextValue {
   setPrecisionEnabled: (enabled: boolean) => void;
   setContextTarget: (target: TimelineContextTarget) => void;
   setInspectorTarget: (target: TimelineInspectorTarget) => void;
-  setSelectedClipId: TimelineSetSelectedClipId;
   isClipSelected: UseTimelineMultiSelectResult['isClipSelected'];
   selectClip: UseTimelineMultiSelectResult['selectClip'];
   selectClips: UseTimelineMultiSelectResult['selectClips'];
-  // Preserve the legacy replace-only callback name while delegating to the store multi-select contract.
-  replaceTimelineSelection: UseTimelineMultiSelectResult['selectClips'];
   addToSelection: UseTimelineMultiSelectResult['addToSelection'];
   clearSelection: UseTimelineMultiSelectResult['clearSelection'];
   setSelectedTrackId: TimelineSetSelectedTrackId;

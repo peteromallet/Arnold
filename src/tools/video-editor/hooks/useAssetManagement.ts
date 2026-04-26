@@ -8,6 +8,7 @@ import { uploadBlobToStorage, uploadImageToStorage } from '@/shared/lib/media/im
 import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata';
 import { extractVideoPosterFrame } from '@/shared/lib/media/videoPosterExtractor';
 import { generateClientThumbnail, uploadImageWithThumbnail } from '@/shared/media/clientThumbnailGenerator';
+import type { UseTimelineMultiSelectResult } from '@/shared/state/selectionStore';
 import { createExternalUploadGeneration } from '@/integrations/supabase/repositories/generationMutationsRepository';
 import { generateUUID } from '@/shared/lib/taskCreation/ids';
 import { findNearestFreeTrack, getCompatibleTrackId, trySnapToEdge, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
@@ -48,7 +49,7 @@ export interface UseAssetManagementArgs {
   dataRef: MutableRefObject<TimelineData | null>;
   selectedTrackId: string | null;
   selectedProjectId: string | null;
-  setSelectedClipId: Dispatch<SetStateAction<string | null>>;
+  selectClip: UseTimelineMultiSelectResult['selectClip'];
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
   applyEdit: TimelineApplyEdit;
   patchRegistry: TimelinePatchRegistry;
@@ -269,7 +270,7 @@ export function useAssetManagement({
   dataRef,
   selectedTrackId,
   selectedProjectId,
-  setSelectedClipId,
+  selectClip,
   setSelectedTrackId,
   applyEdit,
   patchRegistry,
@@ -295,9 +296,9 @@ export function useAssetManagement({
   const getApplyEdit = useCallback(() => {
     return store?.getState().ops.applyEdit ?? applyEdit;
   }, [applyEdit, store]);
-  const getSetSelectedClipId = useCallback(() => {
-    return store?.getState().ops.setSelectedClipId ?? setSelectedClipId;
-  }, [setSelectedClipId, store]);
+  const getSelectClip = useCallback(() => {
+    return store?.getState().ops.selectClip ?? selectClip;
+  }, [selectClip, store]);
   const getSetSelectedTrackId = useCallback(() => {
     return store?.getState().ops.setSelectedTrackId ?? setSelectedTrackId;
   }, [setSelectedTrackId, store]);
@@ -490,9 +491,9 @@ export function useAssetManagement({
       metaUpdates: nextEdit.metaUpdates,
       clipOrderOverride: nextEdit.clipOrderOverride,
     });
-    getSetSelectedClipId()(nextEdit.clipId);
+    getSelectClip()(nextEdit.clipId);
     getSetSelectedTrackId()(resolvedTarget.trackId);
-  }, [getApplyEdit, getDataRef, getSelectedTrackId, getSetSelectedClipId, getSetSelectedTrackId]);
+  }, [getApplyEdit, getDataRef, getSelectedTrackId, getSelectClip, getSetSelectedTrackId]);
 
   return {
     registerGenerationAsset,
