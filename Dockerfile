@@ -11,6 +11,19 @@ COPY vendor ./vendor
 RUN npm ci --no-audit --no-fund
 
 COPY . .
+
+# Vite inlines VITE_* vars into the JS bundle at build time, so they must be
+# present during `npm run build`, not just at runtime. Railway passes service
+# variables matching declared ARGs as build args automatically.
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_API_TARGET_URL
+ARG VITE_APP_ENV
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
+    VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
+    VITE_API_TARGET_URL=$VITE_API_TARGET_URL \
+    VITE_APP_ENV=$VITE_APP_ENV
+
 RUN npm run build
 
 FROM node:20.19.0-alpine AS runtime
