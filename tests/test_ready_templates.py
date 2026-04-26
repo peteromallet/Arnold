@@ -7,7 +7,11 @@ def test_ready_template_ids_include_curated_workflows() -> None:
     ids = ready_template_ids()
 
     assert "edit/qwen_image_edit" in ids
+    assert "edit/flux2_klein_4b_image_edit_base" in ids
+    assert "edit/flux2_klein_9b_image_edit_base" in ids
+    assert "edit/flux2_klein_9b_image_edit_distilled" in ids
     assert "image/z_image" in ids
+    assert "image/flux2_klein_9b_t2i" in ids
     assert "video/wan_t2v" in ids
     assert all(not template_id.rsplit("/", 1)[-1].startswith("_") for template_id in ids)
 

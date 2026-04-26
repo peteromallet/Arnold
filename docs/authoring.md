@@ -1,5 +1,7 @@
 # Authoring
 
+> See [docs/python_composition_dsl_plan.md](python_composition_dsl_plan.md) for the broader composition-layer architecture this doc fits into.
+
 `VibeWorkflow` is the only editable IR. Blocks and patches mutate that object; API JSON is an escape hatch produced by `wf.compile("api")`, not an authoring surface.
 
 ## Blocks

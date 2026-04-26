@@ -58,48 +58,11 @@ Every entry must declare at least one root cause label. Multiple labels are allo
 - `fork_behavior`: HiddenSwitch's pip fork diverges from upstream ComfyUI (lagging node defs, renamed inputs, different CLI semantics, embedded-execution context gaps) in a way that affects this workflow.
 - `custom_node_contract`: a custom node pack (KJNodes, WanVideoWrapper, Lightricks, ComfyUI-GGUF, etc.) has an internal contract — declared schema, expected object attributes, server-context assumptions — that breaks under our usage.
 
-## Runtime Green With Mitigations
-
-### ACE Step audio prompt/runtime path
-
-Status: `Mitigated + gated by validator`
-
-Root cause: `local_bug, fork_behavior`
-Detected by: `value_out_of_range`
-
-Affected workflows:
-
-- `ace_step_1_5_t2a_song`
-
-Observed failures:
-
-- Generic `comfyui run-workflow --prompt ...` failed because HiddenSwitch prompt replacement could not find a positive image text encoder in an audio workflow.
-- Materialized ACE subgraph initially omitted required `TextEncodeAceStepAudio1.5` API inputs: `top_p`, `min_p`, `top_k`, `temperature`, and `bpm`.
-- UI widget-position mapping was fragile; after primitive-link replacement it sent `bpm=2`, which violated the node minimum of `10`.
-
-Current VibeComfy mitigation:
-
-- Audio workflows skip generic `--prompt` override and keep source-authored prompt wiring.
-- ACE smoke materialization now writes explicit API fields for `bpm`, sampling controls, seed, duration, and cfg rather than trusting widget positions.
-
-Validation evidence:
-
-- RunPod artifact: `out/runpod_artifacts/1777204423`.
-- Baseline `comfyui run-workflow`: `ok`, `110s`, MP3 output.
-- VibeComfy converted scratchpad: `ok`, `110s`, MP3 output.
-- Output files:
-  - `out/corpus_matrix/comfyui/ace_step_1_5_t2a_song/audio/vibecomfy_ace_step_smoke_00001_.mp3`
-  - `output/audio/vibecomfy_ace_step_smoke_00001_.mp3`
-
-Remaining structural follow-up:
-
-- Add doctor rules so future audio/custom-text workflows do not rely on image-oriented generic prompt override logic.
-
 ## Open / Active
 
 ### LTX Runexx 22B runtime path
 
-Status: `Open`
+Status: `Open (now diagnosable via watchdog)`
 
 Root cause: `custom_node_contract, fork_behavior`
 
@@ -120,6 +83,7 @@ Current VibeComfy mitigation:
 - Use official/Lightricks LTX workflows as runtime-green coverage.
 - Convert Runexx workflows into ready templates but do not claim runtime-green until the fork mismatch is resolved.
 - Bypass `LTXVLatentUpsampler` in smoke runs and remove unreferenced latent-upscale loader nodes.
+- Failed runs now produce a `vibecomfy/runtime/watchdog.py` report (`out/runs/<run>/watchdog.json`) naming the active node, class type, elapsed-in-node, recent progress events, and recent VRAM samples. This converts mid-sampler stalls and KJNodes object-attribute crashes into actionable diagnoses rather than opaque "no output before timeout" failures.
 
 Candidate root fixes:
 
@@ -127,115 +91,7 @@ Candidate root fixes:
 - Add a doctor check that flags this exact class/attribute mismatch before execution.
 - Keep community 22B workflows behind a larger timeout and stronger model-cache policy once the object mismatch is gone.
 
-### LTX Runexx audio extraction and audio-shape assumptions
-
-Status: `Mitigated`
-
-Root cause: `fixture_gap`
-
-Affected workflows:
-
-- `ltx2_3_runexx_video_to_video_extend`
-- other Runexx custom-audio / lip-sync / talking-avatar graphs when promoted to runtime-gated
-
-Observed failures:
-
-- Some workflows extract audio from smoke guide videos. Our generated guide videos used to be silent, so audio-processing nodes received empty or unexpected waveform structures.
-- WanVideoWrapper `NormalizeAudio` has been observed failing on audio tensor shape assumptions in one LTX community path.
-
-Current VibeComfy mitigation:
-
-- The smoke guide videos `ltx_smoke_guide.mp4`, `wolf_interpolated.mp4`, `bubble.mp4`, and `10.mp4` are now committed under `workflow_corpus/input/` with a real (non-silent) AAC audio stream muxed in (16kHz mono, sourced from `speech_smoke.wav`). Audio-extraction nodes therefore receive a non-empty waveform with realistic speech content rather than empty/DC tensors.
-- A real-speech `workflow_corpus/input/speech_smoke.wav` (~94KB, mono 16kHz, ~2.94s) is committed and used both as the muxed audio in the guide videos and as the target of `LoadAudio("speech_smoke.wav")` injections.
-- Bootstrap and fallback are unified in `vibecomfy/fixtures.py`. The matrix script calls `python -m vibecomfy.fixtures copy --target input`, which prefers committed assets and falls back to a synthetic generator (sine-wave WAV + audio-bearing H.264 videos) only when the committed assets are missing or when `VIBECOMFY_FIXTURES_REGENERATE=1` is set.
-- For some LTX paths, replace audio extracted from video with synthetic `LoadAudio("speech_smoke.wav")` (materializer + matrix-remote workaround retained as a defensive belt-and-braces).
-- See `workflow_corpus/input/FIXTURES.md` for source / license / format of each smoke fixture.
-
-Remaining gap:
-
-- Workflows that require specific speech *content* (talking-head / lip-sync graphs that need phoneme-level or VAD-aligned input, music or instrumental audio for ACE-style paths, multi-speaker mixes, etc.) are still unverified with these smoke fixtures. They will produce non-empty tensors but the output quality is undefined. A per-workflow input-contract system is the next step.
-
-Candidate root fixes:
-
-- Add doctor detection for workflows that use video-audio extraction but whose test input lacks an audio stream (now low-priority since the standard fixtures all carry audio, but useful as a guard against regression).
-- Define per-workflow input contracts so talking-head and music-conditioned workflows can declare a more specific fixture instead of falling back to the generic `speech_smoke.wav`.
-
-### Long-running LTX community graphs do not fail cleanly
-
-Status: `Open`
-
-Root cause: `runtime_observability`
-
-Affected workflows:
-
-- `ltx2_3_runexx_first_last_frame`
-- `ltx2_3_runexx_video_to_video_extend`
-
-Observed failures:
-
-- Several attempts progressed past validation and then failed or stalled after roughly 280-351 seconds.
-- The failure snippets were inside sampler/execution processing rather than a clear missing-node or missing-model error.
-
-Current VibeComfy mitigation:
-
-- Keep smoke budget bounded.
-- Preserve downloaded logs in `out/runpod_artifacts/<run>/`.
-- Prefer smaller official/Lightricks coverage while the community graph runtime path is unstable.
-
-Candidate root fixes:
-
-- Split cold install/model staging time from actual execution time so bottlenecks are visible.
-- Add GPU/VRAM sampling during each run.
-- Add an execution watchdog that records current node id, class type, VRAM, and last progress event before timeout.
-
 ## Mitigated
-
-### Generic prompt and step overrides assume mainline image nodes
-
-Status: `Fixed (local)`
-
-Root cause: `local_bug`
-
-Affected families:
-
-- WanVideoWrapper
-- ACE Step audio
-- Some LTX custom-node graphs
-
-Observed failure:
-
-- HiddenSwitch CLI overrides such as `--prompt` and `--steps` are convenient for mainline image workflows, but they are not general graph transforms. They can fail or mutate the wrong node family when the workflow uses custom prompt/sampler nodes.
-
-VibeComfy fix (`vibecomfy run`):
-
-- `vibecomfy.metadata._register_common_inputs` now gates `workflow.inputs["prompt"]` and `workflow.inputs["steps"]` registration on class-type allowlists (`PROMPT_NODE_CLASSES`, `STEPS_NODE_CLASSES`) instead of pure field-name matching. Custom-node text/sampler classes (WanVideoTextEncode, TextEncodeAceStepAudio1.5, WanVideoSampler, ...) are intentionally excluded.
-- `vibecomfy.commands.run._cmd_run` now exits with a clear error when `--prompt`/`--steps` is supplied against a workflow whose nodes do not match the allowlist, naming the workflow, the offending flag, and pointing the user at either editing the source workflow directly or extending the allowlist.
-- Set `VIBECOMFY_LEGACY_OVERRIDES=1` to restore the field-name-only registration as an emergency reversibility lever.
-- `--seed` remains universal — `seed`/`noise_seed` are well-defined across families.
-- The matrix workaround that stripped `--prompt`/`--steps` from the vibecomfy invocation in `scripts/runpod_corpus_matrix.py` has been removed; the HiddenSwitch baseline (`comfyui run-workflow`) keeps its strip because that path has no equivalent enforcement layer.
-
-### UI JSON to API JSON link representation
-
-Status: `Mitigated + gated by validator`
-
-Root cause: `local_bug`
-Detected by: `invalid_link_shape`
-
-Observed failure:
-
-- HiddenSwitch's UI-to-API workflow conversion expected Comfy UI link arrays. A materialized ACE subgraph with dict-shaped links failed in `_compress_graph_nodes` with `KeyError: 0`.
-
-Current VibeComfy mitigation:
-
-- Materialized official subgraphs must emit standard Comfy UI link arrays:
-
-```text
-[link_id, origin_id, origin_slot, target_id, target_slot, type]
-```
-
-Policy:
-
-- Do not hand-roll partial UI JSON shapes. Either normalize to API JSON or emit complete Comfy UI link arrays.
 
 ### Preview nodes can assume a server context
 
@@ -267,9 +123,10 @@ Policy:
 
 ### Custom-node discovery is not enough
 
-Status: `Mitigated`
+Status: `Mitigated + partial validator guard`
 
 Root cause: `fork_behavior`
+Detected by: `unknown_class_type` (validator) — at submit time, before runtime crashes
 
 Observed failure:
 
@@ -279,48 +136,21 @@ Current VibeComfy mitigation:
 
 - Matrix setup installs known custom-node packages for WanVideoWrapper, LTXVideo, KJNodes, VHS/video helpers, Easy-Use, rgthree, GGUF, and related dependencies.
 - `vibecomfy sources sync` indexes official workflows, external workflows, and custom nodes before materialization.
+- The pre-submit validator (`vibecomfy/schema/validate.py`) now emits `unknown_class_type` issues against `/object_info` *before* a graph is submitted, so missing-node-pack failures surface as hard validation errors during `vibecomfy validate`/`vibecomfy run`, not as runtime crashes.
 
 Policy:
 
 - Required workflows must declare their custom-node source in the corpus manifest or the matrix setup.
 - Ready templates should carry custom-node metadata even when runtime validation is deferred.
 
-### Model name and directory conventions differ across node packs
-
-Status: `Mitigated`
-
-Root cause: `model_layout`
-
-Affected families:
-
-- LTX/KJNodes/Lightricks
-- WanVideoWrapper/Kijai
-- Flux GGUF
-- ACE Step
-
-Observed failure:
-
-- The same model can be expected under different names or subdirectories depending on the node pack. A model can be downloaded correctly but still be invisible to the workflow.
-
-Current VibeComfy mitigation:
-
-- The RunPod matrix materializes model aliases into the directories expected by each node pack.
-- LTX model names from community workflows are normalized to staged Kijai/Lightricks filenames.
-- Wan model names are normalized across Kijai and Comfy-Org repackaged paths.
-- Flux Klein 9B GGUF is added to HiddenSwitch's known GGUF registry during the matrix run.
-
-Policy:
-
-- Required workflows should declare all accepted aliases centrally.
-- Doctor should report both "missing file" and "file exists but not at the path this node expects".
-
 ## Watch Items
 
 ### HiddenSwitch pip fork and official Comfy template drift
 
-Status: `Watch`
+Status: `Watch + partial validator guard`
 
 Root cause: `fork_behavior`
+Detected by: `unknown_class_type`, `unknown_input`, `missing_required_input`, `value_out_of_range`, `value_not_in_enum` (validator)
 
 Issue:
 
@@ -333,27 +163,20 @@ Examples:
 
 Policy:
 
-- Validate against `/object_info` or embedded node definitions, not just raw template shape.
-- Add doctor output that names missing required node inputs and suggests the patch/materialization location.
+- Validate against `/object_info` or embedded node definitions, not just raw template shape. The pre-submit validator now does this for the `vibecomfy run` and `vibecomfy validate` paths, so most schema-drift surfaces as a hard error before submission. Templates that drift in subtler ways (semantic shape changes, default-value drift) can still slip through and need the watch.
+- Doctor output that names missing required node inputs and suggests the patch/materialization location is still TODO (deferred per the wave-1 decision; revisit if validator-as-lint isn't sufficient).
 
-### Model downloader known-model registry
+## Resolved
 
-Status: `Mitigated / Watch`
+The following entries were closed by structural fixes that landed on 2026-04-26. Kept as a one-line history rather than full entries; see the named modules and `git log` for the implementation. If any of these regress, re-open with a new entry rather than reanimating the old one.
 
-Root cause: `model_layout, fork_behavior`
-
-Issue:
-
-- HiddenSwitch model downloader does not know every model used by our corpus.
-
-Current mitigation:
-
-- The RunPod matrix stages required model files directly through Hugging Face downloads and aliases them into all paths expected by the relevant custom nodes.
-- The matrix patches the known GGUF model registry for Flux Klein 9B.
-
-Policy:
-
-- Model staging should be explicit and reproducible. Do not rely on ad hoc downloader discovery for required ready templates.
+- **ACE Step audio prompt/runtime path** (was `local_bug, fork_behavior`). Caught by validator (`value_out_of_range` for `bpm=2`, `missing_required_input` for omitted ACE API fields) and by family-aware overrides (refuses to wire `--prompt` into `TextEncodeAceStepAudio1.5`). Files: `vibecomfy/schema/validate.py`, `vibecomfy/metadata.py`.
+- **LTX Runexx audio extraction and audio-shape assumptions** (was `fixture_gap`). Real `speech_smoke.wav` (~94KB, mono 16kHz, ~2.94s) plus four audio-bearing guide videos shipped under `workflow_corpus/input/`. Bootstrap unified in `vibecomfy/fixtures.py` with `python -m vibecomfy.fixtures copy --target input`. See `workflow_corpus/input/FIXTURES.md`. Remaining gap: workflows requiring specific speech *content* (talking-head / lip-sync, music-conditioned) are still unverified — re-open as a new entry if a specific workflow needs more than the generic clip.
+- **Long-running LTX community graphs do not fail cleanly** (was `runtime_observability`). WebSocket-based execution watchdog with diagnoses (`completed | errored | slow_node | stalled_runtime | oom_ish | missing_event_stream | crashed | in_progress`) wired into both session backends. File: `vibecomfy/runtime/watchdog.py`. Opt-out via `VIBECOMFY_WATCHDOG=0`. The workflows themselves still stall — those stalls now roll up into `LTX Runexx 22B runtime path` and are diagnosable per-incident.
+- **Generic prompt and step overrides assume mainline image nodes** (was `local_bug`). Class-type allowlists in `_register_common_inputs` (`PROMPT_NODE_CLASSES`, `STEPS_NODE_CLASSES`); CLI errors loudly when `--prompt`/`--steps` has no eligible target. Matrix-level workaround removed. Reversibility: `VIBECOMFY_LEGACY_OVERRIDES=1`. Files: `vibecomfy/metadata.py`, `vibecomfy/commands/run.py`, `scripts/runpod_corpus_matrix.py`.
+- **UI JSON to API JSON link representation** (was `local_bug`). Validator catches `invalid_link_shape` structurally — dict-shaped link payloads on inputs whose schema isn't `DICT`/`*` now fail at submit. File: `vibecomfy/schema/validate.py`.
+- **Model name and directory conventions differ across node packs** (was `model_layout`). Flat YAML registry (`vibecomfy/registry/models.yaml`) declaring canonical id → source → list of `(node_pack, target_path)` pairs + accepted aliases. Single source of truth for both staging (`stage_many` via `vibecomfy models stage` CLI) and runtime alias normalization. Files: `vibecomfy/registry/{models.yaml, models_loader.py, __init__.py}`, `vibecomfy/commands/models.py`, `scripts/runpod_corpus_matrix.py`, `scripts/runpod_matrix_remote.py`.
+- **Model downloader known-model registry** (was `model_layout, fork_behavior`). Folded into the registry above; HiddenSwitch's downloader is no longer the source of truth — the YAML is.
 
 ## Compatibility Checklist
 
@@ -361,12 +184,15 @@ Before calling a workflow `runtime_green` on HiddenSwitch:
 
 - Baseline `comfyui run-workflow` generated the expected media.
 - VibeComfy generated the expected media from the converted scratchpad.
-- Any generic CLI overrides are known to be compatible with that node family.
-- Required custom nodes are installed or intentionally absent.
-- Required model files are staged and size-checked.
+- Pre-submit validator passes against `/object_info` (no `unknown_class_type`, `missing_required_input`, `unknown_input`, `value_out_of_range`, `value_not_in_enum`, or `invalid_link_shape` issues). Disable temporarily with `--no-schema` only when intentionally testing the gate's reversibility lever.
+- Watchdog dump for the run produces `diagnosis=completed`. Any other diagnosis (`slow_node`, `stalled_runtime`, `oom_ish`, etc.) is a runtime-green failure even if media was eventually produced.
+- Required custom nodes are installed or intentionally absent (validator's `unknown_class_type` covers this).
+- Required model files are declared in `vibecomfy/registry/models.yaml` and present at every `(node_pack, target_path)` the registry lists. `vibecomfy models stage --dry-run` reports zero missing.
+- CLI overrides (`--prompt`, `--steps`) only invoked against workflows whose nodes match the allowlists — if they don't, the CLI now errors loudly rather than misrouting.
+- Audio-extraction workflows pull from a `workflow_corpus/input/` guide video (all four committed guides carry an AAC audio track) or an explicit `LoadAudio("speech_smoke.wav")`.
 - Preview/server-only nodes are disabled, removed, or patched.
-- UI JSON subgraphs have been materialized into a full API-compatible graph.
-- Failure logs are archived under `out/runpod_artifacts/<run>/`.
+- UI JSON subgraphs have been materialized into a full API-compatible graph (validator's `invalid_link_shape` catches dict-shaped link regressions).
+- Failure logs and watchdog dumps are archived under `out/runpod_artifacts/<run>/` and `out/runs/<run>/watchdog.json`.
 
 ## Contributing Entries
 

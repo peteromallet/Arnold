@@ -6,9 +6,9 @@ They are deliberately separate from `workflow_corpus/`, which stores source Comf
 
 Templates are organized by category (`edit/`, `image/`, `video`) and expose category-qualified ids such as `image/z_image`. Generated templates keep the API workflow, ready metadata, and ready requirements in the template file while delegating shared build/policy behavior to `vibecomfy.registry.ready_template`.
 
-The current checked-in ready corpus covers:
+The current checked-in ready corpus covers 46 templates:
 
-- Image/edit: Z-Image, Qwen image edit, Flux.2 Klein 4B T2I/edit, and Flux.2 Klein 9B GGUF T2I.
+- Image/edit: Z-Image, Qwen image edit, Flux.2 Klein 4B and 9B T2I/edit variants, plus the Flux.2 Klein 9B GGUF T2I runtime fallback.
 - Wan: official Wan T2V/I2V plus the representative Kijai WanVideoWrapper matrix.
 - LTX: official LTX 2.3 T2V/I2V/two-stage/IC-LoRA workflows plus community audio, V2V, anchor, motion-transfer, and long-form templates.
 

@@ -434,6 +434,28 @@
       "coverage_tier": "required"
     },
     {
+      "id": "flux2_klein_9b_t2i",
+      "path": "workflow_corpus/official/image/flux2_klein_9b_t2i.json",
+      "source": "Comfy-Org/workflow_templates",
+      "model_family": "flux2-klein-9b",
+      "task": "text_to_image",
+      "media": "image",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "official Flux.2 Klein 9B text-to-image safetensors workflow"
+    },
+    {
+      "id": "flux2_klein_4b_image_edit_base",
+      "path": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json",
+      "source": "Comfy-Org/workflow_templates",
+      "model_family": "flux2-klein-4b",
+      "task": "image_edit",
+      "media": "image",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "official Flux.2 Klein 4B base image-edit workflow"
+    },
+    {
       "id": "flux2_klein_4b_image_edit_distilled",
       "path": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
       "source": "Comfy-Org/workflow_templates",
@@ -441,6 +463,28 @@
       "task": "image_edit",
       "media": "image",
       "coverage_tier": "required"
+    },
+    {
+      "id": "flux2_klein_9b_image_edit_base",
+      "path": "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+      "source": "Comfy-Org/workflow_templates",
+      "model_family": "flux2-klein-9b",
+      "task": "image_edit",
+      "media": "image",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "official Flux.2 Klein 9B base image-edit workflow"
+    },
+    {
+      "id": "flux2_klein_9b_image_edit_distilled",
+      "path": "workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json",
+      "source": "Comfy-Org/workflow_templates",
+      "model_family": "flux2-klein-9b",
+      "task": "image_edit",
+      "media": "image",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "official Flux.2 Klein 9B distilled image-edit workflow"
     },
     {
       "id": "flux2_klein_9b_gguf_t2i",
