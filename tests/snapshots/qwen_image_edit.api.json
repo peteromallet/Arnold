@@ -1,0 +1,40 @@
+{
+  "102": {
+    "class_type": "74a8e1e2-9cb8-4112-978e-06ce1b5793f1",
+    "inputs": {
+      "image": [
+        "78",
+        0
+      ]
+    }
+  },
+  "60": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "102",
+        0
+      ],
+      "widget_0": "ComfyUI"
+    }
+  },
+  "78": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "widget_0": "image_qwen_image_edit_input_image.png",
+      "widget_1": "image"
+    }
+  },
+  "93": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "78",
+        0
+      ],
+      "widget_0": "lanczos",
+      "widget_1": 1.5,
+      "widget_2": 1
+    }
+  }
+}

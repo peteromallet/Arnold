@@ -1,0 +1,58 @@
+{
+  "75": {
+    "class_type": "7b34ab90-36f9-45ba-a665-71d418f0df18",
+    "inputs": {
+      "image": [
+        "76",
+        0
+      ]
+    }
+  },
+  "76": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "widget_0": "handbag_white.png",
+      "widget_1": "image"
+    }
+  },
+  "81": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "widget_0": "comfy_logo_blue.png",
+      "widget_1": "image"
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "75",
+        0
+      ],
+      "widget_0": "Flux2-Klein"
+    }
+  },
+  "92": {
+    "class_type": "65c22b29-59aa-496b-89c6-55a603658670",
+    "inputs": {
+      "image": [
+        "76",
+        0
+      ],
+      "image_1": [
+        "81",
+        0
+      ]
+    }
+  },
+  "94": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "92",
+        0
+      ],
+      "widget_0": "Flux2-Klein"
+    }
+  }
+}

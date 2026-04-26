@@ -1,0 +1,15 @@
+[
+  "CLIPLoader",
+  "CLIPTextEncode",
+  "CLIPVisionEncode",
+  "CLIPVisionLoader",
+  "CreateVideo",
+  "KSampler",
+  "LoadImage",
+  "ModelSamplingSD3",
+  "SaveVideo",
+  "UNETLoader",
+  "VAEDecode",
+  "VAELoader",
+  "WanImageToVideo"
+]

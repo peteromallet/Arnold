@@ -1,0 +1,71 @@
+# RunPod Validation
+
+Run the live validation from the VibeComfy repo:
+
+```bash
+python scripts/runpod_validate.py
+```
+
+The script uses the sibling `runpod-lifecycle` checkout at:
+
+```bash
+pip install -e '.[runpod-local]'
+pip install -e ../runpod-lifecycle
+```
+
+Set `VIBECOMFY_RUNPOD_LIFECYCLE_ROOT` if that checkout is somewhere other
+than `../runpod-lifecycle`.
+
+Environment:
+
+- `VIBECOMFY_RUNPOD_STORAGE`, default `Peter`
+- `VIBECOMFY_RUNPOD_GPU`, default `NVIDIA GeForce RTX 4090`
+- `VIBECOMFY_RUNPOD_MAX_RUNTIME_SECONDS`, default `7200` for the cheap smoke and `21600` for the proper media matrix
+- `VIBECOMFY_RUNPOD_LIFECYCLE_ROOT`, default `../runpod-lifecycle`
+- RunPod credentials loaded from the `runpod-lifecycle` `.env`
+
+What the script does:
+
+- Launches a RunPod pod with the configured storage.
+- Waits for SSH and checks `nvidia-smi -L`.
+- Uploads the local VibeComfy repo, excluding `.venv`, `.git`, `output`, and run logs.
+- Installs VibeComfy, HiddenSwitch ComfyUI, and ComfyScript.
+- Runs tests.
+- Indexes official templates, external examples, custom-node examples, and runtime nodes.
+- Starts managed runtime smoke.
+- Executes five embedded `EmptyImage -> SaveImage` workflows through `VibeWorkflow.compile("graphbuilder")`.
+- Verifies generated PNG files exist.
+- Terminates the launched pod in `finally`.
+
+The script has local signal handling, explicit `finally` termination, and a max-runtime watchdog. RunPod's current pod docs expose explicit stop/delete calls and a local scheduled stop pattern; network-volume pods should be terminated rather than stopped, so these scripts terminate the launched pod id.
+
+## Proper Media Matrix
+
+For final validation, use the model matrix path rather than only the cheap smoke:
+
+```bash
+python scripts/runpod_model_matrix.py
+```
+
+The proper matrix should launch a fresh RTX 4090 pod on the configured storage, upload the current checkout, install VibeComfy and HiddenSwitch ComfyUI, sync official workflow templates and custom-node examples, run tests, execute each selected workflow through baseline `comfyui run-workflow`, convert the same workflow to a VibeComfy scratchpad, run that scratchpad through embedded Comfy, record outputs and metadata, and terminate the pod in `finally`.
+
+The validation corpus should be official-template heavy:
+
+- Five official model-backed image workflows: `default`, `sdxlturbo_example`, `sdxl_simple_example`, `flux_schnell`, and `sdxl_refiner_prompt_example`.
+- One official Wan model-backed video workflow: `text_to_video_wan`.
+- One external/custom-node image workflow using `kijai/ComfyUI-KJNodes`.
+- One utility video workflow using `SaveWEBM`.
+
+Last verified live on RunPod pod `4pz5727nh80qe2`:
+
+- Source sync: `official=473 external=53 nodes=1202`.
+- Local tests on pod: `5 passed`.
+- Official images produced PNGs through both baseline Comfy and VibeComfy.
+- Official Wan `text_to_video_wan` produced `ComfyUI_00001_.mp4` through both baseline Comfy and VibeComfy.
+- VibeComfy Wan metadata recorded `runtime=embedded`, prompt id `85c548f0-ee87-4905-9a98-4628a04e8e1c`, and workflow hash `7bf088cbb87e47258ce39ef011ce0f1d6878c082d403321b9ada90ea05bd1c26`.
+- The launched pod `4pz5727nh80qe2` was terminated after validation.
+
+Known caveats:
+
+- `flux_fill_inpaint_example` currently fails before VibeComfy if the attached storage lacks authorized access to gated Hugging Face model `black-forest-labs/FLUX.1-Fill-dev/flux1-fill-dev.safetensors`.
+- Extra LTX video candidates may fail because of disk space or missing model files. They are useful probes, but the required model-backed video proof is the official Wan `text_to_video_wan` pass.

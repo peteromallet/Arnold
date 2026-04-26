@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any, Mapping
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import httpx
+
+
+def models_root() -> Path:
+    for env_name in ("VIBECOMFY_MODELS_ROOT", "COMFY_MODELS_ROOT"):
+        value = os.environ.get(env_name)
+        if value:
+            return Path(value)
+    try:
+        from comfy.cmd.folder_paths import folder_names_and_paths
+
+        return Path(folder_names_and_paths["checkpoints"][0][0]).parent
+    except Exception:
+        return Path("ComfyUI/models")
+
+
+def local_path(entry: Mapping[str, Any]) -> Path:
+    return models_root() / str(entry["subdir"]) / str(entry["name"])
+
+
+def is_present(entry: Mapping[str, Any]) -> bool:
+    path = local_path(entry)
+    return path.is_file() and path.stat().st_size > 0
+
+
+def download(entry: Mapping[str, Any], *, force: bool = False, client: Any = None) -> Path:
+    path = local_path(entry)
+    name = str(entry["name"])
+    if is_present(entry) and not force:
+        print(f"skipped {name}")
+        return path
+
+    url = _strip_download_true(str(entry["url"]))
+    headers: dict[str, str] = {}
+    token = os.environ.get("HF_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    timeout = httpx.Timeout(60, read=None)
+    stream_context = (
+        client.stream("GET", url, follow_redirects=True, headers=headers, timeout=timeout)
+        if client is not None
+        else httpx.stream("GET", url, follow_redirects=True, headers=headers, timeout=timeout)
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with stream_context as response:
+            _raise_for_status(response.status_code, url)
+            with tmp.open("wb") as handle:
+                for chunk in response.iter_bytes():
+                    if chunk:
+                        handle.write(chunk)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def download_many(entries: list[dict], *, force: bool = False) -> list[Path]:
+    paths: list[Path] = []
+    failures = 0
+    for entry in entries:
+        name = str(entry.get("name", "<unknown>"))
+        was_present = is_present(entry) and not force
+        try:
+            path = download(entry, force=force)
+        except Exception as exc:
+            failures += 1
+            print(f"failed {name}: {exc}")
+            continue
+        paths.append(path)
+        if not was_present:
+            print(f"downloaded {name} -> {path}")
+    if failures:
+        raise RuntimeError(f"{failures} failures")
+    return paths
+
+
+def _raise_for_status(status_code: int, url: str) -> None:
+    if status_code in {401, 403}:
+        raise PermissionError(f"License-gated download blocked for {url} — set HF_TOKEN or accept the license at the source URL.")
+    if status_code == 404:
+        raise FileNotFoundError(f"Asset not found at {url}")
+    if not 200 <= status_code < 300:
+        raise RuntimeError(f"HTTP {status_code} fetching {url}")
+
+
+def _strip_download_true(url: str) -> str:
+    parsed = urlsplit(url)
+    params = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if not (key == "download" and value == "true")]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query and urlencode(params), parsed.fragment))
+
+
+__all__ = ["download", "download_many", "is_present", "local_path", "models_root"]

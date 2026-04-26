@@ -1,0 +1,388 @@
+from __future__ import annotations
+
+from vibecomfy.registry.ready_template import build_api_ready_workflow
+
+
+API_WORKFLOW = {'210': {'class_type': 'SetNode', 'inputs': {'widget_0': 'fps', 'FLOAT': ['214', 0]}},
+ '209': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ext_seconds', 'INT': ['211', 0]}},
+ '310': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_frames', 'INT': ['605', 1]}},
+ '242': {'class_type': 'GetNode', 'inputs': {'widget_0': 'upscale_model'}},
+ '244': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
+ '349': {'class_type': 'SetNode', 'inputs': {'widget_0': 'extended_frames', 'INT': ['352', 1]}},
+ '459': {'class_type': 'SetNode', 'inputs': {'widget_0': 'upscale_model', 'LATENT_UPSCALE_MODEL': ['465', 0]}},
+ '460': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae_audio', 'VAE': ['471', 0]}},
+ '461': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae', 'VAE': ['463', 0]}},
+ '462': {'class_type': 'SetNode', 'inputs': {'widget_0': 'clip', 'CLIP': ['466', 0]}},
+ '467': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': '## LTX-2 Prompting Tips\n'
+                                '1. **Core Actions**: Describe events and actions as they occur over time  \n'
+                                '2. **Audio**: Describe sounds and dialogue needed for the scene  \n'
+                                '3. **Reference Image**: Do not repeat details already present  \n'
+                                '4. **Consistency**: Avoid instructions that do not match the reference image, as this '
+                                'will degrade results'}},
+ '468': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': 'If using some user made LTX-2 loras they sometimes are not trained on audio, so it '
+                                'will produce very noisy audio outputs. Try use KJNodes LTX-2 Lora Loader Advanced in '
+                                'such cases, and set the non video strenght to zero\n'}},
+ '472': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae_tiny', 'VAE': ['473', 0]}},
+ '473': {'class_type': 'VAELoader', 'inputs': {'widget_0': 'taeltx2_3.safetensors'}},
+ '477': {'class_type': 'DualCLIPLoaderGGUF',
+         'inputs': {'widget_0': 'gemma-3-12b-it-Q2_K.gguf',
+                    'widget_1': 'ltx-2.3_text_projection_bf16.safetensors',
+                    'widget_2': 'sdxl'}},
+ '481': {'class_type': 'SetNode', 'inputs': {'widget_0': 'model', 'MODEL': ['523', 0]}},
+ '476': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': 'Download models from here:\n'
+                                '\n'
+                                '\n'
+                                'https://huggingface.co/Kijai/LTX2.3_comfy\n'
+                                '\n'
+                                'Text encoder : https://huggingface.co/Comfy-Org/ltx-2'}},
+ '498': {'class_type': 'SetNode', 'inputs': {'widget_0': 'max_size', 'INT': ['497', 0]}},
+ '492': {'class_type': 'VHS_VideoInfo', 'inputs': {'video_info': ['319', 3]}},
+ '502': {'class_type': 'GetNode', 'inputs': {'widget_0': 'max_size'}},
+ '500': {'class_type': 'SimpleCalculatorKJ',
+         'inputs': {'widget_0': '(a > c) or (b > c) ',
+                    'variables.a': ['492', 8],
+                    'variables.b': ['492', 9],
+                    'variables.c': ['502', 0]}},
+ '507': {'class_type': 'GetNode', 'inputs': {'widget_0': 'max_size'}},
+ '504': {'class_type': 'LazySwitchKJ',
+         'inputs': {'widget_0': False, 'on_false': ['496', 0], 'on_true': ['505', 0], 'switch': ['500', 2]}},
+ '496': {'class_type': 'Reroute', 'inputs': {}},
+ '505': {'class_type': 'ResizeImagesByLongerEdge',
+         'inputs': {'widget_0': 1536, 'images': ['496', 0], 'longer_edge': ['507', 0]}},
+ '207': {'class_type': 'SetNode', 'inputs': {'widget_0': 'width', 'INT': ['512', 1]}},
+ '208': {'class_type': 'SetNode', 'inputs': {'widget_0': 'height', 'INT': ['512', 2]}},
+ '328': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_video', 'IMAGE': ['512', 0]}},
+ '495': {'class_type': 'ResizeImagesByLongerEdge', 'inputs': {'widget_0': 1536, 'images': ['440', 0]}},
+ '470': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': 'This automagically enhances your prompt using the already loaded Gemma model. But it '
+                                'can be a bit sensitive to having correct Gemma if using GGUF models. Alternatively '
+                                'you can bypass/disable  this feature '}},
+ '221': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
+ '466': {'class_type': 'DualCLIPLoader',
+         'inputs': {'widget_0': 'gemma_3_12B_it_fp4_mixed.safetensors',
+                    'widget_1': 'ltx-2.3_text_projection_bf16.safetensors',
+                    'widget_2': 'ltxv',
+                    'widget_3': 'default'}},
+ '471': {'class_type': 'VAELoaderKJ',
+         'inputs': {'widget_0': 'LTX23_audio_vae_bf16.safetensors', 'widget_1': 'main_device', 'widget_2': 'bf16'}},
+ '463': {'class_type': 'VAELoader', 'inputs': {'widget_0': 'LTX23_video_vae_bf16.safetensors'}},
+ '475': {'class_type': 'UnetLoaderGGUF',
+         'inputs': {'widget_0': 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'}},
+ '474': {'class_type': 'UNETLoader',
+         'inputs': {'widget_0': 'ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors',
+                    'widget_1': 'default'}},
+ '480': {'class_type': 'ManualSigmas',
+         'inputs': {'widget_0': '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0'}},
+ '479': {'class_type': 'ManualSigmas', 'inputs': {'widget_0': '0.85, 0.7250, 0.4219, 0.0'}},
+ '444': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': 'YouTube / Spotify etc : -14 LUFS\n'
+                                '\n'
+                                'Podcasts: -16 LUFS\n'
+                                '\n'
+                                'Instagram/TikTok: -12 to -10 LUFS\n'
+                                '\n'
+                                'Apple Music: -16 LUFS\n'
+                                '\n'
+                                'TV/Broadcast (US): -24 LUFS '}},
+ '382': {'class_type': 'VHS_VideoInfo', 'inputs': {'video_info': ['319', 3]}},
+ '217': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
+ '216': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_audio'}},
+ '555': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
+ '521': {'class_type': 'LTX2MemoryEfficientSageAttentionPatch', 'inputs': {'widget_0': True, 'model': ['520', 0]}},
+ '520': {'class_type': 'PathchSageAttentionKJ', 'inputs': {'widget_0': 'auto', 'widget_1': False, 'model': ['464', 0]}},
+ '164': {'class_type': 'BasicScheduler',
+         'inputs': {'steps': 1, 'widget_0': 1, 'widget_1': 8, 'widget_2': 1, 'model': ['526', 0]}},
+ '254': {'class_type': 'KSamplerSelect', 'inputs': {'widget_0': 'euler'}},
+ '109': {'class_type': 'LTXVConcatAVLatent', 'inputs': {'video_latent': ['545', 2], 'audio_latent': ['178', 1]}},
+ '369': {'class_type': 'GetNode', 'inputs': {'widget_0': 'model'}},
+ '408': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_tiny'}},
+ '250': {'class_type': 'LTXVSeparateAVLatent', 'inputs': {'av_latent': ['113', 0]}},
+ '251': {'class_type': 'LTXVConcatAVLatent', 'inputs': {'video_latent': ['438', 0], 'audio_latent': ['250', 1]}},
+ '224': {'class_type': 'SetNode', 'inputs': {'widget_0': 'positive', 'CONDITIONING': ['107', 0]}},
+ '225': {'class_type': 'SetNode', 'inputs': {'widget_0': 'negative', 'CONDITIONING': ['107', 1]}},
+ '526': {'class_type': 'ModelSamplingSD3', 'inputs': {'widget_0': 13, 'model': ['368', 0]}},
+ '113': {'class_type': 'SamplerCustomAdvanced',
+         'inputs': {'noise': ['115', 0],
+                    'guider': ['129', 0],
+                    'sampler': ['137', 0],
+                    'sigmas': ['164', 0],
+                    'latent_image': ['109', 0]}},
+ '556': {'class_type': 'GetImageRangeFromBatch', 'inputs': {'widget_0': -1, 'widget_1': 1, 'images': ['436', 0]}},
+ '368': {'class_type': 'LTX2SamplingPreviewOverride',
+         'inputs': {'widget_0': 8, 'model': ['369', 0], 'vae': ['408', 0]}},
+ '326': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_frames'}},
+ '542': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_frames'}},
+ '508': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_image'}},
+ '602': {'class_type': 'GetNode', 'inputs': {'widget_0': 'enable_promptenhance'}},
+ '600': {'class_type': 'GetNode', 'inputs': {'widget_0': 'clip'}},
+ '514': {'class_type': 'GetNode', 'inputs': {'widget_0': 'overlap_seconds'}},
+ '357': {'class_type': 'SimpleCalculatorKJ',
+         'inputs': {'widget_0': 'a + b', 'variables.a': ['356', 0], 'variables.b': ['514', 0]}},
+ '223': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
+ '356': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ext_seconds'}},
+ '258': {'class_type': 'SamplerCustomAdvanced',
+         'inputs': {'noise': ['243', 0],
+                    'guider': ['256', 0],
+                    'sampler': ['254', 0],
+                    'sigmas': ['479', 0],
+                    'latent_image': ['251', 0]}},
+ '601': {'class_type': 'SetNode', 'inputs': {'widget_0': 'enable_promptenhance', 'BOOLEAN': ['594', 0]}},
+ '599': {'class_type': '6002fb3c-ab34-4ad8-894e-fccaa60fd8c9',
+         'inputs': {'clip': ['600', 0], 'image': ['508', 0], 'string_b': ['487', 0]}},
+ '137': {'class_type': 'KSamplerSelect', 'inputs': {'widget_0': 'euler_ancestral'}},
+ '352': {'class_type': 'SimpleCalculatorKJ',
+         'inputs': {'widget_0': '((round((a * b -1) / 8)) * 8) + 1 ',
+                    'variables.a': ['211', 0],
+                    'variables.b': ['214', 0]}},
+ '214': {'class_type': 'PrimitiveFloat', 'inputs': {'widget_0': 8}},
+ '606': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
+ '605': {'class_type': 'SimpleCalculatorKJ',
+         'inputs': {'widget_0': '((round((a * b -1) / 8)) * 8) + 1 ',
+                    'variables.a': ['305', 0],
+                    'variables.b': ['606', 0]}},
+ '305': {'class_type': 'INTConstant', 'inputs': {'widget_0': 3}},
+ '608': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': 'Set how many frames from the input video to use as guide reference. LTX official '
+                                'recommend a minimum 3 seconds (around 73 frames in 24fps), maximum 505 frames (around '
+                                '21 seconds in 24fps). \n'
+                                '\n'
+                                'But you can try with less, 1-2 seconds, but might lose consistency'}},
+ '580': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
+ '222': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
+ '215': {'class_type': 'GetNode', 'inputs': {'widget_0': 'clip'}},
+ '528': {'class_type': 'Reroute', 'inputs': {}},
+ '469': {'class_type': 'MarkdownNote', 'inputs': {'widget_0': 'taeltx2_3.safetensors'}},
+ '465': {'class_type': 'LatentUpscaleModelLoader',
+         'inputs': {'widget_0': 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'}},
+ '436': {'class_type': 'ResizeImageMaskNode',
+         'inputs': {'widget_0': 'scale by multiplier', 'widget_1': 256, 'widget_2': 'area', 'input': ['379', 0]}},
+ '594': {'class_type': 'PrimitiveBoolean', 'inputs': {'widget_0': True}},
+ '256': {'class_type': 'CFGGuider',
+         'inputs': {'widget_0': 2.5, 'model': ['563', 0], 'positive': ['549', 0], 'negative': ['549', 1]}},
+ '107': {'class_type': 'LTXVConditioning',
+         'inputs': {'widget_0': 8, 'positive': ['545', 0], 'negative': ['545', 1], 'frame_rate': ['222', 0]}},
+ '439': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_image_overlap'}},
+ '442': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
+ '438': {'class_type': 'LTXVImgToVideoInplace',
+         'inputs': {'widget_0': 1, 'widget_1': False, 'vae': ['442', 0], 'image': ['439', 0], 'latent': ['549', 2]}},
+ '443': {'class_type': 'NormalizeAudioLoudness', 'inputs': {'widget_0': -16, 'audio': ['642', 0]}},
+ '506': {'class_type': 'GetImageSizeAndCount', 'inputs': {'image': ['504', 0]}},
+ '294': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_image', 'IMAGE': ['495', 0]}},
+ '440': {'class_type': 'GetImageRangeFromBatch', 'inputs': {'widget_0': 0, 'widget_1': 1, 'images': ['512', 0]}},
+ '285': {'class_type': 'SetNode', 'inputs': {'widget_0': 'compress_image', 'IMAGE': ['299', 0]}},
+ '299': {'class_type': 'LTXVPreprocess', 'inputs': {'widget_0': 18, 'image': ['495', 0]}},
+ '397': {'class_type': 'SetNode', 'inputs': {'widget_0': 'overlap_seconds', 'FLOAT': ['384', 0]}},
+ '329': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_audio', 'AUDIO': ['443', 0]}},
+ '384': {'class_type': 'SimpleCalculatorKJ',
+         'inputs': {'widget_0': 'a / b', 'variables.a': ['380', 0], 'variables.b': ['382', 5]}},
+ '386': {'class_type': 'SimpleCalculatorKJ',
+         'inputs': {'widget_0': 'a - b', 'variables.a': ['382', 7], 'variables.b': ['384', 0]}},
+ '380': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_frames'}},
+ '379': {'class_type': 'GetImageRangeFromBatch',
+         'inputs': {'widget_0': -1, 'widget_1': 1, 'images': ['638', 0], 'num_frames': ['380', 0]}},
+ '638': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_video'}},
+ '377': {'class_type': 'TrimAudioDuration',
+         'inputs': {'widget_0': 0,
+                    'widget_1': 60,
+                    'audio': ['443', 0],
+                    'start_index': ['386', 0],
+                    'duration': ['384', 0]}},
+ '566': {'class_type': 'GetImageRangeFromBatch', 'inputs': {'widget_0': 0, 'widget_1': 1, 'images': ['379', 0]}},
+ '567': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_image_overlap', 'IMAGE': ['566', 0]}},
+ '565': {'class_type': 'VAEEncode', 'inputs': {'pixels': ['436', 0], 'vae': ['217', 0]}},
+ '179': {'class_type': 'LTXVAudioVAEEncode', 'inputs': {'audio': ['377', 0], 'audio_vae': ['216', 0]}},
+ '178': {'class_type': 'LTXVAudioVideoMask',
+         'inputs': {'widget_0': 24,
+                    'widget_1': 0,
+                    'widget_2': 15,
+                    'widget_3': 0,
+                    'widget_4': 15,
+                    'widget_5': 'pad',
+                    'widget_6': 'add',
+                    'video_latent': ['565', 0],
+                    'audio_latent': ['179', 0],
+                    'video_fps': ['223', 0],
+                    'video_start_time': ['514', 0],
+                    'video_end_time': ['357', 0],
+                    'audio_start_time': ['514', 0],
+                    'audio_end_time': ['357', 0]}},
+ '545': {'class_type': 'LTXVAddLatentGuide',
+         'inputs': {'widget_0': -1,
+                    'widget_1': 1,
+                    'vae': ['555', 0],
+                    'positive': ['592', 0],
+                    'negative': ['110', 0],
+                    'latent': ['178', 0],
+                    'guiding_latent': ['546', 0]}},
+ '573': {'class_type': 'GetNode', 'inputs': {'widget_0': 'negative'}},
+ '572': {'class_type': 'GetNode', 'inputs': {'widget_0': 'positive'}},
+ '549': {'class_type': 'LTXVCropGuides',
+         'inputs': {'positive': ['572', 0], 'negative': ['573', 0], 'latent': ['250', 0]}},
+ '129': {'class_type': 'CFGGuider',
+         'inputs': {'widget_0': 2.5, 'model': ['563', 0], 'positive': ['107', 0], 'negative': ['107', 1]}},
+ '220': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
+ '125': {'class_type': 'LTXVSeparateAVLatent', 'inputs': {'av_latent': ['258', 0]}},
+ '576': {'class_type': 'GetNode', 'inputs': {'widget_0': 'positive'}},
+ '569': {'class_type': 'LTXVCropGuides',
+         'inputs': {'positive': ['576', 0], 'negative': ['577', 0], 'latent': ['125', 0]}},
+ '577': {'class_type': 'GetNode', 'inputs': {'widget_0': 'negative'}},
+ '394': {'class_type': 'TrimAudioDuration',
+         'inputs': {'widget_0': 0, 'widget_1': 2048, 'audio': ['425', 0], 'start_index': ['398', 0]}},
+ '398': {'class_type': 'GetNode', 'inputs': {'widget_0': 'overlap_seconds'}},
+ '453': {'class_type': 'SetNode', 'inputs': {'widget_0': 'final_audio', 'AUDIO': ['393', 0]}},
+ '403': {'class_type': 'ImageBatchMulti', 'inputs': {'widget_0': 2, 'image_1': ['363', 0], 'image_2': ['306', 0]}},
+ '363': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_video'}},
+ '541': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_video'}},
+ '393': {'class_type': 'AudioConcat', 'inputs': {'widget_0': 'after', 'audio1': ['392', 0], 'audio2': ['394', 0]}},
+ '392': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_audio'}},
+ '451': {'class_type': 'SetNode', 'inputs': {'widget_0': 'final_video_cut', 'IMAGE': ['403', 0]}},
+ '574': {'class_type': 'SetNode', 'inputs': {'widget_0': 'final_video_blend', 'IMAGE': ['536', 2]}},
+ '527': {'class_type': 'VAEDecode', 'inputs': {'samples': ['569', 2], 'vae': ['220', 0]}},
+ '127': {'class_type': 'VAEDecodeTiled', 'inputs': {'widget_0': 512, 'widget_1': 64, 'widget_2': 4096, 'widget_3': 8}},
+ '219': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_audio'}},
+ '425': {'class_type': 'LTXVAudioVAEDecode', 'inputs': {'samples': ['125', 1], 'audio_vae': ['219', 0]}},
+ '536': {'class_type': 'ImageBatchExtendWithOverlap',
+         'inputs': {'widget_0': 1,
+                    'widget_1': 'source',
+                    'widget_2': 'perceptual_crossfade',
+                    'source_images': ['541', 0],
+                    'new_images': ['528', 0],
+                    'overlap': ['542', 0]}},
+ '306': {'class_type': 'GetImageRangeFromBatch',
+         'inputs': {'widget_0': 0, 'widget_1': 4096, 'images': ['528', 0], 'start_index': ['326', 0]}},
+ '243': {'class_type': 'RandomNoise', 'inputs': {'widget_0': 432, 'widget_1': 'fixed'}},
+ '115': {'class_type': 'RandomNoise', 'inputs': {'widget_0': 42, 'widget_1': 'fixed'}},
+ '546': {'class_type': 'VAEEncode', 'inputs': {'pixels': ['556', 0], 'vae': ['555', 0]}},
+ '464': {'class_type': 'LoraLoaderModelOnly',
+         'inputs': {'widget_0': 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors',
+                    'widget_1': 0.6,
+                    'model': ['474', 0]}},
+ '640': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_audio'}},
+ '641': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
+ '628': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_video_cut'}},
+ '581': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_video_blend'}},
+ '579': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_audio'}},
+ '592': {'class_type': 'CLIPTextEncode',
+         'inputs': {'widget_0': '= from prompt enhancer = ', 'clip': ['215', 0], 'text': ['599', 0]}},
+ '563': {'class_type': 'LTX2_NAG',
+         'inputs': {'widget_0': 11,
+                    'widget_1': 0.25,
+                    'widget_2': 2.5,
+                    'widget_3': True,
+                    'model': ['368', 0],
+                    'nag_cond_video': ['110', 0],
+                    'nag_cond_audio': ['626', 0]}},
+ '626': {'class_type': 'CLIPTextEncode',
+         'inputs': {'widget_0': ' distorted sound, saturated sound, loud sound', 'clip': ['215', 0]}},
+ '110': {'class_type': 'CLIPTextEncode',
+         'inputs': {'widget_0': 'text, subtitles, logo, low quality, distorted, bad anatomy, oversaturated, pixelated, '
+                                'low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, '
+                                'signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial '
+                                'features, asymmetrical face, missing facial features, extra limbs, disfigured hands, '
+                                'blurry teeth, disfigured teeth',
+                    'clip': ['215', 0]}},
+ '578': {'class_type': 'VHS_VideoCombine',
+         'inputs': {'images': ['581', 0], 'audio': ['579', 0], 'frame_rate': ['580', 0]}},
+ '627': {'class_type': 'VHS_VideoCombine',
+         'inputs': {'images': ['628', 0], 'audio': ['640', 0], 'frame_rate': ['641', 0]}},
+ '522': {'class_type': 'LTXVChunkFeedForward', 'inputs': {'widget_0': 2, 'widget_1': 4096, 'model': ['521', 0]}},
+ '523': {'class_type': 'LTX2AttentionTunerPatch',
+         'inputs': {'widget_0': '',
+                    'widget_1': 1,
+                    'widget_2': 1,
+                    'widget_3': 1,
+                    'widget_4': 1,
+                    'widget_5': True,
+                    'model': ['522', 0]}},
+ '519': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': '**A LITTLE USAGE TIP** \n'
+                                '\n'
+                                'If you want to start extending earlier (aka cut some from end of input video) you can '
+                                'use **frame_load_cap** in the video loader node and set max frames to use. And vice '
+                                'verse if you want to cut off some of the start of your input video you can use  '
+                                '**skip_first_frames** '}},
+ '524': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': '**MAX SIZE**:  Max pixels of the output video (longest side). If lower ram/vram try '
+                                'reasonable sizes such as 768,  832 or 960. And if the original video is lower than '
+                                'that, set same as original video \n'
+                                '\n'
+                                '**EXTEND in seconds** : How much to add to your video. LTX works best with 5s, 10s or '
+                                '15s\n'
+                                '\n'
+                                'You can do multiple times though. For example first extend 10 seconds, then use the '
+                                'extended video and extend another 10 seconds and so on  (you should be able to do '
+                                'this for quite a long shot, but the quality and consistency might degrade over '
+                                'time)\n'}},
+ '633': {'class_type': 'MarkdownNote',
+         'inputs': {'widget_0': 'The single pass workflow mode can work best for since 2-pass workflow the frames runs '
+                                'through 2 samplers and might introduce slight difference in color tones and sharpness '
+                                'compared input video. The blend frames output at end will help make that be more '
+                                'seamless though. \n'
+                                '\n'
+                                '2-pass workflow is usually a faster and easier on ram/vram though. Feel free to try '
+                                'both modes with an easy toggle on/off\n'}},
+ '319': {'class_type': 'VHS_LoadVideo',
+         'inputs': {'file': 'ltx_smoke_guide.mp4',
+                    'video': 'ltx_smoke_guide.mp4',
+                    'widget_0': 'ltx_smoke_guide.mp4',
+                    'force_rate': ['221', 0]}},
+ '512': {'class_type': 'ImageResizeKJv2',
+         'inputs': {'widget_0': 512,
+                    'widget_1': 512,
+                    'widget_2': 'lanczos',
+                    'widget_3': 'crop',
+                    'widget_4': '0, 0, 0',
+                    'widget_5': 'center',
+                    'widget_6': 64,
+                    'widget_7': 'cpu',
+                    'image': ['506', 0],
+                    'width': ['506', 1],
+                    'height': ['506', 2]}},
+ '497': {'class_type': 'INTConstant', 'inputs': {'widget_0': 832}},
+ '211': {'class_type': 'INTConstant', 'inputs': {'widget_0': 10}},
+ '487': {'class_type': 'PrimitiveStringMultiline',
+         'inputs': {'widget_0': 'The Joker looks at the camera and talks, he says "You know what clownheads. This '
+                                'scene is not from the movie. Its from LTX 2 point 3". \n'
+                                '\n'
+                                'Then the Joker stands up with an LTX soda can in his hand. \n'
+                                '\n'
+                                'He drinks from the soda can, and then he says "Ahhh...  with a bit of LTX and '
+                                'Snickers, my mood changed. Lets all be friends." \n'
+                                '\n'
+                                'Then he laughs.\n'}},
+ '642': {'class_type': 'LoadAudio', 'inputs': {'audio': 'speech_smoke.wav', 'widget_0': 'speech_smoke.wav'}}}
+
+READY_METADATA = {'model_assets': [],
+ 'unbound_inputs': {'seed': 4642},
+ 'ready_template': 'video/ltx2_3_runexx_video_to_video_extend',
+ 'workflow_template': 'ltx2_3_runexx_video_to_video_extend',
+ 'capability': 'video_to_video_extend',
+ 'source_role': 'materialized_ready_python_template',
+ 'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json',
+ 'coverage_tier': 'supplemental',
+ 'approach': 'video-to-video extension',
+ 'runtime_note': None,
+ 'discord_signal': None,
+ 'smoke_resolution': '256x256x5_frames',
+ 'ltx_best_practices': ['Use the official Lightricks workflows as runtime gates where possible.',
+                        'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.',
+                        'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes '
+                        'model_mmap_residency for LatentUpscaleModelManageable.',
+                        'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom '
+                        'node packs and service credentials are declared.'],
+ 'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
+
+READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
+
+
+def build():
+    return build_api_ready_workflow(
+        API_WORKFLOW,
+        source_path=__file__,
+        workflow_id=READY_METADATA.get("ready_template", "video/ltx2_3_runexx_video_to_video_extend"),
+        ready_metadata=READY_METADATA,
+        requirements=READY_REQUIREMENTS,
+    )

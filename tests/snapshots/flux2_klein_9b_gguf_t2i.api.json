@@ -1,0 +1,16 @@
+{
+  "75": {
+    "class_type": "7b34ab90-36f9-45ba-a665-71d418f0df18",
+    "inputs": {}
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "75",
+        0
+      ],
+      "widget_0": "Flux2-Klein"
+    }
+  }
+}

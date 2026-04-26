@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from vibecomfy.runtime.client import ComfyClient
+from vibecomfy.runtime.session import (
+    ServerSession,
+    SessionConfig,
+    _cleanup_session_files,
+    find_active_session,
+)
+
+
+def _session_dir(id_: str) -> Path:
+    return Path("out/sessions") / id_
+
+
+def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "port": args.port,
+        "vram_policy": args.vram_policy,
+        "cache_policy": args.cache_policy,
+        "warm_policy": args.warm_policy,
+        "disable_smart_memory": args.disable_smart_memory,
+    }
+    if args.reserve_vram_gb is not None:
+        config["reserve_vram_gb"] = args.reserve_vram_gb
+    return config
+
+
+async def _daemon_main(args: argparse.Namespace) -> int:
+    config_dict = json.loads(args.config)
+    if not isinstance(config_dict, dict):
+        raise ValueError("--config must decode to a JSON object")
+    session = ServerSession(SessionConfig.from_dict(config_dict))
+    session_dir = _session_dir(args.id)
+    stop_event = asyncio.Event()
+
+    def request_stop() -> None:
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, request_stop)
+        except NotImplementedError:
+            signal.signal(sig, lambda *_: request_stop())
+
+    try:
+        await session.start()
+        session_dir.mkdir(parents=True, exist_ok=True)
+        (session_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+        (session_dir / "url").write_text(str(session.url), encoding="utf-8")
+        (session_dir / "config.json").write_text(
+            json.dumps(config_dict, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        await stop_event.wait()
+    finally:
+        await session.stop()
+        _cleanup_session_files(session_dir)
+    return 0
+
+
+def _cmd_session_start(args: argparse.Namespace) -> int:
+    session_dir = _session_dir(args.id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    config = _config_from_args(args)
+    log_path = session_dir / "daemon.log"
+    cmd = [
+        sys.executable,
+        "-m",
+        "vibecomfy.commands.session",
+        "--daemon",
+        "--id",
+        args.id,
+        "--config",
+        json.dumps(config),
+    ]
+    with log_path.open("ab", buffering=0) as stderr:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+            start_new_session=True,
+        )
+    url_path = session_dir / "url"
+    for _ in range(120):
+        if url_path.exists():
+            url = url_path.read_text(encoding="utf-8").strip()
+            if url:
+                print(f"session {args.id}: {url}")
+                return 0
+        if process.poll() is not None:
+            print(f"session {args.id} failed to start; see {log_path}", file=sys.stderr)
+            return 1
+        time.sleep(1)
+    print(f"session {args.id} did not become ready within 120 seconds", file=sys.stderr)
+    return 1
+
+
+def _cmd_session_stop(args: argparse.Namespace) -> int:
+    session_dir = _session_dir(args.id)
+    pid_path = session_dir / "pid"
+    if not pid_path.exists():
+        _cleanup_session_files(session_dir)
+        print(f"session {args.id}: not running")
+        return 0
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        _cleanup_session_files(session_dir)
+        print(f"session {args.id}: stopped")
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"session {args.id}: stop failed: {exc}", file=sys.stderr)
+        return 1
+
+    for _ in range(100):
+        if not pid_path.exists():
+            print(f"session {args.id}: stopped")
+            return 0
+        time.sleep(0.1)
+    _cleanup_session_files(session_dir)
+    print(f"session {args.id}: stop requested")
+    return 0
+
+
+def _cmd_session_list(args: argparse.Namespace) -> int:
+    root = Path("out/sessions")
+    if not root.exists():
+        return 0
+    for session_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        url = find_active_session(session_dir.name)
+        if url:
+            print(f"{session_dir.name}\t{url}")
+    return 0
+
+
+def _cmd_session_status(args: argparse.Namespace) -> int:
+    url = find_active_session(args.id)
+    if not url:
+        print(f"session {args.id}: not running")
+        return 1
+    print(f"session {args.id}: {url}")
+    return 0
+
+
+def _cmd_session_flush(args: argparse.Namespace) -> int:
+    url = find_active_session(args.id)
+    if not url:
+        print(f"session {args.id}: not running", file=sys.stderr)
+        return 1
+    asyncio.run(
+        ComfyClient(url).free(unload_models=args.unload_models, free_memory=args.free_memory)
+    )
+    print(f"session {args.id}: flush queued")
+    return 0
+
+
+def register(subparsers) -> None:
+    session = subparsers.add_parser("session")
+    session_sub = session.add_subparsers(dest="subcmd", required=True)
+
+    start = session_sub.add_parser("start")
+    start.add_argument("--id", default="default")
+    start.add_argument("--vram-policy", choices=["auto", "high", "low", "normal"], default="auto")
+    start.add_argument("--reserve-vram-gb", type=float)
+    start.add_argument("--cache-policy", default="smart")
+    start.add_argument("--disable-smart-memory", action="store_true")
+    start.add_argument("--warm-policy", choices=["auto", "always", "never"], default="auto")
+    start.add_argument("--port", type=int, default=8188)
+    start.set_defaults(func=_cmd_session_start)
+
+    stop = session_sub.add_parser("stop")
+    stop.add_argument("id")
+    stop.set_defaults(func=_cmd_session_stop)
+
+    list_ = session_sub.add_parser("list")
+    list_.set_defaults(func=_cmd_session_list)
+
+    flush = session_sub.add_parser("flush")
+    flush.add_argument("id")
+    flush.add_argument("--unload-models", action=argparse.BooleanOptionalAction, default=True)
+    flush.add_argument("--free-memory", action=argparse.BooleanOptionalAction, default=True)
+    flush.set_defaults(func=_cmd_session_flush)
+
+    status = session_sub.add_parser("status")
+    status.add_argument("id")
+    status.set_defaults(func=_cmd_session_status)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m vibecomfy.commands.session")
+    parser.add_argument("--daemon", action="store_true")
+    parser.add_argument("--id", default="default")
+    parser.add_argument("--config", default="{}")
+    args = parser.parse_args(argv)
+    if not args.daemon:
+        parser.error("--daemon is required for module execution")
+    return asyncio.run(_daemon_main(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,288 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import pytest
+
+from vibecomfy.cli import build_parser
+from vibecomfy.commands import COMMANDS, CommandSpec, load_command
+from vibecomfy.commands.doctor import _doctor_warnings
+from vibecomfy.commands.fetch import _cmd_fetch
+from vibecomfy.commands.nodes import _cmd_nodes_install_plan, _cmd_nodes_list
+from vibecomfy.commands._workflow_path import resolve_workflow_path
+from vibecomfy.commands.workflows import _cmd_workflows_list
+from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
+
+
+def _top_level_commands(parser: argparse.ArgumentParser) -> list[str]:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return list(action.choices)
+    raise AssertionError("parser has no subparsers")
+
+
+def _write_fetch_scratchpad(tmp_path: Path) -> Path:
+    scratchpad = tmp_path / "fetch_scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    workflow = VibeWorkflow(id="fetch-test", source=WorkflowSource(id="fetch-test"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="CheckpointLoaderSimple")
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "present.safetensors",
+            "url": "https://example.test/present.safetensors",
+            "subdir": "checkpoints",
+        },
+        {
+            "name": "missing.safetensors",
+            "url": "https://example.test/missing.safetensors",
+            "subdir": "checkpoints",
+        },
+    ]
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    return scratchpad
+
+
+def test_cli_command_registry_is_explicit_and_ordered() -> None:
+    assert [spec.name for spec in COMMANDS] == [
+        "sources",
+        "workflows",
+        "nodes",
+        "analyze",
+        "search",
+        "inspect",
+        "convert",
+        "validate",
+        "doctor",
+        "fetch",
+        "run",
+        "runtime",
+        "session",
+        "logs",
+        "runpod",
+        "watchdog",
+    ]
+
+
+def test_build_parser_registers_all_known_commands() -> None:
+    parser = build_parser()
+
+    assert _top_level_commands(parser) == [spec.name for spec in COMMANDS]
+
+
+def test_fetch_cli_dry_run_lists_entries_without_downloading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratchpad = _write_fetch_scratchpad(tmp_path)
+    present = tmp_path / "models" / "checkpoints" / "present.safetensors"
+    present.parent.mkdir(parents=True)
+    present.write_bytes(b"present")
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path / "models"))
+    calls = 0
+
+    def download_many(_entries, *, force=False):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("download_many must not be called during dry-run")
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", download_many)
+
+    assert _cmd_fetch(argparse.Namespace(workflow=str(scratchpad), force=False, dry_run=True)) == 0
+
+    captured = capsys.readouterr()
+    assert "present present.safetensors" in captured.out
+    assert f"would fetch missing.safetensors -> {tmp_path / 'models' / 'checkpoints' / 'missing.safetensors'}" in captured.out
+    assert calls == 0
+
+
+def test_fetch_cli_invokes_download_many(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scratchpad = _write_fetch_scratchpad(tmp_path)
+    calls: list[tuple[list[dict], bool]] = []
+
+    def download_many(entries, *, force=False):
+        calls.append((entries, force))
+        return []
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", download_many)
+
+    assert _cmd_fetch(argparse.Namespace(workflow=str(scratchpad), force=True, dry_run=False)) == 0
+
+    assert calls == [
+        (
+            [
+                {
+                    "name": "present.safetensors",
+                    "url": "https://example.test/present.safetensors",
+                    "subdir": "checkpoints",
+                },
+                {
+                    "name": "missing.safetensors",
+                    "url": "https://example.test/missing.safetensors",
+                    "subdir": "checkpoints",
+                },
+            ],
+            True,
+        )
+    ]
+
+
+def test_command_modules_expose_register() -> None:
+    for spec in COMMANDS:
+        assert callable(load_command(spec).register)
+
+
+def test_load_command_rejects_module_without_register() -> None:
+    with pytest.raises(TypeError, match="must expose register"):
+        load_command(CommandSpec("argparse", "argparse"))
+
+
+def test_resolve_workflow_path_accepts_existing_path(tmp_path: Path) -> None:
+    workflow = tmp_path / "workflow.json"
+    workflow.write_text("{}", encoding="utf-8")
+
+    assert resolve_workflow_path(str(workflow)) == str(workflow)
+
+
+def test_resolve_workflow_path_rejects_empty_or_directory(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        resolve_workflow_path("")
+
+    with pytest.raises(FileNotFoundError):
+        resolve_workflow_path(str(tmp_path))
+
+
+def test_resolve_workflow_path_accepts_index_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workflow = tmp_path / "workflow.json"
+    workflow.write_text("{}", encoding="utf-8")
+    (tmp_path / "template_index.json").write_text(
+        json.dumps([{"id": "sample", "path": str(workflow)}]),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert resolve_workflow_path("sample") == str(workflow)
+
+
+def test_resolve_workflow_path_raises_for_unknown_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        resolve_workflow_path("missing")
+
+
+def test_workflows_list_reports_malformed_index_with_recovery_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "template_index.json").write_text("{not-json", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_workflows_list(argparse.Namespace(ready=False, limit=10)) == 1
+
+    captured = capsys.readouterr()
+    assert "template_index.json could not be read" in captured.err
+    assert "vibecomfy sources sync" in captured.err
+
+
+def test_nodes_list_reports_malformed_index_with_recovery_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text("{not-json", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_nodes_list(argparse.Namespace(limit=10)) == 1
+
+    captured = capsys.readouterr()
+    assert "node_index.json could not be read" in captured.err
+    assert "vibecomfy sources sync" in captured.err
+
+
+def test_doctor_warns_about_optional_video_audio_edge() -> None:
+    workflow = VibeWorkflow("video", WorkflowSource("video"))
+    workflow.nodes["1"] = VibeNode("1", "LTXVAudioVAEDecode")
+    workflow.nodes["2"] = VibeNode("2", "CreateVideo")
+    workflow.edges.append(VibeEdge("1", "0", "2", "audio"))
+
+    warnings = _doctor_warnings(workflow)
+
+    assert any("CreateVideo node 2 has optional audio input connected from 1:LTXVAudioVAEDecode" in item for item in warnings)
+
+
+def test_doctor_suggests_custom_node_pack_for_unknown_class(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "SaveImage", "pack": "core", "inputs": {}, "outputs": []}]),
+        encoding="utf-8",
+    )
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
+
+def build():
+    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="DWPreprocessor")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from vibecomfy.commands.doctor import _cmd_doctor
+
+    assert _cmd_doctor(argparse.Namespace(path=str(scratchpad))) == 1
+
+    captured = capsys.readouterr()
+    assert "Suggested custom node packs:" in captured.out
+    assert "comfyui_controlnet_aux" in captured.out
+
+
+def test_nodes_install_plan_suggests_pack_for_missing_class(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "PreviewAudio", "pack": "core", "inputs": {}, "outputs": []}]),
+        encoding="utf-8",
+    )
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
+
+def build():
+    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="Qwen3CustomVoice")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_nodes_install_plan(argparse.Namespace(path=str(scratchpad), json=False)) == 0
+
+    captured = capsys.readouterr()
+    assert "ComfyUI-Qwen3-TTS" in captured.out
+    assert "Qwen3CustomVoice" in captured.out

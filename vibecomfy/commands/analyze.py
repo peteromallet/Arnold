@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict, is_dataclass
+from typing import Any
+
+from vibecomfy.analysis import graph
+from vibecomfy.registry import load_workflow_reference
+from vibecomfy.schema import get_schema_provider
+from vibecomfy.workflow import VibeWorkflow
+
+
+ANALYSIS_FORMATS = ("text", "json", "tsv")
+
+
+def _load_workflow(value: str) -> VibeWorkflow:
+    return load_workflow_reference(value, schema_provider=get_schema_provider("auto"))
+
+
+def _cmd_info(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    return _emit(graph.analyze(workflow), args.format, text=_format_info)
+
+
+def _cmd_trace(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    rows = [_node_row(node) for node in graph.trace(workflow, _require(args.node_id, "--node-id"))]
+    return _emit(rows, args.format, text=_format_node_rows)
+
+
+def _cmd_upstream(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    rows = sorted(graph.upstream(workflow, _require(args.node_id, "--node-id"), depth=args.max_depth))
+    return _emit(rows, args.format, text=lambda value: "\n".join(value) if value else "-")
+
+
+def _cmd_downstream(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    rows = sorted(graph.downstream(workflow, _require(args.node_id, "--node-id"), depth=args.max_depth))
+    return _emit(rows, args.format, text=lambda value: "\n".join(value) if value else "-")
+
+
+def _cmd_path(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    rows = graph.path(workflow, _require(args.src, "--src"), _require(args.dst, "--dst"))
+    return _emit(rows, args.format, text=lambda value: "\n".join(" -> ".join(row) for row in value) if value else "-")
+
+
+def _cmd_subgraph(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    node_ids = _node_ids(args.node_id)
+    result = graph.subgraph(workflow, node_ids)
+    return _emit(_workflow_row(result), args.format, text=_format_subgraph)
+
+
+def _cmd_values(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    rows = graph.values(workflow, args.node_id)
+    return _emit(rows, args.format, text=_format_values)
+
+
+def _cmd_diff(args: argparse.Namespace) -> int:
+    left = _load_workflow(args.workflow)
+    right = _load_workflow(_require(args.dst, "--dst"))
+    return _emit(graph.diff(left, right), args.format, text=_format_diff)
+
+
+def _cmd_unconnected(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    rows = graph.unconnected(workflow, schema_provider=get_schema_provider("auto"))
+    return _emit(rows, args.format, text=_format_dict_rows)
+
+
+def _require(value: str | None, flag: str) -> str:
+    if value is None or value == "":
+        raise SystemExit(f"{flag} is required")
+    return value
+
+
+def _node_ids(values: list[str] | None) -> list[str]:
+    if not values:
+        raise SystemExit("--node-id is required")
+    node_ids: list[str] = []
+    for value in values:
+        node_ids.extend(part.strip() for part in value.split(",") if part.strip())
+    if not node_ids:
+        raise SystemExit("--node-id is required")
+    return node_ids
+
+
+def _emit(data: Any, output_format: str, *, text) -> int:
+    clean = _jsonable(data)
+    if output_format == "json":
+        print(json.dumps(clean, indent=2, sort_keys=True))
+    elif output_format == "tsv":
+        print(_to_tsv(clean))
+    else:
+        print(text(clean))
+    return 0
+
+
+def _jsonable(value: Any) -> Any:
+    if is_dataclass(value):
+        return _jsonable(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _to_tsv(data: Any) -> str:
+    if isinstance(data, list):
+        if not data:
+            return ""
+        if all(isinstance(row, dict) for row in data):
+            keys = sorted({key for row in data for key in row})
+            return "\n".join(["\t".join(keys), *[_tsv_row(row, keys) for row in data]])
+        return "\n".join(_flat_value(row) for row in data)
+    if isinstance(data, dict):
+        if data and all(isinstance(value, dict) for value in data.values()):
+            keys = sorted({key for row in data.values() for key in row})
+            return "\n".join(
+                ["id\t" + "\t".join(keys), *[key + "\t" + _tsv_row(row, keys) for key, row in sorted(data.items())]]
+            )
+        return "\n".join(f"{key}\t{_flat_value(value)}" for key, value in data.items())
+    return _flat_value(data)
+
+
+def _tsv_row(row: dict[str, Any], keys: list[str]) -> str:
+    return "\t".join(_flat_value(row.get(key, "")) for key in keys)
+
+
+def _flat_value(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True)
+    return "" if value is None else str(value)
+
+
+def _format_info(data: dict[str, Any]) -> str:
+    lines = [
+        f"nodes: {data['node_count']}",
+        f"edges: {data['edge_count']}",
+        f"media: {data['detected_media_type']}",
+        f"fan-in: {data['fan_in_histogram']}",
+        f"fan-out: {data['fan_out_histogram']}",
+        "output sinks:",
+        *_indent_rows(data["output_sinks"]),
+        "terminal inputs:",
+        *_indent_rows(data["terminal_inputs"]),
+    ]
+    return "\n".join(lines)
+
+
+def _format_node_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "-"
+    return "\n".join(f"{row['id']}\t{row['class_type']}\t{row.get('pack') or '-'}" for row in rows)
+
+
+def _format_subgraph(data: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"id: {data['id']}",
+            f"nodes: {len(data['nodes'])}",
+            f"edges: {len(data['edges'])}",
+            "node ids:",
+            *_indent_rows(sorted(data["nodes"])),
+        ]
+    )
+
+
+def _format_values(data: Any) -> str:
+    if not data:
+        return "-"
+    if isinstance(data, dict) and all(not isinstance(value, dict) for value in data.values()):
+        return "\n".join(f"{key}: {_flat_value(value)}" for key, value in data.items())
+    return "\n".join(f"{node_id}\t{json.dumps(values, sort_keys=True)}" for node_id, values in sorted(data.items()))
+
+
+def _format_diff(data: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for key, value in data.items():
+        lines.append(f"{key}:")
+        lines.extend(_indent_rows(value if isinstance(value, list) else [value] if value else []))
+    return "\n".join(lines)
+
+
+def _format_dict_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "-"
+    return "\n".join(json.dumps(row, sort_keys=True) for row in rows)
+
+
+def _indent_rows(rows: Any) -> list[str]:
+    if not rows:
+        return ["  -"]
+    return [f"  {_flat_value(row)}" for row in rows]
+
+
+def _node_row(node) -> dict[str, Any]:
+    return {"id": node.id, "class_type": node.class_type, "pack": node.pack}
+
+
+def _workflow_row(workflow: VibeWorkflow) -> dict[str, Any]:
+    return {
+        "id": workflow.id,
+        "source": _jsonable(workflow.source),
+        "nodes": {node_id: _jsonable(node) for node_id, node in workflow.nodes.items()},
+        "edges": [_jsonable(edge) for edge in workflow.edges],
+        "inputs": {name: _jsonable(input_ref) for name, input_ref in workflow.inputs.items()},
+        "outputs": [_jsonable(output) for output in workflow.outputs],
+        "requirements": _jsonable(workflow.requirements),
+        "metadata": _jsonable(workflow.metadata),
+    }
+
+
+def _add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("workflow")
+    parser.add_argument("--format", choices=ANALYSIS_FORMATS, default="text")
+
+
+def register(subparsers) -> None:
+    analyze = subparsers.add_parser("analyze")
+    verbs = analyze.add_subparsers(dest="analyze_cmd", required=True)
+
+    info = verbs.add_parser("info")
+    _add_common(info)
+    info.set_defaults(func=_cmd_info)
+
+    trace = verbs.add_parser("trace")
+    _add_common(trace)
+    trace.add_argument("--node-id")
+    trace.set_defaults(func=_cmd_trace)
+
+    upstream = verbs.add_parser("upstream")
+    _add_common(upstream)
+    upstream.add_argument("--node-id")
+    upstream.add_argument("--max-depth", type=int)
+    upstream.set_defaults(func=_cmd_upstream)
+
+    downstream = verbs.add_parser("downstream")
+    _add_common(downstream)
+    downstream.add_argument("--node-id")
+    downstream.add_argument("--max-depth", type=int)
+    downstream.set_defaults(func=_cmd_downstream)
+
+    path = verbs.add_parser("path")
+    _add_common(path)
+    path.add_argument("--src")
+    path.add_argument("--dst")
+    path.set_defaults(func=_cmd_path)
+
+    subgraph = verbs.add_parser("subgraph")
+    _add_common(subgraph)
+    subgraph.add_argument("--node-id", action="append")
+    subgraph.set_defaults(func=_cmd_subgraph)
+
+    values = verbs.add_parser("values")
+    _add_common(values)
+    values.add_argument("--node-id")
+    values.set_defaults(func=_cmd_values)
+
+    diff = verbs.add_parser("diff")
+    _add_common(diff)
+    diff.add_argument("--dst")
+    diff.set_defaults(func=_cmd_diff)
+
+    unconnected = verbs.add_parser("unconnected")
+    _add_common(unconnected)
+    unconnected.set_defaults(func=_cmd_unconnected)

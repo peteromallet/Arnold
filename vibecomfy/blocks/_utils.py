@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from typing import Any
+
+from vibecomfy.workflow import VibeNode, VibeWorkflow
+
+
+def add_block_node(
+    workflow: VibeWorkflow,
+    dotted_name: str,
+    class_type: str,
+    *,
+    block_id: str | None = None,
+    inputs: dict[str, Any] | None = None,
+    widgets: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> VibeNode:
+    node = workflow.add_node(class_type, **(inputs or {}))
+    widget_kwargs = dict(widgets or {})
+    node.widgets.update(widget_kwargs)
+    node.metadata.update(metadata or {})
+    node.metadata.update(
+        {
+            "block": dotted_name,
+            "block_id": block_id or dotted_name,
+            "widget_kwargs": widget_kwargs,
+        }
+    )
+    return node
+
+
+def node_id(value: str | VibeNode) -> str:
+    return value.id if isinstance(value, VibeNode) else str(value)
+
+
+def connect(
+    workflow: VibeWorkflow,
+    source: str | VibeNode | None,
+    target: VibeNode,
+    input_name: str,
+    *,
+    output_slot: int = 0,
+) -> None:
+    if source is not None:
+        source_id = node_id(source)
+        source_ref = source_id if "." in source_id else f"{source_id}.{output_slot}"
+        workflow.connect(source_ref, f"{target.id}.{input_name}")

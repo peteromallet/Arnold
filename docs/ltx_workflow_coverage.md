@@ -1,0 +1,58 @@
+# LTX Workflow Coverage
+
+VibeComfy treats LTX as a family of concrete workflow capabilities, not as one generic video template. The current corpus is based on three source streams:
+
+- Official Lightricks ComfyUI-LTXVideo workflows under `example_workflows/2.3`.
+- Discord `ltx_chatter` signals: image anchors, I2V, long videos, IC-LoRA, relight/HDR, custom audio, lip-sync, DWPose/motion transfer, and low-RAM upscaling were repeated themes in the sampled messages.
+- Community workflow packs from `RuneXX/LTX-2.3-Workflows` and `IAMCCS/comfyui-iamccs-workflows`, used as coverage for workflows that need extra node packs or external services.
+
+## Ready Templates
+
+Ready templates are Python templates under `ready_templates/video/`. They are distinct from raw JSON:
+
+```text
+raw Comfy JSON -> normalize_to_api -> VibeWorkflow -> generated ready Python template
+```
+
+Runtime-gated official templates:
+
+- `video/ltx2_3_t2v`: official single-stage text-to-video smoke.
+- `video/ltx2_3_i2v`: official single-stage image-to-video smoke.
+- `video/ltx2_3_lightricks_two_stage`: official two-stage workflow with latent spatial upscaling.
+- `video/ltx2_3_lightricks_iclora_hdr`: official HDR IC-LoRA video-guide workflow.
+- `video/ltx2_3_lightricks_iclora_motion_track`: official motion-track IC-LoRA image-anchor workflow.
+- `video/ltx2_3_lightricks_iclora_union_control`: official union-control guide workflow with depth/pose preprocessing.
+
+Supplemental ready templates:
+
+- `video/ltx2_3_runexx_first_last_frame`: first/last-frame image anchors.
+- `video/ltx2_3_runexx_first_middle_last_frame`: first/middle/last-frame anchors.
+- `video/ltx2_3_runexx_custom_audio`: custom-audio conditioning.
+- `video/ltx2_3_runexx_video_to_video_extend`: video-to-video extension.
+- `video/ltx2_3_runexx_lipsync_custom_audio`: custom-audio lip-sync / voice-to-video.
+- `video/ltx2_3_runexx_motion_transfer_dwpose`: DWPose motion transfer.
+- `video/ltx2_3_runexx_talking_avatar_qwen_tts`: Qwen TTS talking avatar.
+- `video/ltx2_3_runexx_music_video_low_ram`: low-RAM multi-scene music video.
+- `video/ltx2_3_iamccs_audio_image_to_video`: audio plus image-to-video.
+- `video/ltx2_3_iamccs_long_i2v`: long low-VRAM image-to-video.
+- `video/ltx2_3_iamccs_audio_extend_low_ram`: three-segment audio extension.
+
+## Runtime Policy
+
+The RunPod smoke path patches LTX workflows to a tiny but real generation shape:
+
+- Use `ltx-2.3-22b-dev-fp8.safetensors` and `gemma_3_12B_it_fp4_mixed.safetensors`.
+- Use the 1.1 Lightricks assets where applicable: `ltx-2.3-22b-distilled-lora-384-1.1.safetensors` and `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`.
+- Use CFG `2.5` for smoke patches unless a workflow explicitly overrides it.
+- Use official Lightricks custom nodes pinned by the corpus runner.
+- Use low-VRAM checkpoint/audio loaders when available.
+- Reduce smoke dimensions and frame counts.
+- Remove audio edges from video save nodes unless the workflow under test is explicitly an audio runtime gate.
+- Materialize small guide assets under `input/` for workflows that expect an image or guide video.
+- Rewrite stale Video-Depth-Anything node class names to the current Kijai `DepthAnything_V2` classes during materialization and RunPod preparation.
+
+This keeps smoke runs cheap enough to repeat while still requiring actual ComfyUI execution and actual media output.
+
+## Source Notes
+
+Kijai is currently used as a model/custom-node ecosystem source rather than an LTX workflow source: `Kijai/LTX2.3_comfy` exposes model assets, while `ComfyUI-KJNodes` supplies useful runtime nodes. The workflow corpus itself comes from Lightricks, RuneXX, IAMCCS, and official Comfy template sources.

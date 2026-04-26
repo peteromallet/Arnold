@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from pathlib import Path
+
+import pytest
+
+import vibecomfy.fetch as fetch
+
+
+ENTRY = {
+    "name": "model.safetensors",
+    "url": "https://example.test/model.safetensors?download=true",
+    "subdir": "checkpoints",
+}
+
+
+class FakeResponse:
+    def __init__(self, status_code: int = 200, chunks: list[bytes] | None = None) -> None:
+        self.status_code = status_code
+        self._chunks = chunks or [b"model-bytes"]
+
+    def iter_bytes(self):
+        yield from self._chunks
+
+
+@contextmanager
+def fake_stream(response: FakeResponse):
+    yield response
+
+
+def test_models_root_prefers_vibecomfy_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path / "vibe"))
+    monkeypatch.setenv("COMFY_MODELS_ROOT", str(tmp_path / "comfy"))
+
+    assert fetch.models_root() == tmp_path / "vibe"
+
+
+def test_download_skips_present_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+    path = tmp_path / "checkpoints" / "model.safetensors"
+    path.parent.mkdir()
+    path.write_bytes(b"present")
+
+    assert fetch.download(ENTRY) == path
+    assert capsys.readouterr().out == "skipped model.safetensors\n"
+
+
+def test_download_writes_tmp_then_renames(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+    requested: dict[str, object] = {}
+
+    def stream(method: str, url: str, **kwargs):
+        requested.update({"method": method, "url": url, **kwargs})
+        return fake_stream(FakeResponse(chunks=[b"abc", b"", b"123"]))
+
+    monkeypatch.setattr(fetch.httpx, "stream", stream)
+
+    path = fetch.download(ENTRY)
+
+    assert path == tmp_path / "checkpoints" / "model.safetensors"
+    assert path.read_bytes() == b"abc123"
+    assert not (tmp_path / "checkpoints" / "model.safetensors.tmp").exists()
+    assert requested["method"] == "GET"
+    assert requested["url"] == "https://example.test/model.safetensors"
+    assert requested["follow_redirects"] is True
+
+
+def test_download_removes_tmp_after_stream_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+
+    class BrokenResponse(FakeResponse):
+        def iter_bytes(self):
+            yield b"partial"
+            raise RuntimeError("stream failed")
+
+    monkeypatch.setattr(fetch.httpx, "stream", lambda *_args, **_kwargs: fake_stream(BrokenResponse()))
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        fetch.download(ENTRY)
+
+    assert not (tmp_path / "checkpoints" / "model.safetensors.tmp").exists()
+    assert not (tmp_path / "checkpoints" / "model.safetensors").exists()
+
+
+def test_download_uses_hf_token_header_and_omits_empty_header(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+    seen_headers: list[dict[str, str]] = []
+
+    def stream(_method: str, _url: str, **kwargs):
+        seen_headers.append(kwargs["headers"])
+        return fake_stream(FakeResponse())
+
+    monkeypatch.setattr(fetch.httpx, "stream", stream)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    fetch.download({**ENTRY, "name": "without-token.safetensors"})
+    monkeypatch.setenv("HF_TOKEN", "secret-token")
+    fetch.download({**ENTRY, "name": "with-token.safetensors"})
+
+    assert seen_headers == [{}, {"Authorization": "Bearer secret-token"}]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type", "message"),
+    [
+        (401, PermissionError, "License-gated download blocked for https://example.test/model.safetensors"),
+        (403, PermissionError, "License-gated download blocked for https://example.test/model.safetensors"),
+        (404, FileNotFoundError, "Asset not found at https://example.test/model.safetensors"),
+    ],
+)
+def test_download_maps_http_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    status_code: int,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+    monkeypatch.setattr(fetch.httpx, "stream", lambda *_args, **_kwargs: fake_stream(FakeResponse(status_code=status_code)))
+
+    with pytest.raises(error_type, match=message):
+        fetch.download(ENTRY)
+
+
+def test_download_routes_supplied_client_without_touching_httpx_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+
+    def unexpected_httpx_stream(*_args, **_kwargs):
+        raise AssertionError("httpx.stream should not be used when client is supplied")
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, dict]] = []
+
+        def stream(self, method: str, url: str, **kwargs):
+            self.calls.append((method, url, kwargs))
+            return fake_stream(FakeResponse(chunks=[b"from-client"]))
+
+    monkeypatch.setattr(fetch.httpx, "stream", unexpected_httpx_stream)
+    client = FakeClient()
+
+    path = fetch.download(ENTRY, client=client)
+
+    assert path.read_bytes() == b"from-client"
+    assert client.calls[0][0] == "GET"
+    assert client.calls[0][1] == "https://example.test/model.safetensors"
+
+
+def test_download_many_continues_past_failure_and_raises_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+
+    def stream(_method: str, url: str, **_kwargs):
+        if "missing" in url:
+            return fake_stream(FakeResponse(status_code=404))
+        return fake_stream(FakeResponse(chunks=[b"ok"]))
+
+    entries = [
+        {**ENTRY, "name": "first.safetensors", "url": "https://example.test/first.safetensors"},
+        {**ENTRY, "name": "missing.safetensors", "url": "https://example.test/missing.safetensors"},
+        {**ENTRY, "name": "second.safetensors", "url": "https://example.test/second.safetensors"},
+    ]
+    monkeypatch.setattr(fetch.httpx, "stream", stream)
+
+    with pytest.raises(RuntimeError, match="1 failures"):
+        fetch.download_many(entries)
+
+    out = capsys.readouterr().out
+    assert "downloaded first.safetensors ->" in out
+    assert "failed missing.safetensors: Asset not found at https://example.test/missing.safetensors" in out
+    assert "downloaded second.safetensors ->" in out
+    assert (tmp_path / "checkpoints" / "first.safetensors").read_bytes() == b"ok"
+    assert (tmp_path / "checkpoints" / "second.safetensors").read_bytes() == b"ok"

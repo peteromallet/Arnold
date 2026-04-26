@@ -1,0 +1,58 @@
+{
+  "75": {
+    "class_type": "7b34ab90-36f9-45ba-a665-71d418f0df18",
+    "inputs": {
+      "text": [
+        "76",
+        0
+      ],
+      "widget_0": "",
+      "widget_1": 1024,
+      "widget_2": 1024,
+      "widget_3": "flux-2-klein-base-4b.safetensors",
+      "widget_4": "qwen_3_4b.safetensors",
+      "widget_5": "flux2-vae.safetensors"
+    }
+  },
+  "76": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "widget_0": "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n"
+    }
+  },
+  "77": {
+    "class_type": "a67caa28-5f85-4917-8396-36004960dd30",
+    "inputs": {
+      "text": [
+        "76",
+        0
+      ],
+      "widget_0": "",
+      "widget_1": 1024,
+      "widget_2": 1024,
+      "widget_3": "flux-2-klein-4b.safetensors",
+      "widget_4": "qwen_3_4b.safetensors",
+      "widget_5": "flux2-vae.safetensors"
+    }
+  },
+  "78": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "77",
+        0
+      ],
+      "widget_0": "Flux2-Klein"
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "75",
+        0
+      ],
+      "widget_0": "Flux2-Klein"
+    }
+  }
+}

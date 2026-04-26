@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+*.pyc
+
+# Generated indexes and runtime artifacts
+template_index.json
+external_workflow_index.json
+node_index.json
+out/
+output/
+temp/
+input/.DS_Store
+
+# Large local runtime/vendor checkouts
+vendor/workflow_templates/
+vendor/external_workflows/
+custom_nodes/
+
+# Tool working directories
+.agents/
+.desloppify/
+.megaplan/
+*.patch

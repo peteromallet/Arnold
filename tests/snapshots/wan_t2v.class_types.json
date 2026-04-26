@@ -1,0 +1,12 @@
+[
+  "CLIPLoader",
+  "CLIPTextEncode",
+  "CreateVideo",
+  "EmptyHunyuanLatentVideo",
+  "KSampler",
+  "ModelSamplingSD3",
+  "SaveVideo",
+  "UNETLoader",
+  "VAEDecode",
+  "VAELoader"
+]
