@@ -4,9 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=20.19.0"
   },
   "scripts": {
+    "preinstall": "npx --yes only-allow npm",
+    "preflight": "docker build .",
     "dev": "vite --config config/vite/vite.config.ts",
     "build": "tsc && vite build --config config/vite/vite.config.ts",
     "build:dev": "vite build --mode development --config config/vite/vite.config.ts",

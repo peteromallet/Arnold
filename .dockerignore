@@ -1,47 +1,71 @@
-# Dependencies
 node_modules
-
-# Build outputs
 dist
 .vite
 .turbo
+.cache
+coverage
+test-results
 
-# Logs
-logs
-*.log
-npm-debug.log*
-
-# Git
 .git
 .gitignore
+.github
 
-# IDE
-.vscode
-.idea
-*.swp
-*.swo
-
-# Environment files (should be set via Railway env vars)
 .env
 .env.local
 .env.*.local
 
-# Debug SQL files (not needed in production)
-*.sql
-!supabase/migrations/*.sql
-!supabase/**/*.sql
+logs
+*.log
 
-# Documentation
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Tooling state — not needed inside the build context
+.claude
+.megaplan
+.cursor
+.cursorrules
+.codex
+codex_logs
+.devcontainer
+.husky
+.agents
+.desloppify
+.pytest_cache
+.venv-debug
+.nixpacksignore
+.railwayignore
+
+# Local-only documents and notes
+tasks
 docs
+investigation
+*.md
+README.md
+VIDEO_EDITOR_INTEGRATION_PLAN.md
+VIDEO_EDITOR_INTEGRATION_TASKS.json
+findings.json
+scorecard.png
+localhost-*.log
+!prev
 
-# Test files
+# Old build configs (replaced by Dockerfile)
+nixpacks.toml
+pnpm-lock.yaml
+
+# The Dockerfile itself doesn't need to be inside the image
+Dockerfile
+.dockerignore
+
+# Tests aren't needed for build/serve
 **/*.test.ts
 **/*.test.tsx
 **/*.spec.ts
 **/*.spec.tsx
 
-# Other
-.DS_Store
-coverage
-.cache
-
+# Deno lockfile is for supabase edge fns, not the Vite build
+deno.lock

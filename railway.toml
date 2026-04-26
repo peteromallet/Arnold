@@ -1,14 +1,9 @@
 [build]
-builder = "nixpacks"
+builder = "dockerfile"
 
 [deploy]
 healthcheckPath = "/"
 restartPolicyType = "on_failure"
-startCommand = "npm run serve"
 
 [environments.production.variables]
 NODE_ENV = "production"
-# Tried NIXPACKS_NODE_VERSION here — Railway didn't propagate it to the
-# build step in practice (build still failed with `npm: command not found`).
-# Setting it directly in Railway Dashboard → Service → Variables tab is the
-# only file-external lever that actually overrides the snapshot's stale Node. 
