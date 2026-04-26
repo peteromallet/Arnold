@@ -1,12 +1,11 @@
 [phases.setup]
-# Don't pin nodejs in nixPkgs — the pinned nixpkgs snapshot's `nodejs_20`
-# resolves to 20.6.1 (below package.json engines.node >=20.9.0 and below
-# >=20.19.0 several @csstools/* deps want), and `nodejs_22` isn't present in
-# that snapshot (the last build failed at nix-env -if). Letting nixpacks
-# auto-detect picks Node from .nvmrc (currently 20.18.0) without depending
-# on which Node version is shipped in the snapshot. openssl stays explicit
-# because some native deps need it at build time.
-nixPkgs = ["openssl"]
+# Pinned nixpkgs snapshot resolves `nodejs_20` to 20.6.1, which is below
+# package.json's `engines.node >=20.9.0` and below the >=20.19.0 several
+# @csstools/* deps want. npm warns (EBADENGINE) but still installs. To
+# bump beyond 20.6.1, set `NIXPACKS_NODE_VERSION` (e.g. 20 or 22) in the
+# Railway service's environment variables — that route is independent of
+# the nixpkgs snapshot. Keeping `nodejs_20` here as a working fallback.
+nixPkgs = ["nodejs_20", "openssl"]
 
 [phases.install]
 cmds = ["npm ci"]
