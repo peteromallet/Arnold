@@ -2,14 +2,28 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
-import { AgentChatProvider, useAgentChatBridge } from '@/shared/contexts/AgentChatContext';
-import { buildVideoEditorLightboxMedia, VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
-import { useTimelineChromeContext } from '@/tools/video-editor/contexts/TimelineChromeContext';
+import { useAddToVideoEditor } from '@/domains/media-lightbox/hooks/useAddToVideoEditor';
 import {
+  ADD_GENERATION_QUERY_PARAM,
+  readPendingAdds,
+} from '@/domains/media-lightbox/hooks/addToVideoEditorConstants';
+import { AgentChatProvider, useAgentChatBridge } from '@/shared/contexts/AgentChatContext';
+import {
+  __getSelectionStateForTests,
+  editorReplaceTimelineSelection,
+  systemResetSelectionForProjectChange,
+  userSelectGalleryItem,
+} from '@/shared/state/selectionStore';
+import { buildVideoEditorLightboxMedia, VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
+import {
+  createTimelineStore,
+  TimelineStoreProvider,
+  useTimelineAvailabilityState,
+  useTimelineChromeContext,
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { useTimelinePlaybackContext } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
+  useTimelinePlaybackContext,
+} from '@/tools/video-editor/hooks/timelineStore';
 import {
   shouldAllowTouchClipDrag,
   shouldAllowTouchMarquee,
@@ -18,6 +32,16 @@ import {
   shouldToggleTouchSelection,
 } from '@/tools/video-editor/lib/mobile-interaction-model';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+
+const navigateMock = vi.fn();
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
 
 const mocks = {
   setInputModality: vi.fn(),
@@ -29,9 +53,7 @@ const mocks = {
   setInspectorTarget: vi.fn(),
   selectClip: vi.fn(),
   selectClips: vi.fn(),
-  replaceTimelineSelection: vi.fn(),
 };
-let hasReplaceTimelineSelection = true;
 
 vi.mock('@/tools/video-editor/hooks/useEffects', () => ({
   useEffects: () => ({ data: [] }),
@@ -45,19 +67,16 @@ vi.mock('@/tools/video-editor/hooks/useEffectResources', () => ({
   useEffectResources: () => ({ effects: [] }),
 }));
 
-vi.mock('@/tools/video-editor/hooks/useSelectedMediaClips', () => ({
-  useSelectedMediaClips: () => ({
-    clips: [
-      {
-        clipId: 'clip-1',
-        assetKey: 'asset-1',
-        url: 'https://example.com/image.png',
-        mediaType: 'image',
-        isTimelineBacked: true,
-      },
-    ],
-    summary: 'attaching 1 image',
-  }),
+vi.mock('@/tools/video-editor/hooks/useTimelineClipsForAttachments', () => ({
+  useTimelineClipsForAttachments: () => [
+    {
+      clipId: 'clip-1',
+      assetKey: 'asset-1',
+      url: 'https://example.com/image.png',
+      mediaType: 'image',
+      isTimelineBacked: true,
+    },
+  ],
 }));
 
 vi.mock('@/shared/contexts/ShotsContext', () => ({
@@ -71,9 +90,17 @@ vi.mock('@/shared/contexts/ShotsContext', () => ({
   }),
 }));
 
+vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
+  useToolSettings: () => ({
+    settings: {
+      lastTimelineId: 'timeline-staged',
+    },
+  }),
+}));
+
 vi.mock('@/tools/video-editor/hooks/useTimelineState', () => ({
-  useTimelineState: () => ({
-    editor: {
+  useTimelineState: () => {
+    const editor = {
       data: null,
       resolvedConfig: { registry: {} },
       deviceClass: 'tablet',
@@ -125,11 +152,9 @@ vi.mock('@/tools/video-editor/hooks/useTimelineState', () => ({
       setPrecisionEnabled: mocks.setPrecisionEnabled,
       setContextTarget: mocks.setContextTarget,
       setInspectorTarget: mocks.setInspectorTarget,
-      setSelectedClipId: vi.fn(),
       isClipSelected: vi.fn(() => true),
       selectClip: mocks.selectClip,
       selectClips: mocks.selectClips,
-      replaceTimelineSelection: hasReplaceTimelineSelection ? mocks.replaceTimelineSelection : undefined,
       addToSelection: vi.fn(),
       clearSelection: vi.fn(),
       setSelectedTrackId: vi.fn(),
@@ -168,11 +193,56 @@ vi.mock('@/tools/video-editor/hooks/useTimelineState', () => ({
       uploadFiles: vi.fn(),
       applyEdit: vi.fn(),
       patchRegistry: vi.fn(),
+      unpatchRegistry: vi.fn(),
       registerAsset: vi.fn(),
-    },
-    chrome: { saveStatus: 'saved' },
-    playback: { currentTime: 12.5 },
-  }),
+    };
+    const chrome = {
+      timelineName: 'Timeline',
+      saveStatus: 'saved' as const,
+      isConflictExhausted: false,
+      renderStatus: 'idle' as const,
+      renderLog: '',
+      renderDirty: false,
+      renderProgress: null,
+      renderResultUrl: null,
+      renderResultFilename: null,
+      undo: vi.fn(),
+      redo: vi.fn(),
+      canUndo: false,
+      canRedo: false,
+      checkpoints: [],
+      jumpToCheckpoint: vi.fn(),
+      createManualCheckpoint: vi.fn(),
+      setScaleWidth: vi.fn(),
+      handleAddTrack: vi.fn(),
+      handleClearUnusedTracks: vi.fn(),
+      unusedTrackCount: 0,
+      handleAddText: vi.fn(),
+      handleAddTextAt: vi.fn(),
+      reloadFromServer: vi.fn(),
+      retrySaveAfterConflict: vi.fn(),
+      startRender: vi.fn(),
+    };
+    const playback = {
+      currentTime: 12.5,
+      previewRef: { current: null },
+      playerContainerRef: { current: null },
+      onPreviewTimeUpdate: vi.fn(),
+      formatTime: vi.fn(() => '0:12'),
+    };
+
+    return {
+      store: createTimelineStore({
+        data: editor,
+        ops: editor,
+        chrome,
+        playback,
+      }),
+      editor,
+      chrome,
+      playback,
+    };
+  },
 }));
 
 function Consumer() {
@@ -196,11 +266,10 @@ function Consumer() {
       <span>{String(editorData.interactionStateRef.current.drag)}</span>
       <span>{typeof editorData.additiveSelectionRef?.current}</span>
       <span>{typeof editorOps.selectClip}</span>
-      <span>{typeof editorOps.replaceTimelineSelection}</span>
+      <span>{typeof editorOps.selectClips}</span>
       <span>{chrome.saveStatus}</span>
       <span>{playback.currentTime}</span>
       <span data-testid="agent-chat-timeline-id">{agentChatBridge.timelineId}</span>
-      <span data-testid="agent-chat-timeline-clip-count">{agentChatBridge.timelineClips.length}</span>
       <button
         type="button"
         onClick={() => {
@@ -215,21 +284,29 @@ function Consumer() {
       >
         update interaction
       </button>
-      <button
-        type="button"
-        onClick={() => {
-          agentChatBridge.replaceSelectedTimelineClips([
-            {
-              clipId: 'clip-2',
-              assetKey: 'asset-2',
-              url: 'https://example.com/video.mp4',
-              mediaType: 'video',
-              isTimelineBacked: true,
-            },
-          ]);
-        }}
-      >
-        replace timeline clips
+    </div>
+  );
+}
+
+const media = {
+  id: 'generation-1',
+  generation_id: 'generation-1',
+  location: 'https://example.com/image.png',
+  imageUrl: 'https://example.com/image.png',
+  thumbUrl: 'https://example.com/image-thumb.png',
+  type: 'image',
+} as const;
+
+function AddToVideoEditorConsumer() {
+  const { onClick, phase } = useAddToVideoEditor(media);
+  const availability = useTimelineAvailabilityState();
+
+  return (
+    <div>
+      <span data-testid="add-phase">{phase}</span>
+      <span data-testid="timeline-mounted">{String(availability.mounted)}</span>
+      <button type="button" onClick={onClick}>
+        add to video editor
       </button>
     </div>
   );
@@ -237,7 +314,9 @@ function Consumer() {
 
 describe('VideoEditorProvider', () => {
   beforeEach(() => {
-    hasReplaceTimelineSelection = true;
+    navigateMock.mockReset();
+    systemResetSelectionForProjectChange();
+    localStorage.clear();
     Object.values(mocks).forEach((mock) => mock.mockClear());
   });
 
@@ -303,10 +382,8 @@ describe('VideoEditorProvider', () => {
     expect(screen.getByText('saved')).toBeInTheDocument();
     expect(screen.getByText('12.5')).toBeInTheDocument();
     expect(screen.getByTestId('agent-chat-timeline-id')).toHaveTextContent('timeline-1');
-    expect(screen.getByTestId('agent-chat-timeline-clip-count')).toHaveTextContent('1');
 
     fireEvent.click(screen.getByRole('button', { name: 'update interaction' }));
-    fireEvent.click(screen.getByRole('button', { name: 'replace timeline clips' }));
 
     expect(mocks.setInputModality).toHaveBeenCalledWith('touch');
     expect(mocks.setInputModalityFromPointerType).toHaveBeenCalledWith('touch');
@@ -315,43 +392,26 @@ describe('VideoEditorProvider', () => {
     expect(mocks.setPrecisionEnabled).toHaveBeenCalledWith(true);
     expect(mocks.setContextTarget).toHaveBeenCalledWith({ kind: 'clip', clipId: 'clip-1' });
     expect(mocks.setInspectorTarget).toHaveBeenCalledWith({ kind: 'selection', clipIds: ['clip-1'] });
-    expect(mocks.replaceTimelineSelection).toHaveBeenCalledWith(['clip-2']);
-    expect(mocks.selectClips).not.toHaveBeenCalled();
+    expect(__getSelectionStateForTests().clipDataById.get('clip-1')).toEqual(expect.objectContaining({
+      clipId: 'clip-1',
+      url: 'https://example.com/image.png',
+    }));
   });
 
-  it('falls back to selectClips when replaceTimelineSelection is unavailable', () => {
-    hasReplaceTimelineSelection = false;
+  it('lets editor timeline replacement update selection while preserving gallery attachments', () => {
+    userSelectGalleryItem({
+      id: 'gallery-1',
+      url: 'https://example.com/gallery.png',
+      type: 'image/png',
+      generationId: 'gen-gallery',
+    }, { additive: false });
 
-    const provider: DataProvider = {
-      loadTimeline: vi.fn(),
-      saveTimeline: vi.fn(),
-      loadAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(),
-    };
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-        },
-      },
-    });
+    editorReplaceTimelineSelection(['clip-1']);
 
-    render(
-      <MemoryRouter>
-        <QueryClientProvider client={queryClient}>
-          <AgentChatProvider>
-            <VideoEditorProvider dataProvider={provider} timelineId="timeline-2" userId="user-1">
-              <Consumer />
-            </VideoEditorProvider>
-          </AgentChatProvider>
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'replace timeline clips' }));
-
-    expect(mocks.replaceTimelineSelection).not.toHaveBeenCalled();
-    expect(mocks.selectClips).toHaveBeenCalledWith(['clip-2']);
+    const selectionState = __getSelectionStateForTests();
+    expect(selectionState.timeline.selectedClipIds).toEqual(new Set(['clip-1']));
+    expect(selectionState.clipDataById.get('clip-1')).toBeUndefined();
+    expect(selectionState.gallery.selectedGalleryIds).toEqual(new Set(['gallery-1']));
   });
 
   it('matches the touch interaction decision table for drag, marquee, trim, and selection routing', () => {
@@ -378,5 +438,110 @@ describe('VideoEditorProvider', () => {
       tabletTouchPreserveSelectionInMove: true,
       tabletMousePreserveSelectionInMove: false,
     });
+  });
+
+  it('keeps the mounted-vs-staged add boundary when a store provider exists but the editor is not mounted', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <TimelineStoreProvider store={createTimelineStore()}>
+            <AddToVideoEditorConsumer />
+          </TimelineStoreProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('timeline-mounted')).toHaveTextContent('false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+
+    expect(screen.getByTestId('add-phase')).toHaveTextContent('staged');
+    expect(readPendingAdds()).toEqual(['generation-1']);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('drops immediately when the mounted timeline store is available', () => {
+    const registerGenerationAsset = vi.fn(() => 'asset-1');
+    const handleAssetDrop = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    const store = createTimelineStore({
+      data: {
+        ...createTimelineStore().getState().data,
+        resolvedConfig: {
+          clips: [
+            { id: 'clip-1', at: 3, from: 0, to: 2 },
+          ],
+        } as never,
+      },
+      ops: {
+        ...createTimelineStore().getState().ops,
+        registerGenerationAsset,
+        handleAssetDrop,
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <TimelineStoreProvider store={store}>
+            <AddToVideoEditorConsumer />
+          </TimelineStoreProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('timeline-mounted')).toHaveTextContent('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+
+    expect(registerGenerationAsset).toHaveBeenCalledWith({
+      generationId: 'generation-1',
+      variantType: 'image',
+      imageUrl: 'https://example.com/image.png',
+      thumbUrl: 'https://example.com/image-thumb.png',
+    });
+    expect(handleAssetDrop).toHaveBeenCalledWith('asset-1', undefined, 5, false, false);
+    expect(readPendingAdds()).toEqual([]);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('navigates on the second staged click when the editor is not mounted', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AddToVideoEditorConsumer />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+
+    expect(readPendingAdds()).toEqual(['generation-1']);
+    expect(navigateMock).toHaveBeenCalledWith(
+      `/tools/video-editor?timeline=timeline-staged&${ADD_GENERATION_QUERY_PARAM}=generation-1`,
+    );
   });
 });

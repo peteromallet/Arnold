@@ -1,3 +1,5 @@
+import { isFloatingOverlayElement as isKnownFloatingOverlayElement } from '@/shared/components/ui/overlay';
+
 export function isInteractiveElement(target: HTMLElement): boolean {
   return (
     target.tagName === 'BUTTON' ||
@@ -11,7 +13,7 @@ export function isInteractiveElement(target: HTMLElement): boolean {
 }
 
 export function isFloatingOverlayElement(target: Element): boolean {
-  return target.closest('[role="listbox"], [role="menu"], [data-side], [data-popup]') !== null;
+  return isKnownFloatingOverlayElement(target);
 }
 
 export function shouldAllowTouchThrough(

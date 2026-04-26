@@ -7,6 +7,7 @@ import { useTimelineCommit } from '@/tools/video-editor/hooks/useTimelineCommit'
 import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus';
 import { useTimelinePersistence } from '@/tools/video-editor/hooks/useTimelinePersistence';
 import { usePollSync, type UsePollSyncQueries } from '@/tools/video-editor/hooks/usePollSync';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
 export { shouldAcceptPolledData } from '@/tools/video-editor/lib/timeline-save-utils';
@@ -20,6 +21,7 @@ export function useTimelineSave(
   queries: UseTimelineSaveQueries,
   provider: DataProvider,
   interactionStateRef: InteractionStateRef,
+  store: TimelineStoreApi,
 ) {
   const { timelineId } = useVideoEditorRuntime();
   const lastSavedSignatureRef = useRef('');
@@ -31,6 +33,7 @@ export function useTimelineSave(
     lastSavedSignatureRef,
   });
   const persistence = useTimelinePersistence({
+    store,
     provider,
     timelineId,
     eventBus: eventBusRef.current,
@@ -50,6 +53,7 @@ export function useTimelineSave(
   }, [persistence.scheduleSave]);
 
   usePollSync({
+    store,
     queries,
     provider,
     commitData: commit.commitData,
@@ -72,7 +76,6 @@ export function useTimelineSave(
     selectedClipId: commit.selectedClipId,
     selectedTrackId: commit.selectedTrackId,
     saveStatus: persistence.saveStatus,
-    setSelectedClipId: commit.setSelectedClipId,
     setSelectedTrackId: commit.setSelectedTrackId,
     applyEdit: commit.applyEdit,
     patchRegistry: commit.patchRegistry,

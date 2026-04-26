@@ -7,16 +7,16 @@ import { createInteractionState, onInteractionEnd } from '@/tools/video-editor/l
 import type { TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 
-const useTimelineEditorDataMock = vi.fn();
+const useTimelineMutableAdaptersMock = vi.fn();
 
-vi.mock('@/tools/video-editor/contexts/TimelineEditorContext', async () => {
-  const actual = await vi.importActual<typeof import('@/tools/video-editor/contexts/TimelineEditorContext')>(
-    '@/tools/video-editor/contexts/TimelineEditorContext',
+vi.mock('@/tools/video-editor/hooks/timelineStore', async () => {
+  const actual = await vi.importActual<typeof import('@/tools/video-editor/hooks/timelineStore')>(
+    '@/tools/video-editor/hooks/timelineStore',
   );
 
   return {
     ...actual,
-    useTimelineEditorData: () => useTimelineEditorDataMock(),
+    useTimelineMutableAdapters: () => useTimelineMutableAdaptersMock(),
   };
 });
 
@@ -133,7 +133,13 @@ function renderStatefulPinnedGroupCanvas(params: {
   const initialRow = params.initialRow ?? pinnedGroupRow;
   const initialShotGroup = params.initialShotGroup ?? pinnedShotGroup;
 
-  useTimelineEditorDataMock.mockReturnValue({ dataRef });
+  useTimelineMutableAdaptersMock.mockReturnValue({
+    dataRef,
+    pendingOpsRef: { current: 0 },
+    interactionStateRef: { current: createInteractionState() },
+    selectedClipIdsRef: { current: new Set<string>() },
+    additiveSelectionRef: { current: false },
+  });
 
   function Harness() {
     const [rows, setRows] = useState<TimelineRow[]>([cloneRowState(initialRow)]);
@@ -247,7 +253,13 @@ function renderCanvas(params?: {
   const dataRef = params?.dataRef ?? { current: null };
   const trackDefinitions = params?.tracks ?? [params?.track ?? track];
   const timelineRows = params?.rows ?? [params?.row ?? row];
-  useTimelineEditorDataMock.mockReturnValue({ dataRef });
+  useTimelineMutableAdaptersMock.mockReturnValue({
+    dataRef,
+    pendingOpsRef: { current: 0 },
+    interactionStateRef: params?.interactionStateRef ?? { current: createInteractionState() },
+    selectedClipIdsRef: { current: new Set<string>() },
+    additiveSelectionRef: { current: false },
+  });
 
   const onActionResizeStart = params?.onActionResizeStart ?? vi.fn();
   const onClipEdgeResizeEnd = params?.onClipEdgeResizeEnd ?? vi.fn();
@@ -329,7 +341,7 @@ function renderCanvas(params?: {
 }
 
 afterEach(() => {
-  useTimelineEditorDataMock.mockReset();
+  useTimelineMutableAdaptersMock.mockReset();
   setGestureOwner.mockReset();
   setInputModalityFromPointerType.mockClear();
 });

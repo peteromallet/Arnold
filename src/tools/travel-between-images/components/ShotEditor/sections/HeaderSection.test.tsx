@@ -7,10 +7,12 @@ import { HeaderSection } from './HeaderSection';
 
 const {
   updateShotAspectRatioMock,
-  useShotSettingsContextMock,
+  useShotSettingsIdentityMock,
+  useShotSettingsUiMock,
 } = vi.hoisted(() => ({
   updateShotAspectRatioMock: vi.fn(),
-  useShotSettingsContextMock: vi.fn(),
+  useShotSettingsIdentityMock: vi.fn(),
+  useShotSettingsUiMock: vi.fn(),
 }));
 
 vi.mock('../ui/Header', () => ({
@@ -33,7 +35,8 @@ vi.mock('../ui/Header', () => ({
 }));
 
 vi.mock('../ShotSettingsContext', () => ({
-  useShotSettingsContext: useShotSettingsContextMock,
+  useShotSettingsIdentity: useShotSettingsIdentityMock,
+  useShotSettingsUi: useShotSettingsUiMock,
 }));
 
 vi.mock('@/shared/hooks/shots', () => ({
@@ -106,7 +109,17 @@ describe('HeaderSection', () => {
 
   it('reverts to the project default aspect ratio instead of the current shot ratio', async () => {
     const contextValue = createContextValue();
-    useShotSettingsContextMock.mockReturnValue(contextValue);
+    useShotSettingsIdentityMock.mockReturnValue({
+      selectedShot: contextValue.selectedShot,
+      selectedShotId: contextValue.selectedShotId,
+      projectId: contextValue.projectId,
+      projects: contextValue.projects,
+      effectiveAspectRatio: contextValue.effectiveAspectRatio,
+    });
+    useShotSettingsUiMock.mockReturnValue({
+      state: contextValue.state,
+      actions: contextValue.actions,
+    });
 
     render(
       <HeaderSection
@@ -131,7 +144,17 @@ describe('HeaderSection', () => {
 
   it('clears autoAdjustedAspectRatio when selectedShotId changes', async () => {
     const contextValue = createContextValue();
-    useShotSettingsContextMock.mockReturnValue(contextValue);
+    useShotSettingsIdentityMock.mockReturnValue({
+      selectedShot: contextValue.selectedShot,
+      selectedShotId: contextValue.selectedShotId,
+      projectId: contextValue.projectId,
+      projects: contextValue.projects,
+      effectiveAspectRatio: contextValue.effectiveAspectRatio,
+    });
+    useShotSettingsUiMock.mockReturnValue({
+      state: contextValue.state,
+      actions: contextValue.actions,
+    });
 
     const { rerender } = render(
       <HeaderSection
@@ -153,7 +176,17 @@ describe('HeaderSection', () => {
       },
       selectedShotId: 'shot-2',
     });
-    useShotSettingsContextMock.mockReturnValue(nextContextValue);
+    useShotSettingsIdentityMock.mockReturnValue({
+      selectedShot: nextContextValue.selectedShot,
+      selectedShotId: nextContextValue.selectedShotId,
+      projectId: nextContextValue.projectId,
+      projects: nextContextValue.projects,
+      effectiveAspectRatio: nextContextValue.effectiveAspectRatio,
+    });
+    useShotSettingsUiMock.mockReturnValue({
+      state: nextContextValue.state,
+      actions: nextContextValue.actions,
+    });
 
     rerender(
       <HeaderSection

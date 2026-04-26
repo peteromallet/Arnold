@@ -10,13 +10,13 @@ import { useClickRipple } from '@/shared/hooks/interaction/useClickRipple';
 import { isVideoGeneration, isPositioned } from '@/shared/lib/typeGuards';
 import { VideoGenerationModal } from '../VideoGenerationModal';
 import { ImageGenerationModal } from '@/shared/components/modals/ImageGenerationModal';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
 import type { ShotFinalVideo } from '../../hooks/video/useShotFinalVideos';
-import { useShotAdditionSelectionOptional } from '@/shared/contexts/ShotAdditionSelectionContext';
 import { useVideoShotDisplayState } from '../hooks/useVideoShotDisplayState';
 import { ShotMetadata, ShotControls, ShotPreview } from './VideoShotDisplayParts';
+import { useShotAdditionSelectionOptional } from '@/shared/state/selectionStore';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 interface VideoShotDisplayProps {
   shot: Shot;
@@ -76,7 +76,7 @@ export const VideoShotDisplay: React.FC<VideoShotDisplayProps> = ({
   const deleteShotMutation = useDeleteShot();
   const duplicateShotMutation = useDuplicateShot();
 
-  const { isGenerationsPaneLocked } = usePanes();
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
   const isMobile = useIsMobile();
   const shotAdditionSelection = useShotAdditionSelectionOptional();
   const {

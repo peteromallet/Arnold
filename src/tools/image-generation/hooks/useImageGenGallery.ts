@@ -66,6 +66,11 @@ export function useImageGenGallery({
     defaults: EMPTY_PAGE_PREFS,
     enabled: !!formAssociatedShotId && !!projectId,
   });
+  const {
+    settings: pagePrefSettings,
+    status: pagePrefsStatus,
+    updateField: updatePagePrefField,
+  } = pagePrefs;
 
   const [galleryRef, containerDimensions] = useContainerDimensions(150, isPhoneOnly);
 
@@ -130,11 +135,11 @@ export function useImageGenGallery({
   // Restore saved gallery filter when switching shots
   const lastAppliedPagePrefsForShotRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!formAssociatedShotId || pagePrefs.status !== 'ready') return;
+    if (!formAssociatedShotId || pagePrefsStatus !== 'ready') return;
     if (lastAppliedPagePrefsForShotRef.current === formAssociatedShotId) return;
     lastAppliedPagePrefsForShotRef.current = formAssociatedShotId;
 
-    const override = pagePrefs.settings.galleryFilterOverride;
+    const override = pagePrefSettings.galleryFilterOverride;
     isFilterChangeRef.current = true;
     setCurrentPage(1);
     if (override !== undefined) {
@@ -142,7 +147,7 @@ export function useImageGenGallery({
     } else {
       setGalleryFilters(prev => ({ ...prev, shotFilter: formAssociatedShotId }));
     }
-  }, [formAssociatedShotId, pagePrefs.status, pagePrefs.settings.galleryFilterOverride]);
+  }, [formAssociatedShotId, pagePrefSettings.galleryFilterOverride, pagePrefsStatus]);
 
   useEffect(() => {
     if (searchParams.get('scrollToGallery') === 'true') {
@@ -226,27 +231,27 @@ export function useImageGenGallery({
 
   const handleGalleryFiltersChange = useCallback((newFilters: GalleryFilterState) => {
     if (newFilters.shotFilter !== galleryFilters.shotFilter) {
-      if (formAssociatedShotId && pagePrefs.status === 'ready') {
+      if (formAssociatedShotId && pagePrefsStatus === 'ready') {
         const shouldSaveOverride = newFilters.shotFilter !== formAssociatedShotId;
         const valueToSave = shouldSaveOverride ? newFilters.shotFilter : undefined;
-        pagePrefs.updateField('galleryFilterOverride', valueToSave);
+        updatePagePrefField('galleryFilterOverride', valueToSave);
       }
     }
     isFilterChangeRef.current = true;
     setCurrentPage(1);
     setGalleryFilters(newFilters);
-  }, [galleryFilters.shotFilter, formAssociatedShotId, pagePrefs]);
+  }, [formAssociatedShotId, galleryFilters.shotFilter, pagePrefsStatus, updatePagePrefField]);
 
   const handleSwitchToAssociatedShot = useCallback((shotId: string) => {
     isFilterChangeRef.current = true;
     setCurrentPage(1);
     setGalleryFilters(prev => ({ ...prev, shotFilter: shotId }));
-    if (formAssociatedShotId && pagePrefs.status === 'ready') {
+    if (formAssociatedShotId && pagePrefsStatus === 'ready') {
       const shouldSaveOverride = shotId !== formAssociatedShotId;
       const valueToSave = shouldSaveOverride ? shotId : undefined;
-      pagePrefs.updateField('galleryFilterOverride', valueToSave);
+      updatePagePrefField('galleryFilterOverride', valueToSave);
     }
-  }, [formAssociatedShotId, pagePrefs]);
+  }, [formAssociatedShotId, pagePrefsStatus, updatePagePrefField]);
 
   return {
     galleryFilters,

@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { toast } from '@/shared/components/ui/runtime/sonner';
+import type { SelectClipOptions } from '@/shared/state/selectionStore';
 import {
   patchAffectsDuration,
   recalcActionEnd,
@@ -31,7 +32,7 @@ export interface UseClipEditingArgs {
   selectedClipId: string | null;
   selectedTrack: TimelineSelectedTrack;
   currentTime: number;
-  setSelectedClipId: Dispatch<SetStateAction<string | null>>;
+  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
   applyEdit: TimelineApplyEdit;
 }
@@ -66,7 +67,7 @@ export function useClipEditing({
   selectedClipId,
   selectedTrack,
   currentTime,
-  setSelectedClipId,
+  selectClip,
   setSelectedTrackId,
   applyEdit,
 }: UseClipEditingArgs): UseClipEditingResult {
@@ -292,7 +293,7 @@ export function useClipEditing({
     isPinnedGroupMember,
     notifyPinnedGroupEditBlocked,
     getValidClipIds,
-    setSelectedClipId,
+    selectClip,
     setSelectedTrackId,
   };
 

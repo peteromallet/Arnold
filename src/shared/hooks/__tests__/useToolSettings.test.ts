@@ -169,6 +169,19 @@ describe('updateToolSettingsSupabase', () => {
 // Mock dependencies
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: () => ({ selectedProjectId: 'project-1' }),
+  useProjectSelectionContext: () => ({ selectedProjectId: 'project-1', project: null, setSelectedProjectId: vi.fn() }),
+  useProjectCrudContext: () => ({
+    projects: [],
+    isLoadingProjects: false,
+    fetchProjects: vi.fn(),
+    addNewProject: vi.fn(),
+    isCreatingProject: false,
+    updateProject: vi.fn(),
+    isUpdatingProject: false,
+    deleteProject: vi.fn(),
+    isDeletingProject: false,
+  }),
+  useProjectIdentityContext: () => ({ userId: 'user-1' }),
 }));
 
 vi.mock('@/integrations/supabase/client', () => ({

@@ -9,57 +9,34 @@ const useTimelineEditorDataMock = vi.fn();
 const useTimelineEditorOpsMock = vi.fn();
 const useTimelinePlaybackContextMock = vi.fn();
 const useTimelineChromeContextMock = vi.fn();
-const usePanesMock = vi.fn();
+const usePanesStoreMock = vi.fn();
 const useTimelineRealtimeMock = vi.fn();
 const useKeyboardShortcutsMock = vi.fn();
 let editorDataValue: any;
 let editorOpsValue: any;
 let overlayEditorProps: any;
 
-vi.mock('@/tools/video-editor/contexts/TimelineEditorContext', async () => {
-  const actual = await vi.importActual<typeof import('@/tools/video-editor/contexts/TimelineEditorContext')>(
-    '@/tools/video-editor/contexts/TimelineEditorContext',
+vi.mock('@/tools/video-editor/hooks/timelineStore', async () => {
+  const actual = await vi.importActual<typeof import('@/tools/video-editor/hooks/timelineStore')>(
+    '@/tools/video-editor/hooks/timelineStore',
   );
 
   return {
     ...actual,
     useTimelineEditorData: () => useTimelineEditorDataMock(),
     useTimelineEditorOps: () => useTimelineEditorOpsMock(),
-  };
-});
-
-vi.mock('@/tools/video-editor/contexts/TimelinePlaybackContext', async () => {
-  const actual = await vi.importActual<typeof import('@/tools/video-editor/contexts/TimelinePlaybackContext')>(
-    '@/tools/video-editor/contexts/TimelinePlaybackContext',
-  );
-
-  return {
-    ...actual,
     useTimelinePlaybackContext: () => useTimelinePlaybackContextMock(),
-  };
-});
-
-vi.mock('@/tools/video-editor/contexts/TimelineChromeContext', async () => {
-  const actual = await vi.importActual<typeof import('@/tools/video-editor/contexts/TimelineChromeContext')>(
-    '@/tools/video-editor/contexts/TimelineChromeContext',
-  );
-
-  return {
-    ...actual,
     useTimelineChromeContext: () => useTimelineChromeContextMock(),
+    useTimelineDataSelector: (selector: (value: any) => unknown) => selector(useTimelineEditorDataMock()),
+    useTimelineOpsSelector: (selector: (value: any) => unknown) => selector(useTimelineEditorOpsMock()),
+    useTimelinePlaybackSelector: (selector: (value: any) => unknown) => selector(useTimelinePlaybackContextMock()),
+    useTimelineChromeSelector: (selector: (value: any) => unknown) => selector(useTimelineChromeContextMock()),
   };
 });
 
-vi.mock('@/shared/contexts/PanesContext', async () => {
-  const actual = await vi.importActual<typeof import('@/shared/contexts/PanesContext')>(
-    '@/shared/contexts/PanesContext',
-  );
-
-  return {
-    ...actual,
-    usePanes: () => usePanesMock(),
-  };
-});
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (value: any) => unknown) => selector(usePanesStoreMock()),
+}));
 
 vi.mock('@/tools/video-editor/hooks/useTimelineRealtime', () => ({
   useTimelineRealtime: () => useTimelineRealtimeMock(),
@@ -250,8 +227,8 @@ beforeEach(() => {
     handleSplitSelectedClip: vi.fn(),
     handleDeleteClips: vi.fn(),
     clearSelection: vi.fn(),
+    selectClip: vi.fn(),
     selectClips: vi.fn(),
-    setSelectedClipId: vi.fn(),
     setInspectorTarget,
     setContextTarget,
     setInteractionMode,
@@ -299,7 +276,7 @@ beforeEach(() => {
     startRender: vi.fn(),
   });
 
-  usePanesMock.mockReturnValue({
+  usePanesStoreMock.mockReturnValue({
     isGenerationsPaneLocked: false,
     setIsGenerationsPaneLocked: vi.fn(),
   });

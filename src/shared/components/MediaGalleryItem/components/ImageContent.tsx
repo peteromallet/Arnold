@@ -15,7 +15,7 @@ interface ImageContentProps {
   progressiveRef: React.Ref<HTMLImageElement>;
   isMobile: boolean;
   enableSingleClick?: boolean;
-  onImageClick?: (image: GeneratedImageWithMetadata) => void;
+  onImageClick?: (image: GeneratedImageWithMetadata, modifiers?: { multiSelect: boolean }) => void;
   onOpenLightbox: (image: GeneratedImageWithMetadata) => void;
   onImageLoad: () => void;
   onImageError: (e?: React.SyntheticEvent) => void;
@@ -34,8 +34,6 @@ export const ImageContent: React.FC<ImageContentProps> = ({
   isFullLoaded,
   progressiveRef,
   isMobile,
-  enableSingleClick,
-  onImageClick,
   onOpenLightbox,
   onImageLoad,
   onImageError,
@@ -72,7 +70,10 @@ export const ImageContent: React.FC<ImageContentProps> = ({
             progressiveEnabled && isThumbShowing && "opacity-90",
             progressiveEnabled && isFullLoaded && "opacity-100"
           )}
-          onClick={onImageClick && (enableSingleClick || !isMobile) ? () => onImageClick(image) : undefined}
+          // Single-click selection is handled at the MediaGalleryItem wrapper
+          // via pointerdown/pointerup with manual movement tracking — the
+          // wrapper is `draggable` and the browser eats native clicks at small
+          // movement thresholds. Only `onDoubleClick` stays here.
           onDoubleClick={isMobile ? undefined : () => onOpenLightbox(image)}
           draggable={false}
           style={{ cursor: 'pointer' }}

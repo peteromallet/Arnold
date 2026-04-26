@@ -166,6 +166,40 @@ export function useStaleVariants({ registry, patchRegistry, registerAsset }: Use
     });
   }, []);
 
+  // Apply a specific variant to a single asset (patches registry + persists)
+  const applyVariantToAsset = useCallback(async (
+    assetKey: string,
+    variant: { id: string; location: string; thumbnail_url?: string | null },
+  ) => {
+    if (!registry) return;
+    const entry = registry[assetKey];
+    if (!entry) return;
+
+    const previousEntry = entry;
+    const previousFile = entry.file;
+
+    const updatedEntry: AssetRegistryEntry = {
+      ...entry,
+      file: variant.location,
+      variantId: variant.id,
+    };
+
+    patchRegistry(assetKey, updatedEntry, variant.location);
+
+    void registerAsset(assetKey, updatedEntry).catch((err) => {
+      console.error('[StaleVariants] Failed to persist variant update:', err);
+      patchRegistry(assetKey, previousEntry, previousFile);
+      toast.error('Failed to update variant');
+    });
+
+    setDismissedAssetKeys((prev) => {
+      if (!prev.has(assetKey)) return prev;
+      const next = new Set(prev);
+      next.delete(assetKey);
+      return next;
+    });
+  }, [registry, patchRegistry, registerAsset]);
+
   // Update a single asset to the current primary variant
   const updateAssetToCurrentVariant = useCallback(async (assetKey: string) => {
     if (!registry) return;
@@ -189,34 +223,8 @@ export function useStaleVariants({ registry, patchRegistry, registerAsset }: Use
     if (error || !data?.primary_variant) return;
 
     const newVariant = data.primary_variant as { id: string; location: string; thumbnail_url: string | null };
-    const newLocation = newVariant.location;
-    const previousEntry = entry;
-    const previousFile = entry.file;
-
-    const updatedEntry: AssetRegistryEntry = {
-      ...entry,
-      file: newLocation,
-      variantId: newVariant.id,
-    };
-
-    // Update in-memory registry
-    patchRegistry(assetKey, updatedEntry, newLocation);
-
-    // Persist to DB
-    void registerAsset(assetKey, updatedEntry).catch((err) => {
-      console.error('[StaleVariants] Failed to persist variant update:', err);
-      patchRegistry(assetKey, previousEntry, previousFile);
-      toast.error('Failed to update variant');
-    });
-
-    // Clear dismiss state (it's now up to date)
-    setDismissedAssetKeys((prev) => {
-      if (!prev.has(assetKey)) return prev;
-      const next = new Set(prev);
-      next.delete(assetKey);
-      return next;
-    });
-  }, [registry, patchRegistry, registerAsset]);
+    await applyVariantToAsset(assetKey, newVariant);
+  }, [registry, applyVariantToAsset]);
 
   return {
     staleAssetKeys,
@@ -224,5 +232,6 @@ export function useStaleVariants({ registry, patchRegistry, registerAsset }: Use
     generationAssetKeys: generationAssetMap.generationAssetKeys,
     dismissAsset,
     updateAssetToCurrentVariant,
+    applyVariantToAsset,
   };
 }

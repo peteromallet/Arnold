@@ -2,7 +2,19 @@ import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LayoutMainContent } from './LayoutMainContent';
 
-const usePanesMock = vi.fn();
+const panesState = vi.hoisted(() => ({
+  state: {
+    isEditorPaneLocked: false,
+    effectiveEditorPaneHeight: 0,
+    isTasksPaneLocked: true,
+    tasksPaneWidth: 320,
+    isShotsPaneLocked: true,
+    shotsPaneWidth: 260,
+    isGenerationsPaneLocked: true,
+    isGenerationsPaneOpen: false,
+    effectiveGenerationsPaneHeight: 180,
+  },
+}));
 const useHeaderStateMock = vi.fn();
 const useViewportResponsiveMock = vi.fn();
 const useVideoEditorRouteStateMock = vi.fn();
@@ -38,8 +50,8 @@ vi.mock('@/shared/components/ProcessingWarnings', () => ({
   },
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: () => usePanesMock(),
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: typeof panesState.state) => unknown) => selector(panesState.state),
 }));
 
 vi.mock('@/shared/contexts/ToolPageHeaderContext', () => ({
@@ -57,7 +69,11 @@ vi.mock('@/app/hooks/useVideoEditorRouteState', () => ({
 describe('LayoutMainContent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    usePanesMock.mockReturnValue(defaultPanesState);
+    panesState.state = {
+      isEditorPaneLocked: false,
+      effectiveEditorPaneHeight: 0,
+      ...defaultPanesState,
+    };
     useHeaderStateMock.mockReturnValue({
       header: <div data-testid="tool-header">Header</div>,
     });
@@ -111,12 +127,11 @@ describe('LayoutMainContent', () => {
   });
 
   it('does not apply top padding when the editor pane is hidden', () => {
-    usePanesMock.mockReturnValue({
+    panesState.state = {
       ...defaultPanesState,
       isEditorPaneLocked: false,
-      isEditorPaneOpen: false,
       effectiveEditorPaneHeight: 360,
-    });
+    };
 
     const { container } = render(
       <LayoutMainContent isMobileSplitView={false} onOpenSettings={vi.fn()} />
@@ -130,12 +145,11 @@ describe('LayoutMainContent', () => {
   });
 
   it('keeps content in place while the editor pane is only hovering open', () => {
-    usePanesMock.mockReturnValue({
+    panesState.state = {
       ...defaultPanesState,
       isEditorPaneLocked: false,
-      isEditorPaneOpen: true,
       effectiveEditorPaneHeight: 360,
-    });
+    };
 
     const { container } = render(
       <LayoutMainContent isMobileSplitView={false} onOpenSettings={vi.fn()} />
@@ -153,12 +167,12 @@ describe('LayoutMainContent', () => {
       isEditorRoute: true,
       isVideoEditorShellActive: true,
     });
-    usePanesMock.mockReturnValue({
+    panesState.state = {
       ...defaultPanesState,
       isGenerationsPaneLocked: true,
       isGenerationsPaneOpen: false,
       effectiveGenerationsPaneHeight: 180,
-    });
+    };
 
     const { container } = render(
       <LayoutMainContent isMobileSplitView={false} onOpenSettings={vi.fn()} />
@@ -176,12 +190,12 @@ describe('LayoutMainContent', () => {
       isEditorRoute: true,
       isVideoEditorShellActive: true,
     });
-    usePanesMock.mockReturnValue({
+    panesState.state = {
       ...defaultPanesState,
       isGenerationsPaneLocked: false,
       isGenerationsPaneOpen: false,
       effectiveGenerationsPaneHeight: 180,
-    });
+    };
 
     const { container } = render(
       <LayoutMainContent isMobileSplitView={false} onOpenSettings={vi.fn()} />

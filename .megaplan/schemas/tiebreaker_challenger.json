@@ -1,0 +1,92 @@
+{
+  "type": "object",
+  "properties": {
+    "measurements_vs_assumptions": {
+      "type": "string"
+    },
+    "missing_options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "why_missed": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "why_missed"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hard_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "scenario": {
+            "type": "string"
+          },
+          "which_option_breaks": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario",
+          "which_option_breaks",
+          "severity"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reframings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "aging_analysis": {
+      "type": "string"
+    },
+    "counter_recommendation": {
+      "type": "object",
+      "properties": {
+        "option_name": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "agrees_with_researcher": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "option_name",
+        "rationale",
+        "agrees_with_researcher"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "measurements_vs_assumptions",
+    "missing_options",
+    "hard_cases",
+    "reframings",
+    "aging_analysis",
+    "counter_recommendation"
+  ],
+  "additionalProperties": false
+}

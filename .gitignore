@@ -47,6 +47,9 @@ temp/
 !docs/structure_detail/*.md
 !docs/blog/*.md
 !docs/quality/*.md
+!docs/state_management_refactor_baselines.md
+!docs/state_management_context_audit.md
+!docs/design/*.md
 !tasks/*.md
 !CLAUDE.md
 
@@ -85,3 +88,6 @@ localhost-*.log
 supabase/.temp/
 supabase/.branches/
 .claude/worktrees/
+
+# megaplan per-run state files — writing them during execute triggers megaplan audit false-positives
+.megaplan/plans/

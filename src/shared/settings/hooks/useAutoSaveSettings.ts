@@ -1,104 +1,17 @@
-import { useReducer, useCallback, useRef, useMemo, useEffect, useLayoutEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
-import { useRenderLogger } from '@/shared/lib/debug/debugRendering';
-import { useDebouncedSettingsSave } from '@/shared/settings/hooks/useDebouncedSettingsSave';
-import { deepEqual } from '@/shared/lib/utils/deepEqual';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { useCustomModeLoad, useReactQueryModeLoad } from '@/shared/settings/hooks/autoSaveSettingsLoaders';
-import {
-  applyLoadedDataState,
-  resolveEntityChange,
-  transitionReadyWithPendingSave,
-} from '@/shared/settings/hooks/autoSaveSettingsHelpers';
+import { useRenderLogger } from '@/shared/lib/debug/debugRendering';
+import { deepEqual } from '@/shared/lib/utils/deepEqual';
+import { createEntityStore, type EntityStoreApi } from '@/shared/state/createEntityStore';
 
-/**
- * Status states for the auto-save settings lifecycle.
- */
 type AutoSaveStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'error';
 
-interface AutoSaveState<T extends object> {
-  entityId: string | null;
-  settings: T;
-  status: AutoSaveStatus;
-  error: Error | null;
-  hasPersistedData: boolean;
-}
-
-type AutoSaveAction<T extends object> =
-  | {
-      type: 'ENTITY_CHANGED';
-      entityId: string | null;
-      settings: T;
-      status: AutoSaveStatus;
-      error: Error | null;
-      hasPersistedData: boolean;
-    }
-  | { type: 'LOAD_STARTED' }
-  | { type: 'LOAD_RESOLVED'; settings: T; hasPersistedData: boolean }
-  | {
-      type: 'SETTINGS_UPDATED';
-      nextSettings?: T;
-      merge?: Partial<T>;
-      status?: AutoSaveStatus;
-      error?: Error | null;
-      hasPersistedData?: boolean;
-    };
-
-function autoSaveSettingsReducer<T extends object>(
-  state: AutoSaveState<T>,
-  action: AutoSaveAction<T>
-): AutoSaveState<T> {
-  switch (action.type) {
-    case 'ENTITY_CHANGED':
-      return {
-        entityId: action.entityId,
-        settings: action.settings,
-        status: action.status,
-        error: action.error,
-        hasPersistedData: action.hasPersistedData,
-      };
-
-    case 'LOAD_STARTED':
-      return {
-        ...state,
-        status: 'loading',
-        error: null,
-      };
-
-    case 'LOAD_RESOLVED':
-      return {
-        ...state,
-        settings: action.settings,
-        status: 'ready',
-        error: null,
-        hasPersistedData: action.hasPersistedData,
-      };
-
-    case 'SETTINGS_UPDATED': {
-      const settings = action.nextSettings ?? { ...state.settings, ...action.merge };
-      return {
-        ...state,
-        settings,
-        status: action.status ?? state.status,
-        error: Object.prototype.hasOwnProperty.call(action, 'error') ? (action.error ?? null) : state.error,
-        hasPersistedData: Object.prototype.hasOwnProperty.call(action, 'hasPersistedData')
-          ? (action.hasPersistedData ?? state.hasPersistedData)
-          : state.hasPersistedData,
-      };
-    }
-
-    default:
-      return state;
-  }
-}
-
-/**
- * Custom load/save functions for non-React-Query persistence.
- */
 interface CustomLoadSave<T> {
   load: (entityId: string) => Promise<T | null>;
   save: (entityId: string, data: T) => Promise<void>;
   entityId: string | null;
+  domainKey?: string;
   onFlush?: (entityId: string, data: T) => void;
 }
 
@@ -114,6 +27,7 @@ interface UseAutoSaveSettingsOptions<T> {
   debugTag?: string;
   onSaveSuccess?: () => void;
   onSaveError?: (error: Error) => void;
+  bootstrapData?: T | null;
   customLoadSave?: CustomLoadSave<T>;
 }
 
@@ -136,53 +50,133 @@ interface UseAutoSaveSettingsReturn<T> {
   initializeFrom: (data: Partial<T>) => void;
 }
 
-/**
- * Recommended hook for auto-saving settings to the database.
- *
- * This is the default choice for new features that need persisted settings.
- * Builds on `useToolSettings` (cascade resolution) and adds auto-save, dirty tracking,
- * entity-change handling, and unmount flushing.
- *
- * Features:
- * - Loads settings from DB with scope cascade (defaults -> user -> project -> shot)
- * - Debounced auto-save on field changes (default 300ms)
- * - Flushes pending saves on unmount/navigation
- * - Dirty tracking for unsaved changes indicator
- * - Status machine for loading states
- * - Optional customLoadSave mode for non-React-Query persistence
- *
- * CRITICAL: During loading (status !== 'ready'), updates only affect local UI state.
- * This prevents auto-initialization effects from blocking DB values.
- *
- * @see docs/structure_detail/settings_system.md for the full settings hook decision tree
- *
- * @example
- * ```typescript
- * // React Query mode (tool settings)
- * const settings = useAutoSaveSettings({
- *   toolId: 'my-tool',
- *   shotId: selectedShotId,
- *   scope: 'shot',
- *   defaults: { prompt: '', mode: 'basic' },
- * });
- *
- * // Custom load/save mode
- * const settings = useAutoSaveSettings({
- *   defaults: { prompt: '', mode: 'basic' },
- *   customLoadSave: {
- *     entityId: generationId,
- *     load: (id) => fetchFromDB(id),
- *     save: (id, data) => saveToDB(id, data),
- *   },
- * });
- *
- * // Update a field (auto-saves after debounce)
- * settings.updateField('prompt', 'new prompt');
- *
- * // Check if ready before rendering
- * if (settings.status !== 'ready') return <Loading />;
- * ```
- */
+interface AutoSaveStoreRuntime<T extends object> {
+  mode: 'custom' | 'react-query';
+  loadRef: { current: ((entityId: string) => Promise<T | null>) | null };
+  saveRef: { current: ((entityId: string, data: T) => Promise<void>) | null };
+  updateRef: { current: ((scope: 'shot' | 'project', settings: Partial<T>) => Promise<void>) | null };
+  reactQuerySeedRef: { current: Map<string, { seed: T; hasPersistedData: boolean }> };
+  scopeRef: { current: 'shot' | 'project' };
+  onSaveSuccessRef: { current: (() => void) | undefined };
+  onSaveErrorRef: { current: ((error: Error) => void) | undefined };
+  onFlushRef: { current: ((entityId: string, data: T) => void) | undefined };
+  bootstrapRef: { current: T | null };
+}
+
+const DISABLED_ENTITY_ID = '__auto-save-settings-disabled__';
+const autoSaveStoreRegistry = new Map<string, EntityStoreApi<any>>();
+const autoSaveRuntimeRegistry = new Map<string, AutoSaveStoreRuntime<any>>();
+
+function cloneValue<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function getDomainKey<T extends object>(
+  toolId: string,
+  scope: 'shot' | 'project',
+  debounceMs: number,
+  customLoadSave?: CustomLoadSave<T>
+): string {
+  if (customLoadSave) {
+    return `custom:${customLoadSave.domainKey ?? toolId ?? 'default'}:${debounceMs}`;
+  }
+
+  return `tool:${toolId}:${scope}:${debounceMs}`;
+}
+
+function getStoreForDomain<T extends object>(
+  domainKey: string,
+  defaults: T,
+  debounceMs: number,
+  mode: 'custom' | 'react-query'
+): {
+  store: EntityStoreApi<T>;
+  runtime: AutoSaveStoreRuntime<T>;
+} {
+  const existingStore = autoSaveStoreRegistry.get(domainKey) as EntityStoreApi<T> | undefined;
+  const existingRuntime = autoSaveRuntimeRegistry.get(domainKey) as AutoSaveStoreRuntime<T> | undefined;
+
+  if (existingStore && existingRuntime) {
+    return { store: existingStore, runtime: existingRuntime };
+  }
+
+  const runtime: AutoSaveStoreRuntime<T> = {
+    mode,
+    loadRef: { current: null },
+    saveRef: { current: null },
+    updateRef: { current: null },
+    reactQuerySeedRef: { current: new Map() },
+    scopeRef: { current: 'shot' },
+    onSaveSuccessRef: { current: undefined },
+    onSaveErrorRef: { current: undefined },
+    onFlushRef: { current: undefined },
+    bootstrapRef: { current: null },
+  };
+
+  const store = createEntityStore<T>({
+    toolId: domainKey,
+    defaults: cloneValue(defaults),
+    persistenceDebounceMs: debounceMs,
+    load: async (entityId) => {
+      if (entityId === DISABLED_ENTITY_ID) {
+        return { db: null, lastUsed: null };
+      }
+
+      if (runtime.mode === 'custom') {
+        const loaded = await runtime.loadRef.current?.(entityId);
+        if (loaded) {
+          return { db: cloneValue(loaded), lastUsed: null };
+        }
+
+        return {
+          db: null,
+          lastUsed: runtime.bootstrapRef.current ? cloneValue(runtime.bootstrapRef.current) : null,
+        };
+      }
+
+      const reactQuerySeed = runtime.reactQuerySeedRef.current.get(entityId);
+      if (!reactQuerySeed) {
+        return { db: null, lastUsed: null };
+      }
+
+      return reactQuerySeed.hasPersistedData
+        ? { db: cloneValue(reactQuerySeed.seed), lastUsed: null }
+        : { db: null, lastUsed: cloneValue(reactQuerySeed.seed) };
+    },
+    save: async (entityId, data) => {
+      if (entityId === DISABLED_ENTITY_ID) {
+        return;
+      }
+
+      const snapshot = cloneValue(data);
+
+      try {
+        if (runtime.mode === 'custom') {
+          await runtime.saveRef.current?.(entityId, snapshot);
+        } else {
+          await runtime.updateRef.current?.(runtime.scopeRef.current, snapshot);
+        }
+
+        runtime.onSaveSuccessRef.current?.();
+        runtime.onFlushRef.current?.(entityId, snapshot);
+      } catch (error) {
+        const normalized = asError(error);
+        normalizeAndPresentError(normalized, { context: 'useAutoSaveSettings.save', showToast: false });
+        runtime.onSaveErrorRef.current?.(normalized);
+        throw normalized;
+      }
+    },
+  });
+
+  autoSaveStoreRegistry.set(domainKey, store);
+  autoSaveRuntimeRegistry.set(domainKey, runtime);
+  return { store, runtime };
+}
+
 export function useAutoSaveSettings<T extends object>(
   options: UseAutoSaveSettingsOptions<T>
 ): UseAutoSaveSettingsReturn<T> {
@@ -196,406 +190,319 @@ export function useAutoSaveSettings<T extends object>(
     enabled = true,
     onSaveSuccess,
     onSaveError,
+    bootstrapData,
     customLoadSave,
   } = options;
 
   const isCustomMode = !!customLoadSave;
-
-  // Determine the entity ID based on mode
   const entityId = isCustomMode
     ? customLoadSave.entityId
     : (scope === 'shot' ? shotId : projectId) ?? null;
-  const isEntityValid = !!entityId;
+  const isEntityValid = enabled && !!entityId;
+  const activeEntityId = isEntityValid ? entityId : DISABLED_ENTITY_ID;
+  const domainKey = getDomainKey(toolId, scope, debounceMs, customLoadSave);
+  const { store, runtime } = useMemo(
+    () => getStoreForDomain<T>(domainKey, defaults, debounceMs, isCustomMode ? 'custom' : 'react-query'),
+    [debounceMs, defaults, domainKey, isCustomMode]
+  );
 
-  // Reducer-backed state is the single source of truth for entity/status/settings transitions.
-  const [state, dispatch] = useReducer(autoSaveSettingsReducer<T>, {
-    entityId,
-    settings: JSON.parse(JSON.stringify(defaults)),
-    status: entityId ? 'idle' : 'idle',
-    error: null,
-    hasPersistedData: false,
-  });
+  runtime.mode = isCustomMode ? 'custom' : 'react-query';
+  runtime.loadRef.current = customLoadSave?.load ?? null;
+  runtime.saveRef.current = customLoadSave?.save ?? null;
+  runtime.scopeRef.current = scope;
+  runtime.onSaveSuccessRef.current = onSaveSuccess;
+  runtime.onSaveErrorRef.current = onSaveError;
+  runtime.onFlushRef.current = customLoadSave?.onFlush;
+  runtime.bootstrapRef.current = bootstrapData ? cloneValue(bootstrapData) : null;
 
-  // Refs for tracking state without triggering re-renders
-  const loadedSettingsRef = useRef<T | null>(null);
-  const isLoadingRef = useRef(false);
-  const stateRef = useRef<AutoSaveState<T>>(state);
-
-  // Stable refs for custom callbacks to avoid effect dependency churn
-  const customLoadRef = useRef(customLoadSave?.load);
-  const customSaveRef = useRef(customLoadSave?.save);
-  const onFlushRef = useRef(customLoadSave?.onFlush);
-  customLoadRef.current = customLoadSave?.load;
-  customSaveRef.current = customLoadSave?.save;
-  onFlushRef.current = customLoadSave?.onFlush;
-
-  // Fetch settings from database (React Query mode only)
   const {
-    settings: dbSettings,
-    isLoading: rqIsLoading,
+    settings: authoritativeSettings,
+    isLoading: authoritativeIsLoading,
+    error: authoritativeError,
     update: updateSettings,
     hasShotSettings,
   } = useToolSettings<T>(toolId, {
-    shotId: scope === 'shot' ? (shotId || undefined) : undefined,
-    projectId: projectId || undefined,
-    enabled: !isCustomMode && enabled && isEntityValid,
+    shotId: !isCustomMode && scope === 'shot' ? (shotId ?? undefined) : undefined,
+    projectId: !isCustomMode ? (projectId ?? undefined) : undefined,
+    enabled: !isCustomMode && isEntityValid,
   });
 
-  useLayoutEffect(() => {
-    const entityChange = resolveEntityChange({
-      entityId,
-      previousEntityId: state.entityId,
-      defaults,
-      isCustomMode,
-      rqIsLoading,
-      dbSettings,
+  runtime.updateRef.current = updateSettings;
+  if (!isCustomMode && isEntityValid && !authoritativeIsLoading && !authoritativeError) {
+    runtime.reactQuerySeedRef.current.set(activeEntityId, {
+      seed: cloneValue(authoritativeSettings ?? defaults),
+      hasPersistedData: hasShotSettings,
     });
+  }
 
-    if (!entityChange) {
-      return;
-    }
-
-    loadedSettingsRef.current = entityChange.loadedSettings;
-    isLoadingRef.current = false;
-    stateRef.current = {
-      ...stateRef.current,
-      ...entityChange.action,
-    };
-    dispatch({
-      type: 'ENTITY_CHANGED',
-      ...entityChange.action,
-    });
-  }, [entityId, state.entityId, defaults, isCustomMode, rqIsLoading, dbSettings]);
+  const localEntity = store.useEntity(activeEntityId);
+  const storeState = store.getState();
+  const bootstrapEntity = storeState.bootstrapEntity;
+  const updateStoredField = storeState.updateField;
+  const updateStoredFields = storeState.updateFields;
+  const updateStoredTextField = storeState.updateTextField;
+  const saveStoredEntity = storeState.save;
+  const saveStoredEntityImmediate = storeState.saveImmediate;
+  const revertStoredEntity = storeState.revert;
+  const resetStoredEntity = storeState.reset;
+  const isStoredEntityDirty = storeState.isDirty;
+  const reloadStoredEntity = storeState.reloadEntity;
+  const activeEntityRef = useRef<string | null>(entityId ?? null);
+  const lastBootstrapRef = useRef<{
+    entityId: string | null;
+    seed: T | null;
+    hasShotSettings: boolean;
+  }>({ entityId: null, seed: null, hasShotSettings: false });
 
   useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    activeEntityRef.current = entityId ?? null;
+  }, [entityId]);
 
-  useRenderLogger(`AutoSaveSettings:${toolId}`, { entityId: state.entityId, status: state.status });
+  useEffect(() => {
+    const currentEntityId = entityId;
 
-  // Dirty flag - has user changed anything since load?
-  const isDirty = useMemo(
-    () => (loadedSettingsRef.current ? !deepEqual(state.settings, loadedSettingsRef.current) : false),
-    [state.settings]
-  );
-
-  // Save implementation
-  const saveImmediate = useCallback(async (settingsToSave?: T): Promise<void> => {
-    const currentEntityId = stateRef.current.entityId;
-    if (!currentEntityId) {
-      return;
-    }
-
-    const toSave = settingsToSave ?? stateRef.current.settings;
-
-    // Don't save if nothing changed
-    if (deepEqual(toSave, loadedSettingsRef.current)) {
-      return;
-    }
-
-    stateRef.current = {
-      ...stateRef.current,
-      status: 'saving',
-      error: null,
-    };
-    dispatch({
-      type: 'SETTINGS_UPDATED',
-      nextSettings: toSave,
-      status: 'saving',
-      error: null,
-    });
-
-    try {
-      if (isCustomMode) {
-        await customSaveRef.current!(currentEntityId, toSave);
-      } else {
-        await updateSettings(scope, toSave);
+    return () => {
+      if (!currentEntityId) {
+        return;
       }
 
-      // Update our "clean" reference
-      loadedSettingsRef.current = JSON.parse(JSON.stringify(toSave));
-
-      // NOTE: Don't clear pendingSettingsRef here - the scheduling layer only clears it
-      // when the saved payload still matches the latest tracked local edits.
-
-      const latestSettings = stateRef.current.settings;
-      stateRef.current = {
-        ...stateRef.current,
-        settings: latestSettings,
-        status: 'ready',
-        error: null,
-        hasPersistedData: isCustomMode ? true : stateRef.current.hasPersistedData,
-      };
-      dispatch({
-        type: 'SETTINGS_UPDATED',
-        nextSettings: latestSettings,
-        status: 'ready',
-        error: null,
-        hasPersistedData: isCustomMode ? true : undefined,
-      });
-
-      onSaveSuccess?.();
-    } catch (err) {
-      normalizeAndPresentError(err, { context: 'useAutoSaveSettings.save', showToast: false });
-      stateRef.current = {
-        ...stateRef.current,
-        status: 'error',
-        error: err as Error,
-      };
-      dispatch({
-        type: 'SETTINGS_UPDATED',
-        status: 'error',
-        error: err as Error,
-      });
-      onSaveError?.(err as Error);
-      throw err;
-    }
-  }, [isCustomMode, updateSettings, scope, onSaveSuccess, onSaveError]);
-
-  // Ref to hold latest saveImmediate to avoid effect dependency churn
-  const saveImmediateRef = useRef(saveImmediate);
-  saveImmediateRef.current = saveImmediate;
-
-  const getLatestSettings = useCallback((): Promise<T> => {
-    return Promise.resolve(stateRef.current.settings);
-  }, []);
-
-  // Debounced save sub-hook — manages scheduling, pending tracking, and flush effects
-  const debouncedSave = useDebouncedSettingsSave<T>({
-    entityId,
-    debounceMs,
-    status: state.status,
-    isCustomMode,
-    scope,
-    toolId,
-    projectId,
-    customSaveRef,
-    onFlushRef,
-    saveImmediateRef,
-    getLatestSettings,
-  });
-
-  const applyFieldUpdate = useCallback((updates: Partial<T>, shouldScheduleSave: boolean) => {
-    const updated = { ...stateRef.current.settings, ...updates };
-    stateRef.current = {
-      ...stateRef.current,
-      settings: updated,
+      void store.getState().saveImmediate(currentEntityId);
     };
-    dispatch({
-      type: 'SETTINGS_UPDATED',
-      nextSettings: updated,
-    });
+  }, [entityId, store]);
 
-    // Always track pending settings - this protects user input from being overwritten by DB load.
-    debouncedSave.trackPendingUpdate(updated, stateRef.current.entityId);
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const currentEntityId = activeEntityRef.current;
+      if (!currentEntityId) {
+        return;
+      }
 
-    if (shouldScheduleSave) {
-      // Schedule auto-save (no-ops during loading - just keeps pending tracking).
-      debouncedSave.scheduleSave(stateRef.current.entityId);
-    }
-  }, [debouncedSave]);
-
-  // Update single field without capturing entity-specific state in the callback closure.
-  const updateField = useCallback(<K extends keyof T>(key: K, value: T[K]) => {
-    applyFieldUpdate({ [key]: value } as Partial<T>, true);
-  }, [applyFieldUpdate]);
-
-  // Update multiple fields at once without capturing entity-specific state in the callback closure.
-  const updateFields = useCallback((updates: Partial<T>) => {
-    applyFieldUpdate(updates, true);
-  }, [applyFieldUpdate]);
-
-  // Free-text fields update local state immediately but wait for explicit blur/generate/close flushes.
-  const updateTextField = useCallback(<K extends keyof T>(key: K, value: T[K]) => {
-    applyFieldUpdate({ [key]: value } as Partial<T>, false);
-  }, [applyFieldUpdate]);
-
-  const updateTextFields = useCallback((updates: Partial<T>) => {
-    applyFieldUpdate(updates, false);
-  }, [applyFieldUpdate]);
-
-  // Revert to last saved settings
-  const revert = useCallback(() => {
-    if (loadedSettingsRef.current) {
-      stateRef.current = {
-        ...stateRef.current,
-        settings: loadedSettingsRef.current,
-        error: null,
-      };
-      dispatch({
-        type: 'SETTINGS_UPDATED',
-        nextSettings: loadedSettingsRef.current,
-        error: null,
-      });
-      debouncedSave.clearPending();
-    }
-  }, [debouncedSave]);
-
-  // Manual save - flushes debounce immediately
-  // Uses saveImmediateRef to avoid depending on saveImmediate directly
-  const save = useCallback(async () => {
-    debouncedSave.cancelPendingSave();
-    await saveImmediateRef.current();
-  }, [debouncedSave]);
-
-  // Reset to defaults (or provided settings)
-  const reset = useCallback((newDefaults?: T) => {
-    const resetTo = JSON.parse(JSON.stringify(newDefaults || defaults)) as T;
-    loadedSettingsRef.current = JSON.parse(JSON.stringify(resetTo));
-    stateRef.current = {
-      ...stateRef.current,
-      settings: resetTo,
-      error: null,
+      void store.getState().saveImmediate(currentEntityId);
     };
-    dispatch({
-      type: 'SETTINGS_UPDATED',
-      nextSettings: resetTo,
-      error: null,
-    });
-    debouncedSave.clearPending();
-  }, [defaults, debouncedSave]);
 
-  // Initialize from external source (e.g., "last used" settings) - custom mode only
-  const initializeFrom = useCallback((data: Partial<T>) => {
-    if (!isCustomMode) return;
-    // Only apply if we don't have persisted data and aren't loading
-    if (stateRef.current.hasPersistedData || isLoadingRef.current) {
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [store]);
+
+  useEffect(() => {
+    if (!isCustomMode || !isEntityValid) {
       return;
     }
 
-    const updated = { ...stateRef.current.settings, ...data };
-    stateRef.current = {
-      ...stateRef.current,
-      settings: updated,
-    };
-    dispatch({
-      type: 'SETTINGS_UPDATED',
-      nextSettings: updated,
-    });
-  }, [isCustomMode]);
+    void reloadStoredEntity(activeEntityId).catch(() => {});
+  }, [activeEntityId, isCustomMode, isEntityValid, reloadStoredEntity]);
 
-  const transitionPendingLoadSave = useCallback(() => {
-    transitionReadyWithPendingSave({
-      markReady: () => {
-        stateRef.current = {
-          ...stateRef.current,
-          status: 'ready',
-          error: null,
-        };
-        dispatch({
-          type: 'SETTINGS_UPDATED',
-          nextSettings: stateRef.current.settings,
-          status: 'ready',
-          error: null,
-        });
-      },
-      debouncedSave,
-      saveImmediateRef,
-      debounceMs,
-    });
-  }, [debouncedSave, saveImmediateRef, debounceMs]);
+  useEffect(() => {
+    if (!isCustomMode || !isEntityValid || !bootstrapData) {
+      return;
+    }
 
-  const applyLoadedData = useCallback((data: T, hadPersistedData: boolean) => {
-    const loadedState = applyLoadedDataState({
-      data,
-      hadPersistedData,
-      isCustomMode,
-    });
-    loadedSettingsRef.current = loadedState.loadedSettings;
-    isLoadingRef.current = false;
-    stateRef.current = {
-      ...stateRef.current,
-      settings: loadedState.settings,
-      status: loadedState.status,
-      error: loadedState.error,
-      hasPersistedData: loadedState.hasPersistedData,
-    };
-    dispatch({
-      type: 'LOAD_RESOLVED',
-      settings: loadedState.settings,
-      hasPersistedData: loadedState.hasPersistedData,
-    });
-  }, [isCustomMode]);
+    const currentEntity = store.getState().entities[activeEntityId];
+    if (!currentEntity || currentEntity.status === 'loading' || currentEntity.hasPersistedData) {
+      return;
+    }
 
-  const startLoad = useCallback(() => {
-    stateRef.current = {
-      ...stateRef.current,
-      status: 'loading',
-      error: null,
-    };
-    dispatch({ type: 'LOAD_STARTED' });
-  }, []);
+    const bootstrapSnapshot = cloneValue(bootstrapData);
+    if (currentEntity.loaded && deepEqual(currentEntity.cleanSnapshot, bootstrapSnapshot)) {
+      return;
+    }
 
-  const setLoadError = useCallback((loadError: Error) => {
-    stateRef.current = {
-      ...stateRef.current,
-      status: 'error',
-      error: loadError,
-    };
-    dispatch({
-      type: 'SETTINGS_UPDATED',
-      status: 'error',
-      error: loadError,
+    bootstrapEntity({
+      entityId: activeEntityId,
+      db: null,
+      lastUsed: bootstrapSnapshot,
     });
-  }, []);
-
-  const markReady = useCallback(() => {
-    stateRef.current = {
-      ...stateRef.current,
-      status: 'ready',
-      error: null,
-    };
-    dispatch({
-      type: 'SETTINGS_UPDATED',
-      nextSettings: stateRef.current.settings,
-      status: 'ready',
-      error: null,
-    });
-  }, []);
-
-  // Load settings - custom mode (imperative async load)
-  useCustomModeLoad({
+  }, [
+    activeEntityId,
+    bootstrapData,
+    bootstrapEntity,
     isCustomMode,
-    entityId,
-    enabled,
-    status: state.status,
+    isEntityValid,
+    store,
+  ]);
+
+  useEffect(() => {
+    if (isCustomMode || !isEntityValid || authoritativeIsLoading || authoritativeError) {
+      return;
+    }
+
+    const seed = cloneValue(authoritativeSettings ?? defaults);
+
+    // Self-tracking guard: this effect is the one-and-only writer for
+    // RQ→store sync here, so it compares against its own last-known seed
+    // (not against store state, which can be mutated by other paths and
+    // cause a feedback loop).
+    if (
+      lastBootstrapRef.current.entityId === activeEntityId
+      && lastBootstrapRef.current.hasShotSettings === hasShotSettings
+      && deepEqual(lastBootstrapRef.current.seed, seed)
+    ) {
+      return;
+    }
+
+    // Secondary guard: if the store already has the same clean snapshot
+    // from some earlier path, skip re-bootstrapping but still record it.
+    const currentEntity = store.getState().entities[activeEntityId];
+    if (
+      currentEntity
+      && currentEntity.loaded
+      && currentEntity.hasPersistedData === hasShotSettings
+      && deepEqual(currentEntity.cleanSnapshot, seed)
+    ) {
+      lastBootstrapRef.current = { entityId: activeEntityId, seed, hasShotSettings };
+      return;
+    }
+
+    lastBootstrapRef.current = { entityId: activeEntityId, seed, hasShotSettings };
+
+    bootstrapEntity({
+      entityId: activeEntityId,
+      db: hasShotSettings ? seed : null,
+      lastUsed: hasShotSettings ? null : seed,
+    });
+  }, [
+    activeEntityId,
+    authoritativeIsLoading,
+    authoritativeError,
+    authoritativeSettings,
     defaults,
-    debouncedSave,
-    customLoadRef,
-    stateRef,
-    isLoadingRef,
-    transitionReadyWithPendingSave: transitionPendingLoadSave,
-    applyLoadedData,
-    startLoad,
-    setLoadError,
+    hasShotSettings,
+    isCustomMode,
+    isEntityValid,
+    bootstrapEntity,
+    store,
+  ]);
+
+  useRenderLogger(`AutoSaveSettings:${toolId || domainKey}`, {
+    entityId,
+    status: localEntity.status,
   });
 
-  // Load settings - React Query mode (reactive from useToolSettings)
-  useReactQueryModeLoad({
-    isCustomMode,
-    entityId,
-    enabled,
-    status: state.status,
-    defaults,
-    dbSettings,
-    rqIsLoading,
-    debouncedSave,
-    loadedSettingsRef,
-    transitionReadyWithPendingSave: transitionPendingLoadSave,
-    applyLoadedData,
-    startLoad,
-    markReady,
-  });
+  const updateField = useCallback(<K extends keyof T>(key: K, value: T[K]) => {
+    if (!isEntityValid) {
+      return;
+    }
 
-  // Memoize return value to prevent object recreation on every render.
+    updateStoredField(activeEntityId, key, value, {
+      deferPersistence: !isCustomMode && authoritativeIsLoading,
+    });
+  }, [activeEntityId, authoritativeIsLoading, isCustomMode, isEntityValid, updateStoredField]);
+
+  const updateFields = useCallback((updates: Partial<T>) => {
+    if (!isEntityValid) {
+      return;
+    }
+
+    const deferKeys = !isCustomMode && authoritativeIsLoading
+      ? (Object.keys(updates) as Array<keyof T>)
+      : undefined;
+    updateStoredFields(activeEntityId, updates, deferKeys ? { deferKeys } : undefined);
+  }, [activeEntityId, authoritativeIsLoading, isCustomMode, isEntityValid, updateStoredFields]);
+
+  const updateTextField = useCallback(<K extends keyof T>(key: K, value: T[K]) => {
+    if (!isEntityValid) {
+      return;
+    }
+
+    updateStoredTextField(activeEntityId, key, value);
+  }, [activeEntityId, isEntityValid, updateStoredTextField]);
+
+  const updateTextFields = useCallback((updates: Partial<T>) => {
+    if (!isEntityValid) {
+      return;
+    }
+
+    for (const [key, value] of Object.entries(updates) as Array<[keyof T, T[keyof T]]>) {
+      updateStoredTextField(activeEntityId, key, value);
+    }
+  }, [activeEntityId, isEntityValid, updateStoredTextField]);
+
+  const save = useCallback(async () => {
+    if (!isEntityValid) {
+      return;
+    }
+
+    await saveStoredEntity(activeEntityId);
+  }, [activeEntityId, isEntityValid, saveStoredEntity]);
+
+  const saveImmediate = useCallback(async (dataToSave?: T) => {
+    if (!isEntityValid) {
+      return;
+    }
+
+    if (dataToSave) {
+      updateStoredFields(activeEntityId, dataToSave);
+    }
+
+    await saveStoredEntityImmediate(activeEntityId);
+  }, [activeEntityId, isEntityValid, saveStoredEntityImmediate, updateStoredFields]);
+
+  const revert = useCallback(() => {
+    if (!isEntityValid) {
+      return;
+    }
+
+    revertStoredEntity(activeEntityId);
+  }, [activeEntityId, isEntityValid, revertStoredEntity]);
+
+  const reset = useCallback((newDefaults?: T) => {
+    if (!isEntityValid) {
+      return;
+    }
+
+    resetStoredEntity(activeEntityId, newDefaults ?? defaults);
+  }, [activeEntityId, defaults, isEntityValid, resetStoredEntity]);
+
+  const initializeFrom = useCallback((data: Partial<T>) => {
+    if (!isCustomMode || !isEntityValid || localEntity.hasPersistedData || localEntity.status === 'loading') {
+      return;
+    }
+
+    const deferKeys = Object.keys(data) as Array<keyof T>;
+    if (deferKeys.length === 0) {
+      return;
+    }
+
+    updateStoredFields(activeEntityId, data, { deferKeys });
+  }, [
+    activeEntityId,
+    isCustomMode,
+    isEntityValid,
+    localEntity.hasPersistedData,
+    localEntity.status,
+    updateStoredFields,
+  ]);
+
+  const disabledSettings = useMemo(() => cloneValue(defaults), [defaults]);
+  const resolvedStatus: AutoSaveStatus = useMemo(() => {
+    if (!isEntityValid) {
+      return 'idle';
+    }
+
+    if (!isCustomMode && authoritativeIsLoading) {
+      return 'loading';
+    }
+
+    if (!isCustomMode && authoritativeError) {
+      return 'error';
+    }
+
+    return localEntity.status;
+  }, [authoritativeError, authoritativeIsLoading, isCustomMode, isEntityValid, localEntity.status]);
+
+  const resolvedError = isCustomMode ? localEntity.error : authoritativeError ?? localEntity.error;
+  const resolvedSettings = isEntityValid ? localEntity.settings : disabledSettings;
+  const resolvedPersistedData = isCustomMode ? localEntity.hasPersistedData : hasShotSettings;
+  const isDirty = isEntityValid ? isStoredEntityDirty(activeEntityId) : false;
+
   return useMemo(() => ({
-    settings: state.settings,
-    status: state.status,
-    entityId: state.entityId,
+    settings: resolvedSettings,
+    status: resolvedStatus,
+    entityId: isEntityValid ? entityId : null,
     isDirty,
-    error: state.error,
-    hasShotSettings: isCustomMode ? state.hasPersistedData : hasShotSettings,
-    hasPersistedData: isCustomMode ? state.hasPersistedData : hasShotSettings,
+    error: isEntityValid ? resolvedError : null,
+    hasShotSettings: isEntityValid ? resolvedPersistedData : false,
+    hasPersistedData: isEntityValid ? resolvedPersistedData : false,
     updateField,
     updateFields,
     updateTextField,
@@ -605,5 +512,22 @@ export function useAutoSaveSettings<T extends object>(
     revert,
     reset,
     initializeFrom,
-  }), [state.settings, state.status, state.entityId, state.error, state.hasPersistedData, isDirty, isCustomMode, hasShotSettings, updateField, updateFields, updateTextField, updateTextFields, save, saveImmediate, revert, reset, initializeFrom]);
+  }), [
+    entityId,
+    initializeFrom,
+    isDirty,
+    isEntityValid,
+    reset,
+    resolvedError,
+    resolvedPersistedData,
+    resolvedSettings,
+    resolvedStatus,
+    revert,
+    save,
+    saveImmediate,
+    updateField,
+    updateFields,
+    updateTextField,
+    updateTextFields,
+  ]);
 }

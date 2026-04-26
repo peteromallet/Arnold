@@ -14,6 +14,7 @@ import type { EditAdvancedSettings as EditAdvancedSettingsType } from '../../hoo
 import type { EditModePanelState } from '../../hooks/useEditModePanelState';
 import { EditAdvancedSettings } from '../EditAdvancedSettings';
 import { GenerateButton } from './GenerateButton';
+import { getClosestOverlayContainer } from '@/shared/components/ui/overlay';
 
 const REPOSITION_DEFAULT_PROMPT = 'match existing content';
 
@@ -28,9 +29,7 @@ function useSelectPortalContainer<T extends HTMLElement>() {
   const [container, setContainer] = React.useState<HTMLElement | null>(null);
 
   React.useLayoutEffect(() => {
-    const nextContainer = sectionRef.current?.closest(
-      '[data-lightbox-popup], [data-dialog-content]',
-    ) as HTMLElement | null;
+    const nextContainer = getClosestOverlayContainer(sectionRef.current);
     setContainer(nextContainer ?? null);
   }, []);
 
@@ -160,7 +159,7 @@ export const ModelAndLoraSection: React.FC<ModelAndLoraSectionProps> = ({
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent container={container} variant="retro" className="z-[100001]">
+            <SelectContent container={container} variant="retro">
               <SelectItem variant="retro" value="qwen-edit">Qwen-Edit</SelectItem>
               <SelectItem variant="retro" value="qwen-edit-2509">Qwen-Edit-2509</SelectItem>
               <SelectItem variant="retro" value="qwen-edit-2511">Qwen-Edit-2511</SelectItem>
@@ -228,7 +227,7 @@ export const LegacyLoraSection: React.FC<LegacyLoraSectionProps> = ({ state, has
             <SelectTrigger variant="retro" className={cn('flex-1', state.isMobile ? 'h-7 text-xs' : 'h-10')}>
               <SelectValue />
             </SelectTrigger>
-            <SelectContent container={container} variant="retro" className="z-[100001]">
+            <SelectContent container={container} variant="retro">
               <SelectItem variant="retro" value="none">None</SelectItem>
               <SelectItem variant="retro" value="in-scene">InScene</SelectItem>
               <SelectItem variant="retro" value="next-scene">Next Scene</SelectItem>

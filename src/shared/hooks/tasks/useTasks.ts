@@ -1,4 +1,5 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { keepPreviousData, useQuery, useQueryClient, type QueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { Task, TaskStatus } from '@/types/tasks';
 import { getSupabaseClientResult } from '@/integrations/supabase/client';
 import { getVisibleTaskTypes } from '@/shared/lib/tasks/taskConfig';
@@ -19,6 +20,11 @@ import {
   type PaginatedTasksResponse as RepositoryPaginatedTasksResponse,
 } from '@/shared/hooks/tasks/paginatedTaskRepository';
 import { resolveTaskProjectScope } from '@/shared/lib/tasks/resolveTaskProjectScope';
+import {
+  getRealtimeTaskSnapshot,
+  useRealtimeTask,
+  upsertRealtimeTaskSnapshot,
+} from '@/shared/state/realtimeStore';
 
 // Types for API responses and request bodies
 // Ensure these align with your server-side definitions and Task type in @/types/tasks.ts
@@ -55,48 +61,113 @@ function createPaginatedTasksQueryFn(filters: PaginatedTaskQuery, cacheProjectKe
 // Exported for use in prefetch utilities
 export { mapDbTaskToTask };
 
+function seedTaskSnapshot(task: Task | null | undefined, projectId?: string | null): Task | null | undefined {
+  if (!task) {
+    return task;
+  }
+
+  return upsertRealtimeTaskSnapshot(task, projectId) ?? task;
+}
+
+async function fetchSingleTask(taskId: string, projectId?: string | null): Promise<Task | null> {
+  const effectiveProjectId = resolveTaskProjectScope(projectId);
+  const supabaseResult = getSupabaseClientResult();
+  if (!supabaseResult.ok) {
+    normalizeAndPresentAndRethrow(supabaseResult.error, {
+      context: 'useTasks.useGetTask',
+      showToast: false,
+      logData: { taskId, projectId: effectiveProjectId },
+    });
+  }
+
+  const { data, error } = await supabaseResult.client
+    .from('tasks')
+    .select('*')
+    .eq('id', taskId)
+    .eq('project_id', effectiveProjectId!)
+    .maybeSingle();
+
+  if (error) {
+    normalizeAndPresentAndRethrow(error, {
+      context: 'useTasks.useGetTask',
+      showToast: false,
+      logData: { taskId, projectId: effectiveProjectId },
+    });
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return seedTaskSnapshot(mapDbTaskToTask(data), effectiveProjectId) ?? null;
+}
+
+export function getCachedTaskSnapshot(
+  queryClient: QueryClient,
+  taskId: string,
+  projectId?: string | null,
+): Task | null | undefined {
+  const effectiveProjectId = resolveTaskProjectScope(projectId);
+  if (!taskId || !effectiveProjectId) {
+    return undefined;
+  }
+
+  const storeTask = getRealtimeTaskSnapshot(taskId, effectiveProjectId);
+  if (storeTask) {
+    return storeTask;
+  }
+
+  const cachedTask = queryClient.getQueryData<Task | null>(
+    taskQueryKeys.single(taskId, effectiveProjectId),
+  );
+  return seedTaskSnapshot(cachedTask, effectiveProjectId);
+}
+
+export function createSingleTaskQueryOptions(
+  taskId: string,
+  projectId?: string | null,
+): UseQueryOptions<Task | null, Error> {
+  const effectiveProjectId = resolveTaskProjectScope(projectId);
+
+  return {
+    queryKey: taskQueryKeys.single(taskId, effectiveProjectId),
+    queryFn: () => fetchSingleTask(taskId, effectiveProjectId),
+    enabled: !!taskId && !!effectiveProjectId,
+    ...QUERY_PRESETS.immutable,
+  };
+}
+
+export async function fetchAndSeedTaskQuery(
+  queryClient: QueryClient,
+  taskId: string,
+  projectId?: string | null,
+): Promise<Task | null> {
+  return queryClient.fetchQuery(createSingleTaskQueryOptions(taskId, projectId));
+}
+
 // Hook to get a single task by ID
 // Uses IMMUTABLE_PRESET since task data rarely changes after creation
 export const useGetTask = (taskId: string, projectId?: string | null) => {
   const effectiveProjectId = resolveTaskProjectScope(projectId);
+  const queryClient = useQueryClient();
+  const storeTask = useRealtimeTask(taskId, effectiveProjectId);
 
-  return useQuery<Task | null, Error>({
-    queryKey: taskQueryKeys.single(taskId, effectiveProjectId),
-    queryFn: async () => {
-      const supabaseResult = getSupabaseClientResult();
-      if (!supabaseResult.ok) {
-        normalizeAndPresentAndRethrow(supabaseResult.error, {
-          context: 'useTasks.useGetTask',
-          showToast: false,
-          logData: { taskId, projectId: effectiveProjectId },
-        });
-      }
+  useEffect(() => {
+    getCachedTaskSnapshot(queryClient, taskId, effectiveProjectId);
+  }, [effectiveProjectId, queryClient, taskId]);
 
-      const { data, error } = await supabaseResult.client
-        .from('tasks')
-        .select('*')
-        .eq('id', taskId)
-        .eq('project_id', effectiveProjectId!)
-        .maybeSingle();
+  const query = useQuery<Task | null, Error>(createSingleTaskQueryOptions(taskId, effectiveProjectId));
 
-      if (error) {
-        normalizeAndPresentAndRethrow(error, {
-          context: 'useTasks.useGetTask',
-          showToast: false,
-          logData: { taskId, projectId: effectiveProjectId },
-        });
-      }
+  useEffect(() => {
+    if (query.data !== undefined) {
+      seedTaskSnapshot(query.data, effectiveProjectId);
+    }
+  }, [effectiveProjectId, query.data]);
 
-      if (!data) {
-        return null;
-      }
-
-      return mapDbTaskToTask(data);
-    },
-    enabled: !!taskId && !!effectiveProjectId,
-    // Task data is essentially immutable once created - cache aggressively
-    ...QUERY_PRESETS.immutable,
-  });
+  return {
+    ...query,
+    data: storeTask ?? query.data,
+  };
 };
 
 // Hook to list tasks with pagination - GALLERY PATTERN

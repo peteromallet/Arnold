@@ -23,7 +23,7 @@ import { useIsMobile } from '@/shared/hooks/mobile';
 import { useLargeModal } from '@/shared/hooks/useModal';
 import { Label } from '@/shared/components/ui/primitives/label';
 import { normalizeTaskDetailsPayload } from '@/shared/components/TaskDetails/hooks/normalizeTaskDetailsPayload';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useGenerationTaskDetails } from '@/shared/components/TaskDetails/hooks/useGenerationTaskDetails';
 import { usePublicLoras } from '@/features/resources/hooks/useResources';
 import {
@@ -72,7 +72,7 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
       setInternalOpen(value);
     }
   };
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const { data: availableLoras } = usePublicLoras();
 
   const {

@@ -8,20 +8,27 @@
  * - Accessibility elements
  *
  * Note: Tasks pane controls are handled by the existing PaneControlTab from TasksPane,
- * which is visible above the lightbox at z-[100001]. The overlay adjusts its size
- * to account for the pane when it's open or locked.
+ * while pane content uses UI_Z_LAYERS.TASKS_PANE_CONTENT (100016) above the lightbox.
+ * The overlay adjusts its size to account for the pane when it's open or locked.
  *
  * This allows the main MediaLightbox to focus on content orchestration.
  */
 
 import React, { useEffect } from 'react';
-import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { cn } from '@/shared/components/ui/contracts/cn';
+import {
+  LightboxDialog,
+  LightboxDialogBackdrop,
+  LightboxDialogDescription,
+  LightboxDialogPopup,
+  LightboxDialogPortal,
+  LightboxDialogTitle,
+} from '@/shared/components/ui/overlay';
 import { useLightboxShellInteractionHandlers } from '@/domains/media-lightbox/hooks/useLightboxShellInteractionHandlers';
 import { useLightboxViewportLock } from '@/domains/media-lightbox/hooks/useLightboxViewportLock';
 import { useLightboxPaneLayout } from '@/domains/media-lightbox/hooks/useLightboxPaneLayout';
 import type { OverlayViewportConstraints } from '@/shared/lib/layout/overlayViewportConstraints';
-import { UI_Z_LAYERS } from '@/shared/lib/uiLayers';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 interface LightboxShellProps {
   children: React.ReactNode;
@@ -62,13 +69,13 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
   accessibilityTitle,
   accessibilityDescription,
 }) => {
+  useRenderBudget('LightboxShell', 5);
   const isActuallyModal = isMobile && !isTabletOrLarger;
   useLightboxViewportLock({ isActuallyModal });
 
   const {
     handleOverlayPointerDown,
     handleOverlayPointerUp,
-    handleOverlayClick,
     handleBgPointerDownCapture,
     handleBgClickCapture,
     handleContentPointerDown,
@@ -80,6 +87,7 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
     isRepositionMode,
     isMobile,
     onClose,
+    popupRef: contentRef,
   });
 
   // Focus the content element on mount
@@ -92,21 +100,21 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
   });
 
   return (
-    <DialogPrimitive.Root
+    <LightboxDialog
       open={true}
       modal={isActuallyModal}
       disablePointerDismissal
       onOpenChange={(_open, eventDetails) => {
         // Prevent Base UI from updating internal state (which corrupts controlled open={true})
         // and from calling stopPropagation on the native event (which blocks our custom handlers).
-        // Our own handlers in useLightboxNavigation (Escape) and handleOverlayClick (outside press)
+        // Our own handlers in useLightboxNavigation (Escape) and our overlay dismissal handlers
         // manage all closing logic.
         eventDetails.cancel();
         eventDetails.allowPropagation();
       }}
     >
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Backdrop
+      <LightboxDialogPortal>
+        <LightboxDialogBackdrop
           data-dialog-backdrop
           className={cn(
             "fixed bg-black/80 p-0 border-none shadow-none",
@@ -115,14 +123,12 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
           )}
           onPointerDown={handleOverlayPointerDown}
           onPointerUp={handleOverlayPointerUp}
-          onClick={handleOverlayClick}
           onTouchStart={handleTouchEvent}
           onTouchMove={handleTouchEvent}
           onTouchEnd={handleTouchEvent}
           onTouchCancel={handleTouchCancel}
           style={{
             ...overlayStyle,
-            zIndex: UI_Z_LAYERS.LIGHTBOX_MODAL,
           }}
         />
 
@@ -130,7 +136,7 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
             is now visible above the lightbox and handles all pane controls.
             The overlay correctly accounts for the pane via shouldAccountForTasksPane. */}
 
-        <DialogPrimitive.Popup
+        <LightboxDialogPopup
           ref={contentRef}
           data-lightbox-popup
           tabIndex={-1}
@@ -154,20 +160,19 @@ export const LightboxShell: React.FC<LightboxShellProps> = ({
           )}
           style={{
             ...contentStyle,
-            zIndex: UI_Z_LAYERS.LIGHTBOX_MODAL,
           }}
         >
           {/* Accessibility: Hidden dialog title for screen readers */}
-          <DialogPrimitive.Title className="sr-only">
+          <LightboxDialogTitle className="sr-only">
             {accessibilityTitle}
-          </DialogPrimitive.Title>
-          <DialogPrimitive.Description className="sr-only">
+          </LightboxDialogTitle>
+          <LightboxDialogDescription className="sr-only">
             {accessibilityDescription}
-          </DialogPrimitive.Description>
+          </LightboxDialogDescription>
 
           {children}
-        </DialogPrimitive.Popup>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+        </LightboxDialogPopup>
+      </LightboxDialogPortal>
+    </LightboxDialog>
   );
 };

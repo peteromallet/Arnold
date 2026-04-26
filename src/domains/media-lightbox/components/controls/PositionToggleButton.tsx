@@ -27,8 +27,7 @@ export const PositionToggleButton: React.FC<PositionToggleButtonProps> = ({
           <Icon className={`h-3 w-3 ${isUp ? 'mt-0.5' : '-mt-0.5'}`} />
         </button>
       </TooltipTrigger>
-      <TooltipContent className="z-[100001]">{tooltipText}</TooltipContent>
+      <TooltipContent>{tooltipText}</TooltipContent>
     </Tooltip>
   );
 };
-

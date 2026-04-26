@@ -126,23 +126,11 @@ export const useProjectIdentityContext = () => {
   );
 };
 
-/** Compatibility hook for existing callers that still need the combined project contract. */
+/** @deprecated Migrate production code to the split project hooks. */
 export const useProject = () => {
-  const selection = requireContextValue(
-    useContext(ProjectSelectionContext),
-    'useProject',
-    'ProjectProvider',
-  );
-  const crud = requireContextValue(
-    useContext(ProjectCrudContext),
-    'useProject',
-    'ProjectProvider',
-  );
-  const identity = requireContextValue(
-    useContext(ProjectIdentityContext),
-    'useProject',
-    'ProjectProvider',
-  );
+  const selection = useProjectSelectionContext();
+  const crud = useProjectCrudContext();
+  const identity = useProjectIdentityContext();
 
   return useMemo<ProjectContextType>(() => ({
     ...crud,

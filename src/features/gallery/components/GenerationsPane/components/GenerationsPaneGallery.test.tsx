@@ -27,10 +27,11 @@ const mocks = vi.hoisted(() => ({
     <div data-testid="video-generation-modal">{shot.name}</div>
   )),
   useGallerySelection: vi.fn(),
+  userSelectGalleryItem: vi.fn(),
+  userSelectGalleryItems: vi.fn(),
   useShots: vi.fn(),
   useShotCreation: vi.fn(),
   useShotNavigation: vi.fn(),
-  useModifierKeys: vi.fn(),
   useLassoSelection: vi.fn(),
 }));
 
@@ -46,8 +47,10 @@ vi.mock('@/shared/components/ui/composed/skeleton-gallery', () => ({
   SkeletonGallery: (props: unknown) => mocks.SkeletonGallery(props),
 }));
 
-vi.mock('@/shared/contexts/GallerySelectionContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useGallerySelection: () => mocks.useGallerySelection(),
+  userSelectGalleryItem: (...args: unknown[]) => mocks.userSelectGalleryItem(...args),
+  userSelectGalleryItems: (...args: unknown[]) => mocks.userSelectGalleryItems(...args),
 }));
 
 vi.mock('@/shared/contexts/ShotsContext', () => ({
@@ -64,10 +67,6 @@ vi.mock('@/shared/hooks/shots/useShotNavigation', () => ({
 
 vi.mock('@/tools/travel-between-images/components/VideoGenerationModal', () => ({
   VideoGenerationModal: (props: unknown) => mocks.VideoGenerationModal(props),
-}));
-
-vi.mock('../hooks/useModifierKeys', () => ({
-  useModifierKeys: () => mocks.useModifierKeys(),
 }));
 
 vi.mock('../hooks/useLassoSelection', () => ({
@@ -111,9 +110,6 @@ describe('GenerationsPaneGallery', () => {
       gallerySelectionMap: new Map([
         ['g2', { url: 'https://example.com/2.mp4', mediaType: 'video', generationId: 'gen-2' }],
       ]),
-      selectGalleryItem: vi.fn(),
-      selectGalleryItems: vi.fn(),
-      clearGallerySelection: vi.fn(),
     });
     mocks.useShots.mockReturnValue({ shots: [{ id: 'shot-9', name: 'Shot 9' }] });
     mocks.useShotCreation.mockReturnValue({
@@ -122,12 +118,6 @@ describe('GenerationsPaneGallery', () => {
     });
     mocks.useShotNavigation.mockReturnValue({
       navigateToShot: vi.fn(),
-    });
-    mocks.useModifierKeys.mockReturnValue({
-      shiftKey: false,
-      metaKey: false,
-      ctrlKey: false,
-      isMultiSelectModifier: false,
     });
     mocks.useLassoSelection.mockReturnValue({
       selectionRect: null,
@@ -187,13 +177,9 @@ describe('GenerationsPaneGallery', () => {
   });
 
   it('selects a single gallery item on single click', () => {
-    const selectGalleryItem = vi.fn();
     mocks.useGallerySelection.mockReturnValue({
       selectedGalleryIds: new Set(),
       gallerySelectionMap: new Map(),
-      selectGalleryItem,
-      selectGalleryItems: vi.fn(),
-      clearGallerySelection: vi.fn(),
     });
 
     const image = {
@@ -214,33 +200,23 @@ describe('GenerationsPaneGallery', () => {
     const mediaGalleryProps = mocks.MediaGallery.mock.calls[0]?.[0];
     mediaGalleryProps.onImageClick(image);
 
-    expect(selectGalleryItem).toHaveBeenCalledWith(
-      'g1',
+    expect(mocks.userSelectGalleryItem).toHaveBeenCalledWith(
       {
+        id: 'g1',
         url: 'https://example.com/1.png',
         type: 'image/png',
         generationId: 'gen-1',
       },
-      { toggle: false },
+      { additive: false },
     );
   });
 
   it('toggles selection on modifier-assisted click and renders lasso overlay', () => {
-    const selectGalleryItem = vi.fn();
     mocks.useGallerySelection.mockReturnValue({
       selectedGalleryIds: new Set(['g1']),
       gallerySelectionMap: new Map([
         ['g1', { url: 'https://example.com/1.png', mediaType: 'video', generationId: 'g1' }],
       ]),
-      selectGalleryItem,
-      selectGalleryItems: vi.fn(),
-      clearGallerySelection: vi.fn(),
-    });
-    mocks.useModifierKeys.mockReturnValue({
-      shiftKey: true,
-      metaKey: false,
-      ctrlKey: false,
-      isMultiSelectModifier: true,
     });
     mocks.useLassoSelection.mockReturnValue({
       selectionRect: {
@@ -269,27 +245,23 @@ describe('GenerationsPaneGallery', () => {
     expect(document.querySelector('.border-sky-400.bg-sky-400\\/10')).toBeInTheDocument();
 
     const mediaGalleryProps = mocks.MediaGallery.mock.calls[0]?.[0];
-    mediaGalleryProps.onImageClick(image);
+    mediaGalleryProps.onImageClick(image, { multiSelect: true });
 
-    expect(selectGalleryItem).toHaveBeenCalledWith(
-      'g1',
+    expect(mocks.userSelectGalleryItem).toHaveBeenCalledWith(
       {
+        id: 'g1',
         url: 'https://example.com/1.png',
         type: 'video/mp4',
         generationId: 'g1',
       },
-      { toggle: true },
+      { additive: true },
     );
   });
 
   it('selects an unselected item before opening the context menu', () => {
-    const selectGalleryItem = vi.fn();
     mocks.useGallerySelection.mockReturnValue({
       selectedGalleryIds: new Set(),
       gallerySelectionMap: new Map(),
-      selectGalleryItem,
-      selectGalleryItems: vi.fn(),
-      clearGallerySelection: vi.fn(),
     });
 
     const image = {
@@ -316,11 +288,12 @@ describe('GenerationsPaneGallery', () => {
       }, image);
     });
 
-    expect(selectGalleryItem).toHaveBeenCalledWith('g1', {
+    expect(mocks.userSelectGalleryItem).toHaveBeenCalledWith({
+      id: 'g1',
       url: 'https://example.com/1.png',
       type: 'image/png',
       generationId: 'gen-1',
-    });
+    }, { additive: false });
     expect(screen.getByTestId('selection-context-menu')).toBeInTheDocument();
   });
 
@@ -329,7 +302,6 @@ describe('GenerationsPaneGallery', () => {
       shotId: 'shot-9',
       shot: { id: 'shot-9', name: 'Shot 9' },
     });
-    const clearGallerySelection = vi.fn();
     mocks.useShotCreation.mockReturnValue({ createShot, isCreating: false });
     mocks.useGallerySelection.mockReturnValue({
       selectedGalleryIds: new Set(['g2', 'g1']),
@@ -337,9 +309,6 @@ describe('GenerationsPaneGallery', () => {
         ['g2', { url: 'https://example.com/2.mp4', mediaType: 'video', generationId: 'gen-2' }],
         ['g1', { url: 'https://example.com/1.png', mediaType: 'image', generationId: 'gen-1' }],
       ]),
-      selectGalleryItem: vi.fn(),
-      selectGalleryItems: vi.fn(),
-      clearGallerySelection,
     });
 
     const image = {
@@ -370,7 +339,6 @@ describe('GenerationsPaneGallery', () => {
     await waitFor(() => {
       expect(createShot).toHaveBeenCalledWith({ generationIds: ['gen-2', 'gen-1'] });
     });
-    expect(clearGallerySelection).not.toHaveBeenCalled();
   });
 
   it('opens the video generation modal with the newly created shot', async () => {
@@ -384,9 +352,6 @@ describe('GenerationsPaneGallery', () => {
       gallerySelectionMap: new Map([
         ['g1', { url: 'https://example.com/1.png', mediaType: 'image', generationId: 'gen-1' }],
       ]),
-      selectGalleryItem: vi.fn(),
-      selectGalleryItems: vi.fn(),
-      clearGallerySelection: vi.fn(),
     });
 
     const image = {
@@ -440,9 +405,6 @@ describe('GenerationsPaneGallery', () => {
         ['gallery-item-1', { url: 'https://example.com/1.png', mediaType: 'image', generationId: 'gen-1' }],
         ['gallery-item-2', { url: 'https://example.com/2.png', mediaType: 'image', generationId: 'gen-2' }],
       ]),
-      selectGalleryItem: vi.fn(),
-      selectGalleryItems: vi.fn(),
-      clearGallerySelection: vi.fn(),
     });
     mocks.useShots.mockReturnValue({
       shots: [

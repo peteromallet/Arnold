@@ -6,8 +6,7 @@ import { ImageGenerationForm } from "@/shared/components/ImageGenerationForm";
 import { MediaGallery } from "@/shared/components/MediaGallery";
 import type { GeneratedImageWithMetadata } from "@/shared/components/MediaGallery/types";
 import { Button } from "@/shared/components/ui/button";
-import { useProject } from "@/shared/contexts/ProjectContext";
-import { useGallerySelection } from "@/shared/contexts/GallerySelectionContext";
+import { useProjectCrudContext, useProjectSelectionContext } from "@/shared/contexts/ProjectContext";
 import { usePublicLoras, usePublicStyleReferences, useMyStyleReferences } from '@/features/resources/hooks/useResources';
 import { PageFadeIn } from '@/shared/components/transitions/PageFadeIn';
 import { useIsMobile, useIsTablet } from "@/shared/hooks/mobile";
@@ -17,10 +16,10 @@ import { ChevronDown, ChevronLeft, Sparkles, Settings2 } from 'lucide-react';
 import { DeleteGenerationConfirmDialog } from '@/shared/components/dialogs/DeleteGenerationConfirmDialog';
 import { getProjectSelectionFallbackId } from '@/shared/contexts/projectSelectionStore';
 
-import { useModifierKeys } from '@/features/gallery/components/GenerationsPane/hooks/useModifierKeys';
 import { useImageGenGallery } from "../hooks/useImageGenGallery";
 import { useImageGenActions } from "../hooks/useImageGenActions";
 import { useImageGenSubmit } from "../hooks/useImageGenSubmit";
+import { userSelectGalleryItem, useGallerySelection } from '@/shared/state/selectionStore';
 
 const ImageGenerationToolPage: React.FC = React.memo(() => {
   const [formAssociatedShotId, setFormAssociatedShotId] = useState<string | null>(null);
@@ -34,9 +33,7 @@ const ImageGenerationToolPage: React.FC = React.memo(() => {
 
   const {
     selectedGalleryIds,
-    selectGalleryItem,
   } = useGallerySelection();
-  const modifierKeys = useModifierKeys();
 
   const buildSelectionMeta = useCallback((image: GeneratedImageWithMetadata) => ({
     url: image.url,
@@ -45,9 +42,15 @@ const ImageGenerationToolPage: React.FC = React.memo(() => {
     variantId: image.primary_variant_id,
   }), []);
 
-  const handleImageClick = useCallback((image: GeneratedImageWithMetadata) => {
-    selectGalleryItem(image.id, buildSelectionMeta(image), { toggle: modifierKeys.isMultiSelectModifier });
-  }, [buildSelectionMeta, modifierKeys.isMultiSelectModifier, selectGalleryItem]);
+  const handleImageClick = useCallback((
+    image: GeneratedImageWithMetadata,
+    modifiers?: { multiSelect: boolean },
+  ) => {
+    userSelectGalleryItem({
+      id: image.id,
+      ...buildSelectionMeta(image),
+    }, { additive: modifiers?.multiSelect ?? false });
+  }, [buildSelectionMeta]);
 
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
@@ -57,7 +60,8 @@ const ImageGenerationToolPage: React.FC = React.memo(() => {
   usePublicStyleReferences();
   useMyStyleReferences();
 
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
 
   const effectiveProjectId = useMemo(() => {
     if (selectedProjectId) return selectedProjectId;

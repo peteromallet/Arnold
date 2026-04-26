@@ -11,7 +11,6 @@ interface ShotPrimaryActionButtonProps {
   isAlreadyPositionedInSelectedShot: boolean;
   onClick: () => void;
   className?: string;
-  tooltipClassName?: string;
 }
 
 function getAriaLabel(
@@ -51,7 +50,6 @@ export const ShotPrimaryActionButton: React.FC<ShotPrimaryActionButtonProps> = (
   isAlreadyPositionedInSelectedShot,
   onClick,
   className,
-  tooltipClassName,
 }) => {
   return (
     <Tooltip>
@@ -78,7 +76,7 @@ export const ShotPrimaryActionButton: React.FC<ShotPrimaryActionButtonProps> = (
           )}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom" className={tooltipClassName}>
+      <TooltipContent side="bottom">
         {getTooltipLabel(
           isAlreadyPositionedInSelectedShot,
           showTick,

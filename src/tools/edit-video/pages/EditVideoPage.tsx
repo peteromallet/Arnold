@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useFileDragTracking } from '@/shared/hooks/useFileDragTracking';
 import { preventDefaultDragOver, createSingleFileDropHandler } from '@/shared/lib/dnd/dragDropUpload';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import {
   Film
 } from 'lucide-react';
@@ -37,7 +37,8 @@ const preloadVideoPoster = (gen: GenerationRow) => {
 const VIDEO_EXTRA_CLEAR_DATA = { lastEditedMediaSegments: null };
 
 export default function EditVideoPage() {
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
 
   // Get project aspect ratio for skeleton sizing
   const selectedProject = projects.find(p => p.id === selectedProjectId);

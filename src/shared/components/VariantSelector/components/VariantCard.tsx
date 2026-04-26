@@ -145,7 +145,7 @@ export const VariantCard: React.FC<VariantCardProps> = ({
                   <Check className="w-2 h-2 text-white" />
                 </div>
               </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs z-[100001]">
+              <TooltipContent side="bottom" className="text-xs">
                 {isPrimary ? 'Main variant' : 'Set as main'}
               </TooltipContent>
             </Tooltip>
@@ -163,7 +163,7 @@ export const VariantCard: React.FC<VariantCardProps> = ({
                   <ArrowUp className="w-2 h-2 text-white" />
                 </div>
               </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs z-[100001]">
+              <TooltipContent side="bottom" className="text-xs">
                 Current variant is based on this one
               </TooltipContent>
             </Tooltip>
@@ -177,7 +177,7 @@ export const VariantCard: React.FC<VariantCardProps> = ({
                   <ArrowDown className="w-2 h-2 text-white" />
                 </div>
               </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs z-[100001]">
+              <TooltipContent side="bottom" className="text-xs">
                 Based on the current variant
               </TooltipContent>
             </Tooltip>
@@ -235,7 +235,7 @@ export const VariantCard: React.FC<VariantCardProps> = ({
                 side="top"
                 align="end"
                 usePortal
-                className="z-[100001] max-w-md p-0 w-auto"
+                className="max-w-md p-0 w-auto"
                 sideOffset={4}
               >
                 <div className="flex flex-col max-h-[85vh]">

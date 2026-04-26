@@ -4,7 +4,7 @@ import { DerivedNavContext } from '../types';
 import { transformExternalGeneration } from '../utils/external-generation-utils';
 import { getSupabaseClient as supabase } from '@/integrations/supabase/client';
 import { useAddImageToShot } from '@/shared/hooks/shots';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { useAppEventListener } from '@/shared/lib/typedEvents';
 import { expandShotData } from '@/shared/lib/shots/shotData';
@@ -33,7 +33,7 @@ export function useExternalGenerations({
   const [derivedNavContext, setDerivedNavContext] = useState<DerivedNavContext | null>(null);
   const [externalGenLightboxSelectedShot, setExternalGenLightboxSelectedShot] = useState<string | undefined>(selectedShotId);
   
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const { mutateAsync: addToShotMutation } = useAddImageToShot();
   const { mutateAsyncWithoutPosition: addToShotWithoutPositionMutation } = useAddImageToShot();
   

@@ -13,12 +13,17 @@ import {
   useGenerationModeSettings,
   useLoraSettings,
   useSettingsSave,
-  useVideoTravelSettings,
+  useVideoTravelSettingsStatus,
 } from '@/tools/travel-between-images/providers';
 import { getModelSpec, type SelectedModel } from '@/tools/travel-between-images/settings';
 import { TravelGuidanceEditor } from '@/shared/components/travel/TravelGuidanceEditor';
 
-import { useShotSettingsContext } from '../../ShotSettingsContext';
+import {
+  useShotSettingsGeneration,
+  useShotSettingsIdentity,
+  useShotSettingsMedia,
+  useShotSettingsUi,
+} from '../../ShotSettingsContext';
 
 import { BatchSettingsForm } from '../../../BatchSettingsForm';
 import { MotionControl } from '../../../MotionControl';
@@ -46,21 +51,16 @@ export const BatchModeContent: React.FC<BatchModeContentProps> = ({
   parentIsGeneratingVideo,
   parentVideoJustQueued,
 }) => {
+  const { projectId, selectedProjectId, projects } = useShotSettingsIdentity();
+  const { state, dimensions } = useShotSettingsUi();
+  const { simpleFilteredImages, structureVideo, structureVideoHandlers } = useShotSettingsMedia();
   const {
-    projectId,
-    selectedProjectId,
-    projects,
-    simpleFilteredImages,
     loraManager,
     availableLoras,
-    structureVideo,
-    structureVideoHandlers,
-    state,
     generationMode,
     generationHandlers,
     joinState,
-    dimensions,
-  } = useShotSettingsContext();
+  } = useShotSettingsGeneration();
 
   const promptSettings = usePromptSettings();
   const motionSettings = useMotionSettings();
@@ -69,7 +69,7 @@ export const BatchModeContent: React.FC<BatchModeContentProps> = ({
   const phaseConfigSettings = usePhaseConfigSettings();
   const generationModeSettings = useGenerationModeSettings();
   const loraSettingsFromContext = useLoraSettings();
-  const { isLoading: settingsLoadingFromContext } = useVideoTravelSettings();
+  const { isLoading: settingsLoadingFromContext } = useVideoTravelSettingsStatus();
   const { onBlurSave: blurSaveHandler } = useSettingsSave();
 
   const advancedMode = motionSettings.motionMode === 'advanced';

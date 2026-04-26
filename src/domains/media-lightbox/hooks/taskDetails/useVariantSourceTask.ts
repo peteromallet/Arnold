@@ -1,7 +1,5 @@
 import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { fetchTaskInProject } from '@/integrations/supabase/repositories/taskRepository';
-import { taskQueryKeys } from '@/shared/lib/queryKeys/tasks';
+import { useGetTask } from '@/shared/hooks/tasks/useTasks';
 import {
   getSourceTaskIdLegacyCompatible,
   hasOrchestratorDetails,
@@ -29,41 +27,20 @@ export function useVariantSourceTask(input: UseVariantSourceTaskInput) {
     };
   }, [activeVariant?.params]);
 
+  const sourceTaskLookupId = (
+    variantSourceTaskId
+    && projectId
+    && variantSourceTaskId !== taskDetailsData?.taskId
+    && !variantHasOrchestratorDetails
+  )
+    ? variantSourceTaskId
+    : '';
+
   const {
     data: variantSourceTask,
     error: variantSourceTaskQueryError,
     isLoading: isLoadingVariantTask,
-  } = useQuery({
-    queryKey: taskQueryKeys.single(variantSourceTaskId ?? '', projectId ?? null),
-    queryFn: async () => {
-      if (!variantSourceTaskId || !projectId) {
-        return null;
-      }
-
-      try {
-        return await fetchTaskInProject(variantSourceTaskId, projectId);
-      } catch (error) {
-        if (error instanceof Error) {
-          throw error;
-        }
-
-        const message = (
-          typeof error === 'object'
-          && error !== null
-          && 'message' in error
-          && typeof error.message === 'string'
-        )
-          ? error.message
-          : 'Failed to fetch source task';
-        throw new Error(message);
-      }
-    },
-    enabled: !!variantSourceTaskId
-      && !!projectId
-      && variantSourceTaskId !== taskDetailsData?.taskId
-      && !variantHasOrchestratorDetails,
-    staleTime: Infinity,
-  });
+  } = useGetTask(sourceTaskLookupId, projectId);
   const variantSourceTaskError = useMemo(() => {
     if (!variantSourceTaskQueryError) {
       return null;

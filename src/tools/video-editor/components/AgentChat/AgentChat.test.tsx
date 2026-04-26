@@ -1,24 +1,30 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentTurn } from '@/tools/video-editor/types/agent-session';
-import { AgentChat } from './AgentChat';
+import { AgentChatPanel } from './AgentChat';
 
 const mocks = vi.hoisted(() => ({
   useAgentChatBridge: vi.fn(),
+  useAgentChatActionsRegistry: vi.fn(),
   useAgentSessions: vi.fn(),
   useCreateSession: vi.fn(),
   useAgentSession: vi.fn(),
   useSendMessage: vi.fn(),
   useCancelSession: vi.fn(),
-  useGallerySelection: vi.fn(),
+  useCurrentAttachmentSet: vi.fn(),
+  composerRemoveAttachment: vi.fn(),
+  composerClearAttachments: vi.fn(),
   useAgentVoice: vi.fn(),
   loadGenerationForLightbox: vi.fn(),
+  // Mutable so individual tests can flip isTasksPaneLocked to satisfy the
+  // engagement gate that drives auto-create.
+  panesState: { isTasksPaneLocked: false },
 }));
 
 vi.mock('@/shared/contexts/AgentChatContext', () => ({
   useAgentChatBridge: (...args: unknown[]) => mocks.useAgentChatBridge(...args),
+  useAgentChatActionsRegistry: (...args: unknown[]) => mocks.useAgentChatActionsRegistry(...args),
 }));
 
 vi.mock('@/tools/video-editor/hooks/useAgentSession', () => ({
@@ -29,18 +35,19 @@ vi.mock('@/tools/video-editor/hooks/useAgentSession', () => ({
   useCancelSession: (...args: unknown[]) => mocks.useCancelSession(...args),
 }));
 
-vi.mock('@/shared/contexts/GallerySelectionContext', () => ({
-  useGallerySelection: (...args: unknown[]) => mocks.useGallerySelection(...args),
+vi.mock('@/shared/state/selectionStore', () => ({
+  composerRemoveAttachment: (...args: unknown[]) => mocks.composerRemoveAttachment(...args),
+  composerClearAttachments: (...args: unknown[]) => mocks.composerClearAttachments(...args),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: () => ({
-    isTasksPaneLocked: false,
-    tasksPaneWidth: 0,
-    isGenerationsPaneLocked: false,
-    isGenerationsPaneOpen: false,
-    effectiveGenerationsPaneHeight: 0,
-  }),
+vi.mock('@/shared/state/currentAttachmentSet', () => ({
+  useCurrentAttachmentSet: (...args: unknown[]) => mocks.useCurrentAttachmentSet(...args),
+}));
+
+vi.mock('@/shared/state/panesStore', () => ({
+  // AgentChatPanel only reads isTasksPaneLocked now (used as an engagement signal).
+  usePanesStore: (selector: (state: { isTasksPaneLocked: boolean }) => unknown) =>
+    selector({ isTasksPaneLocked: mocks.panesState.isTasksPaneLocked }),
 }));
 
 vi.mock('@/tools/video-editor/hooks/useAgentVoice', () => ({
@@ -118,7 +125,6 @@ function createState() {
   return {
     timelineId: 'timeline-1' as string | null,
     timelineClips: [] as Array<ReturnType<typeof createTimelineClip>>,
-    replaceSelectedTimelineClips: vi.fn(),
     sessionsData: [{ id: 'session-1', status: 'waiting_user' }],
     activeSessionData: {
       id: 'session-1',
@@ -139,12 +145,6 @@ function createState() {
       mutate: vi.fn(),
       isPending: false,
     },
-    gallerySelection: {
-      gallerySelectionMap: new Map(),
-      selectedGalleryClips: [],
-      deselectGalleryItems: vi.fn(),
-      clearGallerySelection: vi.fn(),
-    },
     voice: {
       startRecording: vi.fn(),
       stopRecording: vi.fn(),
@@ -159,8 +159,11 @@ function createState() {
 function mockFromState(state: ReturnType<typeof createState>) {
   mocks.useAgentChatBridge.mockImplementation(() => ({
     timelineId: state.timelineId,
-    timelineClips: state.timelineClips,
-    replaceSelectedTimelineClips: state.replaceSelectedTimelineClips,
+  }));
+  mocks.useAgentChatActionsRegistry.mockImplementation(() => ({
+    registerHandlers: vi.fn(),
+    publishState: vi.fn(),
+    unregister: vi.fn(),
   }));
   mocks.useAgentSessions.mockImplementation(() => ({
     data: state.sessionsData,
@@ -173,28 +176,22 @@ function mockFromState(state: ReturnType<typeof createState>) {
   }));
   mocks.useSendMessage.mockImplementation(() => state.sendMessage);
   mocks.useCancelSession.mockImplementation(() => state.cancelSession);
-  mocks.useGallerySelection.mockImplementation(() => state.gallerySelection);
+  mocks.useCurrentAttachmentSet.mockImplementation(() => ({
+    clips: state.timelineClips,
+    summary: state.timelineClips.length > 0 ? `attaching ${state.timelineClips.length} image` : '',
+  }));
   mocks.useAgentVoice.mockImplementation(() => state.voice);
 }
 
 function renderAgentChat() {
-  return render(
-    <MemoryRouter initialEntries={['/tools/video-editor']}>
-      <AgentChat />
-    </MemoryRouter>,
-  );
+  return render(<AgentChatPanel />);
 }
 
 function rerenderAgentChat(rerender: ReturnType<typeof render>['rerender']) {
-  rerender(
-    <MemoryRouter initialEntries={['/tools/video-editor']}>
-      <AgentChat />
-    </MemoryRouter>,
-  );
+  rerender(<AgentChatPanel />);
 }
 
-async function openChatAndGetInput() {
-  fireEvent.click(screen.getByRole('button', { name: /timeline agent/i }));
+async function getInput() {
   const textbox = await screen.findByRole('textbox');
   await waitFor(() => expect(textbox).not.toBeDisabled());
   return textbox;
@@ -213,6 +210,10 @@ function getQueuedTexts() {
 describe('AgentChat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: pane is locked so the engagement gate is satisfied and the
+    // existing auto-create assertions still hold. Tests that need the unengaged
+    // baseline flip this back to false.
+    mocks.panesState.isTasksPaneLocked = true;
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -234,7 +235,7 @@ describe('AgentChat', () => {
     });
   });
 
-  it('shows a no-timeline prompt and does not auto-create a session', async () => {
+  it('shows a no-timeline prompt and does not auto-create a session even when engaged', async () => {
     const state = createState();
     state.timelineId = null;
     state.sessionsData = [];
@@ -247,13 +248,11 @@ describe('AgentChat', () => {
 
     renderAgentChat();
 
-    fireEvent.click(screen.getByRole('button', { name: /timeline agent/i }));
-
     expect(await screen.findByText('Create a timeline to start chatting.')).toBeInTheDocument();
     await waitFor(() => expect(state.createSession.mutate).not.toHaveBeenCalled());
   });
 
-  it('auto-creates a session when the chat opens with a timeline available', async () => {
+  it('auto-creates a session when the engagement gate fires (pane locked) with a timeline available', async () => {
     const state = createState();
     state.sessionsData = [];
     state.createSession = {
@@ -265,12 +264,28 @@ describe('AgentChat', () => {
 
     renderAgentChat();
 
-    fireEvent.click(screen.getByRole('button', { name: /timeline agent/i }));
-
     await waitFor(() => expect(state.createSession.mutate).toHaveBeenCalledTimes(1));
   });
 
-  it('opens the chat instead of starting recording when no timeline exists', async () => {
+  it('does not auto-create when unengaged (pane unlocked, no voice, no markEngaged)', async () => {
+    mocks.panesState.isTasksPaneLocked = false;
+    const state = createState();
+    state.sessionsData = [];
+    state.createSession = {
+      isPending: false,
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+    };
+    mockFromState(state);
+
+    renderAgentChat();
+
+    // Give the auto-create effect time to NOT fire.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.createSession.mutate).not.toHaveBeenCalled();
+  });
+
+  it('Cmd+Shift+R is a no-op when no timeline exists', async () => {
     const state = createState();
     state.timelineId = null;
     state.sessionsData = [];
@@ -293,10 +308,9 @@ describe('AgentChat', () => {
     });
 
     expect(state.voice.startRecording).not.toHaveBeenCalled();
-    expect(await screen.findByText('Create a timeline to start chatting.')).toBeInTheDocument();
   });
 
-  it('routes attachment removal through the bridge callback', async () => {
+  it('routes attachment removal through the composer intent', async () => {
     const state = createState();
     state.timelineClips = [
       createTimelineClip('clip-1'),
@@ -306,12 +320,13 @@ describe('AgentChat', () => {
 
     renderAgentChat();
 
-    fireEvent.click(screen.getByRole('button', { name: /timeline agent/i }));
     fireEvent.click(screen.getByRole('button', { name: 'remove-clip-1' }));
 
-    expect(state.replaceSelectedTimelineClips).toHaveBeenCalledWith([
-      expect.objectContaining({ clipId: 'clip-2' }),
-    ]);
+    expect(mocks.composerRemoveAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      clipId: 'clip-1',
+      url: 'https://example.com/clip-1.png',
+      mediaType: 'image',
+    }));
   });
 
   it('allows typing while processing and queues without sending immediately', async () => {
@@ -321,7 +336,7 @@ describe('AgentChat', () => {
 
     renderAgentChat();
 
-    const textbox = await openChatAndGetInput();
+    const textbox = await getInput();
     expect(textbox).not.toBeDisabled();
 
     await queueMessage(textbox, 'queued while processing');
@@ -337,7 +352,7 @@ describe('AgentChat', () => {
     mockFromState(state);
 
     const view = renderAgentChat();
-    const textbox = await openChatAndGetInput();
+    const textbox = await getInput();
 
     await queueMessage(textbox, 'send old attachment');
     expect(state.sendMessage.mutateAsync).not.toHaveBeenCalled();
@@ -366,7 +381,7 @@ describe('AgentChat', () => {
     mockFromState(state);
 
     const view = renderAgentChat();
-    const textbox = await openChatAndGetInput();
+    const textbox = await getInput();
 
     await queueMessage(textbox, 'same text');
     await queueMessage(textbox, 'same text');
@@ -407,7 +422,7 @@ describe('AgentChat', () => {
     mockFromState(state);
 
     const view = renderAgentChat();
-    const textbox = await openChatAndGetInput();
+    const textbox = await getInput();
 
     await queueMessage(textbox, 'first queued');
     await queueMessage(textbox, 'second queued');
@@ -436,7 +451,7 @@ describe('AgentChat', () => {
 
     renderAgentChat();
 
-    const textbox = await openChatAndGetInput();
+    const textbox = await getInput();
 
     await queueMessage(textbox, 'first');
     await queueMessage(textbox, 'second');

@@ -7,7 +7,7 @@ import { useMarkVariantViewed } from '@/shared/hooks/variants/useMarkVariantView
 import { useIsTouchDevice } from '@/shared/hooks/mobile';
 import { INTERACTION_TIMING } from '@/shared/lib/interactions/timing';
 import { framesToSeconds } from '@/shared/lib/media/videoUtils';
-import { useTimelineMedia } from './TimelineMediaContext';
+import { useTimelineFps } from './TimelineMediaContext';
 import { getTimelineItemAspectRatioStyle, getTimelineItemPosition } from './TimelineItem.helpers';
 import { TimelineItemActionButtons } from './TimelineItemActionButtons';
 import type { TimelineItemProps } from './TimelineItem.types';
@@ -26,7 +26,7 @@ const TimelineItem: React.FC<TimelineItemProps> = ({
   selection,
   presentation,
 }) => {
-  const { timelineFps } = useTimelineMedia();
+  const timelineFps = useTimelineFps();
   const { timelineWidth, fullMinFrames, fullRange } = layout;
   const {
     isDragging,

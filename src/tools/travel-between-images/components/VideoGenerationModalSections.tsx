@@ -9,8 +9,13 @@ import { PanelSectionHeader } from '@/tools/travel-between-images/components/sha
 import { ShotImagesEditor } from '@/tools/travel-between-images/components/ShotImagesEditor';
 import { FinalVideoSection } from '@/tools/travel-between-images/components/FinalVideoSection';
 import { ImageManagerSkeleton } from '@/tools/travel-between-images/components/ShotEditor/ui/Skeleton';
-import { DEFAULT_PHASE_CONFIG, coerceSelectedModel, type VideoTravelSettings } from '@/tools/travel-between-images/settings';
-import { useVideoTravelSettings } from '@/tools/travel-between-images/providers';
+import { DEFAULT_PHASE_CONFIG, coerceSelectedModel, getModelSpec, type SelectedModel, type VideoTravelSettings } from '@/tools/travel-between-images/settings';
+import {
+  useVideoTravelSettingsHandlers,
+  useMotionSettings,
+  useModelSettings,
+  useSettingsSave,
+} from '@/tools/travel-between-images/providers';
 import { useModalImageHandlers } from './hooks/useModalImageHandlers';
 import { useSegmentOutputsForShot } from '@/shared/hooks/segments/useSegmentOutputsForShot';
 import type { GenerationRow } from '@/domains/generation/types';
@@ -146,13 +151,34 @@ export function VideoGenerationModalFormContent({
   onAddTriggerWord,
 }: VideoGenerationModalFormContentProps): React.ReactElement {
   const selectedModel = coerceSelectedModel(settings.selectedModel);
-  const { handlers } = useVideoTravelSettings();
+  const handlers = useVideoTravelSettingsHandlers();
   const {
     handleGenerationTypeModeChange,
     handlePhaseConfigChange,
     handlePhasePresetRemove,
     handlePhasePresetSelect,
   } = handlers;
+
+  // Pull the handlers that BatchSettingsForm gates fields on. These live on the
+  // VideoTravelSettingsProvider (which VideoGenerationModal wraps around this
+  // component). Without them, BatchSettingsForm silently hides the model
+  // toggle, smooth-continuations, guidance scale, and LTX HD resolution
+  // controls — which is how this form drifted behind BatchModeContent.
+  const motionSettings = useMotionSettings();
+  const modelSettings = useModelSettings();
+  const { onBlurSave } = useSettingsSave();
+
+  const ltxSelected = getModelSpec(selectedModel).modelFamily === 'ltx';
+  const handleSelectedModelChange = (nextModel: SelectedModel) => {
+    if (nextModel === 'wan-2.2') {
+      modelSettings.setSelectedModel('wan-2.2');
+      return;
+    }
+    if (getModelSpec(nextModel).modelFamily !== 'ltx') {
+      return;
+    }
+    modelSettings.setSelectedModel(ltxSelected ? nextModel : 'ltx-2.3-fast');
+  };
 
   return (
     <div className="space-y-6 pb-4">
@@ -161,6 +187,7 @@ export function VideoGenerationModalFormContent({
           <PanelSectionHeader title="Settings" theme="orange" />
           <BatchSettingsForm
             selectedModel={selectedModel}
+            onSelectedModelChange={handleSelectedModelChange}
             batchVideoPrompt={settings.prompt || ''}
             onBatchVideoPromptChange={(v) => updateField('prompt', v)}
             batchVideoFrames={settings.batchVideoFrames || 61}
@@ -186,7 +213,12 @@ export function VideoGenerationModalFormContent({
             onRandomSeedChange={onRandomSeedChange}
             turboMode={settings.turboMode || false}
             onTurboModeChange={(v) => updateField('turboMode', v)}
-            smoothContinuations={settings.smoothContinuations || false}
+            smoothContinuations={motionSettings.smoothContinuations}
+            onSmoothContinuationsChange={motionSettings.setSmoothContinuations}
+            guidanceScale={modelSettings.guidanceScale}
+            onGuidanceScaleChange={modelSettings.setGuidanceScale}
+            ltxHdResolution={modelSettings.ltxHdResolution}
+            onLtxHdResolutionChange={modelSettings.setLtxHdResolution}
             amountOfMotion={settings.amountOfMotion || 50}
             onAmountOfMotionChange={(v) => updateField('amountOfMotion', v)}
             imageCount={imageCount}
@@ -199,6 +231,7 @@ export function VideoGenerationModalFormContent({
             selectedPhasePresetId={validPresetId}
             onPhasePresetSelect={handlePhasePresetSelect}
             onPhasePresetRemove={handlePhasePresetRemove}
+            onBlurSave={onBlurSave}
             videoControlMode="batch"
             textBeforePrompts={settings.textBeforePrompts || ''}
             onTextBeforePromptsChange={(v) => updateField('textBeforePrompts', v)}
@@ -239,6 +272,7 @@ export function VideoGenerationModalFormContent({
             advanced={{
               phaseConfig: settings.phaseConfig || DEFAULT_PHASE_CONFIG,
               onPhaseConfigChange: handlePhaseConfigChange,
+              onBlurSave,
               randomSeed,
               onRandomSeedChange,
             }}

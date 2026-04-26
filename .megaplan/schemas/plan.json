@@ -25,11 +25,19 @@
               "should",
               "info"
             ]
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
           }
         },
         "required": [
           "criterion",
-          "priority"
+          "priority",
+          "requires"
         ],
         "additionalProperties": false
       }

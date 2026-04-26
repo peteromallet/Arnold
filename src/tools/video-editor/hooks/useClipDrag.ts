@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
+import type { SelectClipOptions } from '@/shared/state/selectionStore';
+import { userSelectTimelineClip } from '@/shared/state/selectionStore';
 import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
-import type { SelectClipOptions } from '@/tools/video-editor/hooks/useMultiSelect';
 import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types';
 import type { TrackKind } from '@/tools/video-editor/types';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
@@ -19,6 +20,11 @@ import {
 } from '@/tools/video-editor/lib/mobile-interaction-model';
 import { snapDrag } from '@/tools/video-editor/lib/snap-edges';
 import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
+import {
+  useTimelineDataSliceSafe,
+  useTimelineMutableAdaptersSafe,
+  useTimelineOpsSliceSafe,
+} from '@/tools/video-editor/hooks/timelineStore';
 import type { ActionDragState, DragMachineState, DragSession, InternalDragSession } from '@/tools/video-editor/hooks/useClipDrag.helpers';
 import { buildPendingDragSession, commitDraggingSession, createFloatingGhost, ensureCountBadge, findClipElement, updateFloatingGhostPosition } from '@/tools/video-editor/hooks/useClipDrag.helpers';
 
@@ -98,50 +104,71 @@ export const useClipDrag = ({
   scaleWidth,
   startLeft: _startLeft,
 }: UseCrossTrackDragOptions): UseClipDragResult => {
+  const storeData = useTimelineDataSliceSafe();
+  const storeOps = useTimelineOpsSliceSafe();
+  const storeAdapters = useTimelineMutableAdaptersSafe();
+  const effectiveTimelineWrapperRef = storeData?.timelineWrapperRef ?? timelineWrapperRef;
+  const effectiveDataRef = storeAdapters?.dataRef ?? dataRef;
+  const effectiveInteractionStateRef = storeAdapters?.interactionStateRef ?? interactionStateRef;
+  const effectiveDeviceClass = storeData?.deviceClass ?? deviceClass;
+  const effectiveInteractionMode = storeData?.interactionMode ?? interactionMode;
+  const effectiveGestureOwner = storeData?.gestureOwner ?? gestureOwner;
+  const effectiveSetGestureOwner = storeOps?.setGestureOwner ?? setGestureOwner;
+  const effectiveSetInputModalityFromPointerType = storeOps?.setInputModalityFromPointerType ?? setInputModalityFromPointerType;
+  const effectiveMoveClipToRow = storeOps?.moveClipToRow ?? moveClipToRow;
+  const effectiveCreateTrackAndMoveClip = storeOps?.createTrackAndMoveClip ?? createTrackAndMoveClip;
+  const effectiveSelectClip = storeOps?.selectClip ?? selectClip;
+  const effectiveSelectClips = storeOps?.selectClips ?? selectClips;
+  const effectiveSelectedClipIdsRef = storeAdapters?.selectedClipIdsRef ?? selectedClipIdsRef;
+  const effectiveApplyEdit = storeOps?.applyEdit ?? applyEdit;
+  const effectiveCoordinator = storeData?.coordinator ?? coordinator;
+  const effectiveAdditiveSelectionRef = storeAdapters?.additiveSelectionRef ?? additiveSelectionRef;
+  const effectiveScale = storeData?.scale ?? scale;
+  const effectiveScaleWidth = storeData?.scaleWidth ?? scaleWidth;
   const dragSessionRef = useRef<DragSession | null>(null);
   const stateRef = useRef<DragMachineState>({ phase: 'idle' });
   const actionDragStateRef = useRef<ActionDragState | null>(null);
   const crossTrackActiveRef = useRef(false);
   const autoScrollerRef = useRef<ReturnType<typeof createAutoScroller> | null>(null);
   const { pixelsPerSecondRef } = useTimelineScale({
-    scale,
-    scaleWidth,
+    scale: effectiveScale,
+    scaleWidth: effectiveScaleWidth,
     startLeft: _startLeft,
   });
 
   // Keep volatile values in refs so the effect doesn't re-run mid-drag
   // when zoom/scale changes.
   const latestRef = useRef<UseClipDragLatest>({
-    coordinator,
-    moveClipToRow,
-    createTrackAndMoveClip,
-    selectClip,
-    selectClips,
-    selectedClipIdsRef,
-    applyEdit,
-    additiveSelectionRef,
-    deviceClass,
-    interactionMode,
-    gestureOwner,
-    setGestureOwner,
-    setInputModalityFromPointerType,
-    interactionStateRef,
+    coordinator: effectiveCoordinator,
+    moveClipToRow: effectiveMoveClipToRow,
+    createTrackAndMoveClip: effectiveCreateTrackAndMoveClip,
+    selectClip: effectiveSelectClip,
+    selectClips: effectiveSelectClips,
+    selectedClipIdsRef: effectiveSelectedClipIdsRef,
+    applyEdit: effectiveApplyEdit,
+    additiveSelectionRef: effectiveAdditiveSelectionRef,
+    deviceClass: effectiveDeviceClass,
+    interactionMode: effectiveInteractionMode,
+    gestureOwner: effectiveGestureOwner,
+    setGestureOwner: effectiveSetGestureOwner,
+    setInputModalityFromPointerType: effectiveSetInputModalityFromPointerType,
+    interactionStateRef: effectiveInteractionStateRef,
   });
   latestRef.current = {
-    coordinator,
-    moveClipToRow,
-    createTrackAndMoveClip,
-    selectClip,
-    selectClips,
-    selectedClipIdsRef,
-    applyEdit,
-    additiveSelectionRef,
-    deviceClass,
-    interactionMode,
-    gestureOwner,
-    setGestureOwner,
-    setInputModalityFromPointerType,
-    interactionStateRef,
+    coordinator: effectiveCoordinator,
+    moveClipToRow: effectiveMoveClipToRow,
+    createTrackAndMoveClip: effectiveCreateTrackAndMoveClip,
+    selectClip: effectiveSelectClip,
+    selectClips: effectiveSelectClips,
+    selectedClipIdsRef: effectiveSelectedClipIdsRef,
+    applyEdit: effectiveApplyEdit,
+    additiveSelectionRef: effectiveAdditiveSelectionRef,
+    deviceClass: effectiveDeviceClass,
+    interactionMode: effectiveInteractionMode,
+    gestureOwner: effectiveGestureOwner,
+    setGestureOwner: effectiveSetGestureOwner,
+    setInputModalityFromPointerType: effectiveSetInputModalityFromPointerType,
+    interactionStateRef: effectiveInteractionStateRef,
   };
 
   useEffect(() => {
@@ -211,7 +238,7 @@ export const useClipDrag = ({
       const pixelsPerSecond = pixelsPerSecondRef.current;
       const snapThresholdS = SNAP_THRESHOLD_PX / pixelsPerSecond;
       const targetRowId = nextPosition.trackId ?? session.sourceRowId;
-      const targetRow = dataRef.current?.rows.find((row) => row.id === targetRowId);
+      const targetRow = effectiveDataRef.current?.rows.find((row) => row.id === targetRowId);
       const siblings = targetRow?.actions ?? [];
       const { start: snappedStart } = snapDrag(
         nextPosition.time,
@@ -245,7 +272,7 @@ export const useClipDrag = ({
       }
 
       if (session.draggedClipIds.length > 1) {
-        const latest = dataRef.current;
+        const latest = effectiveDataRef.current;
         if (latest) {
           const anchorTargetRowId = nextPosition.trackId ?? session.sourceRowId;
           const ghosts = computeSecondaryGhosts(
@@ -288,7 +315,7 @@ export const useClipDrag = ({
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
 
-      const wrapper = timelineWrapperRef.current;
+      const wrapper = effectiveTimelineWrapperRef.current;
       if (!wrapper || !wrapper.contains(event.target as Node)) return;
 
       const eventTarget = event.target instanceof HTMLElement ? event.target : null;
@@ -324,7 +351,7 @@ export const useClipDrag = ({
         latestRef.current.interactionMode,
       );
 
-      const current = dataRef.current;
+      const current = effectiveDataRef.current;
       const sourceTrack = current?.tracks.find((track) => track.id === rowId);
       const sourceRow = current?.rows.find((row) => row.id === rowId);
       const sourceAction = sourceRow?.actions.find((action) => action.id === clipId);
@@ -402,7 +429,7 @@ export const useClipDrag = ({
             nextStart,
             dropPosition,
             crossTrackActive: crossTrackActiveRef.current,
-            liveData: dataRef.current,
+            liveData: effectiveDataRef.current,
             callbacks: {
               moveClipToRow: latestRef.current.moveClipToRow,
               createTrackAndMoveClip: latestRef.current.createTrackAndMoveClip,
@@ -420,7 +447,7 @@ export const useClipDrag = ({
           session.inputModality,
           latestRef.current.interactionMode,
         )) {
-          latestRef.current.selectClip(session.clipId, { toggle: true });
+          userSelectTimelineClip(session.clipId, { additive: true });
         } else if (
           shouldPreserveTouchSelectionForMove(
             latestRef.current.deviceClass,
@@ -430,11 +457,11 @@ export const useClipDrag = ({
           && session.wasSelectedOnPointerDown
           && latestRef.current.selectedClipIdsRef.current.size > 1
         ) {
-          latestRef.current.selectClip(session.clipId, { preserveSelection: true });
+          userSelectTimelineClip(session.clipId, { additive: false, preserveIfSelected: true });
         } else if (session.metaKey || session.ctrlKey) {
-          latestRef.current.selectClip(session.clipId, { toggle: true });
+          userSelectTimelineClip(session.clipId, { additive: true });
         } else {
-          latestRef.current.selectClip(session.clipId);
+          userSelectTimelineClip(session.clipId, { additive: false });
         }
         endSession();
       };
@@ -482,7 +509,7 @@ export const useClipDrag = ({
     };
   // Stable refs only — volatile values (scale, coordinator, etc.) are read via refs
   // so the effect never re-runs mid-drag.
-  }, [dataRef, timelineWrapperRef]);
+  }, [effectiveDataRef, effectiveTimelineWrapperRef, pixelsPerSecondRef]);
 
   return {
     dragSessionRef,

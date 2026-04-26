@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { TOOL_IDS } from '@/shared/lib/tooling/toolIds';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { useAsyncOperation } from '@/shared/hooks/async/useAsyncOperation';
 import { useDeleteGenerationWithConfirm } from '@/domains/generation/hooks/useDeleteGenerationWithConfirm';
@@ -16,7 +16,8 @@ import type { CharacterImageState, MotionVideoState } from '../characterAnimate.
 
 export function useCharacterAnimateBaseState() {
   const queryClient = useQueryClient();
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const isMobile = useIsMobile();
 
   const [characterImage, setCharacterImage] = useState<CharacterImageState | null>(null);

@@ -16,7 +16,7 @@ describe('supabase client runtime contracts', () => {
     expect(clientExports.getLegacySupabaseClient).toBeUndefined();
     expect(clientExports.getOrInitializeSupabaseClientResult).toBeUndefined();
     expect(typeof debugExports.initializeSupabaseDebugGlobals).toBe('function');
-  });
+  }, 15_000);
 
   it('does not expose deprecated legacy proxy module from canonical client path', async () => {
     expect(

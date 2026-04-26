@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react';
 import type { GeneratedImageWithMetadata } from '@/shared/components/MediaGallery/types';
+import { isAdditiveSelectionEvent } from '@/shared/lib/interactions/selectionGesture';
 import { captureTouchStartPoint, isTouchTapWithinThreshold } from '@/shared/lib/touch/touchGestureUtils';
 
 interface UseItemInteractionParams {
@@ -7,7 +8,10 @@ interface UseItemInteractionParams {
   isMobile: boolean;
   mobileActiveImageId: string | null;
   enableSingleClick: boolean;
-  onImageClick?: (image: GeneratedImageWithMetadata) => void;
+  // `modifiers` is derived from the synthetic event so callers know whether
+  // the user held a multi-select modifier (Cmd / Ctrl / Shift) at click time.
+  // Reading it here is race-free; reading global key state separately is not.
+  onImageClick?: (image: GeneratedImageWithMetadata, modifiers?: { multiSelect: boolean }) => void;
   onMobileTap: (image: GeneratedImageWithMetadata) => void;
 }
 
@@ -50,7 +54,12 @@ export function useItemInteraction({
     event.preventDefault();
 
     if (enableSingleClick && onImageClick) {
-      onImageClick(image);
+      // Touch events don't carry modifier keys, so multi-select is always false
+      // for touch. Mouse events do — read directly from this event so the
+      // handler isn't subject to the React-state race that bites global key listeners.
+      const multiSelect = event.type !== 'touchend'
+        && isAdditiveSelectionEvent(event as React.MouseEvent);
+      onImageClick(image, { multiSelect });
       return;
     }
 

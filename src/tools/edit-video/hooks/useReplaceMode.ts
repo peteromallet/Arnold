@@ -7,7 +7,7 @@ import {
 } from 'react';
 import { GenerationRow } from '@/domains/generation/types';
 import { getGenerationId } from '@/shared/lib/media/mediaTypeHelpers';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useEditVideoSettings } from '@/shared/settings/hooks/useEditVideoSettings';
 import { useLoraManager } from '@/domains/lora/hooks/useLoraManager';
 import { usePublicLoras } from '@/features/resources/hooks/useResources';
@@ -54,7 +54,8 @@ export function useReplaceMode({
   initialSegments,
   onSegmentsChange,
 }: UseReplaceModeProps) {
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const queryClient = useQueryClient();
   const run = useTaskPlaceholder();
 

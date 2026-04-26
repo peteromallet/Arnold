@@ -2,11 +2,11 @@ import type { CSSProperties } from 'react';
 import { Outlet } from 'react-router-dom';
 import { GlobalHeader } from '@/shared/components/GlobalHeader';
 import { GlobalProcessingWarning } from '@/shared/components/ProcessingWarnings';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useHeaderState } from '@/shared/contexts/ToolPageHeaderContext';
 import { useViewportResponsive } from '@/shared/hooks/responsive/useViewportResponsive';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { useVideoEditorRouteState } from '@/app/hooks/useVideoEditorRouteState';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 interface LayoutMainContentProps {
   isMobileSplitView: boolean;
@@ -16,17 +16,15 @@ interface LayoutMainContentProps {
 export function LayoutMainContent(props: LayoutMainContentProps) {
   const { isMobileSplitView, onOpenSettings } = props;
   const { isVideoEditorShellActive } = useVideoEditorRouteState();
-  const {
-    isEditorPaneLocked,
-    effectiveEditorPaneHeight,
-    isTasksPaneLocked,
-    tasksPaneWidth,
-    isShotsPaneLocked,
-    shotsPaneWidth,
-    isGenerationsPaneLocked,
-    isGenerationsPaneOpen,
-    effectiveGenerationsPaneHeight,
-  } = usePanes();
+  const isEditorPaneLocked = usePanesStore((state) => state.isEditorPaneLocked);
+  const effectiveEditorPaneHeight = usePanesStore((state) => state.effectiveEditorPaneHeight);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
+  const isGenerationsPaneOpen = usePanesStore((state) => state.isGenerationsPaneOpen);
+  const effectiveGenerationsPaneHeight = usePanesStore((state) => state.effectiveGenerationsPaneHeight);
   const { header } = useHeaderState();
   const { isSm, isMd, isLg, isXl, is2Xl, contentWidth, contentHeight } = useViewportResponsive();
 

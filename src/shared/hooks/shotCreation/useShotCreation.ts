@@ -4,7 +4,7 @@
 
 import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useLastAffectedShot } from '@/shared/hooks/shots/useLastAffectedShot';
 import {
   useCreateShot,
@@ -21,7 +21,7 @@ import type {
 } from './shotCreationTypes';
 
 export function useShotCreation(): UseShotCreationReturn {
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const { shots } = useShots();
   const { setLastAffectedShotId } = useLastAffectedShot();
   const queryClient = useQueryClient();

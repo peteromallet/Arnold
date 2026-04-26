@@ -6,6 +6,11 @@ export interface MediaGalleryLightboxMedia extends GenerationRow {
   location: string | null;
   metadata: GeneratedImageWithMetadata['metadata'] | null;
   starred: boolean;
+  storage_mode?: GeneratedImageWithMetadata['storage_mode'];
+  local_handle_id?: GeneratedImageWithMetadata['local_handle_id'];
+  local_file_name?: GeneratedImageWithMetadata['local_file_name'];
+  local_file_size?: GeneratedImageWithMetadata['local_file_size'];
+  local_file_mime?: GeneratedImageWithMetadata['local_file_mime'];
 }
 
 interface BuildMediaGalleryLightboxMediaInput {
@@ -60,5 +65,10 @@ export function buildMediaGalleryLightboxMedia({
     is_child: preferredMedia.is_child ?? fallbackMedia.is_child,
     child_order: preferredMedia.child_order ?? fallbackMedia.child_order ?? null,
     contentType: preferredMedia.contentType ?? fallbackMedia.contentType,
+    storage_mode: preferredMedia.storage_mode ?? fallbackMedia.storage_mode ?? null,
+    local_handle_id: preferredMedia.local_handle_id ?? fallbackMedia.local_handle_id ?? null,
+    local_file_name: preferredMedia.local_file_name ?? fallbackMedia.local_file_name ?? null,
+    local_file_size: preferredMedia.local_file_size ?? fallbackMedia.local_file_size ?? null,
+    local_file_mime: preferredMedia.local_file_mime ?? fallbackMedia.local_file_mime ?? null,
   };
 }

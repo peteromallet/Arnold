@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { GenerationRow } from '@/domains/generation/types';
 import {
+  systemClearGallerySelection,
+  systemSyncGallerySelection,
   type GallerySelectionItem,
   useGallerySelectionOptional,
-} from '@/shared/contexts/GallerySelectionContext';
+} from '@/shared/state/selectionStore';
 
 interface UseGallerySelectionBridgeArgs {
   selectedIds: string[];
@@ -17,48 +19,32 @@ export function useGallerySelectionBridge({
   clearLocalSelection,
 }: UseGallerySelectionBridgeArgs): void {
   const gallery = useGallerySelectionOptional();
-  const isPeerClearingRef = useRef(false);
-  const isSelfSelectingRef = useRef(false);
   const imagesRef = useRef(images);
-  const selectedIdsRef = useRef(selectedIds);
 
   imagesRef.current = images;
-  selectedIdsRef.current = selectedIds;
 
-  // Called by GallerySelectionContext when ANOTHER surface selects.
-  // Guard against self-originated calls: when this bridge calls
-  // selectGalleryItems, the context fires peerClear — skip that.
-  const peerClearCallback = useCallback(() => {
-    if (isSelfSelectingRef.current) {
-      return;
-    }
-    isPeerClearingRef.current = true;
-    clearLocalSelection();
-  }, [clearLocalSelection]);
-
-  useEffect(() => {
+  const syncLocalSelection = useCallback(() => {
     if (!gallery) {
       return;
     }
 
-    gallery.registerPeerClear(peerClearCallback);
-    return () => {
-      gallery.registerPeerClear(null);
-    };
-  }, [gallery, peerClearCallback]);
+    const localSelection = new Set(selectedIds);
+    const globalSelection = gallery.selectedGalleryIds;
+    const matches = localSelection.size === globalSelection.size
+      && selectedIds.every((id) => globalSelection.has(id));
+
+    if (!matches && selectedIds.length > 0) {
+      clearLocalSelection();
+    }
+  }, [clearLocalSelection, gallery, selectedIds]);
 
   useEffect(() => {
     if (!gallery) {
-      return;
-    }
-
-    if (isPeerClearingRef.current) {
-      isPeerClearingRef.current = false;
       return;
     }
 
     if (selectedIds.length === 0) {
-      gallery.clearGallerySelection();
+      systemClearGallerySelection();
       return;
     }
 
@@ -78,9 +64,11 @@ export function useGallerySelectionBridge({
     });
 
     if (items.length > 0) {
-      isSelfSelectingRef.current = true;
-      gallery.selectGalleryItems(items);
-      isSelfSelectingRef.current = false;
+      systemSyncGallerySelection(items);
     }
   }, [gallery, selectedIds]);
+
+  useEffect(() => {
+    syncLocalSelection();
+  }, [syncLocalSelection]);
 }

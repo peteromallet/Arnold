@@ -15,13 +15,14 @@ import { useLoraSubmission } from './hooks/useLoraSubmission';
 import { UrlInputSection } from './components/UrlInputSection';
 import { FileUploadSection } from './components/FileUploadSection';
 import { SampleGenerationsSection } from './components/SampleGenerationsSection';
+import { getClosestOverlayContainer } from '@/shared/components/ui/overlay';
 
 function useSelectPortalContainer<T extends HTMLElement>() {
   const sectionRef = React.useRef<T | null>(null);
   const [container, setContainer] = React.useState<HTMLElement | null>(null);
 
   React.useLayoutEffect(() => {
-    const nextContainer = sectionRef.current?.closest('[data-dialog-content]') as HTMLElement | null;
+    const nextContainer = getClosestOverlayContainer(sectionRef.current);
     setContainer(nextContainer ?? null);
   }, []);
 

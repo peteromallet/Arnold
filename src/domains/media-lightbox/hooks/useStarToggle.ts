@@ -3,7 +3,7 @@ import type { UseMutationResult } from '@tanstack/react-query';
 import { useToggleGenerationStar } from '@/domains/generation/hooks/useGenerationMutations';
 import { GenerationRow } from '@/domains/generation/types';
 import { getGenerationId } from '@/shared/lib/media/mediaTypeHelpers';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 
 interface UseStarToggleProps {
   media: GenerationRow;
@@ -23,7 +23,7 @@ interface UseStarToggleReturn {
  * Maintains local state for immediate UI updates while syncing with server
  */
 export const useStarToggle = ({ media, starred, shotId }: UseStarToggleProps): UseStarToggleReturn => {
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const toggleStarMutation = useToggleGenerationStar();
   
   // Track when we last mutated to prevent stale prop syncing

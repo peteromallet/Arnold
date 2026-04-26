@@ -1,4 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
+import type { SelectClipOptions } from '@/shared/state/selectionStore';
 import type {
   ClipMeta,
   TimelineData,
@@ -30,6 +31,6 @@ export interface ClipEditingContext {
   isPinnedGroupMember: (clipId: string) => boolean;
   notifyPinnedGroupEditBlocked: () => void;
   getValidClipIds: (clipIds: string[]) => string[];
-  setSelectedClipId: Dispatch<SetStateAction<string | null>>;
+  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
 }

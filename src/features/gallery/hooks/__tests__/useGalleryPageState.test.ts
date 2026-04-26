@@ -43,14 +43,11 @@ vi.mock('@/shared/hooks/shots', () => ({
   }),
 }));
 
-vi.mock('@/shared/contexts/LastAffectedShotContext', () => ({
-  LastAffectedShotContext: React.createContext({
+vi.mock('@/shared/state/selectionStore', () => ({
+  useLastAffectedShot: () => ({
     lastAffectedShotId: 'shot-1',
     setLastAffectedShotId: vi.fn(),
   }),
-}));
-
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
   useCurrentShot: () => ({ currentShotId: 'shot-1' }),
 }));
 

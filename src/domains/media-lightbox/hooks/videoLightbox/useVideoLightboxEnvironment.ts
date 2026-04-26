@@ -1,6 +1,5 @@
 import { useState, useRef, useLayoutEffect, useCallback } from 'react';
-import { useProject } from '@/shared/contexts/ProjectContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useTaskStatusCounts } from '@/shared/hooks/tasks/useTaskStatusCounts';
 import { useUserUIState } from '@/shared/hooks/useUserUIState';
 import { useIsMobile } from '@/shared/hooks/mobile';
@@ -10,6 +9,7 @@ import { getGenerationId } from '@/shared/lib/media/mediaTypeHelpers';
 import type { GenerationRow } from '@/domains/generation/types';
 import type { SegmentSlotModeData } from '../../types';
 import type { VideoEditSubMode } from '../../model/editSettingsTypes';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 import type { LightboxNavigationProps } from '../../types';
 
@@ -122,16 +122,14 @@ export function useVideoLightboxEnvironment(
   const initialVideoTrimMode = options.videoProps?.initialVideoTrimMode;
 
   const isMobile = useIsMobile();
-  const { project, selectedProjectId } = useProject();
+  const { project, selectedProjectId } = useProjectSelectionContext();
   const projectAspectRatio = project?.aspectRatio;
   const { value: generationMethods } = useUserUIState('generationMethods', { onComputer: true, inCloud: true });
   const isCloudMode = generationMethods.inCloud;
 
-  const {
-    isTasksPaneOpen: tasksPaneOpenContext,
-    tasksPaneWidth: tasksPaneWidthContext,
-    isTasksPaneLocked,
-  } = usePanes();
+  const tasksPaneOpenContext = usePanesStore((state) => state.isTasksPaneOpen);
+  const tasksPaneWidthContext = usePanesStore((state) => state.tasksPaneWidth);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
 
   const effectiveTasksPaneOpen = tasksPaneOpen ?? tasksPaneOpenContext;
   const effectiveTasksPaneWidth = tasksPaneWidth ?? tasksPaneWidthContext;

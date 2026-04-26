@@ -3,7 +3,7 @@ import { ArrowLeftRight } from 'lucide-react';
 import {
   JoinClipsSettingsForm,
 } from '@/shared/components/JoinClipsSettingsForm/JoinClipsSettingsForm';
-import { useShotSettingsContext } from '../../ShotSettingsContext';
+import { useShotSettingsGeneration, useShotSettingsIdentity } from '../../ShotSettingsContext';
 import { buildJoinClipsFormProps } from './joinClipsFormProps';
 import { useBoundarySummary } from '../../hooks/actions/useBoundarySummary';
 
@@ -16,7 +16,8 @@ export const JoinModeContent: React.FC<JoinModeContentProps> = ({
   joinSegmentsSectionRef,
   swapButtonRef,
 }) => {
-  const { projectId, availableLoras, generationMode, joinState } = useShotSettingsContext();
+  const { projectId } = useShotSettingsIdentity();
+  const { availableLoras, generationMode, joinState } = useShotSettingsGeneration();
 
   console.log('[JoinModeContent] joinState.joinSegmentSlots:', joinState.joinSegmentSlots?.length, joinState.joinSegmentSlots);
   const boundarySummary = useBoundarySummary((joinState.joinSegmentSlots ?? []) as import('@/shared/hooks/segments/useSegmentOutputsForShot').SegmentSlot[]);

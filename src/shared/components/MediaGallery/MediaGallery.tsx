@@ -1,10 +1,8 @@
 import React, { useEffect, useCallback, useRef, useMemo } from "react";
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
 import {
   useProjectCrudContext,
   useProjectSelectionContext,
 } from '@/shared/contexts/ProjectContext';
-import { useShotAdditionSelectionOptional } from '@/shared/contexts/ShotAdditionSelectionContext';
 import { useIsMobile, useIsTablet } from "@/shared/hooks/mobile";
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { useTaskDetails } from '@/shared/components/ShotImageManager/hooks/useTaskDetails';
@@ -33,6 +31,7 @@ import type {
 import { DEFAULT_GALLERY_CONFIG } from '@/shared/components/MediaGallery/types';
 import { getGenerationId } from '@/shared/lib/media/mediaTypeHelpers';
 import { GRID_COLUMN_CLASSES, calculateGalleryLayout } from '@/shared/components/MediaGallery/utils';
+import { useCurrentShot, useShotAdditionSelectionOptional } from '@/shared/state/selectionStore';
 
 interface UseAspectRatioLayoutParams {
   projectAspectRatio?: string;

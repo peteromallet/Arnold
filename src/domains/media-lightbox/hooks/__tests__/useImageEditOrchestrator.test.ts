@@ -190,4 +190,102 @@ describe('useImageEditOrchestrator', () => {
     expect(handleGenerateReposition).toHaveBeenCalledTimes(1);
     expect(handleGenerateImg2Img).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps the orchestrator result stable across parent rerenders when inputs are unchanged', () => {
+    const stableInpainting = {
+      isInpaintMode: false,
+      setIsInpaintMode: vi.fn(),
+      brushSize: 24,
+      setBrushSize: vi.fn(),
+      isEraseMode: false,
+      setIsEraseMode: vi.fn(),
+      brushStrokes: [],
+      isAnnotateMode: false,
+      setIsAnnotateMode: vi.fn(),
+      annotationMode: null,
+      setAnnotationMode: vi.fn(),
+      selectedShapeId: null,
+      handleUndo: vi.fn(),
+      handleClearMask: vi.fn(),
+      onStrokeComplete: vi.fn(),
+      onStrokesChange: vi.fn(),
+      onSelectionChange: vi.fn(),
+      onTextModeHint: vi.fn(),
+      strokeOverlayRef: { current: null },
+      getDeleteButtonPosition: vi.fn(),
+      handleToggleFreeForm: vi.fn(),
+      handleDeleteSelected: vi.fn(),
+      inpaintPrompt: '',
+      setInpaintPrompt: vi.fn(),
+      inpaintNumGenerations: 1,
+      setInpaintNumGenerations: vi.fn(),
+      handleEnterInpaintMode: vi.fn(),
+      handleGenerateInpaint: vi.fn(),
+      handleGenerateAnnotatedEdit: vi.fn(),
+      inpaintGenerateSuccess: false,
+      isGeneratingInpaint: false,
+    };
+    const stableMagic = {
+      isMagicEditMode: false,
+      isSpecialEditMode: false,
+      setIsMagicEditMode: vi.fn(),
+      handleEnterMagicEditMode: vi.fn(),
+      handleExitMagicEditMode: vi.fn(),
+      handleUnifiedGenerate: vi.fn(),
+      toolPanelPosition: 'right',
+      setToolPanelPosition: vi.fn(),
+      isCreatingMagicEditTasks: false,
+      magicEditTasksCreated: false,
+    };
+    const stableReposition = {
+      transform: null,
+      hasTransformChanges: false,
+      isDragging: false,
+      dragHandlers: {},
+      getTransformStyle: vi.fn(),
+      setScale: vi.fn(),
+      setRotation: vi.fn(),
+      toggleFlipH: vi.fn(),
+      toggleFlipV: vi.fn(),
+      resetTransform: vi.fn(),
+      isGeneratingReposition: false,
+      repositionGenerateSuccess: false,
+      handleGenerateReposition: vi.fn(),
+      isSavingAsVariant: false,
+      saveAsVariantSuccess: false,
+      handleSaveAsVariant: vi.fn(),
+    };
+    const stableImg2Img = {
+      img2imgPrompt: '',
+      setImg2imgPrompt: vi.fn(),
+      img2imgStrength: 0.6,
+      setImg2imgStrength: vi.fn(),
+      enablePromptExpansion: false,
+      setEnablePromptExpansion: vi.fn(),
+      isGeneratingImg2Img: false,
+      img2imgGenerateSuccess: false,
+      handleGenerateImg2Img: vi.fn(),
+      loraManager: { selectedLoras: [], setSelectedLoras: vi.fn() },
+    };
+    const stableImageEditValue = { editMode: 'text' };
+
+    mockUseInpainting.mockReturnValue(stableInpainting);
+    mockUseMagicEditMode.mockReturnValue(stableMagic);
+    mockUseRepositionMode.mockReturnValue(stableReposition);
+    mockUseImg2ImgMode.mockReturnValue(stableImg2Img);
+    mockBuildImageEditStateValue.mockReturnValue(stableImageEditValue);
+
+    const props = createProps('text');
+    const { result, rerender } = renderHook(() => useImageEditOrchestrator(props));
+
+    const firstResult = result.current;
+    expect(firstResult.imageEditValue).toBe(stableImageEditValue);
+    expect(mockBuildImageEditStateValue).toHaveBeenCalledTimes(1);
+
+    rerender();
+
+    expect(result.current).toBe(firstResult);
+    expect(result.current.imageEditValue).toBe(stableImageEditValue);
+    expect(mockBuildImageEditStateValue).toHaveBeenCalledTimes(1);
+  });
 });

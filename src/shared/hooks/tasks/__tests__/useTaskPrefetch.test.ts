@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, waitFor } from '@testing-library/react';
 import { renderHookWithProviders } from '@/test/test-utils';
+import { setProjectSelectionSnapshot, resetProjectSelectionStoreForTests } from '@/shared/contexts/projectSelectionStore';
 
 const mockResolveGenerationTaskMapping = vi.fn();
 const mockMaybeSingle = vi.fn();
 const mockSingle = vi.fn();
+const mockFetchAndSeedTaskQuery = vi.fn();
+const mockGetCachedTaskSnapshot = vi.fn();
+const mockPrefetchGenerationTaskMapping = vi.fn();
 
 vi.mock('@/integrations/supabase/client', () => ({
   getSupabaseClient: vi.fn(() => ({
@@ -21,6 +25,8 @@ vi.mock('@/integrations/supabase/client', () => ({
 
 vi.mock('../useTasks', () => ({
   mapDbTaskToTask: vi.fn((data: unknown) => ({ ...data as object, _mapped: true })),
+  fetchAndSeedTaskQuery: (...args: unknown[]) => mockFetchAndSeedTaskQuery(...args),
+  getCachedTaskSnapshot: (...args: unknown[]) => mockGetCachedTaskSnapshot(...args),
 }));
 
 vi.mock('@/shared/lib/tasks/generationTaskRepository', () => ({
@@ -33,6 +39,17 @@ vi.mock('@/shared/lib/tasks/generationTaskRepository', () => ({
     ...(mapping?.queryError ? { queryError: mapping.queryError } : {}),
   }),
 }));
+
+vi.mock('@/domains/generation/hooks/tasks/useGenerationTaskMapping', async () => {
+  const actual = await vi.importActual<typeof import('@/domains/generation/hooks/tasks/useGenerationTaskMapping')>(
+    '@/domains/generation/hooks/tasks/useGenerationTaskMapping'
+  );
+
+  return {
+    ...actual,
+    prefetchGenerationTaskMapping: (...args: unknown[]) => mockPrefetchGenerationTaskMapping(...args),
+  };
+});
 
 import { useGenerationTaskMapping } from '@/domains/generation/hooks/tasks/useGenerationTaskMapping';
 import { usePrefetchTaskData, usePrefetchTaskById } from '../useTaskPrefetch';
@@ -101,8 +118,12 @@ describe('useGenerationTaskMapping', () => {
 describe('usePrefetchTaskData', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetProjectSelectionStoreForTests();
     mockMaybeSingle.mockResolvedValue({ data: { tasks: ['task-1'] }, error: null });
     mockSingle.mockResolvedValue({ data: { id: 'task-1', status: 'Completed' }, error: null });
+    mockGetCachedTaskSnapshot.mockReturnValue(undefined);
+    mockFetchAndSeedTaskQuery.mockResolvedValue({ id: 'task-1' });
+    mockPrefetchGenerationTaskMapping.mockResolvedValue({ taskId: 'task-1' });
   });
 
   it('returns a prefetch function', () => {
@@ -129,12 +150,32 @@ describe('usePrefetchTaskData', () => {
 
     expect(mockMaybeSingle).not.toHaveBeenCalled();
   });
+
+  it('uses the fallback project scope and seeds the single-task cache when the mapping resolves', async () => {
+    setProjectSelectionSnapshot({ selectedProjectId: 'fallback-project' });
+
+    const { result } = renderHookWithProviders(() => usePrefetchTaskData());
+
+    await act(async () => {
+      await result.current(GENERATION_ID, null);
+    });
+
+    expect(mockPrefetchGenerationTaskMapping).toHaveBeenCalled();
+    expect(mockFetchAndSeedTaskQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      'task-1',
+      'fallback-project',
+    );
+  });
 });
 
 describe('usePrefetchTaskById', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetProjectSelectionStoreForTests();
     mockSingle.mockResolvedValue({ data: { id: 'task-1', status: 'Completed' }, error: null });
+    mockGetCachedTaskSnapshot.mockReturnValue(undefined);
+    mockFetchAndSeedTaskQuery.mockResolvedValue({ id: 'task-1' });
   });
 
   it('returns a prefetch function', () => {
@@ -160,5 +201,21 @@ describe('usePrefetchTaskById', () => {
     });
 
     expect(mockSingle).not.toHaveBeenCalled();
+  });
+
+  it('uses the fallback project scope when prefetching a task directly', async () => {
+    setProjectSelectionSnapshot({ selectedProjectId: 'fallback-project' });
+
+    const { result } = renderHookWithProviders(() => usePrefetchTaskById());
+
+    await act(async () => {
+      await result.current('11111111-1111-4111-8111-111111111112', null);
+    });
+
+    expect(mockFetchAndSeedTaskQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      '11111111-1111-4111-8111-111111111112',
+      'fallback-project',
+    );
   });
 });

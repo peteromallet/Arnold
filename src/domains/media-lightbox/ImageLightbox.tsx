@@ -50,6 +50,7 @@ import type { LightboxLayoutProps } from './components/layouts/types';
 import { handleLightboxDownload } from './utils/lightboxDownload';
 import { invokeLightboxDelete } from './utils/lightboxDelete';
 import { useAddToVideoEditor } from './hooks/useAddToVideoEditor';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 
 // Re-export grouped sub-interfaces for consumers that import from ImageLightbox
 export type {
@@ -92,6 +93,7 @@ interface ImageLightboxBehaviorProps {
   shotWorkflow?: LightboxShotWorkflowProps;
   features?: LightboxFeatureFlags;
   actions?: LightboxActionHandlers;
+  customOverlay?: React.ReactNode;
 }
 
 interface ImageLightboxProps
@@ -302,12 +304,13 @@ function useImageLightboxRenderModel(
         handleDownload, handleDelete,
       },
     },
+    customOverlay: props.customOverlay,
     adjacentSegments,
   } satisfies LightboxLayoutProps), [
     showPanel, sharedState.layout.shouldShowSidePanel,
     env.effectiveTasksPaneOpen, env.effectiveTasksPaneWidth, workflowBar,
     sharedState.buttonGroupProps.bottomLeft, sharedState.buttonGroupProps.bottomRight,
-    sharedState.buttonGroupProps.topRight, handleDownload, handleDelete, adjacentSegments,
+    sharedState.buttonGroupProps.topRight, handleDownload, handleDelete, props.customOverlay, adjacentSegments,
   ]);
 
   return {
@@ -319,6 +322,7 @@ function useImageLightboxRenderModel(
 }
 
 export const ImageLightbox: React.FC<ImageLightboxProps> = (props) => {
+  useRenderBudget('ImageLightbox', 5);
   const renderCountRef = useRef(0);
   renderCountRef.current += 1;
   const instanceRef = useRef<string>();

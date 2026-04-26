@@ -42,7 +42,7 @@ interface UseMediaGalleryItemFeaturesProps {
   videosAsThumbnails: boolean;
   onToggleStar?: (id: string, starred: boolean) => void;
   onApplySettings?: (metadata: DisplayableMetadata | undefined) => void;
-  onImageClick?: (image: GeneratedImageWithMetadata) => void;
+  onImageClick?: (image: GeneratedImageWithMetadata, modifiers?: { multiSelect: boolean }) => void;
   onContextMenu?: (event: MouseEvent, image: GeneratedImageWithMetadata) => void;
   isDeleting?: string | boolean | null;
 }

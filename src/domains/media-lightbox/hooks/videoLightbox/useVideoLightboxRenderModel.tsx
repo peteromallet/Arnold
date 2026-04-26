@@ -370,10 +370,12 @@ export function useVideoLightboxRenderModel(
         handleDelete,
       },
     },
+    customOverlay: props.customOverlay,
     adjacentSegments,
     segmentSlotMode: modeModel.hasSegmentVideo ? props.segmentSlotMode : undefined,
   }), [
     adjacentSegments,
+    props.customOverlay,
     env.effectiveTasksPaneOpen,
     env.effectiveTasksPaneWidth,
     handleDelete,

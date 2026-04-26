@@ -71,7 +71,7 @@ export const NewImageOverlayButton: React.FC<NewImageOverlayButtonProps> = ({
             {promoteSuccess ? 'Created' : 'New image'}
           </Button>
         </TooltipTrigger>
-        <TooltipContent className="z-[100001]">
+        <TooltipContent>
           Create a standalone image from this variant
         </TooltipContent>
       </Tooltip>

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/primitives/label";
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext } from '@/shared/contexts/ProjectContext';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { Project } from '@/types/project';
 import { Checkbox } from '@/shared/components/ui/checkbox';
@@ -56,7 +56,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({ isOp
   );
 
   const [cropToProjectSize, setCropToProjectSize] = useState<boolean>(true);
-  const { updateProject, isUpdatingProject, deleteProject, isDeletingProject } = useProject();
+  const { updateProject, isUpdatingProject, deleteProject, isDeletingProject } = useProjectCrudContext();
   const [deleteConfirmText, setDeleteConfirmText] = useState<string>('');
   const [isDangerZoneOpen, setIsDangerZoneOpen] = useState(false);
   

@@ -10,7 +10,7 @@ vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: currentPathname }),
 }));
 
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useCurrentShot: () => ({
     setCurrentShotId: setCurrentShotIdMock,
   }),

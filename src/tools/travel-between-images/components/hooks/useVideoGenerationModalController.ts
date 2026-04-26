@@ -1,22 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { toast } from '@/shared/components/ui/runtime/sonner';
+import { useCallback, useMemo, useState } from 'react';
 import type { Shot } from '@/domains/generation/types';
 import type { ActiveLora } from '@/domains/lora/types/lora';
 import type { LoraModel } from '@/domains/lora/types/lora';
-import { useProject } from '@/shared/contexts/ProjectContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { useShotSettings } from '../../hooks/settings/useShotSettings';
-import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
-import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
-import { DEFAULT_STEERABLE_MOTION_SETTINGS } from '@/shared/types/steerableMotion';
-import { DEFAULT_PHASE_CONFIG, coerceSelectedModel } from '@/tools/travel-between-images/settings';
+import { coerceSelectedModel } from '@/tools/travel-between-images/settings';
 import { usePublicLoras } from '@/features/resources/hooks/useResources';
 import { useShotImages } from '@/shared/hooks/shots/useShotImages';
 import { isPositioned, isVideoGeneration } from '@/shared/lib/typeGuards';
 import { findClosestAspectRatio } from '@/shared/lib/media/aspectRatios';
-import { useEnqueueGenerationsInvalidation } from '@/shared/hooks/invalidation/useGenerationInvalidation';
 import { useProjectGenerationModesCache } from '@/shared/hooks/projects/useProjectGenerationModesCache';
 import {
   DEFAULT_STRUCTURE_GUIDANCE_CONTROLS,
@@ -25,22 +19,18 @@ import {
 } from '@/shared/lib/tasks/travelBetweenImages';
 import type { TravelGuidance } from '@/shared/lib/tasks/travelBetweenImages/taskTypes';
 import type { TravelGuidanceMode } from '@/shared/lib/tasks/travelGuidance';
-import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { buildBasicModeGenerationRequest as buildBasicModePhaseConfig } from '../ShotEditor/services/generateVideo/modelPhase';
-import { generateVideo } from '../ShotEditor/services/generateVideoService';
 import {
   BUILTIN_DEFAULT_I2V_ID,
   BUILTIN_DEFAULT_VACE_ID,
   FEATURED_PRESET_IDS,
 } from '../MotionControl.constants';
+import { useVideoUiSettings } from './useVideoUiSettings';
 
 const knownPresetIds = [
   BUILTIN_DEFAULT_I2V_ID,
   BUILTIN_DEFAULT_VACE_ID,
   ...FEATURED_PRESET_IDS,
 ];
-
-const clearAllEnhancedPrompts = async () => {};
 
 function resolveGuidanceKind(travelGuidance?: TravelGuidance): TravelGuidanceMode | undefined {
   if (!travelGuidance || travelGuidance.kind === 'none') {
@@ -94,36 +84,6 @@ function mapSelectedLorasToActiveLoras(
 }
 
 // --- Extracted hooks: only where there's a genuine independent boundary ---
-
-/** Per-shot UI toggle persistence (accelerated mode, random seed). Own external hook dep. */
-function useVideoUiSettings(isOpen: boolean, shotId: string) {
-  const { settings: shotUISettings, update: updateShotUISettings } = useToolSettings<{
-    acceleratedMode?: boolean;
-    randomSeed?: boolean;
-  }>(SETTINGS_IDS.TRAVEL_UI_STATE, {
-    shotId: isOpen ? shotId : undefined,
-    enabled: isOpen && Boolean(shotId),
-  });
-
-  const accelerated = shotUISettings?.acceleratedMode ?? false;
-  const randomSeed = shotUISettings?.randomSeed ?? false;
-
-  const setAccelerated = useCallback(
-    (value: boolean) => {
-      updateShotUISettings('shot', { acceleratedMode: value });
-    },
-    [updateShotUISettings],
-  );
-
-  const setRandomSeed = useCallback(
-    (value: boolean) => {
-      updateShotUISettings('shot', { randomSeed: value });
-    },
-    [updateShotUISettings],
-  );
-
-  return { accelerated, randomSeed, setAccelerated, setRandomSeed };
-}
 
 /** LoRA selection modal + CRUD handlers. Own state (modal open), cohesive unit. */
 function useVideoGenerationLoras(
@@ -217,25 +177,12 @@ export function useVideoGenerationModalController({ isOpen, onClose, shot }: {
   onClose: () => void;
   shot: Shot;
 }) {
-  const { selectedProjectId, projects } = useProject();
-  const queryClient = useQueryClient();
-  const invalidateGenerations = useEnqueueGenerationsInvalidation();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const { navigateToShot } = useShotNavigation();
-  const { isShotsPaneLocked, setIsShotsPaneLocked } = usePanes();
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const setIsShotsPaneLocked = usePanesStore((state) => state.setIsShotsPaneLocked);
   const { updateShotMode } = useProjectGenerationModesCache(selectedProjectId ?? '');
-
-  // UI state
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [justQueued, setJustQueued] = useState(false);
-  const justQueuedTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (justQueuedTimeoutRef.current) {
-        clearTimeout(justQueuedTimeoutRef.current);
-      }
-    };
-  }, []);
 
   // Data
   const uiSettings = useVideoUiSettings(isOpen, shot.id);
@@ -316,131 +263,6 @@ export function useVideoGenerationModalController({ isOpen, onClose, shot }: {
     [loras.isLoraModalOpen, onClose],
   );
 
-  // Generate
-  const handleGenerate = useCallback(async () => {
-    if (!selectedProjectId || !shot.id) {
-      toast.error('No project or shot selected.');
-      return;
-    }
-
-    if (positionedImages.length < 1) {
-      toast.error('At least 1 positioned image is required.');
-      return;
-    }
-
-    setIsGenerating(true);
-    try {
-      updateField('generationMode', 'batch');
-
-      const userLoras = selectedLoras.map((lora) => ({
-        path: lora.path,
-        strength: lora.strength,
-      }));
-      const { phaseConfig: basicPhaseConfig } = buildBasicModePhaseConfig(
-        settings.amountOfMotion || 50,
-        userLoras,
-      );
-
-      const motionMode = settings.motionMode || 'basic';
-      const advancedMode = motionMode === 'advanced';
-      const finalPhaseConfig = advancedMode
-        ? settings.phaseConfig || DEFAULT_PHASE_CONFIG
-        : basicPhaseConfig;
-
-      const mergedSteerableSettings = {
-        ...DEFAULT_STEERABLE_MOTION_SETTINGS,
-        ...(settings.steerableMotionSettings || {}),
-      };
-
-      const result = await generateVideo({
-        projectId: selectedProjectId,
-        selectedShotId: shot.id,
-        selectedShot: shot,
-        queryClient,
-        effectiveAspectRatio,
-        generationMode: 'batch',
-        promptConfig: {
-          base_prompt: settings.prompt || '',
-          enhance_prompt: settings.enhancePrompt,
-          text_before_prompts: settings.textBeforePrompts,
-          text_after_prompts: settings.textAfterPrompts,
-          default_negative_prompt: settings.negativePrompt || mergedSteerableSettings.negative_prompt,
-        },
-        motionConfig: {
-          amount_of_motion: settings.amountOfMotion || 50,
-          motion_mode: motionMode,
-          advanced_mode: advancedMode,
-          phase_config: finalPhaseConfig,
-          selected_phase_preset_id: settings.selectedPhasePresetId ?? undefined,
-        },
-        modelConfig: {
-          selectedModel: coerceSelectedModel(settings.selectedModel),
-          num_inference_steps: settings.batchVideoSteps || 6,
-          guidance_scale: settings.guidanceScale,
-          seed: mergedSteerableSettings.seed,
-          random_seed: uiSettings.randomSeed,
-          turbo_mode: settings.turboMode || false,
-          debug: mergedSteerableSettings.debug || false,
-          generation_type_mode: settings.generationTypeMode || 'i2v',
-          ltxHdResolution: settings.ltxHdResolution ?? true,
-        },
-        travelGuidance: structureState.travelGuidance,
-        structureGuidance: structureState.structureGuidance,
-        structureVideos: structureState.structureVideos,
-        batchVideoFrames: settings.batchVideoFrames || 61,
-        selectedLoras: selectedLoras.map((lora) => ({
-          id: lora.id,
-          path: lora.path,
-          strength: lora.strength,
-          name: lora.name,
-        })),
-        variantNameParam: '',
-        clearAllEnhancedPrompts,
-      });
-
-      if (result.ok) {
-        setJustQueued(true);
-        if (justQueuedTimeoutRef.current) {
-          clearTimeout(justQueuedTimeoutRef.current);
-        }
-        justQueuedTimeoutRef.current = window.setTimeout(() => {
-          setJustQueued(false);
-          justQueuedTimeoutRef.current = null;
-          onClose();
-        }, 1000);
-
-        invalidateGenerations(shot.id, {
-          reason: 'video-generation-modal-success',
-          scope: 'all',
-          includeProjectUnified: true,
-          projectId: selectedProjectId ?? undefined,
-        });
-      } else {
-        toast.error(result.message || 'Failed to generate video');
-      }
-    } catch (error) {
-      normalizeAndPresentError(error, {
-        context: 'VideoGenerationModal',
-        toastTitle: 'Failed to generate video',
-      });
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [
-    selectedProjectId,
-    shot,
-    positionedImages,
-    updateField,
-    selectedLoras,
-    settings,
-    structureState,
-    queryClient,
-    effectiveAspectRatio,
-    uiSettings.randomSeed,
-    onClose,
-    invalidateGenerations,
-  ]);
-
   return {
     projects,
     selectedProjectId,
@@ -450,18 +272,16 @@ export function useVideoGenerationModalController({ isOpen, onClose, shot }: {
     availableLoras,
     positionedImages,
     isLoading,
-    isGenerating,
-    justQueued,
-    isDisabled: isGenerating || isLoading || positionedImages.length < 1,
+    isDisabled: isLoading || positionedImages.length < 1,
     hasStructureVideo,
     guidanceKind,
+    structureState,
     ...uiSettings,
     validPresetId,
     selectedLoras,
     ...loras,
     effectiveAspectRatio,
     shotGenerations: shotGenerations || [],
-    handleGenerate,
     handleNavigateToShot,
     handleDialogOpenChange,
     updateShotMode,

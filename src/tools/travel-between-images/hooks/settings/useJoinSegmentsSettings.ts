@@ -1,4 +1,4 @@
-import { useRef, useMemo, useEffect } from 'react';
+import { useMemo, useEffect } from 'react';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { useAutoSaveSettings } from '@/shared/settings/hooks/useAutoSaveSettings';
 import { joinClipsSettings, JoinClipsSettings } from '@/shared/lib/joinClips/defaults';
@@ -112,23 +112,17 @@ export function useJoinSegmentsSettings(
     revert,
   } = autoSave;
 
-  // Ref for saveImmediate to avoid putting it in effect dependency arrays.
-  // saveImmediate changes reference when entityId or updateSettings change,
-  // but these effects only need the latest version at call time.
-  const saveImmediateRef = useRef(saveImmediate);
-  saveImmediateRef.current = saveImmediate;
-
   // Save inherited settings to DB immediately if we have them
   // CRITICAL: Only save if the shot doesn't already have settings in DB
   useEffect(() => {
     if (inheritedSettings && shotId && status === 'ready') {
       if (!hasShotSettings) {
-        saveImmediateRef.current(inheritedSettings).catch(err => {
+        saveImmediate(inheritedSettings).catch(err => {
           normalizeAndPresentError(err, { context: 'useJoinSegmentsSettings', showToast: false });
         });
       }
     }
-  }, [inheritedSettings, shotId, status, hasShotSettings]);
+  }, [hasShotSettings, inheritedSettings, saveImmediate, shotId, status]);
   
   // Persist settings to localStorage for future inheritance
   useEffect(() => {

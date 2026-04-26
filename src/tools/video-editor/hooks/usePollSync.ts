@@ -4,6 +4,7 @@ import { shouldAcceptPolledData } from '@/tools/video-editor/lib/timeline-save-u
 import { buildTimelineData, preserveUploadingClips, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
 import type { CommitDataOptions } from '@/tools/video-editor/hooks/useTimelineCommit';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 
 const TIMELINE_SYNC_LOG_TAG = '[TimelineSync]';
 
@@ -36,6 +37,7 @@ export interface PollRejectionInput extends TimelinePollGate {
 }
 
 interface UsePollSyncOptions {
+  store?: TimelineStoreApi;
   queries: UsePollSyncQueries;
   provider: DataProvider;
   commitData: (nextData: TimelineData, options?: CommitDataOptions) => void;
@@ -109,6 +111,7 @@ export function getTimelinePollRejectionReason({
 }
 
 export function usePollSync({
+  store,
   queries,
   provider,
   commitData,
@@ -131,6 +134,18 @@ export function usePollSync({
   // Bumped on gesture end to re-trigger the poll-acceptance effect against
   // whatever the latest polled payload is.
   const [interactionEndTick, setInteractionEndTick] = useState(0);
+  const getDataRef = useCallback(() => {
+    const storeDataRef = store?.getState().data.dataRef;
+    return storeDataRef && storeDataRef.current !== null ? storeDataRef : dataRef;
+  }, [dataRef, store]);
+  const getPendingOpsRef = useCallback(() => {
+    const storePendingOpsRef = store?.getState().data.pendingOpsRef;
+    return storePendingOpsRef ? storePendingOpsRef : pendingOpsRef;
+  }, [pendingOpsRef, store]);
+  const getInteractionStateRef = useCallback(() => {
+    const storeInteractionStateRef = store?.getState().data.interactionStateRef;
+    return storeInteractionStateRef ? storeInteractionStateRef : interactionStateRef;
+  }, [interactionStateRef, store]);
 
   useLayoutEffect(() => {
     commitDataRef.current = commitData;
@@ -171,9 +186,9 @@ export function usePollSync({
     return getTimelinePollRejectionReason({
       editSeq: editSeqRef.current,
       savedSeq: savedSeqRef.current,
-      pendingOps: pendingOpsRef.current,
+      pendingOps: getPendingOpsRef().current,
       isSaving: isSavingRef.current,
-      interactionActive: isInteractionActive(interactionStateRef),
+      interactionActive: isInteractionActive(getInteractionStateRef()),
       polledConfigVersion: polledData.configVersion,
       currentConfigVersion: configVersionRef.current,
       polledStableSignature: polledData.stableSignature,
@@ -182,33 +197,31 @@ export function usePollSync({
   }, [
     configVersionRef,
     editSeqRef,
-    interactionStateRef,
     isSavingRef,
     lastSavedSignatureRef,
-    pendingOpsRef,
+    getInteractionStateRef,
+    getPendingOpsRef,
     savedSeqRef,
   ]);
 
   const logPollRejection = useCallback((phase: PollCheckPhase, polledData: TimelineData, reason: string) => {
-    logTimelineSync('poll rejected', {
-      phase,
-      reason,
+    logTimelineSync(`poll rejected (${phase}: ${reason})`, {
       polledConfigVersion: polledData.configVersion,
       currentConfigVersion: configVersionRef.current,
       editSeq: editSeqRef.current,
       savedSeq: savedSeqRef.current,
-      pendingOps: pendingOpsRef.current,
+      pendingOps: getPendingOpsRef().current,
       isSaving: isSavingRef.current,
     });
-  }, [configVersionRef, editSeqRef, isSavingRef, logTimelineSync, pendingOpsRef, savedSeqRef]);
+  }, [configVersionRef, editSeqRef, getPendingOpsRef, isSavingRef, logTimelineSync, savedSeqRef]);
 
   // Wake the poll-acceptance effect once a gesture ends so the most recently
   // deferred polled payload (if any) is re-evaluated against the freshly idle gate.
   useEffect(() => {
-    return onInteractionEnd(interactionStateRef, () => {
+    return onInteractionEnd(getInteractionStateRef(), () => {
       setInteractionEndTick((tick) => tick + 1);
     });
-  }, [interactionStateRef]);
+  }, [getInteractionStateRef]);
 
   useEffect(() => {
     const polledData = deferredPolledDataRef.current ?? queries.timelineQuery.data;
@@ -244,7 +257,7 @@ export function usePollSync({
       logConfigVersionUpdate('poll', polledData.configVersion);
       configVersionRef.current = polledData.configVersion;
       commitDataRef.current(
-        dataRef.current ? preserveUploadingClips(dataRef.current, polledData) : polledData,
+        getDataRef().current ? preserveUploadingClips(getDataRef().current, polledData) : polledData,
         { save: false, skipHistory: true, updateLastSavedSignature: true },
       );
     }, 0);
@@ -258,11 +271,12 @@ export function usePollSync({
     logConfigVersionUpdate,
     logPollRejection,
     logTimelineSync,
+    getDataRef,
     queries.timelineQuery.data,
   ]);
 
   useEffect(() => {
-    const current = dataRef.current;
+    const current = getDataRef().current;
     const registry = queries.assetRegistryQuery.data;
 
     if (
@@ -271,9 +285,9 @@ export function usePollSync({
       || !isTimelinePollIdle({
         editSeq: editSeqRef.current,
         savedSeq: savedSeqRef.current,
-        pendingOps: pendingOpsRef.current,
+        pendingOps: getPendingOpsRef().current,
         isSaving: isSavingRef.current,
-        interactionActive: isInteractionActive(interactionStateRef),
+        interactionActive: isInteractionActive(getInteractionStateRef()),
       })
       || registry === lastRegistryDataRef.current
     ) {
@@ -299,9 +313,9 @@ export function usePollSync({
         if (!isTimelinePollIdle({
           editSeq: editSeqRef.current,
           savedSeq: savedSeqRef.current,
-          pendingOps: pendingOpsRef.current,
+          pendingOps: getPendingOpsRef().current,
           isSaving: isSavingRef.current,
-          interactionActive: isInteractionActive(interactionStateRef),
+          interactionActive: isInteractionActive(getInteractionStateRef()),
         })) {
           return;
         }
@@ -318,15 +332,15 @@ export function usePollSync({
       return () => window.clearTimeout(syncHandle);
     });
   }, [
-    dataRef,
     editSeqRef,
-    interactionStateRef,
     isSavingRef,
-    pendingOpsRef,
     provider,
     queries.assetRegistryQuery.data,
     savedSeqRef,
     selectedClipIdRef,
     selectedTrackIdRef,
+    getDataRef,
+    getInteractionStateRef,
+    getPendingOpsRef,
   ]);
 }

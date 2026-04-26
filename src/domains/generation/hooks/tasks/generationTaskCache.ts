@@ -1,11 +1,11 @@
 import { QueryClient } from '@tanstack/react-query';
 import type { GenerationRow } from '@/domains/generation/types';
 import { Task } from '@/types/tasks';
-import { fetchTaskInProject } from '@/integrations/supabase/repositories/taskRepository';
 import { taskQueryKeys } from '@/shared/lib/queryKeys/tasks';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { resolveTaskProjectScope } from '@/shared/lib/tasks/resolveTaskProjectScope';
 import { getGenerationId } from '@/shared/lib/media/mediaTypeHelpers';
+import { fetchAndSeedTaskQuery, getCachedTaskSnapshot } from '@/shared/hooks/tasks/useTasks';
 import {
   resolveGenerationTaskMappings,
   toGenerationTaskMappingCacheEntry,
@@ -67,11 +67,7 @@ export async function preloadGenerationTaskMappings(
       }
 
       if (preloadFullTaskData && effectiveProjectId && cacheEntry.taskId && cacheEntry.status === 'ok') {
-        prefetchTasks.push(queryClient.prefetchQuery({
-          queryKey: taskQueryKeys.single(cacheEntry.taskId, effectiveProjectId),
-          queryFn: () => fetchTaskInProject(cacheEntry.taskId, effectiveProjectId),
-          staleTime: 2 * 60 * 1000,
-        }));
+        prefetchTasks.push(fetchAndSeedTaskQuery(queryClient, cacheEntry.taskId, effectiveProjectId));
       }
     });
 
@@ -99,7 +95,7 @@ export function mergeGenerationsWithTaskData(
     );
     const taskId = cachedMapping?.taskId || null;
     const taskData = (taskId && effectiveProjectId)
-      ? queryClient.getQueryData<Task | null>(taskQueryKeys.single(taskId, effectiveProjectId))
+      ? getCachedTaskSnapshot(queryClient, taskId, effectiveProjectId) ?? null
       : null;
     const taskMappingStatus = cachedMapping?.status ?? (taskId ? 'ok' : 'not_loaded');
 

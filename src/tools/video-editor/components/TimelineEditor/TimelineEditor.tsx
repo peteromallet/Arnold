@@ -1,4 +1,5 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { shallow } from 'zustand/shallow';
 import {
   KeyboardSensor,
   PointerSensor,
@@ -8,6 +9,7 @@ import {
 } from '@dnd-kit/core';
 import type { Shot } from '@/domains/generation/types';
 import { toast } from '@/shared/components/ui/runtime/sonner';
+import { userSelectTimelineClip } from '@/shared/state/selectionStore';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
@@ -22,11 +24,11 @@ import { DropIndicator } from '@/tools/video-editor/components/TimelineEditor/Dr
 import { TimelineCanvas } from '@/tools/video-editor/components/TimelineEditor/TimelineCanvas';
 import { ROW_HEIGHT, TIMELINE_START_LEFT } from '@/tools/video-editor/lib/coordinate-utils';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
-import { useTimelineChromeContext } from '@/tools/video-editor/contexts/TimelineChromeContext';
 import {
-  useTimelineEditorData,
-  useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
+  useTimelineChromeSelector,
+  useTimelineDataSelector,
+  useTimelineOpsSelector,
+} from '@/tools/video-editor/hooks/timelineStore';
 import { useClipDrag } from '@/tools/video-editor/hooks/useClipDrag';
 import { useActiveTaskClips } from '@/tools/video-editor/hooks/useActiveTaskClips';
 import { useFinalVideoAvailable } from '@/tools/video-editor/hooks/useFinalVideoAvailable';
@@ -34,6 +36,7 @@ import { useMarqueeSelect } from '@/tools/video-editor/hooks/useMarqueeSelect';
 import { usePinnedGroupSync, usePinnedShotGroups } from '@/tools/video-editor/hooks/usePinnedShotGroups';
 import { useShotGroups } from '@/tools/video-editor/hooks/useShotGroups';
 import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants';
+import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration';
 import { useShotGroupHandlers } from '@/tools/video-editor/hooks/useShotGroupHandlers';
 import { useSwitchToFinalVideo } from '@/tools/video-editor/hooks/useSwitchToFinalVideo';
 import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
@@ -186,7 +189,6 @@ export function resolveWaveformAudioSrc(
 
 function TimelineEditorComponent() {
   useRenderDiagnostic('TimelineEditor');
-  const chrome = useTimelineChromeContext();
   const [newTrackDropLabel, setNewTrackDropLabel] = useState<string | null>(null);
   const [videoModalShot, setVideoModalShot] = useState<Shot | null>(null);
   const [videoModalShowImages, setVideoModalShowImages] = useState(false);
@@ -216,7 +218,28 @@ function TimelineEditorComponent() {
     editAreaRef,
     selectedTrackId,
     interactionStateRef,
-  } = useTimelineEditorData();
+  } = useTimelineDataSelector((timeline) => ({
+    data: timeline.data,
+    resolvedConfig: timeline.resolvedConfig,
+    timelineRef: timeline.timelineRef,
+    timelineWrapperRef: timeline.timelineWrapperRef,
+    dataRef: timeline.dataRef,
+    deviceClass: timeline.deviceClass,
+    inputModality: timeline.inputModality,
+    interactionMode: timeline.interactionMode,
+    gestureOwner: timeline.gestureOwner,
+    primaryClipId: timeline.primaryClipId,
+    selectedClipIds: timeline.selectedClipIds,
+    selectedClipIdsRef: timeline.selectedClipIdsRef,
+    additiveSelectionRef: timeline.additiveSelectionRef,
+    scale: timeline.scale,
+    scaleWidth: timeline.scaleWidth,
+    coordinator: timeline.coordinator,
+    indicatorRef: timeline.indicatorRef,
+    editAreaRef: timeline.editAreaRef,
+    selectedTrackId: timeline.selectedTrackId,
+    interactionStateRef: timeline.interactionStateRef,
+  }), shallow);
   const {
     applyEdit,
     moveClipToRow,
@@ -249,7 +272,50 @@ function TimelineEditorComponent() {
     unpatchRegistry,
     registerAsset,
     registerGenerationAsset,
-  } = useTimelineEditorOps();
+  } = useTimelineOpsSelector((ops) => ({
+    applyEdit: ops.applyEdit,
+    moveClipToRow: ops.moveClipToRow,
+    createTrackAndMoveClip: ops.createTrackAndMoveClip,
+    selectClip: ops.selectClip,
+    selectClips: ops.selectClips,
+    addToSelection: ops.addToSelection,
+    clearSelection: ops.clearSelection,
+    isClipSelected: ops.isClipSelected,
+    setSelectedTrackId: ops.setSelectedTrackId,
+    handleTrackPopoverChange: ops.handleTrackPopoverChange,
+    handleMoveTrack: ops.handleMoveTrack,
+    handleRemoveTrack: ops.handleRemoveTrack,
+    handleSplitClipAtTime: ops.handleSplitClipAtTime,
+    handleSplitClipsAtPlayhead: ops.handleSplitClipsAtPlayhead,
+    handleDeleteClips: ops.handleDeleteClips,
+    handleDeleteClip: ops.handleDeleteClip,
+    handleToggleMuteClips: ops.handleToggleMuteClips,
+    onCursorDrag: ops.onCursorDrag,
+    onClickTimeArea: ops.onClickTimeArea,
+    setGestureOwner: ops.setGestureOwner,
+    setInputModalityFromPointerType: ops.setInputModalityFromPointerType,
+    onActionResizeStart: ops.onActionResizeStart,
+    onClipEdgeResizeEnd: ops.onClipEdgeResizeEnd,
+    onTimelineDragOver: ops.onTimelineDragOver,
+    onTimelineDragLeave: ops.onTimelineDragLeave,
+    onTimelineDrop: ops.onTimelineDrop,
+    onDoubleClickAsset: ops.onDoubleClickAsset,
+    patchRegistry: ops.patchRegistry,
+    unpatchRegistry: ops.unpatchRegistry,
+    registerAsset: ops.registerAsset,
+    registerGenerationAsset: ops.registerGenerationAsset,
+  }), shallow);
+  const {
+    handleAddTrack,
+    handleAddTextAt,
+    handleClearUnusedTracks,
+    unusedTrackCount,
+  } = useTimelineChromeSelector((chrome) => ({
+    handleAddTrack: chrome.handleAddTrack,
+    handleAddTextAt: chrome.handleAddTextAt,
+    handleClearUnusedTracks: chrome.handleClearUnusedTracks,
+    unusedTrackCount: chrome.unusedTrackCount,
+  }), shallow);
   const trackSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 },
@@ -302,11 +368,12 @@ function TimelineEditorComponent() {
     clearSelection,
   });
 
-  const { staleAssetKeys, dismissedAssetKeys, generationAssetKeys, dismissAsset, updateAssetToCurrentVariant } = useStaleVariants({
+  const { staleAssetKeys, dismissedAssetKeys, generationAssetKeys, dismissAsset, updateAssetToCurrentVariant, applyVariantToAsset } = useStaleVariants({
     registry: resolvedConfig?.registry,
     patchRegistry,
     registerAsset,
   });
+  const { addVariantAsGenerationAfterClip, isPending: isAddingVariantAsGenerationPending } = useAddVariantAsGeneration();
   const { activeTaskAssetKeys } = useActiveTaskClips({ registry: resolvedConfig?.registry });
   const { finalVideoMap, dismissFinalVideo } = useFinalVideoAvailable();
 
@@ -358,11 +425,11 @@ function TimelineEditorComponent() {
   }, [resolvedConfig]);
 
   const handleClipSelect = useCallback((clipId: string, trackId: string) => {
-    selectClip(clipId);
+    userSelectTimelineClip(clipId, { additive: false });
     setSelectedTrackId(trackId);
-  }, [selectClip, setSelectedTrackId]);
+  }, [setSelectedTrackId]);
 
-  const { pixelsPerSecond, pixelToTime } = useTimelineScale({
+  const { pixelToTime } = useTimelineScale({
     scale,
     scaleWidth,
     startLeft: TIMELINE_START_LEFT,
@@ -858,6 +925,11 @@ function TimelineEditorComponent() {
         onDuplicateGeneration={isGenAsset ? handleDuplicateGenerationClip : undefined}
         onUpdateVariant={isGenAsset && assetKey ? () => void updateAssetToCurrentVariant(assetKey) : undefined}
         onDismissStale={isStale && assetKey ? () => dismissAsset(assetKey) : undefined}
+        variantPickerGenerationId={assetEntry?.generationId}
+        variantPickerCurrentVariantId={assetEntry?.variantId ?? null}
+        onApplyVariant={isGenAsset && assetKey ? (variant) => applyVariantToAsset(assetKey, variant) : undefined}
+        onAddVariantAsGeneration={isGenAsset ? (variant) => addVariantAsGenerationAfterClip(action.id, variant) : undefined}
+        isAddingVariantAsGeneration={(variantId) => isAddingVariantAsGenerationPending(action.id, variantId)}
         canCreateShotFromSelection={selectionShotCreationState.canCreateShot}
         existingShots={existingShotsForSelection}
         onCreateShotFromSelection={handleCreateShotFromSelection}
@@ -905,6 +977,9 @@ function TimelineEditorComponent() {
     staleAssetKeys,
     thumbnailMap,
     updateAssetToCurrentVariant,
+    applyVariantToAsset,
+    addVariantAsGenerationAfterClip,
+    isAddingVariantAsGenerationPending,
   ]);
 
   const handleTrackDragEnd = useCallback(({ active, over }: DragEndEvent) => {
@@ -984,10 +1059,10 @@ function TimelineEditorComponent() {
           interactionStateRef={interactionStateRef}
           marqueeRect={marqueeRect}
           onEditAreaPointerDown={onMarqueePointerDown}
-          onAddTrack={chrome.handleAddTrack}
-          onAddTextAt={chrome.handleAddTextAt}
-          unusedTrackCount={chrome.unusedTrackCount}
-          onClearUnusedTracks={chrome.handleClearUnusedTracks}
+          onAddTrack={handleAddTrack}
+          onAddTextAt={handleAddTextAt}
+          unusedTrackCount={unusedTrackCount}
+          onClearUnusedTracks={handleClearUnusedTracks}
           newTrackDropLabel={newTrackDropLabel}
         />
         <DropIndicator ref={indicatorRef} editAreaRef={editAreaRef} onNewTrackLabel={setNewTrackDropLabel} />

@@ -106,6 +106,37 @@ describe('fetchGenerations', () => {
     const result = await fetchGenerations(null, 100, 0);
     expect(result).toEqual({ items: [], total: 0, hasMore: false });
   });
+
+  it('keeps count and data queries aligned for local-mode generations', async () => {
+    const chains: Array<Record<string, ReturnType<typeof vi.fn>> & { count?: number }> = [];
+
+    mockSupabaseFrom.mockImplementation(() => {
+      const chain: Record<string, ReturnType<typeof vi.fn>> & { count?: number } = {
+        count: 1,
+      };
+      chain.select = vi.fn().mockReturnValue(chain);
+      chain.eq = vi.fn().mockReturnValue(chain);
+      chain.not = vi.fn().mockReturnValue(chain);
+      chain.like = vi.fn().mockReturnValue(chain);
+      chain.ilike = vi.fn().mockReturnValue(chain);
+      chain.or = vi.fn().mockReturnValue(chain);
+      chain.is = vi.fn().mockReturnValue(chain);
+      chain.in = vi.fn().mockReturnValue(chain);
+      chain.order = vi.fn().mockReturnValue(chain);
+      chain.range = vi.fn().mockResolvedValue({ data: [], error: null });
+      chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      chains.push(chain);
+      return chain;
+    });
+
+    await fetchGenerations('project-1');
+
+    expect(chains).toHaveLength(2);
+    expect(chains[0].or).toHaveBeenCalledWith('location.not.is.null,storage_mode.eq.local');
+    expect(chains[1].or).toHaveBeenCalledWith('location.not.is.null,storage_mode.eq.local');
+    expect(chains[0].not).not.toHaveBeenCalledWith('location', 'is', null);
+    expect(chains[1].not).not.toHaveBeenCalledWith('location', 'is', null);
+  });
 });
 
 describe('useProjectGenerations', () => {

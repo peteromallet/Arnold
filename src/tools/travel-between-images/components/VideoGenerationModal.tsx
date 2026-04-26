@@ -1,5 +1,10 @@
 import React from 'react';
 import type { Shot } from '@/domains/generation/types';
+import type { ActiveLora } from '@/domains/lora/types/lora';
+import type { GenerationRow } from '@/domains/generation/types';
+import type { Project } from '@/types/project';
+import type { TravelGuidanceMode } from '@/shared/lib/tasks/travelGuidance';
+import type { resolveTravelStructureState } from '@/shared/lib/tasks/travelBetweenImages';
 import { Dialog, DialogContent, DialogHeader } from '@/shared/components/ui/dialog';
 import { Button } from '@/shared/components/ui/button';
 import { Skeleton } from '@/shared/components/ui/skeleton';
@@ -11,6 +16,7 @@ import {
   VideoGenerationModalLoadingContent,
 } from './VideoGenerationModalSections';
 import { useVideoGenerationModalController } from './hooks/useVideoGenerationModalController';
+import { useBatchVideoGeneration } from './hooks/useBatchVideoGeneration';
 import { getModelSpec } from '../settings';
 import { VideoTravelSettingsProvider } from '../providers';
 
@@ -25,6 +31,134 @@ export interface VideoGenerationModalProps {
   /** Whether the "Generation Settings" section starts open. Default: true */
   defaultBottomOpen?: boolean;
 }
+
+// Inner body renders inside VideoTravelSettingsProvider so it can call the
+// provider-scoped hooks (useBatchVideoGeneration reads live settings via the
+// provider). Everything outside the provider (the shell below) handles shot
+// data fetching, LoRA modal UI state, and navigation.
+interface ModalBodyProps {
+  shot: Shot;
+  projectId: string | null;
+  onClose: () => void;
+  randomSeed: boolean;
+  positionedImages: Array<{ metadata?: Record<string, unknown> | null }>;
+  effectiveAspectRatio: string;
+  selectedLoras: ActiveLora[];
+  structureState: ReturnType<typeof resolveTravelStructureState>;
+  isLoading: boolean;
+  shotGenerations: GenerationRow[];
+  projects: Project[];
+  selectedProjectId: string | null;
+  accordionDefaults: {
+    defaultTopOpen: boolean;
+    defaultFinalVideoOpen: boolean;
+    defaultBottomOpen: boolean;
+  };
+  accordionProps: {
+    availableLoras: ReturnType<typeof useVideoGenerationModalController>['availableLoras'];
+    accelerated: boolean;
+    onAcceleratedChange: (v: boolean) => void;
+    onRandomSeedChange: (v: boolean) => void;
+    hasStructureVideo: boolean;
+    guidanceKind: TravelGuidanceMode | undefined;
+    validPresetId: string | undefined;
+    status: 'idle' | 'loading' | 'ready' | 'saving' | 'error';
+    onOpenLoraModal: () => void;
+    onRemoveLora: (loraId: string) => void;
+    onLoraStrengthChange: (loraId: string, strength: number) => void;
+    onAddTriggerWord: (word: string) => void;
+    settings: ReturnType<typeof useVideoGenerationModalController>['settings'];
+    updateField: ReturnType<typeof useVideoGenerationModalController>['updateField'];
+  };
+}
+
+const VideoGenerationModalBody: React.FC<ModalBodyProps> = ({
+  shot,
+  projectId,
+  onClose,
+  randomSeed,
+  positionedImages,
+  effectiveAspectRatio,
+  selectedLoras,
+  structureState,
+  isLoading,
+  shotGenerations,
+  projects,
+  selectedProjectId,
+  accordionDefaults,
+  accordionProps,
+}) => {
+  const { handleGenerate, isGenerating, justQueued, isDisabled } = useBatchVideoGeneration({
+    shot,
+    projectId,
+    onClose,
+    randomSeed,
+    positionedImages,
+    effectiveAspectRatio,
+    selectedLoras,
+    structureState,
+  });
+
+  const disabledWithLoading = isDisabled || isLoading;
+
+  return (
+    <>
+      {isLoading ? (
+        <VideoGenerationModalLoadingContent />
+      ) : (
+        <VideoGenerationModalAccordionContent
+          defaultTopOpen={accordionDefaults.defaultTopOpen}
+          defaultFinalVideoOpen={accordionDefaults.defaultFinalVideoOpen}
+          defaultBottomOpen={accordionDefaults.defaultBottomOpen}
+          shotId={shot.id}
+          projectId={selectedProjectId || ''}
+          positionedImages={positionedImages as never}
+          shotGenerations={shotGenerations}
+          effectiveAspectRatio={effectiveAspectRatio}
+          settings={accordionProps.settings}
+          updateField={accordionProps.updateField}
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          selectedLoras={selectedLoras}
+          availableLoras={accordionProps.availableLoras}
+          accelerated={accordionProps.accelerated}
+          onAcceleratedChange={accordionProps.onAcceleratedChange}
+          randomSeed={randomSeed}
+          onRandomSeedChange={accordionProps.onRandomSeedChange}
+          imageCount={positionedImages.length}
+          hasStructureVideo={accordionProps.hasStructureVideo}
+          guidanceKind={accordionProps.guidanceKind}
+          validPresetId={accordionProps.validPresetId}
+          status={accordionProps.status}
+          onOpenLoraModal={accordionProps.onOpenLoraModal}
+          onRemoveLora={accordionProps.onRemoveLora}
+          onLoraStrengthChange={accordionProps.onLoraStrengthChange}
+          onAddTriggerWord={accordionProps.onAddTriggerWord}
+        />
+      )}
+
+      <div className="flex-shrink-0 border-t border-zinc-700 bg-background px-6 py-4 -mx-6 -mb-6 flex justify-center">
+        {isLoading ? (
+          <Skeleton className="h-11 w-full max-w-md rounded-md" />
+        ) : (
+          <Button
+            size="retro-default"
+            className="w-full max-w-md"
+            variant={justQueued ? 'success' : 'retro'}
+            onClick={handleGenerate}
+            disabled={disabledWithLoading}
+          >
+            {justQueued
+              ? 'Submitted, closing modal...'
+              : isGenerating
+                ? 'Creating Tasks...'
+                : 'Generate Video'}
+          </Button>
+        )}
+      </div>
+    </>
+  );
+};
 
 /**
  * Video Generation Modal - Opens a simplified video generation form for a shot
@@ -50,11 +184,9 @@ export const VideoGenerationModal: React.FC<VideoGenerationModalProps> = ({
     availableLoras,
     positionedImages,
     isLoading,
-    isGenerating,
-    justQueued,
-    isDisabled,
     hasStructureVideo,
     guidanceKind,
+    structureState,
     accelerated,
     setAccelerated,
     randomSeed,
@@ -71,7 +203,6 @@ export const VideoGenerationModal: React.FC<VideoGenerationModalProps> = ({
     selectedLorasForModal,
     effectiveAspectRatio,
     shotGenerations,
-    handleGenerate,
     handleNavigateToShot,
     handleDialogOpenChange,
     updateShotMode,
@@ -100,59 +231,41 @@ export const VideoGenerationModal: React.FC<VideoGenerationModalProps> = ({
             </DialogHeader>
 
             <div className={`${modal.scrollClass} -mx-6 px-6 flex-1 min-h-0`}>
-              {isLoading ? (
-                <VideoGenerationModalLoadingContent />
-              ) : (
-                <VideoGenerationModalAccordionContent
-                  defaultTopOpen={defaultTopOpen}
-                  defaultFinalVideoOpen={defaultFinalVideoOpen}
-                  defaultBottomOpen={defaultBottomOpen}
-                  shotId={shot.id}
-                  projectId={selectedProjectId || ''}
-                  positionedImages={positionedImages}
-                  shotGenerations={shotGenerations}
-                  effectiveAspectRatio={effectiveAspectRatio}
-                  settings={settings}
-                  updateField={updateField}
-                  projects={projects}
-                  selectedProjectId={selectedProjectId}
-                  selectedLoras={selectedLoras}
-                  availableLoras={availableLoras}
-                  accelerated={accelerated}
-                  onAcceleratedChange={setAccelerated}
-                  randomSeed={randomSeed}
-                  onRandomSeedChange={setRandomSeed}
-                  imageCount={positionedImages.length}
-                  hasStructureVideo={hasStructureVideo}
-                  guidanceKind={guidanceKind}
-                  validPresetId={validPresetId}
-                  status={status}
-                  onOpenLoraModal={openLoraModal}
-                  onRemoveLora={handleRemoveLora}
-                  onLoraStrengthChange={handleLoraStrengthChange}
-                  onAddTriggerWord={handleAddTriggerWord}
-                />
-              )}
-            </div>
-
-            <div className="flex-shrink-0 border-t border-zinc-700 bg-background px-6 py-4 -mx-6 -mb-6 flex justify-center">
-              {isLoading ? (
-                <Skeleton className="h-11 w-full max-w-md rounded-md" />
-              ) : (
-                <Button
-                  size="retro-default"
-                  className="w-full max-w-md"
-                  variant={justQueued ? 'success' : 'retro'}
-                  onClick={handleGenerate}
-                  disabled={isDisabled}
-                >
-                  {justQueued
-                    ? 'Submitted, closing modal...'
-                    : isGenerating
-                      ? 'Creating Tasks...'
-                      : 'Generate Video'}
-                </Button>
-              )}
+              <VideoGenerationModalBody
+                shot={shot}
+                projectId={selectedProjectId}
+                onClose={onClose}
+                randomSeed={randomSeed}
+                positionedImages={positionedImages}
+                effectiveAspectRatio={effectiveAspectRatio}
+                selectedLoras={selectedLoras}
+                structureState={structureState}
+                isLoading={isLoading}
+                shotGenerations={shotGenerations}
+                projects={projects}
+                selectedProjectId={selectedProjectId}
+                accordionDefaults={{
+                  defaultTopOpen,
+                  defaultFinalVideoOpen,
+                  defaultBottomOpen,
+                }}
+                accordionProps={{
+                  availableLoras,
+                  accelerated,
+                  onAcceleratedChange: setAccelerated,
+                  onRandomSeedChange: setRandomSeed,
+                  hasStructureVideo,
+                  guidanceKind,
+                  validPresetId,
+                  status,
+                  onOpenLoraModal: openLoraModal,
+                  onRemoveLora: handleRemoveLora,
+                  onLoraStrengthChange: handleLoraStrengthChange,
+                  onAddTriggerWord: handleAddTriggerWord,
+                  settings,
+                  updateField,
+                }}
+              />
             </div>
           </DialogContent>
         </Dialog>

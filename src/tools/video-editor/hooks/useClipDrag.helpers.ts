@@ -1,4 +1,5 @@
 import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types';
+import { userSelectTimelineClip, userSelectTimelineClips } from '@/shared/state/selectionStore';
 import type { DropPosition } from '@/tools/video-editor/lib/drop-position';
 import type { TimelineInputModality } from '@/tools/video-editor/lib/mobile-interaction-model';
 import {
@@ -360,7 +361,7 @@ export function commitDraggingSession({
     } else {
       callbacks.moveClipToRow(session.clipId, session.sourceRowId, nextStart, session.transactionId);
     }
-    callbacks.selectClip(session.clipId);
+    userSelectTimelineClip(session.clipId, { additive: false });
     return { deferDeactivate: true };
   }
 
@@ -454,11 +455,11 @@ export function commitDraggingSession({
       }
     }
 
-    callbacks.selectClips(session.draggedClipIds);
+    userSelectTimelineClips(session.draggedClipIds, { additive: false });
     return { deferDeactivate: crossTrackActive };
   }
 
   callbacks.moveClipToRow(session.clipId, session.sourceRowId, nextStart, session.transactionId);
-  callbacks.selectClip(session.clipId);
+  userSelectTimelineClip(session.clipId, { additive: false });
   return { deferDeactivate: false };
 }

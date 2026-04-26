@@ -135,7 +135,7 @@ describe('useClipEditing duration recalculation', () => {
       selectedClipId: 'clip-1',
       selectedTrack: null,
       currentTime: 0,
-      setSelectedClipId: vi.fn(),
+      selectClip: vi.fn(),
       setSelectedTrackId: vi.fn(),
       applyEdit,
     }));
@@ -177,7 +177,7 @@ describe('useClipEditing duration recalculation', () => {
       selectedClipId: null,
       selectedTrack: null,
       currentTime: 0,
-      setSelectedClipId: vi.fn(),
+      selectClip: vi.fn(),
       setSelectedTrackId: vi.fn(),
       applyEdit,
     }));
@@ -240,7 +240,7 @@ describe('useClipEditing pinned group guards', () => {
       selectedClipId: 'clip-1',
       selectedTrack: null,
       currentTime: 0,
-      setSelectedClipId: vi.fn(),
+      selectClip: vi.fn(),
       setSelectedTrackId: vi.fn(),
       applyEdit,
     }));
@@ -288,7 +288,7 @@ describe('useClipEditing pinned group guards', () => {
       selectedClipId: 'clip-1',
       selectedTrack: null,
       currentTime: 0,
-      setSelectedClipId: vi.fn(),
+      selectClip: vi.fn(),
       setSelectedTrackId: vi.fn(),
       applyEdit,
     }));
@@ -333,7 +333,7 @@ describe('useClipEditing pinned group guards', () => {
       selectedClipId: 'clip-1',
       selectedTrack: null,
       currentTime: 0,
-      setSelectedClipId: vi.fn(),
+      selectClip: vi.fn(),
       setSelectedTrackId: vi.fn(),
       applyEdit,
     }));
@@ -378,7 +378,7 @@ describe('useClipEditing pinned group guards', () => {
       selectedClipId: 'clip-1',
       selectedTrack: null,
       currentTime: 2,
-      setSelectedClipId: vi.fn(),
+      selectClip: vi.fn(),
       setSelectedTrackId: vi.fn(),
       applyEdit,
     }));

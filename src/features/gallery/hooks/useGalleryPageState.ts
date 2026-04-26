@@ -1,18 +1,17 @@
 /** Page-level gallery controller for filters, pagination, and gallery actions. */
 
-import { useState, useEffect, useMemo, useContext } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useProjectGenerations, type GenerationsPaginatedResponse } from '@/shared/hooks/projects/useProjectGenerations';
 import { useToggleGenerationStar } from '@/domains/generation/hooks/useGenerationMutations';
 import { useDeleteGenerationWithConfirm } from '@/domains/generation/hooks/useDeleteGenerationWithConfirm';
 import { useAddImageToShot, usePositionExistingGenerationInShot } from '@/shared/hooks/shots';
-import { LastAffectedShotContext } from '@/shared/contexts/LastAffectedShotContext';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
 import { useShots } from '@/shared/contexts/ShotsContext';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { useGalleryFilterState } from '@/shared/hooks/gallery/useGalleryFilterState';
 import { dispatchAppEvent } from '@/shared/lib/typedEvents';
+import { useCurrentShot, useLastAffectedShot } from '@/shared/state/selectionStore';
 
 interface UseGenerationsPageLogicOptions {
   itemsPerPage?: number;
@@ -38,8 +37,7 @@ function useGenerationsPageLogic({
 
   const { currentShotId } = useCurrentShot();
 
-  const lastAffectedShotContext = useContext(LastAffectedShotContext);
-  const { lastAffectedShotId = null, setLastAffectedShotId = () => {} } = lastAffectedShotContext || {};
+  const { lastAffectedShotId, setLastAffectedShotId } = useLastAffectedShot();
 
   const filterState = useGalleryFilterState({
     shouldLoadData,

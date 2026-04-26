@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
+import { setProjectSelectionSnapshot, resetProjectSelectionStoreForTests } from '@/shared/contexts/projectSelectionStore';
+
+const mockMaybeSingle = vi.fn();
+const mockGetRealtimeTaskSnapshot = vi.fn();
+const mockUseRealtimeTask = vi.fn();
+const mockUpsertRealtimeTaskSnapshot = vi.fn((task: unknown) => task);
 
 // Mock supabase
 vi.mock('@/integrations/supabase/client', () => {
@@ -16,12 +22,19 @@ vi.mock('@/integrations/supabase/client', () => {
     chain.range = vi.fn().mockResolvedValue({ data: [], error: null });
     chain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
     chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+    chain.maybeSingle = mockMaybeSingle;
     return chain;
   };
 
   return {
     getSupabaseClient: vi.fn(() => ({
       from: vi.fn(() => createChain()),
+    })),
+    getSupabaseClientResult: vi.fn(() => ({
+      ok: true,
+      client: {
+        from: vi.fn(() => createChain()),
+      },
     })),
   };
 });
@@ -64,6 +77,12 @@ vi.mock('@/shared/realtime/DataFreshnessManager', () => ({
     onFetchFailure: vi.fn(),
     onFetchSuccess: vi.fn(),
   },
+}));
+
+vi.mock('@/shared/state/realtimeStore', () => ({
+  getRealtimeTaskSnapshot: (...args: unknown[]) => mockGetRealtimeTaskSnapshot(...args),
+  useRealtimeTask: (...args: unknown[]) => mockUseRealtimeTask(...args),
+  upsertRealtimeTaskSnapshot: (...args: unknown[]) => mockUpsertRealtimeTaskSnapshot(...args),
 }));
 
 import { useGetTask, usePaginatedTasks, mapDbTaskToTask } from '../useTasks';
@@ -145,6 +164,11 @@ describe('mapDbTaskToTask', () => {
 describe('useGetTask', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetProjectSelectionStoreForTests();
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+    mockGetRealtimeTaskSnapshot.mockReturnValue(undefined);
+    mockUseRealtimeTask.mockReturnValue(null);
+    mockUpsertRealtimeTaskSnapshot.mockImplementation((task: unknown) => task);
   });
 
   it('is disabled when taskId is empty', () => {
@@ -154,6 +178,48 @@ describe('useGetTask', () => {
 
     expect(result.current.data).toBeUndefined();
     expect(result.current.isFetching).toBe(false);
+  });
+
+  it('falls back to the selected project scope when projectId is omitted', async () => {
+    setProjectSelectionSnapshot({ selectedProjectId: 'fallback-project' });
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        id: 'task-1',
+        task_type: 'generate-video',
+        params: { prompt: 'test' },
+        status: 'Complete',
+        dependant_on: null,
+        output_location: null,
+        created_at: '2025-01-15T12:00:00Z',
+        updated_at: null,
+        project_id: 'fallback-project',
+        cost_cents: null,
+        generation_started_at: null,
+        generation_processed_at: null,
+        error_message: null,
+      },
+      error: null,
+    });
+
+    const { result } = renderHook(() => useGetTask('task-1', null), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toMatchObject({
+        id: 'task-1',
+        projectId: 'fallback-project',
+      });
+    });
+
+    expect(mockMaybeSingle).toHaveBeenCalled();
+    expect(mockUpsertRealtimeTaskSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'task-1',
+        projectId: 'fallback-project',
+      }),
+      'fallback-project',
+    );
   });
 
   it('fetches task data for valid taskId', () => {

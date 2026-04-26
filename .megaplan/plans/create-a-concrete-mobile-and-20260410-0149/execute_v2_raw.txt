@@ -1,7 +1,0 @@
-error: unexpected argument '--add-dir' found
-
-  tip: to pass '--add-dir' as a value, use '-- --add-dir'
-
-Usage: codex exec resume --full-auto --json --skip-git-repo-check [SESSION_ID] [PROMPT]
-
-For more information, try '--help'.

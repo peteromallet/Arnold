@@ -9,8 +9,7 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Shot } from '@/domains/generation/types';
 import { Button } from '@/shared/components/ui/button';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { useUpdateShotName } from '@/shared/hooks/shots';
@@ -22,12 +21,16 @@ import { useUserUIState } from '@/shared/hooks/useUserUIState';
 import { useVideoGalleryPreloader } from '@/shared/hooks/gallery/useVideoGalleryPreloader';
 import type { LoraModel } from '@/domains/lora/types/lora';
 import { ShotSettingsEditor } from '../components/ShotEditor';
-import { VideoTravelSettingsProvider, useVideoTravelSettings } from '../providers';
+import {
+  VideoTravelSettingsProvider,
+  useVideoTravelSettingsMutations,
+} from '../providers';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { VideoTravelFloatingOverlay } from '../components/VideoTravelFloatingOverlay';
 import { useStickyHeader } from '../hooks/useStickyHeader';
 import { useNavigationState } from '../hooks/navigation/useNavigationState';
 import { useOperationTracking } from '../hooks/useOperationTracking';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 interface ShotEditorViewProps {
   /** The shot to edit */
@@ -138,12 +141,10 @@ export function ShotEditorView({
   });
 
   // Pane widths for floating overlay
-  const {
-    isShotsPaneLocked,
-    shotsPaneWidth,
-    isTasksPaneLocked,
-    tasksPaneWidth
-  } = usePanes();
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
 
   // Navigation handlers
   const handleBackToShotList = useCallback(() => {
@@ -279,7 +280,8 @@ function SettingsAutoDisable({ shotId, isCloudGenerationEnabled }: {
   shotId: string;
   isCloudGenerationEnabled: boolean;
 }) {
-  const { settings, status, shotId: loadedShotId, updateField, updateFields } = useVideoTravelSettings();
+  const { settings, status, shotId: loadedShotId, updateField, updateFields } =
+    useVideoTravelSettingsMutations();
   const { turboMode = false, advancedMode = false } = settings;
 
   // Auto-disable turbo mode when cloud generation is disabled

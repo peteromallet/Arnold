@@ -3,11 +3,20 @@ import { act, renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useLightboxShellInteractionHandlers } from './useLightboxShellInteractionHandlers';
 import { isFloatingOverlayElement, shouldAllowTouchThrough } from '@/shared/lib/interactions/elementPolicy';
+import { isElementWithinTopmostOverlay } from '@/shared/components/ui/overlay';
 
 vi.mock('@/shared/lib/interactions/elementPolicy', () => ({
   isFloatingOverlayElement: vi.fn(),
   shouldAllowTouchThrough: vi.fn(),
 }));
+
+vi.mock('@/shared/components/ui/overlay', async () => {
+  const actual = await vi.importActual<typeof import('@/shared/components/ui/overlay')>('@/shared/components/ui/overlay');
+  return {
+    ...actual,
+    isElementWithinTopmostOverlay: vi.fn(),
+  };
+});
 
 function createPointerEvent(target: EventTarget, currentTarget: EventTarget = target) {
   return {
@@ -41,6 +50,7 @@ describe('useLightboxShellInteractionHandlers', () => {
     vi.clearAllMocks();
     vi.mocked(isFloatingOverlayElement).mockReturnValue(false);
     vi.mocked(shouldAllowTouchThrough).mockReturnValue(false);
+    vi.mocked(isElementWithinTopmostOverlay).mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -49,12 +59,15 @@ describe('useLightboxShellInteractionHandlers', () => {
 
   it('closes on overlay pointer up when click starts and ends on overlay', () => {
     const onClose = vi.fn();
+    const popup = document.createElement('div');
+    const popupRef = { current: popup };
     const { result } = renderHook(() =>
       useLightboxShellInteractionHandlers({
         hasCanvasOverlay: false,
         isRepositionMode: false,
         isMobile: false,
         onClose,
+        popupRef,
       }),
     );
 
@@ -76,24 +89,26 @@ describe('useLightboxShellInteractionHandlers', () => {
     expect(upEvent.nativeEvent.stopImmediatePropagation).toHaveBeenCalledTimes(1);
   });
 
-  it('does not close on overlay click while in reposition mode', () => {
+  it('does not close on overlay pointer up while in reposition mode', () => {
     const onClose = vi.fn();
+    const popupRef = { current: document.createElement('div') };
     const { result } = renderHook(() =>
       useLightboxShellInteractionHandlers({
         hasCanvasOverlay: false,
         isRepositionMode: true,
         isMobile: false,
         onClose,
+        popupRef,
       }),
     );
 
     const overlay = document.createElement('div');
     const downEvent = createPointerEvent(overlay, overlay);
-    const clickEvent = createMouseEvent(overlay, overlay);
+    const upEvent = createPointerEvent(overlay, overlay);
 
     act(() => {
       result.current.handleOverlayPointerDown(downEvent);
-      result.current.handleOverlayClick(clickEvent);
+      result.current.handleOverlayPointerUp(upEvent);
     });
 
     expect(onClose).not.toHaveBeenCalled();
@@ -101,12 +116,14 @@ describe('useLightboxShellInteractionHandlers', () => {
 
   it('closes from background capture when pointer down/up are both on lightbox background', () => {
     const onClose = vi.fn();
+    const popupRef = { current: document.createElement('div') };
     const { result } = renderHook(() =>
       useLightboxShellInteractionHandlers({
         hasCanvasOverlay: false,
         isRepositionMode: false,
         isMobile: false,
         onClose,
+        popupRef,
       }),
     );
 
@@ -126,12 +143,14 @@ describe('useLightboxShellInteractionHandlers', () => {
 
   it('stops content pointer propagation unless target is a floating overlay element', () => {
     const onClose = vi.fn();
+    const popupRef = { current: document.createElement('div') };
     const { result } = renderHook(() =>
       useLightboxShellInteractionHandlers({
         hasCanvasOverlay: false,
         isRepositionMode: false,
         isMobile: false,
         onClose,
+        popupRef,
       }),
     );
 
@@ -153,12 +172,14 @@ describe('useLightboxShellInteractionHandlers', () => {
 
   it('handles touch-through policy and mobile touch cancel behavior', () => {
     const onClose = vi.fn();
+    const popupRef = { current: document.createElement('div') };
     const { result } = renderHook(() =>
       useLightboxShellInteractionHandlers({
         hasCanvasOverlay: true,
         isRepositionMode: false,
         isMobile: true,
         onClose,
+        popupRef,
       }),
     );
 
@@ -184,5 +205,33 @@ describe('useLightboxShellInteractionHandlers', () => {
     expect(cancelWithoutDialog.preventDefault).toHaveBeenCalledTimes(1);
     expect(cancelWithoutDialog.stopPropagation).toHaveBeenCalledTimes(1);
     expect(cancelWithoutDialog.nativeEvent.stopImmediatePropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores overlay dismissal handlers when the lightbox is not topmost', () => {
+    vi.mocked(isElementWithinTopmostOverlay).mockReturnValue(false);
+    const onClose = vi.fn();
+    const popupRef = { current: document.createElement('div') };
+    const { result } = renderHook(() =>
+      useLightboxShellInteractionHandlers({
+        hasCanvasOverlay: false,
+        isRepositionMode: false,
+        isMobile: false,
+        onClose,
+        popupRef,
+      }),
+    );
+
+    const overlay = document.createElement('div');
+    const downEvent = createPointerEvent(overlay, overlay);
+    const upEvent = createPointerEvent(overlay, overlay);
+
+    act(() => {
+      result.current.handleOverlayPointerDown(downEvent);
+      result.current.handleOverlayPointerUp(upEvent);
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(downEvent.preventDefault).not.toHaveBeenCalled();
+    expect(upEvent.preventDefault).not.toHaveBeenCalled();
   });
 });

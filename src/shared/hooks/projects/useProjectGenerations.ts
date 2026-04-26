@@ -57,56 +57,88 @@ interface GenerationBaseFilters {
 /**
  * Apply common filters to a generations query.
  * Used by both count and data queries to ensure consistency.
+ *
+ * `options.mediaAvailabilityOr` lets the caller fold a "row has media available"
+ * OR clause into the same combined filter so we never emit two separate `or=`
+ * query-string params (PostgREST rejects that with 400 Bad Request).
  */
 // TODO: type properly - PostgrestFilterBuilder generics are complex Supabase internals
 function applyGenerationFilters<T extends AnyPostgrestFilterBuilder>(
   query: T,
-  filters: GenerationBaseFilters | undefined
+  filters: GenerationBaseFilters | undefined,
+  options?: { mediaAvailabilityOr?: string }
 ): T {
-  if (!filters) return query;
+  // All OR clauses get accumulated and applied together at the end as a single
+  // PostgREST filter parameter. Multiple chained `.or()` calls produce duplicate
+  // `or=` query-string entries which PostgREST rejects.
+  const orClauses: string[] = [];
 
-  // Tool type filter (skip when shot filter is active - shot filter takes precedence)
-  if (filters.toolType && !filters.shotId) {
-    if (filters.toolType === TOOL_IDS.IMAGE_GENERATION) {
-      query = query.eq('params->>tool_type', TOOL_IDS.IMAGE_GENERATION) as T;
-    } else {
-      query = query.or(`params->>tool_type.eq.${filters.toolType},params->>tool_type.eq.${filters.toolType}-reconstructed-client`) as T;
+  if (filters) {
+    // Tool type filter (skip when shot filter is active - shot filter takes precedence)
+    if (filters.toolType && !filters.shotId) {
+      if (filters.toolType === TOOL_IDS.IMAGE_GENERATION) {
+        query = query.eq('params->>tool_type', TOOL_IDS.IMAGE_GENERATION) as T;
+      } else {
+        orClauses.push(`params->>tool_type.eq.${filters.toolType},params->>tool_type.eq.${filters.toolType}-reconstructed-client`);
+      }
+    }
+
+    // Media type filter
+    if (filters.mediaType && filters.mediaType !== 'all') {
+      if (filters.mediaType === 'video') {
+        query = query.like('type', '%video%') as T;
+      } else if (filters.mediaType === 'image') {
+        query = query.not('type', 'like', '%video%') as T;
+      }
+    }
+
+    // Starred filter
+    if (filters.starredOnly) {
+      query = query.eq('starred', true) as T;
+    }
+
+    // Edits only filter (generations derived from another)
+    if (filters.editsOnly) {
+      query = query.not('based_on', 'is', null) as T;
+    }
+
+    // Search filter
+    if (filters.searchTerm?.trim()) {
+      const searchPattern = `%${filters.searchTerm.trim()}%`;
+      query = query.ilike('params->originalParams->orchestrator_details->>prompt', searchPattern) as T;
+    }
+
+    // Shot filter
+    if (filters.shotId === SHOT_FILTER.NO_SHOT) {
+      orClauses.push('shot_data.is.null,shot_data.eq.{}');
+    } else if (filters.shotId) {
+      query = query.not(`shot_data->${filters.shotId}`, 'is', null) as T;
+      if (filters.excludePositioned) {
+        orClauses.push(`shot_data->${filters.shotId}.eq.null,shot_data->${filters.shotId}.eq.-1,shot_data->${filters.shotId}.cs.[null],shot_data->${filters.shotId}.cs.[-1]`);
+      }
     }
   }
 
-  // Media type filter
-  if (filters.mediaType && filters.mediaType !== 'all') {
-    if (filters.mediaType === 'video') {
-      query = query.like('type', '%video%') as T;
-    } else if (filters.mediaType === 'image') {
-      query = query.not('type', 'like', '%video%') as T;
-    }
+  // Caller-supplied availability OR (e.g. location.not.is.null,storage_mode.eq.local).
+  if (options?.mediaAvailabilityOr) {
+    orClauses.push(options.mediaAvailabilityOr);
   }
 
-  // Starred filter
-  if (filters.starredOnly) {
-    query = query.eq('starred', true) as T;
-  }
-
-  // Edits only filter (generations derived from another)
-  if (filters.editsOnly) {
-    query = query.not('based_on', 'is', null) as T;
-  }
-
-  // Search filter
-  if (filters.searchTerm?.trim()) {
-    const searchPattern = `%${filters.searchTerm.trim()}%`;
-    query = query.ilike('params->originalParams->orchestrator_details->>prompt', searchPattern) as T;
-  }
-
-  // Shot filter
-  if (filters.shotId === SHOT_FILTER.NO_SHOT) {
-    query = query.or('shot_data.is.null,shot_data.eq.{}') as T;
-  } else if (filters.shotId) {
-    query = query.not(`shot_data->${filters.shotId}`, 'is', null) as T;
-    if (filters.excludePositioned) {
-      query = query.or(`shot_data->${filters.shotId}.eq.null,shot_data->${filters.shotId}.eq.-1,shot_data->${filters.shotId}.cs.[null],shot_data->${filters.shotId}.cs.[-1]`) as T;
-    }
+  // Apply OR clauses. Single clause → plain `query.or(...)` produces `or=(...)`.
+  // Multiple clauses → combine via a top-level `and=(or(...),or(...))` param so
+  // the request stays valid:
+  //   - chaining multiple `.or()` calls would emit duplicate `or=` keys (rejected
+  //     by PostgREST with 400);
+  //   - wrapping multiple clauses inside a single `or=(and(...))` is also rejected
+  //     because PostgREST requires ≥2 comma-separated entries in an `or=()` group.
+  // supabase-js doesn't expose `.and()`, so we append the param directly to the
+  // builder's underlying URL.
+  if (orClauses.length === 1) {
+    query = query.or(orClauses[0]) as T;
+  } else if (orClauses.length > 1) {
+    const combined = orClauses.map((clause) => `or(${clause})`).join(',');
+    const url = (query as unknown as { url: URL }).url;
+    url.searchParams.append('and', `(${combined})`);
   }
 
   return query;
@@ -256,16 +288,18 @@ async function fetchGenerationsForProject(
     });
   }
 
+  // "Row has media available" = location set OR stored locally. Folded into the
+  // single combined OR clause below to avoid duplicate `or=` query params (which
+  // PostgREST rejects with 400). Skipped when fetching children of a specific
+  // parent — those may still be processing and need to render as placeholders.
+  const mediaAvailabilityOr = filters?.parentGenerationId
+    ? undefined
+    : 'location.not.is.null,storage_mode.eq.local';
+
   // Build count query
   let countQuery = supabase().from('generations')
     .select('*', { count: 'exact', head: true })
     .eq('project_id', projectId);
-  
-  // Only include generations with valid output URLs - UNLESS fetching children of a specific parent
-  // (children may still be processing and need to show as placeholders)
-  if (!filters?.parentGenerationId) {
-    countQuery = countQuery.not('location', 'is', null);
-  }
 
   // Parent/Child filtering (count query specific)
   if (filters?.parentGenerationId) {
@@ -275,7 +309,8 @@ async function fetchGenerationsForProject(
   }
 
   // Apply common filters (toolType, mediaType, starred, edits, search, shot)
-  countQuery = applyGenerationFilters(countQuery, filters);
+  // and the media-availability OR in a single combined call.
+  countQuery = applyGenerationFilters(countQuery, filters, { mediaAvailabilityOr });
 
   const { count, error: countError } = await countQuery;
   if (countError) {
@@ -290,6 +325,11 @@ async function fetchGenerationsForProject(
       location,
       thumbnail_url,
       primary_variant_id,
+      storage_mode,
+      local_handle_id,
+      local_file_name,
+      local_file_size,
+      local_file_mime,
       primary_variant:generation_variants!generations_primary_variant_id_fkey (
         location,
         thumbnail_url
@@ -309,20 +349,18 @@ async function fetchGenerationsForProject(
     `)
     .eq('project_id', projectId);
 
-  // Parent/Child filtering - apply BEFORE location filter since parentGenerationId affects whether we filter by location
-  // Parent/Child filtering (data query specific - has ordering)
+  // Parent/Child filtering (data query specific - has ordering). The
+  // location/storage_mode availability OR is folded into applyGenerationFilters
+  // below as a single combined OR clause.
   if (filters?.parentGenerationId) {
     dataQuery = dataQuery.eq('parent_generation_id', filters.parentGenerationId);
     dataQuery = dataQuery.order('child_order', { ascending: true });
-  } else {
-    dataQuery = dataQuery.not('location', 'is', null);
-    if (!filters?.includeChildren) {
-      dataQuery = dataQuery.eq('is_child', false);
-    }
+  } else if (!filters?.includeChildren) {
+    dataQuery = dataQuery.eq('is_child', false);
   }
 
   // Apply common filters (toolType, mediaType, starred, edits, search, shot)
-  dataQuery = applyGenerationFilters(dataQuery, filters);
+  dataQuery = applyGenerationFilters(dataQuery, filters, { mediaAvailabilityOr });
 
 
   // Determine sort order

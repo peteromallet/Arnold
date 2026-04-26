@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from '@/shared/components/ui/runtime/sonner';
@@ -11,26 +11,17 @@ import {
   DataProviderWrapper,
   useVideoEditorRuntime,
 } from '@/tools/video-editor/contexts/DataProviderContext';
-import { TimelineChromeContextProvider } from '@/tools/video-editor/contexts/TimelineChromeContext';
-import {
-  TimelineEditorDataContextProvider,
-  TimelineEditorOpsContextProvider,
-  useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { TimelinePlaybackContextProvider } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
-import {
-  useAgentChatRegistry,
-  type AgentChatContextValue,
-} from '@/shared/contexts/AgentChatContext';
+import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext';
+import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects';
 import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry';
 import { useEffectResources } from '@/tools/video-editor/hooks/useEffectResources';
-import { useSelectedMediaClips } from '@/tools/video-editor/hooks/useSelectedMediaClips';
+import { useTimelineClipsForAttachments } from '@/tools/video-editor/hooks/useTimelineClipsForAttachments';
 import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
+import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore';
 import type {
   TimelineActionResizeStart,
   TimelineClipEdgeResizeEnd,
-  TimelineEditorDataContextValue,
   TimelineEditorOpsContextValue,
 } from '@/tools/video-editor/hooks/useTimelineState.types';
 import { useVideoEditorLightboxNavigation } from '@/tools/video-editor/hooks/useVideoEditorLightboxNavigation';
@@ -75,42 +66,22 @@ export function buildVideoEditorLightboxMedia(
   };
 }
 
-/** Registers video-editor state into the app-level AgentChatContext so the
- *  global AgentChat component (rendered outside this provider tree) can access
- *  timeline clips and selection ops. Must be rendered inside TimelineEditorOpsContextProvider. */
+/** Registers video-editor state into the app-level AgentChatContext and keeps
+ *  timeline attachment metadata synchronized in the selection store. */
 function AgentChatBridgeRegistration() {
   const { timelineId } = useVideoEditorRuntime();
-  const timelineEditorOps = useTimelineEditorOps();
-  const { clips: timelineClips } = useSelectedMediaClips();
+  const allClips = useTimelineClipsForAttachments();
   const { register, unregister } = useAgentChatRegistry();
 
-  // Use refs so the registered callback always reads fresh values without
-  // re-running the effect (which would cause register/unregister churn).
-  const opsRef = useRef(timelineEditorOps);
-  const clipsRef = useRef(timelineClips);
-  opsRef.current = timelineEditorOps;
-  clipsRef.current = timelineClips;
-
-  const stableReplace = useCallback((nextClips: AgentChatContextValue['timelineClips']) => {
-    const nextClipIds = nextClips.map((clip) => clip.clipId);
-    const ops = opsRef.current;
-    if (typeof ops.replaceTimelineSelection === 'function') {
-      ops.replaceTimelineSelection(nextClipIds);
-      return;
-    }
-    ops.selectClips(nextClipIds);
-  }, []);
-
-  // Only re-register when timelineId changes (mount, unmount, or timeline switch).
-  // Clips and ops are accessed via refs from the stable callback.
   useEffect(() => {
-    register({
-      timelineId,
-      get timelineClips() { return clipsRef.current; },
-      replaceSelectedTimelineClips: stableReplace,
-    });
+    setTimelineClipData(allClips);
+    return () => clearTimelineClipData();
+  }, [allClips]);
+
+  useEffect(() => {
+    register({ timelineId });
     return unregister;
-  }, [register, unregister, stableReplace, timelineId]);
+  }, [register, unregister, timelineId]);
 
   return null;
 }
@@ -132,7 +103,7 @@ function InnerProvider({
     })),
     effectResources.effects,
   );
-  const { editor, chrome, playback } = useTimelineState();
+  const { store, editor } = useTimelineState();
   const { shots } = useShots();
   const [searchParams, setSearchParams] = useSearchParams();
   const pendingAddGenerationId = searchParams.get(ADD_GENERATION_QUERY_PARAM);
@@ -292,42 +263,6 @@ function InnerProvider({
     });
   }, [lightboxAssetKey, lightboxClipId, lightboxFallbackMedia, lightboxGenerationId, lightboxQuery.data, lightboxQuery.isLoading]);
 
-  const editorData = useMemo<TimelineEditorDataContextValue>(() => ({
-    data: editor.data,
-    resolvedConfig: editor.resolvedConfig,
-    deviceClass: editor.deviceClass,
-    inputModality: editor.inputModality,
-    interactionMode: editor.interactionMode,
-    gestureOwner: editor.gestureOwner,
-    precisionEnabled: editor.precisionEnabled,
-    contextTarget: editor.contextTarget,
-    inspectorTarget: editor.inspectorTarget,
-    interactionPolicy: editor.interactionPolicy,
-    selectedClipId: editor.selectedClipId,
-    selectedClipIds: editor.selectedClipIds,
-    selectedClipIdsRef: editor.selectedClipIdsRef,
-    additiveSelectionRef: editor.additiveSelectionRef,
-    selectedTrackId: editor.selectedTrackId,
-    primaryClipId: editor.primaryClipId,
-    selectedClip: editor.selectedClip,
-    selectedTrack: editor.selectedTrack,
-    selectedClipHasPredecessor: editor.selectedClipHasPredecessor,
-    compositionSize: editor.compositionSize,
-    trackScaleMap: editor.trackScaleMap,
-    scale: editor.scale,
-    scaleWidth: editor.scaleWidth,
-    isLoading: editor.isLoading,
-    dataRef: editor.dataRef,
-    pendingOpsRef: editor.pendingOpsRef,
-    interactionStateRef: editor.interactionStateRef,
-    coordinator: editor.coordinator,
-    indicatorRef: editor.indicatorRef,
-    editAreaRef: editor.editAreaRef,
-    preferences: editor.preferences,
-    timelineRef: editor.timelineRef,
-    timelineWrapperRef: editor.timelineWrapperRef,
-  }), [editor]);
-
   const onActionResizeStart: TimelineActionResizeStart = editor.onActionResizeStart;
   const onClipEdgeResizeEnd: TimelineClipEdgeResizeEnd = editor.onClipEdgeResizeEnd;
 
@@ -339,11 +274,9 @@ function InnerProvider({
     setPrecisionEnabled: editor.setPrecisionEnabled,
     setContextTarget: editor.setContextTarget,
     setInspectorTarget: editor.setInspectorTarget,
-    setSelectedClipId: editor.setSelectedClipId,
     isClipSelected: editor.isClipSelected,
     selectClip: editor.selectClip,
     selectClips: editor.selectClips,
-    replaceTimelineSelection: editor.replaceTimelineSelection,
     addToSelection: editor.addToSelection,
     clearSelection: editor.clearSelection,
     setSelectedTrackId: editor.setSelectedTrackId,
@@ -388,6 +321,10 @@ function InnerProvider({
     setLightboxAssetKey,
   }), [editor, onActionResizeStart, onClipEdgeResizeEnd, onDoubleClickAsset, setLightboxAssetKey]);
 
+  useLayoutEffect(() => {
+    store.getState().syncOpsSlice(editorOps);
+  }, [editorOps, store]);
+
   const resolvedLightboxMedia = lightboxQuery.data ?? lightboxFallbackMedia;
   const lightboxOnClose = useCallback(() => {
     setLightboxAssetKey(null);
@@ -401,28 +338,22 @@ function InnerProvider({
   );
 
   return (
-    <TimelineEditorDataContextProvider value={editorData}>
-      <TimelineEditorOpsContextProvider value={editorOps}>
-        <AgentChatBridgeRegistration />
-        <TimelineChromeContextProvider value={chrome}>
-          <TimelinePlaybackContextProvider value={playback}>
-            {children}
-            {lightboxAssetKey && resolvedLightboxMedia && (
-              <>
-                <MediaLightbox
-                  media={resolvedLightboxMedia}
-                  navigation={navResult.navigation}
-                  initialVariantId={lightboxInitialVariantId}
-                  onClose={lightboxOnClose}
-                  features={lightboxFeatures}
-                />
-                {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
-              </>
-            )}
-          </TimelinePlaybackContextProvider>
-        </TimelineChromeContextProvider>
-      </TimelineEditorOpsContextProvider>
-    </TimelineEditorDataContextProvider>
+    <TimelineStoreProvider store={store}>
+      <AgentChatBridgeRegistration />
+      {children}
+      {lightboxAssetKey && resolvedLightboxMedia && (
+        <>
+          <MediaLightbox
+            media={resolvedLightboxMedia}
+            navigation={navResult.navigation}
+            initialVariantId={lightboxInitialVariantId}
+            onClose={lightboxOnClose}
+            features={lightboxFeatures}
+          />
+          {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
+        </>
+      )}
+    </TimelineStoreProvider>
   );
 }
 

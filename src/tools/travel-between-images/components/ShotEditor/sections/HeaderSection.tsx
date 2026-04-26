@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { Header } from '../ui/Header';
-import { useShotSettingsContext } from '../ShotSettingsContext';
+import { useShotSettingsIdentity, useShotSettingsUi } from '../ShotSettingsContext';
 import { useUpdateShotAspectRatio } from '@/shared/hooks/shots';
 import type { HeaderSectionCallbacks, HeaderSectionLayout } from './headerSectionTypes';
 
@@ -26,10 +26,9 @@ export const HeaderSection: React.FC<HeaderSectionProps> = ({
     selectedShotId,
     projectId,
     projects,
-    state,
-    actions,
     effectiveAspectRatio,
-  } = useShotSettingsContext();
+  } = useShotSettingsIdentity();
+  const { state, actions } = useShotSettingsUi();
   const { updateShotAspectRatio } = useUpdateShotAspectRatio();
 
   const onRevertAspectRatio = React.useCallback(async () => {

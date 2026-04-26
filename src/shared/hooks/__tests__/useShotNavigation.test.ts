@@ -8,7 +8,7 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }));
 
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useCurrentShot: () => ({
     setCurrentShotId: mockSetCurrentShotId,
     currentShotId: null,

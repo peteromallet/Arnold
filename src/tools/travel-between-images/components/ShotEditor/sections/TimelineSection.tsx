@@ -1,10 +1,14 @@
 import React from 'react';
 import { ShotImagesEditor } from '../../ShotImagesEditor';
 import { ImageManagerSkeleton } from '../ui/Skeleton';
-import { useShotSettingsContext } from '../ShotSettingsContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
+import {
+  useShotSettingsIdentity,
+  useShotSettingsMedia,
+  useShotSettingsUi,
+} from '../ShotSettingsContext';
 import { useModelSettings } from '@/tools/travel-between-images/providers';
 import { MODEL_DEFAULTS } from '@/tools/travel-between-images/settings';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 interface TimelineSectionProps {
   timelineSectionRef?: (node: HTMLDivElement | null) => void;
@@ -55,11 +59,9 @@ export const TimelineSection: React.FC<TimelineSectionProps> = ({
   onDragStateChange,
   cachedHasStructureVideo,
 }) => {
+  const { selectedShot, projectId, effectiveAspectRatio } = useShotSettingsIdentity();
+  const { state } = useShotSettingsUi();
   const {
-    selectedShot,
-    projectId,
-    effectiveAspectRatio,
-    state,
     allShotImages,
     unpositionedImages,
     contextImages,
@@ -68,8 +70,8 @@ export const TimelineSection: React.FC<TimelineSectionProps> = ({
     audio,
     imageHandlers,
     shotManagement,
-  } = useShotSettingsContext();
-  const { isGenerationsPaneLocked } = usePanes();
+  } = useShotSettingsMedia();
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
   const { selectedModel } = useModelSettings();
   const timelineFps = MODEL_DEFAULTS[selectedModel]?.fps ?? 16;
 

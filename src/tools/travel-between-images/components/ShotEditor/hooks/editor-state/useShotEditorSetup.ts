@@ -1,5 +1,5 @@
 import React, { useMemo, useRef } from 'react';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useShots } from '@/shared/contexts/ShotsContext';
 import { useShotImages } from '@/shared/hooks/shots/useShotImages';
 import { Shot, GenerationRow } from '@/domains/generation/types';
@@ -57,7 +57,8 @@ export function useShotEditorSetup({
   optimisticShotData,
   batchVideoFrames,
 }: UseShotEditorSetupProps): UseShotEditorSetupReturn {
-  const { selectedProjectId, projects } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
+  const { projects } = useProjectCrudContext();
   const { shots } = useShots();
 
   const foundShot = useMemo(

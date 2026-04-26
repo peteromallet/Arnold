@@ -189,7 +189,6 @@ export const ShotSelectorWithAdd: React.FC<ShotSelectorWithAddProps> = ({
           isAlreadyPositionedInSelectedShot && !showTick && 'bg-gray-500/60 hover:bg-gray-600/70 !text-white',
           buttonClassName
         )}
-        tooltipClassName="z-[100001]"
       />
     </div>
   );

@@ -17,10 +17,10 @@ import { TOOL_ROUTES } from '@/shared/lib/tooling/toolRoutes';
 import { type GalleryFilterState } from '@/shared/components/MediaGallery';
 import { useContainerWidth } from '@/shared/components/MediaGallery/hooks/useContainerWidth';
 import { calculateGalleryLayout } from '@/shared/components/MediaGallery/utils';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useGalleryPageState } from '@/features/gallery/hooks/useGalleryPageState';
 import { useIsMobile } from '@/shared/hooks/mobile';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { useShots } from '@/shared/contexts/ShotsContext';
 import {
   useProjectCrudContext,
@@ -283,18 +283,16 @@ const usePaneLayout = (projectAspectRatio: ProjectAspectRatio | undefined, expan
 export const useGenerationsPaneController = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const {
-    isGenerationsPaneLocked,
-    setIsGenerationsPaneLocked,
-    isGenerationsPaneOpen,
-    setIsGenerationsPaneOpen,
-    generationsPaneHeight,
-    isShotsPaneLocked,
-    shotsPaneWidth,
-    isTasksPaneLocked,
-    tasksPaneWidth,
-    isEditorPaneLocked,
-  } = usePanes();
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
+  const setIsGenerationsPaneLocked = usePanesStore((state) => state.setIsGenerationsPaneLocked);
+  const isGenerationsPaneOpen = usePanesStore((state) => state.isGenerationsPaneOpen);
+  const setIsGenerationsPaneOpen = usePanesStore((state) => state.setIsGenerationsPaneOpen);
+  const generationsPaneHeight = usePanesStore((state) => state.generationsPaneHeight);
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
+  const isEditorPaneLocked = usePanesStore((state) => state.isEditorPaneLocked);
   const { selectedProjectId } = useProjectSelectionContext();
   const { projects } = useProjectCrudContext();
   const { currentShotId } = useCurrentShot();

@@ -16,7 +16,6 @@ export type TimelineRenderProgress = {
 
 export type TimelineDataRef = React.MutableRefObject<TimelineData | null>;
 export type TimelinePendingOpsRef = React.MutableRefObject<number>;
-export type TimelineSetSelectedClipId = React.Dispatch<React.SetStateAction<string | null>>;
 export type TimelineSetSelectedTrackId = React.Dispatch<React.SetStateAction<string | null>>;
 export type TimelineSetRenderLog = React.Dispatch<React.SetStateAction<string>>;
 export type TimelineSetRenderDirty = React.Dispatch<React.SetStateAction<boolean>>;

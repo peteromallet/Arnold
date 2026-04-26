@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { resolveVideoEditorPath } from '@/tools/video-editor/lib/video-editor-path';
 
 /**
@@ -20,16 +20,14 @@ import { resolveVideoEditorPath } from '@/tools/video-editor/lib/video-editor-pa
 export function useGlobalPaneShortcuts() {
   const queryClient = useQueryClient();
   const { selectedProjectId } = useProjectSelectionContext();
-  const {
-    isEditorPaneLocked,
-    setIsEditorPaneLocked,
-    isGenerationsPaneLocked,
-    setIsGenerationsPaneLocked,
-    isShotsPaneLocked,
-    setIsShotsPaneLocked,
-    isTasksPaneLocked,
-    setIsTasksPaneLocked,
-  } = usePanes();
+  const isEditorPaneLocked = usePanesStore((state) => state.isEditorPaneLocked);
+  const setIsEditorPaneLocked = usePanesStore((state) => state.setIsEditorPaneLocked);
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
+  const setIsGenerationsPaneLocked = usePanesStore((state) => state.setIsGenerationsPaneLocked);
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const setIsShotsPaneLocked = usePanesStore((state) => state.setIsShotsPaneLocked);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const setIsTasksPaneLocked = usePanesStore((state) => state.setIsTasksPaneLocked);
   const navigate = useNavigate();
 
   useEffect(() => {

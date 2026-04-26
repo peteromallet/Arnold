@@ -16,12 +16,12 @@
  */
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
 import { useShots } from '@/shared/contexts/ShotsContext';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { GenerationsPaneSettings } from '@/shared/types/steerableMotion';
 import { SHOT_FILTER, isSpecialFilter } from '@/shared/constants/filterConstants';
 import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 
 /**
  * Filter state for a single shot.

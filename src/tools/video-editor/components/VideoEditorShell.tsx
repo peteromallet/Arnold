@@ -10,19 +10,20 @@ import { cn } from '@/shared/components/ui/contracts/cn';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/shared/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/shared/components/ui/dropdown-menu';
 import { Slider } from '@/shared/components/ui/slider';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useHomeNavigation } from '@/shared/hooks/useHomeNavigation';
+import { usePanesStore } from '@/shared/state/panesStore';
+import { editorReplaceTimelineSelection } from '@/shared/state/selectionStore';
 import { CompactPreview } from '@/tools/video-editor/components/CompactPreview';
 import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel';
 import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
 import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel';
 import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor';
-import { useTimelineChromeContext } from '@/tools/video-editor/contexts/TimelineChromeContext';
 import {
+  useTimelineChromeContext,
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { useTimelinePlaybackContext } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
+  useTimelinePlaybackContext,
+} from '@/tools/video-editor/hooks/timelineStore';
 import { useKeyboardShortcuts } from '@/tools/video-editor/hooks/useKeyboardShortcuts';
 import { useTimelineRealtime } from '@/tools/video-editor/hooks/useTimelineRealtime';
 import { getTimelineDurationInFrames, parseResolution } from '@/tools/video-editor/lib/config-utils';
@@ -96,7 +97,9 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
   const chrome = useTimelineChromeContext();
   const playback = useTimelinePlaybackContext();
   const { navigateHome } = useHomeNavigation();
-  const { isEditorPaneLocked, isGenerationsPaneLocked, setIsGenerationsPaneLocked } = usePanes();
+  const isEditorPaneLocked = usePanesStore((state) => state.isEditorPaneLocked);
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
+  const setIsGenerationsPaneLocked = usePanesStore((state) => state.setIsGenerationsPaneLocked);
   const isPhone = editorData.deviceClass === 'phone';
   const isTablet = editorData.deviceClass === 'tablet';
   const location = useLocation();
@@ -142,7 +145,7 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
     moveSelectedClipsToTrack: editorOps.moveSelectedClipsToTrack,
     undo: chrome.undo,
     redo: chrome.redo,
-    selectAllClips: () => editorOps.selectClips(Object.keys(editorData.data?.meta ?? {})),
+    selectAllClips: () => editorReplaceTimelineSelection(Object.keys(editorData.data?.meta ?? {})),
     togglePlayPause: () => playback.previewRef.current?.togglePlayPause(),
     seekRelative: (deltaSeconds) => playback.previewRef.current?.seek(Math.max(0, playback.currentTime + deltaSeconds)),
     toggleMute: () => editorOps.handleToggleMuteClips([...editorData.selectedClipIds]),

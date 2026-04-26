@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useShots } from '@/shared/contexts/ShotsContext';
-import { useTimelineEditorData } from '@/tools/video-editor/contexts/TimelineEditorContext';
+import { useTimelineEditorData } from '@/tools/video-editor/hooks/timelineStore';
 import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils';
 
 export type SelectedMediaClip = {
@@ -17,6 +17,7 @@ export type SelectedMediaClip = {
   trackId?: string;
   at?: number;
   duration?: number;
+  isPlaceholder?: boolean;
 };
 
 type SummaryMediaClip = Pick<SelectedMediaClip, 'mediaType' | 'shotId' | 'shotSelectionClipCount'>;

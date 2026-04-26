@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { MediaLightbox } from "@/domains/media-lightbox/MediaLightbox";
 import { TaskDetailsModal } from '@/shared/components/TaskDetails/TaskDetailsModal';
 import { GenerationDetails } from '@/domains/generation/components/GenerationDetails';
@@ -8,6 +8,8 @@ import type { GeneratedImageWithMetadata } from '../types';
 import type { LightboxActionHandlers } from '@/domains/media-lightbox/types';
 import type { TaskDetailsData } from '@/shared/lib/taskDetails/taskDetailsContract';
 import type { MediaGalleryLightboxMedia } from '../utils/lightboxMedia';
+import { useLocalMediaUrl } from '@/shared/media/localMediaResolver';
+import { LocalMediaPermissionOverlay } from '@/features/gallery/components/GenerationsPane/components/LocalMediaPermissionOverlay';
 
 export interface MediaGalleryLightboxSession {
   activeLightboxMedia: GeneratedImageWithMetadata | null;
@@ -110,17 +112,65 @@ export const MediaGalleryLightbox: React.FC<MediaGalleryLightboxProps> = ({
     toolTypeOverride,
   } = session;
 
+  const [resolverRefreshToken, setResolverRefreshToken] = useState(0);
+  const [materializedLocationOverride, setMaterializedLocationOverride] = useState<string | null>(null);
+
+  useEffect(() => {
+    setResolverRefreshToken(0);
+    setMaterializedLocationOverride(null);
+  }, [lightboxMedia?.id]);
+
   const effectiveAutoEnterEditMode = useMemo(() => {
     const fromMetadata = activeLightboxMedia?.metadata?.__autoEnterEditMode as boolean | undefined;
     return fromMetadata ?? autoEnterEditMode ?? false;
   }, [activeLightboxMedia?.metadata?.__autoEnterEditMode, autoEnterEditMode]);
 
+  const resolvedLocalMedia = useLocalMediaUrl(lightboxMedia, { refreshToken: resolverRefreshToken });
+  const handlePermissionGranted = useCallback(() => {
+    setResolverRefreshToken((current) => current + 1);
+  }, []);
+  const handleMaterialized = useCallback((location: string) => {
+    setMaterializedLocationOverride(location);
+    setResolverRefreshToken((current) => current + 1);
+  }, []);
+  const effectiveLightboxMedia = useMemo(() => {
+    if (!lightboxMedia) {
+      return null;
+    }
+
+    return {
+      ...lightboxMedia,
+      storage_mode: materializedLocationOverride ? 'remote' : lightboxMedia.storage_mode,
+      location: materializedLocationOverride ?? resolvedLocalMedia.url,
+      imageUrl: materializedLocationOverride ?? resolvedLocalMedia.url ?? undefined,
+    };
+  }, [lightboxMedia, materializedLocationOverride, resolvedLocalMedia.url]);
+
+  const localMediaOverlay = useMemo(() => {
+    if (!lightboxMedia) {
+      return null;
+    }
+
+    if (resolvedLocalMedia.state !== 'needs-permission' && resolvedLocalMedia.state !== 'missing') {
+      return null;
+    }
+
+    return (
+      <LocalMediaPermissionOverlay
+        generation={lightboxMedia}
+        state={resolvedLocalMedia.state}
+        onPermissionGranted={handlePermissionGranted}
+        onMaterialized={handleMaterialized}
+      />
+    );
+  }, [handleMaterialized, handlePermissionGranted, lightboxMedia, resolvedLocalMedia.state]);
+
   return (
     <>
       {/* Main Lightbox Modal */}
-      {lightboxMedia && (
+      {effectiveLightboxMedia && (
         <MediaLightbox
-          media={lightboxMedia}
+          media={effectiveLightboxMedia}
           onClose={onClose}
           shotId={selectedShotIdLocal !== 'all' ? selectedShotIdLocal : undefined}
           toolTypeOverride={toolTypeOverride}
@@ -154,8 +204,9 @@ export const MediaGalleryLightbox: React.FC<MediaGalleryLightboxProps> = ({
             onDelete,
             isDeleting,
             onApplySettings,
-            starred: lightboxMedia.starred ?? false,
+            starred: effectiveLightboxMedia.starred ?? false,
           }}
+          customOverlay={localMediaOverlay}
           features={{
             showTaskDetails: true,
             showImageEditTools: !((activeLightboxMedia?.type || '').includes('video')),

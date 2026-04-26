@@ -13,7 +13,7 @@ import { getSourceTaskIdLegacyCompatible } from '@/shared/lib/taskIdHelpers';
 import { useGetTask } from '@/shared/hooks/tasks/useTasks';
 import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
 import { TASK_STATUS } from '@/types/tasks';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 
 interface VariantDetailsProps {
   variant: GenerationVariant;
@@ -21,7 +21,7 @@ interface VariantDetailsProps {
 }
 
 export const VariantDetails: React.FC<VariantDetailsProps> = ({ variant, availableLoras }) => {
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
   const variantParams = variant.params;
   const sourceTaskId = getSourceTaskIdLegacyCompatible(variantParams);
   const { data: task, isLoading } = useGetTask(sourceTaskId || '', selectedProjectId ?? null);

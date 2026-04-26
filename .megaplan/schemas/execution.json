@@ -34,7 +34,8 @@
             "type": "string",
             "enum": [
               "done",
-              "skipped"
+              "skipped",
+              "blocked"
             ]
           },
           "executor_notes": {
@@ -51,6 +52,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "auto_attributed_files": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -58,7 +65,8 @@
           "status",
           "executor_notes",
           "files_changed",
-          "commands_run"
+          "commands_run",
+          "auto_attributed_files"
         ],
         "additionalProperties": false
       }

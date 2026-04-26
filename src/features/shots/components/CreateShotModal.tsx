@@ -7,7 +7,7 @@ import { parseRatio, findClosestAspectRatio } from '@/shared/lib/media/aspectRat
 import { cropImageToProjectAspectRatio } from '@/shared/lib/media/imageCropper';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { AspectRatioSelector } from '@/shared/components/GenerationControls/AspectRatioSelector';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext } from '@/shared/contexts/ProjectContext';
 import { ModalContainer, ModalFooterButtons } from '@/shared/components/ModalContainer';
 
 interface CreateShotModalProps {
@@ -38,7 +38,7 @@ const CreateShotModal: React.FC<CreateShotModalProps> = ({
   const [updateProjectAspectRatio, setUpdateProjectAspectRatio] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [imageChangedRatio, setImageChangedRatio] = useState(false);
-  const { updateProject } = useProject();
+  const { updateProject } = useProjectCrudContext();
 
   useEffect(() => {
     if (isOpen) {

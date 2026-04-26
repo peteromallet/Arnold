@@ -40,7 +40,7 @@ export const WorkflowControlsBar: React.FC<WorkflowControlsBarProps> = ({
   return (
     <>
       {core.onAddToVideoEditor && (
-        <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 flex items-center z-[70] pointer-events-auto">
+        <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 flex items-center z-[70]">
           <div className="bg-black/50 backdrop-blur-sm rounded-lg px-1.5 py-1 flex items-center">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -57,7 +57,7 @@ export const WorkflowControlsBar: React.FC<WorkflowControlsBarProps> = ({
                   {isStaged ? <Check className="h-4 w-4" /> : <FilmIcon className="h-4 w-4" />}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="z-[100001]">
+              <TooltipContent>
                 {isStaged ? 'Click to jump to video editor' : 'Add to video editor timeline'}
               </TooltipContent>
             </Tooltip>
@@ -86,7 +86,7 @@ export const WorkflowControlsBar: React.FC<WorkflowControlsBarProps> = ({
                   <Settings className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="z-[100001]">Apply settings</TooltipContent>
+              <TooltipContent>Apply settings</TooltipContent>
             </Tooltip>
           )}
         </div>

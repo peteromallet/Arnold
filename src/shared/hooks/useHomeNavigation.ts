@@ -2,7 +2,6 @@ import { useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { useUserUIState } from '@/shared/hooks/useUserUIState';
 import {
@@ -11,6 +10,7 @@ import {
   resolveHomeToolPath,
 } from '@/shared/lib/tooling/homeNavigation';
 import { TOOL_IDS } from '@/shared/lib/tooling/toolIds';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults';
 
 const FALLBACK_GENERATION_METHODS = { onComputer: true, inCloud: true };
@@ -19,7 +19,7 @@ export function useHomeNavigation() {
   const navigate = useNavigate();
   const location = useLocation();
   const { selectedProjectId } = useProjectSelectionContext();
-  const { setIsShotsPaneLocked } = usePanes();
+  const setIsShotsPaneLocked = usePanesStore((state) => state.setIsShotsPaneLocked);
   const { value: defaultTool } = useUserUIState('defaultTool', {
     toolId: TOOL_IDS.TRAVEL_BETWEEN_IMAGES,
   });
@@ -74,4 +74,3 @@ export function useHomeNavigation() {
     navigateHome,
   };
 }
-

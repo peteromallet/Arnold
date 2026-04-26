@@ -7,10 +7,11 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   normalizeAndPresentError: vi.fn(),
   useProject: vi.fn(),
+  useProjectCrudContext: vi.fn(),
   useQueryClient: vi.fn(),
   useEnqueueGenerationsInvalidation: vi.fn(),
   useShotNavigation: vi.fn(),
-  usePanes: vi.fn(),
+  usePanesStore: vi.fn(),
   useShotSettings: vi.fn(),
   useToolSettings: vi.fn(),
   useProjectGenerationModesCache: vi.fn(),
@@ -36,6 +37,9 @@ vi.mock('@/shared/lib/errorHandling/runtimeError', () => ({
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: (...args: unknown[]) => mocks.useProject(...args),
+  useProjectSelectionContext: (...args: unknown[]) => mocks.useProject(...args),
+  useProjectCrudContext: (...args: unknown[]) => mocks.useProjectCrudContext(...args),
+  useProjectIdentityContext: () => ({ userId: null }),
 }));
 
 vi.mock('@tanstack/react-query', () => ({
@@ -50,8 +54,8 @@ vi.mock('@/shared/hooks/shots/useShotNavigation', () => ({
   useShotNavigation: (...args: unknown[]) => mocks.useShotNavigation(...args),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: (...args: unknown[]) => mocks.usePanes(...args),
+vi.mock('@/shared/state/panesStore', () => ({
+  usePanesStore: (selector: (state: unknown) => unknown) => selector(mocks.usePanesStore()),
 }));
 
 vi.mock('../../hooks/settings/useShotSettings', () => ({
@@ -114,12 +118,22 @@ describe('useVideoGenerationModalController', () => {
     vi.useFakeTimers();
     mocks.useProject.mockReturnValue({
       selectedProjectId: 'project-1',
+    });
+    mocks.useProjectCrudContext.mockReturnValue({
       projects: [{ id: 'project-1', aspectRatio: '16:9' }],
+      isLoadingProjects: false,
+      fetchProjects: vi.fn(),
+      addNewProject: vi.fn(),
+      isCreatingProject: false,
+      updateProject: vi.fn(),
+      isUpdatingProject: false,
+      deleteProject: vi.fn(),
+      isDeletingProject: false,
     });
     mocks.useQueryClient.mockReturnValue({ query: 'client' });
     mocks.useEnqueueGenerationsInvalidation.mockReturnValue(vi.fn());
     mocks.useShotNavigation.mockReturnValue({ navigateToShot: vi.fn() });
-    mocks.usePanes.mockReturnValue({ isShotsPaneLocked: false, setIsShotsPaneLocked: vi.fn() });
+    mocks.usePanesStore.mockReturnValue({ isShotsPaneLocked: false, setIsShotsPaneLocked: vi.fn() });
     mocks.useToolSettings.mockReturnValue({
       settings: { acceleratedMode: false, randomSeed: true },
       update: vi.fn(),
@@ -261,86 +275,6 @@ describe('useVideoGenerationModalController', () => {
     expect(result.current.guidanceKind).toBe('depth');
   });
 
-  it('queues generation successfully and closes after the success timeout', async () => {
-    const onClose = vi.fn();
-    const invalidateGenerations = vi.fn();
-    mocks.useEnqueueGenerationsInvalidation.mockReturnValueOnce(invalidateGenerations);
-
-    const { result } = renderHook(() => useVideoGenerationModalController({
-      isOpen: true,
-      onClose,
-      shot: { id: 'shot-1' } as never,
-    }));
-
-    await act(async () => {
-      await result.current.handleGenerate();
-    });
-
-    expect(mocks.useShotSettings.mock.results[0]?.value.updateField).toHaveBeenCalledWith(
-      'generationMode',
-      'batch',
-    );
-    expect(mocks.buildBasicModePhaseConfig).toHaveBeenCalledWith(70, [
-      { path: '/lora-1', strength: 0.8 },
-    ]);
-    expect(mocks.generateVideo).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: 'project-1',
-      selectedShotId: 'shot-1',
-      effectiveAspectRatio: '16:9',
-      generationMode: 'batch',
-    }));
-    expect(mocks.generateVideo).toHaveBeenCalledWith(expect.objectContaining({
-      structureGuidance: { mode: 'none' },
-      structureVideos: [],
-      selectedLoras: [
-        expect.objectContaining({
-          id: 'lora-1',
-          name: 'Lora One',
-          path: '/lora-1',
-          strength: 0.8,
-        }),
-      ],
-    }));
-    expect(result.current.justQueued).toBe(true);
-    expect(result.current.isGenerating).toBe(false);
-    expect(invalidateGenerations).toHaveBeenCalledWith('shot-1', {
-      reason: 'video-generation-modal-success',
-      scope: 'all',
-      includeProjectUnified: true,
-      projectId: 'project-1',
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-
-    expect(result.current.justQueued).toBe(false);
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('shows a toast instead of generating when no positioned images are available', async () => {
-    mocks.useShotImages.mockReturnValue({
-      data: [
-        {
-          id: 'vid-1',
-          type: 'video',
-          timeline_frame: 5,
-        },
-      ],
-      isLoading: false,
-    });
-
-    const { result } = renderHook(() => useVideoGenerationModalController({
-      isOpen: true,
-      onClose: vi.fn(),
-      shot: { id: 'shot-1' } as never,
-    }));
-
-    await act(async () => {
-      await result.current.handleGenerate();
-    });
-
-    expect(mocks.toastError).toHaveBeenCalledWith('At least 1 positioned image is required.');
-    expect(mocks.generateVideo).not.toHaveBeenCalled();
-  });
+  // Note: generation orchestration (handleGenerate, isGenerating, justQueued)
+  // now lives in useBatchVideoGeneration — see useBatchVideoGeneration.test.tsx.
 });

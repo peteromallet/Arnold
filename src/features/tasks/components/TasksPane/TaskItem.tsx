@@ -5,7 +5,7 @@ import { Button } from '@/shared/components/ui/button';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { Task } from '@/types/tasks';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useIsMobile } from '@/shared/hooks/mobile';
 import { useCancelTask } from '@/shared/hooks/tasks/useTaskCancellation';
 import { useTaskType } from '@/shared/hooks/tasks/useTaskType';
@@ -47,7 +47,7 @@ const TaskItemComponent: React.FC<TaskItemProps> = ({
   projectName,
 }) => {
   const isMobile = useIsMobile();
-  const { selectedProjectId, setSelectedProjectId } = useProject();
+  const { selectedProjectId, setSelectedProjectId } = useProjectSelectionContext();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const cancelTaskMutation = useCancelTask(selectedProjectId);

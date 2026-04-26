@@ -10,6 +10,19 @@ vi.mock('@/shared/hooks/mobile', () => ({
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: () => ({ selectedProjectId: 'proj-1', projects: [] }),
+  useProjectSelectionContext: () => ({ selectedProjectId: 'proj-1', project: null, setSelectedProjectId: vi.fn() }),
+  useProjectCrudContext: () => ({
+    projects: [],
+    isLoadingProjects: false,
+    fetchProjects: vi.fn(),
+    addNewProject: vi.fn(),
+    isCreatingProject: false,
+    updateProject: vi.fn(),
+    isUpdatingProject: false,
+    deleteProject: vi.fn(),
+    isDeletingProject: false,
+  }),
+  useProjectIdentityContext: () => ({ userId: null }),
 }));
 
 vi.mock('@/shared/hooks/useUserUIState', () => ({
@@ -218,7 +231,7 @@ vi.mock('@/shared/hooks/variants/useVariants', () => ({
   }),
 }));
 
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useCurrentShot: () => ({ currentShotId: null, setCurrentShotId: vi.fn() }),
 }));
 

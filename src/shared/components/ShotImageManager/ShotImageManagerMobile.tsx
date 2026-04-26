@@ -6,7 +6,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { ConfirmDialog } from '@/shared/components/dialogs/ConfirmDialog';
 import { BaseShotImageManagerProps } from './types';
 import { useMarkVariantViewed } from '@/shared/hooks/variants/useMarkVariantViewed';
@@ -15,6 +14,7 @@ import { MobileSelectionActionBar } from './components/MobileSelectionActionBar'
 import { useMobileImageSelection } from './hooks/useMobileImageSelection';
 import { useMobileOptimisticOrder } from './hooks/useMobileOptimisticOrder';
 import { getMobileGridColsClass } from './constants';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 export const ShotImageManagerMobile: React.FC<BaseShotImageManagerProps> = ({
   images,
@@ -78,12 +78,10 @@ export const ShotImageManagerMobile: React.FC<BaseShotImageManagerProps> = ({
   const newShotResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { markAllViewed } = useMarkVariantViewed();
-  const { 
-    isShotsPaneLocked, 
-    isTasksPaneLocked, 
-    shotsPaneWidth, 
-    tasksPaneWidth 
-  } = usePanes();
+  const isShotsPaneLocked = usePanesStore((state) => state.isShotsPaneLocked);
+  const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
+  const shotsPaneWidth = usePanesStore((state) => state.shotsPaneWidth);
+  const tasksPaneWidth = usePanesStore((state) => state.tasksPaneWidth);
 
   // Use columns from useDeviceInfo (phones=2, tablet portrait=3, tablet landscape=4)
   const effectiveColumns = columns;

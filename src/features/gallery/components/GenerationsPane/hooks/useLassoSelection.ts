@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { GallerySelectionItem } from '@/shared/contexts/GallerySelectionContext';
 import type { GeneratedImageWithMetadata } from '@/shared/components/MediaGallery/types';
+import type { GallerySelectionItem } from '@/shared/state/selectionStore';
+import { isAdditiveSelectionEvent, isPrimaryPointer } from '@/shared/lib/interactions/selectionGesture';
 
 type SelectionRect = {
   left: number;
@@ -12,7 +13,7 @@ type SelectionRect = {
 type UseLassoSelectionParams = {
   containerRef: RefObject<HTMLElement | null>;
   items: GeneratedImageWithMetadata[];
-  onSelectItems: (items: GallerySelectionItem[], options?: { append?: boolean }) => void;
+  onSelectItems: (items: GallerySelectionItem[], options?: { additive?: boolean }) => void;
 };
 
 type DragState = {
@@ -24,7 +25,7 @@ type DragState = {
 function toSelectionItem(image: GeneratedImageWithMetadata): GallerySelectionItem {
   return {
     id: image.id,
-    url: image.url,
+    url: image.url ?? image.thumbUrl ?? '',
     type: image.type ?? image.contentType ?? (image.isVideo ? 'video/mp4' : 'image/png'),
     generationId: image.generation_id ?? image.id,
   };
@@ -32,10 +33,6 @@ function toSelectionItem(image: GeneratedImageWithMetadata): GallerySelectionIte
 
 function rectsIntersect(a: DOMRect, b: DOMRect) {
   return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
-}
-
-function isMultiSelectEvent(event: Pick<MouseEvent, 'shiftKey' | 'metaKey' | 'ctrlKey'>) {
-  return event.shiftKey || event.metaKey || event.ctrlKey;
 }
 
 export function useLassoSelection({
@@ -82,7 +79,7 @@ export function useLassoSelection({
         : [];
     });
 
-    onSelectItems(selectedItems, { append: dragState.append });
+    onSelectItems(selectedItems, { additive: dragState.append });
     dragStateRef.current = null;
     setSelectionRect(null);
   }, [containerRef, itemsById, onSelectItems]);
@@ -123,7 +120,7 @@ export function useLassoSelection({
   }, [containerRef, endSelection]);
 
   const handleMouseDown = useCallback((event: React.MouseEvent<HTMLElement>) => {
-    if (event.button !== 0) {
+    if (!isPrimaryPointer(event.nativeEvent ?? event)) {
       return;
     }
 
@@ -137,7 +134,7 @@ export function useLassoSelection({
     dragStateRef.current = {
       startX: event.clientX,
       startY: event.clientY,
-      append: isMultiSelectEvent(event),
+      append: isAdditiveSelectionEvent(event),
     };
     setSelectionRect({
       left: event.clientX - bounds.left,

@@ -1,15 +1,13 @@
-import { usePanes } from '@/shared/contexts/PanesContext';
 import { useLightboxOpenState } from '@/shared/state/lightboxOpenState';
+import { usePanesStore } from '@/shared/state/panesStore';
 
 /**
  * Calculates side-pane handle offset from the generations pane state.
  */
 export const useBottomOffset = (): number => {
-  const {
-    isGenerationsPaneLocked,
-    isGenerationsPaneOpen,
-    effectiveGenerationsPaneHeight,
-  } = usePanes();
+  const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
+  const isGenerationsPaneOpen = usePanesStore((state) => state.isGenerationsPaneOpen);
+  const effectiveGenerationsPaneHeight = usePanesStore((state) => state.effectiveGenerationsPaneHeight);
   const isLightboxOpen = useLightboxOpenState();
 
   if (isLightboxOpen) return 0;

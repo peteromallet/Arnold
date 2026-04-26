@@ -73,7 +73,7 @@ describe('ProjectContext', () => {
 
       expect(() => {
         render(<BadConsumer />);
-      }).toThrow('useProject must be used within a ProjectProvider');
+      }).toThrow('useProjectSelectionContext must be used within a ProjectProvider');
 
       consoleSpy.mockRestore();
     });

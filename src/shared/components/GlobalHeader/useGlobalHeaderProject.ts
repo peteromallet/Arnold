@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDarkMode } from '@/shared/hooks/core/useDarkMode';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectCrudContext, useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 
 interface UseGlobalHeaderProjectOptions {
   onOpenCreateProject: (initialName?: string) => void;
@@ -10,7 +10,8 @@ interface UseGlobalHeaderProjectOptions {
 export function useGlobalHeaderProject({ onOpenCreateProject }: UseGlobalHeaderProjectOptions) {
   const navigate = useNavigate();
   const { darkMode } = useDarkMode();
-  const { projects, selectedProjectId, setSelectedProjectId, isLoadingProjects } = useProject();
+  const { selectedProjectId, setSelectedProjectId } = useProjectSelectionContext();
+  const { projects, isLoadingProjects } = useProjectCrudContext();
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
 

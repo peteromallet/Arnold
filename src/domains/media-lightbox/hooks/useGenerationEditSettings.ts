@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { generationQueryKeys } from '@/shared/lib/queryKeys/generations';
 import { useAutoSaveSettings } from '@/shared/settings/hooks/useAutoSaveSettings';
@@ -85,6 +85,7 @@ interface UseGenerationEditSettingsReturn extends EditSettingsSetterMethods {
 interface UseGenerationEditSettingsProps {
   generationId: string | null;
   enabled?: boolean;
+  bootstrapSettings?: (SyncedEditSettings & { editMode: EditMode }) | null;
 }
 
 /**
@@ -154,8 +155,18 @@ async function saveGenerationSettings(generationId: string, settings: AutoSaveGe
 export function useGenerationEditSettings({
   generationId,
   enabled = true,
+  bootstrapSettings = null,
 }: UseGenerationEditSettingsProps): UseGenerationEditSettingsReturn {
   const queryClient = useQueryClient();
+  const bootstrapData = bootstrapSettings
+    ? {
+        ...DEFAULT_EDIT_SETTINGS,
+        ...bootstrapSettings,
+        prompt: '',
+        img2imgPrompt: '',
+        img2imgPromptHasBeenSet: false,
+      }
+    : null;
 
   // Use the base persistent state hook (customLoadSave mode)
   const {
@@ -172,9 +183,11 @@ export function useGenerationEditSettings({
     defaults: DEFAULT_EDIT_SETTINGS as AutoSaveGenerationEditSettings,
     debounceMs: 500,
     enabled,
+    bootstrapData: bootstrapData as AutoSaveGenerationEditSettings | null,
     debugTag: '[useGenerationEditSettings]',
     customLoadSave: {
       entityId: generationId,
+      domainKey: 'generation-edit-settings',
       load: loadGenerationSettings,
       save: saveGenerationSettings,
       onFlush: (entityId) => {
@@ -192,6 +205,10 @@ export function useGenerationEditSettings({
       }
     },
   });
+  const advancedSettingsRef = useRef(settings.advancedSettings);
+  advancedSettingsRef.current = settings.advancedSettings;
+  const enhanceSettingsRef = useRef(settings.enhanceSettings);
+  enhanceSettingsRef.current = settings.enhanceSettings;
 
   // Individual setters that delegate to updateField
   const setEditMode = useCallback((mode: EditMode) => {
@@ -233,16 +250,16 @@ export function useGenerationEditSettings({
   // Advanced settings setter (merges with existing)
   const setAdvancedSettings = useCallback((updates: Partial<EditAdvancedSettings>) => {
     updateFields({
-      advancedSettings: { ...settings.advancedSettings, ...updates },
+      advancedSettings: { ...advancedSettingsRef.current, ...updates },
     });
-  }, [updateFields, settings.advancedSettings]);
+  }, [updateFields]);
 
   // Video enhance settings setter (merges with existing)
   const setEnhanceSettings = useCallback((updates: Partial<VideoEnhanceSettings>) => {
     updateFields({
-      enhanceSettings: { ...settings.enhanceSettings, ...updates },
+      enhanceSettings: { ...enhanceSettingsRef.current, ...updates },
     });
-  }, [updateFields, settings.enhanceSettings]);
+  }, [updateFields]);
 
   const setCreateAsGeneration = useCallback((value: boolean) => {
     updateField('createAsGeneration', value);

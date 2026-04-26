@@ -8,7 +8,10 @@ import {
 } from './VideoGenerationModalSections';
 
 const mocks = vi.hoisted(() => ({
-  useVideoTravelSettings: vi.fn(),
+  useVideoTravelSettingsHandlers: vi.fn(),
+  useMotionSettings: vi.fn(),
+  useModelSettings: vi.fn(),
+  useSettingsSave: vi.fn(),
   handleGenerationTypeModeChange: vi.fn(),
   handlePhaseConfigChange: vi.fn(),
   handlePhasePresetRemove: vi.fn(),
@@ -102,7 +105,10 @@ vi.mock('@/shared/components/ui/skeleton', () => ({
 }));
 
 vi.mock('@/tools/travel-between-images/providers', () => ({
-  useVideoTravelSettings: (...args: unknown[]) => mocks.useVideoTravelSettings(...args),
+  useVideoTravelSettingsHandlers: (...args: unknown[]) => mocks.useVideoTravelSettingsHandlers(...args),
+  useMotionSettings: (...args: unknown[]) => mocks.useMotionSettings(...args),
+  useModelSettings: (...args: unknown[]) => mocks.useModelSettings(...args),
+  useSettingsSave: (...args: unknown[]) => mocks.useSettingsSave(...args),
 }));
 
 vi.mock('@/tools/travel-between-images/components/BatchSettingsForm', () => ({
@@ -120,13 +126,25 @@ vi.mock('@/shared/components/ImageGenerationForm/components', () => ({
 describe('VideoGenerationModalSections', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.useVideoTravelSettings.mockReturnValue({
-      handlers: {
-        handleGenerationTypeModeChange: mocks.handleGenerationTypeModeChange,
-        handlePhaseConfigChange: mocks.handlePhaseConfigChange,
-        handlePhasePresetRemove: mocks.handlePhasePresetRemove,
-        handlePhasePresetSelect: mocks.handlePhasePresetSelect,
-      },
+    mocks.useVideoTravelSettingsHandlers.mockReturnValue({
+      handleGenerationTypeModeChange: mocks.handleGenerationTypeModeChange,
+      handlePhaseConfigChange: mocks.handlePhaseConfigChange,
+      handlePhasePresetRemove: mocks.handlePhasePresetRemove,
+      handlePhasePresetSelect: mocks.handlePhasePresetSelect,
+    });
+    mocks.useMotionSettings.mockReturnValue({
+      smoothContinuations: false,
+      setSmoothContinuations: vi.fn(),
+    });
+    mocks.useModelSettings.mockReturnValue({
+      guidanceScale: undefined,
+      setGuidanceScale: vi.fn(),
+      ltxHdResolution: true,
+      setLtxHdResolution: vi.fn(),
+      setSelectedModel: vi.fn(),
+    });
+    mocks.useSettingsSave.mockReturnValue({
+      onBlurSave: vi.fn(),
     });
   });
 

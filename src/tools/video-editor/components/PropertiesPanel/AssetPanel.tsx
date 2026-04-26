@@ -7,7 +7,7 @@ import { Button } from '@/shared/components/ui/button';
 import { Input } from '@/shared/components/ui/input';
 import { ScrollArea } from '@/shared/components/ui/scroll-area';
 import { ExternalLink, Film, ImageIcon, Music2, Upload } from 'lucide-react';
-import { useTimelineEditorOps } from '@/tools/video-editor/contexts/TimelineEditorContext';
+import { useTimelineEditorOps } from '@/tools/video-editor/hooks/timelineStore';
 import { loadGenerationForLightbox } from '@/tools/video-editor/lib/generation-utils';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
 import type { AssetRegistryEntry } from '@/tools/video-editor/types';

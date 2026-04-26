@@ -71,13 +71,56 @@ function toAbortError(reason: unknown): Error {
   return new Error(message);
 }
 
+function getRequestMethod(input: URL | RequestInfo, init: RequestInit): string {
+  const initMethod = typeof init.method === 'string' ? init.method.toUpperCase() : undefined;
+  if (initMethod) return initMethod;
+  if (input instanceof Request) return input.method.toUpperCase();
+  return 'GET';
+}
+
+async function logErrorResponseBody(
+  url: string,
+  method: string,
+  response: Response,
+  init: RequestInit,
+): Promise<void> {
+  const safeUrl = url.replace(/&apikey=[^&]+/g, '&apikey=[REDACTED]');
+  try {
+    let text: string;
+    if (method === 'HEAD') {
+      // HEAD responses have no body, so PostgREST's diagnostic message is
+      // stripped before it reaches us. Fire a parallel GET (with the same auth
+      // headers) just to read the error body — purely for logging.
+      // Strip Range/Prefer count headers so the GET returns a body, and limit to 1 row.
+      const headers = new Headers(init.headers);
+      headers.delete('Range');
+      headers.delete('Prefer');
+      const probeUrl = url.includes('limit=') ? url : `${url}&limit=1`;
+      const probe = await fetch(probeUrl, { ...init, method: 'GET', headers });
+      text = await probe.text();
+    } else {
+      text = await response.clone().text();
+    }
+    console.warn(`[supabase-fetch] ${method} ${response.status} ${response.statusText || '(no statusText)'}\n  url:  ${safeUrl}\n  body: ${text}`);
+  } catch (err) {
+    console.warn(`[supabase-fetch] ${method} ${response.status} — failed to read error body for ${safeUrl}`, err);
+  }
+}
+
 export function fetchWithTimeout(input: URL | RequestInfo, init: RequestInit = {}): Promise<Response> {
   const url = getRequestUrl(input);
   const isEdgeFunction = url.includes('/functions/v1/');
   const isStorageUpload = url.includes('/storage/v1/object/');
 
   if (!isEdgeFunction && !isStorageUpload) {
-    return fetch(input, init);
+    return fetch(input, init).then((response) => {
+      if (response.status >= 400 && response.status < 600) {
+        const method = getRequestMethod(input, init);
+        // Fire-and-forget; consumer still gets the unread response.
+        void logErrorResponseBody(url, method, response, init);
+      }
+      return response;
+    });
   }
 
   const callerSignal = init.signal instanceof AbortSignal ? init.signal : undefined;

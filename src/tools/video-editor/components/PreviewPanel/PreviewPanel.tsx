@@ -1,18 +1,22 @@
 import { memo, type RefObject } from 'react';
+import { shallow } from 'zustand/shallow';
 import OverlayEditor from '@/tools/video-editor/components/PreviewPanel/OverlayEditor';
 import {
-  useTimelineEditorData,
-  useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
-import { useTimelinePlaybackContext } from '@/tools/video-editor/contexts/TimelinePlaybackContext';
+  useTimelineDataSelector,
+  useTimelineOpsSelector,
+  useTimelinePlaybackSelector,
+} from '@/tools/video-editor/hooks/timelineStore';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { isTouchTimelineInput } from '@/tools/video-editor/lib/mobile-interaction-model';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
+import { userClearAllSelection, userSelectTimelineClip } from '@/shared/state/selectionStore';
 
 interface PreviewPanelProps {
   previewSlotRef: RefObject<HTMLDivElement>;
 }
 
 function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
+  useRenderBudget('PreviewPanel', 5);
   useRenderDiagnostic('PreviewPanel');
   const {
     data,
@@ -25,20 +29,40 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
     interactionMode,
     gestureOwner,
     precisionEnabled,
-  } = useTimelineEditorData();
+  } = useTimelineDataSelector((timeline) => ({
+    data: timeline.data,
+    resolvedConfig: timeline.resolvedConfig,
+    trackScaleMap: timeline.trackScaleMap,
+    compositionSize: timeline.compositionSize,
+    selectedClipId: timeline.selectedClipId,
+    deviceClass: timeline.deviceClass,
+    inputModality: timeline.inputModality,
+    interactionMode: timeline.interactionMode,
+    gestureOwner: timeline.gestureOwner,
+    precisionEnabled: timeline.precisionEnabled,
+  }), shallow);
   const {
-    setSelectedClipId,
     onOverlayChange,
     onDoubleClickAsset,
     setInputModalityFromPointerType,
     setGestureOwner,
     setContextTarget,
     setInspectorTarget,
-  } = useTimelineEditorOps();
+  } = useTimelineOpsSelector((ops) => ({
+    onOverlayChange: ops.onOverlayChange,
+    onDoubleClickAsset: ops.onDoubleClickAsset,
+    setInputModalityFromPointerType: ops.setInputModalityFromPointerType,
+    setGestureOwner: ops.setGestureOwner,
+    setContextTarget: ops.setContextTarget,
+    setInspectorTarget: ops.setInspectorTarget,
+  }), shallow);
   const {
     playerContainerRef,
     currentTime,
-  } = useTimelinePlaybackContext();
+  } = useTimelinePlaybackSelector((playback) => ({
+    playerContainerRef: playback.playerContainerRef,
+    currentTime: playback.currentTime,
+  }), shallow);
 
   if (!data || !resolvedConfig) {
     return null;
@@ -80,7 +104,7 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
             if (gestureOwner === 'preview') {
               setGestureOwner('none');
             }
-            setSelectedClipId(null);
+            userClearAllSelection();
           }}
         >
           <div className="sr-only" aria-live="polite" aria-atomic="true">
@@ -103,7 +127,13 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
             inputModality={inputModality}
             interactionMode={interactionMode}
             gestureOwner={gestureOwner}
-            onSelectClip={setSelectedClipId}
+            onSelectClip={(clipId) => {
+              if (clipId === null) {
+                userClearAllSelection();
+                return;
+              }
+              userSelectTimelineClip(clipId, { additive: false });
+            }}
             onOverlayChange={onOverlayChange}
             setInputModalityFromPointerType={setInputModalityFromPointerType}
             setGestureOwner={setGestureOwner}

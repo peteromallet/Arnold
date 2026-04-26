@@ -46,7 +46,11 @@ const RotationHandle: React.FC<{
 }> = ({ position, rotation, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }) => (
   <div
     className={`absolute ${position} w-8 h-8 flex items-center justify-center cursor-grab active:cursor-grabbing`}
-    style={{ pointerEvents: 'auto', ...(rotation ? { transform: rotation } : {}) }}
+    style={{
+      // Required because RepositionOverlay.tsx:114 sets the handles overlay wrapper to pointer-events-none.
+      pointerEvents: 'auto',
+      ...(rotation ? { transform: rotation } : {}),
+    }}
     onPointerDown={onPointerDown}
     onPointerMove={onPointerMove}
     onPointerUp={onPointerUp}
@@ -121,7 +125,11 @@ export const RepositionOverlay: React.FC<RepositionOverlayProps> = ({
         {onRepositionScaleChange && (
           <div
             className="absolute left-1/2 -translate-x-1/2 flex items-center rounded-full bg-white/60 border border-black/30 px-0.5 py-0.5"
-            style={{ pointerEvents: 'auto', top: '5%' }}
+            style={{
+              // Required because RepositionOverlay.tsx:114 sets the handles overlay wrapper to pointer-events-none.
+              pointerEvents: 'auto',
+              top: '5%',
+            }}
           >
             <div
               className="w-7 h-7 flex items-center justify-center cursor-pointer rounded-full hover:bg-white/20 transition-colors"

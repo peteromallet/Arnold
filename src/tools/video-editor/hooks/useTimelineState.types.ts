@@ -3,6 +3,7 @@ import type { useClipEditing } from '@/tools/video-editor/hooks/useClipEditing';
 import type { useClipResize } from '@/tools/video-editor/hooks/useClipResize';
 import type { useDragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
 import type { useExternalDrop } from '@/tools/video-editor/hooks/useExternalDrop';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 import type { useTimelinePlayback } from '@/tools/video-editor/hooks/useTimelinePlayback';
 import type { useTimelineTrackManagement } from '@/tools/video-editor/hooks/useTimelineTrackManagement';
 import type {
@@ -21,7 +22,6 @@ import type {
   TimelineSelectedClip,
   TimelineSelectedTrack,
   TimelineSetScaleWidth,
-  TimelineSetSelectedClipId,
   TimelineSetSelectedTrackId,
   TimelineStartRender,
   TimelineUnpatchRegistry,
@@ -31,7 +31,7 @@ import type { ClipTab, EditorPreferences } from '@/tools/video-editor/hooks/useE
 import type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelineSave';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { UseMultiSelectResult } from '@/tools/video-editor/hooks/useMultiSelect';
+import type { SelectClipOptions, UseTimelineMultiSelectResult } from '@/shared/state/selectionStore';
 import type {
   MobileInteractionPolicy,
   TimelineContextTarget,
@@ -50,7 +50,6 @@ type ClipEditingHook = ReturnType<typeof useClipEditing>;
 type ExternalDropHook = ReturnType<typeof useExternalDrop>;
 type TimelineSetActiveClipTab = (tab: ClipTab) => void;
 type TimelineSetAssetPanelState = (patch: Partial<EditorPreferences['assetPanel']>) => void;
-
 export type TimelineActionResizeStart = ClipResizeHook['onActionResizeStart'];
 export type TimelineClipEdgeResizeEnd = ClipResizeHook['onClipEdgeResizeEnd'];
 
@@ -66,11 +65,11 @@ export interface TimelineEditorDataContextValue {
   inspectorTarget: TimelineInspectorTarget;
   interactionPolicy: MobileInteractionPolicy;
   selectedClipId: string | null;
-  selectedClipIds: UseMultiSelectResult['selectedClipIds'];
-  selectedClipIdsRef: UseMultiSelectResult['selectedClipIdsRef'];
-  additiveSelectionRef: UseMultiSelectResult['additiveSelectionRef'];
+  selectedClipIds: UseTimelineMultiSelectResult['selectedClipIds'];
+  selectedClipIdsRef: UseTimelineMultiSelectResult['selectedClipIdsRef'];
+  additiveSelectionRef: UseTimelineMultiSelectResult['additiveSelectionRef'];
   selectedTrackId: string | null;
-  primaryClipId: UseMultiSelectResult['primaryClipId'];
+  primaryClipId: UseTimelineMultiSelectResult['primaryClipId'];
   selectedClip: TimelineSelectedClip;
   selectedTrack: TimelineSelectedTrack;
   selectedClipHasPredecessor: boolean;
@@ -98,13 +97,11 @@ export interface TimelineEditorOpsContextValue {
   setPrecisionEnabled: (enabled: boolean) => void;
   setContextTarget: (target: TimelineContextTarget) => void;
   setInspectorTarget: (target: TimelineInspectorTarget) => void;
-  setSelectedClipId: TimelineSetSelectedClipId;
-  isClipSelected: UseMultiSelectResult['isClipSelected'];
-  selectClip: UseMultiSelectResult['selectClip'];
-  selectClips: UseMultiSelectResult['selectClips'];
-  replaceTimelineSelection: UseMultiSelectResult['selectClips'];
-  addToSelection: UseMultiSelectResult['addToSelection'];
-  clearSelection: UseMultiSelectResult['clearSelection'];
+  isClipSelected: UseTimelineMultiSelectResult['isClipSelected'];
+  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
+  selectClips: (clipIds: Iterable<string>) => void;
+  addToSelection: (clipIds: Iterable<string>) => void;
+  clearSelection: () => void;
   setSelectedTrackId: TimelineSetSelectedTrackId;
   setActiveClipTab: TimelineSetActiveClipTab;
   setAssetPanelState: TimelineSetAssetPanelState;
@@ -189,7 +186,10 @@ export interface TimelinePlaybackContextValue {
 }
 
 export interface UseTimelineStateResult {
+  store: TimelineStoreApi;
   editor: TimelineEditorContextValue;
+  editorData: TimelineEditorDataContextValue;
+  editorOps: TimelineEditorOpsContextValue;
   chrome: TimelineChromeContextValue;
   playback: TimelinePlaybackContextValue;
 }

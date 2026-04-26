@@ -30,7 +30,7 @@ import {
 import { TrackListRenderer } from '@/tools/video-editor/components/TimelineEditor/TrackListRenderer';
 import { useClipResizeGesture } from '@/tools/video-editor/hooks/useClipResizeGesture';
 import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups';
-import { useTimelineEditorData } from '@/tools/video-editor/contexts/TimelineEditorContext';
+import { useTimelineMutableAdapters } from '@/tools/video-editor/hooks/timelineStore';
 import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils';
 import {
   shouldExpandTouchTrimHandles,
@@ -44,6 +44,7 @@ import {
 } from '@/tools/video-editor/lib/resize-math';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget';
 import type { TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag';
@@ -173,7 +174,8 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   onClearUnusedTracks,
   newTrackDropLabel,
 }: TimelineCanvasProps, ref) {
-  const { dataRef } = useTimelineEditorData();
+  useRenderBudget('TimelineCanvas', 3);
+  const { dataRef } = useTimelineMutableAdapters();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);
   const timeRef = useRef(0);

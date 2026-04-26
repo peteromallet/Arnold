@@ -1,0 +1,89 @@
+{
+  "type": "object",
+  "properties": {
+    "output": {
+      "type": "string"
+    },
+    "commands_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deviations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "task_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "done",
+              "skipped",
+              "blocked"
+            ]
+          },
+          "executor_notes": {
+            "type": "string"
+          },
+          "sections_written": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "task_id",
+          "status",
+          "executor_notes",
+          "sections_written"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "sense_check_acknowledgments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sense_check_id": {
+            "type": "string"
+          },
+          "executor_note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sense_check_id",
+          "executor_note"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "sections_written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "output",
+    "commands_run",
+    "deviations",
+    "task_updates",
+    "sense_check_acknowledgments",
+    "sections_written"
+  ],
+  "additionalProperties": false
+}

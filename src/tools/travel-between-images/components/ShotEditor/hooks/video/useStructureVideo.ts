@@ -154,32 +154,37 @@ export function useStructureVideo({
     enabled: !!shotId,
     debounceMs: 100,
   });
+  const {
+    settings: persistedSettings,
+    status: persistedStatus,
+    updateFields,
+  } = settings;
 
   const storedTravelGuidance = selectedModel
-    ? settings.settings?.travel_guidance_by_model?.[selectedModel] ?? settings.settings?.travel_guidance
-    : settings.settings?.travel_guidance;
+    ? persistedSettings?.travel_guidance_by_model?.[selectedModel] ?? persistedSettings?.travel_guidance
+    : persistedSettings?.travel_guidance;
 
   const resolvedStructureState = useMemo(
-    () => resolveTravelStructureState(settings.settings ?? null, {
+    () => resolveTravelStructureState(persistedSettings ?? null, {
       defaultEndFrame: timelineEndFrame,
       defaultVideoTreatment: DEFAULT_STRUCTURE_VIDEO.treatment,
       defaultMotionStrength: DEFAULT_STRUCTURE_GUIDANCE_CONTROLS.motionStrength,
       defaultStructureType: DEFAULT_STRUCTURE_GUIDANCE_CONTROLS.structureType,
       defaultUni3cEndPercent: DEFAULT_STRUCTURE_GUIDANCE_CONTROLS.uni3cEndPercent,
     }),
-    [settings.settings, timelineEndFrame],
+    [persistedSettings, timelineEndFrame],
   );
 
   const travelGuidance = useMemo(
     () => normalizeTravelGuidance({
       modelName,
       travelGuidance: storedTravelGuidance,
-      structureGuidance: settings.settings?.structure_guidance,
+      structureGuidance: persistedSettings?.structure_guidance,
       structureVideos: resolvedStructureState.structureVideos,
       defaultVideoTreatment: DEFAULT_STRUCTURE_VIDEO.treatment,
       defaultUni3cEndPercent: DEFAULT_STRUCTURE_GUIDANCE_CONTROLS.uni3cEndPercent,
     }),
-    [modelName, resolvedStructureState.structureVideos, settings.settings, storedTravelGuidance],
+    [modelName, persistedSettings?.structure_guidance, resolvedStructureState.structureVideos, storedTravelGuidance],
   );
 
   const structureGuidance = resolvedStructureState.structureGuidance as StructureGuidanceConfig | undefined;
@@ -197,7 +202,7 @@ export function useStructureVideo({
   );
 
   const structureVideos = resolvedStructureState.structureVideos;
-  const travelGuidanceByModel = settings.settings?.travel_guidance_by_model;
+  const travelGuidanceByModel = persistedSettings?.travel_guidance_by_model;
   const structureVideoDefaultsByModel = useMemo(
     () => {
       const firstStructureVideo = structureVideos[0];
@@ -209,7 +214,7 @@ export function useStructureVideo({
         const guidance = normalizeTravelGuidance({
           modelName: MODEL_DEFAULTS[model].modelName,
           travelGuidance: travelGuidanceByModel?.[model] ?? (model === selectedModel ? travelGuidance : undefined),
-          structureGuidance: settings.settings?.structure_guidance,
+          structureGuidance: persistedSettings?.structure_guidance,
           structureVideos,
           defaultVideoTreatment: DEFAULT_STRUCTURE_VIDEO.treatment,
           defaultUni3cEndPercent: DEFAULT_STRUCTURE_GUIDANCE_CONTROLS.uni3cEndPercent,
@@ -234,7 +239,7 @@ export function useStructureVideo({
         return acc;
       }, {} as NonNullable<UseStructureVideoReturn['structureVideoDefaultsByModel']>);
     },
-    [selectedModel, settings.settings?.structure_guidance, structureVideos, travelGuidance, travelGuidanceByModel],
+    [persistedSettings?.structure_guidance, selectedModel, structureVideos, travelGuidance, travelGuidanceByModel],
   );
 
   const setStructureVideos = useCallback((videos: StructureVideoConfigWithMetadata[]) => {
@@ -243,7 +248,7 @@ export function useStructureVideo({
     // When all videos are removed, clear ALL guidance fields to prevent
     // stale video URLs from being resolved back into structure videos.
     if (sanitizedVideos.length === 0) {
-      settings.updateFields({
+      updateFields({
         structure_videos: [],
         travel_guidance: undefined,
         travel_guidance_by_model: {},
@@ -259,16 +264,16 @@ export function useStructureVideo({
       defaultVideoTreatment: DEFAULT_STRUCTURE_VIDEO.treatment,
     });
 
-    settings.updateFields({
+    updateFields({
       structure_videos: sanitizedVideos,
       travel_guidance: newGuidance,
       travel_guidance_by_model: {
-        ...(settings.settings?.travel_guidance_by_model ?? {}),
+        ...(persistedSettings?.travel_guidance_by_model ?? {}),
         ...(selectedModel ? { [selectedModel]: newGuidance ?? null } : {}),
       },
       structure_guidance: undefined,
     });
-  }, [modelName, selectedModel, settings, structureControls, timelineEndFrame]);
+  }, [modelName, persistedSettings?.travel_guidance_by_model, selectedModel, structureControls, timelineEndFrame, updateFields]);
 
   const updateStructureGuidanceControls = useCallback((updates: Partial<TravelGuidanceControls>) => {
     const sanitizedVideos = sanitizeEditableStructureVideos(structureVideos, timelineEndFrame);
@@ -277,7 +282,7 @@ export function useStructureVideo({
       ...updates,
     };
 
-    settings.updateFields({
+    updateFields({
       structure_videos: sanitizedVideos,
       travel_guidance: buildTravelGuidanceFromControls({
         modelName,
@@ -288,7 +293,7 @@ export function useStructureVideo({
       ...(selectedModel
         ? {
           travel_guidance_by_model: {
-            ...(settings.settings?.travel_guidance_by_model ?? {}),
+            ...(persistedSettings?.travel_guidance_by_model ?? {}),
             [selectedModel]: buildTravelGuidanceFromControls({
               modelName,
               structureVideos: sanitizedVideos,
@@ -300,7 +305,7 @@ export function useStructureVideo({
         : {}),
       structure_guidance: undefined,
     });
-  }, [modelName, selectedModel, settings, structureControls, structureVideos, timelineEndFrame]);
+  }, [modelName, persistedSettings?.travel_guidance_by_model, selectedModel, structureControls, structureVideos, timelineEndFrame, updateFields]);
 
   const addStructureVideo = useCallback((video: StructureVideoConfigWithMetadata) => {
     setStructureVideos([...structureVideos, video]);
@@ -332,13 +337,13 @@ export function useStructureVideo({
   }, [setStructureVideos]);
 
   const clearAllStructureVideos = useCallback(() => {
-    settings.updateFields({
+    updateFields({
       structure_videos: [],
       travel_guidance: undefined,
       travel_guidance_by_model: {},
       structure_guidance: undefined,
     });
-  }, [settings]);
+  }, [updateFields]);
 
   const primaryStructureVideo = useMemo(
     () => resolvePrimaryStructureVideo(structureVideos, travelGuidance ?? structureGuidance),
@@ -356,7 +361,7 @@ export function useStructureVideo({
     clearAllStructureVideos,
     setStructureVideos,
     updateStructureGuidanceControls,
-    isLoading: !!shotId && settings.status === 'loading',
+    isLoading: !!shotId && persistedStatus === 'loading',
     structureVideoPath: primaryStructureVideo.path,
     structureVideoMetadata: primaryStructureVideo.metadata,
     structureVideoTreatment: primaryStructureVideo.treatment,

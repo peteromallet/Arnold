@@ -2347,6 +2347,907 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-139",
+      "subsystem": "planning-source-of-truth",
+      "concern": "milestone traceability remains prompt-driven because the referenced repo plan document is absent.",
+      "flag_ids": [
+        "issue_hints"
+      ],
+      "plan_ids": [
+        "milestone-m1-from-docs-state-20260415-2100"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-15T22:13:56Z",
+      "updated_at": "2026-04-15T22:13:56Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-140",
+      "subsystem": "join-clips-settings",
+      "concern": "the first migrated consumer is broader than the milestone summary implied.",
+      "flag_ids": [
+        "scope"
+      ],
+      "plan_ids": [
+        "milestone-m1-from-docs-state-20260415-2100"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-15T22:13:56Z",
+      "updated_at": "2026-04-15T22:13:56Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-141",
+      "subsystem": "join-clips-settings",
+      "concern": "join clips is not a minimal five-field adapter in this checkout.",
+      "flag_ids": [
+        "join-clips-surface-broader"
+      ],
+      "plan_ids": [
+        "milestone-m1-from-docs-state-20260415-2100"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-15T22:13:56Z",
+      "updated_at": "2026-04-15T22:13:56Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-142",
+      "subsystem": "m1a-chain-config",
+      "concern": "plan deviates from the brief's explicit halt instruction when createentitystore.ts is absent from origin/main by instead committing the untracked files to the m1a branch and continuing.",
+      "flag_ids": [
+        "FLAG-M1A-001"
+      ],
+      "plan_ids": [
+        "milestone-m1a-from-docs-state-20260416-0928"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T09:53:02Z",
+      "updated_at": "2026-04-16T09:53:02Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-143",
+      "subsystem": "m1a-verification-artifacts",
+      "concern": "step 13 requires manual browser verification but does not explicitly require the pr artifact (screen recording or step-by-step note) the brief mandates.",
+      "flag_ids": [
+        "issue_hints-2"
+      ],
+      "plan_ids": [
+        "milestone-m1a-from-docs-state-20260416-0928"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T09:53:02Z",
+      "updated_at": "2026-04-16T09:53:02Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-144",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: re-checked the dependency precondition against the repository and the milestone brief. `src/shared/state/createentitystore.ts` and `src/shared/state/createentitystore.test.ts` are still only untracked working-tree files here, and `git show` still fails for `main`, `origin/main`, and `megaplan/m1-foundation-store`; the revised plan now detects that, but step 1 still says to commit those files onto the m1a branch and continue, which conflicts with the brief's explicit instruction to halt and surface a chain-config error if the factory is missing from `origin/main`.",
+      "flag_ids": [
+        "issue_hints-1"
+      ],
+      "plan_ids": [
+        "milestone-m1a-from-docs-state-20260416-0928"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T09:53:02Z",
+      "updated_at": "2026-04-16T09:53:02Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-145",
+      "subsystem": "selection-store-dependency",
+      "concern": "selection store dependency: the plan still treats m1b as executable even though `src/shared/state/createentitystore.ts` is absent from both `main` and `origin/main`, which the brief defines as a halt condition.",
+      "flag_ids": [
+        "FLAG-M1B-CHAIN-CONFIG"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-146",
+      "subsystem": "timeline-selection-ownership",
+      "concern": "timeline selection ownership: the plan scopes the migration around `usetimelinecommit`/`usetimelinesave`, but `usemultiselect` still owns `selectedclipids`, `primaryclipid`, and `additiveselectionref`, so following the plan literally would leave timeline selection split across the new store and old hook-local state.",
+      "flag_ids": [
+        "FLAG-M1B-TIMELINE-SELECTION-SPLIT"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-147",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the branch and dependency preconditions exactly as the brief requires. this checkout is still on `megaplan/m1a-settings-store` with a large dirty worktree, and both `git show main:src/shared/state/createentitystore.ts` and `git show origin/main:src/shared/state/createentitystore.ts` fail, so the plan still conflicts with the brief's explicit instruction to halt m1b when the factory is absent from `main` and when the work is not starting from the requested `megaplan/m1b-selection-store` branch off `main`.",
+      "flag_ids": [
+        "issue_hints-1"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-148",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the repo documentation surface and found `docs/state_management_refactor_plan.md` is still absent; only `docs/state_management_refactor_baselines.md` exists in this area. the plan correctly notices the missing doc, but it still leaves the authoritative source unresolved and therefore remains partially prompt-driven rather than anchored to an in-repo milestone document.",
+      "flag_ids": [
+        "issue_hints-2"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-149",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked the actual timeline selection ownership across `src/tools/video-editor/hooks/usetimelinecommit.ts`, `src/tools/video-editor/hooks/usetimelineselection.ts`, and `src/tools/video-editor/hooks/usemultiselect.ts`. `usetimelinecommit` owns only `selectedclipid` and `selectedtrackid`, while `usemultiselect` still owns `selectedclipids`, `primaryclipid`, and `additiveselectionref`, so the plan's step 3 is technically incomplete: following it literally would leave timeline selection split between the new store and old hook-local state instead of collapsing it into one authoritative store.",
+      "flag_ids": [
+        "correctness-1"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-150",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked the current imperative selection adapters in `useclipdrag.ts`, `usetimelinepersistence.ts`, `usepollsync.ts`, and `videoeditorprovider.tsx`. the mutable refs (`selectedclipidsref`, `additiveselectionref`, `selectedclipidref`, `selectedtrackidref`) are runtime adapters for drag/save/poll callers rather than durable domain state, so the plan's wording about putting 'refs/helpers' into the `timeline` slice is a design error unless it explicitly keeps store state separate from ref adapters rebuilt around that state.",
+      "flag_ids": [
+        "correctness-2"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-151",
+      "subsystem": "selection-store-scope",
+      "concern": "selection store scope: wrapper-hook consumers broaden the migration surface beyond files that import the raw contexts directly.",
+      "flag_ids": [
+        "scope"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-152",
+      "subsystem": "selection-store-inventory",
+      "concern": "selection store inventory: the plan's pasted context-consumer list is stale and misses current files and tests, so it cannot be trusted as the full migration checklist.",
+      "flag_ids": [
+        "all_locations"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-153",
+      "subsystem": "selection-store-callers",
+      "concern": "selection store callers: multi-select ref consumers are not yet accounted for, so the proposed migration point does not handle every caller contract that depends on timeline selection today.",
+      "flag_ids": [
+        "callers"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-154",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: searched beyond direct context imports and found the shot-selection surface is broader than the plan's grep-based inventory implies. `uselastaffectedshot()` and `usecurrentshot()` are consumed in files such as `src/tools/image-generation/hooks/useimagegenactions.ts`, `src/tools/travel-between-images/hooks/workflow/usevideotraveladdtoshot.ts`, `src/shared/hooks/shotcreation/useshotcreation.ts`, `src/shared/components/mediagalleryitem.tsx`, and `src/shared/components/selectors/shotselectorwithadd.tsx`, so behavior-risk review and migration scope extend past files that import the raw context symbols directly.",
+      "flag_ids": [
+        "scope-1"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-155",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the gallery\u2194timeline synchronization surface and confirmed the broader problem is not only the explicit `registerpeerclear` bridge. `usegalleryselectionbridge.ts` also mirrors local gallery pane selection into the global gallery context with effect guards, and `usegallerypagestate.ts` plus `usegalleryfilterstate.ts` update shot-selection state as a side effect of navigation and filtering, so a correct selection-store migration has to cover those cross-surface behaviors rather than just replacing the four provider files.",
+      "flag_ids": [
+        "scope-2"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-156",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: ran the exact inventory command from the brief, `rg 'galleryselectioncontext|lastaffectedshotcontext|currentshotcontext|shotadditionselectioncontext' src/ --type ts -l | sort`, and compared it with the pasted plan list. the plan inventory is already stale in this repo: it misses `src/shared/hooks/gallery/__tests__/usegalleryfilterstate.test.ts`, and it still uses the old agentchat path instead of `src/tools/video-editor/components/agentchat/agentchat.tsx` and its test, so it is not safe to use that pasted list as the authoritative migration checklist.",
+      "flag_ids": [
+        "all_locations-1"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-157",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the supporting infrastructure around provider composition and optional consumers. `src/app/providers/appproviders.tsx` still wires all four providers, `src/app/app.tsx` reads `lastaffectedshotcontext` directly for external-drop behavior, and optional shot-addition readers live in `src/shared/components/mediagallery/mediagallery.tsx` and `src/tools/travel-between-images/components/videogallery/videoshotdisplay.tsx`, so the migration needs explicit replacement wiring for those integration points in addition to the core store file.",
+      "flag_ids": [
+        "all_locations-2"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-158",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the actual callers of the timeline-selection refs with `rg 'selectedclipidsref|additiveselectionref|selectedclipidref|selectedtrackidref' src/tools/video-editor`. save/poll paths consume `selectedclipidref` and `selectedtrackidref`, but `useclipdrag.ts`, `timelineeditor.tsx`, `videoeditorprovider.tsx`, and `usetimelinestate.contexts.ts` also consume `selectedclipidsref` and `additiveselectionref`, so the plan does not yet handle all caller shapes unless it adds a store-backed adapter for the multi-select refs as well.",
+      "flag_ids": [
+        "callers-1"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-159",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked `setselectedclipid(` callers in `useassetmanagement.ts`, `usecliptextoverlay.ts`, `propertiespanel.tsx`, and `previewpanel.tsx`. those callers pass concrete clip ids and `null` through the existing dispatch-like api, so any store action that replaces `setselectedclipid` must preserve the same semantics for clearing and reselection rather than narrowing the contract to a simpler single-purpose setter.",
+      "flag_ids": [
+        "callers-2"
+      ],
+      "plan_ids": [
+        "milestone-m1b-from-docs-state-20260416-1226"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T17:16:16Z",
+      "updated_at": "2026-04-16T17:16:16Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-160",
+      "subsystem": "timeline-store-migration",
+      "concern": "timeline store migration: removing the timeline contexts without replacing the nullable safe-hook boundary will break `useaddtovideoeditor`'s staged-vs-mounted control flow.",
+      "flag_ids": [
+        "FLAG-001"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-161",
+      "subsystem": "timeline-render-isolation",
+      "concern": "timeline render isolation: the plan under-specifies the row-level work needed to keep non-dragged `sortablerow` instances at 0 rerenders during drag.",
+      "flag_ids": [
+        "FLAG-002"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-162",
+      "subsystem": "timeline-store-bootstrap",
+      "concern": "timeline store bootstrap: the plan does not pin down how `usetimelinestate.ts` hydrates the store without either render-time side effects or effect-time staleness for pending-add and agentchat readers.",
+      "flag_ids": [
+        "FLAG-003"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-163",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the milestone-start preconditions against the actual worktree with `git branch --show-current`, `git status --short`, and the presence of `src/shared/state/selectionstore.ts`. the repo is still on `megaplan/m1a-settings-store`, the worktree is dirty, and `selectionstore.ts` is untracked here, so the plan's 'rebase onto a base with m1b landed' wording is weaker than the brief's required halt-if-m1b-is-not-shipped gate.",
+      "flag_ids": [
+        "issue_hints-1"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-164",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the load-bearing pathways around `videoeditorprovider.tsx` against the brief's 'do not delete silently' warning. the plan inventories the provider-local agentchat, pending-add, and lightbox flows, but it does not mention the external safe-hook contract in `src/domains/media-lightbox/hooks/useaddtovideoeditor.ts`, which currently depends on `usetimelineeditordatasafe()` and `usetimelineeditoropssafe()` returning `null` outside a mounted editor.",
+      "flag_ids": [
+        "issue_hints-2"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-165",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the render-verification source of truth in `docs/state_management_refactor_baselines.md` and `src/shared/dev/userenderbudget.ts`. the repo baseline documents a 1-second interaction-window `maxcount` aggregation, not a per-scroll-event probe, so the plan's instruction to 'verify scroll with m0 telemetry' is only partially backed by the actual in-repo instrumentation.",
+      "flag_ids": [
+        "issue_hints-3"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-166",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked `src/tools/video-editor/components/timelineeditor/timelinecanvas.tsx` and `src/tools/video-editor/components/timelineeditor/tracklistrenderer.tsx`. `timelinecanvas` still computes shared `rowresizepreview`, `selectedtrackid`, and other drag-sensitive props centrally and passes them through every `sortablerow`, so moving context reads to narrow zustand selectors alone will not meet the gate that non-dragged rows stay at 0 rerenders during drag unless the plan also changes this row-prop fan-out.",
+      "flag_ids": [
+        "correctness-1"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-167",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked the staged-vs-mounted add flow in `src/domains/media-lightbox/hooks/useaddtovideoeditor.ts`. that hook decides between immediate in-process drop and staged url/localstorage fallback by testing whether the safe timeline hooks return `null`, so a global `timelinestore.ts` with default state would change runtime behavior unless the migration preserves an explicit 'editor mounted' availability boundary.",
+      "flag_ids": [
+        "correctness-2"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-168",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked `src/tools/video-editor/hooks/usetimelinestate.ts` and `src/tools/video-editor/contexts/videoeditorprovider.tsx` together. the current composition is synchronous and consumers like the pending-add drain and agentchat bridge read fresh `editor` values in the same render pass, so the plan's 'build values and write them into the zustand store' step is under-specified about whether hydration happens during render or in an effect, and either choice has real correctness risk if not designed carefully.",
+      "flag_ids": [
+        "correctness-3"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-169",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: searched for timeline-context usage outside the video-editor tree and found `src/domains/media-lightbox/hooks/useaddtovideoeditor.ts` importing the safe timeline hooks. that means the migration surface is broader than the plan's mostly-editor-local inventory: deleting the contexts also affects the media-lightbox add-to-editor flow, not just timeline components.",
+      "flag_ids": [
+        "scope-1"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-170",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: searched the test surface with `rg` and found three current test files that mock the timeline contexts directly: `src/tools/video-editor/contexts/videoeditorprovider.test.tsx`, `src/tools/video-editor/components/timelineeditor/timelinecanvas.test.tsx`, and `src/tools/video-editor/components/__tests__/previewpersistence.test.tsx`. the plan mentions the first two patterns but does not explicitly account for `previewpersistence.test.tsx`, so the migration checklist is still narrower than the actual break surface.",
+      "flag_ids": [
+        "scope-2"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-171",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the supposedly 'high-risk render surfaces' against the actual leaf wiring and found that `timelinecanvas.tsx` still calls `usetimelineeditordata()` internally just to obtain `dataref` for `useclipresizegesture`. this makes the work broader than simply rewiring top-level consumers, because one of the hottest leaf components still has a direct context dependency that must be replaced before the old providers can be deleted.",
+      "flag_ids": [
+        "scope-3"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-172",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: searched all imports of `timelineeditorcontext`, `timelinechromecontext`, and `timelineplaybackcontext` and found live consumers in `videoeditorshell.tsx`, `timelineeditor.tsx`, `previewpanel.tsx`, `compactpreview.tsx`, `propertiespanel.tsx`, `assetpanel.tsx`, `useselectedmediaclips.ts`, `timelinecanvas.tsx`, `videoeditorprovider.test.tsx`, `timelinecanvas.test.tsx`, and `components/__tests__/previewpersistence.test.tsx`. the plan's consumer list is directionally right but not exhaustive enough to safely support deleting the three context files without a fresh grep-driven checklist.",
+      "flag_ids": [
+        "all_locations-1"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-173",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked supporting infrastructure beyond direct context imports and found `src/domains/media-lightbox/hooks/useaddtovideoeditor.ts` consuming `usetimelineeditordatasafe()` and `usetimelineeditoropssafe()`. those nullable-safe exports are part of the integration surface for pending-add staging, so removing the contexts also requires replacement glue for the safe hooks, not just store selectors for in-editor readers.",
+      "flag_ids": [
+        "all_locations-2"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-174",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked render-budget support files and found that `sortablerow` instrumentation lives in `tracklistrenderer.tsx`, while `timelinecanvas` telemetry is emitted through `userenderbudget`'s interaction-window counter. the plan does not yet name the concrete runtime harness or extra instrumentation needed to turn those generic counters into the brief's scroll-event and drag-isolation gate evidence.",
+      "flag_ids": [
+        "all_locations-3"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-175",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the real callers of the safe timeline hooks in `src/domains/media-lightbox/hooks/useaddtovideoeditor.ts`. that code passes through both mounted-editor values and the `null` outside-provider case, then uses `ops.registergenerationasset`, `ops.handleassetdrop`, and `data.resolvedconfig?.clips` when available, so any replacement api has to preserve both nullable access and the current immediate-drop contract rather than only exposing non-null store selectors.",
+      "flag_ids": [
+        "callers-1"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-176",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked `src/tools/video-editor/components/timelineeditor/timelinecanvas.tsx` as a caller of `usetimelineeditordata()`. it only reads `dataref`, but it passes that mutable ref straight into `useclipresizegesture`, which relies on latest timeline data during pointer sequences; the plan does not yet say how this exact caller will receive a stable mutable adapter once the context is removed.",
+      "flag_ids": [
+        "callers-2"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-177",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked `src/tools/video-editor/components/videoeditorshell.tsx`, where `handlekeyboarddelete` combines `editordata.dataref.current` with `editordata.selectedclipids` to build a mutation before falling back to `handledeleteclips`. that caller needs synchronized latest-ref and latest-selection semantics, so splitting those reads across unrelated store selectors without an adapter can change behavior even if each field is individually correct.",
+      "flag_ids": [
+        "callers-3"
+      ],
+      "plan_ids": [
+        "milestone-m1c-from-docs-state-20260416-2053"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-16T21:21:42Z",
+      "updated_at": "2026-04-16T21:21:42Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-178",
+      "subsystem": "overlay-validation",
+      "concern": "the broad repo-wide numeric z-index grep is noisy and cannot serve as a standalone invariant because it includes intentional non-overlay layout layers.",
+      "flag_ids": [
+        "all_locations"
+      ],
+      "plan_ids": [
+        "m2-overlay-stack-centralize-20260416-2326"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-17T01:04:43Z",
+      "updated_at": "2026-04-17T01:04:43Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-179",
+      "subsystem": "task-status-counts",
+      "concern": "all-project status-count queries alias to a shared cache key for different `allprojectids` sets.",
+      "flag_ids": [
+        "correctness"
+      ],
+      "plan_ids": [
+        "m3-realtime-events-store-20260417-0218"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-17T03:21:43Z",
+      "updated_at": "2026-04-17T03:21:43Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-180",
+      "subsystem": "verification-instrumentation",
+      "concern": "two `must` success criteria (`[panesboot]` log spam absence, `taskspane` render-budget warning absence) require `observe_runtime_logs` \u2014 manual dev-console inspection.",
+      "flag_ids": [
+        "FG-009"
+      ],
+      "plan_ids": [
+        "tech-debt-cleanup-action-pane-20260426-0205"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T00:24:23Z",
+      "updated_at": "2026-04-26T00:24:23Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-181",
+      "subsystem": "verification-instrumentation",
+      "concern": "five `must` success criteria require `inspect_runtime_ui` \u2014 manual ui verification (taskspane bottom strip clickable when generationspane locked, pane content covers tab when open, medialightbox stacking, attachment-removal on `/shots`, attachment-removal on `/tools/video-editor`).",
+      "flag_ids": [
+        "FG-010"
+      ],
+      "plan_ids": [
+        "tech-debt-cleanup-action-pane-20260426-0205"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T00:24:23Z",
+      "updated_at": "2026-04-26T00:24:23Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-182",
+      "subsystem": "verification-instrumentation",
+      "concern": "manual browser verification (step 12.5/12.6) requires `drive_browser` and `subjective_judgment` and cannot be fully automated.",
+      "flag_ids": [
+        "FG-009"
+      ],
+      "plan_ids": [
+        "structural-cleanup-of-the-20260426-0209"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T00:49:09Z",
+      "updated_at": "2026-04-26T00:49:09Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-183",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked step 7.4's dev-only warning guard against the repo's frontend environment conventions. the plan sketch uses `process.env.node_env !== 'production'`, but this vite react app uses `import.meta.env.dev` throughout `src/`; unless `process` is separately defined in the browser bundle, that selector path can throw a `referenceerror` when placeholders are emitted.",
+      "flag_ids": [
+        "correctness-1"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-184",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked the proposed `useselectionstore` export against the intent-facade requirement. exporting the raw zustand selector hook makes every field in `selectionstorestate` selectable, including the low-level reducer functions that step 5 intends to remove from public hooks, so it technically reopens the public low-level mutation surface rather than making the intent commands the only reachable api.",
+      "flag_ids": [
+        "correctness-2"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-185",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the planned merge-key test (step 7.7f) against actual gallery clip construction. the plan says gallery items lack `clipid` and therefore fall back to url, but the store always assigns `clipid` to gallery clips; a test that fabricates a gallery clip without `clipid` would not exercise the real `selectedgalleryclips` path and could pass while the app shows duplicate timeline/gallery chips.",
+      "flag_ids": [
+        "scope"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-186",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the new `clip.clipid || clip.url` merge-key assumption against `selectionstore.ts:249-256` and `selectedmediaclip` in `useselectedmediaclips.ts:6-19`. gallery selections are converted into `selectedmediaclip` objects with `clipid: id`, so they do not lack `clipid`; the revised key therefore stops deduping a gallery item and timeline clip that share the same url, which the existing `agentchat.tsx:40-75` url-keyed merge intentionally did.",
+      "flag_ids": [
+        "issue_hints"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-187",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked step 7.4's proposed `currentattachmentset.ts` import against `selectionstore.ts:690-699`. `useselectionstore` is currently a private non-exported function, while the plan creates a separate module that imports it from `./selectionstore`; followed literally, that new file will not compile unless the plan either exports a deliberately narrow selector api or colocates `usecurrentattachmentset()` inside `selectionstore.ts`.",
+      "flag_ids": [
+        "correctness"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-188",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the actual attachment merge callers: `agentchat.tsx` currently passes timeline clips from `useselectedmediaclips()` and gallery clips from `usegalleryselection().selectedgalleryclips` into the merge. because both caller paths supply `clipid`, a `clipid || url` key handles placeholder timeline clips but no longer matches the real gallery-vs-timeline same-url caller case that the old url-keyed merge handled.",
+      "flag_ids": [
+        "callers"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-189",
+      "subsystem": "attachment-merge-key",
+      "concern": "attachment merge key: `clip.clipid || clip.url` fixes placeholder collisions but breaks the existing url dedupe between timeline and gallery attachments because gallery clips already have `clipid`.",
+      "flag_ids": [
+        "FLAG-019"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-190",
+      "subsystem": "selection-store-public-surface",
+      "concern": "selection store public surface: exporting the raw `useselectionstore` hook re-exposes low-level zustand reducer functions despite the intent-facade goal.",
+      "flag_ids": [
+        "FLAG-020"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-191",
+      "subsystem": "frontend-environment-guard",
+      "concern": "frontend environment guard: the planned placeholder warning uses `process.env.node_env` in a vite browser module, while the repo uses `import.meta.env.dev`.",
+      "flag_ids": [
+        "FLAG-021"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

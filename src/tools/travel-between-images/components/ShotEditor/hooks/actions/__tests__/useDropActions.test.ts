@@ -70,12 +70,29 @@ vi.mock('@/shared/hooks/invalidation/useGenerationInvalidation', () => ({
   enqueueVariantInvalidation: enqueueVariantInvalidationMock,
 }));
 
-vi.mock('@/shared/hooks/shots/externalImageDrop', () => ({
+vi.mock('@/shared/lib/media/createGenerationFromFile', () => ({
   uploadImageForVariant: uploadImageForVariantMock,
 }));
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
   useProject: useProjectMock,
+  useProjectSelectionContext: () => ({
+    selectedProjectId: 'project-1',
+    project: null,
+    setSelectedProjectId: vi.fn(),
+  }),
+  useProjectCrudContext: () => ({
+    projects: [],
+    isLoadingProjects: false,
+    fetchProjects: vi.fn(),
+    addNewProject: vi.fn(),
+    isCreatingProject: false,
+    updateProject: vi.fn(),
+    isUpdatingProject: false,
+    deleteProject: vi.fn(),
+    isDeletingProject: false,
+  }),
+  useProjectIdentityContext: () => ({ userId: null }),
 }));
 
 vi.mock('@/shared/hooks/settings/useToolSettings', () => ({

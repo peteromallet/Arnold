@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import { toast } from "@/shared/components/ui/runtime/sonner";
 import { normalizeAndPresentError } from "@/shared/lib/errorHandling/runtimeError";
 import { GenerationRow, Shot } from "@/domains/generation/types";
-import { useProject } from "@/shared/contexts/ProjectContext";
+import { useProjectCrudContext } from "@/shared/contexts/ProjectContext";
 import {
   useAddImageToShot,
   useHandleExternalImageDrop,
@@ -23,7 +23,7 @@ import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
 import { findClosestAspectRatio } from '@/shared/lib/media/aspectRatios';
 import { VARIANT_TYPE } from '@/shared/constants/variantTypes';
 import { enqueueVariantInvalidation } from '@/shared/hooks/invalidation/useGenerationInvalidation';
-import { uploadImageForVariant } from '@/shared/hooks/shots/externalImageDrop';
+import { uploadImageForVariant } from '@/shared/lib/media/createGenerationFromFile';
 import type { VariantDropParams } from '@/shared/hooks/dnd/useImageVariantDrop';
 import type { ShotEditorActions } from '../../state/useShotEditorState';
 
@@ -136,7 +136,7 @@ export const useDropActions = ({
   projectId,
   batchVideoFrames,
 }: UseDropActionsProps) => {
-  const { projects } = useProject();
+  const { projects } = useProjectCrudContext();
   const queryClient = useQueryClient();
   const addImageToShotMutation = useAddImageToShot();
   const handleExternalImageDropMutation = useHandleExternalImageDrop();

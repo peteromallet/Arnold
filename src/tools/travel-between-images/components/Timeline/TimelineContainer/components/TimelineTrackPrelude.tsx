@@ -2,7 +2,10 @@ import React from 'react';
 import { GenerationRow } from '@/domains/generation/types';
 import { SegmentSlot } from '@/shared/hooks/segments';
 import { PairData } from '@/shared/types/pairData';
-import { useTimelineMedia, type TimelineMediaContextValue } from '../../TimelineMediaContext';
+import {
+  useTimelineFps,
+  type TimelineMediaContextValue,
+} from '../../TimelineMediaContext';
 import { AudioStrip } from '../../AudioStrip';
 import { GuidanceVideoStrip } from '../../GuidanceVideoStrip';
 import { GuidanceVideoUploader } from '../../GuidanceVideoUploader';
@@ -94,7 +97,7 @@ export const TimelineTrackPrelude: React.FC<TimelineTrackPreludeProps> = ({
   layout,
   zoom,
 }) => {
-  const { timelineFps } = useTimelineMedia();
+  const timelineFps = useTimelineFps();
   const {
     shotId,
     projectId,

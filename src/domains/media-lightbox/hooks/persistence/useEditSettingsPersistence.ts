@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useGenerationEditSettings } from '../useGenerationEditSettings';
 import { useLastUsedEditSettings } from '../useLastUsedEditSettings';
 
@@ -83,54 +83,21 @@ export function useEditSettingsPersistence({
   projectId,
   enabled = true,
 }: UseEditSettingsPersistenceProps): UseEditSettingsPersistenceReturn {
-  // Per-generation settings
-  const generationSettings = useGenerationEditSettings({
-    generationId,
-    enabled,
-  });
-
   // "Last used" settings
   const lastUsedSettings = useLastUsedEditSettings({
     projectId,
     enabled,
   });
 
-  // Track initialization state
-  const hasInitializedRef = useRef(false);
-  const lastGenerationIdRef = useRef<string | null>(generationId);
-  const [isReady, setIsReady] = useState(false);
+  // Per-generation settings
+  const generationSettings = useGenerationEditSettings({
+    generationId,
+    enabled,
+    bootstrapSettings: lastUsedSettings.lastUsed,
+  });
 
   // Extract stable references
-  const { isLoading: genIsLoading, hasPersistedSettings, initializeFromLastUsed } = generationSettings;
   const { lastUsed } = lastUsedSettings;
-
-  // Reset the coordinator when the generation changes so last-used initialization reruns
-  // against the next generation after the reducer-driven entity transition settles.
-  useEffect(() => {
-    if (generationId === lastGenerationIdRef.current) {
-      return;
-    }
-
-    hasInitializedRef.current = false;
-    lastGenerationIdRef.current = generationId;
-    setIsReady(false);
-  }, [generationId]);
-
-  // Effect-based init: must be an effect (not render-time) because initializeFromLastUsed
-  // calls setState on another hook (useGenerationEditSettings), which React forbids during
-  // a parent's render phase.
-  useEffect(() => {
-    if (!genIsLoading && !hasInitializedRef.current) {
-      if (!hasPersistedSettings && generationId) {
-        hasInitializedRef.current = true;
-        initializeFromLastUsed(lastUsed);
-        setIsReady(true);
-      } else if (hasPersistedSettings) {
-        hasInitializedRef.current = true;
-        setIsReady(true);
-      }
-    }
-  }, [generationId, genIsLoading, hasPersistedSettings, initializeFromLastUsed, lastUsed]);
 
   // Compute effective values
   // editMode is ALWAYS from lastUsed (user-level, not per-generation) so it stays consistent across images/videos
@@ -152,35 +119,15 @@ export function useEditSettingsPersistence({
       };
     }
 
-    // No persisted settings yet.
-    // Before the coordinator finishes initialization, we use lastUsed as defaults.
-    // After initialization, always prefer the live generationSettings state so controls
-    // (like the Img2Img strength slider) never feel "locked" while the debounced save runs.
-    if (!isReady) {
-      return {
-        editMode: lastUsedSettings.lastUsed.editMode,
-        loraMode: lastUsedSettings.lastUsed.loraMode,
-        customLoraUrl: lastUsedSettings.lastUsed.customLoraUrl,
-        numGenerations: lastUsedSettings.lastUsed.numGenerations,
-        prompt: generationSettings.settings.prompt || '',
-        img2imgPrompt: generationSettings.settings.img2imgPrompt || '',
-        img2imgPromptHasBeenSet: generationSettings.settings.img2imgPromptHasBeenSet || false,
-        img2imgStrength: lastUsedSettings.lastUsed.img2imgStrength,
-        img2imgEnablePromptExpansion: lastUsedSettings.lastUsed.img2imgEnablePromptExpansion,
-        advancedSettings: lastUsedSettings.lastUsed.advancedSettings ?? DEFAULT_ADVANCED_SETTINGS,
-        enhanceSettings: generationSettings.settings.enhanceSettings ?? DEFAULT_ENHANCE_SETTINGS,
-        qwenEditModel: generationSettings.settings.qwenEditModel ?? DEFAULT_EDIT_SETTINGS.qwenEditModel,
-        createAsGeneration: lastUsedSettings.lastUsed.createAsGeneration,
-      };
-    }
-
-    // Initialized: use the live per-generation state BUT override editMode with lastUsed (user-level)
+    // No persisted settings yet: use last-used values for synced fields and the live
+    // generation-scoped values for prompt/model-only fields.
     return {
+      ...DEFAULT_EDIT_SETTINGS,
+      ...lastUsedSettings.lastUsed,
       ...generationSettings.settings,
       editMode: lastUsedSettings.lastUsed.editMode,
     };
   }, [
-    isReady,
     generationSettings.isLoading,
     generationSettings.hasPersistedSettings,
     generationSettings.settings,
@@ -209,15 +156,9 @@ export function useEditSettingsPersistence({
   // Wrapper setters that also update "last used" (except prompt)
   // editMode writes to both generation persistence and user-level last used state.
   const setEditMode = useCallback((mode: EditMode) => {
-    console.log('[EditSettings] setEditMode called', {
-      mode,
-      previousEditMode: effectiveSettings.editMode,
-      hasPersistedSettings: generationSettings.hasPersistedSettings,
-      isReady,
-    });
     genSetEditMode(mode);
     updateLastUsed({ editMode: mode });
-  }, [genSetEditMode, updateLastUsed, effectiveSettings.editMode, generationSettings.hasPersistedSettings, isReady]);
+  }, [genSetEditMode, updateLastUsed]);
 
   const setLoraMode = useCallback((mode: LoraMode) => {
     genSetLoraMode(mode);
@@ -348,7 +289,7 @@ export function useEditSettingsPersistence({
 
       // State
       isLoading: generationSettings.isLoading,
-      isReady,
+      isReady: !generationSettings.isLoading,
       hasPersistedSettings: generationSettings.hasPersistedSettings,
     }),
     [
@@ -372,7 +313,6 @@ export function useEditSettingsPersistence({
       editModeLoras,
       flushTextFields,
       generationSettings.isLoading,
-      isReady,
       generationSettings.hasPersistedSettings,
     ],
   );

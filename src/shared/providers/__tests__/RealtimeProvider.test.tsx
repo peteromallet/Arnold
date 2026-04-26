@@ -4,11 +4,31 @@
  * Tests for the realtime connection provider.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+// @vitest-environment jsdom
 
-// Mock all external dependencies
-let statusChangeCallback: ((state: Record<string, unknown>) => void) | null = null;
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, act, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RawDatabaseEvent } from '@/shared/realtime/types';
+
+const mockedState = vi.hoisted(() => ({
+  statusChangeCallback: null as ((state: Record<string, unknown>) => void) | null,
+  rawEventCallback: null as ((event: RawDatabaseEvent) => void) | null,
+  mockUseProject: vi.fn(),
+  mockFetchAndSeedTaskQuery: vi.fn(),
+  mockGetCachedTaskSnapshot: vi.fn(),
+  mockUpsertRealtimeTaskSnapshot: vi.fn(),
+  mockResetRealtimeTaskScope: vi.fn(),
+  mockRealtimeEventProcessor: {
+    process: vi.fn(),
+    clear: vi.fn(),
+  },
+  mockDataFreshnessManager: {
+    reset: vi.fn(),
+  },
+}));
+
 const mockRealtimeConnection = {
   connect: vi.fn().mockResolvedValue(true),
   disconnect: vi.fn().mockResolvedValue(undefined),
@@ -22,8 +42,7 @@ const mockRealtimeConnection = {
     nextRetryAt: null,
   }),
   onStatusChange: vi.fn().mockImplementation((cb: (state: Record<string, unknown>) => void) => {
-    statusChangeCallback = cb;
-    // Immediately call with current state per the implementation
+    mockedState.statusChangeCallback = cb;
     cb({
       status: 'disconnected',
       projectId: null,
@@ -33,16 +52,44 @@ const mockRealtimeConnection = {
       nextRetryAt: null,
     });
     return () => {
-      statusChangeCallback = null;
+      mockedState.statusChangeCallback = null;
     };
   }),
-  onEvent: vi.fn().mockImplementation((_cb: (event: Record<string, unknown>) => void) => {
-    return () => undefined;
+  onEvent: vi.fn().mockImplementation((cb: (event: RawDatabaseEvent) => void) => {
+    mockedState.rawEventCallback = cb;
+    return () => {
+      mockedState.rawEventCallback = null;
+    };
   }),
 };
 
 vi.mock('@/shared/contexts/ProjectContext', () => ({
-  useProject: vi.fn().mockReturnValue({ selectedProjectId: 'proj-1' }),
+  useProject: () => mockedState.mockUseProject(),
+  useProjectSelectionContext: () => {
+    const value = mockedState.mockUseProject();
+    return {
+      selectedProjectId: value.selectedProjectId ?? null,
+      project: value.project ?? null,
+      setSelectedProjectId: vi.fn(),
+    };
+  },
+  useProjectCrudContext: () => ({
+    projects: [],
+    isLoadingProjects: false,
+    fetchProjects: vi.fn(),
+    addNewProject: vi.fn(),
+    isCreatingProject: false,
+    updateProject: vi.fn(),
+    isUpdatingProject: false,
+    deleteProject: vi.fn(),
+    isDeletingProject: false,
+  }),
+  useProjectIdentityContext: () => ({ userId: null }),
+}));
+
+vi.mock('@/shared/hooks/tasks/useTasks', () => ({
+  fetchAndSeedTaskQuery: (...args: unknown[]) => mockedState.mockFetchAndSeedTaskQuery(...args),
+  getCachedTaskSnapshot: (...args: unknown[]) => mockedState.mockGetCachedTaskSnapshot(...args),
 }));
 
 vi.mock('@/shared/realtime/RealtimeConnection', () => ({
@@ -50,25 +97,52 @@ vi.mock('@/shared/realtime/RealtimeConnection', () => ({
 }));
 
 vi.mock('@/shared/realtime/RealtimeEventProcessor', () => ({
-  realtimeEventProcessor: {
-    process: vi.fn(),
-    clear: vi.fn(),
-  },
+  realtimeEventProcessor: mockedState.mockRealtimeEventProcessor,
 }));
 
 vi.mock('@/shared/realtime/DataFreshnessManager', () => ({
-  dataFreshnessManager: {
-    reset: vi.fn(),
-  },
+  dataFreshnessManager: mockedState.mockDataFreshnessManager,
 }));
 
 vi.mock('@/shared/hooks/useRealtimeInvalidation', () => ({
   useRealtimeInvalidation: vi.fn(),
 }));
 
+vi.mock('@/shared/state/realtimeStore', () => ({
+  getRealtimeTaskSnapshot: vi.fn(() => null),
+  upsertRealtimeTaskSnapshot: (...args: unknown[]) => mockedState.mockUpsertRealtimeTaskSnapshot(...args),
+  resetRealtimeTaskScope: (...args: unknown[]) => mockedState.mockResetRealtimeTaskScope(...args),
+}));
+
 import { RealtimeProvider, useRealtime } from '../RealtimeProvider';
 
-// Test consumer component
+function createQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+        staleTime: 0,
+      },
+      mutations: {
+        retry: false,
+      },
+    },
+  });
+}
+
+function renderWithProviders(ui: React.ReactElement) {
+  const queryClient = createQueryClient();
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        {ui}
+      </QueryClientProvider>
+    ),
+  };
+}
+
 function RealtimeConsumer() {
   const ctx = useRealtime();
   return (
@@ -88,11 +162,15 @@ function RealtimeConsumer() {
 describe('RealtimeProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    statusChangeCallback = null;
+    mockedState.statusChangeCallback = null;
+    mockedState.rawEventCallback = null;
+    mockedState.mockUseProject.mockReturnValue({ selectedProjectId: 'proj-1' });
+    mockedState.mockGetCachedTaskSnapshot.mockReturnValue(undefined);
+    mockedState.mockFetchAndSeedTaskQuery.mockResolvedValue(null);
   });
 
   it('renders children', () => {
-    render(
+    renderWithProviders(
       <RealtimeProvider>
         <div data-testid="child">Hello</div>
       </RealtimeProvider>
@@ -102,7 +180,7 @@ describe('RealtimeProvider', () => {
   });
 
   it('provides initial disconnected state', () => {
-    render(
+    renderWithProviders(
       <RealtimeProvider>
         <RealtimeConsumer />
       </RealtimeProvider>
@@ -116,17 +194,18 @@ describe('RealtimeProvider', () => {
   });
 
   it('connects when project is selected', () => {
-    render(
+    renderWithProviders(
       <RealtimeProvider>
         <RealtimeConsumer />
       </RealtimeProvider>
     );
 
     expect(mockRealtimeConnection.connect).toHaveBeenCalledWith('proj-1');
+    expect(mockedState.mockResetRealtimeTaskScope).toHaveBeenCalledWith('proj-1');
   });
 
   it('subscribes to status changes', () => {
-    render(
+    renderWithProviders(
       <RealtimeProvider>
         <RealtimeConsumer />
       </RealtimeProvider>
@@ -135,35 +214,139 @@ describe('RealtimeProvider', () => {
     expect(mockRealtimeConnection.onStatusChange).toHaveBeenCalled();
   });
 
-  it('wires connection events to event processor', () => {
-    render(
+  it('hydrates canonical task rows into the scoped realtime store before processing the event', async () => {
+    renderWithProviders(
       <RealtimeProvider>
         <RealtimeConsumer />
       </RealtimeProvider>
     );
 
-    expect(mockRealtimeConnection.onEvent).toHaveBeenCalled();
+    const event: RawDatabaseEvent = {
+      table: 'tasks',
+      eventType: 'UPDATE',
+      receivedAt: Date.now(),
+      new: {
+        id: 'task-1',
+        task_type: 'image_generation',
+        params: { source_generation_id: 'gen-1' },
+        status: 'In Progress',
+        created_at: '2026-04-17T00:00:00.000Z',
+        project_id: 'proj-1',
+      },
+      old: {
+        id: 'task-1',
+        project_id: 'proj-1',
+        status: 'Queued',
+      },
+    };
+
+    act(() => {
+      mockedState.rawEventCallback?.(event);
+    });
+
+    await waitFor(() => {
+      expect(mockedState.mockUpsertRealtimeTaskSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+        id: 'task-1',
+        taskType: 'image_generation',
+        projectId: 'proj-1',
+        status: 'In Progress',
+      }), 'proj-1');
+    });
+    expect(mockedState.mockRealtimeEventProcessor.process).toHaveBeenCalledWith(event);
+    expect(mockedState.mockUpsertRealtimeTaskSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedState.mockRealtimeEventProcessor.process.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('falls back to targeted single-task fetch when the raw row is incomplete', async () => {
+    const fetchedTask = {
+      id: 'task-2',
+      taskType: 'video_generation',
+      params: { source_generation_id: 'gen-2' },
+      status: 'Queued',
+      createdAt: '2026-04-17T00:00:00.000Z',
+      projectId: 'proj-1',
+    };
+    mockedState.mockFetchAndSeedTaskQuery.mockResolvedValue(fetchedTask);
+
+    renderWithProviders(
+      <RealtimeProvider>
+        <RealtimeConsumer />
+      </RealtimeProvider>
+    );
+
+    const event: RawDatabaseEvent = {
+      table: 'tasks',
+      eventType: 'INSERT',
+      receivedAt: Date.now(),
+      new: {
+        id: 'task-2',
+        project_id: 'proj-1',
+        status: 'Queued',
+      },
+      old: null,
+    };
+
+    act(() => {
+      mockedState.rawEventCallback?.(event);
+    });
+
+    await waitFor(() => {
+      expect(mockedState.mockFetchAndSeedTaskQuery).toHaveBeenCalledWith(expect.anything(), 'task-2', 'proj-1');
+    });
+    expect(mockedState.mockUpsertRealtimeTaskSnapshot).toHaveBeenCalledWith(fetchedTask, 'proj-1');
+  });
+
+  it('clears previous project scope and disconnects when the selected project changes away or clears', () => {
+    const { queryClient, rerender } = renderWithProviders(
+      <RealtimeProvider>
+        <RealtimeConsumer />
+      </RealtimeProvider>
+    );
+
+    mockedState.mockUseProject.mockReturnValue({ selectedProjectId: 'proj-2' });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <RealtimeProvider>
+          <RealtimeConsumer />
+        </RealtimeProvider>
+      </QueryClientProvider>
+    );
+
+    expect(mockedState.mockResetRealtimeTaskScope).toHaveBeenCalledWith('proj-1');
+    expect(mockedState.mockResetRealtimeTaskScope).toHaveBeenCalledWith('proj-2');
+    expect(mockRealtimeConnection.disconnect).toHaveBeenCalledTimes(0);
+
+    mockedState.mockUseProject.mockReturnValue({ selectedProjectId: null });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <RealtimeProvider>
+          <RealtimeConsumer />
+        </RealtimeProvider>
+      </QueryClientProvider>
+    );
+
+    expect(mockedState.mockResetRealtimeTaskScope).toHaveBeenCalledWith('proj-2');
+    expect(mockRealtimeConnection.disconnect).toHaveBeenCalledTimes(1);
+    expect(mockedState.mockDataFreshnessManager.reset).toHaveBeenCalledTimes(1);
   });
 
   it('updates state when status changes', () => {
-    render(
+    renderWithProviders(
       <RealtimeProvider>
         <RealtimeConsumer />
       </RealtimeProvider>
     );
 
-    // Simulate status change to connected
     act(() => {
-      if (statusChangeCallback) {
-        statusChangeCallback({
-          status: 'connected',
-          projectId: 'proj-1',
-          error: null,
-          statusChangedAt: Date.now(),
-          reconnectAttempt: 0,
-          nextRetryAt: null,
-        });
-      }
+      mockedState.statusChangeCallback?.({
+        status: 'connected',
+        projectId: 'proj-1',
+        error: null,
+        statusChangedAt: Date.now(),
+        reconnectAttempt: 0,
+        nextRetryAt: null,
+      });
     });
 
     expect(screen.getByTestId('status')).toHaveTextContent('connected');
@@ -171,7 +354,7 @@ describe('RealtimeProvider', () => {
   });
 
   it('provides reconnect function', () => {
-    render(
+    renderWithProviders(
       <RealtimeProvider>
         <RealtimeConsumer />
       </RealtimeProvider>
@@ -187,7 +370,6 @@ describe('RealtimeProvider', () => {
 
   describe('useRealtime hook', () => {
     it('returns default values when used outside provider', () => {
-      // useRealtime uses a context with default value, so it should not throw
       function OutsideConsumer() {
         const ctx = useRealtime();
         return <span data-testid="status">{ctx.status}</span>;

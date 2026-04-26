@@ -23,7 +23,7 @@
     "bun:install": "bun install",
     "test": "npm run check:no-smoke-tests && vitest run --config config/testing/vitest.config.ts",
     "test:contracts": "vitest run --config config/testing/vitest.config.ts src/**/**/*.contract.test.ts src/**/**/clientContracts.test.ts src/shared/lib/__tests__/qualityCheck.contract.test.ts",
-    "test:arch": "npm run check:shots-shim-usage && npm run check:core-shim-usage && npm run check:error-runtime-alias-usage && npm run check:contracts && npm run check:contract-surface-map",
+    "test:arch": "npm run check:shots-shim-usage && npm run check:core-shim-usage && npm run check:error-runtime-alias-usage && npm run check:fat-contexts && npm run check:contracts && npm run check:contract-surface-map",
     "test:edge": "npm run test:edge:unit && npm run test:edge:smoke",
     "test:edge:unit": "vitest run --config config/testing/vitest.edge.config.ts",
     "test:edge:smoke": "vitest run --config config/testing/vitest.edge.smoke.config.ts --testNamePattern=\"Smoke\"",
@@ -33,13 +33,14 @@
     "check:no-smoke-tests": "node scripts/quality/check-no-smoke-tests.mjs",
     "check:core-shim-usage": "node scripts/quality/check-core-shim-usage.mjs",
     "check:error-runtime-alias-usage": "node scripts/quality/check-error-runtime-alias-usage.mjs",
+    "check:fat-contexts": "node scripts/quality/check-fat-contexts.mjs",
     "check:shots-shim-usage": "node scripts/quality/check-shots-shim-usage.mjs --max 0",
     "check:contracts": "node scripts/quality/check-contract-governance.mjs",
     "check:contract-surface-map": "node scripts/quality/check-contract-surface-map.mjs",
     "lint:strict-islands": "eslint src/app src/integrations/supabase/bootstrap src/shared/lib/debugPolling.ts src/shared/lib/mobileProjectDebug.ts src/shared/components/MediaGallery/hooks/useMediaGalleryDebugTools.ts src/shared/components/MediaLightbox/hooks/useVideoLightboxEnvironment.ts src/shared/components/MediaLightbox/hooks/useVideoLightboxRenderModel.tsx src/tools/travel-between-images/components/ShotImagesEditor/hooks/useShotImagesEditorCallbacks.ts src/tools/travel-between-images/components/ShotImagesEditor/hooks/useShotImagesEditorModel.ts src/shared/lib/tasks/travelBetweenImages supabase/functions/create-task --ext ts,tsx --max-warnings 0",
     "typecheck:strict-islands": "tsc -p tsconfig.strict-islands.json --noEmit",
     "typecheck:strict-probe": "npm run typecheck:strict-islands",
-    "quality:check": "npm run check:no-smoke-tests && npm run check:shots-shim-usage && npm run check:core-shim-usage && npm run check:error-runtime-alias-usage && npm run check:contracts && npm run check:contract-surface-map && npm run lint && npm run typecheck:strict-probe"
+    "quality:check": "npm run check:no-smoke-tests && npm run check:shots-shim-usage && npm run check:core-shim-usage && npm run check:error-runtime-alias-usage && npm run check:fat-contexts && npm run check:contracts && npm run check:contract-surface-map && npm run lint && npm run typecheck:strict-probe"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
@@ -67,7 +68,8 @@
     "remark-gfm": "^4.0.1",
     "remotion": "^4.0.434",
     "sucrase": "^3.35.1",
-    "tailwind-merge": "^2.5.2"
+    "tailwind-merge": "^2.5.2",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
@@ -83,6 +85,7 @@
     "eslint": "^9.9.0",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.9",
+    "fake-indexeddb": "file:vendor/fake-indexeddb",
     "globals": "^15.9.0",
     "jsdom": "^28.0.0",
     "postcss": "^8.4.47",

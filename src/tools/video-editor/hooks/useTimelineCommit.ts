@@ -7,6 +7,12 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
+import {
+  editorClearTimelineSelection,
+  editorSelectTimelineClip,
+  editorSetSelectedTrackId,
+  useTimelineSelectionStore,
+} from '@/shared/state/selectionStore';
 import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus';
 import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
 import { migrateToFlatTracks } from '@/tools/video-editor/lib/migrate';
@@ -80,7 +86,6 @@ export interface UseTimelineCommitResult {
   dataRef: MutableRefObject<TimelineData | null>;
   selectedClipId: string | null;
   selectedTrackId: string | null;
-  setSelectedClipId: Dispatch<SetStateAction<string | null>>;
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
   applyEdit: (mutation: TimelineEditMutation, options?: ApplyEditOptions) => void;
   patchRegistry: (assetId: string, entry: AssetRegistryEntry, src?: string) => void;
@@ -107,10 +112,17 @@ export function useTimelineCommit({
   const dataRef = useRef<TimelineData | null>(null);
   const selectedClipIdRef = useRef<string | null>(null);
   const selectedTrackIdRef = useRef<string | null>(null);
-
   const [data, setData] = useState<TimelineData | null>(null);
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const {
+    selectedClipId,
+    selectedTrackId,
+  } = useTimelineSelectionStore();
+  const setSelectedTrackId = useCallback<Dispatch<SetStateAction<string | null>>>((updater) => {
+    const nextTrackId = typeof updater === 'function'
+      ? updater(selectedTrackIdRef.current)
+      : updater;
+    editorSetSelectedTrackId(nextTrackId);
+  }, []);
 
   useLayoutEffect(() => {
     dataRef.current = data;
@@ -172,24 +184,28 @@ export function useTimelineCommit({
 
     if (options?.selectedClipId !== undefined) {
       selectedClipIdRef.current = options.selectedClipId;
-      setSelectedClipId(options.selectedClipId);
+      if (options.selectedClipId === null) {
+        editorClearTimelineSelection();
+      } else {
+        editorSelectTimelineClip(options.selectedClipId);
+      }
     } else if (selectedClipIdRef.current && !nextData.meta[selectedClipIdRef.current]) {
       selectedClipIdRef.current = null;
-      setSelectedClipId(null);
+      editorClearTimelineSelection();
     }
 
     eventBus.emit('pruneSelection', new Set(Object.keys(nextData.meta)));
 
     if (options?.selectedTrackId !== undefined) {
       selectedTrackIdRef.current = options.selectedTrackId;
-      setSelectedTrackId(options.selectedTrackId);
+      editorSetSelectedTrackId(options.selectedTrackId);
     } else {
       const fallbackTrackId = selectedTrackIdRef.current
         && nextData.tracks.some((track) => track.id === selectedTrackIdRef.current)
         ? selectedTrackIdRef.current
         : nextData.tracks[0]?.id ?? null;
       selectedTrackIdRef.current = fallbackTrackId;
-      setSelectedTrackId(fallbackTrackId);
+      editorSetSelectedTrackId(fallbackTrackId);
     }
 
     if (options?.updateLastSavedSignature) {
@@ -398,7 +414,6 @@ export function useTimelineCommit({
     dataRef,
     selectedClipId,
     selectedTrackId,
-    setSelectedClipId,
     setSelectedTrackId,
     applyEdit,
     patchRegistry,

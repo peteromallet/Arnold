@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
 import { TOOL_ROUTES } from '@/shared/lib/tooling/toolRoutes';
 
 export function useResetCurrentShotOnRouteChange() {

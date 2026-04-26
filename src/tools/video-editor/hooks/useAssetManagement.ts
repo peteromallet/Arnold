@@ -8,6 +8,7 @@ import { uploadBlobToStorage, uploadImageToStorage } from '@/shared/lib/media/im
 import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata';
 import { extractVideoPosterFrame } from '@/shared/lib/media/videoPosterExtractor';
 import { generateClientThumbnail, uploadImageWithThumbnail } from '@/shared/media/clientThumbnailGenerator';
+import type { SelectClipOptions } from '@/shared/state/selectionStore';
 import { createExternalUploadGeneration } from '@/integrations/supabase/repositories/generationMutationsRepository';
 import { generateUUID } from '@/shared/lib/taskCreation/ids';
 import { findNearestFreeTrack, getCompatibleTrackId, trySnapToEdge, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
@@ -28,6 +29,7 @@ import type {
 } from '@/tools/video-editor/hooks/timeline-state-types';
 import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
 import type { AssetRegistryEntry, ClipType } from '@/tools/video-editor/types';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 
 function estimateAssetDuration(
   assetEntry: AssetRegistryEntry | undefined,
@@ -43,10 +45,11 @@ type UploadedGenerationData = GenerationDropData & {
 };
 
 export interface UseAssetManagementArgs {
+  store?: TimelineStoreApi;
   dataRef: MutableRefObject<TimelineData | null>;
   selectedTrackId: string | null;
   selectedProjectId: string | null;
-  setSelectedClipId: Dispatch<SetStateAction<string | null>>;
+  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
   applyEdit: TimelineApplyEdit;
   patchRegistry: TimelinePatchRegistry;
@@ -263,16 +266,43 @@ export function buildAssetDropEdit({
 }
 
 export function useAssetManagement({
+  store,
   dataRef,
   selectedTrackId,
   selectedProjectId,
-  setSelectedClipId,
+  selectClip,
   setSelectedTrackId,
   applyEdit,
   patchRegistry,
   unpatchRegistry,
   registerAsset,
 }: UseAssetManagementArgs): UseAssetManagementResult {
+  const getDataRef = useCallback(() => {
+    const storeDataRef = store?.getState().data.dataRef;
+    return storeDataRef && storeDataRef.current !== null ? storeDataRef : dataRef;
+  }, [dataRef, store]);
+  const getSelectedTrackId = useCallback(() => {
+    return store?.getState().data.selectedTrackId ?? selectedTrackId;
+  }, [selectedTrackId, store]);
+  const getPatchRegistry = useCallback(() => {
+    return store?.getState().ops.patchRegistry ?? patchRegistry;
+  }, [patchRegistry, store]);
+  const getUnpatchRegistry = useCallback(() => {
+    return store?.getState().ops.unpatchRegistry ?? unpatchRegistry;
+  }, [store, unpatchRegistry]);
+  const getRegisterAsset = useCallback(() => {
+    return store?.getState().ops.registerAsset ?? registerAsset;
+  }, [registerAsset, store]);
+  const getApplyEdit = useCallback(() => {
+    return store?.getState().ops.applyEdit ?? applyEdit;
+  }, [applyEdit, store]);
+  const getSelectClip = useCallback(() => {
+    return store?.getState().ops.selectClip ?? selectClip;
+  }, [selectClip, store]);
+  const getSetSelectedTrackId = useCallback(() => {
+    return store?.getState().ops.setSelectedTrackId ?? setSelectedTrackId;
+  }, [setSelectedTrackId, store]);
+
   const registerGenerationAsset = useCallback((generationData: UploadedGenerationData | null) => {
     if (!generationData) {
       return null;
@@ -319,15 +349,15 @@ export function useAssetManagement({
         : {}),
     };
 
-    patchRegistry(assetId, entry, imageUrl);
-    void registerAsset(assetId, entry).catch((error) => {
+    getPatchRegistry()(assetId, entry, imageUrl);
+    void getRegisterAsset()(assetId, entry).catch((error) => {
       console.error('[video-editor] Failed to persist generation asset:', error);
-      unpatchRegistry(assetId);
+      getUnpatchRegistry()(assetId);
       toast.error('Failed to save asset');
     });
 
     return assetId;
-  }, [patchRegistry, registerAsset, unpatchRegistry]);
+  }, [getPatchRegistry, getRegisterAsset, getUnpatchRegistry]);
 
   const uploadImageGeneration = useCallback(async (file: File) => {
     if (!selectedProjectId) {
@@ -429,13 +459,15 @@ export function useAssetManagement({
   }, [selectedProjectId]);
 
   const handleAssetDrop = useCallback((assetKey: string, trackId: string | undefined, time: number, forceNewTrack = false, insertAtTop = false) => {
-    const assetKind = inferTrackType(dataRef.current?.registry.assets[assetKey]?.file ?? assetKey);
-    const duration = estimateAssetDuration(dataRef.current?.registry.assets[assetKey], assetKind);
+    const latestDataRef = getDataRef();
+    const current = latestDataRef.current;
+    const assetKind = inferTrackType(current?.registry.assets[assetKey]?.file ?? assetKey);
+    const duration = estimateAssetDuration(current?.registry.assets[assetKey], assetKind);
     const resolvedTarget = resolveAssetDropTarget({
-      dataRef,
+      dataRef: latestDataRef,
       assetKind,
       trackId,
-      selectedTrackId,
+      selectedTrackId: getSelectedTrackId(),
       forceNewTrack,
       insertAtTop,
       time,
@@ -453,15 +485,15 @@ export function useAssetManagement({
     if (!nextEdit) {
       return;
     }
-    applyEdit({
+    getApplyEdit()({
       type: 'rows',
       rows: nextEdit.rows,
       metaUpdates: nextEdit.metaUpdates,
       clipOrderOverride: nextEdit.clipOrderOverride,
     });
-    setSelectedClipId(nextEdit.clipId);
-    setSelectedTrackId(resolvedTarget.trackId);
-  }, [applyEdit, dataRef, selectedTrackId, setSelectedClipId, setSelectedTrackId]);
+    getSelectClip()(nextEdit.clipId);
+    getSetSelectedTrackId()(resolvedTarget.trackId);
+  }, [getApplyEdit, getDataRef, getSelectedTrackId, getSelectClip, getSetSelectedTrackId]);
 
   return {
     registerGenerationAsset,

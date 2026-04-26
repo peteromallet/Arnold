@@ -7,8 +7,9 @@ import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/c
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/contexts/TimelineEditorContext';
+} from '@/tools/video-editor/hooks/timelineStore';
 import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants';
+import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { getBulkVisibleTabs, getSharedNestedValue, getSharedValue } from '@/tools/video-editor/lib/bulk-utils';
 
@@ -30,7 +31,6 @@ function PropertiesPanelComponent() {
   } = useTimelineEditorData();
   const {
     clearSelection,
-    setSelectedClipId,
     handleUpdateClips,
     handleUpdateClipsDeep,
     handleDeleteClip,
@@ -52,11 +52,12 @@ function PropertiesPanelComponent() {
     patchRegistry,
     registerAsset,
   } = useTimelineEditorOps();
-  const { staleAssetKeys, dismissedAssetKeys, dismissAsset, updateAssetToCurrentVariant } = useStaleVariants({
+  const { staleAssetKeys, dismissedAssetKeys, dismissAsset, updateAssetToCurrentVariant, applyVariantToAsset } = useStaleVariants({
     registry: resolvedConfig?.registry,
     patchRegistry,
     registerAsset,
   });
+  const { addVariantAsGenerationAfterClip, isPending: isAddingVariantAsGenerationPending } = useAddVariantAsGeneration();
   const [assetsExpanded, setAssetsExpanded] = useState(false);
   const prevClipIdRef = useRef(selectedClip?.id);
   const selectedClipIdsList = [...selectedClipIds];
@@ -262,7 +263,7 @@ function PropertiesPanelComponent() {
             hasPredecessor={selectedClipHasPredecessor}
             onChange={handleSelectedClipChange}
             onResetPosition={handleResetClipPosition}
-            onClose={() => setSelectedClipId(null)}
+            onClose={clearSelection}
             onDelete={selectedClip ? () => handleDeleteClip(selectedClip.id) : undefined}
             onToggleMute={handleToggleMute}
             onDetachAudio={selectedClip ? () => handleDetachAudioClip(selectedClip.id) : undefined}
@@ -290,6 +291,9 @@ function PropertiesPanelComponent() {
             isVariantStale={selectedClip?.asset ? staleAssetKeys.has(selectedClip.asset) && !dismissedAssetKeys.has(selectedClip.asset) : false}
             onUpdateVariant={selectedClip?.asset ? () => void updateAssetToCurrentVariant(selectedClip.asset!) : undefined}
             onDismissStale={selectedClip?.asset && staleAssetKeys.has(selectedClip.asset) ? () => dismissAsset(selectedClip.asset!) : undefined}
+            onApplyVariant={selectedClip?.asset ? (variant) => applyVariantToAsset(selectedClip.asset!, variant) : undefined}
+            onAddVariantAsGeneration={selectedClip ? (variant) => addVariantAsGenerationAfterClip(selectedClip.id, variant) : undefined}
+            isAddingVariantAsGeneration={selectedClip ? (variantId) => isAddingVariantAsGenerationPending(selectedClip.id, variantId) : undefined}
             timelineFps={resolvedConfig?.output.fps}
           />
         )}

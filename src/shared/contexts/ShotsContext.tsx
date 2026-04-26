@@ -1,6 +1,6 @@
 import React, { createContext, useContext, ReactNode, useMemo, useState, useEffect } from 'react';
 import { useListShots, useProjectImageStats } from '@/shared/hooks/shots';
-import { useProject } from '@/shared/contexts/ProjectContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { Shot } from '@/domains/generation/types';
 
 interface ShotsContextType {
@@ -20,7 +20,7 @@ interface ShotsProviderProps {
 }
 
 export const ShotsProvider: React.FC<ShotsProviderProps> = ({ children }) => {
-  const { selectedProjectId } = useProject();
+  const { selectedProjectId } = useProjectSelectionContext();
 
   const [isProjectTransitioning, setIsProjectTransitioning] = useState(false);
   const prevProjectIdRef = React.useRef<string | null>(null);

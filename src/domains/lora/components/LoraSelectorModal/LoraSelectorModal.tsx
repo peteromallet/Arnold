@@ -6,7 +6,7 @@ import { useExtraLargeModal } from '@/shared/hooks/useModal';
 import { useScrollFade } from '@/shared/hooks/useScrollFade';
 import { useListResources, useCreateResource, useUpdateResource, useDeleteResource } from '@/features/resources/hooks/useResources';
 import { useUserUIState } from '@/shared/hooks/useUserUIState';
-import { UI_Z_LAYERS, getTopDialogElement } from '@/shared/lib/uiLayers';
+import { useOverlayStackApi } from '@/shared/state/overlayStack';
 
 import { LoraSelectorModalProps } from './types';
 import { CommunityLorasTab } from './components/CommunityLorasTab';
@@ -25,6 +25,7 @@ export const LoraSelectorModal: React.FC<LoraSelectorModalProps> = ({
   loraType,
 }) => {
   const contentRef = React.useRef<HTMLDivElement | null>(null);
+  const overlayStackApi = useOverlayStackApi();
   const myLorasResource = useListResources('lora');
   const createResource = useCreateResource();
   const updateResource = useUpdateResource();
@@ -83,7 +84,9 @@ export const LoraSelectorModal: React.FC<LoraSelectorModalProps> = ({
         return;
       }
 
-      if (getTopDialogElement() !== content) {
+      const topOverlay = overlayStackApi.getState().getTopOverlay();
+      const contentOverlay = overlayStackApi.getState().getTopmostOverlayContainingElement(content);
+      if (!topOverlay || !contentOverlay || topOverlay.id !== contentOverlay.id) {
         return;
       }
 
@@ -99,7 +102,7 @@ export const LoraSelectorModal: React.FC<LoraSelectorModalProps> = ({
 
     document.addEventListener('pointerdown', handlePointerDown, true);
     return () => document.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, overlayStackApi]);
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -108,8 +111,6 @@ export const LoraSelectorModal: React.FC<LoraSelectorModalProps> = ({
           ref={contentRef}
           className={modal.className}
           style={modal.style}
-          overlayClassName="!z-[100012]"
-          zIndexBase={UI_Z_LAYERS.LIGHTBOX_MODAL + 2}
         >
           <div className={modal.headerClass}>
             <DialogHeader className={`${modalHeaderPaddingClass} flex-shrink-0`}>

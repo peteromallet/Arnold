@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/components/ui/
 
 import { BatchModeContent } from './generation/BatchModeContent';
 import { JoinModeContent } from './generation/JoinModeContent';
-import { useShotSettingsContext } from '../ShotSettingsContext';
+import { useShotSettingsGeneration, useShotSettingsMedia } from '../ShotSettingsContext';
 
 export interface GenerationSectionProps {
   refs: {
@@ -26,7 +26,8 @@ export const GenerationSection: React.FC<GenerationSectionProps> = ({
   refs,
   cta,
 }) => {
-  const { simpleFilteredImages, generationMode, joinState } = useShotSettingsContext();
+  const { simpleFilteredImages } = useShotSettingsMedia();
+  const { generationMode, joinState } = useShotSettingsGeneration();
   const showSimpleHeader = simpleFilteredImages.length <= 2;
   const canSwitchToJoin = joinState.joinValidationData.videoCount >= 2;
 

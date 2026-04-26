@@ -40,6 +40,7 @@ import type { TrackKind } from '@/tools/video-editor/types';
 import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll';
 import type { Shot } from '@/domains/generation/types';
 import { useFinalVideoAvailable } from '@/tools/video-editor/hooks/useFinalVideoAvailable';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 
 async function resolveFinalVideoDurationSecondsWithRetry(
   finalVideo: Parameters<typeof resolveFinalVideoDurationSeconds>[0],
@@ -326,6 +327,7 @@ async function dispatchTimelineDrop({
 }
 
 export interface UseExternalDropArgs {
+  store?: TimelineStoreApi;
   dataRef: React.MutableRefObject<TimelineData | null>;
   pendingOpsRef: React.MutableRefObject<number>;
   scale: number;
@@ -353,6 +355,7 @@ export interface UseExternalDropResult {
 }
 
 export function useExternalDrop({
+  store,
   dataRef,
   pendingOpsRef,
   selectedTrackId,
@@ -379,6 +382,22 @@ export function useExternalDrop({
     sourceKind: TrackKind | null;
   } | null>(null);
   const latestExternalPositionRef = useRef<ReturnType<DragCoordinator['update']> | null>(null);
+  const getDataRef = useCallback(() => {
+    const storeDataRef = store?.getState().data.dataRef;
+    return storeDataRef && storeDataRef.current !== null ? storeDataRef : dataRef;
+  }, [dataRef, store]);
+  const getPendingOpsRef = useCallback(() => {
+    return store?.getState().data.pendingOpsRef ?? pendingOpsRef;
+  }, [pendingOpsRef, store]);
+  const getSelectedTrackId = useCallback(() => {
+    return store?.getState().data.selectedTrackId ?? selectedTrackId;
+  }, [selectedTrackId, store]);
+  const getApplyEdit = useCallback(() => {
+    return store?.getState().ops.applyEdit ?? applyEdit;
+  }, [applyEdit, store]);
+  const getPatchRegistry = useCallback(() => {
+    return store?.getState().ops.patchRegistry ?? patchRegistry;
+  }, [patchRegistry, store]);
 
   const clearExternalDragState = useCallback(() => {
     if (externalDragFrameRef.current !== null) {
@@ -469,12 +488,12 @@ export function useExternalDrop({
     });
     await dispatchTimelineDrop({
       event,
-      dataRef,
-      pendingOpsRef,
+      dataRef: getDataRef(),
+      pendingOpsRef: getPendingOpsRef(),
       dropPosition,
-      selectedTrackId,
-      applyEdit,
-      patchRegistry,
+      selectedTrackId: getSelectedTrackId(),
+      applyEdit: getApplyEdit(),
+      patchRegistry: getPatchRegistry(),
       uploadAsset,
       invalidateAssetRegistry,
       resolveAssetUrl,
@@ -488,16 +507,16 @@ export function useExternalDrop({
     });
     onSeekToTime?.(dropPosition.time);
   }, [
-    applyEdit,
     coordinator,
-    dataRef,
     dropAsset,
+    getApplyEdit,
+    getDataRef,
+    getPatchRegistry,
+    getPendingOpsRef,
+    getSelectedTrackId,
     invalidateAssetRegistry,
-    pendingOpsRef,
-    patchRegistry,
     registerGenerationAsset,
     resolveAssetUrl,
-    selectedTrackId,
     shots,
     finalVideoMap,
     handleAddTextAt,

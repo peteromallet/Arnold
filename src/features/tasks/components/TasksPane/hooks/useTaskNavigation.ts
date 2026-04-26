@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useProject } from '@/shared/contexts/ProjectContext';
-import { usePanes } from '@/shared/contexts/PanesContext';
-import { useCurrentShot } from '@/shared/contexts/CurrentShotContext';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
+import { useCurrentShot } from '@/shared/state/selectionStore';
+import { usePanesStore } from '@/shared/state/panesStore';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { parseTaskParams } from '@/shared/lib/taskTypeUtils';
@@ -84,8 +84,9 @@ export function useTaskNavigation({
   isMobileActive,
   onMobileActiveChange,
 }: UseTaskNavigationOptions): UseTaskNavigationReturn {
-  const { selectedProjectId, setSelectedProjectId } = useProject();
-  const { setActiveTaskId, setIsTasksPaneOpen } = usePanes();
+  const { selectedProjectId, setSelectedProjectId } = useProjectSelectionContext();
+  const setActiveTaskId = usePanesStore((state) => state.setActiveTaskId);
+  const setIsTasksPaneOpen = usePanesStore((state) => state.setIsTasksPaneOpen);
   const { setCurrentShotId } = useCurrentShot();
   const navigate = useNavigate();
 

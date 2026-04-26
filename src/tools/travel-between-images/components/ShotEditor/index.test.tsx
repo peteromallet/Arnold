@@ -18,10 +18,6 @@ vi.mock('@/shared/hooks/mobile', () => ({
   useDeviceInfo: () => ({ isPhone: false, mobileColumns: 3 }),
 }));
 
-vi.mock('@/shared/contexts/PanesContext', () => ({
-  usePanes: () => ({ setIsGenerationsPaneLocked: vi.fn() }),
-}));
-
 vi.mock('@/shared/hooks/timeline/useTimelineCore', () => ({
   useTimelineCore: () => ({
     clearAllEnhancedPrompts: vi.fn(async () => {}),
@@ -38,7 +34,7 @@ vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
   }),
 }));
 
-vi.mock('@/shared/contexts/CurrentShotContext', () => ({
+vi.mock('@/shared/state/selectionStore', () => ({
   useCurrentShot: () => ({ setCurrentShotId: vi.fn() }),
 }));
 
@@ -64,6 +60,23 @@ vi.mock('@/shared/contexts/ProjectContext', () => ({
     selectedProjectId: 'project-1',
     projects: [{ id: 'project-1', aspectRatio: '16:9' }],
   }),
+  useProjectSelectionContext: () => ({
+    selectedProjectId: 'project-1',
+    project: { id: 'project-1', aspectRatio: '16:9' },
+    setSelectedProjectId: vi.fn(),
+  }),
+  useProjectCrudContext: () => ({
+    projects: [{ id: 'project-1', aspectRatio: '16:9' }],
+    isLoadingProjects: false,
+    fetchProjects: vi.fn(),
+    addNewProject: vi.fn(),
+    isCreatingProject: false,
+    updateProject: vi.fn(),
+    isUpdatingProject: false,
+    deleteProject: vi.fn(),
+    isDeletingProject: false,
+  }),
+  useProjectIdentityContext: () => ({ userId: null }),
 }));
 
 vi.mock('@/shared/contexts/IncomingTasksContext', () => ({
