@@ -7,4 +7,11 @@ restartPolicyType = "on_failure"
 startCommand = "npm run serve"
 
 [environments.production.variables]
-NODE_ENV = "production" 
+NODE_ENV = "production"
+# Nixpacks Node provider reads these at build time:
+#   - NIXPACKS_NODE_VERSION makes nixpacks install Node via fnm rather than
+#     the snapshot's stale nodejs_20 (20.6.1). "20" gets the latest 20.x.
+#   - NIXPACKS_PKGS adds packages alongside the auto-detected Node setup,
+#     replacing what we used to put in nixpacks.toml's [phases.setup].
+NIXPACKS_NODE_VERSION = "20"
+NIXPACKS_PKGS = "openssl" 
