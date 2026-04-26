@@ -162,11 +162,30 @@ Examples:
 
 - ACE Step official subgraph required explicit materialization.
 - ACE text node required fields not visible in the first shallow conversion pass.
+- Qwen Image 2512 required a workflow-family policy rather than universal CLI step overrides. The official template routes step/cfg selection through primitive nodes and `ComfySwitchNode`; HiddenSwitch baseline execution works after graph preparation, but VibeComfy must not inject `--steps` unless metadata has an eligible sampler target.
 
 Policy:
 
 - Validate against `/object_info` or embedded node definitions, not just raw template shape. The pre-submit validator now does this for the `vibecomfy run` and `vibecomfy validate` paths, so most schema-drift surfaces as a hard error before submission. Templates that drift in subtler ways (semantic shape changes, default-value drift) can still slip through and need the watch.
 - Doctor output that names missing required node inputs and suggests the patch/materialization location is still TODO (deferred per the wave-1 decision; revisit if validator-as-lint isn't sufficient).
+- Treat CLI override eligibility as part of runtime compatibility. A workflow can be valid and runnable while still rejecting `--prompt` or `--steps`; that should become a matrix policy decision, not a template failure.
+
+### Watchdog completion semantics for embedded runs
+
+Status: `Open`
+
+Root cause: `runtime_observability`
+Detected by: watchdog JSON and successful output mismatch
+
+Issue:
+
+- A Qwen Image 2512 embedded VibeComfy run produced a PNG and returned `rc=0`, but the watchdog log reported `diagnosis=crashed` with no prompt/node id. This is a false-negative diagnosis for runtime-green evidence: the output exists and the process succeeded, but the watchdog report is misleading.
+
+Policy:
+
+- Runtime-green evidence should still require generated media and process success.
+- Watchdog diagnosis should be used for debugging, but `diagnosis=crashed` with `rc=0` and valid output should be treated as a watchdog bug until the event-stream lifecycle is fixed.
+- Fix target: align watchdog shutdown with successful embedded prompt completion so completed runs produce `diagnosis=completed`, or mark "event stream ended after output" distinctly.
 
 ## Resolved
 

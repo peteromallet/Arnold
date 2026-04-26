@@ -1,22 +1,31 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 from typing import Any
 
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.ingest.loader import load_template
 from vibecomfy.model_assets import extract_from_raw_workflow
+from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.schema.format import format_issue
 from vibecomfy.workflow import VibeEdge, VibeWorkflow
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 
+_RAW_REF_RE = re.compile(r"^\w+\.\w+$")
+
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
+    lint = getattr(args, "lint", False)
+    allow_drift = getattr(args, "allow_drift", False)
     schema_provider = get_schema_provider("auto")
     try:
         workflow = load_workflow_reference(args.path, schema_provider=schema_provider, allow_scratchpad=True)
@@ -25,6 +34,24 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print(f"Error: {type(exc).__name__}: {exc}")
         print("Next: fix the Python file until build() returns a VibeWorkflow.")
         return 1
+    if lint:
+        for warning in _lint_untyped_raw_refs(Path(args.path)):
+            print(f"- untyped_raw_ref: {warning}")
+    drift_warnings, drift_errors = _nodepack_lockfile_drift()
+    if drift_errors:
+        if allow_drift:
+            print("Nodepack lockfile drift warnings:")
+            for warning in [*drift_warnings, *drift_errors]:
+                print(f"- {warning}")
+            return 0
+        print("Layer: nodepack lockfile drift")
+        for error in drift_errors:
+            print(f"- {error}")
+        return 1
+    if drift_warnings:
+        print("Nodepack lockfile warnings:")
+        for warning in drift_warnings:
+            print(f"- {warning}")
     report = workflow.validate(schema_provider=schema_provider)
     if not report.ok:
         print("Layer: VibeWorkflow validation")
@@ -62,6 +89,152 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         return 0
     print("No local issues found. Runtime/model/node failures require `vibecomfy run` logs.")
     return 0
+
+
+def _read_doctor_lockfile() -> list[LockEntry]:
+    return read_lockfile()
+
+
+def _nodepack_lockfile_drift() -> tuple[list[str], list[str]]:
+    warnings: list[str] = []
+    errors: list[str] = []
+    for entry in _read_doctor_lockfile():
+        pack_dir = _doctor_nodepack_dir(entry.name)
+        if pack_dir is None:
+            warnings.append(f"{entry.name} in lockfile but not installed; skipping drift check")
+            continue
+        actual = _git_head(pack_dir)
+        if actual is None:
+            warnings.append(f"{entry.name} is installed at {pack_dir} but git HEAD could not be read; skipping drift check")
+            continue
+        if actual != entry.git_commit_sha:
+            errors.append(f"{entry.name} git HEAD {actual} does not match lockfile git_commit_sha {entry.git_commit_sha}")
+        for rel_path, expected_hash in entry.source_sha256.items():
+            source_path = pack_dir / rel_path
+            if not source_path.is_file():
+                errors.append(f"{entry.name} source {rel_path} is missing; expected sha256 {expected_hash}")
+                continue
+            actual_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+            if actual_hash != expected_hash:
+                errors.append(
+                    f"{entry.name} source {rel_path} sha256 {actual_hash} does not match lockfile {expected_hash}"
+                )
+    return warnings, errors
+
+
+def _doctor_nodepack_dir(name: str) -> Path | None:
+    candidates = (
+        Path("vendor") / name,
+        Path("custom_nodes") / name,
+        Path("vendor") / "ComfyUI" / "custom_nodes" / name,
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _git_head(pack_dir: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(pack_dir), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def _lint_untyped_raw_refs(path: Path) -> list[str]:
+    if path.suffix.lower() != ".py" or not path.is_file():
+        return []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError as exc:
+        return [f"{path}:{exc.lineno}: could not parse Python source: {exc.msg}"]
+    visitor = _UntypedRawRefVisitor(path)
+    visitor.visit(tree)
+    return visitor.warnings
+
+
+class _UntypedRawRefVisitor(ast.NodeVisitor):
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.warnings: list[str] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+        self._visit_function_body(node.body)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
+        self._visit_function_body(node.body)
+
+    def _visit_function_body(self, body: list[ast.stmt]) -> None:
+        typed_handle_names: set[str] = set()
+        for statement in body:
+            for child in ast.walk(statement):
+                if isinstance(child, ast.Call) and self._is_str_of_typed_handle(child, typed_handle_names):
+                    arg = child.args[0]
+                    assert isinstance(arg, ast.Name)
+                    self.warnings.append(
+                        f"{self.path}:{child.lineno}: str({arg.id}) erases typed Handle metadata"
+                    )
+                if isinstance(child, ast.Call) and self._is_raw_connect_ref(child, typed_handle_names):
+                    raw_ref = child.args[0]
+                    assert isinstance(raw_ref, ast.Constant)
+                    self.warnings.append(
+                        f"{self.path}:{child.lineno}: raw string ref {raw_ref.value!r} passed to connect() "
+                        "after typed Handle creation"
+                    )
+            for target in _assigned_names(statement):
+                if _contains_out_call(statement):
+                    typed_handle_names.add(target)
+
+    @staticmethod
+    def _is_str_of_typed_handle(node: ast.Call, typed_handle_names: set[str]) -> bool:
+        return (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "str"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in typed_handle_names
+        )
+
+    @staticmethod
+    def _is_raw_connect_ref(node: ast.Call, typed_handle_names: set[str]) -> bool:
+        if not typed_handle_names:
+            return False
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "connect":
+            return False
+        if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+            return False
+        return bool(_RAW_REF_RE.match(node.args[0].value))
+
+
+def _assigned_names(statement: ast.stmt) -> set[str]:
+    names: set[str] = set()
+    if isinstance(statement, ast.Assign):
+        for target in statement.targets:
+            names.update(_target_names(target))
+    elif isinstance(statement, ast.AnnAssign):
+        names.update(_target_names(statement.target))
+    return names
+
+
+def _target_names(target: ast.expr) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: set[str] = set()
+        for element in target.elts:
+            names.update(_target_names(element))
+        return names
+    return set()
+
+
+def _contains_out_call(node: ast.AST) -> bool:
+    return any(isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr == "out" for child in ast.walk(node))
 
 
 def _doctor_warnings(workflow: VibeWorkflow) -> list[str]:
@@ -172,4 +345,6 @@ def _audio_source(workflow: VibeWorkflow, edge: VibeEdge | None, literal: Any) -
 def register(subparsers) -> None:
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("path")
+    doctor.add_argument("--lint", action="store_true", default=False)
+    doctor.add_argument("--allow-drift", action="store_true", default=False)
     doctor.set_defaults(func=_cmd_doctor)

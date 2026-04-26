@@ -28,7 +28,7 @@ What the script does:
 
 - Launches a RunPod pod with the configured storage.
 - Waits for SSH and checks `nvidia-smi -L`.
-- Uploads the local VibeComfy repo, excluding `.venv`, `.git`, `output`, and run logs.
+- Uploads the local VibeComfy repo, excluding `.venv`, `.git`, `out`, `output`, `vendor`, `.desloppify`, `.megaplan`, and run logs.
 - Installs VibeComfy, HiddenSwitch ComfyUI, and ComfyScript.
 - Runs tests.
 - Indexes official templates, external examples, custom-node examples, and runtime nodes.
@@ -38,6 +38,8 @@ What the script does:
 - Terminates the launched pod in `finally`.
 
 The script has local signal handling, explicit `finally` termination, and a max-runtime watchdog. RunPod's current pod docs expose explicit stop/delete calls and a local scheduled stop pattern; network-volume pods should be terminated rather than stopped, so these scripts terminate the launched pod id.
+
+Cleanup note: do not depend on `runpodctl` inside the launched pod for cleanup. It may not have local RunPod credentials. The launcher or local `runpod-lifecycle` CLI/API should terminate the pod id that was launched.
 
 ## Proper Media Matrix
 
@@ -69,3 +71,5 @@ Known caveats:
 
 - `flux_fill_inpaint_example` currently fails before VibeComfy if the attached storage lacks authorized access to gated Hugging Face model `black-forest-labs/FLUX.1-Fill-dev/flux1-fill-dev.safetensors`.
 - Extra LTX video candidates may fail because of disk space or missing model files. They are useful probes, but the required model-backed video proof is the official Wan `text_to_video_wan` pass.
+- Family-specific workflows may reject universal CLI overrides. For example, Qwen Image 2512's step/cfg values are selected through primitive nodes and `ComfySwitchNode`; the matrix should patch the workflow and then avoid passing `--steps` to VibeComfy unless a registered sampler step target exists.
+- Keep local artifact-summary commands portable. Linux pod commands may use GNU `find -printf`, but macOS artifact pulls should use portable alternatives.

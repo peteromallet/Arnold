@@ -13,7 +13,16 @@ from vibecomfy import fetch as fetch_assets
 
 
 DEFAULT_REGISTRY_PATH = Path(__file__).with_name("models.yaml")
-RESERVED_TAGS = {"phase:core", "phase:gguf", "phase:ltx", "phase:wan_wrapper", "ltx_lean_excluded", "requires_hf_token", "excluded_in_public_scope"}
+RESERVED_TAGS = {
+    "phase:core",
+    "phase:gguf",
+    "phase:ltx",
+    "phase:wan_wrapper",
+    "phase:qwen_image",
+    "ltx_lean_excluded",
+    "requires_hf_token",
+    "excluded_in_public_scope",
+}
 LTX_LEAN_EXCLUDED_SCOPES = {"ltx_official", "ltx_official_public", "ltx_lightricks", "ltx_iclora", "ltx_iclora_public"}
 PUBLIC_SCOPES = {"ltx_official_public", "ltx_iclora_public"}
 
@@ -312,7 +321,7 @@ def _build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY_PATH)
     stage.add_argument("--models-root", type=Path, required=True)
     stage.add_argument("--ids", nargs="+")
-    stage.add_argument("--select-phase", choices=("core", "gguf", "ltx", "wan_wrapper"))
+    stage.add_argument("--select-phase", choices=("core", "gguf", "ltx", "wan_wrapper", "qwen_image"))
     stage.add_argument("--dry-run", action="store_true")
     return parser
 

@@ -129,6 +129,7 @@ def test_corpus_matrix_plan_has_z_flux_scope(tmp_path: Path) -> None:
             {
                 "workflows": [
                     {"id": "qwen_image_edit", "path": "qwen.json", "media": "image", "task": "image_edit", "coverage_tier": "required"},
+                    {"id": "qwen_image_2512", "path": "qwen2512.json", "media": "image", "task": "text_to_image", "coverage_tier": "required"},
                     {"id": "z_image", "path": "z.json", "media": "image", "task": "text_to_image", "coverage_tier": "required"},
                     {"id": "flux2_klein_4b_t2i", "path": "flux4.json", "media": "image", "task": "text_to_image", "coverage_tier": "required"},
                     {"id": "flux2_klein_9b_gguf_t2i", "path": "flux9.json", "media": "image", "task": "text_to_image", "coverage_tier": "required"},
@@ -143,6 +144,27 @@ def test_corpus_matrix_plan_has_z_flux_scope(tmp_path: Path) -> None:
 
     assert format_rows(plan.core_rows) == "z_image\tz.json\timage\nflux2_klein_4b_t2i\tflux4.json\timage"
     assert format_rows(plan.gguf_rows) == "flux2_klein_9b_gguf_t2i\tflux9.json\timage"
+
+
+def test_corpus_matrix_plan_has_qwen_image_2512_scope(tmp_path: Path) -> None:
+    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "workflows": [
+                    {"id": "qwen_image_edit", "path": "qwen-edit.json", "media": "image", "task": "image_edit", "coverage_tier": "required"},
+                    {"id": "qwen_image_2512", "path": "qwen2512.json", "media": "image", "task": "text_to_image", "coverage_tier": "required"},
+                    {"id": "z_image", "path": "z.json", "media": "image", "task": "text_to_image", "coverage_tier": "required"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    plan = build_corpus_matrix_plan(tmp_path, scope="qwen_image_2512")
+
+    assert format_rows(plan.core_rows) == "qwen_image_2512\tqwen2512.json\timage"
 
 
 def test_corpus_matrix_plan_includes_flux_ready_supplementals(tmp_path: Path) -> None:

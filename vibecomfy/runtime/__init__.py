@@ -1,7 +1,11 @@
-from .run import RunResult, run, run_embedded, run_embedded_sync, run_sync, smoke_runtime, smoke_runtime_sync
+from .run import run, run_embedded, run_embedded_sync, run_sync, smoke_runtime, smoke_runtime_sync
+from .session import EmbeddedSession, RunResult, ServerSession, SessionConfig
 
 __all__ = [
+    "EmbeddedSession",
     "RunResult",
+    "ServerSession",
+    "SessionConfig",
     "run",
     "run_sync",
     "run_embedded",

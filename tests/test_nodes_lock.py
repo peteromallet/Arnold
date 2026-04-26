@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, upsert_lockfile_entry, write_lockfile
+
+
+def test_lockfile_legacy_round_trip_to_toml(tmp_path: Path) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text("ComfyUI-KJNodes abc123 https://example.test/kj.git\n", encoding="utf-8")
+
+    entries = read_lockfile(lockfile)
+    assert entries == [
+        LockEntry(
+            name="ComfyUI-KJNodes",
+            git_commit_sha="abc123",
+            url="https://example.test/kj.git",
+        )
+    ]
+
+    write_lockfile(entries, lockfile)
+    assert '[nodepacks."ComfyUI-KJNodes"]' in lockfile.read_text(encoding="utf-8")
+    assert read_lockfile(lockfile) == entries
+
+
+def test_lockfile_reads_git_sha_synonym_and_absent_path(tmp_path: Path) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text(
+        """
+[nodepacks.LegacyName]
+git_sha = "abc123"
+url = "https://example.test/legacy.git"
+semantic_label = "main"
+
+[nodepacks.LegacyName.source_sha256]
+"nodes.py" = "deadbeef"
+""",
+        encoding="utf-8",
+    )
+
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="LegacyName",
+            git_commit_sha="abc123",
+            url="https://example.test/legacy.git",
+            semantic_label="main",
+            source_sha256={"nodes.py": "deadbeef"},
+        )
+    ]
+    assert read_lockfile(tmp_path / "missing.lock") == []
+
+
+def test_upsert_lockfile_entry_appends_to_legacy_lockfile(tmp_path: Path) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text(
+        "\n".join(
+            [
+                "ComfyUI-KJNodes abc123 https://example.test/kj.git",
+                "ComfyUI-WanVideoWrapper def456 https://example.test/wan.git",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    upsert_lockfile_entry(
+        LockEntry(
+            name="ComfyUI-QwenTTS",
+            git_commit_sha="fedcba",
+            url="https://example.test/qwen.git",
+        ),
+        lockfile,
+    )
+
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-KJNodes",
+            git_commit_sha="abc123",
+            url="https://example.test/kj.git",
+        ),
+        LockEntry(
+            name="ComfyUI-QwenTTS",
+            git_commit_sha="fedcba",
+            url="https://example.test/qwen.git",
+        ),
+        LockEntry(
+            name="ComfyUI-WanVideoWrapper",
+            git_commit_sha="def456",
+            url="https://example.test/wan.git",
+        ),
+    ]
+    assert '[nodepacks."ComfyUI-QwenTTS"]' in lockfile.read_text(encoding="utf-8")
+
+
+def test_upsert_lockfile_entry_replaces_existing_name(tmp_path: Path) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text(
+        "\n".join(
+            [
+                "ComfyUI-KJNodes abc123 https://example.test/kj.git",
+                "ComfyUI-WanVideoWrapper def456 https://example.test/wan.git",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    upsert_lockfile_entry(
+        LockEntry(
+            name="ComfyUI-KJNodes",
+            git_commit_sha="updated",
+            url="https://example.test/kj-updated.git",
+        ),
+        lockfile,
+    )
+
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-KJNodes",
+            git_commit_sha="updated",
+            url="https://example.test/kj-updated.git",
+        ),
+        LockEntry(
+            name="ComfyUI-WanVideoWrapper",
+            git_commit_sha="def456",
+            url="https://example.test/wan.git",
+        ),
+    ]

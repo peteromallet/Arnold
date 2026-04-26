@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vibecomfy.blocks import Handles, block
+from vibecomfy.blocks import Handle, Handles, block
 from vibecomfy.blocks._utils import add_block_node, connect
 from vibecomfy.workflow import VibeWorkflow
 
@@ -22,7 +22,7 @@ class KSamplerSettings:
 def model_sampling_sd3(
     workflow: VibeWorkflow,
     *,
-    model: str,
+    model: str | Handle,
     shift: int | float = 8,
     block_id: str | None = None,
 ) -> Handles:
@@ -34,17 +34,17 @@ def model_sampling_sd3(
         widgets={"widget_0": shift},
     )
     connect(workflow, model, node, "model")
-    return Handles(model=node.id)
+    return Handles(model=Handle(node_id=node.id, output_slot=0, name="model"))
 
 
 @block
 def ksampler(
     workflow: VibeWorkflow,
     *,
-    model: str,
-    positive: str,
-    negative: str,
-    latent: str,
+    model: str | Handle,
+    positive: str | Handle,
+    negative: str | Handle,
+    latent: str | Handle,
     settings: KSamplerSettings | None = None,
     block_id: str | None = None,
 ) -> Handles:
@@ -68,4 +68,4 @@ def ksampler(
     connect(workflow, positive, node, "positive")
     connect(workflow, negative, node, "negative")
     connect(workflow, latent, node, "latent_image")
-    return Handles(samples=node.id)
+    return Handles(samples=Handle(node_id=node.id, output_slot=0, name="samples"))

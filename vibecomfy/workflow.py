@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from vibecomfy.handles import Handle
 from vibecomfy.schema.provider import SchemaProvider
 
 
@@ -125,7 +126,18 @@ class VibeWorkflow:
         self.nodes[node_id] = node
         return node
 
-    def connect(self, from_ref: str, to_ref: str) -> "VibeWorkflow":
+    def node(self, class_type: str, **kwargs: Any) -> "_NodeBuilder":
+        node = self.add_node(class_type)
+        for key, value in kwargs.items():
+            if isinstance(value, Handle):
+                self.connect(value, f"{node.id}.{key}")
+            else:
+                node.inputs[key] = value
+        return _NodeBuilder(workflow=self, node=node)
+
+    def connect(self, from_ref: str | Handle, to_ref: str) -> "VibeWorkflow":
+        if isinstance(from_ref, Handle):
+            from_ref = str(from_ref)
         from_node, from_output = from_ref.split(".", 1)
         to_node, to_input = to_ref.split(".", 1)
         self.edges.append(VibeEdge(from_node, from_output, to_node, to_input))
@@ -151,6 +163,14 @@ class VibeWorkflow:
         """
         self.disconnect(to_ref)
         return self.connect(new_from_ref, to_ref)
+
+    def run_until(self, handle: Handle) -> Any:
+        if handle.output_type is None:
+            raise NotImplementedError(
+                "wf.run_until is gated on MP-6 schema integration; handle.output_type is None. "
+                "Manually attach SaveImage/PreviewImage/SaveAudio."
+            )
+        raise NotImplementedError("wf.run_until runner is not implemented yet; gated on MP-6.")
 
     def validate(self, schema_provider: SchemaProvider | None = None) -> ValidationReport:
         issues: list[ValidationIssue] = []
@@ -208,3 +228,23 @@ class VibeWorkflow:
     def _next_node_id(self) -> str:
         numeric = [int(node_id) for node_id in self.nodes if str(node_id).isdigit()]
         return str(max(numeric, default=0) + 1)
+
+
+@dataclass(frozen=True)
+class _NodeBuilder:
+    workflow: VibeWorkflow
+    node: VibeNode
+
+    @property
+    def id(self) -> str:
+        return self.node.id
+
+    def out(self, slot: int | str) -> Handle:
+        try:
+            int(str(slot))
+        except ValueError as exc:
+            raise NotImplementedError(
+                f"Named outputs (e.g. .out({slot!r})) require MP-6 schema integration; "
+                "pass an integer slot for P1."
+            ) from exc
+        return Handle(node_id=self.node.id, output_slot=slot)

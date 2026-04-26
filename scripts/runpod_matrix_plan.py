@@ -36,6 +36,8 @@ def build_corpus_matrix_plan(root: Path, *, scope: str = "all", manifest: str = 
         "wan_core",
         "image_core",
         "audio_core",
+        "qwen_image",
+        "qwen_image_2512",
         "z_flux",
         "image_creation_types",
         "z_image",
@@ -193,6 +195,10 @@ def _matches_core_scope(row: MatrixRow, scope: str) -> bool:
         return row.media == "audio"
     if scope == "z_image":
         return row.id == "z_image"
+    if scope == "qwen_image":
+        return row.id.startswith("qwen_image")
+    if scope == "qwen_image_2512":
+        return row.id == "qwen_image_2512"
     if scope in {"z_flux", "flux2", "image_creation_types"}:
         return row.id == "z_image" or row.id.startswith("flux2_klein")
     if scope == "flux2_4b":

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from vibecomfy.blocks import Handles, block
+from vibecomfy.blocks import Handle, Handles, block
 from vibecomfy.blocks._utils import add_block_node, connect
 from vibecomfy.workflow import VibeNode, VibeWorkflow
 
@@ -44,7 +44,10 @@ def opaque(
     )
     for input_name, source in dict(links or {}).items():
         connect(workflow, source.node_id, node, input_name, output_slot=source.slot)
-    return Handles({name: f"{node.id}.{slot}" for slot, name in enumerate(outputs)}, node=node.id)
+    return Handles(
+        {name: Handle(node_id=node.id, output_slot=slot, name=name) for slot, name in enumerate(outputs)},
+        node=Handle(node_id=node.id, output_slot=0, name="node"),
+    )
 
 
 def _widget_kwargs(

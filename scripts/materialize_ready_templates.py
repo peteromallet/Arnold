@@ -57,6 +57,8 @@ def _apply_ready_policy(workflow: VibeWorkflow, item: dict) -> None:
     )
     if workflow_template == "flux2_klein_9b_gguf_t2i":
         _apply_flux2_gguf_policy(workflow)
+    elif workflow_template == "qwen_image_2512":
+        _apply_qwen_image_2512_policy(workflow)
     elif workflow_template.startswith("ace_step"):
         _apply_ace_step_policy(workflow)
     elif workflow_template.startswith("ltx2_3"):
@@ -82,6 +84,52 @@ def _apply_flux2_gguf_policy(workflow: VibeWorkflow) -> None:
         if node.class_type == "VAELoader" and node.inputs.get("vae_name") == "full_encoder_small_decoder.safetensors":
             node.inputs["vae_name"] = "flux2-vae.safetensors"
     workflow.requirements.custom_nodes.append("ComfyUI-GGUF")
+
+
+def _apply_qwen_image_2512_policy(workflow: VibeWorkflow) -> None:
+    for node in workflow.nodes.values():
+        if node.class_type == "PrimitiveBoolean":
+            node.inputs["value"] = True
+            node.widgets = {}
+        elif node.class_type == "PrimitiveInt":
+            node.inputs["value"] = min(int(node.inputs.get("value", 4)), 4)
+            node.widgets = {}
+        elif node.class_type == "PrimitiveFloat":
+            node.inputs["value"] = min(float(node.inputs.get("value", 1)), 1)
+            node.widgets = {}
+        elif node.class_type == "EmptySD3LatentImage":
+            node.inputs.update({"width": 768, "height": 768, "batch_size": 1})
+            node.widgets = {}
+        elif node.class_type == "KSampler":
+            node.inputs.update({"seed": 1232512, "sampler_name": "euler", "scheduler": "simple", "denoise": 1})
+            node.widgets = {}
+        elif node.class_type == "SaveImage":
+            node.inputs["filename_prefix"] = "Qwen-Image-2512"
+            node.widgets = {}
+    workflow.metadata["runtime_variant"] = "qwen-image-2512-lightning-4step-768px"
+    workflow.metadata["smoke_resolution"] = "768x768"
+    workflow.metadata["model_assets_extra"] = [
+        {
+            "name": "qwen_image_2512_fp8_e4m3fn.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",
+            "subdir": "diffusion_models",
+        },
+        {
+            "name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "subdir": "text_encoders",
+        },
+        {
+            "name": "qwen_image_vae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+            "subdir": "vae",
+        },
+        {
+            "name": "Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
+            "url": "https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
+            "subdir": "loras",
+        },
+    ]
 
 
 def _apply_ace_step_policy(workflow: VibeWorkflow) -> None:
@@ -498,7 +546,7 @@ def _referenced_model_filenames(workflow: VibeWorkflow) -> set[str]:
 def _finalise_model_assets(workflow: VibeWorkflow) -> None:
     referenced = _referenced_model_filenames(workflow)
     raw_assets = workflow.metadata.get("model_assets", [])
-    extra_assets = workflow.metadata.get("model_assets_extra", [])
+    extra_assets = workflow.metadata.pop("model_assets_extra", [])
     replaced_by_policy = set(workflow.metadata.pop("model_assets_replaced_by_policy", []))
     filtered = [
         asset

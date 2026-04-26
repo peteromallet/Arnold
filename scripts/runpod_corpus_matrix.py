@@ -15,7 +15,10 @@ EXCLUDE_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     ".venv",
+    ".desloppify",
+    ".megaplan",
     "__pycache__",
+    "vendor",
     "out",
     "output",
     "temp",
@@ -24,7 +27,7 @@ EXCLUDE_DIRS = {
 
 # REMOVEME after one green matrix
 def _legacy_or_registry_block(phase: str) -> str:
-    if phase not in {"core", "gguf", "ltx", "wan_wrapper"}:
+    if phase not in {"core", "gguf", "ltx", "wan_wrapper", "qwen_image"}:
         raise ValueError(f"unknown staging phase: {phase}")
     return f"""
 if [ "${{VIBECOMFY_REGISTRY_LEGACY:-0}}" = "1" ]; then
@@ -42,6 +45,7 @@ fi
 
 def _remote_script() -> str:
     scope = os.environ.get("VIBECOMFY_MATRIX_SCOPE", "all")
+    core_stage_phase = "qwen_image" if scope in {"qwen_image", "qwen_image_2512"} else "core"
     ltx_lean_model_scope = scope in {"ltx_official", "ltx_official_public", "ltx_lightricks", "ltx_iclora", "ltx_iclora_public"}
     hf_token = _load_hf_token()
     hf_token_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else "unset HF_TOKEN"
@@ -268,6 +272,14 @@ while IFS=$'\\t' read -r id wf media; do
       vibe_override_args=(--seed 123)
       workflow_timeout=2400
       ;;
+    qwen_image_2512)
+      # Qwen Image 2512 switches step/cfg values through primitive nodes, so
+      # VibeComfy's mainline sampler override guard correctly rejects --steps.
+      # The workflow preparation policy already fixes this to a 4-step
+      # Lightning path for runtime validation.
+      vibe_override_args=(--seed 123 --prompt "a compact red cube on a neutral background")
+      workflow_timeout=2400
+      ;;
     *)
       if [ "$media" = "audio" ]; then
         # Audio workflows use model-specific text/audio encoder nodes; the
@@ -374,7 +386,7 @@ done < "$1"
 }}
 printf 'id\tmedia\tstatus\tbaseline_seconds\tconvert_seconds\tvalidate_seconds\tvibecomfy_seconds\tmedia_files\tbytes\tfailure\n' > out/corpus_matrix/ready_results.tsv
 if grep -q '[^[:space:]]' out/corpus_matrix/core_workflows.tsv; then
-{_legacy_or_registry_block("core")}
+{_legacy_or_registry_block(core_stage_phase)}
 "$PY" - <<'PY'
 from huggingface_hub import hf_hub_download
 from pathlib import Path
@@ -431,7 +443,7 @@ downloads = [
 for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
-{_registry_staging_fallback("core")}
+{_registry_staging_fallback(core_stage_phase)}
 fi
 run_workflow_set out/corpus_matrix/core_workflows.tsv
 if grep -q '[^[:space:]]' out/corpus_matrix/gguf_workflows.tsv; then

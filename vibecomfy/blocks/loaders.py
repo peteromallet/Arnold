@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vibecomfy.blocks import Handles, block
+from vibecomfy.blocks import Handle, Handles, block
 from vibecomfy.blocks._utils import add_block_node
 from vibecomfy.workflow import VibeWorkflow
 
@@ -45,7 +45,12 @@ def unet_clip_vae(
         block_id=block_id,
         widgets={"widget_0": names.vae_name},
     )
-    return Handles(unet=unet.id, model=unet.id, clip=clip.id, vae=vae.id)
+    return Handles(
+        unet=Handle(node_id=unet.id, output_slot=0, name="unet"),
+        model=Handle(node_id=unet.id, output_slot=0, name="model"),
+        clip=Handle(node_id=clip.id, output_slot=0, name="clip"),
+        vae=Handle(node_id=vae.id, output_slot=0, name="vae"),
+    )
 
 
 @block
@@ -62,7 +67,7 @@ def clip_vision(
         block_id=block_id,
         widgets={"widget_0": clip_name},
     )
-    return Handles(clip_vision=node.id)
+    return Handles(clip_vision=Handle(node_id=node.id, output_slot=0, name="clip_vision"))
 
 
 @block
@@ -80,4 +85,4 @@ def load_image(
         block_id=block_id,
         widgets={"widget_0": image, "widget_1": upload},
     )
-    return Handles(image=node.id)
+    return Handles(image=Handle(node_id=node.id, output_slot=0, name="image"))

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vibecomfy.blocks import Handles, block
+from vibecomfy.blocks import Handle, Handles, block
 from vibecomfy.blocks._utils import add_block_node
 from vibecomfy.workflow import VibeWorkflow
 
@@ -30,4 +30,4 @@ def empty_hunyuan_video(
         block_id=block_id,
         widgets={"widget_0": shape.width, "widget_1": shape.height, "widget_2": shape.length, "widget_3": shape.batch_size},
     )
-    return Handles(latent=node.id)
+    return Handles(latent=Handle(node_id=node.id, output_slot=0, name="latent"))

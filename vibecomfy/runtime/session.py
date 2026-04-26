@@ -81,7 +81,7 @@ class VibeSession(Protocol):
     async def reconfigure(self, config: SessionConfig) -> Any:
         ...
 
-    async def stop(self) -> None:
+    async def stop(self, wait_for_inflight: bool = True) -> None:
         ...
 
 
@@ -93,6 +93,7 @@ class EmbeddedSession:
         self._comfy: Any | None = None
         self._schema_provider: Any | None = None
         self._schema_warning_emitted = False
+        self._inflight_run: asyncio.Task[Any] | None = None
 
     def _on_schema_unavailable(self, msg: str) -> None:
         if self._schema_warning_emitted:
@@ -108,7 +109,31 @@ class EmbeddedSession:
         self._context = Comfy(configuration=_embedded_configuration_for_session(self.config))
         self._comfy = await self._context.__aenter__()
 
-    async def run(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+    async def run(self, workflow: VibeWorkflow, *, backend: str = "api", ensure_packs: bool = False) -> RunResult:
+        if self._inflight_run is not None and not self._inflight_run.done():
+            raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
+        if ensure_packs:
+            from vibecomfy.node_packs_install import install_pack, missing_packs_for_workflow
+
+            # Dev convenience only; production should pre-stage nodepacks with `vibecomfy nodes ensure`.
+            packs, _unresolved = missing_packs_for_workflow(workflow)
+            installed_or_refreshed = False
+            for pack in packs:
+                result = install_pack(name=pack.name)
+                if result.status not in {"installed", "refreshed"}:
+                    raise RuntimeError(f"ensure_packs: install failed for {pack.name}: {result.error}")
+                installed_or_refreshed = True
+            if installed_or_refreshed:
+                await self.reload_for_nodepack_change(reason="ensure_packs")
+        task = asyncio.current_task()
+        self._inflight_run = task
+        try:
+            return await self._run_untracked(workflow, backend=backend)
+        finally:
+            if self._inflight_run is task:
+                self._inflight_run = None
+
+    async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
         await self.start()
         assert self._comfy is not None
         if self._schema_provider is None:
@@ -182,7 +207,8 @@ class EmbeddedSession:
             return None
         return await self._comfy.reconfigure(_embedded_configuration_for_session(config))
 
-    async def stop(self) -> None:
+    async def stop(self, wait_for_inflight: bool = True) -> None:
+        await _resolve_inflight_before_stop(self, wait_for_inflight)
         if self._context is None:
             return
         try:
@@ -193,6 +219,23 @@ class EmbeddedSession:
         finally:
             self._context = None
             self._comfy = None
+
+    async def reload_for_nodepack_change(self, *, reason: str) -> None:
+        if self._inflight_run is not None and not self._inflight_run.done():
+            raise RuntimeError("reload_for_nodepack_change refused: run in flight")
+        logger.info("reload_for_nodepack_change: %s", reason)
+        if self._context is not None:
+            try:
+                await self._context.__aexit__(None, None, None)
+            except AttributeError as exc:
+                if "model_mmap_residency" not in str(exc):
+                    raise
+        self._comfy = None
+        self._context = None
+        self._schema_provider = None
+        self._schema_warning_emitted = False
+        self.last_fingerprint = None
+        await self.start()
 
 
 class ServerSession:
@@ -205,6 +248,7 @@ class ServerSession:
         self._argv = _comfy_server_argv(self.config)
         self._schema_provider: Any | None = None
         self._schema_warning_emitted = False
+        self._inflight_run: asyncio.Task[Any] | None = None
 
     def _on_schema_unavailable(self, msg: str) -> None:
         if self._schema_warning_emitted:
@@ -221,6 +265,17 @@ class ServerSession:
         self._argv = _comfy_server_argv(self.config)
 
     async def run(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+        if self._inflight_run is not None and not self._inflight_run.done():
+            raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
+        task = asyncio.current_task()
+        self._inflight_run = task
+        try:
+            return await self._run_untracked(workflow, backend=backend)
+        finally:
+            if self._inflight_run is task:
+                self._inflight_run = None
+
+    async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
         await self.start()
         assert self.url is not None
         if self._schema_provider is None:
@@ -289,7 +344,8 @@ class ServerSession:
         await self.start()
         return True
 
-    async def stop(self) -> None:
+    async def stop(self, wait_for_inflight: bool = True) -> None:
+        await _resolve_inflight_before_stop(self, wait_for_inflight)
         process = self.process
         if process is not None and process.returncode is None:
             process.send_signal(signal.SIGTERM)
@@ -303,6 +359,35 @@ class ServerSession:
         self.process = None
         self.url = None
         self.log_handle = None
+
+    async def reload_for_nodepack_change(self, *, reason: str) -> None:
+        if self._inflight_run is not None and not self._inflight_run.done():
+            raise RuntimeError("reload_for_nodepack_change refused: run in flight")
+        # NOTE: ServerSession external-mode handling (attach to a server VibeComfy didn't spawn) is deferred to MP-5 alongside session-shared multi-stage orchestration. Current production paths route external server URLs through comfy_server(server_url=...) in vibecomfy/runtime/server.py, which already skips spawn/cleanup for external URLs.
+        await self.stop()
+        await self.start()
+        logger.info("reload_for_nodepack_change: %s", reason)
+
+
+async def _resolve_inflight_before_stop(session: Any, wait_for_inflight: bool) -> None:
+    task = getattr(session, "_inflight_run", None)
+    if task is None:
+        return
+    if task.done():
+        session._inflight_run = None
+        return
+    if not wait_for_inflight:
+        raise RuntimeError(
+            "session.stop() called while a run is in flight; pass wait_for_inflight=True or call after run completes"
+        )
+    if task is asyncio.current_task():
+        raise RuntimeError("session.stop() called from the in-flight run; call after run completes")
+    try:
+        await task
+    except BaseException:
+        session._inflight_run = None
+        raise
+    session._inflight_run = None
 
 
 def find_active_session(id: str = "default") -> str | None:

@@ -2,6 +2,7 @@
 # workflow inspection, use the *_preview variant or workflow_from_ready /
 # workflow_from_file directly.
 from .runtime.run import run, run_sync
+from .handles import Handle
 from .registry.library import workflow_from_file, workflow_from_template
 from .registry.ready import ready_template_ids, workflow_from_ready
 from .workflow import (
@@ -17,6 +18,7 @@ from .workflow import (
 )
 
 __all__ = [
+    "Handle",
     "VibeWorkflow",
     "VibeNode",
     "VibeEdge",

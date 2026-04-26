@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 
 import vibecomfy.runtime.session as session_module
+import vibecomfy.node_packs_install as node_packs_install
+from vibecomfy.node_packs import CustomNodePack
 from vibecomfy.schema import InputSpec, NodeSchema
 from vibecomfy.runtime.session import (
     EmbeddedSession,
@@ -751,3 +753,310 @@ def test_server_session_stop_sigterms_then_falls_back_to_kill(monkeypatch: pytes
 
     assert process.signals == [signal.SIGTERM]
     assert process.killed is True
+
+
+def _patch_fast_runtime_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_prepare(workflow, *, backend, schema_provider, on_unavailable, cache_only=False):
+        return workflow.compile(backend=backend)
+
+    async def fake_maybe_flush(_session, _fp):
+        return None
+
+    async def fake_start_watchdog(*, server_url, client_id, api_dict):
+        return object()
+
+    async def fake_finalize_watchdog(_watchdog, *, run_dir, reason):
+        return None
+
+    monkeypatch.setattr(session_module, "_prepare_prompt_async", fake_prepare)
+    monkeypatch.setattr(session_module, "_maybe_flush_for_policy", fake_maybe_flush)
+    monkeypatch.setattr(session_module, "_start_watchdog", fake_start_watchdog)
+    monkeypatch.setattr(session_module, "_finalize_watchdog", fake_finalize_watchdog)
+    monkeypatch.setattr(session_module, "_build_schema_provider", lambda _url: object())
+
+
+def test_embedded_stop_refuses_inflight_when_not_waiting(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            return {"prompt_id": "prompt-blocked", "outputs": []}
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", blocking_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        with pytest.raises(RuntimeError, match="session.stop\\(\\) called while a run is in flight"):
+            await session.stop(wait_for_inflight=False)
+        release.set()
+        await task
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_stop_waits_for_inflight_run(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            return {"prompt_id": "prompt-blocked", "outputs": []}
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", blocking_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        stop_task = asyncio.create_task(session.stop(wait_for_inflight=True))
+        await asyncio.sleep(0)
+        assert not stop_task.done()
+        release.set()
+        await stop_task
+        assert task.done()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_stop_reraises_inflight_run_exception_before_teardown(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def failing_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            raise ValueError("boom")
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", failing_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        stop_task = asyncio.create_task(session.stop(wait_for_inflight=True))
+        await asyncio.sleep(0)
+        assert not stop_task.done()
+        release.set()
+        with pytest.raises(RuntimeError, match="Workflow queue failed: boom"):
+            await stop_task
+        assert task.done()
+        assert fake_comfy.exit_count == 0
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_concurrent_run_is_rejected(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            return {"prompt_id": "prompt-blocked", "outputs": []}
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", blocking_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        with pytest.raises(RuntimeError, match="session already has a run in flight"):
+            await session.run(_workflow(seed=2))
+        release.set()
+        await task
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_reload_reopens_fresh_context_and_resets_cached_state(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        await session.start()
+        first_comfy = session._comfy
+        session._schema_provider = object()
+        session._schema_warning_emitted = True
+        session.last_fingerprint = ("stale",)
+        await session.reload_for_nodepack_change(reason="test")
+        assert fake_comfy.exit_count == 1
+        assert fake_comfy.enter_count == 2
+        assert len(fake_comfy.instances) == 2
+        assert session._comfy is not first_comfy
+        assert session._schema_provider is None
+        assert session._schema_warning_emitted is False
+        assert session.last_fingerprint is None
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_reload_refuses_inflight_run(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            return {"prompt_id": "prompt-blocked", "outputs": []}
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", blocking_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        with pytest.raises(RuntimeError, match="reload_for_nodepack_change refused: run in flight"):
+            await session.reload_for_nodepack_change(reason="test")
+        release.set()
+        await task
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_run_ensure_packs_invokes_install_then_reload_then_queue(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    pack = CustomNodePack(
+        name="ExamplePack",
+        repo="https://example.test/example.git",
+        classes=frozenset({"ExampleNode"}),
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", lambda workflow: ([pack], []))
+
+    def fake_install_pack(*, name):
+        calls.append(f"install:{name}")
+        return node_packs_install.InstallResult(name=name, status="installed", git_commit_sha="abc123", error=None)
+
+    async def fake_reload(*, reason: str) -> None:
+        calls.append(f"reload:{reason}")
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure", "outputs": []}
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        session.reload_for_nodepack_change = fake_reload  # type: ignore[method-assign]
+        try:
+            await session.run(_workflow(), ensure_packs=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == ["install:ExamplePack", "reload:ensure_packs", "queue"]
+
+
+def test_embedded_run_ensure_packs_skips_reload_when_nothing_missing(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[str] = []
+
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", lambda workflow: ([], []))
+
+    def fail_install_pack(**_kwargs):
+        raise AssertionError("install_pack must not be called when no packs are missing")
+
+    async def fake_reload(*, reason: str) -> None:
+        calls.append(f"reload:{reason}")
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure", "outputs": []}
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fail_install_pack)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        session.reload_for_nodepack_change = fake_reload  # type: ignore[method-assign]
+        try:
+            await session.run(_workflow(), ensure_packs=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == ["queue"]
+
+
+def test_server_reload_calls_stop_then_start() -> None:
+    async def run_case() -> None:
+        session = ServerSession()
+        calls: list[str] = []
+
+        async def fake_stop(wait_for_inflight: bool = True) -> None:
+            calls.append("stop")
+
+        async def fake_start() -> None:
+            calls.append("start")
+
+        session.stop = fake_stop  # type: ignore[method-assign]
+        session.start = fake_start  # type: ignore[method-assign]
+        await session.reload_for_nodepack_change(reason="test")
+        assert calls == ["stop", "start"]
+
+    asyncio.run(run_case())
+
+
+def test_server_reload_refuses_inflight_and_has_no_external_mode_api() -> None:
+    async def run_case() -> None:
+        session = ServerSession()
+        task = asyncio.create_task(asyncio.sleep(3600))
+        session._inflight_run = task
+        try:
+            with pytest.raises(RuntimeError, match="reload_for_nodepack_change refused: run in flight"):
+                await session.reload_for_nodepack_change(reason="test")
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(run_case())
+    assert not hasattr(ServerSession, "attach")
+    assert not hasattr(session_module, "ExternalServerRestartRequired")

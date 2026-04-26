@@ -12,6 +12,16 @@
       "coverage_tier": "required"
     },
     {
+      "id": "qwen_image_2512",
+      "path": "workflow_corpus/official/image/qwen_image_2512.json",
+      "source": "Comfy-Org/workflow_templates",
+      "model_family": "qwen-image-2512",
+      "task": "text_to_image",
+      "media": "image",
+      "coverage_tier": "required",
+      "approach": "official Qwen-Image-2512 text-to-image workflow using the 4-step Lightning LoRA path for smoke/runtime validation"
+    },
+    {
       "id": "z_image",
       "path": "workflow_corpus/official/image/z_image.json",
       "source": "Comfy-Org/workflow_templates",

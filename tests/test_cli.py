@@ -10,7 +10,8 @@ from vibecomfy.cli import build_parser
 from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
-from vibecomfy.commands.nodes import _cmd_nodes_install_plan, _cmd_nodes_list
+from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list
+import vibecomfy.node_packs_install as node_packs_install
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.commands.workflows import _cmd_workflows_list
@@ -282,6 +283,8 @@ def build():
 
     from vibecomfy.commands.doctor import _cmd_doctor
 
+    # B5 lockfile drift verification is default-on per Step 16; this test predates B5 and isolates from the seam to keep its existing assertions stable.
+    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
     assert _cmd_doctor(argparse.Namespace(path=str(scratchpad))) == 1
 
     captured = capsys.readouterr()
@@ -317,3 +320,120 @@ def build():
     captured = capsys.readouterr()
     assert "ComfyUI-Qwen3-TTS" in captured.out
     assert "Qwen3CustomVoice" in captured.out
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code"),
+    [
+        ("installed", 0),
+        ("refreshed", 0),
+        ("skipped_dirty", 1),
+        ("failed", 1),
+    ],
+)
+def test_cmd_nodes_install_translates_install_result_to_exit_codes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+    expected_code: int,
+) -> None:
+    def fake_install_pack(**kwargs):
+        assert kwargs == {"name": "ExamplePack", "repo": None, "force": False}
+        return node_packs_install.InstallResult(
+            name="ExamplePack",
+            status=status,  # type: ignore[arg-type]
+            git_commit_sha="abc123" if status in {"installed", "refreshed"} else None,
+            error="install issue" if status in {"skipped_dirty", "failed"} else None,
+        )
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+
+    code = _cmd_nodes_install(argparse.Namespace(name="ExamplePack", repo=None, force=False))
+
+    captured = capsys.readouterr()
+    assert code == expected_code
+    assert f"ExamplePack: {status}" in captured.out
+    if expected_code:
+        assert "install issue" in captured.err
+    else:
+        assert captured.err == ""
+
+
+def test_cmd_nodes_ensure_dry_run_does_not_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "SaveImage", "pack": "core", "inputs": {}, "outputs": []}]),
+        encoding="utf-8",
+    )
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
+
+def build():
+    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="Qwen3CustomVoice")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    def fail_install_pack(**_kwargs):
+        raise AssertionError("install_pack must not be called during dry-run")
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fail_install_pack)
+
+    code = _cmd_nodes_ensure(argparse.Namespace(template=None, workflow=str(scratchpad), dry_run=True))
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "Suggested custom node packs:" in captured.out
+    assert "ComfyUI-Qwen3-TTS" in captured.out
+
+
+def test_ensure_calls_install_for_each_missing_pack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "SaveImage", "pack": "core", "inputs": {}, "outputs": []}]),
+        encoding="utf-8",
+    )
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
+
+def build():
+    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="Qwen3CustomVoice")
+    workflow.nodes["2"] = VibeNode(id="2", class_type="VHS_LoadVideo")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    installed: list[str | None] = []
+
+    def fake_install_pack(**kwargs):
+        installed.append(kwargs.get("name"))
+        return node_packs_install.InstallResult(
+            name=str(kwargs["name"]),
+            status="refreshed",
+            git_commit_sha="abc123",
+            error=None,
+        )
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+
+    code = _cmd_nodes_ensure(argparse.Namespace(template=None, workflow=str(scratchpad), dry_run=False))
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert installed == ["ComfyUI-Qwen3-TTS", "ComfyUI-VideoHelperSuite"]
+    assert "Nodepacks installed/refreshed." in captured.out

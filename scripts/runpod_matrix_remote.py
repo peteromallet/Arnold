@@ -47,6 +47,9 @@ def patch_workflow_api(workflow_id: str, api: dict[str, Any]) -> bool:
     if workflow_id == "flux2_klein_9b_gguf_t2i":
         _patch_gguf(api)
         return True
+    if workflow_id == "qwen_image_2512":
+        _patch_qwen_image_2512(api)
+        return True
     if workflow_id.startswith("wanvideo_wrapper"):
         _patch_wanvideo_wrapper(api)
         return True
@@ -54,6 +57,26 @@ def patch_workflow_api(workflow_id: str, api: dict[str, Any]) -> bool:
         _patch_ace_step(api)
         return True
     return False
+
+
+def _patch_qwen_image_2512(api: dict[str, Any]) -> None:
+    for node in api.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs", {})
+        class_type = node.get("class_type")
+        if class_type == "PrimitiveBoolean":
+            inputs["value"] = True
+        elif class_type == "PrimitiveInt":
+            inputs["value"] = min(int(inputs.get("value", 4)), 4)
+        elif class_type == "PrimitiveFloat":
+            inputs["value"] = min(float(inputs.get("value", 1)), 1)
+        elif class_type == "EmptySD3LatentImage":
+            inputs.update({"width": 768, "height": 768, "batch_size": 1})
+        elif class_type == "KSampler":
+            inputs.update({"seed": 1232512, "sampler_name": "euler", "scheduler": "simple", "denoise": 1})
+        elif class_type == "SaveImage":
+            inputs["filename_prefix"] = "Qwen-Image-2512"
 
 
 def _patch_ace_step(api: dict[str, Any]) -> None:

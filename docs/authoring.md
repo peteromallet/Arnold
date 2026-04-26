@@ -9,18 +9,24 @@
 A block is a small function that mutates a workflow and returns `Handles`. Most blocks use `workflow.add_node()` plus `workflow.connect()`, but blocks may use any `VibeWorkflow` method — including `disconnect()` and `replace_edge()` for blocks that splice into existing topology. The contract is "mutate and return handles," not "add_node/connect only."
 
 ```python
-from vibecomfy.blocks import Handles
+from vibecomfy.blocks import Handle, Handles
 
 def my_block(wf, *, prompt: str) -> Handles:
     node = wf.add_node("CLIPTextEncode")
     node.widgets["widget_0"] = prompt
     node.metadata["block"] = "my_package.my_block"
-    return Handles(text=node.id)
+    return Handles({"text": Handle(node_id=node.id, output_slot=0, name="text")})
 ```
 
 Built-in blocks also record `metadata.block`, `metadata.block_id`, and `metadata.widget_kwargs` on produced nodes. This keeps generated graphs inspectable without making node ids part of the public contract.
 
 Use blocks when the call changes the handles available to the caller: a loader creates `model`, `clip`, and `vae`; a sampler creates `samples`; a decode block creates `images`.
+
+## Typed Handles in P1
+
+P1 ships typed handle metadata, not mypy-grade static validation. New authoring code should prefer `wf.node(...).out(<int_slot>)`, which returns a `Handle` carrying the source node id, output slot, optional output type, and optional name. Blocks should return `Handles({"image": Handle(node_id=node.id, output_slot=0, name="image")})` instead of raw string references.
+
+Named output strings such as `.out("IMAGE")` are intentionally gated until MP-6 schema integration can map Comfy output names to slots. In P1, pass an integer slot or digit string; non-numeric output names raise `NotImplementedError`.
 
 ## Patches
 

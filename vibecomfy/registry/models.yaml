@@ -78,6 +78,50 @@ models:
         path: vae/full_encoder_small_decoder.safetensors
     tags: [phase:core]
 
+  - id: qwen_image_2512_fp8
+    source:
+      kind: huggingface
+      repo: Comfy-Org/Qwen-Image_ComfyUI
+      filename: split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors
+    min_size: 10_000_000_000
+    targets:
+      - node_pack: comfy_core
+        path: diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors
+    tags: [phase:core, phase:qwen_image]
+
+  - id: qwen_image_2_5_vl_text_encoder
+    source:
+      kind: huggingface
+      repo: Comfy-Org/Qwen-Image_ComfyUI
+      filename: split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+    min_size: 5_000_000_000
+    targets:
+      - node_pack: comfy_core
+        path: text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+    tags: [phase:core, phase:qwen_image]
+
+  - id: qwen_image_vae
+    source:
+      kind: huggingface
+      repo: Comfy-Org/Qwen-Image_ComfyUI
+      filename: split_files/vae/qwen_image_vae.safetensors
+    min_size: 100_000_000
+    targets:
+      - node_pack: comfy_core
+        path: vae/qwen_image_vae.safetensors
+    tags: [phase:core, phase:qwen_image]
+
+  - id: qwen_image_2512_lightning_4step_lora
+    source:
+      kind: huggingface
+      repo: lightx2v/Qwen-Image-2512-Lightning
+      filename: Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors
+    min_size: 10_000_000
+    targets:
+      - node_pack: comfy_core
+        path: loras/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors
+    tags: [phase:core, phase:qwen_image]
+
   - id: ace_step_qwen_0_6b_text_encoder
     source:
       kind: huggingface

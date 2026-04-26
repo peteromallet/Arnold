@@ -126,12 +126,14 @@ Current approach:
 - Matrix runs use `runpod-lifecycle`.
 - Generic pods launched by the harness are terminated after completion or failure.
 - Peter's long-lived named pods are left alone.
+- The upload tarball excludes `.venv`, `.git`, `out`, `output`, `vendor`, `.desloppify`, and `.megaplan`. This matters operationally: one Qwen Image 2512 run spent several minutes extracting unnecessary local baggage before model staging. Upload size should stay small enough that setup time reflects dependency/model work, not repo debris.
 
 Operational rule:
 
 - Terminate generic pods launched during validation.
 - Leave named `text-ip-adapter-*` pods alone unless explicitly asked.
 - Always list pods after a long run because the local harness can report termination while a stale generic pod is still visible briefly.
+- Do not rely on `runpodctl` inside the pod for cleanup; it may not be configured there. Termination should happen from the local `runpod-lifecycle` credentials or from the launcher guard that created the pod.
 
 Policy:
 
@@ -140,6 +142,7 @@ Policy:
 - Keep a server-side TTL backstop for every launched pod.
 - Save artifacts before termination.
 - List pods after validation and terminate any generic orphaned pods.
+- Artifact collection commands must be portable across macOS and Linux. Avoid GNU-only `find -printf` in local artifact summaries unless the command is only run on the Linux pod.
 
 Needed improvement:
 
@@ -170,6 +173,7 @@ Observed issue:
 Structural risk:
 
 - A workflow can pass one surface and fail another because prompt overrides, server context, preview nodes, cache behavior, and output waiting differ.
+- Generic `--prompt` and `--steps` overrides are not valid for every workflow. Qwen Image 2512 uses primitive step/cfg nodes routed through `ComfySwitchNode`; baseline Comfy can run the patched graph, while VibeComfy correctly rejects `--steps` because there is no directly registered mainline sampler field.
 
 Policy:
 
@@ -177,6 +181,11 @@ Policy:
 - HTTP queue submission alone is not enough; we need completed output evidence.
 - Use embedded mode for one-shot proof of execution.
 - Use managed server mode for warm-cache/session testing.
+- Matrix scopes need per-family override policy. When a preparation/materialization policy already sets steps, cfg, resolution, LoRA switch, and seed inside the graph, the run command should not also pass universal CLI overrides for those fields.
+
+Recent example:
+
+- `qwen_image_2512` generated a baseline Comfy PNG and a VibeComfy PNG on RunPod. The first matrix pass failed only because the VibeComfy phase passed `--steps`; rerunning the same generated scratchpad with `--seed` and `--prompt` succeeded. The matrix now has a Qwen 2512-specific override path.
 
 Execution standard:
 

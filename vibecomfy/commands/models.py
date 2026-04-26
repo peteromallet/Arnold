@@ -26,7 +26,7 @@ def register(subparsers) -> None:
     stage.add_argument("--models-root", type=Path)
     selector = stage.add_mutually_exclusive_group()
     selector.add_argument("--ids", nargs="+")
-    selector.add_argument("--select-phase", choices=("core", "gguf", "ltx", "wan_wrapper"))
+    selector.add_argument("--select-phase", choices=("core", "gguf", "ltx", "wan_wrapper", "qwen_image"))
     stage.add_argument("--dry-run", action="store_true")
     stage.set_defaults(func=_cmd_models_stage)
 

@@ -23,6 +23,10 @@ dev = [
 runpod-local = [
   "python-dotenv>=1.0",
 ]
+runpod-launch = [
+  "python-dotenv>=1.0",
+  "runpod-lifecycle",
+]
 
 [project.scripts]
 vibecomfy = "vibecomfy.cli:main"
@@ -33,3 +37,11 @@ packages = ["vibecomfy"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-m 'not gpu'"
+markers = [
+  "gpu: marks tests that provision live GPU resources",
+  "runpod: opt-in smoke tests that provision real RunPod GPU pods (requires --runpod and RUNPOD_API_KEY).",
+]
+
+[tool.uv.sources]
+runpod-lifecycle = { path = "../runpod-lifecycle", editable = true }

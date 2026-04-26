@@ -4,10 +4,15 @@ Pinned custom-node packs:
 
 ```text
 ComfyUI-KJNodes b7646ad70a7daa7aeb919ca542274758d26ba2df https://github.com/kijai/ComfyUI-KJNodes.git
+ComfyUI-QwenTTS d8122a8ba835b65fd65c113d2b273b1ad1579293 https://github.com/1038lab/ComfyUI-QwenTTS.git
 ComfyUI-WanVideoWrapper df8f3e49daaad117cf3090cc916c83f3d001494c https://github.com/kijai/ComfyUI-WanVideoWrapper.git
 ```
 
 The lockfile is `custom_nodes.lock`.
+
+ComfyUI-QwenTTS is required by `ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py`. The lockfile entry pins upstream HEAD at lock time. Run `vibecomfy nodes install ComfyUI-QwenTTS` to install locally; the verb will UPSERT the lockfile to your installed SHA.
+
+The opt-in P1 GPU smoke test is documented in [RunPod P1 Smoke Test](runpod_smoke.md). It provisions a real RunPod pod, so run it only with `pytest --runpod -m runpod tests/smoke/test_p1_runpod.py`.
 
 ## Resolution Policy
 
