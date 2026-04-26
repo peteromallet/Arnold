@@ -16,8 +16,8 @@
   Rationale: custom node behavior is part of workflow reproducibility.
 - **SD-007** - Provide escape hatches for raw workflow, raw JSON, raw node, and raw runtime configuration paths. _load_bearing: true_
   Rationale: the layer must improve common authoring without blocking workflows whose nodes or schemas are not typed yet.
-- **SD-008** - Migrate ready templates manually and iteratively, treating the current Flux 4B native builder as a transition proof point and a typed-handle rewrite of it as the eventual model. _load_bearing: true_
-  Rationale: the repository currently contains many runtime-green API dictionaries; a big-bang migration would add risk without improving execution.
+- **SD-008** - Migrate ready templates manually and iteratively, treating the current Flux 4B native builder as a transition proof point *in spirit, not in API*, with a typed-handle rewrite against `wf.node(...).out(...)` as the canonical end-state. _load_bearing: true_
+  Rationale: the repository currently contains many runtime-green API dictionaries; a big-bang migration would add risk without improving execution. The Flux 4B builder uses a private `node()` helper and string `connect()`, so it is not the shape new migrations should copy.
 - **SD-009** - Add structured provenance for composition, source, and multi-stage flow execution. _load_bearing: true_
   Rationale: authors need to explain where a graph came from, what changed, and what artifacts moved between stages.
 - **SD-010** - Make typed handles first-class and backward compatible with existing string references. _load_bearing: true_
@@ -96,7 +96,7 @@ api_workflow = wf.compile("api") # round-trips back to the raw dict
 - This is not a parallel workflow IR. `VibeWorkflow` remains canonical, matching the current class at `vibecomfy/workflow.py:74`.
 - Authoring must not require a live `/object_info` request. A checked-in or cached schema snapshot is enough for typed affordances; raw/opaque nodes remain possible when schema data is missing.
 - No direct single-node execution is promised as a core runtime feature. HiddenSwitch accepts whole-graph API dictionaries via `/prompt` and embedded `Comfy.queue_prompt_api`, so VibeComfy should compile small graphs when it needs focused debug runs.
-- No arbitrary Python is injected inside an active Comfy graph. Runtime Python inside a graph must cross an explicit node boundary, such as `ExternalPythonNode`, with serialized inputs and outputs.
+- No arbitrary Python is injected inside an active Comfy graph. Runtime Python inside a graph would have to cross an explicit serialized node boundary; the planned `ExternalPythonNode` (P3) is the eventual mechanism. Until it ships, the request is refused rather than routed.
 
 ## API Concepts
 
@@ -108,7 +108,7 @@ api_workflow = wf.compile("api") # round-trips back to the raw dict
 - **Stages** - a stage is one step in a `VibeFlow`: a graph execution, an ordinary Python transform, or final artifact collection.
 - **Typed Handles** - `Handle[T]` names a node output or artifact with `node_id`, output slot, optional name, and schema/runtime type metadata. It is additive over today's string references.
 - **Run Results / Artifacts** - `RunResult` records execution metadata and maps named graph outputs to `Artifact` values such as images, audio, video, JSON metadata, or files.
-- **ExternalPythonNode** - the runtime boundary for Python that must execute inside a Comfy graph. It is not an authoring-time block.
+- **ExternalPythonNode** - the planned (P3) runtime boundary for Python that must execute inside a Comfy graph. Not implemented today; not an authoring-time block.
 - **Escape Hatches** - raw refs, raw node construction, opaque subgraphs, `compile("api")`, `compile("graphbuilder")`, raw API import/export, and raw HiddenSwitch configuration remain available when typed helpers are incomplete.
 
 Avoid introducing additional synonyms. "Recipe" is dropped from the public surface, including the provenance schema. "Pipeline" is also dropped: `Template` covers single-graph builders and `VibeFlow` covers multi-stage orchestration; nothing else has a non-overlapping role today. If an async/streaming variant of `VibeFlow` ever ships, it will be named distinctly at that time rather than reserving "Pipeline" speculatively.
@@ -151,7 +151,7 @@ Stage(Python setup)
   -> Stage(Python finalize)
 ```
 
-The north-star API is the product shape. The architecture exists to preserve that experience while keeping `VibeWorkflow` canonical, HiddenSwitch as the execution boundary, and lower-layer escape hatches available.
+The "Desired Authoring Experience" section above is the product shape. The architecture exists to preserve that experience while keeping `VibeWorkflow` canonical, HiddenSwitch as the execution boundary, and lower-layer escape hatches available.
 
 ## Typed Handles (and Backward Compatibility)
 
@@ -187,7 +187,7 @@ Graph A
 
 Arbitrary Python runs before, after, and between graph executions. It can inspect `RunResult`, read and write files, branch on metadata, update prompts, choose models, or decide which graph should run next.
 
-Arbitrary Python does not run inside an active Comfy graph unless it is compiled to an `ExternalPythonNode`. This boundary is deliberate: Comfy graph execution exchanges serialized node inputs and outputs, not arbitrary live Python objects.
+Arbitrary Python does not run inside an active Comfy graph. The planned `ExternalPythonNode` (P3) would be the only sanctioned compile target for in-graph Python; until it lands the request is refused. This boundary is deliberate: Comfy graph execution exchanges serialized node inputs and outputs, not arbitrary live Python objects.
 
 `VibeFlow` is the orchestration container for this model. It holds an ordered list of `Stage` entries, where each stage is either:
 
@@ -198,18 +198,20 @@ The executor passes typed media handles between stages. A Python stage can recei
 
 `VibeFlow` lifecycle semantics are settled in SD-013: cancellation shields `queue_prompt_api` and propagates by stopping the watchdog and recording the partial run (no mid-prompt abort against HiddenSwitch); a single `VibeFlow` runs stages serially against one embedded session (multi-session opt-in deferred); run-dirs are `out/runs/<flow-id>/stage-<n>/...` with monotonic stage index; `RunResult` carries `flow_id` and `stage_index` for resume identity.
 
-## ExternalPythonNode (Distinct from @block)
+## ExternalPythonNode (Aspirational, Distinct from @block)
 
-`@block` is authoring-time sugar. The protocol at `vibecomfy/blocks/__init__.py:38` mutates a `VibeWorkflow` and returns `Handles`; it never executes during Comfy runtime.
+`ExternalPythonNode` is a P3 deliverable, not a current primitive. Nothing in the repository implements it today; this section describes the intended shape so the boundary it occupies is reserved against accidental alternative inventions.
 
-`ExternalPythonNode` is a planned runtime primitive, not available today. When implemented, it emits a real Comfy custom node, or an external-process custom node, registered through `NODE_CLASS_MAPPINGS`. Its inputs and outputs cross explicit serialization boundaries: typed file handles, tensor/media handles, strings, numbers, and other Comfy-compatible values only. No live Python objects cross that boundary.
+`@block` is authoring-time sugar that exists today. The protocol at `vibecomfy/blocks/__init__.py:38` mutates a `VibeWorkflow` and returns `Handles`; it never executes during Comfy runtime.
 
-The names stay different on purpose. `@block` helps Python authors build a graph. `ExternalPythonNode` is the only sanctioned way for VibeComfy to run Python inside an active graph.
+When `ExternalPythonNode` ships, it will emit a real Comfy custom node, or an external-process custom node, registered through `NODE_CLASS_MAPPINGS`. Its inputs and outputs would cross explicit serialization boundaries: typed file handles, tensor/media handles, strings, numbers, and other Comfy-compatible values only. No live Python objects would cross that boundary. Until it lands, runtime Python inside a graph is not supported and SD-005 is enforced by refusing the request rather than by routing through this primitive.
 
-| Surface | When it runs | Where it lives | Returns |
-| --- | --- | --- | --- |
-| `@block` (`vibecomfy/blocks/__init__.py:38`) | Authoring time | Python builder code | `Handles` |
-| `ExternalPythonNode` | Comfy runtime | Compiled to a Comfy custom node + `NODE_CLASS_MAPPINGS` | Comfy-typed outputs (IMAGE/LATENT/STRING/…) |
+The names stay different on purpose. `@block` helps Python authors build a graph. `ExternalPythonNode` is the planned, sanctioned way for VibeComfy to run Python inside an active graph once P3 codegen exists.
+
+| Surface | Status | When it would run | Where it lives | Returns |
+| --- | --- | --- | --- | --- |
+| `@block` (`vibecomfy/blocks/__init__.py:38`) | Implemented | Authoring time | Python builder code | `Handles` |
+| `ExternalPythonNode` | Planned (P3) | Comfy runtime | Would compile to a Comfy custom node + `NODE_CLASS_MAPPINGS` | Comfy-typed outputs (IMAGE/LATENT/STRING/…) |
 
 ## Custom Nodes — Adding On the Fly
 
@@ -303,16 +305,16 @@ Supported workarounds:
 
 Do not promise inferred save/preview/audio taps before typed handles and schema metadata land. Runtime lifecycle remains graph-level: sessions start, run a compiled workflow, flush or reconfigure, and stop (`docs/runtime_lifecycle.md:9`, `docs/runtime_lifecycle.md:26`).
 
-The P1-P3 contract should be explicit: `wf.run_until(handle)` raises `NotImplementedError` unless `handle.output_type` is populated and mapped to a known sink. That prevents downstream code from relying on partial behavior before P4.
+The P1-P3 contract is explicit: until P4, `wf.run_until(handle)` raises `NotImplementedError` if `handle.output_type is None`. Hand-populated `output_type` may happen to work pre-P4 but is unsupported and will not survive the P4 cutover; downstream code must not form against partial behavior.
 
 ## Ready Template Migration
 
-The repository already shows both sides of the migration. There are 42 ready-template `.py` files, 41 of them currently embed `API_WORKFLOW` dictionaries, and one is already a native VibeComfy Python builder. `ready_templates/image/z_image.py:6` is representative of the API-dict precedent; `ready_templates/image/flux2_klein_4b_t2i.py:81` is the native builder precedent and the migration model.
+The repository already shows both sides of the migration. There are 42 ready-template `.py` files, 41 of them currently embed `API_WORKFLOW` dictionaries, and one is already a native VibeComfy Python builder. `ready_templates/image/z_image.py:6` is representative of the API-dict precedent; `ready_templates/image/flux2_klein_4b_t2i.py:81` is the native builder precedent — but it is the migration model **in spirit, not yet in API**. It defines its own private `node()` helper at `ready_templates/image/flux2_klein_4b_t2i.py:172` and uses raw string `connect(...)` calls rather than `wf.node(...).out(...)`. The final shape is what the "Desired Authoring Experience" section shows; the existing builder is a *transition precedent* that proves native Python builders work, not the canonical end-state.
 
 Migration policy:
 
 - Leave runtime-green API-dict templates untouched until they need editing.
-- When a template is being tweaked, re-author it through the composition layer using the Flux 4B builder shape.
+- When a template is being tweaked, re-author it through the composition layer using the **target** `wf.node(...).out(...)` / typed-handle shape, not the transitional Flux 4B private-helper shape.
 - Keep round-trippability: every authored template should `compile("api")` to a graph that matches its prior runtime-green API JSON within an allowed-difference set.
 
 Allowed differences should stay narrow: node IDs may move when the authored builder intentionally chooses clearer IDs, and UI-only `MarkdownNote` nodes may be stripped when they have no runtime effect. Behavioral graph nodes, model names, prompts, dimensions, sampler settings, and output sinks should remain explainably equivalent.
@@ -321,9 +323,9 @@ Manual/iterative migration is the policy. There is no big-bang codemod, and this
 
 ## Reconciliation with docs/authoring.md
 
-`docs/authoring.md:99` says ready templates "should be hand-curated Python builders" and that retiring the materializer is intentional. This plan softens, not supersedes, that rule: hand-curated Python builders remain the destination shape, and the Flux 4B builder is the transition proof point, but the plan accepts the current 41-of-42 API-dict reality and migrates manually when a template is edited.
+`docs/authoring.md:99` says ready templates "should be hand-curated Python builders" and that retiring the materializer is intentional. This plan softens, not supersedes, that rule: hand-curated Python builders remain the destination shape, and the Flux 4B builder is the transition proof point (in spirit, not in API), but the plan accepts the current 41-of-42 API-dict reality and migrates manually when a template is edited.
 
-The current Flux 4B builder is not the final API ideal. It still uses explicit node IDs, a private `node()` helper, and string `connect(...)` calls. Before declaring it the canonical migration shape for more templates, rewrite or wrap it against the planned `wf.node(...).out(...)` / typed-handle API. Until then it is evidence that native Python builders work, not evidence that the authoring surface is finished.
+The Flux 4B builder is not the final API ideal. It uses explicit node IDs, a private `node()` helper at `ready_templates/image/flux2_klein_4b_t2i.py:172`, and string `connect(...)` calls. The canonical migration shape is the public `wf.node(...).out(...)` / typed-handle API shown in the "Desired Authoring Experience" section. Until the existing builder is rewritten against that surface, it remains evidence that native Python builders work, not evidence that the authoring surface is finished.
 
 A one-line pointer added to `docs/authoring.md` in this same delivery links readers back to this plan. The core authoring rules in `docs/authoring.md` remain authoritative: blocks mutate workflows and return handles, patches decorate or transform workflows, edge primitives support topology changes, and `finalize_metadata()` refreshes discoverable inputs, outputs, and requirements.
 
@@ -445,7 +447,7 @@ The full implementation should deliver:
 
 Template migration should be comprehensive:
 
-- Start with the current Flux Klein 4B native builder and rewrite it into the public `wf.node(...).out(...)` style.
+- Start by rewriting the current Flux Klein 4B native builder into the public `wf.node(...).out(...)` style — its private `node()` helper and string `connect()` calls are the transition shape, not the target.
 - Convert every existing `ready_templates/**/*.py` file whose primary payload is an `API_WORKFLOW` dict into an authored Python builder.
 - Preserve source provenance for each migrated template: original raw JSON/template source, conversion timestamp or migration note, required models, required nodepacks, and validation result.
 - Keep model families organized by capability, not by accident of source: image, video, audio, editing, inpaint/outpaint, control/conditioning, LoRA/IP-adapter, and utility/debug templates.
@@ -469,7 +471,7 @@ The implementation should feel boring in the best sense: one public node-constru
 - **P2** - Expand block library coverage for Wan, LTX, KJNodes, GGUF, and ACE Step; replace positional `widget_N` keys with named widgets where schema is known; add the compile-time serialization gate and raw-ref/coercion lints.
 - **P3** - Add `VibeFlow` multi-stage orchestration for Comfy <-> Python with typed media handles, but only after failure semantics, run-dir naming, stage identity, raw API wrapping, and nodepack reload are settled; add `ExternalPythonNode` codegen for rare cases that need Python at graph-execution time; add custom-node session-reload helpers; add `vibecomfy nodes lock` writing `git_commit_sha`, optional `semantic_label`, and optional `source_sha256` to `custom_nodes.lock`.
 - **P4** - Add schema-backed validation against a `/object_info` snapshot in CI, following the schema-validation direction in `docs/old_vibecomfy_port_rationale.md:9`; populate typed-handle `output_type`; ungate the `wf.run_until(handle)` debug runner.
-- **P5** - Complete the ready-template migration manually and iteratively, using an updated Flux 4B builder as the canonical shape; add the optional ComfyScript import adapter and any further public docs.
+- **P5** - Complete the ready-template migration manually and iteratively, using a *rewritten* Flux 4B builder (now in `wf.node(...).out(...)` shape) as the canonical reference; add the optional ComfyScript import adapter and any further public docs.
 
 `wf.run_until(handle)` lands in P4, not P1. P1 can create typed handles and preserve string compatibility, but it cannot infer safe save/preview/audio sinks until P4 provides schema-backed `output_type`.
 
@@ -486,13 +488,18 @@ The implementation should feel boring in the best sense: one public node-constru
 - ComfyScript remains import-only/reference material, not the authoring API.
 - Direct single-node execution is out of scope; debug runs are gated on P4.
 - Schema-backed validation uses a `/object_info` snapshot.
-- Ready-template migration is manual and iterative, with the current Flux 4B builder as a transition precedent and the typed-handle rewrite as the canonical target.
+- Ready-template migration is manual and iterative; the current Flux 4B builder is a transition precedent in spirit (proves native builders work) but not in API (uses a private `node()` helper and string `connect()`); the canonical target is the public `wf.node(...).out(...)` typed-handle shape.
 - Custom-node pinning uses `(repo_url, git_commit_sha)` with optional `semantic_label` and `source_sha256`.
 - Adding new nodepacks defaults to session reload or restart.
 - Multi-stage orchestration is the primary mixing model for Comfy and Python.
-- `ExternalPythonNode` is the path for Python that must run inside a Comfy graph.
-- `@block` is authoring-time only; `ExternalPythonNode` is runtime.
-- Typed `Handle` is additive and keeps `str()` coercion.
+- `ExternalPythonNode` is the *planned* (P3) path for Python that must run inside a Comfy graph; it is not implemented today.
+- `@block` is authoring-time only; `ExternalPythonNode` will be runtime when it lands.
+- Typed `Handle` is additive and keeps `str()` coercion. P1 delivers typed metadata and lintable handles, not mypy-grade static safety.
+- Block return shape narrows toward `Mapping[str, Handle]` (MP-2 work); P1 docs the surface, MP-2 enforces it.
+- Patches have signature `(workflow) -> VibeWorkflow` and never return handles, matching `vibecomfy/patches/types.py:9`.
+- "Recipe" and "Pipeline" are not public types; only `Template` and `VibeFlow` describe authoring containers.
+- `VibeFlow` lifecycle (cancellation, single-session serial execution, flow-scoped run-dirs, resume identity) is settled in SD-013.
+- `wf.run_until(handle)` raises `NotImplementedError` until P4 ungates it via schema-backed `output_type` plus a published `SCHEMA_TYPE_REGISTRY`.
 - The deliverable is two markdown edits: this plan plus the pointer in `docs/authoring.md`.
 - The final document should stay within roughly 300-550 lines.
 - Custom-node coverage starts generic-first with `wf.node(...)`, plus hand-curated blocks for high-traffic packs.

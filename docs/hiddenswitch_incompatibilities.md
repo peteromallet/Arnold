@@ -62,9 +62,9 @@ Every entry must declare at least one root cause label. Multiple labels are allo
 
 ### LTX Runexx 22B runtime path
 
-Status: `Open (now diagnosable via watchdog)`
+Status: `Open (now diagnosable via watchdog; LatentUpscaleModelManageable fix pending upstream)`
 
-Root cause: `custom_node_contract, fork_behavior`
+Root cause: `fork_behavior`
 
 Affected workflows:
 
@@ -76,20 +76,22 @@ Observed failures:
 
 - Several community graphs depend on node packs that are not present by default in the HiddenSwitch pip environment.
 - After installing the node packs and normalizing model names, the workflows still hit runtime incompatibilities or stalls under the smoke budget.
-- `LTXVLatentUpsampler` path hit a KJNodes/HiddenSwitch object mismatch: `LatentUpscaleModelManageable` missing `model_mmap_residency`.
+- `LTXVLatentUpsampler` path crashed with `AttributeError: 'LatentUpscaleModelManageable' object has no attribute 'model_mmap_residency'`. Originally attributed to a KJNodes/HiddenSwitch object mismatch — investigation showed it is a HiddenSwitch-internal Protocol/runtime asymmetry, not a KJNodes bug. KJNodes' `LTXVLatentUpsampler` loads its model through HiddenSwitch's `LatentUpscaleModelLoader`, which wraps it in `LatentUpscaleModelManageable` (`comfy_extras/nodes/nodes_latent_upscaler.py:15`); that class extends `ModelManageableStub`, which lacked `model_mmap_residency`/`pinned_memory_size`/`partially_unload_ram` — three methods `load_models_gpu` invokes on every loaded model. Fixed in vendored fork branch and submitted upstream.
 
 Current VibeComfy mitigation:
 
 - Use official/Lightricks LTX workflows as runtime-green coverage.
 - Convert Runexx workflows into ready templates but do not claim runtime-green until the fork mismatch is resolved.
 - Bypass `LTXVLatentUpsampler` in smoke runs and remove unreferenced latent-upscale loader nodes.
-- Failed runs now produce a `vibecomfy/runtime/watchdog.py` report (`out/runs/<run>/watchdog.json`) naming the active node, class type, elapsed-in-node, recent progress events, and recent VRAM samples. This converts mid-sampler stalls and KJNodes object-attribute crashes into actionable diagnoses rather than opaque "no output before timeout" failures.
+- Failed runs now produce a `vibecomfy/runtime/watchdog.py` report (`out/runs/<run>/watchdog.json`) naming the active node, class type, elapsed-in-node, recent progress events, and recent VRAM samples. This converts mid-sampler stalls and contract-gap crashes into actionable diagnoses rather than opaque "no output before timeout" failures.
+- Local fork at `vendor/ComfyUI/` on branch `fix/latentupscale-model-mmap-residency` (commit `15c739ff`) carries the `ModelManageableStub` fix. Verified end-to-end on RTX 4090: vanilla HiddenSwitch `c5ed9402` reproduces the AttributeError; the patched build runs `load_models_gpu([LatentUpscaleModelManageable(...)])` to completion.
+- Upstream PR: https://github.com/hiddenswitch/pip-and-uv-installable-ComfyUI/pull/60
 
 Candidate root fixes:
 
-- Patch or pin a KJNodes version whose latent upscaler object contract matches HiddenSwitch.
-- Add a doctor check that flags this exact class/attribute mismatch before execution.
-- Keep community 22B workflows behind a larger timeout and stronger model-cache policy once the object mismatch is gone.
+- ~~Patch or pin a KJNodes version whose latent upscaler object contract matches HiddenSwitch.~~ Not the right layer — KJNodes is innocent. Fixed at `ModelManageableStub` instead.
+- Wait for upstream PR #60 to merge, then drop `vendor/ComfyUI/` and pin the released HiddenSwitch version that includes the fix.
+- Once the contract gap is closed, re-enable `LTXVLatentUpsampler` in smoke runs and use the watchdog to triage any remaining stalls behind a larger timeout / stronger model-cache policy.
 
 ## Mitigated
 

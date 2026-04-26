@@ -23,3 +23,4 @@ custom_nodes/
 .desloppify/
 .megaplan/
 *.patch
+vendor/ComfyUI/

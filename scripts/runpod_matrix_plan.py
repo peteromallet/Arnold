@@ -30,7 +30,19 @@ class CorpusMatrixPlan:
 
 def build_corpus_matrix_plan(root: Path, *, scope: str = "all", manifest: str = MANIFEST) -> CorpusMatrixPlan:
     rows = _selected_manifest_workflows(root / manifest, scope=scope)
-    run_core = scope in {"all", "wan", "wan_core", "image_core", "audio_core", "z_flux", "image_creation_types", "z_image", "flux2", "flux2_4b"}
+    run_core = scope in {
+        "all",
+        "wan",
+        "wan_core",
+        "image_core",
+        "audio_core",
+        "z_flux",
+        "image_creation_types",
+        "z_image",
+        "flux2",
+        "flux2_4b",
+        "flux2_9b",
+    }
     run_gguf = scope in {"all", "tail", "gguf", "z_flux", "image_creation_types", "flux2", "flux2_9b"}
     run_wan_wrapper = scope in {
         "all",
@@ -122,6 +134,8 @@ def _include_supplemental_for_scope(item: dict, scope: str) -> bool:
         "ltx_runexx_creation",
     }:
         return workflow_id.startswith("ltx2_3")
+    if scope in {"image_core", "z_flux", "image_creation_types", "flux2", "flux2_4b", "flux2_9b"}:
+        return workflow_id.startswith("flux2_klein")
     return False
 
 
@@ -183,6 +197,8 @@ def _matches_core_scope(row: MatrixRow, scope: str) -> bool:
         return row.id == "z_image" or row.id.startswith("flux2_klein")
     if scope == "flux2_4b":
         return row.id.startswith("flux2_klein_4b")
+    if scope == "flux2_9b":
+        return row.id.startswith("flux2_klein_9b")
     return True
 
 

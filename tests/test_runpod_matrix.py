@@ -145,6 +145,69 @@ def test_corpus_matrix_plan_has_z_flux_scope(tmp_path: Path) -> None:
     assert format_rows(plan.gguf_rows) == "flux2_klein_9b_gguf_t2i\tflux9.json\timage"
 
 
+def test_corpus_matrix_plan_includes_flux_ready_supplementals(tmp_path: Path) -> None:
+    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "workflows": [
+                    {
+                        "id": "flux2_klein_4b_t2i",
+                        "path": "flux4.json",
+                        "media": "image",
+                        "task": "text_to_image",
+                        "coverage_tier": "required",
+                    },
+                    {
+                        "id": "flux2_klein_4b_image_edit_base",
+                        "path": "flux4-edit.json",
+                        "media": "image",
+                        "task": "image_edit",
+                        "coverage_tier": "supplemental",
+                        "ready_template": True,
+                    },
+                    {
+                        "id": "flux2_klein_9b_t2i",
+                        "path": "flux9.json",
+                        "media": "image",
+                        "task": "text_to_image",
+                        "coverage_tier": "supplemental",
+                        "ready_template": True,
+                    },
+                    {
+                        "id": "flux2_klein_9b_gguf_t2i",
+                        "path": "flux9-gguf.json",
+                        "media": "image",
+                        "task": "text_to_image",
+                        "coverage_tier": "required",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    for category, template_id in [
+        ("edit", "flux2_klein_4b_image_edit_base"),
+        ("image", "flux2_klein_9b_t2i"),
+    ]:
+        ready = tmp_path / "ready_templates" / category / f"{template_id}.py"
+        ready.parent.mkdir(parents=True, exist_ok=True)
+        ready.write_text("# ready\n", encoding="utf-8")
+
+    flux4 = build_corpus_matrix_plan(tmp_path, scope="flux2_4b")
+    flux9 = build_corpus_matrix_plan(tmp_path, scope="flux2_9b")
+
+    assert format_rows(flux4.core_rows) == (
+        "flux2_klein_4b_t2i\tflux4.json\timage\n"
+        "flux2_klein_4b_image_edit_base\tflux4-edit.json\timage"
+    )
+    assert format_ready_rows(flux4.ready_rows, tmp_path) == "flux2_klein_4b_image_edit_base\tready_templates/edit/flux2_klein_4b_image_edit_base.py\timage"
+    assert format_rows(flux9.core_rows) == "flux2_klein_9b_t2i\tflux9.json\timage"
+    assert format_rows(flux9.gguf_rows) == "flux2_klein_9b_gguf_t2i\tflux9-gguf.json\timage"
+    assert format_ready_rows(flux9.ready_rows, tmp_path) == "flux2_klein_9b_t2i\tready_templates/image/flux2_klein_9b_t2i.py\timage"
+
+
 def test_corpus_matrix_plan_has_audio_scope(tmp_path: Path) -> None:
     manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
@@ -409,6 +472,15 @@ def test_corpus_matrix_patches_wan_headless_preview_crash() -> None:
 
     assert "custom_nodes/ComfyUI-WanVideoWrapper/latent_preview.py" in script
     assert "node_id = serv.last_node_id or '0'" in script
+
+
+def test_corpus_matrix_handles_flux_custom_scheduler_overrides_and_assets() -> None:
+    script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
+
+    assert "flux2_klein*)" in script
+    assert "vibe_override_args=(--seed 123)" in script
+    assert "FLUX.2-klein-base-4b-fp8" in script
+    assert "full_encoder_small_decoder.safetensors" in script
 
 
 def test_corpus_matrix_plan_has_wan_infinitetalk_scope(tmp_path: Path) -> None:

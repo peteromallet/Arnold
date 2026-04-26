@@ -258,6 +258,16 @@ while IFS=$'\\t' read -r id wf media; do
       workflow_override_args=(--seed 123)
       workflow_timeout=2400
       ;;
+    flux2_klein*)
+      # Flux Klein workflows use custom Flux scheduler/conditioning nodes.
+      # Universal --prompt/--steps overrides intentionally target only known
+      # mainline fields, so matrix validation should exercise the workflow's
+      # source-authored prompt and sampling settings instead of failing on
+      # deliberate override guards.
+      workflow_override_args=(--seed 123)
+      vibe_override_args=(--seed 123)
+      workflow_timeout=2400
+      ;;
     *)
       if [ "$media" = "audio" ]; then
         # Audio workflows use model-specific text/audio encoder nodes; the
@@ -398,6 +408,12 @@ downloads = [
     ], 1_000_000_000),
     ("Comfy-Org/flux2-dev", "split_files/vae/flux2-vae.safetensors", [
         Path("models/vae/flux2-vae.safetensors"),
+    ], 100_000_000),
+    ("black-forest-labs/FLUX.2-klein-base-4b-fp8", "flux-2-klein-base-4b-fp8.safetensors", [
+        Path("models/diffusion_models/flux-2-klein-base-4b-fp8.safetensors"),
+    ], 1_000_000_000),
+    ("black-forest-labs/FLUX.2-small-decoder", "full_encoder_small_decoder.safetensors", [
+        Path("models/vae/full_encoder_small_decoder.safetensors"),
     ], 100_000_000),
     ("Comfy-Org/ace_step_1.5_ComfyUI_files", "split_files/text_encoders/qwen_0.6b_ace15.safetensors", [
         Path("models/text_encoders/qwen_0.6b_ace15.safetensors"),

@@ -34,6 +34,17 @@ models:
         path: diffusion_models/flux-2-klein-4b-fp8.safetensors
     tags: [phase:core]
 
+  - id: flux2_klein_base_4b_fp8
+    source:
+      kind: huggingface
+      repo: black-forest-labs/FLUX.2-klein-base-4b-fp8
+      filename: flux-2-klein-base-4b-fp8.safetensors
+    min_size: 1_000_000_000
+    targets:
+      - node_pack: comfy_core
+        path: diffusion_models/flux-2-klein-base-4b-fp8.safetensors
+    tags: [phase:core]
+
   - id: z_image_qwen_3_4b_text_encoder
     source:
       kind: huggingface
@@ -54,6 +65,17 @@ models:
     targets:
       - node_pack: comfy_core
         path: vae/flux2-vae.safetensors
+    tags: [phase:core]
+
+  - id: flux2_small_decoder
+    source:
+      kind: huggingface
+      repo: black-forest-labs/FLUX.2-small-decoder
+      filename: full_encoder_small_decoder.safetensors
+    min_size: 100_000_000
+    targets:
+      - node_pack: comfy_core
+        path: vae/full_encoder_small_decoder.safetensors
     tags: [phase:core]
 
   - id: ace_step_qwen_0_6b_text_encoder
