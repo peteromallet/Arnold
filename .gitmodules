@@ -1,0 +1,4 @@
+[submodule "vendor/ComfyUI"]
+	path = vendor/ComfyUI
+	url = https://github.com/peteromallet/ComfyUI.git
+	branch = fix/latentupscale-model-mmap-residency

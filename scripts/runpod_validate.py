@@ -10,7 +10,7 @@ REMOTE_SCRIPT = f"""
 set -e
 cd {REMOTE_ROOT}
 python3 -m pip install -e '.[dev]'
-python3 -m pip install 'comfyui@git+https://github.com/hiddenswitch/ComfyUI.git' 'comfy-script[default]'
+python3 -m pip install 'comfyui@git+https://github.com/peteromallet/ComfyUI.git@fix/latentupscale-model-mmap-residency' 'comfy-script[default]'
 python3 -m pytest -q tests
 python3 -m vibecomfy.cli sources sync --official vendor/direct_templates --external examples
 python3 -m vibecomfy.cli workflows list --limit 10
