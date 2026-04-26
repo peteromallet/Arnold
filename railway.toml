@@ -8,10 +8,7 @@ startCommand = "npm run serve"
 
 [environments.production.variables]
 NODE_ENV = "production"
-# Nixpacks Node provider reads these at build time:
-#   - NIXPACKS_NODE_VERSION makes nixpacks install Node via fnm rather than
-#     the snapshot's stale nodejs_20 (20.6.1). "20" gets the latest 20.x.
-#   - NIXPACKS_PKGS adds packages alongside the auto-detected Node setup,
-#     replacing what we used to put in nixpacks.toml's [phases.setup].
-NIXPACKS_NODE_VERSION = "20"
-NIXPACKS_PKGS = "openssl" 
+# Tried NIXPACKS_NODE_VERSION here — Railway didn't propagate it to the
+# build step in practice (build still failed with `npm: command not found`).
+# Setting it directly in Railway Dashboard → Service → Variables tab is the
+# only file-external lever that actually overrides the snapshot's stale Node. 
