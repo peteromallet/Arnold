@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentChatAttachmentStrip, AgentChatMessage } from './AgentChatMessage';
 
@@ -158,5 +158,92 @@ describe('AgentChatMessage', () => {
       url: 'https://example.com/3.png',
       mediaType: 'image',
     });
+  });
+
+  it('renders placeholder attachment chips as loading slots without media bindings or remove controls', () => {
+    const onRemoveAttachment = vi.fn();
+
+    render(
+      <AgentChatAttachmentStrip
+        attachments={[
+          {
+            clipId: 'pending-clip',
+            url: '',
+            mediaType: 'image',
+            isPlaceholder: true,
+          },
+        ]}
+        isUser={false}
+        onRemoveAttachment={onRemoveAttachment}
+        maxPreviewCount={null}
+      />,
+    );
+
+    const loadingSlot = screen.getByLabelText('Attached image 1');
+
+    expect(within(loadingSlot).getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByLabelText('Loading attached image 1')).toBeInTheDocument();
+    expect(loadingSlot.querySelector('img')).not.toBeInTheDocument();
+    expect(loadingSlot.querySelector('video')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Deselect attached image 1' })).not.toBeInTheDocument();
+  });
+
+  it('renders non-placeholder attachment chips with media bindings and remove controls', () => {
+    const onRemoveAttachment = vi.fn();
+
+    render(
+      <AgentChatAttachmentStrip
+        attachments={[
+          {
+            clipId: 'real-clip',
+            url: 'https://example.com/real.png',
+            mediaType: 'image',
+          },
+        ]}
+        isUser={false}
+        onRemoveAttachment={onRemoveAttachment}
+        maxPreviewCount={null}
+      />,
+    );
+
+    const chip = screen.getByLabelText('Attached image 1');
+    const image = chip.querySelector('img');
+
+    expect(image).toBeInTheDocument();
+    expect(image).toHaveAttribute('src', 'https://example.com/real.png');
+    fireEvent.click(screen.getByRole('button', { name: 'Deselect attached image 1' }));
+    expect(onRemoveAttachment).toHaveBeenCalledWith({
+      clipId: 'real-clip',
+      url: 'https://example.com/real.png',
+      mediaType: 'image',
+    });
+  });
+
+  it('reserves the same chip dimensions for placeholder and real attachment slots', () => {
+    render(
+      <AgentChatAttachmentStrip
+        attachments={[
+          {
+            clipId: 'pending-clip',
+            url: '',
+            mediaType: 'image',
+            isPlaceholder: true,
+          },
+          {
+            clipId: 'real-clip',
+            url: 'https://example.com/real.mp4',
+            mediaType: 'video',
+          },
+        ]}
+        isUser={false}
+        maxPreviewCount={null}
+      />,
+    );
+
+    const placeholderSurface = screen.getByLabelText('Attached image 1').parentElement;
+    const realSurface = screen.getByLabelText('Attached video 2').parentElement;
+
+    expect(placeholderSurface).toHaveClass('h-10', 'w-10');
+    expect(realSurface).toHaveClass('h-10', 'w-10');
   });
 });

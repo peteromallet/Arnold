@@ -8,6 +8,12 @@ import {
   readPendingAdds,
 } from '@/domains/media-lightbox/hooks/addToVideoEditorConstants';
 import { AgentChatProvider, useAgentChatBridge } from '@/shared/contexts/AgentChatContext';
+import {
+  __getSelectionStateForTests,
+  editorReplaceTimelineSelection,
+  systemResetSelectionForProjectChange,
+  userSelectGalleryItem,
+} from '@/shared/state/selectionStore';
 import { buildVideoEditorLightboxMedia, VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
 import {
   createTimelineStore,
@@ -61,19 +67,16 @@ vi.mock('@/tools/video-editor/hooks/useEffectResources', () => ({
   useEffectResources: () => ({ effects: [] }),
 }));
 
-vi.mock('@/tools/video-editor/hooks/useSelectedMediaClips', () => ({
-  useSelectedMediaClips: () => ({
-    clips: [
-      {
-        clipId: 'clip-1',
-        assetKey: 'asset-1',
-        url: 'https://example.com/image.png',
-        mediaType: 'image',
-        isTimelineBacked: true,
-      },
-    ],
-    summary: 'attaching 1 image',
-  }),
+vi.mock('@/tools/video-editor/hooks/useTimelineClipsForAttachments', () => ({
+  useTimelineClipsForAttachments: () => [
+    {
+      clipId: 'clip-1',
+      assetKey: 'asset-1',
+      url: 'https://example.com/image.png',
+      mediaType: 'image',
+      isTimelineBacked: true,
+    },
+  ],
 }));
 
 vi.mock('@/shared/contexts/ShotsContext', () => ({
@@ -267,7 +270,6 @@ function Consumer() {
       <span>{chrome.saveStatus}</span>
       <span>{playback.currentTime}</span>
       <span data-testid="agent-chat-timeline-id">{agentChatBridge.timelineId}</span>
-      <span data-testid="agent-chat-timeline-clip-count">{agentChatBridge.timelineClips.length}</span>
       <button
         type="button"
         onClick={() => {
@@ -281,22 +283,6 @@ function Consumer() {
         }}
       >
         update interaction
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          agentChatBridge.replaceSelectedTimelineClips([
-            {
-              clipId: 'clip-2',
-              assetKey: 'asset-2',
-              url: 'https://example.com/video.mp4',
-              mediaType: 'video',
-              isTimelineBacked: true,
-            },
-          ]);
-        }}
-      >
-        replace timeline clips
       </button>
     </div>
   );
@@ -329,6 +315,7 @@ function AddToVideoEditorConsumer() {
 describe('VideoEditorProvider', () => {
   beforeEach(() => {
     navigateMock.mockReset();
+    systemResetSelectionForProjectChange();
     localStorage.clear();
     Object.values(mocks).forEach((mock) => mock.mockClear());
   });
@@ -395,10 +382,8 @@ describe('VideoEditorProvider', () => {
     expect(screen.getByText('saved')).toBeInTheDocument();
     expect(screen.getByText('12.5')).toBeInTheDocument();
     expect(screen.getByTestId('agent-chat-timeline-id')).toHaveTextContent('timeline-1');
-    expect(screen.getByTestId('agent-chat-timeline-clip-count')).toHaveTextContent('1');
 
     fireEvent.click(screen.getByRole('button', { name: 'update interaction' }));
-    fireEvent.click(screen.getByRole('button', { name: 'replace timeline clips' }));
 
     expect(mocks.setInputModality).toHaveBeenCalledWith('touch');
     expect(mocks.setInputModalityFromPointerType).toHaveBeenCalledWith('touch');
@@ -407,7 +392,26 @@ describe('VideoEditorProvider', () => {
     expect(mocks.setPrecisionEnabled).toHaveBeenCalledWith(true);
     expect(mocks.setContextTarget).toHaveBeenCalledWith({ kind: 'clip', clipId: 'clip-1' });
     expect(mocks.setInspectorTarget).toHaveBeenCalledWith({ kind: 'selection', clipIds: ['clip-1'] });
-    expect(mocks.selectClips).toHaveBeenCalledWith(['clip-2']);
+    expect(__getSelectionStateForTests().clipDataById.get('clip-1')).toEqual(expect.objectContaining({
+      clipId: 'clip-1',
+      url: 'https://example.com/image.png',
+    }));
+  });
+
+  it('lets editor timeline replacement update selection while preserving gallery attachments', () => {
+    userSelectGalleryItem({
+      id: 'gallery-1',
+      url: 'https://example.com/gallery.png',
+      type: 'image/png',
+      generationId: 'gen-gallery',
+    }, { additive: false });
+
+    editorReplaceTimelineSelection(['clip-1']);
+
+    const selectionState = __getSelectionStateForTests();
+    expect(selectionState.timeline.selectedClipIds).toEqual(new Set(['clip-1']));
+    expect(selectionState.clipDataById.get('clip-1')).toBeUndefined();
+    expect(selectionState.gallery.selectedGalleryIds).toEqual(new Set(['gallery-1']));
   });
 
   it('matches the touch interaction decision table for drag, marquee, trim, and selection routing', () => {

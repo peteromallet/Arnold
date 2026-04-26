@@ -3,6 +3,8 @@ import { AudioWaveform, Pencil, Plus, RefreshCw, Trash2, Volume2, X } from 'luci
 import { Button } from '@/shared/components/ui/button';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { Input } from '@/shared/components/ui/input';
+import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker';
+import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
 import { NumberInput } from '@/shared/components/ui/number-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select';
 import { Slider } from '@/shared/components/ui/slider';
@@ -43,6 +45,9 @@ interface ClipPanelProps {
   isVariantStale?: boolean;
   onUpdateVariant?: () => void;
   onDismissStale?: () => void;
+  onApplyVariant?: (variant: GenerationVariant) => void | Promise<void>;
+  onAddVariantAsGeneration?: (variant: GenerationVariant) => void | Promise<void>;
+  isAddingVariantAsGeneration?: (variantId: string) => boolean;
   timelineFps?: number;
 }
 
@@ -165,6 +170,9 @@ export function ClipPanel({
   isVariantStale,
   onUpdateVariant,
   onDismissStale,
+  onApplyVariant,
+  onAddVariantAsGeneration,
+  isAddingVariantAsGeneration,
   timelineFps,
 }: ClipPanelProps) {
   const { userId } = useVideoEditorRuntime();
@@ -200,7 +208,18 @@ export function ClipPanel({
             {clip.clipType ?? 'media'} · {track?.label ?? clip.track}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {clip.assetEntry?.generationId && (
+            <MediaVariantPicker
+              generationId={clip.assetEntry.generationId}
+              currentVariantId={clip.assetEntry.variantId ?? null}
+              onVariantApplied={onApplyVariant}
+              onAddVariantAsGeneration={onAddVariantAsGeneration}
+              isAddingVariantAsGeneration={isAddingVariantAsGeneration}
+              inline
+              defaultMediaKind={clip.assetEntry.type?.startsWith('video') ? 'video' : 'image'}
+            />
+          )}
           {onDelete && (
             <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={onDelete}>
               <Trash2 className="h-4 w-4" />

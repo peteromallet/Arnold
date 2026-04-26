@@ -3,7 +3,6 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  type Dispatch,
   type SetStateAction,
 } from 'react';
 import { shallow } from 'zustand/shallow';
@@ -65,6 +64,7 @@ interface SelectionStoreState {
   gallery: GallerySliceState;
   timeline: TimelineSliceState;
   shot: ShotSliceState;
+  clipDataById: ReadonlyMap<string, SelectedMediaClip>;
   clearGallerySelection: () => void;
   selectGalleryItem: (
     id: string,
@@ -156,6 +156,8 @@ const initialShotState = (): ShotSliceState => ({
   lastAffectedShotId: null,
   shotAdditionSelectedShotId: null,
 });
+
+const initialClipDataById = (): ReadonlyMap<string, SelectedMediaClip> => new Map();
 
 function resolveMediaType(value: string | null | undefined): GallerySelectionMediaType | null {
   if (!value) {
@@ -301,10 +303,130 @@ function clearTimelineClipSelection(
   };
 }
 
-const selectionStore = createStore<SelectionStoreState>((set, get) => ({
+function computeTimelineReplacement(
+  timeline: TimelineSliceState,
+  clipIds: Iterable<string>,
+): TimelineSliceState {
+  const nextSelection = new Set(clipIds);
+  return buildTimelineState(
+    nextSelection,
+    null,
+    timeline.selectedTrackId,
+    nextSelection.size > 1,
+  );
+}
+
+function computeTimelineSingleSelection(
+  timeline: TimelineSliceState,
+  clipId: string,
+  options?: SelectClipOptions,
+): TimelineSliceState {
+  const currentSelection = timeline.selectedClipIds;
+  const currentPrimary = timeline.primaryClipId;
+
+  let nextSelection: ReadonlySet<string>;
+  let nextPrimary = clipId;
+
+  if (!options?.toggle) {
+    nextSelection = new Set([clipId]);
+  } else {
+    const mutableSelection = new Set(currentSelection);
+    if (mutableSelection.has(clipId)) {
+      mutableSelection.delete(clipId);
+      nextPrimary = getPrimaryClipId(
+        mutableSelection,
+        currentPrimary === clipId ? null : currentPrimary,
+      ) ?? null;
+    } else {
+      mutableSelection.add(clipId);
+    }
+    nextSelection = mutableSelection;
+  }
+
+  return buildTimelineState(
+    nextSelection,
+    nextPrimary,
+    timeline.selectedTrackId,
+    nextSelection.size > 1,
+  );
+}
+
+function computeTimelineAppend(
+  timeline: TimelineSliceState,
+  clipIds: Iterable<string>,
+): TimelineSliceState {
+  const mergedSelection = new Set(timeline.selectedClipIds);
+  for (const clipId of clipIds) {
+    mergedSelection.add(clipId);
+  }
+
+  return buildTimelineState(
+    mergedSelection,
+    getPrimaryClipId(mergedSelection, timeline.primaryClipId),
+    timeline.selectedTrackId,
+    mergedSelection.size > 1,
+  );
+}
+
+function computeTimelinePrune(
+  timeline: TimelineSliceState,
+  validIds: ReadonlySet<string>,
+): TimelineSliceState {
+  const nextSelection = new Set<string>();
+  for (const clipId of timeline.selectedClipIds) {
+    if (validIds.has(clipId)) {
+      nextSelection.add(clipId);
+    }
+  }
+
+  return buildTimelineState(
+    nextSelection,
+    getPrimaryClipId(nextSelection, timeline.primaryClipId),
+    timeline.selectedTrackId,
+    timeline.additiveSelection,
+  );
+}
+
+function hasSameTimelineState(left: TimelineSliceState, right: TimelineSliceState): boolean {
+  return areSetsEqual(left.selectedClipIds, right.selectedClipIds)
+    && left.primaryClipId === right.primaryClipId
+    && left.selectedClipId === right.selectedClipId
+    && left.selectedTrackId === right.selectedTrackId
+    && left.additiveSelection === right.additiveSelection;
+}
+
+type AttachmentMatch = {
+  url: string;
+  mediaType: 'image' | 'video';
+  generationId?: string | null;
+  clipId?: string | null;
+};
+
+function matchesAttachment(
+  clip: Pick<SelectedMediaClip, 'url' | 'mediaType' | 'generationId' | 'clipId'>,
+  match: AttachmentMatch,
+  options?: { matchClipId?: boolean },
+): boolean {
+  if (clip.url !== match.url || clip.mediaType !== match.mediaType) {
+    return false;
+  }
+
+  if (match.generationId && clip.generationId !== match.generationId) {
+    return false;
+  }
+
+  if (options?.matchClipId && match.clipId && clip.clipId !== match.clipId) {
+    return false;
+  }
+
+  return true;
+}
+
+const selectionStore = createStore<SelectionStoreState>((set) => ({
   gallery: initialGalleryState(),
   timeline: initialTimelineState(),
   shot: initialShotState(),
+  clipDataById: initialClipDataById(),
 
   clearGallerySelection: () => {
     set((state) => (
@@ -449,45 +571,13 @@ const selectionStore = createStore<SelectionStoreState>((set, get) => ({
 
   selectTimelineClip: (clipId, options, syncOptions) => {
     set((state) => {
-      const currentSelection = state.timeline.selectedClipIds;
-      const currentPrimary = state.timeline.primaryClipId;
-
-      if (options?.preserveSelection && currentSelection.has(clipId)) {
+      if (options?.preserveSelection && state.timeline.selectedClipIds.has(clipId)) {
         return state;
       }
 
-      let nextSelection: ReadonlySet<string>;
-      let nextPrimary = clipId;
+      const nextTimeline = computeTimelineSingleSelection(state.timeline, clipId, options);
 
-      if (!options?.toggle) {
-        nextSelection = new Set([clipId]);
-      } else {
-        const mutableSelection = new Set(currentSelection);
-        if (mutableSelection.has(clipId)) {
-          mutableSelection.delete(clipId);
-          nextPrimary = getPrimaryClipId(
-            mutableSelection,
-            currentPrimary === clipId ? null : currentPrimary,
-          ) ?? null;
-        } else {
-          mutableSelection.add(clipId);
-        }
-        nextSelection = mutableSelection;
-      }
-
-      const nextTimeline = buildTimelineState(
-        nextSelection,
-        nextPrimary,
-        state.timeline.selectedTrackId,
-        nextSelection.size > 1,
-      );
-
-      if (
-        areSetsEqual(state.timeline.selectedClipIds, nextTimeline.selectedClipIds)
-        && state.timeline.primaryClipId === nextTimeline.primaryClipId
-        && state.timeline.selectedClipId === nextTimeline.selectedClipId
-        && state.timeline.additiveSelection === nextTimeline.additiveSelection
-      ) {
+      if (hasSameTimelineState(state.timeline, nextTimeline)) {
         return state;
       }
 
@@ -499,25 +589,12 @@ const selectionStore = createStore<SelectionStoreState>((set, get) => ({
   },
 
   selectTimelineClips: (clipIds, syncOptions) => {
-    const nextSelection = new Set<string>();
-    for (const clipId of clipIds) {
-      nextSelection.add(clipId);
-    }
+    const nextSelection = new Set(clipIds);
 
     set((state) => {
-      const nextTimeline = buildTimelineState(
-        nextSelection,
-        null,
-        state.timeline.selectedTrackId,
-        nextSelection.size > 1,
-      );
+      const nextTimeline = computeTimelineReplacement(state.timeline, nextSelection);
 
-      if (
-        areSetsEqual(state.timeline.selectedClipIds, nextTimeline.selectedClipIds)
-        && state.timeline.primaryClipId === nextTimeline.primaryClipId
-        && state.timeline.selectedClipId === nextTimeline.selectedClipId
-        && state.timeline.additiveSelection === nextTimeline.additiveSelection
-      ) {
+      if (hasSameTimelineState(state.timeline, nextTimeline)) {
         return state;
       }
 
@@ -529,58 +606,30 @@ const selectionStore = createStore<SelectionStoreState>((set, get) => ({
   },
 
   addTimelineClips: (clipIds) => {
-    const nextClipIds = new Set<string>();
-    for (const clipId of clipIds) {
-      nextClipIds.add(clipId);
-    }
+    const nextClipIds = new Set(clipIds);
 
     set((state) => {
-      const mergedSelection = new Set(state.timeline.selectedClipIds);
-      nextClipIds.forEach((clipId) => mergedSelection.add(clipId));
-      const nextPrimary = getPrimaryClipId(mergedSelection, state.timeline.primaryClipId);
+      const nextTimeline = computeTimelineAppend(state.timeline, nextClipIds);
 
-      if (
-        areSetsEqual(state.timeline.selectedClipIds, mergedSelection)
-        && state.timeline.primaryClipId === nextPrimary
-      ) {
+      if (hasSameTimelineState(state.timeline, nextTimeline)) {
         return state;
       }
 
       return {
-        timeline: buildTimelineState(
-          mergedSelection,
-          nextPrimary,
-          state.timeline.selectedTrackId,
-          mergedSelection.size > 1,
-        ),
+        timeline: nextTimeline,
       };
     });
   },
 
   pruneTimelineSelection: (validIds) => {
     set((state) => {
-      const nextSelection = new Set<string>();
-      for (const clipId of state.timeline.selectedClipIds) {
-        if (validIds.has(clipId)) {
-          nextSelection.add(clipId);
-        }
-      }
-
-      const nextPrimary = getPrimaryClipId(nextSelection, state.timeline.primaryClipId);
-      if (
-        areSetsEqual(state.timeline.selectedClipIds, nextSelection)
-        && state.timeline.primaryClipId === nextPrimary
-      ) {
+      const nextTimeline = computeTimelinePrune(state.timeline, validIds);
+      if (hasSameTimelineState(state.timeline, nextTimeline)) {
         return state;
       }
 
       return {
-        timeline: buildTimelineState(
-          nextSelection,
-          nextPrimary,
-          state.timeline.selectedTrackId,
-          state.timeline.additiveSelection,
-        ),
+        timeline: nextTimeline,
       };
     });
   },
@@ -676,7 +725,305 @@ const selectionStore = createStore<SelectionStoreState>((set, get) => ({
     ));
   },
 
-  resetForProjectChange: () => ({
+  resetForProjectChange: () => {
+    set({
+      gallery: initialGalleryState(),
+      timeline: initialTimelineState(),
+      shot: {
+        ...initialShotState(),
+        currentShotId: null,
+        lastAffectedShotId: null,
+      },
+      clipDataById: initialClipDataById(),
+    });
+  },
+}));
+
+export function useSelectionStore<T>(
+  selector: (state: SelectionStoreState) => T,
+  equalityFn?: (left: T, right: T) => boolean,
+): T {
+  return useStoreWithEqualityFn(selectionStore, selector, equalityFn);
+}
+
+export function userSelectGalleryItem(
+  item: GallerySelectionItem,
+  opts: { additive: boolean },
+): void {
+  const normalized = normalizeSelectionItem(item);
+  if (!normalized) {
+    return;
+  }
+
+  selectionStore.setState((state) => {
+    const previous = state.gallery.gallerySelectionMap;
+    // Single-click gallery intent (additive=false) is a context shift to the
+    // gallery surface — clear timeline selection so the agent-chat attachment
+    // set reflects ONLY what the user just clicked. Additive (Cmd+click) is a
+    // multi-select extension of the current surface and does NOT clear timeline.
+    const shouldClearTimeline = !opts.additive;
+    const nextTimeline = shouldClearTimeline ? clearTimelineClipSelection(state.timeline) : state.timeline;
+    const timelinePatch = hasSameTimelineState(state.timeline, nextTimeline)
+      ? null
+      : { timeline: nextTimeline };
+
+    if (!opts.additive) {
+      if (hasSameSelection(previous, [normalized])) {
+        return timelinePatch ?? state;
+      }
+
+      return {
+        ...(timelinePatch ?? {}),
+        gallery: buildGalleryState(new Map([
+          [
+            normalized.id,
+            {
+              url: normalized.url,
+              mediaType: normalized.mediaType,
+              generationId: normalized.generationId,
+              variantId: normalized.variantId,
+            },
+          ],
+        ])),
+      };
+    }
+
+    const next = new Map(previous);
+    if (next.has(normalized.id)) {
+      next.delete(normalized.id);
+    } else {
+      next.set(normalized.id, {
+        url: normalized.url,
+        mediaType: normalized.mediaType,
+        generationId: normalized.generationId,
+        variantId: normalized.variantId,
+      });
+    }
+
+    return { gallery: buildGalleryState(next) };
+  });
+}
+
+export function userSelectGalleryItems(
+  items: GallerySelectionItem[],
+  opts: { additive: boolean },
+): void {
+  const normalizedItems = items
+    .map(normalizeSelectionItem)
+    .filter((item): item is GallerySelectionEntry & { id: string } => item !== null);
+
+  selectionStore.setState((state) => {
+    const previous = state.gallery.gallerySelectionMap;
+    // Same rule as userSelectGalleryItem: replace-marquee (additive=false) clears
+    // timeline; append-marquee (additive=true) preserves it.
+    const shouldClearTimeline = !opts.additive;
+    const nextTimeline = shouldClearTimeline ? clearTimelineClipSelection(state.timeline) : state.timeline;
+    const timelinePatch = hasSameTimelineState(state.timeline, nextTimeline)
+      ? null
+      : { timeline: nextTimeline };
+
+    if (normalizedItems.length === 0) {
+      if (opts.additive || previous.size === 0) {
+        return timelinePatch ?? state;
+      }
+      return { ...(timelinePatch ?? {}), gallery: initialGalleryState() };
+    }
+
+    const next = opts.additive ? new Map(previous) : new Map<string, GallerySelectionEntry>();
+    let changed = !opts.additive && !hasSameSelection(previous, normalizedItems);
+
+    for (const item of normalizedItems) {
+      const nextEntry = {
+        url: item.url,
+        mediaType: item.mediaType,
+        generationId: item.generationId,
+        variantId: item.variantId,
+      };
+      const previousEntry = previous.get(item.id);
+      if (
+        !previousEntry
+        || previousEntry.url !== nextEntry.url
+        || previousEntry.mediaType !== nextEntry.mediaType
+        || previousEntry.generationId !== nextEntry.generationId
+        || previousEntry.variantId !== nextEntry.variantId
+      ) {
+        changed = true;
+      }
+      next.set(item.id, nextEntry);
+    }
+
+    if (changed || next.size !== previous.size) {
+      return { ...(timelinePatch ?? {}), gallery: buildGalleryState(next) };
+    }
+    return timelinePatch ?? state;
+  });
+}
+
+/**
+ * User single-click timeline intent.
+ *
+ * `additive: true` means TOGGLE for one clip: Cmd/Ctrl/Shift-clicking an
+ * already-selected clip removes it from the timeline selection.
+ */
+export function userSelectTimelineClip(
+  clipId: string,
+  opts: { additive: boolean; preserveIfSelected?: boolean },
+): void {
+  selectionStore.setState((state) => {
+    if (opts.preserveIfSelected && state.timeline.selectedClipIds.has(clipId)) {
+      return state;
+    }
+
+    const nextTimeline = computeTimelineSingleSelection(
+      state.timeline,
+      clipId,
+      { toggle: opts.additive },
+    );
+
+    return {
+      timeline: hasSameTimelineState(state.timeline, nextTimeline) ? state.timeline : nextTimeline,
+      gallery: initialGalleryState(),
+    };
+  });
+}
+
+/**
+ * User marquee timeline intent.
+ *
+ * `additive: true` means APPEND-ONLY for marquee selection. It never toggles
+ * existing selected clips off.
+ */
+export function userSelectTimelineClips(
+  clipIds: Iterable<string>,
+  opts: { additive: boolean },
+): void {
+  const nextClipIds = new Set(clipIds);
+  selectionStore.setState((state) => {
+    const nextTimeline = opts.additive
+      ? computeTimelineAppend(state.timeline, nextClipIds)
+      : computeTimelineReplacement(state.timeline, nextClipIds);
+
+    return {
+      timeline: hasSameTimelineState(state.timeline, nextTimeline) ? state.timeline : nextTimeline,
+      gallery: initialGalleryState(),
+    };
+  });
+}
+
+export function userClearAllSelection(): void {
+  selectionStore.setState((state) => ({
+    gallery: state.gallery.gallerySelectionMap.size === 0 ? state.gallery : initialGalleryState(),
+    timeline: clearTimelineClipSelection(state.timeline),
+  }));
+}
+
+export function composerRemoveAttachment(match: AttachmentMatch): void {
+  selectionStore.setState((state) => {
+    let galleryChanged = false;
+    const nextGalleryMap = new Map(state.gallery.gallerySelectionMap);
+    for (const [id, entry] of nextGalleryMap) {
+      if (matchesAttachment({
+        clipId: id,
+        url: entry.url,
+        mediaType: entry.mediaType,
+        generationId: entry.generationId,
+      }, match)) {
+        nextGalleryMap.delete(id);
+        galleryChanged = true;
+      }
+    }
+
+    let timelineChanged = false;
+    const nextTimelineIds = new Set(state.timeline.selectedClipIds);
+    for (const clipId of state.timeline.selectedClipIds) {
+      const clip = state.clipDataById.get(clipId);
+      const shouldRemove = clip
+        ? matchesAttachment(clip, match, { matchClipId: true })
+        : false;
+
+      if (shouldRemove) {
+        nextTimelineIds.delete(clipId);
+        timelineChanged = true;
+      }
+    }
+
+    return {
+      gallery: galleryChanged ? buildGalleryState(nextGalleryMap) : state.gallery,
+      timeline: timelineChanged
+        ? buildTimelineState(
+            nextTimelineIds,
+            getPrimaryClipId(nextTimelineIds, state.timeline.primaryClipId),
+            state.timeline.selectedTrackId,
+            state.timeline.additiveSelection,
+          )
+        : state.timeline,
+    };
+  });
+}
+
+export function composerClearAttachments(): void {
+  selectionStore.setState((state) => ({
+    gallery: state.gallery.gallerySelectionMap.size === 0 ? state.gallery : initialGalleryState(),
+    timeline: clearTimelineClipSelection(state.timeline),
+  }));
+}
+
+export function editorReplaceTimelineSelection(clipIds: Iterable<string>): void {
+  const nextClipIds = new Set(clipIds);
+  selectionStore.setState((state) => {
+    const nextTimeline = computeTimelineReplacement(state.timeline, nextClipIds);
+    return hasSameTimelineState(state.timeline, nextTimeline)
+      ? state
+      : { timeline: nextTimeline };
+  });
+}
+
+export function editorSelectTimelineClip(clipId: string | null): void {
+  selectionStore.setState((state) => {
+    const nextTimeline = clipId
+      ? computeTimelineSingleSelection(state.timeline, clipId)
+      : clearTimelineClipSelection(state.timeline);
+    return hasSameTimelineState(state.timeline, nextTimeline)
+      ? state
+      : { timeline: nextTimeline };
+  });
+}
+
+export function editorClearTimelineSelection(): void {
+  selectionStore.setState((state) => {
+    const nextTimeline = clearTimelineClipSelection(state.timeline);
+    return nextTimeline === state.timeline ? state : { timeline: nextTimeline };
+  });
+}
+
+export function editorSetSelectedTrackId(trackId: string | null): void {
+  selectionStore.setState((state) => (
+    state.timeline.selectedTrackId === trackId
+      ? state
+      : {
+          timeline: {
+            ...state.timeline,
+            selectedTrackId: trackId,
+          },
+        }
+  ));
+}
+
+export function systemPruneTimelineSelection(validIds: ReadonlySet<string>): void {
+  selectionStore.setState((state) => {
+    const nextTimeline = computeTimelinePrune(state.timeline, validIds);
+    return hasSameTimelineState(state.timeline, nextTimeline)
+      ? state
+      : { timeline: nextTimeline };
+  });
+}
+
+export function systemResetTimelineSelection(): void {
+  selectionStore.setState({ timeline: initialTimelineState() });
+}
+
+export function systemResetSelectionForProjectChange(): void {
+  selectionStore.setState({
     gallery: initialGalleryState(),
     timeline: initialTimelineState(),
     shot: {
@@ -684,18 +1031,80 @@ const selectionStore = createStore<SelectionStoreState>((set, get) => ({
       currentShotId: null,
       lastAffectedShotId: null,
     },
-  }),
-}));
-
-export function useSelectionStoreApi() {
-  return selectionStore;
+    clipDataById: initialClipDataById(),
+  });
 }
 
-function useSelectionStore<T>(
-  selector: (state: SelectionStoreState) => T,
-  equalityFn?: (left: T, right: T) => boolean,
-): T {
-  return useStoreWithEqualityFn(selectionStore, selector, equalityFn);
+export function systemSyncGallerySelection(items: GallerySelectionItem[]): void {
+  // System-level gallery sync (e.g. external state hydration). Does NOT clear
+  // timeline — user-intent commands do that, system ones never should.
+  const normalizedItems = items
+    .map(normalizeSelectionItem)
+    .filter((item): item is GallerySelectionEntry & { id: string } => item !== null);
+
+  selectionStore.setState((state) => {
+    const previous = state.gallery.gallerySelectionMap;
+    if (normalizedItems.length === 0) {
+      return previous.size === 0 ? state : { gallery: initialGalleryState() };
+    }
+
+    const next = new Map<string, GallerySelectionEntry>();
+    let changed = !hasSameSelection(previous, normalizedItems);
+
+    for (const item of normalizedItems) {
+      const nextEntry = {
+        url: item.url,
+        mediaType: item.mediaType,
+        generationId: item.generationId,
+        variantId: item.variantId,
+      };
+      const previousEntry = previous.get(item.id);
+      if (
+        !previousEntry
+        || previousEntry.url !== nextEntry.url
+        || previousEntry.mediaType !== nextEntry.mediaType
+        || previousEntry.generationId !== nextEntry.generationId
+        || previousEntry.variantId !== nextEntry.variantId
+      ) {
+        changed = true;
+      }
+      next.set(item.id, nextEntry);
+    }
+
+    return changed || next.size !== previous.size
+      ? { gallery: buildGalleryState(next) }
+      : state;
+  });
+}
+
+export function systemClearGallerySelection(): void {
+  selectionStore.setState((state) => (
+    state.gallery.gallerySelectionMap.size === 0
+      ? state
+      : { gallery: initialGalleryState() }
+  ));
+}
+
+export function systemSetCurrentShotId(shotId: string | null): void {
+  selectionStore.getState().setCurrentShotId(shotId);
+}
+
+export function systemSetLastAffectedShotId(shotIdOrUpdater: SetStateAction<string | null>): void {
+  selectionStore.getState().setLastAffectedShotId(shotIdOrUpdater);
+}
+
+export function setTimelineClipData(entries: Iterable<SelectedMediaClip>): void {
+  selectionStore.setState({
+    clipDataById: new Map(Array.from(entries, (clip) => [clip.clipId, clip])),
+  });
+}
+
+export function clearTimelineClipData(): void {
+  selectionStore.setState({ clipDataById: initialClipDataById() });
+}
+
+export function __getSelectionStateForTests(): SelectionStoreState {
+  return selectionStore.getState();
 }
 
 export function useGallerySelectionOptional() {
@@ -708,10 +1117,6 @@ export function useGallerySelection() {
     gallerySelectionMap: state.gallery.gallerySelectionMap,
     selectedGalleryClips: state.gallery.selectedGalleryClips,
     gallerySummary: state.gallery.gallerySummary,
-    selectGalleryItem: state.selectGalleryItem,
-    selectGalleryItems: state.selectGalleryItems,
-    deselectGalleryItems: state.deselectGalleryItems,
-    clearGallerySelection: state.clearGallerySelection,
   }), shallow);
 }
 
@@ -744,13 +1149,6 @@ export function useTimelineSelectionStore() {
     selectedClipIds: state.timeline.selectedClipIds,
     primaryClipId: state.timeline.primaryClipId,
     additiveSelection: state.timeline.additiveSelection,
-    setSelectedTrackId: state.setTimelineSelectedTrackId,
-    clearSelection: state.clearTimelineSelection,
-    selectClip: state.selectTimelineClip,
-    selectClips: state.selectTimelineClips,
-    addToSelection: state.addTimelineClips,
-    pruneSelection: state.pruneTimelineSelection,
-    resetSelection: state.resetTimelineSelection,
   }), shallow);
 }
 
@@ -759,33 +1157,15 @@ export interface UseTimelineMultiSelectResult {
   selectedClipIdsRef: React.MutableRefObject<Set<string>>;
   additiveSelectionRef: React.MutableRefObject<boolean>;
   primaryClipId: string | null;
-  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
-  selectClips: (clipIds: Iterable<string>) => void;
-  addToSelection: (clipIds: Iterable<string>) => void;
-  clearSelection: () => void;
   isClipSelected: (clipId: string) => boolean;
   pruneSelection: (validIds: Set<string>) => void;
 }
 
-/**
- * Timeline-editor multi-select adapter.
- *
- * Editor-internal mutations preserve gallery selection by passing
- * `{ clearGallery: false }` to `selectTimelineClip` and `selectTimelineClips`.
- * The wrapped `clearSelection` calls
- * `clearTimelineSelection({ clearGallery: false })`, which is functionally
- * equivalent to the store default but kept explicit for parallelism.
- */
 export function useTimelineMultiSelect(): UseTimelineMultiSelectResult {
   const {
     selectedClipIds,
     primaryClipId,
     additiveSelection,
-    clearSelection,
-    selectClip,
-    selectClips,
-    addToSelection,
-    pruneSelection,
   } = useTimelineSelectionStore();
 
   const selectedClipIdsRef = useRef<Set<string>>(new Set(selectedClipIds));
@@ -805,27 +1185,11 @@ export function useTimelineMultiSelect(): UseTimelineMultiSelectResult {
     selectedClipIdsRef,
     additiveSelectionRef,
     primaryClipId,
-    selectClip: (clipId: string, opts?: SelectClipOptions) => {
-      selectionStore.getState().selectTimelineClip(clipId, opts, { clearGallery: false });
-    },
-    selectClips: (clipIds: Iterable<string>) => {
-      selectionStore.getState().selectTimelineClips(clipIds, { clearGallery: false });
-    },
-    addToSelection,
-    clearSelection: () => {
-      selectionStore.getState().clearTimelineSelection({ clearGallery: false });
-    },
     isClipSelected,
-    pruneSelection,
+    pruneSelection: systemPruneTimelineSelection,
   }), [
-    addToSelection,
-    additiveSelection,
-    clearSelection,
     isClipSelected,
     primaryClipId,
-    pruneSelection,
-    selectClip,
-    selectClips,
     selectedClipIds,
   ]);
 }
@@ -835,5 +1199,6 @@ export function __resetSelectionStoreForTests(): void {
     gallery: initialGalleryState(),
     timeline: initialTimelineState(),
     shot: initialShotState(),
+    clipDataById: initialClipDataById(),
   });
 }

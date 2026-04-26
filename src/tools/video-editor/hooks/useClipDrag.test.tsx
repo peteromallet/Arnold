@@ -8,6 +8,16 @@ import { repairConfig } from '@/tools/video-editor/lib/migrate';
 import { configToRows, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
 import type { TimelineConfig, TrackDefinition } from '@/tools/video-editor/types';
 
+const selectionMocks = vi.hoisted(() => ({
+  userSelectTimelineClip: vi.fn(),
+  userSelectTimelineClips: vi.fn(),
+}));
+
+vi.mock('@/shared/state/selectionStore', () => ({
+  userSelectTimelineClip: selectionMocks.userSelectTimelineClip,
+  userSelectTimelineClips: selectionMocks.userSelectTimelineClips,
+}));
+
 const makeTrack = (id: string): TrackDefinition => ({
   id,
   kind: 'visual',
@@ -317,6 +327,7 @@ function setupPinnedGroupLabelDom(anchorClipId = 'clip-1', rowId = 'V1') {
 
 afterEach(() => {
   document.body.innerHTML = '';
+  vi.clearAllMocks();
 });
 
 describe('useClipDrag', () => {
@@ -445,7 +456,7 @@ describe('useClipDrag', () => {
         });
       });
 
-      expect(selectClip).toHaveBeenCalledWith('clip-1', { toggle: true });
+      expect(selectionMocks.userSelectTimelineClip).toHaveBeenCalledWith('clip-1', { additive: true });
     } finally {
       cleanup();
     }
@@ -500,7 +511,10 @@ describe('useClipDrag', () => {
         });
       });
 
-      expect(selectClip).toHaveBeenCalledWith('clip-1', { preserveSelection: true });
+      expect(selectionMocks.userSelectTimelineClip).toHaveBeenCalledWith('clip-1', {
+        additive: false,
+        preserveIfSelected: true,
+      });
     } finally {
       cleanup();
     }
@@ -813,7 +827,7 @@ describe('useClipDrag', () => {
         expect.objectContaining({ id: 'clip-2', track: 'V3', at: 3, hold: 2 }),
       ]));
       expect(edit.pinnedShotGroupsOverride).toBeUndefined();
-      expect(selectClips).toHaveBeenCalledWith(['clip-2', 'clip-1']);
+      expect(selectionMocks.userSelectTimelineClips).toHaveBeenCalledWith(['clip-2', 'clip-1'], { additive: false });
       expect(coordinator.showSecondaryGhosts).toHaveBeenCalled();
 
     } finally {
@@ -1191,7 +1205,7 @@ describe('useClipDrag', () => {
         mode: 'images',
       })]);
       expect(options).toMatchObject({ transactionId: expect.any(String) });
-      expect(selectClips).toHaveBeenCalledWith(['clip-1', 'clip-2']);
+      expect(selectionMocks.userSelectTimelineClips).toHaveBeenCalledWith(['clip-1', 'clip-2'], { additive: false });
     } finally {
       cleanup();
     }

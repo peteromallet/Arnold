@@ -1,9 +1,10 @@
 import * as React from 'react';
 
 // Regular modals (Dialog, AlertDialog, Popover, Select, etc.) must render above
-// locked panes (GenerationsPane at ~100013, TasksPane at 100001, pane tab at
-// 100014). The lightbox is the sole exception — it renders below panes so users
-// can interact with locked panes while media is open.
+// locked panes (GenerationsPane at 100013, GENERATIONS_DROP_CHIP at 100014,
+// TASKS_PANE_TAB_ABOVE_LIGHTBOX at 100015, TASKS_PANE_CONTENT at 100016).
+// The lightbox is the sole exception — it renders below panes so users can
+// interact with locked panes while media is open.
 export const OVERLAY_BASE_Z_INDEX = 110000;
 export const LIGHTBOX_BASE_Z_INDEX = 1000;
 const OVERLAY_LAYER_STEP = 10;

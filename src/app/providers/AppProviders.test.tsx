@@ -93,7 +93,6 @@ function AgentChatBridgeConsumer() {
   return (
     <>
       <span data-testid="agent-chat-timeline-id">{bridge.timelineId ?? 'none'}</span>
-      <span data-testid="agent-chat-timeline-clips">{String(bridge.timelineClips.length)}</span>
     </>
   );
 }
@@ -109,7 +108,6 @@ describe('AppProviders', () => {
 
     expect(screen.getByTestId('gallery-selection-context')).toHaveTextContent('available');
     expect(screen.getByTestId('agent-chat-timeline-id')).toHaveTextContent('timeline-from-settings');
-    expect(screen.getByTestId('agent-chat-timeline-clips')).toHaveTextContent('0');
     expect(screen.getByTestId('PanesStoreBootstrapBoundary')).toBeInTheDocument();
   });
 });

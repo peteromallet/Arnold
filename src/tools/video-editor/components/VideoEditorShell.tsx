@@ -12,6 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Slider } from '@/shared/components/ui/slider';
 import { useHomeNavigation } from '@/shared/hooks/useHomeNavigation';
 import { usePanesStore } from '@/shared/state/panesStore';
+import { editorReplaceTimelineSelection } from '@/shared/state/selectionStore';
 import { CompactPreview } from '@/tools/video-editor/components/CompactPreview';
 import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel';
 import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
@@ -144,7 +145,7 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
     moveSelectedClipsToTrack: editorOps.moveSelectedClipsToTrack,
     undo: chrome.undo,
     redo: chrome.redo,
-    selectAllClips: () => editorOps.selectClips(Object.keys(editorData.data?.meta ?? {})),
+    selectAllClips: () => editorReplaceTimelineSelection(Object.keys(editorData.data?.meta ?? {})),
     togglePlayPause: () => playback.previewRef.current?.togglePlayPause(),
     seekRelative: (deltaSeconds) => playback.previewRef.current?.seek(Math.max(0, playback.currentTime + deltaSeconds)),
     toggleMute: () => editorOps.handleToggleMuteClips([...editorData.selectedClipIds]),

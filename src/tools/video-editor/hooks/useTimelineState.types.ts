@@ -31,7 +31,7 @@ import type { ClipTab, EditorPreferences } from '@/tools/video-editor/hooks/useE
 import type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelineSave';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { UseTimelineMultiSelectResult } from '@/shared/state/selectionStore';
+import type { SelectClipOptions, UseTimelineMultiSelectResult } from '@/shared/state/selectionStore';
 import type {
   MobileInteractionPolicy,
   TimelineContextTarget,
@@ -98,10 +98,10 @@ export interface TimelineEditorOpsContextValue {
   setContextTarget: (target: TimelineContextTarget) => void;
   setInspectorTarget: (target: TimelineInspectorTarget) => void;
   isClipSelected: UseTimelineMultiSelectResult['isClipSelected'];
-  selectClip: UseTimelineMultiSelectResult['selectClip'];
-  selectClips: UseTimelineMultiSelectResult['selectClips'];
-  addToSelection: UseTimelineMultiSelectResult['addToSelection'];
-  clearSelection: UseTimelineMultiSelectResult['clearSelection'];
+  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
+  selectClips: (clipIds: Iterable<string>) => void;
+  addToSelection: (clipIds: Iterable<string>) => void;
+  clearSelection: () => void;
   setSelectedTrackId: TimelineSetSelectedTrackId;
   setActiveClipTab: TimelineSetActiveClipTab;
   setAssetPanelState: TimelineSetAssetPanelState;

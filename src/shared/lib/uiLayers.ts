@@ -8,6 +8,8 @@ export const UI_Z_LAYERS = {
   GENERATIONS_PANE: 100013,
   GENERATIONS_DROP_CHIP: 100014,
   TASKS_PANE_TAB_ABOVE_LIGHTBOX: 100015,
+  // Pane body sits above the tab so the pane visually covers the tab handle when open; above GenerationsPane so the bottom strip stays clickable.
+  TASKS_PANE_CONTENT: 100016,
   // Toasts must clear non-lightbox modals (110000+), so keep this above 110020
   // (the highest practical modal popup z at layer ~2).
   TOAST_VIEWPORT: 120000,

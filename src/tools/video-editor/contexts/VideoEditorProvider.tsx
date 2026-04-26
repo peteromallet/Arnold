@@ -11,19 +11,14 @@ import {
   DataProviderWrapper,
   useVideoEditorRuntime,
 } from '@/tools/video-editor/contexts/DataProviderContext';
-import {
-  useAgentChatRegistry,
-  type AgentChatContextValue,
-} from '@/shared/contexts/AgentChatContext';
+import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext';
+import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects';
 import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry';
 import { useEffectResources } from '@/tools/video-editor/hooks/useEffectResources';
-import { useSelectedMediaClips } from '@/tools/video-editor/hooks/useSelectedMediaClips';
+import { useTimelineClipsForAttachments } from '@/tools/video-editor/hooks/useTimelineClipsForAttachments';
 import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
-import {
-  TimelineStoreProvider,
-  useTimelineEditorOps,
-} from '@/tools/video-editor/hooks/timelineStore';
+import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore';
 import type {
   TimelineActionResizeStart,
   TimelineClipEdgeResizeEnd,
@@ -71,38 +66,22 @@ export function buildVideoEditorLightboxMedia(
   };
 }
 
-/** Registers video-editor state into the app-level AgentChatContext so the
- *  global AgentChat component (rendered outside this provider tree) can access
- *  timeline clips and selection ops. Must be rendered inside TimelineEditorOpsContextProvider. */
+/** Registers video-editor state into the app-level AgentChatContext and keeps
+ *  timeline attachment metadata synchronized in the selection store. */
 function AgentChatBridgeRegistration() {
   const { timelineId } = useVideoEditorRuntime();
-  const timelineEditorOps = useTimelineEditorOps();
-  const { clips: timelineClips } = useSelectedMediaClips();
+  const allClips = useTimelineClipsForAttachments();
   const { register, unregister } = useAgentChatRegistry();
 
-  // Use refs so the registered callback always reads fresh values without
-  // re-running the effect (which would cause register/unregister churn).
-  const opsRef = useRef(timelineEditorOps);
-  const clipsRef = useRef(timelineClips);
-  opsRef.current = timelineEditorOps;
-  clipsRef.current = timelineClips;
-
-  const stableReplace = useCallback((nextClips: AgentChatContextValue['timelineClips']) => {
-    const nextClipIds = nextClips.map((clip) => clip.clipId);
-    const ops = opsRef.current;
-    ops.selectClips(nextClipIds);
-  }, []);
-
-  // Only re-register when timelineId changes (mount, unmount, or timeline switch).
-  // Clips and ops are accessed via refs from the stable callback.
   useEffect(() => {
-    register({
-      timelineId,
-      get timelineClips() { return clipsRef.current; },
-      replaceSelectedTimelineClips: stableReplace,
-    });
+    setTimelineClipData(allClips);
+    return () => clearTimelineClipData();
+  }, [allClips]);
+
+  useEffect(() => {
+    register({ timelineId });
     return unregister;
-  }, [register, unregister, stableReplace, timelineId]);
+  }, [register, unregister, timelineId]);
 
   return null;
 }
@@ -124,7 +103,7 @@ function InnerProvider({
     })),
     effectResources.effects,
   );
-  const { store, editor, chrome, playback } = useTimelineState();
+  const { store, editor } = useTimelineState();
   const { shots } = useShots();
   const [searchParams, setSearchParams] = useSearchParams();
   const pendingAddGenerationId = searchParams.get(ADD_GENERATION_QUERY_PARAM);

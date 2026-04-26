@@ -80,7 +80,7 @@ export interface ItemActions {
   onApplySettings?: (metadata: DisplayableMetadata) => void;
   onDownloadImage: (rawUrl: string, filename: string, imageId?: string, isVideo?: boolean, originalContentType?: string) => void;
   onToggleStar?: (id: string, starred: boolean) => void;
-  onImageClick?: (image: GeneratedImageWithMetadata) => void;
+  onImageClick?: (image: GeneratedImageWithMetadata, modifiers?: { multiSelect: boolean }) => void;
   onContextMenu?: (event: MouseEvent, image: GeneratedImageWithMetadata) => void;
   /** Callback when the image has fully loaded and is visible */
   onImageLoaded?: (imageId: string) => void;

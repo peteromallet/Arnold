@@ -79,7 +79,7 @@ describe('useLassoSelection', () => {
         type: 'image/png',
         generationId: 'g1',
       },
-    ], { append: false });
+    ], { additive: false });
   });
 
   it('does not start lasso selection when the pointer starts on a gallery item', () => {
@@ -153,6 +153,6 @@ describe('useLassoSelection', () => {
         type: 'video/mp4',
         generationId: 'g2',
       },
-    ], { append: true });
+    ], { additive: true });
   });
 });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Terminal, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Terminal, X } from 'lucide-react';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { buildAttachedSummary } from '@/tools/video-editor/hooks/useSelectedMediaClips';
 import type { AgentTurn } from '@/tools/video-editor/types/agent-session';
@@ -22,6 +22,7 @@ export type AgentChatAttachmentPreviewItem = {
   clipId: string;
   url: string;
   mediaType: 'image' | 'video';
+  isPlaceholder?: boolean;
   generationId?: string;
   assetKey?: string;
   shotId?: string;
@@ -172,8 +173,17 @@ export function AgentChatAttachmentStrip({
     index: number,
     removeLabel: string,
   ) => {
-    const isInteractive = Boolean(onAttachmentClick && attachment.generationId);
-    const content = attachment.mediaType === 'video' ? (
+    const isPlaceholder = attachment.isPlaceholder === true;
+    const isInteractive = Boolean(onAttachmentClick && attachment.generationId && !isPlaceholder);
+    const content = isPlaceholder ? (
+      <div
+        className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-muted/50 text-[8px] leading-none text-muted-foreground"
+        aria-label={`Loading attached ${attachment.mediaType} ${index + 1}`}
+      >
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+        <span>Loading…</span>
+      </div>
+    ) : attachment.mediaType === 'video' ? (
       <video
         src={attachment.url}
         className="h-full w-full object-cover"
@@ -218,7 +228,7 @@ export function AgentChatAttachmentStrip({
             </div>
           )}
         </div>
-        {onRemoveAttachment && (
+        {onRemoveAttachment && !isPlaceholder && (
           <button
             type="button"
             className={removeButtonClassName}

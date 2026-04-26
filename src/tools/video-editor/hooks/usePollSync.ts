@@ -205,9 +205,7 @@ export function usePollSync({
   ]);
 
   const logPollRejection = useCallback((phase: PollCheckPhase, polledData: TimelineData, reason: string) => {
-    logTimelineSync('poll rejected', {
-      phase,
-      reason,
+    logTimelineSync(`poll rejected (${phase}: ${reason})`, {
       polledConfigVersion: polledData.configVersion,
       currentConfigVersion: configVersionRef.current,
       editSeq: editSeqRef.current,

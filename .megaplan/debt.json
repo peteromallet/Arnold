@@ -3044,6 +3044,210 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-180",
+      "subsystem": "verification-instrumentation",
+      "concern": "two `must` success criteria (`[panesboot]` log spam absence, `taskspane` render-budget warning absence) require `observe_runtime_logs` \u2014 manual dev-console inspection.",
+      "flag_ids": [
+        "FG-009"
+      ],
+      "plan_ids": [
+        "tech-debt-cleanup-action-pane-20260426-0205"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T00:24:23Z",
+      "updated_at": "2026-04-26T00:24:23Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-181",
+      "subsystem": "verification-instrumentation",
+      "concern": "five `must` success criteria require `inspect_runtime_ui` \u2014 manual ui verification (taskspane bottom strip clickable when generationspane locked, pane content covers tab when open, medialightbox stacking, attachment-removal on `/shots`, attachment-removal on `/tools/video-editor`).",
+      "flag_ids": [
+        "FG-010"
+      ],
+      "plan_ids": [
+        "tech-debt-cleanup-action-pane-20260426-0205"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T00:24:23Z",
+      "updated_at": "2026-04-26T00:24:23Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-182",
+      "subsystem": "verification-instrumentation",
+      "concern": "manual browser verification (step 12.5/12.6) requires `drive_browser` and `subjective_judgment` and cannot be fully automated.",
+      "flag_ids": [
+        "FG-009"
+      ],
+      "plan_ids": [
+        "structural-cleanup-of-the-20260426-0209"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T00:49:09Z",
+      "updated_at": "2026-04-26T00:49:09Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-183",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked step 7.4's dev-only warning guard against the repo's frontend environment conventions. the plan sketch uses `process.env.node_env !== 'production'`, but this vite react app uses `import.meta.env.dev` throughout `src/`; unless `process` is separately defined in the browser bundle, that selector path can throw a `referenceerror` when placeholders are emitted.",
+      "flag_ids": [
+        "correctness-1"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-184",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked the proposed `useselectionstore` export against the intent-facade requirement. exporting the raw zustand selector hook makes every field in `selectionstorestate` selectable, including the low-level reducer functions that step 5 intends to remove from public hooks, so it technically reopens the public low-level mutation surface rather than making the intent commands the only reachable api.",
+      "flag_ids": [
+        "correctness-2"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-185",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: checked the planned merge-key test (step 7.7f) against actual gallery clip construction. the plan says gallery items lack `clipid` and therefore fall back to url, but the store always assigns `clipid` to gallery clips; a test that fabricates a gallery clip without `clipid` would not exercise the real `selectedgalleryclips` path and could pass while the app shows duplicate timeline/gallery chips.",
+      "flag_ids": [
+        "scope"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-186",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the new `clip.clipid || clip.url` merge-key assumption against `selectionstore.ts:249-256` and `selectedmediaclip` in `useselectedmediaclips.ts:6-19`. gallery selections are converted into `selectedmediaclip` objects with `clipid: id`, so they do not lack `clipid`; the revised key therefore stops deduping a gallery item and timeline clip that share the same url, which the existing `agentchat.tsx:40-75` url-keyed merge intentionally did.",
+      "flag_ids": [
+        "issue_hints"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-187",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked step 7.4's proposed `currentattachmentset.ts` import against `selectionstore.ts:690-699`. `useselectionstore` is currently a private non-exported function, while the plan creates a separate module that imports it from `./selectionstore`; followed literally, that new file will not compile unless the plan either exports a deliberately narrow selector api or colocates `usecurrentattachmentset()` inside `selectionstore.ts`.",
+      "flag_ids": [
+        "correctness"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-188",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the actual attachment merge callers: `agentchat.tsx` currently passes timeline clips from `useselectedmediaclips()` and gallery clips from `usegalleryselection().selectedgalleryclips` into the merge. because both caller paths supply `clipid`, a `clipid || url` key handles placeholder timeline clips but no longer matches the real gallery-vs-timeline same-url caller case that the old url-keyed merge handled.",
+      "flag_ids": [
+        "callers"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-189",
+      "subsystem": "attachment-merge-key",
+      "concern": "attachment merge key: `clip.clipid || clip.url` fixes placeholder collisions but breaks the existing url dedupe between timeline and gallery attachments because gallery clips already have `clipid`.",
+      "flag_ids": [
+        "FLAG-019"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-190",
+      "subsystem": "selection-store-public-surface",
+      "concern": "selection store public surface: exporting the raw `useselectionstore` hook re-exposes low-level zustand reducer functions despite the intent-facade goal.",
+      "flag_ids": [
+        "FLAG-020"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-191",
+      "subsystem": "frontend-environment-guard",
+      "concern": "frontend environment guard: the planned placeholder warning uses `process.env.node_env` in a vite browser module, while the repo uses `import.meta.env.dev`.",
+      "flag_ids": [
+        "FLAG-021"
+      ],
+      "plan_ids": [
+        "selection-coordination-20260426-1613"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-26T15:29:51Z",
+      "updated_at": "2026-04-26T15:29:51Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

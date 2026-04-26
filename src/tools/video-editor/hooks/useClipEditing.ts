@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { toast } from '@/shared/components/ui/runtime/sonner';
-import type { UseTimelineMultiSelectResult } from '@/shared/state/selectionStore';
+import type { SelectClipOptions } from '@/shared/state/selectionStore';
 import {
   patchAffectsDuration,
   recalcActionEnd,
@@ -32,7 +32,7 @@ export interface UseClipEditingArgs {
   selectedClipId: string | null;
   selectedTrack: TimelineSelectedTrack;
   currentTime: number;
-  selectClip: UseTimelineMultiSelectResult['selectClip'];
+  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
   applyEdit: TimelineApplyEdit;
 }

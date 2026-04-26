@@ -8,8 +8,8 @@
  * - Accessibility elements
  *
  * Note: Tasks pane controls are handled by the existing PaneControlTab from TasksPane,
- * which is visible above the lightbox at z-[100001]. The overlay adjusts its size
- * to account for the pane when it's open or locked.
+ * while pane content uses UI_Z_LAYERS.TASKS_PANE_CONTENT (100016) above the lightbox.
+ * The overlay adjusts its size to account for the pane when it's open or locked.
  *
  * This allows the main MediaLightbox to focus on content orchestration.
  */

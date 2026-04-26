@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/core';
 import type { Shot } from '@/domains/generation/types';
 import { toast } from '@/shared/components/ui/runtime/sonner';
+import { userSelectTimelineClip } from '@/shared/state/selectionStore';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
@@ -35,6 +36,7 @@ import { useMarqueeSelect } from '@/tools/video-editor/hooks/useMarqueeSelect';
 import { usePinnedGroupSync, usePinnedShotGroups } from '@/tools/video-editor/hooks/usePinnedShotGroups';
 import { useShotGroups } from '@/tools/video-editor/hooks/useShotGroups';
 import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants';
+import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration';
 import { useShotGroupHandlers } from '@/tools/video-editor/hooks/useShotGroupHandlers';
 import { useSwitchToFinalVideo } from '@/tools/video-editor/hooks/useSwitchToFinalVideo';
 import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
@@ -366,11 +368,12 @@ function TimelineEditorComponent() {
     clearSelection,
   });
 
-  const { staleAssetKeys, dismissedAssetKeys, generationAssetKeys, dismissAsset, updateAssetToCurrentVariant } = useStaleVariants({
+  const { staleAssetKeys, dismissedAssetKeys, generationAssetKeys, dismissAsset, updateAssetToCurrentVariant, applyVariantToAsset } = useStaleVariants({
     registry: resolvedConfig?.registry,
     patchRegistry,
     registerAsset,
   });
+  const { addVariantAsGenerationAfterClip, isPending: isAddingVariantAsGenerationPending } = useAddVariantAsGeneration();
   const { activeTaskAssetKeys } = useActiveTaskClips({ registry: resolvedConfig?.registry });
   const { finalVideoMap, dismissFinalVideo } = useFinalVideoAvailable();
 
@@ -422,11 +425,11 @@ function TimelineEditorComponent() {
   }, [resolvedConfig]);
 
   const handleClipSelect = useCallback((clipId: string, trackId: string) => {
-    selectClip(clipId);
+    userSelectTimelineClip(clipId, { additive: false });
     setSelectedTrackId(trackId);
-  }, [selectClip, setSelectedTrackId]);
+  }, [setSelectedTrackId]);
 
-  const { pixelsPerSecond, pixelToTime } = useTimelineScale({
+  const { pixelToTime } = useTimelineScale({
     scale,
     scaleWidth,
     startLeft: TIMELINE_START_LEFT,
@@ -922,6 +925,11 @@ function TimelineEditorComponent() {
         onDuplicateGeneration={isGenAsset ? handleDuplicateGenerationClip : undefined}
         onUpdateVariant={isGenAsset && assetKey ? () => void updateAssetToCurrentVariant(assetKey) : undefined}
         onDismissStale={isStale && assetKey ? () => dismissAsset(assetKey) : undefined}
+        variantPickerGenerationId={assetEntry?.generationId}
+        variantPickerCurrentVariantId={assetEntry?.variantId ?? null}
+        onApplyVariant={isGenAsset && assetKey ? (variant) => applyVariantToAsset(assetKey, variant) : undefined}
+        onAddVariantAsGeneration={isGenAsset ? (variant) => addVariantAsGenerationAfterClip(action.id, variant) : undefined}
+        isAddingVariantAsGeneration={(variantId) => isAddingVariantAsGenerationPending(action.id, variantId)}
         canCreateShotFromSelection={selectionShotCreationState.canCreateShot}
         existingShots={existingShotsForSelection}
         onCreateShotFromSelection={handleCreateShotFromSelection}
@@ -969,6 +977,9 @@ function TimelineEditorComponent() {
     staleAssetKeys,
     thumbnailMap,
     updateAssetToCurrentVariant,
+    applyVariantToAsset,
+    addVariantAsGenerationAfterClip,
+    isAddingVariantAsGenerationPending,
   ]);
 
   const handleTrackDragEnd = useCallback(({ active, over }: DragEndEvent) => {

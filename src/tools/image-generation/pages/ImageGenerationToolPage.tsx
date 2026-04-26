@@ -16,11 +16,10 @@ import { ChevronDown, ChevronLeft, Sparkles, Settings2 } from 'lucide-react';
 import { DeleteGenerationConfirmDialog } from '@/shared/components/dialogs/DeleteGenerationConfirmDialog';
 import { getProjectSelectionFallbackId } from '@/shared/contexts/projectSelectionStore';
 
-import { useModifierKeys } from '@/features/gallery/components/GenerationsPane/hooks/useModifierKeys';
 import { useImageGenGallery } from "../hooks/useImageGenGallery";
 import { useImageGenActions } from "../hooks/useImageGenActions";
 import { useImageGenSubmit } from "../hooks/useImageGenSubmit";
-import { useGallerySelection } from '@/shared/state/selectionStore';
+import { userSelectGalleryItem, useGallerySelection } from '@/shared/state/selectionStore';
 
 const ImageGenerationToolPage: React.FC = React.memo(() => {
   const [formAssociatedShotId, setFormAssociatedShotId] = useState<string | null>(null);
@@ -34,9 +33,7 @@ const ImageGenerationToolPage: React.FC = React.memo(() => {
 
   const {
     selectedGalleryIds,
-    selectGalleryItem,
   } = useGallerySelection();
-  const modifierKeys = useModifierKeys();
 
   const buildSelectionMeta = useCallback((image: GeneratedImageWithMetadata) => ({
     url: image.url,
@@ -45,9 +42,15 @@ const ImageGenerationToolPage: React.FC = React.memo(() => {
     variantId: image.primary_variant_id,
   }), []);
 
-  const handleImageClick = useCallback((image: GeneratedImageWithMetadata) => {
-    selectGalleryItem(image.id, buildSelectionMeta(image), { toggle: modifierKeys.isMultiSelectModifier });
-  }, [buildSelectionMeta, modifierKeys.isMultiSelectModifier, selectGalleryItem]);
+  const handleImageClick = useCallback((
+    image: GeneratedImageWithMetadata,
+    modifiers?: { multiSelect: boolean },
+  ) => {
+    userSelectGalleryItem({
+      id: image.id,
+      ...buildSelectionMeta(image),
+    }, { additive: modifiers?.multiSelect ?? false });
+  }, [buildSelectionMeta]);
 
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
 import type { SelectClipOptions } from '@/shared/state/selectionStore';
+import { userSelectTimelineClip } from '@/shared/state/selectionStore';
 import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
 import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types';
 import type { TrackKind } from '@/tools/video-editor/types';
@@ -446,7 +447,7 @@ export const useClipDrag = ({
           session.inputModality,
           latestRef.current.interactionMode,
         )) {
-          latestRef.current.selectClip(session.clipId, { toggle: true });
+          userSelectTimelineClip(session.clipId, { additive: true });
         } else if (
           shouldPreserveTouchSelectionForMove(
             latestRef.current.deviceClass,
@@ -456,11 +457,11 @@ export const useClipDrag = ({
           && session.wasSelectedOnPointerDown
           && latestRef.current.selectedClipIdsRef.current.size > 1
         ) {
-          latestRef.current.selectClip(session.clipId, { preserveSelection: true });
+          userSelectTimelineClip(session.clipId, { additive: false, preserveIfSelected: true });
         } else if (session.metaKey || session.ctrlKey) {
-          latestRef.current.selectClip(session.clipId, { toggle: true });
+          userSelectTimelineClip(session.clipId, { additive: true });
         } else {
-          latestRef.current.selectClip(session.clipId);
+          userSelectTimelineClip(session.clipId, { additive: false });
         }
         endSession();
       };
@@ -508,7 +509,7 @@ export const useClipDrag = ({
     };
   // Stable refs only — volatile values (scale, coordinator, etc.) are read via refs
   // so the effect never re-runs mid-drag.
-  }, [effectiveDataRef, effectiveTimelineWrapperRef]);
+  }, [effectiveDataRef, effectiveTimelineWrapperRef, pixelsPerSecondRef]);
 
   return {
     dragSessionRef,

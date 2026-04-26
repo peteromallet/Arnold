@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { ArrowRight, Clapperboard, Copy, Ellipsis, Film, FolderPlus, ImageIcon, Layers, Loader2, Music2, RefreshCw, Scissors, Trash2, Type, X } from 'lucide-react';
 import { cn } from '@/shared/components/ui/contracts/cn';
+import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker';
+import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
 import type { Shot } from '@/domains/generation/types';
 import { usePortalMousedownGuard } from '@/shared/hooks/usePortalMousedownGuard';
 import { WaveformOverlay } from '@/tools/video-editor/components/TimelineEditor/WaveformOverlay';
@@ -50,6 +52,16 @@ interface ClipActionProps {
   onDuplicateGeneration?: (clipId: string) => void | Promise<void>;
   onUpdateVariant?: () => void;
   onDismissStale?: () => void;
+  /** Generation id for the asset bound to this clip (enables the variant picker badge). */
+  variantPickerGenerationId?: string;
+  /** Variant id currently bound to this clip's asset (highlighted in picker). */
+  variantPickerCurrentVariantId?: string | null;
+  /** Apply a chosen variant to this clip's asset (patches registry). */
+  onApplyVariant?: (variant: GenerationVariant) => void | Promise<void>;
+  /** Promote a chosen variant into a new generation and insert it after this clip. */
+  onAddVariantAsGeneration?: (variant: GenerationVariant) => void | Promise<void>;
+  /** Returns true while a specific variant's add-as-generation action is in flight. */
+  isAddingVariantAsGeneration?: (variantId: string) => boolean;
   canCreateShotFromSelection?: boolean;
   existingShots?: Shot[];
   onCreateShotFromSelection?: () => Promise<Shot | null>;
@@ -316,6 +328,11 @@ function ClipActionComponent({
   onDuplicateGeneration,
   onUpdateVariant,
   onDismissStale,
+  variantPickerGenerationId,
+  variantPickerCurrentVariantId,
+  onApplyVariant,
+  onAddVariantAsGeneration,
+  isAddingVariantAsGeneration,
   canCreateShotFromSelection = false,
   existingShots,
   onCreateShotFromSelection,
@@ -507,6 +524,26 @@ function ClipActionComponent({
             </div>
           )}
         </div>
+        {variantPickerGenerationId && (
+          <div
+            className={cn(
+              'absolute z-20',
+              (isTaskActive || isDuplicatingGeneration || isVariantStale) ? 'right-6 top-0' : 'right-1 top-0',
+            )}
+            data-no-clip-drag
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <MediaVariantPicker
+              generationId={variantPickerGenerationId}
+              currentVariantId={variantPickerCurrentVariantId ?? null}
+              onVariantApplied={onApplyVariant}
+              onAddVariantAsGeneration={onAddVariantAsGeneration}
+              isAddingVariantAsGeneration={isAddingVariantAsGeneration}
+              inline
+              defaultMediaKind={isVideoClip ? 'video' : 'image'}
+            />
+          </div>
+        )}
         {isTaskActive || isDuplicatingGeneration ? (
           <div
             className="absolute right-1 top-1 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-white"
@@ -616,6 +653,8 @@ function areClipActionPropsEqual(prev: ClipActionProps, next: ClipActionProps): 
   if (prev.isVariantStale !== next.isVariantStale) return false;
   if (prev.isGenerationAsset !== next.isGenerationAsset) return false;
   if (prev.isDuplicatingGeneration !== next.isDuplicatingGeneration) return false;
+  if (prev.variantPickerGenerationId !== next.variantPickerGenerationId) return false;
+  if (prev.variantPickerCurrentVariantId !== next.variantPickerCurrentVariantId) return false;
   if (prev.canCreateShotFromSelection !== next.canCreateShotFromSelection) return false;
   if (prev.isCreatingShot !== next.isCreatingShot) return false;
   if (prevSelectedClipIds.length !== nextSelectedClipIds.length) return false;
@@ -652,6 +691,9 @@ function areClipActionPropsEqual(prev: ClipActionProps, next: ClipActionProps): 
     && prev.onGenerateVideoFromSelection === next.onGenerateVideoFromSelection
     && prev.onNavigateToShot === next.onNavigateToShot
     && prev.onOpenGenerateVideo === next.onOpenGenerateVideo
+    && prev.onApplyVariant === next.onApplyVariant
+    && prev.onAddVariantAsGeneration === next.onAddVariantAsGeneration
+    && prev.isAddingVariantAsGeneration === next.isAddingVariantAsGeneration
   );
 }
 

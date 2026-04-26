@@ -21,7 +21,6 @@ import { AppProviders } from '@/app/providers/AppProviders';
 import { useAppDndOverlay } from '@/app/hooks/useAppDndOverlay';
 import { useAppExternalDrop } from '@/app/hooks/useAppExternalDrop';
 import { useGlobalFileDragDetection } from '@/app/hooks/useGlobalFileDragDetection';
-import { AgentChat } from '@/tools/video-editor/components/AgentChat';
 import { isRenderBudgetRuntimeEnabled } from '@/shared/dev/useRenderBudget';
 import { useLastAffectedShot } from '@/shared/state/selectionStore';
 
@@ -69,7 +68,6 @@ const AppInternalContent: React.FC = () => {
         onDragEnd={handleDragEnd}
       >
         <AppRoutes />
-        <AgentChat />
         {isRenderBudgetRuntimeEnabled() ? (
           <Suspense fallback={null}>
             <LazyRenderTelemetryOverlay />

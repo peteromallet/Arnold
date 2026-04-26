@@ -77,13 +77,6 @@ export interface PanesStoreBootstrapInput extends PanesStoreBootstrapSnapshot, P
 
 const MIN_EDITOR_HEIGHT = 200;
 
-const UNLOCKED_PANES: PaneLocksState = {
-  shots: false,
-  tasks: false,
-  gens: false,
-  editor: false,
-};
-
 let activeBootstrapOwner: symbol | null = null;
 let activeBootstrapSnapshot: PanesStoreBootstrapInput | null = null;
 let activeBootstrapRuntime: PanesStoreBootstrapRuntime | null = null;
@@ -225,15 +218,7 @@ function areBootstrapInputsEqual(
     && previous.locks.editor === next.locks.editor
     && previous.isGenerationsPaneOpen === next.isGenerationsPaneOpen
     && previous.isEditorPaneOpen === next.isEditorPaneOpen
-    && previous.isTasksPaneOpen === next.isTasksPaneOpen
-    && previous.setIsGenerationsPaneLocked === next.setIsGenerationsPaneLocked
-    && previous.setIsEditorPaneLocked === next.setIsEditorPaneLocked
-    && previous.setIsShotsPaneLocked === next.setIsShotsPaneLocked
-    && previous.setIsTasksPaneLocked === next.setIsTasksPaneLocked
-    && previous.setIsGenerationsPaneOpen === next.setIsGenerationsPaneOpen
-    && previous.setIsEditorPaneOpen === next.setIsEditorPaneOpen
-    && previous.setIsTasksPaneOpen === next.setIsTasksPaneOpen
-    && previous.resetAllPaneLocks === next.resetAllPaneLocks;
+    && previous.isTasksPaneOpen === next.isTasksPaneOpen;
 }
 
 function updateBootstrapRuntime(input: PanesStoreBootstrapInput | null): void {
@@ -341,7 +326,7 @@ function buildStateWithUpdatedGenerationsHeight(
 
 const initialSnapshot = createInitialSnapshot();
 
-const panesStore = createStore<PanesStoreState>((set, get) => ({
+const panesStore = createStore<PanesStoreState>((set) => ({
   ...initialSnapshot,
   setIsGenerationsPaneLocked: (isLocked) => {
     activeBootstrapRuntime?.setIsGenerationsPaneLocked(isLocked);
@@ -398,24 +383,14 @@ const panesStore = createStore<PanesStoreState>((set, get) => ({
     activeBootstrapRuntime?.resetAllPaneLocks();
   },
   bootstrap: (input) => {
-    if (areBootstrapInputsEqual(activeBootstrapSnapshot, input)) {
-      console.log('[PanesBoot] bootstrap short-circuit (inputs equal)', { owner: input.owner.toString() });
-      return;
-    }
-
-    console.log('[PanesBoot] bootstrap APPLY set()', {
-      owner: input.owner.toString(),
-      prevOwner: activeBootstrapOwner?.toString() ?? null,
-      locks: input.locks,
-      isGenerationsPaneOpen: input.isGenerationsPaneOpen,
-      isEditorPaneOpen: input.isEditorPaneOpen,
-      isTasksPaneOpen: input.isTasksPaneOpen,
-    });
+    const wasEqual = areBootstrapInputsEqual(activeBootstrapSnapshot, input);
     activeBootstrapOwner = input.owner;
     activeBootstrapSnapshot = input;
     updateBootstrapRuntime(input);
 
-    set((state) => buildBootstrappedState(state, input));
+    if (!wasEqual) {
+      set((state) => buildBootstrappedState(state, input));
+    }
   },
   clearBootstrap: (owner) => {
     if (owner && activeBootstrapOwner && owner !== activeBootstrapOwner) {
@@ -519,26 +494,18 @@ export function useBootstrapPanesStore(): void {
     resetAllPaneLocks,
   ]);
 
-  console.log('[PanesBoot] useBootstrapPanesStore render', {
-    owner: ownerRef.current?.toString(),
-    inputId: bootstrapInput && (bootstrapInput as unknown as { __id?: number }).__id,
-  });
-
   useEffect(() => {
-    console.log('[PanesBoot] effect fires (bootstrapInput changed identity)');
     bootstrapPanesStore(bootstrapInput);
   }, [bootstrapInput]);
 
   useEffect(() => {
     return () => {
-      console.log('[PanesBoot] CLEANUP unmount', { owner: ownerRef.current?.toString() });
       clearPanesStoreBootstrap(ownerRef.current ?? undefined);
     };
   }, []);
 }
 
 export function PanesStoreBootstrapBoundary({ children }: { children: ReactNode }) {
-  console.log('[PanesBoot] PanesStoreBootstrapBoundary render');
   useBootstrapPanesStore();
   return children;
 }

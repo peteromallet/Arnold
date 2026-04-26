@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { GenerationRow } from '@/domains/generation/types';
 import {
+  systemClearGallerySelection,
+  systemSyncGallerySelection,
   type GallerySelectionItem,
   useGallerySelectionOptional,
 } from '@/shared/state/selectionStore';
@@ -42,7 +44,7 @@ export function useGallerySelectionBridge({
     }
 
     if (selectedIds.length === 0) {
-      gallery.clearGallerySelection();
+      systemClearGallerySelection();
       return;
     }
 
@@ -62,7 +64,7 @@ export function useGallerySelectionBridge({
     });
 
     if (items.length > 0) {
-      gallery.selectGalleryItems(items);
+      systemSyncGallerySelection(items);
     }
   }, [gallery, selectedIds]);
 

@@ -8,7 +8,7 @@ import { uploadBlobToStorage, uploadImageToStorage } from '@/shared/lib/media/im
 import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata';
 import { extractVideoPosterFrame } from '@/shared/lib/media/videoPosterExtractor';
 import { generateClientThumbnail, uploadImageWithThumbnail } from '@/shared/media/clientThumbnailGenerator';
-import type { UseTimelineMultiSelectResult } from '@/shared/state/selectionStore';
+import type { SelectClipOptions } from '@/shared/state/selectionStore';
 import { createExternalUploadGeneration } from '@/integrations/supabase/repositories/generationMutationsRepository';
 import { generateUUID } from '@/shared/lib/taskCreation/ids';
 import { findNearestFreeTrack, getCompatibleTrackId, trySnapToEdge, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
@@ -49,7 +49,7 @@ export interface UseAssetManagementArgs {
   dataRef: MutableRefObject<TimelineData | null>;
   selectedTrackId: string | null;
   selectedProjectId: string | null;
-  selectClip: UseTimelineMultiSelectResult['selectClip'];
+  selectClip: (clipId: string, opts?: SelectClipOptions) => void;
   setSelectedTrackId: Dispatch<SetStateAction<string | null>>;
   applyEdit: TimelineApplyEdit;
   patchRegistry: TimelinePatchRegistry;

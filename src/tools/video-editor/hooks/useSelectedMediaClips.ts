@@ -17,6 +17,7 @@ export type SelectedMediaClip = {
   trackId?: string;
   at?: number;
   duration?: number;
+  isPlaceholder?: boolean;
 };
 
 type SummaryMediaClip = Pick<SelectedMediaClip, 'mediaType' | 'shotId' | 'shotSelectionClipCount'>;

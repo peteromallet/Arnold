@@ -42,6 +42,12 @@
               "type": "string"
             }
           },
+          "auto_attributed_files": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "evidence_files": {
             "type": "array",
             "items": {
@@ -60,6 +66,7 @@
           "executor_notes",
           "files_changed",
           "commands_run",
+          "auto_attributed_files",
           "evidence_files",
           "reviewer_verdict"
         ],

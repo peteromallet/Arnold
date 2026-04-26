@@ -9,6 +9,7 @@ import {
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { isTouchTimelineInput } from '@/tools/video-editor/lib/mobile-interaction-model';
 import { useRenderBudget } from '@/shared/dev/useRenderBudget';
+import { userClearAllSelection, userSelectTimelineClip } from '@/shared/state/selectionStore';
 
 interface PreviewPanelProps {
   previewSlotRef: RefObject<HTMLDivElement>;
@@ -41,8 +42,6 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
     precisionEnabled: timeline.precisionEnabled,
   }), shallow);
   const {
-    selectClip,
-    clearSelection,
     onOverlayChange,
     onDoubleClickAsset,
     setInputModalityFromPointerType,
@@ -50,8 +49,6 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
     setContextTarget,
     setInspectorTarget,
   } = useTimelineOpsSelector((ops) => ({
-    selectClip: ops.selectClip,
-    clearSelection: ops.clearSelection,
     onOverlayChange: ops.onOverlayChange,
     onDoubleClickAsset: ops.onDoubleClickAsset,
     setInputModalityFromPointerType: ops.setInputModalityFromPointerType,
@@ -107,7 +104,7 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
             if (gestureOwner === 'preview') {
               setGestureOwner('none');
             }
-            clearSelection();
+            userClearAllSelection();
           }}
         >
           <div className="sr-only" aria-live="polite" aria-atomic="true">
@@ -132,10 +129,10 @@ function PreviewPanelComponent({ previewSlotRef }: PreviewPanelProps) {
             gestureOwner={gestureOwner}
             onSelectClip={(clipId) => {
               if (clipId === null) {
-                clearSelection();
+                userClearAllSelection();
                 return;
               }
-              selectClip(clipId);
+              userSelectTimelineClip(clipId, { additive: false });
             }}
             onOverlayChange={onOverlayChange}
             setInputModalityFromPointerType={setInputModalityFromPointerType}

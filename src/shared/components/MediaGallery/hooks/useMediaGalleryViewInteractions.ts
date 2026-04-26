@@ -79,7 +79,7 @@ interface UseMediaGalleryViewInteractionsParams {
   videosAsThumbnails: boolean;
   onToggleStar?: ((id: string, starred: boolean) => void) | undefined;
   onApplySettings?: ((metadata: DisplayableMetadata | undefined) => Promise<void> | void) | undefined;
-  onImageClick?: ((image: GeneratedImageWithMetadata) => void) | undefined;
+  onImageClick?: ((image: GeneratedImageWithMetadata, modifiers?: { multiSelect: boolean }) => void) | undefined;
   onContextMenu?: ((event: MouseEvent, image: GeneratedImageWithMetadata) => void) | undefined;
   isDeleting?: string | boolean | null;
   currentViewingShotId?: string;

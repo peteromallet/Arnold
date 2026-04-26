@@ -51,7 +51,9 @@ describe('useItemInteraction', () => {
     });
 
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
-    expect(args.onImageClick).toHaveBeenCalledWith(baseImage);
+    // multiSelect is derived from the synthetic event's metaKey/ctrlKey/shiftKey;
+    // the buildInteractionEvent helper doesn't set them, so multiSelect is false.
+    expect(args.onImageClick).toHaveBeenCalledWith(baseImage, { multiSelect: false });
     expect(args.onMobileTap).not.toHaveBeenCalled();
   });
 

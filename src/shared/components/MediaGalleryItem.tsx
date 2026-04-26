@@ -40,6 +40,7 @@ import { isImageEditTaskType } from "@/shared/lib/taskParamsUtils";
 import { useMarkVariantViewed } from "@/shared/hooks/variants/useMarkVariantViewed";
 import { getGenerationId, getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers';
 import { useRenderBudget } from '@/shared/dev/useRenderBudget';
+import { isAdditiveSelectionEvent, isClickLikePointerGesture, isPrimaryPointer } from '@/shared/lib/interactions/selectionGesture';
 
 const MIN_PADDING = 60;
 const MAX_PADDING = 200;
@@ -329,6 +330,41 @@ export const MediaGalleryItem: React.FC<MediaGalleryItemProps> = ({
   const handleDragEnd = useCallback(() => {
     setIsDragging(false);
   }, [setIsDragging]);
+  // Wrapper-level click detection for desktop. The native click on the inner
+  // <img> is intermittently swallowed by the wrapper's HTML5 `draggable=true`
+  // (any sub-pixel-or-two mousemove between mousedown and mouseup makes the
+  // browser fire dragstart instead of click). We track pointerdown position and
+  // treat sub-threshold pointerup gestures as clicks ourselves, regardless of
+  // whether the browser would have synthesised a click. Real drags skip the
+  // click and let the drag pipeline run.
+  const pointerDownRef = React.useRef<{ x: number; y: number; pointerId: number; targetIsButton: boolean } | null>(null);
+
+  const handleWrapperPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse') return;
+    if (!isPrimaryPointer(event.nativeEvent)) return;
+    if (isMobile) return;
+    const target = event.target as HTMLElement | null;
+    const targetIsButton = Boolean(target?.closest('button'));
+    pointerDownRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      pointerId: event.pointerId,
+      targetIsButton,
+    };
+  }, [isMobile]);
+
+  const handleWrapperPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const start = pointerDownRef.current;
+    pointerDownRef.current = null;
+    if (!start || start.pointerId !== event.pointerId) return;
+    if (start.targetIsButton) return; // Don't hijack clicks on internal action buttons.
+    if (!enableSingleClick || !onImageClick) return;
+    if (!isClickLikePointerGesture(start, { x: event.clientX, y: event.clientY })) return;
+    onImageClick(image, {
+      multiSelect: isAdditiveSelectionEvent(event),
+    });
+  }, [enableSingleClick, onImageClick, image]);
+
   const { handleTouchStart, handleInteraction } = useItemInteraction({
     image,
     isMobile,
@@ -383,6 +419,8 @@ export const MediaGalleryItem: React.FC<MediaGalleryItemProps> = ({
         onContextMenu={(event) => onContextMenu?.(event, image)}
         onTouchStart={isMobile && !enableSingleClick && !isVideoContent ? handleTouchStart : undefined}
         onTouchEnd={isMobile && !enableSingleClick && !isVideoContent ? handleInteraction : undefined}
+        onPointerDown={handleWrapperPointerDown}
+        onPointerUp={handleWrapperPointerUp}
     >
       {/* Image layer */}
       <div

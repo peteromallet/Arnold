@@ -1,7 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useIsMobile, useIsTablet } from '@/shared/hooks/mobile';
-import { useTimelineMultiSelect, useTimelineSelectionStore } from '@/shared/state/selectionStore';
+import {
+  editorClearTimelineSelection,
+  systemResetTimelineSelection,
+  useTimelineMultiSelect,
+  userSelectTimelineClip,
+  userSelectTimelineClips,
+} from '@/shared/state/selectionStore';
 import { createInteractionState, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
 import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
@@ -176,10 +182,13 @@ function useTimelineEditorContextValue({
     setContextTarget,
     setInspectorTarget,
     isClipSelected: multiSelect.isClipSelected,
-    selectClip: multiSelect.selectClip,
-    selectClips: multiSelect.selectClips,
-    addToSelection: multiSelect.addToSelection,
-    clearSelection: multiSelect.clearSelection,
+    selectClip: (clipId, opts) => userSelectTimelineClip(clipId, {
+      additive: Boolean(opts?.toggle),
+      preserveIfSelected: opts?.preserveSelection,
+    }),
+    selectClips: (clipIds) => userSelectTimelineClips(clipIds, { additive: false }),
+    addToSelection: (clipIds) => userSelectTimelineClips(clipIds, { additive: true }),
+    clearSelection: editorClearTimelineSelection,
     setSelectedTrackId,
     setActiveClipTab,
     setAssetPanelState,
@@ -249,11 +258,7 @@ function useTimelineEditorContextValue({
     interactionPolicy,
     interactionStateRef,
     isLoading,
-    multiSelect.addToSelection,
-    multiSelect.clearSelection,
     multiSelect.isClipSelected,
-    multiSelect.selectClip,
-    multiSelect.selectClips,
     onActionResizeStart,
     onClipEdgeResizeEnd,
     patchRegistry,
@@ -456,7 +461,6 @@ export function useTimelineState(): UseTimelineStateResult {
     dataRef,
     eventBus,
     isConflictExhausted,
-    selectedClipId,
     selectedTrackId,
     saveStatus,
     setSelectedTrackId,
@@ -469,7 +473,6 @@ export function useTimelineState(): UseTimelineStateResult {
     isLoading,
   } = save;
   const {
-    resolvedConfig,
     compositionSize,
     trackScaleMap,
   } = derived;
@@ -508,7 +511,6 @@ export function useTimelineState(): UseTimelineStateResult {
     invalidateAssetRegistry,
   } = assetOperations;
   const { selectedProjectId } = useProjectSelectionContext();
-  const { resetSelection, setSelectedTrackId: setSelectionStoreTrackId } = useTimelineSelectionStore();
   const selection = useTimelineSelection({
     data,
     selectedTrackId,
@@ -516,9 +518,8 @@ export function useTimelineState(): UseTimelineStateResult {
   const multiSelect = useTimelineMultiSelect();
 
   useEffect(() => {
-    resetSelection();
-    setSelectionStoreTrackId(null);
-  }, [resetSelection, runtime.timelineId, setSelectionStoreTrackId]);
+    systemResetTimelineSelection();
+  }, [runtime.timelineId]);
   const setInputModalityFromPointerType = useCallback((pointerType: string | null | undefined) => {
     const nextModality = resolveInputModalityFromPointerType(pointerType);
     setInputModality(nextModality);

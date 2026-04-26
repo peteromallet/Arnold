@@ -15,7 +15,11 @@ function ToastList() {
 
   return (
     <Toast.Viewport
-      className="fixed bottom-0 right-0 flex max-h-screen w-full flex-col gap-2 p-4 md:max-w-[420px]"
+      // pointer-events-none so the bottom-right region (which sits at
+      // z-TOAST_VIEWPORT, above the action pane / chat) doesn't block clicks
+      // when no toast is visible. Individual ToastItems re-enable pointer
+      // events with their own `pointer-events-auto`.
+      className="fixed bottom-0 right-0 flex max-h-screen w-full flex-col gap-2 p-4 pointer-events-none md:max-w-[420px]"
       style={{ zIndex: UI_Z_LAYERS.TOAST_VIEWPORT }}
     >
       {toasts.map((t) => (

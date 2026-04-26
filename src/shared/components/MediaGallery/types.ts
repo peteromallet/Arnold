@@ -161,7 +161,7 @@ interface MediaGalleryActionsProps {
   onCreateShot?: (shotName: string, files: File[]) => Promise<void>;
   /** Called after delete to trigger data refetch. Should invalidate queries and refetch current page. */
   onBackfillRequest?: () => Promise<void>;
-  onImageClick?: (image: GeneratedImageWithMetadata) => void;
+  onImageClick?: (image: GeneratedImageWithMetadata, modifiers?: { multiSelect: boolean }) => void;
   onContextMenu?: (event: MouseEvent, image: GeneratedImageWithMetadata) => void;
   formAssociatedShotId?: string | null;
   onSwitchToAssociatedShot?: (shotId: string) => void;

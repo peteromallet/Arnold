@@ -1,4 +1,6 @@
 import { useCallback, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent } from 'react';
+import { isAdditiveSelectionEvent, isPrimaryPointer } from '@/shared/lib/interactions/selectionGesture';
+import { userClearAllSelection, userSelectTimelineClips } from '@/shared/state/selectionStore';
 import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll';
 import {
   shouldAllowTouchMarquee,
@@ -24,9 +26,9 @@ interface UseMarqueeSelectArgs {
   gestureOwner: TimelineGestureOwner;
   setGestureOwner: (owner: TimelineGestureOwner) => void;
   setInputModalityFromPointerType: (pointerType: string | null | undefined) => TimelineInputModality;
-  selectClips: (clipIds: Iterable<string>) => void;
-  addToSelection: (clipIds: Iterable<string>) => void;
-  clearSelection: () => void;
+  selectClips?: (clipIds: Iterable<string>) => void;
+  addToSelection?: (clipIds: Iterable<string>) => void;
+  clearSelection?: () => void;
 }
 
 interface MarqueeSession {
@@ -63,9 +65,6 @@ export function useMarqueeSelect({
   gestureOwner,
   setGestureOwner,
   setInputModalityFromPointerType,
-  selectClips,
-  addToSelection,
-  clearSelection,
 }: UseMarqueeSelectArgs) {
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
   const sessionRef = useRef<MarqueeSession | null>(null);
@@ -97,7 +96,7 @@ export function useMarqueeSelect({
   }, [setGestureOwner]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0) {
+    if (!isPrimaryPointer(event.nativeEvent)) {
       return;
     }
 
@@ -198,9 +197,9 @@ export function useMarqueeSelect({
       if (session.hasMoved) {
         const clipIds = intersectedClipIdsRef.current;
         if (session.additive) {
-          addToSelection(clipIds);
+          userSelectTimelineClips(clipIds, { additive: true });
         } else {
-          selectClips(clipIds);
+          userSelectTimelineClips(clipIds, { additive: false });
         }
       } else if (!session.additive) {
         // Only clear selection if the pointer-up landed inside the edit area.
@@ -208,7 +207,7 @@ export function useMarqueeSelect({
         // so a pointer-up there should not be treated as "click on empty timeline".
         const upTarget = upEvent.target;
         if (upTarget instanceof Node && editArea.contains(upTarget)) {
-          clearSelection();
+          userClearAllSelection();
         }
       }
 
@@ -230,7 +229,7 @@ export function useMarqueeSelect({
       startClientY: event.clientY,
       startCanvasX,
       startCanvasY,
-      additive: event.ctrlKey || event.metaKey,
+      additive: isAdditiveSelectionEvent(event),
       hasMoved: false,
       claimedOwnership: false,
       moveListener: handlePointerMove,
@@ -242,13 +241,10 @@ export function useMarqueeSelect({
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerCancel);
   }, [
-    addToSelection,
-    clearSelection,
     clearSession,
     deviceClass,
     editAreaRef,
     interactionMode,
-    selectClips,
     setGestureOwner,
     setInputModalityFromPointerType,
   ]);

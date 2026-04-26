@@ -15,7 +15,11 @@ import { TooltipProvider } from '@/shared/components/ui/tooltip';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
 import { PanesStoreBootstrapBoundary } from '@/shared/state/panesStore';
-import { useLastAffectedShot, useSelectionStoreApi } from '@/shared/state/selectionStore';
+import {
+  systemResetSelectionForProjectChange,
+  systemSetLastAffectedShotId,
+  useLastAffectedShot,
+} from '@/shared/state/selectionStore';
 import { queryClient } from '@/app/providers/queryClient';
 
 interface AppProvidersProps {
@@ -39,7 +43,6 @@ interface LastAffectedShotSettings {
 
 function SelectionStoreBoundary({ children }: { children: React.ReactNode }) {
   const { selectedProjectId } = useProjectSelectionContext();
-  const selectionStore = useSelectionStoreApi();
   const { lastAffectedShotId } = useLastAffectedShot();
   const previousProjectIdRef = useRef<string | null>(null);
   const hydratedProjectIdRef = useRef<string | null>(null);
@@ -61,8 +64,8 @@ function SelectionStoreBoundary({ children }: { children: React.ReactNode }) {
     previousProjectIdRef.current = selectedProjectId;
     hydratedProjectIdRef.current = null;
     lastPersistedShotIdRef.current = null;
-    selectionStore.getState().resetForProjectChange();
-  }, [selectedProjectId, selectionStore]);
+    systemResetSelectionForProjectChange();
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (!selectedProjectId || isLoading) {
@@ -76,8 +79,8 @@ function SelectionStoreBoundary({ children }: { children: React.ReactNode }) {
     const storedShotId = settings?.lastAffectedShotId ?? null;
     hydratedProjectIdRef.current = selectedProjectId;
     lastPersistedShotIdRef.current = storedShotId;
-    selectionStore.getState().hydrateLastAffectedShotId(storedShotId);
-  }, [isLoading, selectedProjectId, selectionStore, settings?.lastAffectedShotId]);
+    systemSetLastAffectedShotId(storedShotId);
+  }, [isLoading, selectedProjectId, settings?.lastAffectedShotId]);
 
   useEffect(() => {
     if (!selectedProjectId) {

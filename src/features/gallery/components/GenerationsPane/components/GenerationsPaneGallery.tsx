@@ -8,9 +8,12 @@ import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation';
 import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
 import { VideoGenerationModal } from '@/tools/travel-between-images/components/VideoGenerationModal';
 import { useLassoSelection } from '../hooks/useLassoSelection';
-import { useModifierKeys } from '../hooks/useModifierKeys';
 import { useRenderBudget } from '@/shared/dev/useRenderBudget';
-import { useGallerySelection } from '@/shared/state/selectionStore';
+import {
+  userSelectGalleryItem,
+  userSelectGalleryItems,
+  useGallerySelection,
+} from '@/shared/state/selectionStore';
 
 type MediaGalleryProps = React.ComponentProps<typeof MediaGallery>;
 
@@ -74,18 +77,16 @@ export function GenerationsPaneGallery({
   const {
     selectedGalleryIds,
     gallerySelectionMap,
-    selectGalleryItem,
-    selectGalleryItems,
-    clearGallerySelection,
   } = useGallerySelection();
   const { shots } = useShots();
   const { createShot, isCreating } = useShotCreation();
   const { navigateToShot } = useShotNavigation();
-  const modifierKeys = useModifierKeys();
   const { selectionRect, handleMouseDown } = useLassoSelection({
     containerRef: gallerySurfaceRef,
     items: gallery.items,
-    onSelectItems: selectGalleryItems,
+    onSelectItems: (items, options) => {
+      userSelectGalleryItems(items, { additive: options?.additive ?? false });
+    },
   });
 
   const buildSelectionMeta = React.useCallback((image: MediaGalleryProps['images'][number]) => ({
@@ -95,9 +96,15 @@ export function GenerationsPaneGallery({
     variantId: image.primary_variant_id,
   }), []);
 
-  const handleImageClick = React.useCallback((image: MediaGalleryProps['images'][number]) => {
-    selectGalleryItem(image.id, buildSelectionMeta(image), { toggle: modifierKeys.isMultiSelectModifier });
-  }, [buildSelectionMeta, modifierKeys.isMultiSelectModifier, selectGalleryItem]);
+  const handleImageClick = React.useCallback((
+    image: MediaGalleryProps['images'][number],
+    modifiers?: { multiSelect: boolean },
+  ) => {
+    userSelectGalleryItem({
+      id: image.id,
+      ...buildSelectionMeta(image),
+    }, { additive: modifiers?.multiSelect ?? false });
+  }, [buildSelectionMeta]);
 
   const resolveSelectedGenerationIds = React.useCallback(() => (
     Array.from(gallerySelectionMap.values()).map((entry) => entry.generationId)
@@ -141,10 +148,13 @@ export function GenerationsPaneGallery({
   ) => {
     event.preventDefault();
     if (!selectedGalleryIds.has(image.id)) {
-      selectGalleryItem(image.id, buildSelectionMeta(image));
+      userSelectGalleryItem({
+        id: image.id,
+        ...buildSelectionMeta(image),
+      }, { additive: false });
     }
     setContextMenuPosition({ x: event.clientX, y: event.clientY });
-  }, [buildSelectionMeta, selectGalleryItem, selectedGalleryIds]);
+  }, [buildSelectionMeta, selectedGalleryIds]);
 
   const handleCreateShotFromMenu = React.useCallback(async (): Promise<Shot | null> => {
     return createShotFromSelection();
