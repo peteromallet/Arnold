@@ -64,6 +64,7 @@ def test_cli_command_registry_is_explicit_and_ordered() -> None:
         "validate",
         "doctor",
         "fetch",
+        "models",
         "run",
         "runtime",
         "session",

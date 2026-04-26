@@ -22,11 +22,30 @@ EXCLUDE_DIRS = {
 }
 
 
+# REMOVEME after one green matrix
+def _legacy_or_registry_block(phase: str) -> str:
+    if phase not in {"core", "gguf", "ltx", "wan_wrapper"}:
+        raise ValueError(f"unknown staging phase: {phase}")
+    return f"""
+if [ "${{VIBECOMFY_REGISTRY_LEGACY:-0}}" = "1" ]; then
+"""
+
+
+# REMOVEME after one green matrix
+def _registry_staging_fallback(phase: str) -> str:
+    return f"""
+else
+  "$PY" -m vibecomfy.registry.models_loader stage --registry vibecomfy/registry/models.yaml --models-root models --select-phase {phase}
+fi
+"""
+
+
 def _remote_script() -> str:
     scope = os.environ.get("VIBECOMFY_MATRIX_SCOPE", "all")
     ltx_lean_model_scope = scope in {"ltx_official", "ltx_official_public", "ltx_lightricks", "ltx_iclora", "ltx_iclora_public"}
     hf_token = _load_hf_token()
     hf_token_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else "unset HF_TOKEN"
+    registry_legacy_export = "export VIBECOMFY_REGISTRY_LEGACY=1" if os.environ.get("VIBECOMFY_REGISTRY_LEGACY") == "1" else "unset VIBECOMFY_REGISTRY_LEGACY"
     plan = build_corpus_matrix_plan(ROOT, scope=scope)
     core_rows = format_rows(plan.core_rows)
     gguf_rows = format_rows(plan.gguf_rows)
@@ -45,6 +64,7 @@ export PIP_CACHE_DIR=/workspace/.cache/pip
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+{registry_legacy_export}
 mkdir -p "$XDG_CACHE_HOME" "$UV_CACHE_DIR" "$HF_HOME" "$PIP_CACHE_DIR"
 find "$HF_HOME" -type f -name '*.incomplete' -delete 2>/dev/null || true
 if [ "{scope}" = "wan_creation_types" ] || [ "{scope}" = "wan_infinitetalk" ]; then
@@ -344,6 +364,7 @@ done < "$1"
 }}
 printf 'id\tmedia\tstatus\tbaseline_seconds\tconvert_seconds\tvalidate_seconds\tvibecomfy_seconds\tmedia_files\tbytes\tfailure\n' > out/corpus_matrix/ready_results.tsv
 if grep -q '[^[:space:]]' out/corpus_matrix/core_workflows.tsv; then
+{_legacy_or_registry_block("core")}
 "$PY" - <<'PY'
 from huggingface_hub import hf_hub_download
 from pathlib import Path
@@ -394,6 +415,7 @@ downloads = [
 for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
+{_registry_staging_fallback("core")}
 fi
 run_workflow_set out/corpus_matrix/core_workflows.tsv
 if grep -q '[^[:space:]]' out/corpus_matrix/gguf_workflows.tsv; then
@@ -411,6 +433,7 @@ if line not in text:
         raise RuntimeError("Could not find KNOWN_GGUF_MODELS Flux marker in Hiddenswitch ComfyUI")
     path.write_text(text.replace(marker, marker + line))
 PY
+{_legacy_or_registry_block("gguf")}
 "$PY" - <<'PY'
 from huggingface_hub import hf_hub_download
 from pathlib import Path
@@ -448,6 +471,7 @@ downloads = [
 for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
+{_registry_staging_fallback("gguf")}
 $PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
 run_workflow_set out/corpus_matrix/gguf_workflows.tsv
 fi
@@ -485,6 +509,7 @@ text = re.sub(pattern, replacement, text)
 path.write_text(text, encoding="utf-8")
 PY
 fi
+{_legacy_or_registry_block("ltx")}
 "$PY" - <<'PY'
 from huggingface_hub import hf_hub_download
 from pathlib import Path
@@ -567,6 +592,7 @@ else:
 for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
+{_registry_staging_fallback("ltx")}
 $PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
 if [ "{scope}" = "ltx_official" ] || [ "{scope}" = "ltx_official_public" ] || [ "{scope}" = "ltx_lightricks" ] || [ "{scope}" = "ltx_iclora" ] || [ "{scope}" = "ltx_iclora_public" ]; then
   echo "skipping_remote_ready_materialization_for_lean_ltx_scope={scope}" >> out/corpus_matrix/live.log
@@ -611,6 +637,7 @@ if [ -f custom_nodes/ComfyUI-VideoHelperSuite/requirements.txt ]; then $PY -m pi
 if [ "{scope}" != "wan_wrapper_basic" ] && [ "{scope}" != "wan_wrapper_5b" ]; then
   for req in custom_nodes/*/requirements.txt; do [ -f "$req" ] && $PY -m pip install --no-deps -r "$req" || true; done
 fi
+{_legacy_or_registry_block("wan_wrapper")}
 "$PY" - <<'PY'
 from huggingface_hub import hf_hub_download
 from pathlib import Path
@@ -701,6 +728,7 @@ downloads = [
 for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
+{_registry_staging_fallback("wan_wrapper")}
 $PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
 $PY scripts/materialize_ready_templates.py
 validate_ready_set out/corpus_matrix/ready_workflows.tsv

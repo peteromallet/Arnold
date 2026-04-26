@@ -7,16 +7,19 @@ from typing import Any
 
 from vibecomfy.ingest.loader import load_template
 from vibecomfy.ingest.normalize import normalize_to_api
+from vibecomfy.registry.models_loader import canonical_filename, load_registry, normalize_alias
 
 
-LTX_CHECKPOINT = "ltx-2.3-22b-dev-fp8.safetensors"
-LTX_TEXT_ENCODER = "gemma_3_12B_it_fp4_mixed.safetensors"
-LTX_TEXT_PROJECTION = "ltx-2.3_text_projection_bf16.safetensors"
-LTX_VIDEO_VAE = "LTX23_video_vae_bf16.safetensors"
-LTX_AUDIO_VAE = "LTX23_audio_vae_bf16.safetensors"
-LTX_PREVIEW_VAE = "taeltx2_3.safetensors"
-GGUF_MODEL = "flux-2-klein-9b-Q4_K_M.gguf"
-FLUX_VAE = "flux2-vae.safetensors"
+_REGISTRY = load_registry()
+
+LTX_CHECKPOINT = canonical_filename("ltx_2_3_22b_dev_fp8", registry=_REGISTRY)
+LTX_TEXT_ENCODER = canonical_filename("ltx_2_3_text_encoder", registry=_REGISTRY)
+LTX_TEXT_PROJECTION = canonical_filename("ltx_2_3_text_projection", registry=_REGISTRY)
+LTX_VIDEO_VAE = canonical_filename("ltx_2_3_video_vae", registry=_REGISTRY)
+LTX_AUDIO_VAE = canonical_filename("ltx_2_3_audio_vae", registry=_REGISTRY)
+LTX_PREVIEW_VAE = canonical_filename("ltx_2_3_preview_vae", registry=_REGISTRY)
+GGUF_MODEL = canonical_filename("flux2_klein_9b_q4_k_m_gguf", registry=_REGISTRY)
+FLUX_VAE = canonical_filename("flux2_vae_from_klein_9b", registry=_REGISTRY)
 
 
 def prepare_workflow(workflow_id: str, source: Path, output: Path) -> Path:
@@ -128,6 +131,14 @@ def _replace_ace_primitive_links(api: dict[str, Any], source_id: str, value: Any
                 node["inputs"][key] = value
 
 
+def _normalize_model_aliases(inputs: dict[str, Any]) -> None:
+    for key, value in list(inputs.items()):
+        if isinstance(value, str):
+            normalized = normalize_alias(value, registry=_REGISTRY)
+            if normalized is not None:
+                inputs[key] = normalized
+
+
 def _patch_ltx(api: dict[str, Any], *, image_to_video: bool) -> None:
     _patch_ltx_common(api)
     if not all(node_id in api for node_id in ("4977", "2004", "4981")):
@@ -139,11 +150,7 @@ def _patch_ltx(api: dict[str, Any], *, image_to_video: bool) -> None:
         for key, value in list(inputs.items()):
             if isinstance(value, dict) or value is None:
                 inputs.pop(key)
-        for key, value in list(inputs.items()):
-            if value == "ltx-2.3-22b-dev.safetensors":
-                inputs[key] = LTX_CHECKPOINT
-            elif value == "comfy_gemma_3_12B_it.safetensors":
-                inputs[key] = LTX_TEXT_ENCODER
+        _normalize_model_aliases(inputs)
     api["3059"]["inputs"].update({"widget_0": 256, "widget_1": 256, "widget_2": 5})
     api["4979"]["inputs"]["widget_0"] = 5
     api["4978"]["inputs"]["widget_0"] = 4
@@ -179,21 +186,12 @@ def _patch_ltx_common(api: dict[str, Any]) -> None:
         for key, value in list(inputs.items()):
             if isinstance(value, dict):
                 inputs.pop(key)
+        _normalize_model_aliases(inputs)
         for key, value in list(inputs.items()):
-            if value == "ltx-2.3-22b-dev.safetensors":
-                inputs[key] = LTX_CHECKPOINT
-            elif value == "comfy_gemma_3_12B_it.safetensors":
-                inputs[key] = LTX_TEXT_ENCODER
-            elif isinstance(value, str) and value in {"gemma_3_12B_it_fp8_scaled.safetensors", "gemma_3_12B_it_fp4_mixed.safetensors"}:
-                inputs[key] = LTX_TEXT_ENCODER
-            elif value == "ltx-2.3_text_projection_bf16.safetensors":
-                inputs[key] = LTX_TEXT_PROJECTION
-            elif isinstance(value, str) and value in {"LTX23_video_vae_bf16_KJ.safetensors", "LTX23_video_vae_bf16.safetensors"}:
-                inputs[key] = LTX_VIDEO_VAE
-            elif isinstance(value, str) and value in {"LTX23_audio_vae_bf16_KJ.safetensors", "LTX23_audio_vae_bf16.safetensors"}:
-                inputs[key] = LTX_AUDIO_VAE
-            elif isinstance(value, str) and value.replace("\\", "/").endswith("taeltx2_3.safetensors"):
+            # TODO(registry): pattern aliases
+            if isinstance(value, str) and value.replace("\\", "/").endswith("taeltx2_3.safetensors"):
                 inputs[key] = LTX_PREVIEW_VAE
+            # TODO(registry): pattern aliases
             elif isinstance(value, str) and "ltx-2.3-22b-distilled" in value and "transformer_only" in value:
                 inputs[key] = value.replace("\\", "/").rsplit("/", 1)[-1]
         class_type = node.get("class_type")
@@ -370,23 +368,7 @@ def _patch_wanvideo_wrapper(api: dict[str, Any]) -> None:
             continue
         inputs = node.get("inputs", {})
         class_type = node.get("class_type")
-        for key, value in list(inputs.items()):
-            if not isinstance(value, str):
-                continue
-            if value == "WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors":
-                inputs[key] = "WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
-            elif value == "WanVid\\wan2.1-1.3b-control-lora-tile-v0.1_comfy.safetensors":
-                inputs[key] = "WanVid\\wan2.1-1.3b-control-lora-tile-v1.1_comfy.safetensors"
-            elif value in {
-                "WanVideo\\InfiniteTalk\\InfiniteTalk\\Wan2_1-InfiniteTalk_Single_Q8.gguf",
-                "WanVideo/InfiniteTalk/InfiniteTalk/Wan2_1-InfiniteTalk_Single_Q8.gguf",
-            }:
-                inputs[key] = "WanVideo/InfiniteTalk/InfiniteTalk/Wan2_1-InfiniteTalk_Single_Q4_K_M.gguf"
-            elif value in {
-                "WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf",
-                "WanVideo/wan2.1-i2v-14b-480p-Q8_0.gguf",
-            }:
-                inputs[key] = "WanVideo/wan2.1-i2v-14b-480p-Q4_K_M.gguf"
+        _normalize_model_aliases(inputs)
         if class_type in {"WanVideoEmptyEmbeds", "WanVideoImageToVideoEncode"}:
             inputs.update({"width": 256, "height": 256, "num_frames": 5, "widget_0": 256, "widget_1": 256, "widget_2": 5})
         elif class_type == "WanVideoModelLoader":

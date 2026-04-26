@@ -4,7 +4,28 @@ import json
 from pathlib import Path
 
 from scripts.runpod_matrix_plan import build_corpus_matrix_plan, format_ready_rows, format_rows
-from scripts.runpod_matrix_remote import GGUF_MODEL, LTX_CHECKPOINT, patch_workflow_api
+from scripts.runpod_matrix_remote import (
+    FLUX_VAE,
+    GGUF_MODEL,
+    LTX_AUDIO_VAE,
+    LTX_CHECKPOINT,
+    LTX_PREVIEW_VAE,
+    LTX_TEXT_ENCODER,
+    LTX_TEXT_PROJECTION,
+    LTX_VIDEO_VAE,
+    patch_workflow_api,
+)
+
+
+def test_runpod_matrix_model_constants_match_registry_contract() -> None:
+    assert LTX_CHECKPOINT == "ltx-2.3-22b-dev-fp8.safetensors"
+    assert LTX_TEXT_ENCODER == "gemma_3_12B_it_fp4_mixed.safetensors"
+    assert LTX_TEXT_PROJECTION == "ltx-2.3_text_projection_bf16.safetensors"
+    assert LTX_VIDEO_VAE == "LTX23_video_vae_bf16.safetensors"
+    assert LTX_AUDIO_VAE == "LTX23_audio_vae_bf16.safetensors"
+    assert LTX_PREVIEW_VAE == "taeltx2_3.safetensors"
+    assert GGUF_MODEL == "flux-2-klein-9b-Q4_K_M.gguf"
+    assert FLUX_VAE == "flux2-vae.safetensors"
 
 
 def test_corpus_matrix_plan_splits_required_workflows(tmp_path: Path) -> None:

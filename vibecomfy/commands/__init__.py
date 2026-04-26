@@ -22,6 +22,7 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("validate", "vibecomfy.commands.validate"),
     CommandSpec("doctor", "vibecomfy.commands.doctor"),
     CommandSpec("fetch", "vibecomfy.commands.fetch"),
+    CommandSpec("models", "vibecomfy.commands.models"),
     CommandSpec("run", "vibecomfy.commands.run"),
     CommandSpec("runtime", "vibecomfy.commands.runtime"),
     CommandSpec("session", "vibecomfy.commands.session"),

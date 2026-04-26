@@ -21,19 +21,20 @@ def models_root() -> Path:
         return Path("ComfyUI/models")
 
 
-def local_path(entry: Mapping[str, Any]) -> Path:
-    return models_root() / str(entry["subdir"]) / str(entry["name"])
+def local_path(entry: Mapping[str, Any], *, root: Path | None = None) -> Path:
+    base = root if root is not None else models_root()
+    return base / str(entry["subdir"]) / str(entry["name"])
 
 
-def is_present(entry: Mapping[str, Any]) -> bool:
-    path = local_path(entry)
+def is_present(entry: Mapping[str, Any], *, root: Path | None = None) -> bool:
+    path = local_path(entry, root=root)
     return path.is_file() and path.stat().st_size > 0
 
 
-def download(entry: Mapping[str, Any], *, force: bool = False, client: Any = None) -> Path:
-    path = local_path(entry)
+def download(entry: Mapping[str, Any], *, force: bool = False, client: Any = None, root: Path | None = None) -> Path:
+    path = local_path(entry, root=root)
     name = str(entry["name"])
-    if is_present(entry) and not force:
+    if is_present(entry, root=root) and not force:
         print(f"skipped {name}")
         return path
 

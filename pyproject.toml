@@ -9,7 +9,9 @@ description = "Python scratchpads for discovering, editing, validating, and runn
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "huggingface_hub[hf_xet]>=0.32.0",
   "httpx>=0.25",
+  "pyyaml>=6",
   "websockets>=12",
 ]
 
