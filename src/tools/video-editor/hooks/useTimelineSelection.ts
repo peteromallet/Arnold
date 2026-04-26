@@ -81,65 +81,34 @@ export function useTimelineSelection({
   } = multiSelect;
   const selectionDerived = useDerivedTimeline(data, primaryClipId, selectedTrackId);
 
+  // The selectionStore actions below already derive primaryClipId via
+  // buildTimelineState; do NOT also call setSelectionState here. setSelectionState
+  // routes to setTimelineSelectedClipId → selectTimelineClip(id, undefined),
+  // which resets selectedClipIds to a single-clip set and silently destroys
+  // multi-selection committed by the action above.
   const selectClip = useCallback((clipId: string, opts?: SelectClipOptions) => {
     if (opts?.preserveSelection && selectedClipIdsRef.current.has(clipId)) {
-      setSelectionState(getPrimaryClipId(selectedClipIdsRef.current, primaryClipId));
       return;
     }
 
-    let nextPrimaryClipId: string | null = clipId;
-
-    if (opts?.toggle) {
-      const nextSelection = new Set(selectedClipIdsRef.current);
-      if (nextSelection.has(clipId)) {
-        nextSelection.delete(clipId);
-        nextPrimaryClipId = getPrimaryClipId(
-          nextSelection,
-          primaryClipId === clipId ? null : primaryClipId,
-        );
-      }
-    }
-
     selectClipState(clipId, opts);
-    setSelectionState(nextPrimaryClipId);
-  }, [primaryClipId, selectClipState, selectedClipIdsRef, setSelectionState]);
+  }, [selectClipState, selectedClipIdsRef]);
 
   const selectClips = useCallback((clipIds: Iterable<string>) => {
-    const nextSelection = new Set<string>();
-    for (const clipId of clipIds) {
-      nextSelection.add(clipId);
-    }
-
-    selectClipsState(nextSelection);
-    setSelectionState(getPrimaryClipId(nextSelection, null));
-  }, [selectClipsState, setSelectionState]);
+    selectClipsState(clipIds);
+  }, [selectClipsState]);
 
   const addToSelection = useCallback((clipIds: Iterable<string>) => {
-    const nextSelection = new Set(selectedClipIdsRef.current);
-    const nextClipIds = new Set<string>();
-    for (const clipId of clipIds) {
-      nextSelection.add(clipId);
-      nextClipIds.add(clipId);
-    }
-
-    addToSelectionState(nextClipIds);
-    setSelectionState(getPrimaryClipId(nextSelection, primaryClipId));
-  }, [addToSelectionState, primaryClipId, selectedClipIdsRef, setSelectionState]);
+    addToSelectionState(clipIds);
+  }, [addToSelectionState]);
 
   const clearSelection = useCallback(() => {
     clearSelectionState();
-    setSelectionState(null);
-  }, [clearSelectionState, setSelectionState]);
+  }, [clearSelectionState]);
 
   const replaceTimelineSelection = useCallback((clipIds: Iterable<string>) => {
-    const nextSelection = new Set<string>();
-    for (const clipId of clipIds) {
-      nextSelection.add(clipId);
-    }
-
-    selectClipsState(nextSelection);
-    setSelectionState(getPrimaryClipId(nextSelection, null));
-  }, [selectClipsState, setSelectionState]);
+    selectClipsState(clipIds);
+  }, [selectClipsState]);
 
   const setSelectedClipId = useCallback<Dispatch<SetStateAction<string | null>>>((updater) => {
     const nextClipId = typeof updater === 'function'
