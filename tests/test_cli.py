@@ -11,6 +11,7 @@ from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
 from vibecomfy.commands.nodes import _cmd_nodes_install_plan, _cmd_nodes_list
+import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.commands.workflows import _cmd_workflows_list
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
@@ -78,6 +79,35 @@ def test_build_parser_registers_all_known_commands() -> None:
     parser = build_parser()
 
     assert _top_level_commands(parser) == [spec.name for spec in COMMANDS]
+
+
+def test_validate_no_schema_skips_schema_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratchpad = tmp_path / "workflow.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    workflow = VibeWorkflow("validate-no-schema", WorkflowSource("validate-no-schema"))
+    workflow.nodes["1"] = VibeNode("1", "UnknownRuntimeOnlyNode")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        validate_cmd,
+        "get_schema_provider",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("schema provider should not be built")),
+    )
+
+    assert validate_cmd._cmd_validate(argparse.Namespace(path=str(scratchpad), backend="api", no_schema=True)) == 0
+    assert capsys.readouterr().out == "ok\n"
 
 
 def test_fetch_cli_dry_run_lists_entries_without_downloading(

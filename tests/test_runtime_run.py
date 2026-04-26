@@ -21,7 +21,7 @@ def _workflow() -> VibeWorkflow:
     return workflow
 
 
-def test_run_builds_before_starting_server(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_run_starts_server_before_building(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     entered_server = False
 
     @asynccontextmanager
@@ -32,21 +32,34 @@ def test_run_builds_before_starting_server(monkeypatch: pytest.MonkeyPatch, tmp_
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(runtime_run_module, "comfy_server", fail_if_entered)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     with pytest.raises(ValueError, match="Workflow build failed: Unknown compile backend"):
         asyncio.run(runtime_run_module.run(_workflow(), backend="missing"))
 
-    assert entered_server is False
-    assert not (tmp_path / "out").exists()
+    assert entered_server is True
+    assert (tmp_path / "out").exists()
 
 
-def test_run_embedded_builds_before_importing_comfy(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_embedded_starts_before_building(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeComfy:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setitem(sys.modules, "comfy", types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy.client", types.ModuleType("comfy.client"))
+    embedded = types.ModuleType("comfy.client.embedded_comfy_client")
+    embedded.Comfy = lambda configuration=None: FakeComfy()
+    monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(ValueError, match="Workflow build failed: Unknown compile backend"):
         asyncio.run(runtime_run_module.run_embedded(_workflow(), backend="missing"))
 
-    assert not (tmp_path / "out").exists()
+    assert not (tmp_path / "out/runs").exists()
 
 
 def test_run_validates_before_queueing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -60,12 +73,13 @@ def test_run_validates_before_queueing(monkeypatch: pytest.MonkeyPatch, tmp_path
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(runtime_run_module, "comfy_server", fail_if_entered)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
-    with pytest.raises(ValueError, match="Workflow validation failed: Workflow contains no nodes."):
+    with pytest.raises(ValueError, match=r"Workflow validation failed:\n  - \[empty_workflow\]"):
         asyncio.run(runtime_run_module.run(VibeWorkflow("empty", WorkflowSource("empty"))))
 
-    assert entered_server is False
-    assert not (tmp_path / "out").exists()
+    assert entered_server is True
+    assert (tmp_path / "out").exists()
 
 
 def test_run_surfaces_queue_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -86,6 +100,7 @@ def test_run_surfaces_queue_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FailingClient)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     with pytest.raises(RuntimeError, match="Workflow queue failed: runtime rejected prompt"):
         asyncio.run(runtime_run_module.run(_workflow(), server_url="http://runtime.test"))

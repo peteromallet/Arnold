@@ -91,6 +91,14 @@ class EmbeddedSession:
         self.last_fingerprint: tuple[Any, ...] | None = None
         self._context: Any | None = None
         self._comfy: Any | None = None
+        self._schema_provider: Any | None = None
+        self._schema_warning_emitted = False
+
+    def _on_schema_unavailable(self, msg: str) -> None:
+        if self._schema_warning_emitted:
+            return
+        logger.warning("vibecomfy schema gate: %s", msg)
+        self._schema_warning_emitted = True
 
     async def start(self) -> None:
         if self._comfy is not None:
@@ -101,10 +109,18 @@ class EmbeddedSession:
         self._comfy = await self._context.__aenter__()
 
     async def run(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
-        api_dict = _prepare_prompt(workflow, backend=backend)
-        fp = model_fingerprint(api_dict)
         await self.start()
         assert self._comfy is not None
+        if self._schema_provider is None:
+            self._schema_provider = _build_schema_provider(None)
+        api_dict = await _prepare_prompt_async(
+            workflow,
+            backend=backend,
+            schema_provider=self._schema_provider,
+            on_unavailable=self._on_schema_unavailable,
+            cache_only=True,
+        )
+        fp = model_fingerprint(api_dict)
 
         await _maybe_flush_for_policy(self, fp)
 
@@ -187,6 +203,14 @@ class ServerSession:
         self.url: str | None = None
         self.log_handle: Any | None = None
         self._argv = _comfy_server_argv(self.config)
+        self._schema_provider: Any | None = None
+        self._schema_warning_emitted = False
+
+    def _on_schema_unavailable(self, msg: str) -> None:
+        if self._schema_warning_emitted:
+            return
+        logger.warning("vibecomfy schema gate: %s", msg)
+        self._schema_warning_emitted = True
 
     async def start(self) -> None:
         if self.process is not None and self.process.returncode is None:
@@ -197,10 +221,17 @@ class ServerSession:
         self._argv = _comfy_server_argv(self.config)
 
     async def run(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
-        api_dict = _prepare_prompt(workflow, backend=backend)
-        fp = model_fingerprint(api_dict)
         await self.start()
         assert self.url is not None
+        if self._schema_provider is None:
+            self._schema_provider = _build_schema_provider(self.url)
+        api_dict = await _prepare_prompt_async(
+            workflow,
+            backend=backend,
+            schema_provider=self._schema_provider,
+            on_unavailable=self._on_schema_unavailable,
+        )
+        fp = model_fingerprint(api_dict)
 
         await _maybe_flush_for_policy(self, fp)
 
@@ -356,9 +387,54 @@ def _partition_comfy_config(values: dict[str, Any]) -> tuple[dict[str, Any], dic
     return kwargs, extra
 
 
-def _prepare_prompt(workflow: VibeWorkflow, *, backend: str) -> dict[str, Any]:
-    # Runtime submissions stay structural-only to avoid schema lookup cost on every invocation.
-    report = workflow.validate()
+def _schema_validate_disabled() -> bool:
+    return os.environ.get("VIBECOMFY_SCHEMA_VALIDATE", "1").strip() in {"0", "false", "False", "no", "off"}
+
+
+def _build_schema_provider(server_url: str | None) -> Any | None:
+    if _schema_validate_disabled():
+        return None
+    from vibecomfy.schema import RuntimeSchemaProvider
+
+    return RuntimeSchemaProvider(server_url=server_url)
+
+
+async def _warm_schema_provider(
+    provider: Any | None,
+    *,
+    on_unavailable,
+    cache_only: bool = False,
+) -> Any | None:
+    if provider is None:
+        return None
+    try:
+        if getattr(provider, "_object_info", None) is not None:
+            return provider
+        if cache_only:
+            from vibecomfy.schema.cache import load_object_info_cache
+
+            cached = load_object_info_cache(provider.cache_path)
+            if cached is None:
+                on_unavailable(f"object_info cache unavailable at {provider.cache_path}; using structural validation only")
+                return None
+            provider._object_info = cached
+            return provider
+
+        provider._object_info = await provider.object_info_async()
+        return provider
+    except (OSError, RuntimeError, TimeoutError) as exc:
+        on_unavailable(f"{type(exc).__name__}: {exc}; using structural validation only")
+        return None
+
+
+def _prepare_prompt(
+    workflow: VibeWorkflow,
+    *,
+    backend: str,
+    schema_provider: Any | None = None,
+) -> dict[str, Any]:
+    # Schema validation: cache-hit on every submit after the first per-runtime; first-fetch latency acceptable.
+    report = workflow.validate(schema_provider=schema_provider)
     if not report.ok:
         messages = "; ".join(issue.message for issue in report.issues)
         raise ValueError(f"Workflow validation failed: {messages}")
@@ -371,6 +447,41 @@ def _prepare_prompt(workflow: VibeWorkflow, *, backend: str) -> dict[str, Any]:
         raise RuntimeError(f"Workflow build failed: {exc}") from exc
     except Exception as exc:
         raise RuntimeError(f"Workflow build failed: {exc}") from exc
+
+
+async def _prepare_prompt_async(
+    workflow: VibeWorkflow,
+    *,
+    backend: str,
+    schema_provider: Any | None,
+    on_unavailable,
+    cache_only: bool = False,
+) -> dict[str, Any]:
+    effective = await _warm_schema_provider(
+        schema_provider,
+        on_unavailable=on_unavailable,
+        cache_only=cache_only,
+    )
+    report = workflow.validate(schema_provider=effective)
+    if not report.ok:
+        raise ValueError(_validation_failed_message(report))
+
+    try:
+        return workflow.compile(backend=backend)
+    except ValueError as exc:
+        raise ValueError(f"Workflow build failed: {exc}") from exc
+    except RuntimeError as exc:
+        raise RuntimeError(f"Workflow build failed: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Workflow build failed: {exc}") from exc
+
+
+def _validation_failed_message(report: Any) -> str:
+    from vibecomfy.schema.format import format_issue
+
+    return "Workflow validation failed:\n  - " + "\n  - ".join(
+        format_issue(issue) for issue in report.issues if issue.severity == "error"
+    )
 
 
 def _run_metadata(

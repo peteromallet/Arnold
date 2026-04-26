@@ -62,9 +62,10 @@ Every entry must declare at least one root cause label. Multiple labels are allo
 
 ### ACE Step audio prompt/runtime path
 
-Status: `Mitigated`
+Status: `Mitigated + gated by validator`
 
 Root cause: `local_bug, fork_behavior`
+Detected by: `value_out_of_range`
 
 Affected workflows:
 
@@ -215,9 +216,10 @@ VibeComfy fix (`vibecomfy run`):
 
 ### UI JSON to API JSON link representation
 
-Status: `Mitigated`
+Status: `Mitigated + gated by validator`
 
 Root cause: `local_bug`
+Detected by: `invalid_link_shape`
 
 Observed failure:
 

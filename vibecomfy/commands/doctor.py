@@ -11,6 +11,7 @@ from vibecomfy.ingest.loader import load_template
 from vibecomfy.model_assets import extract_from_raw_workflow
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import get_schema_provider
+from vibecomfy.schema.format import format_issue
 from vibecomfy.workflow import VibeEdge, VibeWorkflow
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 
@@ -28,7 +29,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     if not report.ok:
         print("Layer: VibeWorkflow validation")
         for issue in report.issues:
-            print(f"- {issue.code}: {issue.message}")
+            print(f"- {format_issue(issue)}")
         missing_classes = {
             str(issue.detail.get("class_type"))
             for issue in report.issues

@@ -162,9 +162,15 @@ class VibeWorkflow:
             if edge.to_node not in self.nodes:
                 issues.append(ValidationIssue("missing_edge_target", f"Missing target node {edge.to_node}."))
         if schema_provider is not None:
-            from vibecomfy.schema.validate import validate_against_schema
+            from vibecomfy.schema.validate import validate_against_schema, validate_api_link_shapes
 
             issues.extend(validate_against_schema(self, schema_provider))
+            try:
+                api = self.compile(backend="api")
+            except Exception as exc:
+                issues.append(ValidationIssue("api_compile_failed", str(exc), severity="warning"))
+            else:
+                issues.extend(validate_api_link_shapes(api, schema_provider))
         return ValidationReport(ok=not any(issue.severity == "error" for issue in issues), issues=issues)
 
     def compile(self, backend: str = "api") -> dict[str, Any]:

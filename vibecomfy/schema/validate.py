@@ -6,6 +6,12 @@ from vibecomfy.schema.provider import SchemaProvider, schema_for, schema_registr
 from vibecomfy.workflow import ValidationIssue, VibeWorkflow
 
 
+#: Known-lying custom-node schemas that may suppress only ``unknown_input`` and
+#: ``value_*`` validation issues. Every entry must be cross-referenced from
+#: ``docs/hiddenswitch_incompatibilities.md`` with its contract/root-cause note.
+SCHEMA_VALIDATION_SKIP_CLASSES: dict[str, str] = {}
+
+
 def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) -> list[ValidationIssue]:
     if schema_registry_empty(provider):
         return []
@@ -46,13 +52,64 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                 )
 
         for name in sorted(provided_inputs - declared_inputs):
-            issues.append(
-                ValidationIssue(
-                    "unknown_input",
-                    f"Node {node_id} ({node.class_type}) has unknown input {name}.",
-                    detail={"node_id": node_id, "class_type": node.class_type, "input": name},
+            if not _issue_suppressed(node.class_type, "unknown_input"):
+                issues.append(
+                    ValidationIssue(
+                        "unknown_input",
+                        f"Node {node_id} ({node.class_type}) has unknown input {name}.",
+                        detail={"node_id": node_id, "class_type": node.class_type, "input": name},
+                    )
                 )
-            )
+
+        for name in sorted(provided_inputs & declared_inputs):
+            value = node.inputs[name] if name in node.inputs else node.widgets[name]
+            if _is_api_link(value):
+                continue
+            spec = raw_schema_inputs[name]
+            choices = getattr(spec, "choices", None) or []
+            if choices and value not in choices and not _issue_suppressed(node.class_type, "value_not_in_enum"):
+                issues.append(
+                    ValidationIssue(
+                        "value_not_in_enum",
+                        f"Node {node_id} ({node.class_type}) input {name} value {_truncate(value)} is not one of the declared choices.",
+                        severity="error",
+                        detail={
+                            "node_id": node_id,
+                            "class_type": node.class_type,
+                            "input": name,
+                            "value": _truncate(value),
+                            "choices": choices,
+                        },
+                    )
+                )
+
+            min_value = getattr(spec, "min", None)
+            max_value = getattr(spec, "max", None)
+            if (min_value is not None or max_value is not None) and not _issue_suppressed(
+                node.class_type, "value_out_of_range"
+            ):
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if (min_value is not None and numeric_value < float(min_value)) or (
+                    max_value is not None and numeric_value > float(max_value)
+                ):
+                    issues.append(
+                        ValidationIssue(
+                            "value_out_of_range",
+                            f"Node {node_id} ({node.class_type}) input {name} value {_truncate(value)} is outside the declared range.",
+                            severity="error",
+                            detail={
+                                "node_id": node_id,
+                                "class_type": node.class_type,
+                                "input": name,
+                                "value": _truncate(value),
+                                "min": min_value,
+                                "max": max_value,
+                            },
+                        )
+                    )
 
     for edge in workflow.edges:
         from_schema = schema_by_node.get(edge.from_node)
@@ -81,6 +138,39 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                 )
             )
 
+    return issues
+
+
+def validate_api_link_shapes(api_dict: dict[str, Any], provider: SchemaProvider) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    for node_id, node in api_dict.items():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if not isinstance(class_type, str) or not isinstance(inputs, dict):
+            continue
+        schema = schema_for(provider, class_type)
+        raw_schema_inputs = getattr(schema, "inputs", {}) or {}
+        for name, value in inputs.items():
+            if not isinstance(value, dict):
+                continue
+            spec = raw_schema_inputs.get(name)
+            if _schema_accepts_dict(spec):
+                continue
+            issues.append(
+                ValidationIssue(
+                    "invalid_link_shape",
+                    f"Node {node_id} ({class_type}) input {name} has dict-shaped link; expected [node_id, output_index].",
+                    severity="error",
+                    detail={
+                        "node_id": str(node_id),
+                        "class_type": class_type,
+                        "input": name,
+                        "value_repr": _truncate(value),
+                    },
+                )
+            )
     return issues
 
 
@@ -127,3 +217,32 @@ def _types_compatible(output_type: str, input_type: str) -> bool:
     if output_type in {"*", "ANY"} or input_type in {"*", "ANY"}:
         return True
     return False
+
+
+def _is_api_link(value: Any) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and isinstance(value[0], str)
+        and isinstance(value[1], int)
+    )
+
+
+def _truncate(value: Any, n: int = 120) -> str:
+    text = repr(value)
+    if len(text) <= n:
+        return text
+    return text[: max(0, n - 3)] + "..."
+
+
+def _issue_suppressed(class_type: str, code: str) -> bool:
+    if class_type not in SCHEMA_VALIDATION_SKIP_CLASSES:
+        return False
+    return code == "unknown_input" or code.startswith("value_")
+
+
+def _schema_accepts_dict(spec: Any) -> bool:
+    typ = getattr(spec, "type", None)
+    if typ is None:
+        return False
+    return str(typ).strip().upper() in {"DICT", "*"}
