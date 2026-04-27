@@ -3,8 +3,17 @@
     "class_type": "LoadImage",
     "inputs": {
       "image": "example.png",
-      "widget_1": "image",
       "widget_0": "egyptian_queen.png"
+    }
+  },
+  "3940": {
+    "class_type": "LowVRAMCheckpointLoader",
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+      "dependencies": [
+        "4960",
+        0
+      ]
     }
   },
   "4010": {
@@ -16,8 +25,7 @@
   "4814": {
     "class_type": "RandomNoise",
     "inputs": {
-      "noise_seed": 42,
-      "control_after_generate": "fixed"
+      "noise_seed": 42
     }
   },
   "4831": {
@@ -29,51 +37,33 @@
   "4832": {
     "class_type": "RandomNoise",
     "inputs": {
-      "noise_seed": 43,
-      "control_after_generate": "fixed"
+      "noise_seed": 43
     }
   },
   "4960": {
     "class_type": "LTXAVTextEncoderLoader",
     "inputs": {
-      "widget_0": "comfy_gemma_3_12B_it.safetensors",
-      "widget_1": "ltx-2.3-22b-dev.safetensors",
-      "widget_2": "default"
+      "ckpt_name": "ltx-2.3-22b-dev.safetensors",
+      "device": "default",
+      "text_encoder": "comfy_gemma_3_12B_it.safetensors"
     }
   },
   "4963": {
     "class_type": "GuiderParameters",
     "inputs": {
-      "widget_0": "AUDIO",
-      "widget_1": 7,
-      "widget_2": 1,
-      "widget_3": true,
-      "widget_4": 0.7,
-      "widget_5": 3,
-      "widget_6": 0,
-      "widget_7": true
+      "UNKNOWN": true
     }
   },
   "4967": {
     "class_type": "ClownSampler_Beta",
     "inputs": {
-      "widget_0": 0.25,
-      "widget_1": "exponential/res_2s",
-      "widget_2": 94,
-      "widget_3": "fixed",
-      "widget_4": true
+      "UNKNOWN": true
     }
   },
   "4971": {
     "class_type": "ManualSigmas",
     "inputs": {
-      "widget_0": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
-    }
-  },
-  "4973": {
-    "class_type": "PrimitiveString",
-    "inputs": {
-      "value": ""
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
     }
   },
   "4977": {
@@ -94,7 +84,6 @@
     "class_type": "PrimitiveInt",
     "inputs": {
       "value": 121,
-      "widget_1": "fixed",
       "widget_0": 9
     }
   },
@@ -124,47 +113,22 @@
       "width": 384,
       "height": 256,
       "batch_size": 1,
-      "widget_2": 9,
       "widget_0": 384,
       "widget_1": 256,
+      "widget_2": 9,
       "length": [
         "4979",
         0
       ]
     }
   },
-  "3940": {
-    "class_type": "LowVRAMCheckpointLoader",
+  "4922": {
+    "class_type": "LoraLoaderModelOnly",
     "inputs": {
-      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
-      "dependencies": [
-        "4960",
-        0
-      ]
-    }
-  },
-  "4923": {
-    "class_type": "GemmaAPITextEncode",
-    "inputs": {
-      "widget_0": "",
-      "widget_1": "",
-      "widget_2": "ltx-2.3-22b-dev.safetensors",
-      "widget_3": "ltx-2.3-22b-dev.safetensors",
-      "api_key": [
-        "4973",
-        0
-      ]
-    }
-  },
-  "4961": {
-    "class_type": "GemmaAPITextEncode",
-    "inputs": {
-      "widget_0": "",
-      "widget_1": "pc game, console game, video game, cartoon, childish, ugly",
-      "widget_2": false,
-      "widget_3": "ltx-2.3-22b-dev.safetensors",
-      "api_key": [
-        "4973",
+      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.5,
+      "model": [
+        "3940",
         0
       ]
     }
@@ -172,16 +136,20 @@
   "4964": {
     "class_type": "GuiderParameters",
     "inputs": {
-      "widget_0": "VIDEO",
-      "widget_1": 3,
-      "widget_2": 1,
-      "widget_3": true,
-      "widget_4": 0.9,
-      "widget_5": 3,
-      "widget_6": 0,
-      "widget_7": true,
+      "UNKNOWN": true,
       "parameters": [
         "4963",
+        0
+      ]
+    }
+  },
+  "4968": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.2,
+      "model": [
+        "3940",
         0
       ]
     }
@@ -189,9 +157,10 @@
   "4981": {
     "class_type": "ResizeImageMaskNode",
     "inputs": {
-      "widget_0": "scale longer dimension",
+      "resize_type": "scale longer dimension",
+      "scale_method": "lanczos",
+      "resize_type.longer_size": 1536,
       "widget_1": 384,
-      "widget_2": "lanczos",
       "input": [
         "2004",
         0
@@ -201,7 +170,7 @@
   "4985": {
     "class_type": "LTXFloatToInt",
     "inputs": {
-      "widget_0": 0,
+      "UNKNOWN": 0,
       "a": [
         "4978",
         0
@@ -229,7 +198,7 @@
   "3336": {
     "class_type": "LTXVPreprocess",
     "inputs": {
-      "widget_0": 18,
+      "img_compression": 18,
       "image": [
         "4981",
         0
@@ -239,9 +208,9 @@
   "3980": {
     "class_type": "LTXVEmptyLatentAudio",
     "inputs": {
+      "batch_size": 1,
       "widget_0": 9,
       "widget_1": 8,
-      "widget_2": 1,
       "audio_vae": [
         "4010",
         0
@@ -256,33 +225,10 @@
       ]
     }
   },
-  "4922": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-      "strength_model": 0.5,
-      "model": [
-        "3940",
-        0
-      ]
-    }
-  },
-  "4968": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-      "strength_model": 0.2,
-      "model": [
-        "3940",
-        0
-      ]
-    }
-  },
   "3159": {
     "class_type": "LTXVImgToVideoConditionOnly",
     "inputs": {
-      "widget_0": 0.7,
-      "widget_1": false,
+      "UNKNOWN": false,
       "bypass": [
         "4977",
         0
@@ -304,7 +250,7 @@
   "4808": {
     "class_type": "MultimodalGuider",
     "inputs": {
-      "widget_0": "28",
+      "UNKNOWN": "28",
       "model": [
         "4968",
         0
@@ -382,11 +328,11 @@
   "4966": {
     "class_type": "LTXVScheduler",
     "inputs": {
-      "widget_0": 15,
-      "widget_1": 2.05,
-      "widget_2": 0.95,
-      "widget_3": true,
-      "widget_4": 0.1,
+      "base_shift": 0.95,
+      "max_shift": 2.05,
+      "steps": 15,
+      "stretch": true,
+      "terminal": 0.1,
       "latent": [
         "4528",
         0
@@ -452,12 +398,7 @@
   "4982": {
     "class_type": "LTXVTiledVAEDecode",
     "inputs": {
-      "widget_0": 2,
-      "widget_1": 2,
-      "widget_2": 6,
-      "widget_3": false,
-      "widget_4": "auto",
-      "widget_5": "auto",
+      "UNKNOWN": "auto",
       "latents": [
         "4845",
         0
@@ -484,7 +425,6 @@
   "4849": {
     "class_type": "CreateVideo",
     "inputs": {
-      "widget_0": 30,
       "fps": [
         "4978",
         0
@@ -502,12 +442,7 @@
   "4983": {
     "class_type": "LTXVTiledVAEDecode",
     "inputs": {
-      "widget_0": 2,
-      "widget_1": 2,
-      "widget_2": 6,
-      "widget_3": false,
-      "widget_4": "auto",
-      "widget_5": "auto",
+      "UNKNOWN": "auto",
       "latents": [
         "4824",
         0
@@ -521,7 +456,6 @@
   "4819": {
     "class_type": "CreateVideo",
     "inputs": {
-      "widget_0": 30,
       "fps": [
         "4978",
         0

@@ -36,12 +36,16 @@ def _is_ui_only(class_type: str) -> bool:
     return class_type in UI_ONLY
 
 
-def _canonical_key(class_type: str, key: str) -> str:
+def _canonical_key(class_type: str, key: str) -> str | None:
     """Translate widget_N → canonical name when the schema knows it.
 
     Lets the equality check treat `LoadImage.widget_0='x'` and
     `LoadImage.image='x'` as the same logical input — necessary for
     the converter, which promotes widget_X to canonical names.
+
+    Returns None when the position is a UI-only widget (e.g. KSampler
+    `control_after_generate` at index 1) so callers can drop it; both
+    sides should normalise the same way to keep equivalence stable.
     """
     if not key.startswith("widget_"):
         return key
@@ -74,6 +78,8 @@ def _widget_value_counter(api: dict) -> Counter[tuple[str, str, str]]:
             if _is_link(value):
                 continue
             canonical = _canonical_key(class_type, key)
+            if canonical is None:
+                continue  # UI-only widget; drop from both sides for stable equivalence
             values[(class_type, canonical, repr(value))] += 1
     return values
 
@@ -92,6 +98,8 @@ def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
             if _is_ui_only(source_class):
                 continue
             canonical = _canonical_key(class_type, key)
+            if canonical is None:
+                continue  # UI-only widget edge — shouldn't happen in practice but defensive.
             topology[(class_type, canonical, source_class, int(value[1]))] += 1
     return topology
 

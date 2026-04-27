@@ -126,7 +126,6 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    wf.register_input('prompt', '76', 'value', wf.nodes['76'].inputs.get('value', wf.nodes['76'].widgets.get('value')))
     return wf
 
 

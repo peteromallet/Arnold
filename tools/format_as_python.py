@@ -238,7 +238,7 @@ def _node_kwargs(node: Any, edges_in: dict, var_names: dict[str, str]) -> list[t
     """
     cls = node.class_type
 
-    schema = WIDGET_SCHEMA.get(cls, [])
+    schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
     schema_set = set(schema)
 
     # Build incoming map: edges first, then any list-shaped link still in inputs.
@@ -246,8 +246,8 @@ def _node_kwargs(node: Any, edges_in: dict, var_names: dict[str, str]) -> list[t
     for edge in edges_in.get(node.id, []):
         incoming[edge.to_input] = (edge.from_node, int(edge.from_output))
 
-    def _translate_widget(key: str) -> str:
-        """Resolve a widget_N key to its canonical name when known."""
+    def _translate_widget(key: str) -> str | None:
+        """Resolve a widget_N key to its canonical name, or None to drop it."""
         if not key.startswith("widget_"):
             return key
         try:
@@ -263,12 +263,16 @@ def _node_kwargs(node: Any, edges_in: dict, var_names: dict[str, str]) -> list[t
     raw_inputs: dict[str, Any] = {}
     for key, value in node.inputs.items():
         if _is_link(value):
-            incoming.setdefault(_translate_widget(key), (str(value[0]), int(value[1])))
+            translated_link = _translate_widget(key)
+            if translated_link is not None:
+                incoming.setdefault(translated_link, (str(value[0]), int(value[1])))
         else:
             raw_inputs[key] = value
     for key, value in node.widgets.items():
         if _is_link(value):
-            incoming.setdefault(_translate_widget(key), (str(value[0]), int(value[1])))
+            translated_link = _translate_widget(key)
+            if translated_link is not None:
+                incoming.setdefault(translated_link, (str(value[0]), int(value[1])))
         else:
             if key not in raw_inputs:
                 raw_inputs[key] = value
@@ -276,6 +280,9 @@ def _node_kwargs(node: Any, edges_in: dict, var_names: dict[str, str]) -> list[t
     static_inputs: dict[str, Any] = {}
     for key, value in raw_inputs.items():
         translated = _translate_widget(key)
+        if translated is None:
+            # UI-only widget (e.g. KSampler control_after_generate) — drop entirely.
+            continue
         if (
             translated != key
             and translated not in raw_inputs

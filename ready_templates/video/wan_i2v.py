@@ -70,11 +70,10 @@ def build() -> VibeWorkflow:
         vae_name='wan_2.1_vae.safetensors',
     )
     clipvisionloader = _node(wf, 'CLIPVisionLoader', '49',
-        widget_0='clip_vision_h.safetensors',
+        clip_name='clip_vision_h.safetensors',
     )
     loadimage = _node(wf, 'LoadImage', '52',
         image='image_to_video_wan_start_image.png',
-        widget_1='image',
     )
     cliptextencode = _node(wf, 'CLIPTextEncode', '6',
         text='a cute anime girl with massive fennec ears and a big fluffy tail wearing a maid outfit turning around',
@@ -85,7 +84,7 @@ def build() -> VibeWorkflow:
         clip=cliploader.out(0),
     )
     clipvisionencode = _node(wf, 'CLIPVisionEncode', '51',
-        widget_0='none',
+        crop='none',
         clip_vision=clipvisionloader.out(0),
         image=loadimage.out(0),
     )
@@ -94,10 +93,10 @@ def build() -> VibeWorkflow:
         model=unetloader.out(0),
     )
     wanimagetovideo = _node(wf, 'WanImageToVideo', '50',
-        widget_0=512,
-        widget_1=512,
-        widget_2=33,
-        widget_3=1,
+        batch_size=1,
+        height=512,
+        length=33,
+        width=512,
         clip_vision_output=clipvisionencode.out(0),
         negative=cliptextencode_2.out(0),
         positive=cliptextencode.out(0),
@@ -106,12 +105,11 @@ def build() -> VibeWorkflow:
     )
     ksampler = _node(wf, 'KSampler', '3',
         seed=987948718394761,
-        steps='randomize',
-        cfg=20,
-        sampler_name=6,
-        scheduler='uni_pc',
-        denoise='simple',
-        widget_6=1,
+        steps=20,
+        cfg=6,
+        sampler_name='uni_pc',
+        scheduler='simple',
+        denoise=1,
         latent_image=wanimagetovideo.out(2),
         model=modelsamplingsd3.out(0),
         negative=wanimagetovideo.out(1),
@@ -134,7 +132,6 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    wf.register_input('prompt', '6', 'text', wf.nodes['6'].inputs.get('text', wf.nodes['6'].widgets.get('text')))
     return wf
 
 

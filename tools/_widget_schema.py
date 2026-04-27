@@ -11,7 +11,7 @@ Cross-checked against `vendor/ComfyUI/comfy/nodes/base_nodes.py` and
 
 from __future__ import annotations
 
-WIDGET_SCHEMA: dict[str, list[str]] = {
+WIDGET_SCHEMA: dict[str, list[str | None]] = {
     # Stock samplers / guiders — only widget inputs (links omitted).
     "BasicScheduler": ["scheduler", "steps", "denoise"],
     "CFGGuider": ["cfg"],
@@ -35,6 +35,7 @@ WIDGET_SCHEMA: dict[str, list[str]] = {
     "ImageScaleToTotalPixels": ["upscale_method", "megapixels", "resolution_steps"],
     "KSampler": [
         "seed",
+        None,  # control_after_generate — UI-only widget, not an API input.
         "steps",
         "cfg",
         "sampler_name",
@@ -44,6 +45,7 @@ WIDGET_SCHEMA: dict[str, list[str]] = {
     "KSamplerAdvanced": [
         "add_noise",
         "noise_seed",
+        None,  # control_after_generate — UI-only.
         "steps",
         "cfg",
         "sampler_name",
@@ -80,8 +82,14 @@ WIDGET_SCHEMA: dict[str, list[str]] = {
 }
 
 
-def resolve_widget_name(class_type: str, idx: int) -> str:
-    """Return the real input name for a positional widget, when known."""
+def resolve_widget_name(class_type: str, idx: int) -> str | None:
+    """Return the real input name for a positional widget, or None to drop it.
+
+    A None entry in WIDGET_SCHEMA marks a UI-only widget (e.g. KSampler's
+    `control_after_generate` at index 1) — these appear in the UI's
+    `widgets_values` list but are NOT valid API inputs. Callers should
+    skip emitting/comparing widgets resolved to None.
+    """
     names = WIDGET_SCHEMA.get(class_type)
     if names is not None and 0 <= idx < len(names):
         return names[idx]

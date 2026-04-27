@@ -23,14 +23,13 @@
   "49": {
     "class_type": "CLIPVisionLoader",
     "inputs": {
-      "widget_0": "clip_vision_h.safetensors"
+      "clip_name": "clip_vision_h.safetensors"
     }
   },
   "52": {
     "class_type": "LoadImage",
     "inputs": {
-      "image": "image_to_video_wan_start_image.png",
-      "widget_1": "image"
+      "image": "image_to_video_wan_start_image.png"
     }
   },
   "6": {
@@ -56,7 +55,7 @@
   "51": {
     "class_type": "CLIPVisionEncode",
     "inputs": {
-      "widget_0": "none",
+      "crop": "none",
       "clip_vision": [
         "49",
         0
@@ -80,10 +79,10 @@
   "50": {
     "class_type": "WanImageToVideo",
     "inputs": {
-      "widget_0": 512,
-      "widget_1": 512,
-      "widget_2": 33,
-      "widget_3": 1,
+      "batch_size": 1,
+      "height": 512,
+      "length": 33,
+      "width": 512,
       "clip_vision_output": [
         "51",
         0
@@ -110,12 +109,11 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": 987948718394761,
-      "steps": "randomize",
-      "cfg": 20,
-      "sampler_name": 6,
-      "scheduler": "uni_pc",
-      "denoise": "simple",
-      "widget_6": 1,
+      "steps": 20,
+      "cfg": 6,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
       "latent_image": [
         "50",
         2

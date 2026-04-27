@@ -483,13 +483,13 @@ def test_model_fingerprint_ltx_snapshot_excludes_edge_references() -> None:
     fingerprint = model_fingerprint(api)
 
     # Post-conversion: apply_ltx_lowvram swaps the ckpt to fp8; LoraLoaderModelOnly
-    # widget_0 is now schema-resolved to lora_name; LTXAVTextEncoderLoader's widget
-    # name remains widget_0 because it's a custom-pack class without a stock schema.
+    # widget_0 is now schema-resolved to lora_name; LTXAVTextEncoderLoader uses
+    # canonical names from its source workflow JSON (text_encoder, not widget_0).
     assert ("LowVRAMCheckpointLoader", "ckpt_name", "ltx-2.3-22b-dev-fp8.safetensors") in fingerprint
     assert ("LowVRAMAudioVAELoader", "ckpt_name", "ltx-2.3-22b-dev-fp8.safetensors") in fingerprint
     assert (
         "LTXAVTextEncoderLoader",
-        "widget_0",
+        "text_encoder",
         "comfy_gemma_3_12B_it.safetensors",
     ) in fingerprint
     assert (

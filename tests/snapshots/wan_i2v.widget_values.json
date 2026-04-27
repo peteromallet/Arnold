@@ -31,13 +31,13 @@
   ],
   [
     "CLIPVisionEncode",
-    "widget_0",
+    "crop",
     "'none'",
     1
   ],
   [
     "CLIPVisionLoader",
-    "widget_0",
+    "clip_name",
     "'clip_vision_h.safetensors'",
     1
   ],
@@ -50,25 +50,25 @@
   [
     "KSampler",
     "cfg",
-    "20",
-    1
-  ],
-  [
-    "KSampler",
-    "denoise",
-    "'simple'",
-    1
-  ],
-  [
-    "KSampler",
-    "sampler_name",
     "6",
     1
   ],
   [
     "KSampler",
-    "scheduler",
+    "denoise",
+    "1",
+    1
+  ],
+  [
+    "KSampler",
+    "sampler_name",
     "'uni_pc'",
+    1
+  ],
+  [
+    "KSampler",
+    "scheduler",
+    "'simple'",
     1
   ],
   [
@@ -80,25 +80,13 @@
   [
     "KSampler",
     "steps",
-    "'randomize'",
-    1
-  ],
-  [
-    "KSampler",
-    "widget_6",
-    "1",
+    "20",
     1
   ],
   [
     "LoadImage",
     "image",
     "'image_to_video_wan_start_image.png'",
-    1
-  ],
-  [
-    "LoadImage",
-    "widget_1",
-    "'image'",
     1
   ],
   [
@@ -145,26 +133,26 @@
   ],
   [
     "WanImageToVideo",
-    "widget_0",
+    "batch_size",
+    "1",
+    1
+  ],
+  [
+    "WanImageToVideo",
+    "height",
     "512",
     1
   ],
   [
     "WanImageToVideo",
-    "widget_1",
-    "512",
-    1
-  ],
-  [
-    "WanImageToVideo",
-    "widget_2",
+    "length",
     "33",
     1
   ],
   [
     "WanImageToVideo",
-    "widget_3",
-    "1",
+    "width",
+    "512",
     1
   ]
 ]

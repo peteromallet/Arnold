@@ -63,12 +63,11 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": 82628696717253,
-      "steps": "randomize",
-      "cfg": 30,
-      "sampler_name": 6,
-      "scheduler": "uni_pc",
-      "denoise": "simple",
-      "widget_6": 1,
+      "steps": 30,
+      "cfg": 6,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
       "latent_image": [
         "40",
         0

@@ -83,12 +83,11 @@ def build() -> VibeWorkflow:
     )
     ksampler = _node(wf, 'KSampler', '3',
         seed=82628696717253,
-        steps='randomize',
-        cfg=30,
-        sampler_name=6,
-        scheduler='uni_pc',
-        denoise='simple',
-        widget_6=1,
+        steps=30,
+        cfg=6,
+        sampler_name='uni_pc',
+        scheduler='simple',
+        denoise=1,
         latent_image=emptyhunyuanlatentvideo.out(0),
         model=modelsamplingsd3.out(0),
         negative=negative.out(0),
@@ -111,7 +110,6 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    wf.register_input('prompt', '6', 'text', wf.nodes['6'].inputs.get('text', wf.nodes['6'].widgets.get('text')))
     return wf
 
 

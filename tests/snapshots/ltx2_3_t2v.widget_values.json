@@ -19,39 +19,9 @@
   ],
   [
     "ClownSampler_Beta",
-    "widget_0",
-    "0.25",
-    1
-  ],
-  [
-    "ClownSampler_Beta",
-    "widget_1",
-    "'exponential/res_2s'",
-    1
-  ],
-  [
-    "ClownSampler_Beta",
-    "widget_2",
-    "94",
-    1
-  ],
-  [
-    "ClownSampler_Beta",
-    "widget_3",
-    "'fixed'",
-    1
-  ],
-  [
-    "ClownSampler_Beta",
-    "widget_4",
+    "UNKNOWN",
     "True",
     1
-  ],
-  [
-    "CreateVideo",
-    "fps",
-    "30",
-    2
   ],
   [
     "EmptyLTXVLatentVideo",
@@ -78,104 +48,8 @@
     2
   ],
   [
-    "GemmaAPITextEncode",
-    "widget_0",
-    "''",
-    2
-  ],
-  [
-    "GemmaAPITextEncode",
-    "widget_1",
-    "''",
-    1
-  ],
-  [
-    "GemmaAPITextEncode",
-    "widget_1",
-    "'pc game, console game, video game, cartoon, childish, ugly'",
-    1
-  ],
-  [
-    "GemmaAPITextEncode",
-    "widget_2",
-    "'ltx-2.3-22b-dev.safetensors'",
-    1
-  ],
-  [
-    "GemmaAPITextEncode",
-    "widget_2",
-    "False",
-    1
-  ],
-  [
-    "GemmaAPITextEncode",
-    "widget_3",
-    "'ltx-2.3-22b-dev.safetensors'",
-    2
-  ],
-  [
     "GuiderParameters",
-    "widget_0",
-    "'AUDIO'",
-    1
-  ],
-  [
-    "GuiderParameters",
-    "widget_0",
-    "'VIDEO'",
-    1
-  ],
-  [
-    "GuiderParameters",
-    "widget_1",
-    "3",
-    1
-  ],
-  [
-    "GuiderParameters",
-    "widget_1",
-    "7",
-    1
-  ],
-  [
-    "GuiderParameters",
-    "widget_2",
-    "1",
-    2
-  ],
-  [
-    "GuiderParameters",
-    "widget_3",
-    "True",
-    2
-  ],
-  [
-    "GuiderParameters",
-    "widget_4",
-    "0.7",
-    1
-  ],
-  [
-    "GuiderParameters",
-    "widget_4",
-    "0.9",
-    1
-  ],
-  [
-    "GuiderParameters",
-    "widget_5",
-    "3",
-    2
-  ],
-  [
-    "GuiderParameters",
-    "widget_6",
-    "0",
-    2
-  ],
-  [
-    "GuiderParameters",
-    "widget_7",
+    "UNKNOWN",
     "True",
     2
   ],
@@ -187,25 +61,25 @@
   ],
   [
     "LTXAVTextEncoderLoader",
-    "widget_0",
-    "'comfy_gemma_3_12B_it.safetensors'",
-    1
-  ],
-  [
-    "LTXAVTextEncoderLoader",
-    "widget_1",
+    "ckpt_name",
     "'ltx-2.3-22b-dev.safetensors'",
     1
   ],
   [
     "LTXAVTextEncoderLoader",
-    "widget_2",
+    "device",
     "'default'",
     1
   ],
   [
+    "LTXAVTextEncoderLoader",
+    "text_encoder",
+    "'comfy_gemma_3_12B_it.safetensors'",
+    1
+  ],
+  [
     "LTXFloatToInt",
-    "widget_0",
+    "UNKNOWN",
     "0",
     1
   ],
@@ -213,6 +87,12 @@
     "LTXVConditioning",
     "widget_0",
     "8",
+    1
+  ],
+  [
+    "LTXVEmptyLatentAudio",
+    "batch_size",
+    "1",
     1
   ],
   [
@@ -228,92 +108,50 @@
     1
   ],
   [
-    "LTXVEmptyLatentAudio",
-    "widget_2",
-    "1",
-    1
-  ],
-  [
     "LTXVImgToVideoConditionOnly",
-    "widget_0",
-    "0.7",
-    1
-  ],
-  [
-    "LTXVImgToVideoConditionOnly",
-    "widget_1",
+    "UNKNOWN",
     "False",
     1
   ],
   [
     "LTXVPreprocess",
-    "widget_0",
+    "img_compression",
     "18",
     1
   ],
   [
     "LTXVScheduler",
-    "widget_0",
-    "15",
-    1
-  ],
-  [
-    "LTXVScheduler",
-    "widget_1",
-    "2.05",
-    1
-  ],
-  [
-    "LTXVScheduler",
-    "widget_2",
+    "base_shift",
     "0.95",
     1
   ],
   [
     "LTXVScheduler",
-    "widget_3",
+    "max_shift",
+    "2.05",
+    1
+  ],
+  [
+    "LTXVScheduler",
+    "steps",
+    "15",
+    1
+  ],
+  [
+    "LTXVScheduler",
+    "stretch",
     "True",
     1
   ],
   [
     "LTXVScheduler",
-    "widget_4",
+    "terminal",
     "0.1",
     1
   ],
   [
     "LTXVTiledVAEDecode",
-    "widget_0",
-    "2",
-    2
-  ],
-  [
-    "LTXVTiledVAEDecode",
-    "widget_1",
-    "2",
-    2
-  ],
-  [
-    "LTXVTiledVAEDecode",
-    "widget_2",
-    "6",
-    2
-  ],
-  [
-    "LTXVTiledVAEDecode",
-    "widget_3",
-    "False",
-    2
-  ],
-  [
-    "LTXVTiledVAEDecode",
-    "widget_4",
-    "'auto'",
-    2
-  ],
-  [
-    "LTXVTiledVAEDecode",
-    "widget_5",
+    "UNKNOWN",
     "'auto'",
     2
   ],
@@ -327,12 +165,6 @@
     "LoadImage",
     "image",
     "'example.png'",
-    1
-  ],
-  [
-    "LoadImage",
-    "widget_1",
-    "'image'",
     1
   ],
   [
@@ -367,13 +199,13 @@
   ],
   [
     "ManualSigmas",
-    "widget_0",
+    "sigmas",
     "'1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0'",
     1
   ],
   [
     "MultimodalGuider",
-    "widget_0",
+    "UNKNOWN",
     "'28'",
     1
   ],
@@ -414,24 +246,6 @@
     1
   ],
   [
-    "PrimitiveInt",
-    "widget_1",
-    "'fixed'",
-    1
-  ],
-  [
-    "PrimitiveString",
-    "value",
-    "''",
-    1
-  ],
-  [
-    "RandomNoise",
-    "control_after_generate",
-    "'fixed'",
-    2
-  ],
-  [
     "RandomNoise",
     "noise_seed",
     "42",
@@ -445,20 +259,26 @@
   ],
   [
     "ResizeImageMaskNode",
-    "widget_0",
+    "resize_type",
     "'scale longer dimension'",
+    1
+  ],
+  [
+    "ResizeImageMaskNode",
+    "resize_type.longer_size",
+    "1536",
+    1
+  ],
+  [
+    "ResizeImageMaskNode",
+    "scale_method",
+    "'lanczos'",
     1
   ],
   [
     "ResizeImageMaskNode",
     "widget_1",
     "384",
-    1
-  ],
-  [
-    "ResizeImageMaskNode",
-    "widget_2",
-    "'lanczos'",
     1
   ],
   [
