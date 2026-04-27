@@ -76,12 +76,16 @@ async def install_current_branch(pod, *, retries: int = 3) -> None:
     requirements.txt``). A clean ``rm -rf`` between tries recovers from both.
     """
     repo_url, git_ref = resolve_repo_install_target()
-    repo_dir = "/workspace/vibecomfy"
+    # Install onto container-local disk (/root) instead of the shared /workspace
+    # network volume — `/workspace` is persistent across pod instances so prior
+    # failed installs leave corrupt directories that defeat `rm -rf` on the next
+    # pod (`Directory not empty`, stale .git/hooks symlinks, etc).
+    repo_dir = "/root/vibecomfy"
     # --depth=1 + shallow-submodules keeps the transfer small enough that pack-write
     # races are far less likely; we don't need history for an ephemeral install.
     install_cmd = (
         "set -e && "
-        f"rm -rf {repo_dir} && "
+        f"rm -rf {repo_dir} 2>/dev/null || true && "
         f"git clone --depth=1 --branch {git_ref} --shallow-submodules --recurse-submodules "
         f"{repo_url} {repo_dir} && "
         f"cd {repo_dir} && "
