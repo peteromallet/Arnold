@@ -107,3 +107,43 @@ python -m runpod_lifecycle terminate <pod-id>
   legacy `tests/test_runpod_matrix.py` corpus sweep.
 - Does not grade output quality. Tests assert that workflows run to completion
   and produce outputs of the expected shape; they do not score the pixels.
+
+## Known issues and pre-existing failure modes
+
+Discovered/triaged across 8 Tier 2 matrix attempts during the
+ready_templates → real-Python conversion work (2026-04-27, branch
+`codex/composition-ready-templates`). Some are fixed in tree; others are
+genuine pre-existing failures with separate scope.
+
+### Fixed in this branch
+
+| ID | Symptom | Root cause | Fix commit |
+|---|---|---|---|
+| `RP-1` | `BrokenProcessPool: All workers expired` followed by `FileNotFoundError: '/root/<stdin>'` whenever LTX (or any high-VRAM workflow) tried to respawn a worker | Test bodies were piped via `python - <<'PY'` heredoc. ComfyUI runs workflows under `pebble.ProcessPool`; when a worker dies and respawns, `multiprocessing.spawn` re-imports the entry script — but the entry was `<stdin>`. | `4552b81` — write the body to `/tmp/vibecomfy_matrix_runner.py` and exec it as a real path |
+| `RP-2` | `LaunchFailure: Something went wrong. Please try again later or contact support.` on ~50 % of pod create attempts | Transient RunPod 4090 capacity. No retry layer in the lifecycle library. | `89cab91` — `launch_with_retry(..., retries=4)` with 30/60/90s backoff in `_runpod_helpers.py` |
+| `RP-3` | `git clone: tmp_pack_*: No such file or directory` / `unable to read sha1 file` / `unable to write new index file` | The `/workspace` network volume is shared across all matrix pods; prior failed installs leave partial state, full transfer races on filesystem. | `89cab91` — clone with `--depth=1 --shallow-submodules` plus 3× retries on `install_current_branch`. Mostly mitigated; for the residual cases see `RP-5`. |
+| `RP-4` | `wan` KSampler rejected with `denoise: 'simple' could not convert to FLOAT`, `steps: 'randomize' could not convert to INT`, `sampler_name: 6 not in list`, `scheduler: 'uni_pc' not in list` — every kwarg shifted by one position | UI `widgets_values` puts `control_after_generate` at index 1 of KSampler / index 2 of KSamplerAdvanced. It is **UI-only**, not in `INPUT_TYPES`, and ComfyUI's API rejects it. The previous schema in `tools/_widget_schema.py` skipped it entirely, so widget_1='randomize' got emitted as `steps='randomize'`, etc. Local roundtrip-equality didn't catch it because both sides shifted the same way. | `bb38594` — `None` sentinel in `WIDGET_SCHEMA` for UI-only positions; emitter and `_compile_equivalence` both drop None-resolved widgets. All 8 AUTHORED templates re-emitted from source JSON; 9 snapshot triples regenerated. |
+| `RP-5` | `rm: cannot remove '/workspace/vibecomfy/vendor/ComfyUI/...': Directory not empty` / `fatal: cannot copy /usr/share/git-core/templates/hooks/...` even with retries | The `/workspace` mount is the shared `Peter` network volume; corruption from prior pods persists across launches and defeats `rm -rf` (sym/dangling `.git/hooks`, partial submodule trees). | `58988a6` — install to `/root/vibecomfy` (container-local, fresh per pod boot) instead of `/workspace/vibecomfy` |
+| `RP-6` | `RuntimeError: An attempt has been made to start a new process before the current process has finished its bootstrapping phase. … `if __name__ == '__main__':` … freeze_support()` | After `RP-1` we wrote the body to `/tmp/runner.py` but kept `sys.exit(_main())` at module top-level. When pebble respawned a worker, it re-imported the script and recursively re-ran `_main()`. | `0b7db16` — wrap entry in `if __name__ == '__main__':` |
+| `RP-7` | `wan` matrix run reported `route 0 (video.t2v) output missing: ComfyUI_00001_.mp4` even when the workflow produced output | `outputs[0]` from `run_embedded_sync` is a relative path. Matrix runner used bare `os.path.exists`; no resolution against ComfyUI's output dir. (Same shape as `test_z_image_only.py:_resolve_path`.) | `0b7db16` — resolve against `output/`, cwd, and `/root/vibecomfy/output/` before declaring missing |
+
+### Still open (pre-existing, not converter-related)
+
+| ID | Test path it blocks | Symptom | Root cause | Scope |
+|---|---|---|---|---|
+| `RP-8` | `test_layer2_runpod_matrix.py::wan` family | Workflow validates clean (kwargs all valid post-`RP-4`), model loads, then `WATCHDOG diagnosis=crashed last_node=- elapsed_in_node=- vram_free=-` ~35 s after model load. No Python traceback, no comfy log line for the failure. Reproduces deterministically on attempts 7 and 8. | Pod-side runtime crash. Production-res wan_t2v is 832×480×81 frames on a 1.3 B-param model — likely VRAM exhaustion, low-step-count sampler instability, or a comfy worker segfault. The brief flags this category as "GPU-only KSampler convergence behavior at low step counts" — pod-only, not catchable locally. | Out of scope for the converter; needs a separate investigation pass with `VIBECOMFY_WATCHDOG=1` log capture or a smaller resolution to triangulate. |
+| `RP-9` | `test_layer2_runpod_matrix.py::ltx` family | `ValueError: missing_node_type: Node 'LowVRAMCheckpointLoader' not found. The custom node may not be installed.` | LTX templates depend on a custom node pack (`vibecomfy_lowvram` etc.) that isn't auto-installed on the pod. The brief's failure-modes table (`docs/megaplan_briefs/convert_templates_to_real_python.md` line 512) explicitly carves this out: "Conversion succeeds but pod-run errors with `missing_node_type` \| Custom pack isn't installed on the pod \| **Out of scope** (separate `vibecomfy nodes ensure` work)". | Out of scope. Belongs to the `vibecomfy nodes ensure --workflow X` work stream. |
+| `RP-10` | `test_layer2_runpod_ops.py::z_image` route | `image.t2i("a fox", width=512, height=512, steps=4) → art.run(backend="graphbuilder")` crashes silently on the pod ~10 s after model load (`watchdog: diagnosis=crashed, last_node=-`). The same workflow via `load_workflow_any("image/z_image") + run_embedded_sync(wf, backend="graphbuilder")` runs cleanly to completion in ~268 s (proven in `test_z_image_only.py`). | The verb-native dispatch path mutates the workflow via `_set_prompt_preserving_registration` + `set_steps(4)`. Locally the compiled API dict is correct (verified). Pod-side, something about the mutated workflow at very low step counts segfaults the comfy worker. Matrix uses `steps=25` and works, so this only affects the cheap `_ops` smoke test. | Pre-existing verb-native path bug. Out of scope here; revisit when MP-6 schema validation lands. |
+| `RP-11` | `test_layer2_runpod_dropped.py::flux2_klein_9b_gguf_t2i` | `value_not_in_list: unet_name 'flux-2-klein-base-9b-fp8.safetensors' not in (list of length 194)`, preceded by `httpx → anyio: ValueError: second argument (exceptions) must be a non-empty sequence` from anyio's `ExceptionGroup` constructor | The model isn't pre-cached on the pod and HF auto-download fails: anyio's TCP-connect chain raises `ExceptionGroup` with an empty list under Python 3.11. ComfyUI then validates the dropdown and rejects the missing model. | Pre-existing infra. Workarounds: pre-stage the model on the network volume, or pin a different anyio. |
+| `RP-12` | All matrix families (intermittent) | Pod creation hits `LaunchFailure: Something went wrong. Please try again later or contact support.` for `gpu_type=NVIDIA GeForce RTX 4090, ram=32GB, storage=Peter` | RunPod 4090 capacity windows are thin and bursty. | External; `RP-2` retries handle most cases. |
+
+### Tier 2 release-gate status (matrix attempt 8, post-fixes)
+
+| Family | Result | Notes |
+|---|---|---|
+| `z_image` | ✅ pass | 1024² @ steps=25 (matrix default), template kept manual (`# vibecomfy: manual` marker) |
+| `flux_klein_4b` | ✅ pass | 1024², converted template — first end-to-end converter validation on production resolution |
+| `wan` | ❌ blocked by `RP-8` | Workflow shape correct post-`RP-4` fix; pod runtime crash |
+| `ltx` | ❌ blocked by `RP-9` | Out-of-scope custom-node-pack install |
+
+The release gate is partially green: the converter is validated end-to-end for both image families. Video families remain blocked by pre-existing pod-runtime / custom-pack issues that have separate work streams.
