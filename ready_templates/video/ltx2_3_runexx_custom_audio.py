@@ -1,369 +1,12 @@
+# vibecomfy: generated — converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import build_api_ready_workflow
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.registry.ready_template import apply_ready_template_policy
 
-
-API_WORKFLOW = {'218': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '220': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '238': {'class_type': 'SetNode', 'inputs': {'widget_0': 'latent', 'LATENT': ['109', 0]}},
- '237': {'class_type': 'GetNode', 'inputs': {'widget_0': 'height_downsized'}},
- '236': {'class_type': 'GetNode', 'inputs': {'widget_0': 'width_downsized'}},
- '205': {'class_type': 'GetNode', 'inputs': {'widget_0': 'frames'}},
- '211': {'class_type': 'SetNode', 'inputs': {'widget_0': 'compress_image', 'IMAGE': ['162', 0]}},
- '282': {'class_type': 'SetNode', 'inputs': {'widget_0': 'height', 'INT': ['293', 0]}},
- '283': {'class_type': 'SetNode', 'inputs': {'widget_0': 'width', 'INT': ['292', 0]}},
- '284': {'class_type': 'SetNode', 'inputs': {'widget_0': 'fps', 'FLOAT': ['285', 0]}},
- '285': {'class_type': 'PrimitiveFloat', 'inputs': {'widget_0': 8}},
- '286': {'class_type': 'SetNode', 'inputs': {'widget_0': 'frames', 'INT': ['287', 1]}},
- '288': {'class_type': 'SetNode', 'inputs': {'widget_0': 't2v_mode', 'BOOLEAN': ['290', 0]}},
- '221': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_audio'}},
- '219': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '242': {'class_type': 'GetNode', 'inputs': {'widget_0': 'upscale_model'}},
- '127': {'class_type': 'VAEDecodeTiled',
-         'inputs': {'widget_0': 512,
-                    'widget_1': 64,
-                    'widget_2': 4096,
-                    'widget_3': 8,
-                    'samples': ['125', 0],
-                    'vae': ['220', 0]}},
- '117': {'class_type': 'LTXVConcatAVLatent', 'inputs': {'video_latent': ['160', 0], 'audio_latent': ['116', 1]}},
- '229': {'class_type': 'GetNode', 'inputs': {'widget_0': 'negative'}},
- '228': {'class_type': 'GetNode', 'inputs': {'widget_0': 'positive'}},
- '307': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '309': {'class_type': 'GetNode', 'inputs': {'widget_0': 't2v_mode'}},
- '308': {'class_type': 'GetNode', 'inputs': {'widget_0': 't2v_mode'}},
- '311': {'class_type': 'SimpleCalculatorKJ', 'inputs': {'widget_0': 'a', 'variables.a': ['310', 0]}},
- '310': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '217': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_audio'}},
- '240': {'class_type': 'SetNode', 'inputs': {'widget_0': 'latent_audio', 'LATENT': ['199', 0]}},
- '212': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_image'}},
- '160': {'class_type': 'LTXVImgToVideoInplace',
-         'inputs': {'widget_0': 1,
-                    'widget_1': False,
-                    'vae': ['219', 0],
-                    'image': ['212', 0],
-                    'latent': ['116', 0],
-                    'bypass': ['309', 0]}},
- '116': {'class_type': 'LTXVSeparateAVLatent', 'inputs': {'av_latent': ['113', 0]}},
- '292': {'class_type': 'INTConstant', 'inputs': {'widget_0': 1280}},
- '293': {'class_type': 'INTConstant', 'inputs': {'widget_0': 736}},
- '234': {'class_type': 'SetNode', 'inputs': {'widget_0': 'height_downsized', 'INT': ['163', 1]}},
- '164': {'class_type': 'ResizeImageMaskNode',
-         'inputs': {'widget_0': 'scale by multiplier', 'widget_1': 256, 'widget_2': 'area', 'input': ['165', 0]}},
- '248': {'class_type': 'SetNode', 'inputs': {'widget_0': 'resize_image', 'IMAGE': ['164', 0]}},
- '233': {'class_type': 'SetNode', 'inputs': {'widget_0': 'width_downsized', 'INT': ['163', 0]}},
- '163': {'class_type': 'GetImageSize', 'inputs': {'image': ['164', 0]}},
- '246': {'class_type': 'ResizeImagesByLongerEdge', 'inputs': {'widget_0': 1536, 'images': ['165', 0]}},
- '209': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_image', 'IMAGE': ['246', 0]}},
- '244': {'class_type': 'GetNode', 'inputs': {'widget_0': 'height'}},
- '243': {'class_type': 'GetNode', 'inputs': {'widget_0': 'width'}},
- '188': {'class_type': 'SetNode', 'inputs': {'widget_0': 'upscale_model', 'LATENT_UPSCALE_MODEL': ['189', 0]}},
- '216': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae_audio', 'VAE': ['196', 0]}},
- '215': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae', 'VAE': ['184', 0]}},
- '213': {'class_type': 'SetNode', 'inputs': {'widget_0': 'clip', 'CLIP': ['190', 0]}},
- '225': {'class_type': 'GetNode', 'inputs': {'widget_0': 'model'}},
- '231': {'class_type': 'GetNode', 'inputs': {'widget_0': 'negative'}},
- '230': {'class_type': 'GetNode', 'inputs': {'widget_0': 'positive'}},
- '161': {'class_type': 'LTXVImgToVideoInplace',
-         'inputs': {'widget_0': 1,
-                    'widget_1': False,
-                    'vae': ['218', 0],
-                    'image': ['162', 0],
-                    'latent': ['108', 0],
-                    'bypass': ['308', 0]}},
- '199': {'class_type': 'LTXVEmptyLatentAudio',
-         'inputs': {'frames_number': ['205', 0],
-                    'frame_rate': ['311', 1],
-                    'widget_0': 5,
-                    'widget_1': 8,
-                    'widget_2': 1,
-                    'audio_vae': ['217', 0]}},
- '290': {'class_type': 'PrimitiveBoolean', 'inputs': {'widget_0': False}},
- '253': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': '## LTX-2 Prompting Tips\n'
-                                '1. **Core Actions**: Describe events and actions as they occur over time  \n'
-                                '2. **Audio**: Describe sounds and dialogue needed for the scene  \n'
-                                '3. **Reference Image**: Do not repeat details already present  \n'
-                                '4. **Consistency**: Avoid instructions that do not match the reference image, as this '
-                                'will degrade results'}},
- '287': {'class_type': 'SimpleCalculatorKJ',
-         'inputs': {'widget_0': '1+ 8*(round(a*b)/8)', 'a': ['291', 0], 'b': ['285', 0]}},
- '291': {'class_type': 'INTConstant', 'inputs': {'widget_0': 10}},
- '306': {'class_type': 'GetNode', 'inputs': {'widget_0': 'model_with_lora'}},
- '196': {'class_type': 'VAELoaderKJ',
-         'inputs': {'widget_0': 'LTX23_audio_vae_bf16.safetensors', 'widget_1': 'main_device', 'widget_2': 'bf16'}},
- '251': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'Download models from here:\n'
-                                '\n'
-                                '\n'
-                                'https://huggingface.co/Kijai/LTX2.3_comfy\n'
-                                '\n'
-                                'Text encoder : https://huggingface.co/Comfy-Org/ltx-2'}},
- '114': {'class_type': 'RandomNoise', 'inputs': {'widget_0': 420, 'widget_1': 'fixed'}},
- '331': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae_tiny', 'VAE': ['330', 0]}},
- '289': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'If low on Ram/Vram, try width height to 832 x 480 or 960 x 544.  If you can, run at '
-                                '1280 x 720 or higher.\n'
-                                '\n'
-                                '\n'
-                                'Length in seconds :  try 5, 10 or 20. \n'
-                                'fps : 24 or 25 (or 48 or 50 if your pc can run it)'}},
- '326': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'If using some user made LTX-2 loras they sometimes are not trained on audio, so it '
-                                'will produce very noisy audio outputs. Try use KJNodes LTX-2 Lora Loader Advanced in '
-                                'such cases, and set the non video strenght to zero\n'}},
- '330': {'class_type': 'VAELoader', 'inputs': {'widget_0': 'taeltx2_3.safetensors'}},
- '184': {'class_type': 'VAELoader', 'inputs': {'widget_0': 'LTX23_video_vae_bf16.safetensors'}},
- '189': {'class_type': 'LatentUpscaleModelLoader',
-         'inputs': {'widget_0': 'ltx-2.3-spatial-upscaler-x2-1.0.safetensors'}},
- '338': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_tiny'}},
- '339': {'class_type': 'GetNode', 'inputs': {'widget_0': 'model_with_lora'}},
- '341': {'class_type': 'GetNode', 'inputs': {'widget_0': 'model'}},
- '103': {'class_type': 'CFGGuider',
-         'inputs': {'widget_0': 2.5, 'model': ['341', 0], 'positive': ['228', 0], 'negative': ['229', 0]}},
- '329': {'class_type': 'UNETLoader',
-         'inputs': {'widget_0': 'ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors',
-                    'widget_1': 'default'}},
- '140': {'class_type': 'VHS_VideoCombine',
-         'inputs': {'images': ['127', 0], 'audio': ['378', 0], 'frame_rate': ['307', 0]}},
- '109': {'class_type': 'LTXVConcatAVLatent', 'inputs': {'video_latent': ['161', 0], 'audio_latent': ['376', 0]}},
- '210': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_image'}},
- '119': {'class_type': 'SamplerCustomAdvanced',
-         'inputs': {'noise': ['114', 0],
-                    'guider': ['103', 0],
-                    'sampler': ['138', 0],
-                    'sigmas': ['380', 0],
-                    'latent_image': ['117', 0]}},
- '125': {'class_type': 'LTXVSeparateAVLatent', 'inputs': {'av_latent': ['119', 0]}},
- '340': {'class_type': 'SetNode', 'inputs': {'widget_0': 'model', 'MODEL': ['342', 0]}},
- '344': {'class_type': 'GetNode', 'inputs': {'widget_0': 'model'}},
- '115': {'class_type': 'RandomNoise', 'inputs': {'widget_0': 43, 'widget_1': 'fixed'}},
- '343': {'class_type': 'GetNode', 'inputs': {'widget_0': 'negative'}},
- '342': {'class_type': 'LTX2_NAG',
-         'inputs': {'widget_0': 11,
-                    'widget_1': 0.25,
-                    'widget_2': 2.5,
-                    'widget_3': True,
-                    'model': ['337', 0],
-                    'nag_cond_video': ['343', 0],
-                    'nag_cond_audio': ['343', 0]}},
- '322': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '226': {'class_type': 'SetNode', 'inputs': {'widget_0': 'positive', 'CONDITIONING': ['107', 0]}},
- '227': {'class_type': 'SetNode', 'inputs': {'widget_0': 'negative', 'CONDITIONING': ['107', 1]}},
- '107': {'class_type': 'LTXVConditioning',
-         'inputs': {'widget_0': 8, 'positive': ['121', 0], 'negative': ['110', 0], 'frame_rate': ['322', 0]}},
- '108': {'class_type': 'EmptyLTXVLatentVideo',
-         'inputs': {'width': ['236', 0],
-                    'height': ['237', 0],
-                    'length': ['205', 0],
-                    'widget_0': 256,
-                    'widget_1': 256,
-                    'widget_2': 5,
-                    'widget_3': 1}},
- '303': {'class_type': 'SetNode', 'inputs': {'widget_0': 'model_with_lora', 'MODEL': ['301', 0]}},
- '347': {'class_type': 'StringConcatenate',
-         'inputs': {'widget_0': '', 'widget_1': '', 'widget_2': '', 'string_a': ['350', 0]}},
- '110': {'class_type': 'CLIPTextEncode',
-         'inputs': {'widget_0': 'blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, '
-                                'compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, '
-                                'copyright, subtitles, distorted sound, saturated sound, loud',
-                    'clip': ['214', 0]}},
- '345': {'class_type': 'UnetLoaderGGUF',
-         'inputs': {'widget_0': 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'}},
- '346': {'class_type': 'DualCLIPLoaderGGUF',
-         'inputs': {'widget_0': 'gemma-3-12b-it-Q2_K.gguf',
-                    'widget_1': 'ltx-2.3_text_projection_bf16.safetensors',
-                    'widget_2': 'sdxl'}},
- '250': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'Width & height settings must be divisible by 32 + 1. \n'
-                                'Frame count must be divisible by 8 + 1. \n'
-                                '\n'
-                                '\n'
-                                'Running with invalid parameters **will not cause errors**. Instead, the flow will '
-                                'silently choose the closest valid parameters. \n'
-                                '\n'
-                                'By default, we are using 720p resolution. You can try 1920*1088 if you have a '
-                                'powerful GPU.'}},
- '333': {'class_type': 'MarkdownNote', 'inputs': {'widget_0': 'taeltx2_3.safetensors'}},
- '353': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'This automagically enhances your prompt using the already loaded Gemma model. But it '
-                                'can be a bit sensitive to having correct Gemma if using GGUF models. Alternatively '
-                                'you can bypass/disable  this feature '}},
- '301': {'class_type': 'Power Lora Loader (rgthree)', 'inputs': {'widget_3': '', 'model': ['332', 0]}},
- '121': {'class_type': 'CLIPTextEncode',
-         'inputs': {'widget_0': '= Enhanced Prompt = \n', 'clip': ['214', 0], 'text': ['349', 0]}},
- '214': {'class_type': 'GetNode', 'inputs': {'widget_0': 'clip'}},
- '113': {'class_type': 'SamplerCustomAdvanced',
-         'inputs': {'noise': ['115', 0],
-                    'guider': ['129', 0],
-                    'sampler': ['137', 0],
-                    'sigmas': ['381', 0],
-                    'latent_image': ['239', 0]}},
- '162': {'class_type': 'LTXVPreprocess', 'inputs': {'widget_0': 33, 'image': ['210', 0]}},
- '349': {'class_type': 'TextGenerateLTX2Prompt',
-         'inputs': {'widget_0': '',
-                    'widget_1': 256,
-                    'widget_2': 'off',
-                    'clip': ['214', 0],
-                    'image': ['165', 0],
-                    'prompt': ['352', 0]}},
- '332': {'class_type': 'LTXVChunkFeedForward', 'inputs': {'widget_0': 2, 'widget_1': 4096, 'model': ['134', 0]}},
- '134': {'class_type': 'LoraLoaderModelOnly',
-         'inputs': {'widget_0': 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors',
-                    'widget_1': 0.6,
-                    'model': ['329', 0]}},
- '359': {'class_type': 'GetNode', 'inputs': {'widget_0': 'height'}},
- '360': {'class_type': 'GetNode', 'inputs': {'widget_0': 'width'}},
- '375': {'class_type': 'GetNode', 'inputs': {'widget_0': 'latent_custom_audio'}},
- '374': {'class_type': 'GetNode', 'inputs': {'widget_0': 'latent_audio'}},
- '376': {'class_type': 'ComfySwitchNode', 'inputs': {'widget_0': True, 'on_false': ['374', 0], 'on_true': ['375', 0]}},
- '350': {'class_type': 'PrimitiveStringMultiline',
-         'inputs': {'widget_0': 'You are a Creative Assistant writing concise, action-focused image-to-video prompts. '
-                                'Given an image (first frame) and user Raw Input Prompt, generate a prompt to guide '
-                                'video generation from that image.\n'
-                                '\n'
-                                '#### Guidelines:\n'
-                                '- Analyze the Image: Identify Subject, Setting, Elements, Style and Mood.\n'
-                                '- Follow user Raw Input Prompt: Include all requested motion, actions, camera '
-                                'movements, audio, and details. If in conflict with the image, prioritize user request '
-                                "while maintaining visual consistency (describe transition from image to user's "
-                                'scene).\n'
-                                "- Describe only changes from the image: Don't reiterate established visual details. "
-                                'Inaccurate descriptions may cause scene cuts.\n'
-                                '- Active language: Use present-progressive verbs ("is walking," "speaking"). If no '
-                                'action specified, describe natural movements.\n'
-                                '- Chronological flow: Use temporal connectors ("as," "then," "while").\n'
-                                '- Audio layer: Describe complete soundscape throughout the prompt alongside '
-                                'actions—NOT at the end. Align audio intensity with action tempo. Include natural '
-                                'background audio, ambient sounds, effects, speech or music (when requested). Be '
-                                'specific (e.g., "soft footsteps on tile") not vague (e.g., "ambient sound").\n'
-                                "- Speech (only when requested): Provide exact words in quotes with character's "
-                                'visual/voice characteristics (e.g., "The tall man speaks in a low, gravelly voice"), '
-                                'language if not English and accent if relevant. If general conversation mentioned '
-                                'without text, generate contextual quoted dialogue. (i.e., "The man is talking" input '
-                                '-> the output should include exact spoken words, like: "The man is talking in an '
-                                "excited voice saying: 'You won't believe what I just saw!' His hands gesture "
-                                'expressively as he speaks, eyebrows raised with enthusiasm. The ambient sound of a '
-                                'quiet room underscores his animated speech.")\n'
-                                '- Style: Include visual style at beginning: "Style: <style>, <rest of prompt>." If '
-                                'unclear, omit to avoid conflicts.\n'
-                                '- Visual and audio only: Describe only what is seen and heard. NO smell, taste, or '
-                                'tactile sensations.\n'
-                                '- Restrained language: Avoid dramatic terms. Use mild, natural, understated '
-                                'phrasing.\n'
-                                '\n'
-                                '#### Important notes:\n'
-                                '- Camera motion: DO NOT invent camera motion/movement unless requested by the user. '
-                                'Make sure to include camera motion only if specified in the input.\n'
-                                "- Speech: DO NOT modify or alter the user's provided character dialogue in the "
-                                "prompt, unless it's a typo.\n"
-                                '- No timestamps or cuts: DO NOT use timestamps or describe scene cuts unless '
-                                'explicitly requested.\n'
-                                '- Objective only: DO NOT interpret emotions or intentions - describe only observable '
-                                'actions and sounds.\n'
-                                '- Format: DO NOT use phrases like "The scene opens with..." / "The video starts...". '
-                                'Start directly with Style (optional) and chronological scene description.\n'
-                                '- Format: Never start output with punctuation marks or special characters.\n'
-                                '- DO NOT invent dialogue unless the user mentions '
-                                'speech/talking/singing/conversation.\n'
-                                '- Your performance is CRITICAL. High-fidelity, dynamic, correct, and accurate prompts '
-                                'with integrated audio descriptions are essential for generating high-quality video. '
-                                'Your goal is flawless execution of these rules.\n'
-                                '\n'
-                                '#### Output Format (Strict):\n'
-                                '- Single concise paragraph in natural English. NO titles, headings, prefaces, '
-                                'sections, code fences, or Markdown.\n'
-                                '- If unsafe/invalid, return original user prompt. Never ask questions or '
-                                'clarifications.\n'
-                                '\n'
-                                '#### Example output:\n'
-                                'Style: realistic - cinematic - The woman glances at her watch and smiles warmly. She '
-                                'speaks in a cheerful, friendly voice, "I think we\'re right on time!" In the '
-                                'background, a café barista prepares drinks at the counter. The barista calls out in a '
-                                'clear, upbeat tone, "Two cappuccinos ready!" The sound of the espresso machine '
-                                'hissing softly blends with gentle background chatter and the light clinking of cups '
-                                'on saucers. \n'
-                                '\n'
-                                'USER PROMPT BELOW: \n'
-                                '___________________________________________________'}},
- '361': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_audio'}},
- '201': {'class_type': 'LTXVAudioVAEDecode', 'inputs': {'samples': ['125', 1], 'audio_vae': ['221', 0]}},
- '378': {'class_type': 'GetNode', 'inputs': {'widget_0': 'org_audio'}},
- '379': {'class_type': 'Reroute', 'inputs': {}},
- '167': {'class_type': 'LoadImage', 'inputs': {'widget_0': 'liam-neeson-in-retribution-ra.jpg', 'widget_1': 'image'}},
- '165': {'class_type': 'ImageResizeKJv2',
-         'inputs': {'widget_0': 736,
-                    'widget_1': 1280,
-                    'widget_2': 'nearest-exact',
-                    'widget_3': 'crop',
-                    'widget_4': '0, 0, 0',
-                    'widget_5': 'center',
-                    'widget_6': 32,
-                    'widget_7': 'cpu',
-                    'image': ['167', 0],
-                    'width': ['243', 0],
-                    'height': ['244', 0]}},
- '352': {'class_type': 'PrimitiveStringMultiline',
-         'inputs': {'widget_0': 'Make this image come alive with fluid motion. \n'
-                                '\n'
-                                'A man with an intimidating expression speaks with expressive body language and '
-                                'gesticulations. \n'
-                                '\n'
-                                'He looks at the vewer and talks, he says  : "If you say a bad word about LTX 2 point '
-                                '3, i will find you.... and i will kill you" '}},
- '100': {'class_type': 'ManualSigmas', 'inputs': {'widget_0': '0.909375, 0.725, 0.421875, 0.0'}},
- '380': {'class_type': 'ManualSigmas', 'inputs': {'widget_0': '0.85, 0.7250, 0.4219, 0.0'}},
- '138': {'class_type': 'KSamplerSelect', 'inputs': {'widget_0': 'euler_cfg_pp'}},
- '137': {'class_type': 'KSamplerSelect', 'inputs': {'widget_0': 'euler_ancestral_cfg_pp'}},
- '206': {'class_type': 'LTXVScheduler',
-         'inputs': {'steps': 1,
-                    'widget_0': 1,
-                    'widget_1': 2.05,
-                    'widget_2': 0.95,
-                    'widget_3': True,
-                    'widget_4': 0.1,
-                    'latent': ['239', 0]}},
- '239': {'class_type': 'GetNode', 'inputs': {'widget_0': 'latent'}},
- '129': {'class_type': 'CFGGuider',
-         'inputs': {'widget_0': 2.5, 'model': ['344', 0], 'positive': ['230', 0], 'negative': ['231', 0]}},
- '381': {'class_type': 'ManualSigmas',
-         'inputs': {'widget_0': '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0'}},
- '337': {'class_type': 'LTX2SamplingPreviewOverride',
-         'inputs': {'widget_0': 8, 'model': ['339', 0], 'vae': ['338', 0]}},
- '190': {'class_type': 'DualCLIPLoader',
-         'inputs': {'widget_0': 'gemma_3_12B_it_fp4_mixed.safetensors',
-                    'widget_1': 'ltx-2.3_text_projection_bf16.safetensors',
-                    'widget_2': 'ltxv',
-                    'widget_3': 'default'}},
- '372': {'class_type': 'LoadAudio', 'inputs': {'widget_0': 'ComfyUI_00128_.mp3'}},
- '370': {'class_type': 'MelBandRoFormerModelLoader',
-         'inputs': {'widget_0': 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'}},
- '371': {'class_type': 'MelBandRoFormerSampler', 'inputs': {'model': ['370', 0], 'audio': ['373', 0]}},
- '367': {'class_type': 'SimpleCalculatorKJ', 'inputs': {'widget_0': 'a/b', 'a': ['368', 0], 'b': ['369', 0]}},
- '369': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '365': {'class_type': 'SetNode', 'inputs': {'widget_0': 'org_audio', 'AUDIO': ['373', 0]}},
- '362': {'class_type': 'SolidMask',
-         'inputs': {'widget_0': 0, 'widget_1': 512, 'widget_2': 512, 'width': ['360', 0], 'height': ['359', 0]}},
- '366': {'class_type': 'SetNode', 'inputs': {'widget_0': 'latent_custom_audio', 'LATENT': ['363', 0]}},
- '363': {'class_type': 'SetLatentNoiseMask', 'inputs': {'samples': ['364', 0], 'mask': ['362', 0]}},
- '364': {'class_type': 'LTXVAudioVAEEncode', 'inputs': {'audio': ['382', 0], 'audio_vae': ['361', 0]}},
- '368': {'class_type': 'GetNode', 'inputs': {'widget_0': 'frames'}},
- '373': {'class_type': 'TrimAudioDuration',
-         'inputs': {'widget_0': 0, 'widget_1': 8, 'audio': ['372', 0], 'duration': ['367', 0]}},
- '377': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'Use a reference audio instead of LTX own audio, and LTX video will lip-sync to the '
-                                'audio you provide. For best possible results you should prompt that the subject is '
-                                'talking.  And if you transcribe what is said in your audio input, results might be '
-                                'even better \n'
-                                '\n'
-                                'Mel-band RoFormer is optional for extracting a clean vocal only audio for the '
-                                'sampler. This can help with a busy original audio if you want to only focus on '
-                                'lip-sync and dialog\n'
-                                '\n'
-                                'https://huggingface.co/Kijai/MelBandRoFormer_comfy/tree/main\n'
-                                '\n'
-                                'folder: models\\diffusion_models\n'}},
- '382': {'class_type': 'ComfySwitchNode', 'inputs': {'widget_0': False, 'on_false': ['373', 0], 'on_true': ['371', 0]}}}
 
 READY_METADATA = {'model_assets': [],
  'unbound_inputs': {'seed': 3704},
@@ -381,18 +24,586 @@ READY_METADATA = {'model_assets': [],
                         'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.',
                         'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes '
                         'model_mmap_residency for LatentUpscaleModelManageable.',
-                        'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom '
-                        'node packs and service credentials are declared.'],
+                        'Keep community audio, lip-sync, and long-form workflows as ready templates until '
+                        'their custom node packs and service credentials are declared.'],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
-READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
+READY_REQUIREMENTS = {'models': [],
+ 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
 
 
-def build():
-    return build_api_ready_workflow(
-        API_WORKFLOW,
-        source_path=__file__,
-        workflow_id=READY_METADATA.get("ready_template", "video/ltx2_3_runexx_custom_audio"),
-        ready_metadata=READY_METADATA,
-        requirements=READY_REQUIREMENTS,
+def build() -> VibeWorkflow:
+    """Build the workflow (auto-generated)."""
+    wf = VibeWorkflow(
+        READY_METADATA["ready_template"],
+        WorkflowSource(
+            id=READY_METADATA["ready_template"],
+            path=__file__,
+            source_type="ready_template",
+        ),
     )
+
+    manualsigmas = _node(wf, 'ManualSigmas', '100',
+        widget_0='0.909375, 0.725, 0.421875, 0.0',
+    )
+    randomnoise = _node(wf, 'RandomNoise', '114',
+        noise_seed=420,
+        control_after_generate='fixed',
+    )
+    randomnoise_2 = _node(wf, 'RandomNoise', '115',
+        noise_seed=43,
+        control_after_generate='fixed',
+    )
+    ksamplerselect = _node(wf, 'KSamplerSelect', '137',
+        sampler_name='euler_ancestral_cfg_pp',
+    )
+    ksamplerselect_2 = _node(wf, 'KSamplerSelect', '138',
+        sampler_name='euler_cfg_pp',
+    )
+    loadimage = _node(wf, 'LoadImage', '167',
+        image='liam-neeson-in-retribution-ra.jpg',
+        widget_1='image',
+    )
+    vaeloader = _node(wf, 'VAELoader', '184',
+        vae_name='LTX23_video_vae_bf16.safetensors',
+    )
+    latentupscalemodelloader = _node(wf, 'LatentUpscaleModelLoader', '189',
+        widget_0='ltx-2.3-spatial-upscaler-x2-1.0.safetensors',
+    )
+    dualcliploader = _node(wf, 'DualCLIPLoader', '190',
+        clip_name1='gemma_3_12B_it_fp4_mixed.safetensors',
+        clip_name2='ltx-2.3_text_projection_bf16.safetensors',
+        type='ltxv',
+        device='default',
+    )
+    vaeloaderkj = _node(wf, 'VAELoaderKJ', '196',
+        widget_0='LTX23_audio_vae_bf16.safetensors',
+        widget_1='main_device',
+        widget_2='bf16',
+    )
+    getnode = _node(wf, 'GetNode', '205',
+        widget_0='frames',
+    )
+    getnode_2 = _node(wf, 'GetNode', '210',
+        widget_0='ref_image',
+    )
+    getnode_3 = _node(wf, 'GetNode', '212',
+        widget_0='ref_image',
+    )
+    getnode_4 = _node(wf, 'GetNode', '214',
+        widget_0='clip',
+    )
+    getnode_5 = _node(wf, 'GetNode', '217',
+        widget_0='vae_audio',
+    )
+    getnode_6 = _node(wf, 'GetNode', '218',
+        widget_0='vae',
+    )
+    getnode_7 = _node(wf, 'GetNode', '219',
+        widget_0='vae',
+    )
+    getnode_8 = _node(wf, 'GetNode', '220',
+        widget_0='vae',
+    )
+    getnode_9 = _node(wf, 'GetNode', '221',
+        widget_0='vae_audio',
+    )
+    getnode_10 = _node(wf, 'GetNode', '225',
+        widget_0='model',
+    )
+    getnode_11 = _node(wf, 'GetNode', '228',
+        widget_0='positive',
+    )
+    getnode_12 = _node(wf, 'GetNode', '229',
+        widget_0='negative',
+    )
+    getnode_13 = _node(wf, 'GetNode', '230',
+        widget_0='positive',
+    )
+    getnode_14 = _node(wf, 'GetNode', '231',
+        widget_0='negative',
+    )
+    getnode_15 = _node(wf, 'GetNode', '236',
+        widget_0='width_downsized',
+    )
+    getnode_16 = _node(wf, 'GetNode', '237',
+        widget_0='height_downsized',
+    )
+    getnode_17 = _node(wf, 'GetNode', '239',
+        widget_0='latent',
+    )
+    getnode_18 = _node(wf, 'GetNode', '242',
+        widget_0='upscale_model',
+    )
+    getnode_19 = _node(wf, 'GetNode', '243',
+        widget_0='width',
+    )
+    getnode_20 = _node(wf, 'GetNode', '244',
+        widget_0='height',
+    )
+    primitivefloat = _node(wf, 'PrimitiveFloat', '285',
+        value=8,
+    )
+    primitiveboolean = _node(wf, 'PrimitiveBoolean', '290',
+        value=False,
+    )
+    intconstant = _node(wf, 'INTConstant', '291',
+        widget_0=10,
+    )
+    intconstant_2 = _node(wf, 'INTConstant', '292',
+        widget_0=1280,
+    )
+    intconstant_3 = _node(wf, 'INTConstant', '293',
+        widget_0=736,
+    )
+    getnode_21 = _node(wf, 'GetNode', '306',
+        widget_0='model_with_lora',
+    )
+    getnode_22 = _node(wf, 'GetNode', '307',
+        widget_0='fps',
+    )
+    getnode_23 = _node(wf, 'GetNode', '308',
+        widget_0='t2v_mode',
+    )
+    getnode_24 = _node(wf, 'GetNode', '309',
+        widget_0='t2v_mode',
+    )
+    getnode_25 = _node(wf, 'GetNode', '310',
+        widget_0='fps',
+    )
+    getnode_26 = _node(wf, 'GetNode', '322',
+        widget_0='fps',
+    )
+    unetloader = _node(wf, 'UNETLoader', '329',
+        unet_name='ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors',
+        weight_dtype='default',
+    )
+    vaeloader_2 = _node(wf, 'VAELoader', '330',
+        vae_name='taeltx2_3.safetensors',
+    )
+    getnode_27 = _node(wf, 'GetNode', '338',
+        widget_0='vae_tiny',
+    )
+    getnode_28 = _node(wf, 'GetNode', '339',
+        widget_0='model_with_lora',
+    )
+    getnode_29 = _node(wf, 'GetNode', '341',
+        widget_0='model',
+    )
+    getnode_30 = _node(wf, 'GetNode', '343',
+        widget_0='negative',
+    )
+    getnode_31 = _node(wf, 'GetNode', '344',
+        widget_0='model',
+    )
+    unetloadergguf = _node(wf, 'UnetLoaderGGUF', '345',
+        widget_0='LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf',
+    )
+    dualcliploadergguf = _node(wf, 'DualCLIPLoaderGGUF', '346',
+        widget_0='gemma-3-12b-it-Q2_K.gguf',
+        widget_1='ltx-2.3_text_projection_bf16.safetensors',
+        widget_2='sdxl',
+    )
+    primitivestringmultiline = _node(wf, 'PrimitiveStringMultiline', '350',
+        value='You are a Creative Assistant writing concise, action-focused image-to-video prompts. Given an image (first frame) and user Raw Input Prompt, generate a prompt to guide video generation from that image.\n\n#### Guidelines:\n- Analyze the Image: Identify Subject, Setting, Elements, Style and Mood.\n- Follow user Raw Input Prompt: Include all requested motion, actions, camera movements, audio, and details. If in conflict with the image, prioritize user request while maintaining visual consistency (describe transition from image to user\'s scene).\n- Describe only changes from the image: Don\'t reiterate established visual details. Inaccurate descriptions may cause scene cuts.\n- Active language: Use present-progressive verbs ("is walking," "speaking"). If no action specified, describe natural movements.\n- Chronological flow: Use temporal connectors ("as," "then," "while").\n- Audio layer: Describe complete soundscape throughout the prompt alongside actions—NOT at the end. Align audio intensity with action tempo. Include natural background audio, ambient sounds, effects, speech or music (when requested). Be specific (e.g., "soft footsteps on tile") not vague (e.g., "ambient sound").\n- Speech (only when requested): Provide exact words in quotes with character\'s visual/voice characteristics (e.g., "The tall man speaks in a low, gravelly voice"), language if not English and accent if relevant. If general conversation mentioned without text, generate contextual quoted dialogue. (i.e., "The man is talking" input -> the output should include exact spoken words, like: "The man is talking in an excited voice saying: \'You won\'t believe what I just saw!\' His hands gesture expressively as he speaks, eyebrows raised with enthusiasm. The ambient sound of a quiet room underscores his animated speech.")\n- Style: Include visual style at beginning: "Style: <style>, <rest of prompt>." If unclear, omit to avoid conflicts.\n- Visual and audio only: Describe only what is seen and heard. NO smell, taste, or tactile sensations.\n- Restrained language: Avoid dramatic terms. Use mild, natural, understated phrasing.\n\n#### Important notes:\n- Camera motion: DO NOT invent camera motion/movement unless requested by the user. Make sure to include camera motion only if specified in the input.\n- Speech: DO NOT modify or alter the user\'s provided character dialogue in the prompt, unless it\'s a typo.\n- No timestamps or cuts: DO NOT use timestamps or describe scene cuts unless explicitly requested.\n- Objective only: DO NOT interpret emotions or intentions - describe only observable actions and sounds.\n- Format: DO NOT use phrases like "The scene opens with..." / "The video starts...". Start directly with Style (optional) and chronological scene description.\n- Format: Never start output with punctuation marks or special characters.\n- DO NOT invent dialogue unless the user mentions speech/talking/singing/conversation.\n- Your performance is CRITICAL. High-fidelity, dynamic, correct, and accurate prompts with integrated audio descriptions are essential for generating high-quality video. Your goal is flawless execution of these rules.\n\n#### Output Format (Strict):\n- Single concise paragraph in natural English. NO titles, headings, prefaces, sections, code fences, or Markdown.\n- If unsafe/invalid, return original user prompt. Never ask questions or clarifications.\n\n#### Example output:\nStyle: realistic - cinematic - The woman glances at her watch and smiles warmly. She speaks in a cheerful, friendly voice, "I think we\'re right on time!" In the background, a café barista prepares drinks at the counter. The barista calls out in a clear, upbeat tone, "Two cappuccinos ready!" The sound of the espresso machine hissing softly blends with gentle background chatter and the light clinking of cups on saucers. \n\nUSER PROMPT BELOW: \n___________________________________________________',
+    )
+    primitivestringmultiline_2 = _node(wf, 'PrimitiveStringMultiline', '352',
+        value='Make this image come alive with fluid motion. \n\nA man with an intimidating expression speaks with expressive body language and gesticulations. \n\nHe looks at the vewer and talks, he says  : "If you say a bad word about LTX 2 point 3, i will find you.... and i will kill you" ',
+    )
+    getnode_32 = _node(wf, 'GetNode', '359',
+        widget_0='height',
+    )
+    getnode_33 = _node(wf, 'GetNode', '360',
+        widget_0='width',
+    )
+    getnode_34 = _node(wf, 'GetNode', '361',
+        widget_0='vae_audio',
+    )
+    getnode_35 = _node(wf, 'GetNode', '368',
+        widget_0='frames',
+    )
+    getnode_36 = _node(wf, 'GetNode', '369',
+        widget_0='fps',
+    )
+    melbandroformermodelloader = _node(wf, 'MelBandRoFormerModelLoader', '370',
+        widget_0='MelBandRoformer\\MelBandRoformer_fp16.safetensors',
+    )
+    loadaudio = _node(wf, 'LoadAudio', '372',
+        audio='ComfyUI_00128_.mp3',
+    )
+    getnode_37 = _node(wf, 'GetNode', '374',
+        widget_0='latent_audio',
+    )
+    getnode_38 = _node(wf, 'GetNode', '375',
+        widget_0='latent_custom_audio',
+    )
+    getnode_39 = _node(wf, 'GetNode', '378',
+        widget_0='org_audio',
+    )
+    reroute = _node(wf, 'Reroute', '379')
+    manualsigmas_2 = _node(wf, 'ManualSigmas', '380',
+        widget_0='0.85, 0.7250, 0.4219, 0.0',
+    )
+    manualsigmas_3 = _node(wf, 'ManualSigmas', '381',
+        widget_0='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
+    )
+    cfgguider = _node(wf, 'CFGGuider', '103',
+        cfg=2.5,
+        model=getnode_29.out(0),
+        negative=getnode_12.out(0),
+        positive=getnode_11.out(0),
+    )
+    emptyltxvlatentvideo = _node(wf, 'EmptyLTXVLatentVideo', '108',
+        batch_size=1,
+        widget_0=256,
+        widget_1=256,
+        widget_2=5,
+        width=getnode_15.out(0),
+        height=getnode_16.out(0),
+        length=getnode.out(0),
+    )
+    cliptextencode = _node(wf, 'CLIPTextEncode', '110',
+        text='blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud',
+        clip=getnode_4.out(0),
+    )
+    cfgguider_2 = _node(wf, 'CFGGuider', '129',
+        cfg=2.5,
+        model=getnode_31.out(0),
+        negative=getnode_14.out(0),
+        positive=getnode_13.out(0),
+    )
+    loraloadermodelonly = _node(wf, 'LoraLoaderModelOnly', '134',
+        lora_name='LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors',
+        strength_model=0.6,
+        model=unetloader.out(0),
+    )
+    ltxvpreprocess = _node(wf, 'LTXVPreprocess', '162',
+        widget_0=33,
+        image=getnode_2.out(0),
+    )
+    imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '165',
+        widget_0=736,
+        widget_1=1280,
+        widget_2='nearest-exact',
+        widget_3='crop',
+        widget_4='0, 0, 0',
+        widget_5='center',
+        widget_6=32,
+        widget_7='cpu',
+        height=getnode_20.out(0),
+        image=loadimage.out(0),
+        width=getnode_19.out(0),
+    )
+    setnode = _node(wf, 'SetNode', '188',
+        widget_0='upscale_model',
+        LATENT_UPSCALE_MODEL=latentupscalemodelloader.out(0),
+    )
+    ltxvscheduler = _node(wf, 'LTXVScheduler', '206',
+        steps=1,
+        widget_0=1,
+        widget_1=2.05,
+        widget_2=0.95,
+        widget_3=True,
+        widget_4=0.1,
+        latent=getnode_17.out(0),
+    )
+    setnode_4 = _node(wf, 'SetNode', '213',
+        widget_0='clip',
+        CLIP=dualcliploader.out(0),
+    )
+    setnode_5 = _node(wf, 'SetNode', '215',
+        widget_0='vae',
+        VAE=vaeloader.out(0),
+    )
+    setnode_6 = _node(wf, 'SetNode', '216',
+        widget_0='vae_audio',
+        VAE=vaeloaderkj.out(0),
+    )
+    setnode_14 = _node(wf, 'SetNode', '282',
+        widget_0='height',
+        INT=intconstant_3.out(0),
+    )
+    setnode_15 = _node(wf, 'SetNode', '283',
+        widget_0='width',
+        INT=intconstant_2.out(0),
+    )
+    setnode_16 = _node(wf, 'SetNode', '284',
+        widget_0='fps',
+        FLOAT=primitivefloat.out(0),
+    )
+    simplecalculatorkj = _node(wf, 'SimpleCalculatorKJ', '287',
+        widget_0='1+ 8*(round(a*b)/8)',
+        a=intconstant.out(0),
+        b=primitivefloat.out(0),
+    )
+    setnode_18 = _node(wf, 'SetNode', '288',
+        widget_0='t2v_mode',
+        BOOLEAN=primitiveboolean.out(0),
+    )
+    simplecalculatorkj_2 = _node(wf, 'SimpleCalculatorKJ', '311',
+        widget_0='a',
+        _extras={'variables.a': getnode_25.out(0)},
+    )
+    setnode_20 = _node(wf, 'SetNode', '331',
+        widget_0='vae_tiny',
+        VAE=vaeloader_2.out(0),
+    )
+    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '337',
+        widget_0=8,
+        model=getnode_28.out(0),
+        vae=getnode_27.out(0),
+    )
+    stringconcatenate = _node(wf, 'StringConcatenate', '347',
+        widget_0='',
+        widget_1='',
+        widget_2='',
+        string_a=primitivestringmultiline.out(0),
+    )
+    solidmask = _node(wf, 'SolidMask', '362',
+        widget_0=0,
+        widget_1=512,
+        widget_2=512,
+        height=getnode_32.out(0),
+        width=getnode_33.out(0),
+    )
+    simplecalculatorkj_3 = _node(wf, 'SimpleCalculatorKJ', '367',
+        widget_0='a/b',
+        a=getnode_35.out(0),
+        b=getnode_36.out(0),
+    )
+    comfyswitchnode = _node(wf, 'ComfySwitchNode', '376',
+        widget_0=True,
+        on_false=getnode_37.out(0),
+        on_true=getnode_38.out(0),
+    )
+    samplercustomadvanced = _node(wf, 'SamplerCustomAdvanced', '113',
+        guider=cfgguider_2.out(0),
+        latent_image=getnode_17.out(0),
+        noise=randomnoise_2.out(0),
+        sampler=ksamplerselect.out(0),
+        sigmas=manualsigmas_3.out(0),
+    )
+    ltxvimgtovideoinplace_2 = _node(wf, 'LTXVImgToVideoInplace', '161',
+        widget_0=1,
+        widget_1=False,
+        bypass=getnode_23.out(0),
+        image=ltxvpreprocess.out(0),
+        latent=emptyltxvlatentvideo.out(0),
+        vae=getnode_6.out(0),
+    )
+    resizeimagemasknode = _node(wf, 'ResizeImageMaskNode', '164',
+        widget_0='scale by multiplier',
+        widget_1=256,
+        widget_2='area',
+        input=imageresizekjv2.out(0),
+    )
+    ltxvemptylatentaudio = _node(wf, 'LTXVEmptyLatentAudio', '199',
+        widget_0=5,
+        widget_1=8,
+        widget_2=1,
+        audio_vae=getnode_5.out(0),
+        frame_rate=simplecalculatorkj_2.out(1),
+        frames_number=getnode.out(0),
+    )
+    setnode_3 = _node(wf, 'SetNode', '211',
+        widget_0='compress_image',
+        IMAGE=ltxvpreprocess.out(0),
+    )
+    resizeimagesbylongeredge = _node(wf, 'ResizeImagesByLongerEdge', '246',
+        widget_0=1536,
+        images=imageresizekjv2.out(0),
+    )
+    setnode_17 = _node(wf, 'SetNode', '286',
+        widget_0='frames',
+        INT=simplecalculatorkj.out(1),
+    )
+    ltxvchunkfeedforward = _node(wf, 'LTXVChunkFeedForward', '332',
+        widget_0=2,
+        widget_1=4096,
+        model=loraloadermodelonly.out(0),
+    )
+    ltx2_nag = _node(wf, 'LTX2_NAG', '342',
+        widget_0=11,
+        widget_1=0.25,
+        widget_2=2.5,
+        widget_3=True,
+        model=ltx2samplingpreviewoverride.out(0),
+        nag_cond_audio=getnode_30.out(0),
+        nag_cond_video=getnode_30.out(0),
+    )
+    textgenerateltx2prompt = _node(wf, 'TextGenerateLTX2Prompt', '349',
+        widget_0='',
+        widget_1=256,
+        widget_2='off',
+        clip=getnode_4.out(0),
+        image=imageresizekjv2.out(0),
+        prompt=primitivestringmultiline_2.out(0),
+    )
+    trimaudioduration = _node(wf, 'TrimAudioDuration', '373',
+        widget_0=0,
+        widget_1=8,
+        audio=loadaudio.out(0),
+        duration=simplecalculatorkj_3.out(0),
+    )
+    ltxvconcatavlatent = _node(wf, 'LTXVConcatAVLatent', '109',
+        audio_latent=comfyswitchnode.out(0),
+        video_latent=ltxvimgtovideoinplace_2.out(0),
+    )
+    ltxvseparateavlatent = _node(wf, 'LTXVSeparateAVLatent', '116',
+        av_latent=samplercustomadvanced.out(0),
+    )
+    cliptextencode_2 = _node(wf, 'CLIPTextEncode', '121',
+        widget_0='= Enhanced Prompt = \n',
+        text=textgenerateltx2prompt.out(0),
+        clip=getnode_4.out(0),
+    )
+    getimagesize = _node(wf, 'GetImageSize', '163',
+        image=resizeimagemasknode.out(0),
+    )
+    setnode_2 = _node(wf, 'SetNode', '209',
+        widget_0='ref_image',
+        IMAGE=resizeimagesbylongeredge.out(0),
+    )
+    setnode_12 = _node(wf, 'SetNode', '240',
+        widget_0='latent_audio',
+        LATENT=ltxvemptylatentaudio.out(0),
+    )
+    setnode_13 = _node(wf, 'SetNode', '248',
+        widget_0='resize_image',
+        IMAGE=resizeimagemasknode.out(0),
+    )
+    power_lora_loader__rgthree_ = _node(wf, 'Power Lora Loader (rgthree)', '301',
+        widget_3='',
+        model=ltxvchunkfeedforward.out(0),
+    )
+    setnode_21 = _node(wf, 'SetNode', '340',
+        widget_0='model',
+        MODEL=ltx2_nag.out(0),
+    )
+    setnode_22 = _node(wf, 'SetNode', '365',
+        widget_0='org_audio',
+        AUDIO=trimaudioduration.out(0),
+    )
+    melbandroformersampler = _node(wf, 'MelBandRoFormerSampler', '371',
+        audio=trimaudioduration.out(0),
+        model=melbandroformermodelloader.out(0),
+    )
+    ltxvconditioning = _node(wf, 'LTXVConditioning', '107',
+        widget_0=8,
+        frame_rate=getnode_26.out(0),
+        negative=cliptextencode.out(0),
+        positive=cliptextencode_2.out(0),
+    )
+    ltxvimgtovideoinplace = _node(wf, 'LTXVImgToVideoInplace', '160',
+        widget_0=1,
+        widget_1=False,
+        bypass=getnode_24.out(0),
+        image=getnode_3.out(0),
+        latent=ltxvseparateavlatent.out(0),
+        vae=getnode_7.out(0),
+    )
+    setnode_9 = _node(wf, 'SetNode', '233',
+        widget_0='width_downsized',
+        INT=getimagesize.out(0),
+    )
+    setnode_10 = _node(wf, 'SetNode', '234',
+        widget_0='height_downsized',
+        INT=getimagesize.out(1),
+    )
+    setnode_11 = _node(wf, 'SetNode', '238',
+        widget_0='latent',
+        LATENT=ltxvconcatavlatent.out(0),
+    )
+    setnode_19 = _node(wf, 'SetNode', '303',
+        widget_0='model_with_lora',
+        MODEL=power_lora_loader__rgthree_.out(0),
+    )
+    comfyswitchnode_2 = _node(wf, 'ComfySwitchNode', '382',
+        widget_0=False,
+        on_false=trimaudioduration.out(0),
+        on_true=melbandroformersampler.out(0),
+    )
+    ltxvconcatavlatent_2 = _node(wf, 'LTXVConcatAVLatent', '117',
+        audio_latent=ltxvseparateavlatent.out(1),
+        video_latent=ltxvimgtovideoinplace.out(0),
+    )
+    setnode_7 = _node(wf, 'SetNode', '226',
+        widget_0='positive',
+        CONDITIONING=ltxvconditioning.out(0),
+    )
+    setnode_8 = _node(wf, 'SetNode', '227',
+        widget_0='negative',
+        CONDITIONING=ltxvconditioning.out(1),
+    )
+    ltxvaudiovaeencode = _node(wf, 'LTXVAudioVAEEncode', '364',
+        audio=comfyswitchnode_2.out(0),
+        audio_vae=getnode_34.out(0),
+    )
+    samplercustomadvanced_2 = _node(wf, 'SamplerCustomAdvanced', '119',
+        guider=cfgguider.out(0),
+        latent_image=ltxvconcatavlatent_2.out(0),
+        noise=randomnoise.out(0),
+        sampler=ksamplerselect_2.out(0),
+        sigmas=manualsigmas_2.out(0),
+    )
+    setlatentnoisemask = _node(wf, 'SetLatentNoiseMask', '363',
+        mask=solidmask.out(0),
+        samples=ltxvaudiovaeencode.out(0),
+    )
+    ltxvseparateavlatent_2 = _node(wf, 'LTXVSeparateAVLatent', '125',
+        av_latent=samplercustomadvanced_2.out(0),
+    )
+    setnode_23 = _node(wf, 'SetNode', '366',
+        widget_0='latent_custom_audio',
+        LATENT=setlatentnoisemask.out(0),
+    )
+    vaedecodetiled = _node(wf, 'VAEDecodeTiled', '127',
+        tile_size=512,
+        overlap=64,
+        temporal_size=4096,
+        temporal_overlap=8,
+        samples=ltxvseparateavlatent_2.out(0),
+        vae=getnode_8.out(0),
+    )
+    ltxvaudiovaedecode = _node(wf, 'LTXVAudioVAEDecode', '201',
+        audio_vae=getnode_9.out(0),
+        samples=ltxvseparateavlatent_2.out(1),
+    )
+    vhs_videocombine = _node(wf, 'VHS_VideoCombine', '140',
+        audio=getnode_39.out(0),
+        frame_rate=getnode_22.out(0),
+        images=vaedecodetiled.out(0),
+    )
+
+    wf.finalize_metadata()
+    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    return wf
+
+
+def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
+    """Create a node, preserving the original node id from the source workflow.
+
+    `_extras` carries kwargs whose names are not valid Python identifiers
+    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
+    They are applied to the new node post-construction.
+    """
+    from vibecomfy.handles import Handle
+    builder = wf.node(class_type, **kwargs)
+    if _extras:
+        for key, value in _extras.items():
+            if isinstance(value, Handle):
+                wf.connect(value, f"{builder.node.id}.{key}")
+            else:
+                builder.node.inputs[key] = value
+    if builder.node.id != _id:
+        old_id = builder.node.id
+        node = wf.nodes.pop(old_id)
+        node.id = _id
+        wf.nodes[_id] = node
+        for edge in wf.edges:
+            if edge.to_node == old_id:
+                edge.to_node = _id
+            if edge.from_node == old_id:
+                edge.from_node = _id
+    return builder
+

@@ -1,58 +1,170 @@
 {
-  "75": {
-    "class_type": "7b34ab90-36f9-45ba-a665-71d418f0df18",
+  "75:61": {
+    "class_type": "KSamplerSelect",
     "inputs": {
-      "text": [
-        "76",
-        0
-      ],
-      "widget_0": "",
-      "widget_1": 1024,
-      "widget_2": 1024,
-      "widget_3": "flux-2-klein-base-4b.safetensors",
-      "widget_4": "qwen_3_4b.safetensors",
-      "widget_5": "flux2-vae.safetensors"
+      "sampler_name": "euler"
+    }
+  },
+  "75:68": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 1024
+    }
+  },
+  "75:69": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 1024
+    }
+  },
+  "75:70": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux-2-klein-base-4b.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "75:71": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "flux2",
+      "device": "default"
+    }
+  },
+  "75:72": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    }
+  },
+  "75:73": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
     }
   },
   "76": {
     "class_type": "PrimitiveStringMultiline",
     "inputs": {
-      "widget_0": "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n"
+      "value": "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n"
     }
   },
-  "77": {
-    "class_type": "a67caa28-5f85-4917-8396-36004960dd30",
+  "75:62": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "steps": 20,
+      "height": [
+        "75:69",
+        0
+      ],
+      "width": [
+        "75:68",
+        0
+      ]
+    }
+  },
+  "75:66": {
+    "class_type": "EmptyFlux2LatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "width": [
+        "75:68",
+        0
+      ],
+      "height": [
+        "75:69",
+        0
+      ]
+    }
+  },
+  "75:67": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "",
+      "clip": [
+        "75:71",
+        0
+      ]
+    }
+  },
+  "75:74": {
+    "class_type": "CLIPTextEncode",
     "inputs": {
       "text": [
         "76",
         0
       ],
-      "widget_0": "",
-      "widget_1": 1024,
-      "widget_2": 1024,
-      "widget_3": "flux-2-klein-4b.safetensors",
-      "widget_4": "qwen_3_4b.safetensors",
-      "widget_5": "flux2-vae.safetensors"
+      "clip": [
+        "75:71",
+        0
+      ]
     }
   },
-  "78": {
-    "class_type": "SaveImage",
+  "75:63": {
+    "class_type": "CFGGuider",
     "inputs": {
-      "images": [
-        "77",
+      "cfg": 5,
+      "model": [
+        "75:70",
         0
       ],
-      "widget_0": "Flux2-Klein"
+      "negative": [
+        "75:67",
+        0
+      ],
+      "positive": [
+        "75:74",
+        0
+      ]
+    }
+  },
+  "75:64": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "guider": [
+        "75:63",
+        0
+      ],
+      "latent_image": [
+        "75:66",
+        0
+      ],
+      "noise": [
+        "75:73",
+        0
+      ],
+      "sampler": [
+        "75:61",
+        0
+      ],
+      "sigmas": [
+        "75:62",
+        0
+      ]
+    }
+  },
+  "75:65": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "75:64",
+        0
+      ],
+      "vae": [
+        "75:72",
+        0
+      ]
     }
   },
   "9": {
     "class_type": "SaveImage",
     "inputs": {
+      "filename_prefix": "Flux2-Klein",
       "images": [
-        "75",
+        "75:65",
         0
-      ],
-      "widget_0": "Flux2-Klein"
+      ]
     }
   }
 }

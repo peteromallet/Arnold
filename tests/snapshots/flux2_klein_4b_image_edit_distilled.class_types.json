@@ -1,6 +1,22 @@
 [
-  "65c22b29-59aa-496b-89c6-55a603658670",
-  "7b34ab90-36f9-45ba-a665-71d418f0df18",
+  "CFGGuider",
+  "CLIPLoader",
+  "CLIPTextEncode",
+  "ConditioningZeroOut",
+  "EmptyFlux2LatentImage",
+  "Flux2Scheduler",
+  "GetImageSize",
+  "ImageScaleToTotalPixels",
+  "KSamplerSelect",
   "LoadImage",
-  "SaveImage"
+  "LoadImage",
+  "RandomNoise",
+  "ReferenceLatent",
+  "ReferenceLatent",
+  "SamplerCustomAdvanced",
+  "SaveImage",
+  "UNETLoader",
+  "VAEDecode",
+  "VAEEncode",
+  "VAELoader"
 ]

@@ -1,6 +1,18 @@
 [
-  "7b34ab90-36f9-45ba-a665-71d418f0df18",
+  "CFGGuider",
+  "CLIPLoader",
+  "CLIPTextEncode",
+  "CLIPTextEncode",
+  "EmptyFlux2LatentImage",
+  "Flux2Scheduler",
+  "KSamplerSelect",
+  "PrimitiveInt",
+  "PrimitiveInt",
   "PrimitiveStringMultiline",
+  "RandomNoise",
+  "SamplerCustomAdvanced",
   "SaveImage",
-  "a67caa28-5f85-4917-8396-36004960dd30"
+  "UNETLoader",
+  "VAEDecode",
+  "VAELoader"
 ]

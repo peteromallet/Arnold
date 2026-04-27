@@ -1,9 +1,246 @@
 {
-  "102": {
-    "class_type": "74a8e1e2-9cb8-4112-978e-06ce1b5793f1",
+  "78": {
+    "class_type": "LoadImage",
     "inputs": {
+      "image": "image_qwen_image_edit_input_image.png"
+    }
+  },
+  "102:37": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "102:38": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "102:39": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "102:103": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 4
+    }
+  },
+  "102:105": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 1
+    }
+  },
+  "102:106": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 20
+    }
+  },
+  "102:107": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": 2.5
+    }
+  },
+  "102:111": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": false
+    }
+  },
+  "93": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 1.5,
+      "resolution_steps": 1,
       "image": [
         "78",
+        0
+      ]
+    }
+  },
+  "102:76": {
+    "class_type": "TextEncodeQwenImageEdit",
+    "inputs": {
+      "prompt": "Remove all UI text elements from the image. Keep the feeling that the characters and scene are in water. Also, remove the green UI elements at the bottom.",
+      "clip": [
+        "102:38",
+        0
+      ],
+      "image": [
+        "78",
+        0
+      ],
+      "vae": [
+        "102:39",
+        0
+      ]
+    }
+  },
+  "102:77": {
+    "class_type": "TextEncodeQwenImageEdit",
+    "inputs": {
+      "prompt": "",
+      "clip": [
+        "102:38",
+        0
+      ],
+      "image": [
+        "78",
+        0
+      ],
+      "vae": [
+        "102:39",
+        0
+      ]
+    }
+  },
+  "102:88": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "78",
+        0
+      ],
+      "vae": [
+        "102:39",
+        0
+      ]
+    }
+  },
+  "102:89": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "102:37",
+        0
+      ]
+    }
+  },
+  "102:109": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "on_false": [
+        "102:107",
+        0
+      ],
+      "on_true": [
+        "102:105",
+        0
+      ],
+      "switch": [
+        "102:111",
+        0
+      ]
+    }
+  },
+  "102:110": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "on_false": [
+        "102:106",
+        0
+      ],
+      "on_true": [
+        "102:103",
+        0
+      ],
+      "switch": [
+        "102:111",
+        0
+      ]
+    }
+  },
+  "102:108": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "on_false": [
+        "102:37",
+        0
+      ],
+      "on_true": [
+        "102:89",
+        0
+      ],
+      "switch": [
+        "102:111",
+        0
+      ]
+    }
+  },
+  "102:66": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "102:108",
+        0
+      ]
+    }
+  },
+  "102:75": {
+    "class_type": "CFGNorm",
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "102:66",
+        0
+      ]
+    }
+  },
+  "102:3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 344147753686358,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "steps": [
+        "102:110",
+        0
+      ],
+      "cfg": [
+        "102:109",
+        0
+      ],
+      "latent_image": [
+        "102:88",
+        0
+      ],
+      "model": [
+        "102:75",
+        0
+      ],
+      "negative": [
+        "102:77",
+        0
+      ],
+      "positive": [
+        "102:76",
+        0
+      ]
+    }
+  },
+  "102:8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "102:3",
+        0
+      ],
+      "vae": [
+        "102:39",
         0
       ]
     }
@@ -11,30 +248,11 @@
   "60": {
     "class_type": "SaveImage",
     "inputs": {
+      "filename_prefix": "ComfyUI",
       "images": [
-        "102",
+        "102:8",
         0
-      ],
-      "widget_0": "ComfyUI"
-    }
-  },
-  "78": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "widget_0": "image_qwen_image_edit_input_image.png",
-      "widget_1": "image"
-    }
-  },
-  "93": {
-    "class_type": "ImageScaleToTotalPixels",
-    "inputs": {
-      "image": [
-        "78",
-        0
-      ],
-      "widget_0": "lanczos",
-      "widget_1": 1.5,
-      "widget_2": 1
+      ]
     }
   }
 }

@@ -1,158 +1,12 @@
+# vibecomfy: generated — converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import build_api_ready_workflow
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.registry.ready_template import apply_ready_template_policy
 
-
-API_WORKFLOW = {'90': {'class_type': 'WanVideoExperimentalArgs',
-        'inputs': {'widget_0': '',
-                   'widget_1': True,
-                   'widget_2': False,
-                   'widget_3': 0,
-                   'widget_4': False,
-                   'widget_5': 1,
-                   'widget_6': 1.25,
-                   'widget_7': 20,
-                   'widget_8': True,
-                   'widget_9': 0}},
- '35': {'class_type': 'WanVideoTorchCompileSettings',
-        'inputs': {'widget_0': 'inductor',
-                   'widget_1': False,
-                   'widget_2': 'default',
-                   'widget_3': False,
-                   'widget_4': 64,
-                   'widget_5': True,
-                   'widget_6': 128}},
- '22': {'class_type': 'WanVideoModelLoader',
-        'inputs': {'widget_0': 'Wan2_2-TI2V-5B-FastWanFullAttn_bf16.safetensors',
-                   'widget_1': 'fp16',
-                   'widget_2': 'disabled',
-                   'widget_3': 'offload_device',
-                   'widget_4': 'sdpa',
-                   'compile_args': ['35', 0]}},
- '103': {'class_type': 'WanVideoControlnetLoader',
-         'inputs': {'widget_0': 'wan2.2-ti2v-5b-controlnet-depth-v1/diffusion_pytorch_model.safetensors',
-                    'widget_1': 'bf16',
-                    'widget_2': 'disabled',
-                    'widget_3': 'main_device'}},
- '105': {'class_type': 'WanVideoControlnet',
-         'inputs': {'widget_0': 1,
-                    'widget_1': 3,
-                    'widget_2': 0,
-                    'widget_3': 1,
-                    'model': ['22', 0],
-                    'controlnet': ['103', 0],
-                    'control_images': ['109', 0]}},
- '107': {'class_type': 'WanVideoEnhanceAVideo', 'inputs': {'widget_0': 2, 'widget_1': 0, 'widget_2': 1}},
- '94': {'class_type': 'WanVideoEasyCache',
-        'inputs': {'widget_0': 0.015, 'widget_1': 10, 'widget_2': -1, 'widget_3': 'offload_device'}},
- '11': {'class_type': 'LoadWanVideoT5TextEncoder',
-        'inputs': {'widget_0': 'umt5-xxl-enc-bf16.safetensors',
-                   'widget_1': 'bf16',
-                   'widget_2': 'offload_device',
-                   'widget_3': 'disabled'}},
- '104': {'class_type': 'MiDaS-DepthMapPreprocessor',
-         'inputs': {'widget_0': 6.283185307179586, 'widget_1': 0.1, 'widget_2': 512, 'image': ['101', 0]}},
- '109': {'class_type': 'ImageResizeKJv2',
-         'inputs': {'width': ['117', 0],
-                    'height': ['118', 0],
-                    'widget_0': 256,
-                    'widget_1': 256,
-                    'widget_2': 'nearest-exact',
-                    'widget_3': 'stretch',
-                    'widget_4': '0, 0, 0',
-                    'widget_5': 'center',
-                    'widget_6': 2,
-                    'widget_7': 'cpu',
-                    'image': ['104', 0]}},
- '27': {'class_type': 'WanVideoSampler',
-        'inputs': {'steps': 1,
-                   'widget_0': 1,
-                   'widget_1': 5,
-                   'widget_2': 8,
-                   'widget_3': 47,
-                   'widget_4': 'fixed',
-                   'widget_5': True,
-                   'widget_6': 'flowmatch_pusa',
-                   'widget_7': 0,
-                   'widget_8': 1,
-                   'widget_9': '',
-                   'widget_10': 'comfy',
-                   'widget_11': 0,
-                   'widget_12': -1,
-                   'widget_13': '',
-                   'model': ['105', 0],
-                   'image_embeds': ['106', 0],
-                   'text_embeds': ['16', 0],
-                   'feta_args': ['107', 0],
-                   'cache_args': ['94', 0],
-                   'slg_args': ['91', 0],
-                   'experimental_args': ['90', 0]}},
- '91': {'class_type': 'WanVideoSLG', 'inputs': {'widget_0': '7,8,9', 'widget_1': 0.1, 'widget_2': 0.7}},
- '28': {'class_type': 'WanVideoDecode',
-        'inputs': {'widget_0': False,
-                   'widget_1': 272,
-                   'widget_2': 272,
-                   'widget_3': 144,
-                   'widget_4': 128,
-                   'widget_5': 'default',
-                   'vae': ['38', 0],
-                   'samples': ['27', 0]}},
- '16': {'class_type': 'WanVideoTextEncode',
-        'inputs': {'widget_0': 'Close-up shot with soft lighting, focusing sharply on the lower half of a young '
-                               "woman's face. Her lips are slightly parted as she blows an enormous bubblegum bubble. "
-                               'The bubble is semi-transparent, shimmering gently under the light, and surprisingly '
-                               'contains a miniature aquarium inside, where two orange-and-white goldfish slowly swim, '
-                               'their fins delicately fluttering as if in an aquatic universe. The background is a '
-                               'pure light blue color.',
-                   'widget_1': 'Bright tones, overexposed, static, blurred details, subtitles, style, works, '
-                               'paintings, images, static, overall gray, worst quality, low quality, JPEG compression '
-                               'residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, '
-                               'deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, '
-                               'three legs, many people in the background, walking backwards"',
-                   'widget_2': True,
-                   'widget_3': False,
-                   'widget_4': 'gpu',
-                   't5': ['11', 0],
-                   'model_to_offload': ['105', 0]}},
- '101': {'class_type': 'ImageResizeKJv2',
-         'inputs': {'width': ['117', 0],
-                    'height': ['118', 0],
-                    'widget_0': 256,
-                    'widget_1': 256,
-                    'widget_2': 'nearest-exact',
-                    'widget_3': 'stretch',
-                    'widget_4': '0, 0, 0',
-                    'widget_5': 'center',
-                    'widget_6': 2,
-                    'widget_7': 'cpu',
-                    'image': ['98', 0]}},
- '38': {'class_type': 'WanVideoVAELoader', 'inputs': {'widget_0': 'Wan2_2_VAE_bf16.safetensors', 'widget_1': 'bf16'}},
- '112': {'class_type': 'PreviewAnimation', 'inputs': {'widget_0': 24, 'images': ['109', 0]}},
- '92': {'class_type': 'VHS_VideoCombine', 'inputs': {'save_output': True, 'images': ['28', 0]}},
- '114': {'class_type': 'WanVideoEncode',
-         'inputs': {'widget_0': False,
-                    'widget_1': 272,
-                    'widget_2': 272,
-                    'widget_3': 144,
-                    'widget_4': 128,
-                    'widget_5': 0,
-                    'widget_6': 1,
-                    'vae': ['38', 0],
-                    'image': ['113', 0]}},
- '113': {'class_type': 'GetImagesFromBatchIndexed', 'inputs': {'widget_0': '0', 'images': ['101', 0]}},
- '98': {'class_type': 'VHS_LoadVideo', 'inputs': {'video': 'wolf_interpolated.mp4', 'frame_load_cap': ['116', 0]}},
- '106': {'class_type': 'WanVideoEmptyEmbeds',
-         'inputs': {'width': ['117', 0],
-                    'height': ['118', 0],
-                    'num_frames': 5,
-                    'widget_0': 256,
-                    'widget_1': 256,
-                    'widget_2': 5,
-                    'extra_latents': ['114', 0]}},
- '116': {'class_type': 'INTConstant', 'inputs': {'widget_0': 121}},
- '115': {'class_type': 'PreviewImage', 'inputs': {'images': ['113', 0]}},
- '117': {'class_type': 'INTConstant', 'inputs': {'widget_0': 1280}},
- '118': {'class_type': 'INTConstant', 'inputs': {'widget_0': 704}}}
 
 READY_METADATA = {'model_assets': [],
  'unbound_inputs': {'seed': 4725},
@@ -170,11 +24,240 @@ READY_METADATA = {'model_assets': [],
 READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']}
 
 
-def build():
-    return build_api_ready_workflow(
-        API_WORKFLOW,
-        source_path=__file__,
-        workflow_id=READY_METADATA.get("ready_template", "video/wanvideo_wrapper_22_5b_i2v_controlnet"),
-        ready_metadata=READY_METADATA,
-        requirements=READY_REQUIREMENTS,
+def build() -> VibeWorkflow:
+    """Build the workflow (auto-generated)."""
+    wf = VibeWorkflow(
+        READY_METADATA["ready_template"],
+        WorkflowSource(
+            id=READY_METADATA["ready_template"],
+            path=__file__,
+            source_type="ready_template",
+        ),
     )
+
+    loadwanvideot5textencoder = _node(wf, 'LoadWanVideoT5TextEncoder', '11',
+        widget_0='umt5-xxl-enc-bf16.safetensors',
+        widget_1='bf16',
+        widget_2='offload_device',
+        widget_3='disabled',
+    )
+    wanvideotorchcompilesettings = _node(wf, 'WanVideoTorchCompileSettings', '35',
+        widget_0='inductor',
+        widget_1=False,
+        widget_2='default',
+        widget_3=False,
+        widget_4=64,
+        widget_5=True,
+        widget_6=128,
+    )
+    wanvideovaeloader = _node(wf, 'WanVideoVAELoader', '38',
+        widget_0='Wan2_2_VAE_bf16.safetensors',
+        widget_1='bf16',
+    )
+    wanvideoexperimentalargs = _node(wf, 'WanVideoExperimentalArgs', '90',
+        widget_0='',
+        widget_1=True,
+        widget_2=False,
+        widget_3=0,
+        widget_4=False,
+        widget_5=1,
+        widget_6=1.25,
+        widget_7=20,
+        widget_8=True,
+        widget_9=0,
+    )
+    wanvideoslg = _node(wf, 'WanVideoSLG', '91',
+        widget_0='7,8,9',
+        widget_1=0.1,
+        widget_2=0.7,
+    )
+    wanvideoeasycache = _node(wf, 'WanVideoEasyCache', '94',
+        widget_0=0.015,
+        widget_1=10,
+        widget_2=-1,
+        widget_3='offload_device',
+    )
+    wanvideocontrolnetloader = _node(wf, 'WanVideoControlnetLoader', '103',
+        widget_0='wan2.2-ti2v-5b-controlnet-depth-v1/diffusion_pytorch_model.safetensors',
+        widget_1='bf16',
+        widget_2='disabled',
+        widget_3='main_device',
+    )
+    wanvideoenhanceavideo = _node(wf, 'WanVideoEnhanceAVideo', '107',
+        widget_0=2,
+        widget_1=0,
+        widget_2=1,
+    )
+    intconstant = _node(wf, 'INTConstant', '116',
+        widget_0=121,
+    )
+    intconstant_2 = _node(wf, 'INTConstant', '117',
+        widget_0=1280,
+    )
+    intconstant_3 = _node(wf, 'INTConstant', '118',
+        widget_0=704,
+    )
+    wanvideomodelloader = _node(wf, 'WanVideoModelLoader', '22',
+        widget_0='Wan2_2-TI2V-5B-FastWanFullAttn_bf16.safetensors',
+        widget_1='fp16',
+        widget_2='disabled',
+        widget_3='offload_device',
+        widget_4='sdpa',
+        compile_args=wanvideotorchcompilesettings.out(0),
+    )
+    vhs_loadvideo = _node(wf, 'VHS_LoadVideo', '98',
+        video='wolf_interpolated.mp4',
+        frame_load_cap=intconstant.out(0),
+    )
+    imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '101',
+        widget_0=256,
+        widget_1=256,
+        widget_2='nearest-exact',
+        widget_3='stretch',
+        widget_4='0, 0, 0',
+        widget_5='center',
+        widget_6=2,
+        widget_7='cpu',
+        height=intconstant_3.out(0),
+        image=vhs_loadvideo.out(0),
+        width=intconstant_2.out(0),
+    )
+    midas_depthmappreprocessor = _node(wf, 'MiDaS-DepthMapPreprocessor', '104',
+        widget_0=6.283185307179586,
+        widget_1=0.1,
+        widget_2=512,
+        image=imageresizekjv2.out(0),
+    )
+    getimagesfrombatchindexed = _node(wf, 'GetImagesFromBatchIndexed', '113',
+        widget_0='0',
+        images=imageresizekjv2.out(0),
+    )
+    imageresizekjv2_2 = _node(wf, 'ImageResizeKJv2', '109',
+        widget_0=256,
+        widget_1=256,
+        widget_2='nearest-exact',
+        widget_3='stretch',
+        widget_4='0, 0, 0',
+        widget_5='center',
+        widget_6=2,
+        widget_7='cpu',
+        height=intconstant_3.out(0),
+        image=midas_depthmappreprocessor.out(0),
+        width=intconstant_2.out(0),
+    )
+    wanvideoencode = _node(wf, 'WanVideoEncode', '114',
+        widget_0=False,
+        widget_1=272,
+        widget_2=272,
+        widget_3=144,
+        widget_4=128,
+        widget_5=0,
+        widget_6=1,
+        image=getimagesfrombatchindexed.out(0),
+        vae=wanvideovaeloader.out(0),
+    )
+    previewimage = _node(wf, 'PreviewImage', '115',
+        images=getimagesfrombatchindexed.out(0),
+    )
+    wanvideocontrolnet = _node(wf, 'WanVideoControlnet', '105',
+        widget_0=1,
+        widget_1=3,
+        widget_2=0,
+        widget_3=1,
+        control_images=imageresizekjv2_2.out(0),
+        controlnet=wanvideocontrolnetloader.out(0),
+        model=wanvideomodelloader.out(0),
+    )
+    wanvideoemptyembeds = _node(wf, 'WanVideoEmptyEmbeds', '106',
+        num_frames=5,
+        widget_0=256,
+        widget_1=256,
+        widget_2=5,
+        extra_latents=wanvideoencode.out(0),
+        height=intconstant_3.out(0),
+        width=intconstant_2.out(0),
+    )
+    previewanimation = _node(wf, 'PreviewAnimation', '112',
+        widget_0=24,
+        images=imageresizekjv2_2.out(0),
+    )
+    wanvideotextencode = _node(wf, 'WanVideoTextEncode', '16',
+        widget_0="Close-up shot with soft lighting, focusing sharply on the lower half of a young woman's face. Her lips are slightly parted as she blows an enormous bubblegum bubble. The bubble is semi-transparent, shimmering gently under the light, and surprisingly contains a miniature aquarium inside, where two orange-and-white goldfish slowly swim, their fins delicately fluttering as if in an aquatic universe. The background is a pure light blue color.",
+        widget_1='Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"',
+        widget_2=True,
+        widget_3=False,
+        widget_4='gpu',
+        model_to_offload=wanvideocontrolnet.out(0),
+        t5=loadwanvideot5textencoder.out(0),
+    )
+    wanvideosampler = _node(wf, 'WanVideoSampler', '27',
+        steps=1,
+        widget_0=1,
+        widget_1=5,
+        widget_10='comfy',
+        widget_11=0,
+        widget_12=-1,
+        widget_13='',
+        widget_2=8,
+        widget_3=47,
+        widget_4='fixed',
+        widget_5=True,
+        widget_6='flowmatch_pusa',
+        widget_7=0,
+        widget_8=1,
+        widget_9='',
+        cache_args=wanvideoeasycache.out(0),
+        experimental_args=wanvideoexperimentalargs.out(0),
+        feta_args=wanvideoenhanceavideo.out(0),
+        image_embeds=wanvideoemptyembeds.out(0),
+        model=wanvideocontrolnet.out(0),
+        slg_args=wanvideoslg.out(0),
+        text_embeds=wanvideotextencode.out(0),
+    )
+    wanvideodecode = _node(wf, 'WanVideoDecode', '28',
+        widget_0=False,
+        widget_1=272,
+        widget_2=272,
+        widget_3=144,
+        widget_4=128,
+        widget_5='default',
+        samples=wanvideosampler.out(0),
+        vae=wanvideovaeloader.out(0),
+    )
+    vhs_videocombine = _node(wf, 'VHS_VideoCombine', '92',
+        save_output=True,
+        images=wanvideodecode.out(0),
+    )
+
+    wf.finalize_metadata()
+    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    return wf
+
+
+def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
+    """Create a node, preserving the original node id from the source workflow.
+
+    `_extras` carries kwargs whose names are not valid Python identifiers
+    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
+    They are applied to the new node post-construction.
+    """
+    from vibecomfy.handles import Handle
+    builder = wf.node(class_type, **kwargs)
+    if _extras:
+        for key, value in _extras.items():
+            if isinstance(value, Handle):
+                wf.connect(value, f"{builder.node.id}.{key}")
+            else:
+                builder.node.inputs[key] = value
+    if builder.node.id != _id:
+        old_id = builder.node.id
+        node = wf.nodes.pop(old_id)
+        node.id = _id
+        wf.nodes[_id] = node
+        for edge in wf.edges:
+            if edge.to_node == old_id:
+                edge.to_node = _id
+            if edge.from_node == old_id:
+                edge.from_node = _id
+    return builder
+

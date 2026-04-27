@@ -465,13 +465,16 @@ def test_session_config_empty_dict_uses_defaults() -> None:
 def test_model_fingerprint_wan_snapshot() -> None:
     api = json.loads(Path("tests/snapshots/wan_t2v.api.json").read_text(encoding="utf-8"))
 
+    # Post-conversion the snapshot uses canonical input names rather than
+    # positional widget_X. Expectations updated to match the converted shape
+    # (per docs/megaplan_briefs/convert_templates_to_real_python.md).
     assert model_fingerprint(api) == (
-        ("CLIPLoader", "widget_0", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
-        ("CLIPLoader", "widget_1", "wan"),
-        ("CLIPLoader", "widget_2", "default"),
-        ("UNETLoader", "widget_0", "wan2.1_t2v_1.3B_fp16.safetensors"),
-        ("UNETLoader", "widget_1", "default"),
-        ("VAELoader", "widget_0", "wan_2.1_vae.safetensors"),
+        ("CLIPLoader", "clip_name", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
+        ("CLIPLoader", "device", "default"),
+        ("CLIPLoader", "type", "wan"),
+        ("UNETLoader", "unet_name", "wan2.1_t2v_1.3B_fp16.safetensors"),
+        ("UNETLoader", "weight_dtype", "default"),
+        ("VAELoader", "vae_name", "wan_2.1_vae.safetensors"),
     )
 
 
@@ -479,8 +482,11 @@ def test_model_fingerprint_ltx_snapshot_excludes_edge_references() -> None:
     api = json.loads(Path("tests/snapshots/ltx2_3_t2v.api.json").read_text(encoding="utf-8"))
     fingerprint = model_fingerprint(api)
 
-    assert ("LowVRAMCheckpointLoader", "ckpt_name", "ltx-2.3-22b-dev.safetensors") in fingerprint
-    assert ("LowVRAMAudioVAELoader", "ckpt_name", "ltx-2.3-22b-dev.safetensors") in fingerprint
+    # Post-conversion: apply_ltx_lowvram swaps the ckpt to fp8; LoraLoaderModelOnly
+    # widget_0 is now schema-resolved to lora_name; LTXAVTextEncoderLoader's widget
+    # name remains widget_0 because it's a custom-pack class without a stock schema.
+    assert ("LowVRAMCheckpointLoader", "ckpt_name", "ltx-2.3-22b-dev-fp8.safetensors") in fingerprint
+    assert ("LowVRAMAudioVAELoader", "ckpt_name", "ltx-2.3-22b-dev-fp8.safetensors") in fingerprint
     assert (
         "LTXAVTextEncoderLoader",
         "widget_0",
@@ -488,7 +494,7 @@ def test_model_fingerprint_ltx_snapshot_excludes_edge_references() -> None:
     ) in fingerprint
     assert (
         "LoraLoaderModelOnly",
-        "widget_0",
+        "lora_name",
         "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
     ) in fingerprint
     assert not any(slot in {"dependencies", "model"} for _, slot, _ in fingerprint)

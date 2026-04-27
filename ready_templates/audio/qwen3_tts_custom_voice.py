@@ -1,18 +1,12 @@
+# vibecomfy: generated — converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import build_api_ready_workflow
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.registry.ready_template import apply_ready_template_policy
 
-
-API_WORKFLOW = {'1': {'class_type': 'AILab_Qwen3TTSCustomVoice',
-       'inputs': {'text': 'VibeComfy generated this short Qwen voice smoke test from a reusable Python template.',
-                  'speaker': 'Ryan',
-                  'model_size': '0.6B',
-                  'language': 'English',
-                  'instruct': 'Calm, clear, friendly delivery.',
-                  'unload_models': True,
-                  'seed': 3327}},
- '2': {'class_type': 'SaveAudioMP3',
-       'inputs': {'filename_prefix': 'audio/qwen3_tts_custom_voice', 'quality': 'V0', 'audio': ['1', 0]}}}
 
 READY_METADATA = {'model_assets': [],
  'ready_template': 'audio/qwen3_tts_custom_voice',
@@ -30,11 +24,61 @@ READY_METADATA = {'model_assets': [],
 READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-QwenTTS']}
 
 
-def build():
-    return build_api_ready_workflow(
-        API_WORKFLOW,
-        source_path=__file__,
-        workflow_id=READY_METADATA.get("ready_template", "audio/qwen3_tts_custom_voice"),
-        ready_metadata=READY_METADATA,
-        requirements=READY_REQUIREMENTS,
+def build() -> VibeWorkflow:
+    """Build the workflow (auto-generated)."""
+    wf = VibeWorkflow(
+        READY_METADATA["ready_template"],
+        WorkflowSource(
+            id=READY_METADATA["ready_template"],
+            path=__file__,
+            source_type="ready_template",
+        ),
     )
+
+    ailab_qwen3ttscustomvoice = _node(wf, 'AILab_Qwen3TTSCustomVoice', '1',
+        instruct='Calm, clear, friendly delivery.',
+        language='English',
+        model_size='0.6B',
+        seed=3327,
+        speaker='Ryan',
+        text='VibeComfy generated this short Qwen voice smoke test from a reusable Python template.',
+        unload_models=True,
+    )
+    saveaudiomp3 = _node(wf, 'SaveAudioMP3', '2',
+        filename_prefix='audio/qwen3_tts_custom_voice',
+        quality='V0',
+        audio=ailab_qwen3ttscustomvoice.out(0),
+    )
+
+    wf.finalize_metadata()
+    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    return wf
+
+
+def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
+    """Create a node, preserving the original node id from the source workflow.
+
+    `_extras` carries kwargs whose names are not valid Python identifiers
+    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
+    They are applied to the new node post-construction.
+    """
+    from vibecomfy.handles import Handle
+    builder = wf.node(class_type, **kwargs)
+    if _extras:
+        for key, value in _extras.items():
+            if isinstance(value, Handle):
+                wf.connect(value, f"{builder.node.id}.{key}")
+            else:
+                builder.node.inputs[key] = value
+    if builder.node.id != _id:
+        old_id = builder.node.id
+        node = wf.nodes.pop(old_id)
+        node.id = _id
+        wf.nodes[_id] = node
+        for edge in wf.edges:
+            if edge.to_node == old_id:
+                edge.to_node = _id
+            if edge.from_node == old_id:
+                edge.from_node = _id
+    return builder
+

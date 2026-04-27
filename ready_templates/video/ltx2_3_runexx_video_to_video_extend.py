@@ -1,359 +1,12 @@
+# vibecomfy: generated — converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import build_api_ready_workflow
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.registry.ready_template import apply_ready_template_policy
 
-
-API_WORKFLOW = {'210': {'class_type': 'SetNode', 'inputs': {'widget_0': 'fps', 'FLOAT': ['214', 0]}},
- '209': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ext_seconds', 'INT': ['211', 0]}},
- '310': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_frames', 'INT': ['605', 1]}},
- '242': {'class_type': 'GetNode', 'inputs': {'widget_0': 'upscale_model'}},
- '244': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '349': {'class_type': 'SetNode', 'inputs': {'widget_0': 'extended_frames', 'INT': ['352', 1]}},
- '459': {'class_type': 'SetNode', 'inputs': {'widget_0': 'upscale_model', 'LATENT_UPSCALE_MODEL': ['465', 0]}},
- '460': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae_audio', 'VAE': ['471', 0]}},
- '461': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae', 'VAE': ['463', 0]}},
- '462': {'class_type': 'SetNode', 'inputs': {'widget_0': 'clip', 'CLIP': ['466', 0]}},
- '467': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': '## LTX-2 Prompting Tips\n'
-                                '1. **Core Actions**: Describe events and actions as they occur over time  \n'
-                                '2. **Audio**: Describe sounds and dialogue needed for the scene  \n'
-                                '3. **Reference Image**: Do not repeat details already present  \n'
-                                '4. **Consistency**: Avoid instructions that do not match the reference image, as this '
-                                'will degrade results'}},
- '468': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'If using some user made LTX-2 loras they sometimes are not trained on audio, so it '
-                                'will produce very noisy audio outputs. Try use KJNodes LTX-2 Lora Loader Advanced in '
-                                'such cases, and set the non video strenght to zero\n'}},
- '472': {'class_type': 'SetNode', 'inputs': {'widget_0': 'vae_tiny', 'VAE': ['473', 0]}},
- '473': {'class_type': 'VAELoader', 'inputs': {'widget_0': 'taeltx2_3.safetensors'}},
- '477': {'class_type': 'DualCLIPLoaderGGUF',
-         'inputs': {'widget_0': 'gemma-3-12b-it-Q2_K.gguf',
-                    'widget_1': 'ltx-2.3_text_projection_bf16.safetensors',
-                    'widget_2': 'sdxl'}},
- '481': {'class_type': 'SetNode', 'inputs': {'widget_0': 'model', 'MODEL': ['523', 0]}},
- '476': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'Download models from here:\n'
-                                '\n'
-                                '\n'
-                                'https://huggingface.co/Kijai/LTX2.3_comfy\n'
-                                '\n'
-                                'Text encoder : https://huggingface.co/Comfy-Org/ltx-2'}},
- '498': {'class_type': 'SetNode', 'inputs': {'widget_0': 'max_size', 'INT': ['497', 0]}},
- '492': {'class_type': 'VHS_VideoInfo', 'inputs': {'video_info': ['319', 3]}},
- '502': {'class_type': 'GetNode', 'inputs': {'widget_0': 'max_size'}},
- '500': {'class_type': 'SimpleCalculatorKJ',
-         'inputs': {'widget_0': '(a > c) or (b > c) ',
-                    'variables.a': ['492', 8],
-                    'variables.b': ['492', 9],
-                    'variables.c': ['502', 0]}},
- '507': {'class_type': 'GetNode', 'inputs': {'widget_0': 'max_size'}},
- '504': {'class_type': 'LazySwitchKJ',
-         'inputs': {'widget_0': False, 'on_false': ['496', 0], 'on_true': ['505', 0], 'switch': ['500', 2]}},
- '496': {'class_type': 'Reroute', 'inputs': {}},
- '505': {'class_type': 'ResizeImagesByLongerEdge',
-         'inputs': {'widget_0': 1536, 'images': ['496', 0], 'longer_edge': ['507', 0]}},
- '207': {'class_type': 'SetNode', 'inputs': {'widget_0': 'width', 'INT': ['512', 1]}},
- '208': {'class_type': 'SetNode', 'inputs': {'widget_0': 'height', 'INT': ['512', 2]}},
- '328': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_video', 'IMAGE': ['512', 0]}},
- '495': {'class_type': 'ResizeImagesByLongerEdge', 'inputs': {'widget_0': 1536, 'images': ['440', 0]}},
- '470': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'This automagically enhances your prompt using the already loaded Gemma model. But it '
-                                'can be a bit sensitive to having correct Gemma if using GGUF models. Alternatively '
-                                'you can bypass/disable  this feature '}},
- '221': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '466': {'class_type': 'DualCLIPLoader',
-         'inputs': {'widget_0': 'gemma_3_12B_it_fp4_mixed.safetensors',
-                    'widget_1': 'ltx-2.3_text_projection_bf16.safetensors',
-                    'widget_2': 'ltxv',
-                    'widget_3': 'default'}},
- '471': {'class_type': 'VAELoaderKJ',
-         'inputs': {'widget_0': 'LTX23_audio_vae_bf16.safetensors', 'widget_1': 'main_device', 'widget_2': 'bf16'}},
- '463': {'class_type': 'VAELoader', 'inputs': {'widget_0': 'LTX23_video_vae_bf16.safetensors'}},
- '475': {'class_type': 'UnetLoaderGGUF',
-         'inputs': {'widget_0': 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'}},
- '474': {'class_type': 'UNETLoader',
-         'inputs': {'widget_0': 'ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors',
-                    'widget_1': 'default'}},
- '480': {'class_type': 'ManualSigmas',
-         'inputs': {'widget_0': '1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0'}},
- '479': {'class_type': 'ManualSigmas', 'inputs': {'widget_0': '0.85, 0.7250, 0.4219, 0.0'}},
- '444': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'YouTube / Spotify etc : -14 LUFS\n'
-                                '\n'
-                                'Podcasts: -16 LUFS\n'
-                                '\n'
-                                'Instagram/TikTok: -12 to -10 LUFS\n'
-                                '\n'
-                                'Apple Music: -16 LUFS\n'
-                                '\n'
-                                'TV/Broadcast (US): -24 LUFS '}},
- '382': {'class_type': 'VHS_VideoInfo', 'inputs': {'video_info': ['319', 3]}},
- '217': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '216': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_audio'}},
- '555': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '521': {'class_type': 'LTX2MemoryEfficientSageAttentionPatch', 'inputs': {'widget_0': True, 'model': ['520', 0]}},
- '520': {'class_type': 'PathchSageAttentionKJ', 'inputs': {'widget_0': 'auto', 'widget_1': False, 'model': ['464', 0]}},
- '164': {'class_type': 'BasicScheduler',
-         'inputs': {'steps': 1, 'widget_0': 1, 'widget_1': 8, 'widget_2': 1, 'model': ['526', 0]}},
- '254': {'class_type': 'KSamplerSelect', 'inputs': {'widget_0': 'euler'}},
- '109': {'class_type': 'LTXVConcatAVLatent', 'inputs': {'video_latent': ['545', 2], 'audio_latent': ['178', 1]}},
- '369': {'class_type': 'GetNode', 'inputs': {'widget_0': 'model'}},
- '408': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_tiny'}},
- '250': {'class_type': 'LTXVSeparateAVLatent', 'inputs': {'av_latent': ['113', 0]}},
- '251': {'class_type': 'LTXVConcatAVLatent', 'inputs': {'video_latent': ['438', 0], 'audio_latent': ['250', 1]}},
- '224': {'class_type': 'SetNode', 'inputs': {'widget_0': 'positive', 'CONDITIONING': ['107', 0]}},
- '225': {'class_type': 'SetNode', 'inputs': {'widget_0': 'negative', 'CONDITIONING': ['107', 1]}},
- '526': {'class_type': 'ModelSamplingSD3', 'inputs': {'widget_0': 13, 'model': ['368', 0]}},
- '113': {'class_type': 'SamplerCustomAdvanced',
-         'inputs': {'noise': ['115', 0],
-                    'guider': ['129', 0],
-                    'sampler': ['137', 0],
-                    'sigmas': ['164', 0],
-                    'latent_image': ['109', 0]}},
- '556': {'class_type': 'GetImageRangeFromBatch', 'inputs': {'widget_0': -1, 'widget_1': 1, 'images': ['436', 0]}},
- '368': {'class_type': 'LTX2SamplingPreviewOverride',
-         'inputs': {'widget_0': 8, 'model': ['369', 0], 'vae': ['408', 0]}},
- '326': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_frames'}},
- '542': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_frames'}},
- '508': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_image'}},
- '602': {'class_type': 'GetNode', 'inputs': {'widget_0': 'enable_promptenhance'}},
- '600': {'class_type': 'GetNode', 'inputs': {'widget_0': 'clip'}},
- '514': {'class_type': 'GetNode', 'inputs': {'widget_0': 'overlap_seconds'}},
- '357': {'class_type': 'SimpleCalculatorKJ',
-         'inputs': {'widget_0': 'a + b', 'variables.a': ['356', 0], 'variables.b': ['514', 0]}},
- '223': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '356': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ext_seconds'}},
- '258': {'class_type': 'SamplerCustomAdvanced',
-         'inputs': {'noise': ['243', 0],
-                    'guider': ['256', 0],
-                    'sampler': ['254', 0],
-                    'sigmas': ['479', 0],
-                    'latent_image': ['251', 0]}},
- '601': {'class_type': 'SetNode', 'inputs': {'widget_0': 'enable_promptenhance', 'BOOLEAN': ['594', 0]}},
- '599': {'class_type': '6002fb3c-ab34-4ad8-894e-fccaa60fd8c9',
-         'inputs': {'clip': ['600', 0], 'image': ['508', 0], 'string_b': ['487', 0]}},
- '137': {'class_type': 'KSamplerSelect', 'inputs': {'widget_0': 'euler_ancestral'}},
- '352': {'class_type': 'SimpleCalculatorKJ',
-         'inputs': {'widget_0': '((round((a * b -1) / 8)) * 8) + 1 ',
-                    'variables.a': ['211', 0],
-                    'variables.b': ['214', 0]}},
- '214': {'class_type': 'PrimitiveFloat', 'inputs': {'widget_0': 8}},
- '606': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '605': {'class_type': 'SimpleCalculatorKJ',
-         'inputs': {'widget_0': '((round((a * b -1) / 8)) * 8) + 1 ',
-                    'variables.a': ['305', 0],
-                    'variables.b': ['606', 0]}},
- '305': {'class_type': 'INTConstant', 'inputs': {'widget_0': 3}},
- '608': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'Set how many frames from the input video to use as guide reference. LTX official '
-                                'recommend a minimum 3 seconds (around 73 frames in 24fps), maximum 505 frames (around '
-                                '21 seconds in 24fps). \n'
-                                '\n'
-                                'But you can try with less, 1-2 seconds, but might lose consistency'}},
- '580': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '222': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '215': {'class_type': 'GetNode', 'inputs': {'widget_0': 'clip'}},
- '528': {'class_type': 'Reroute', 'inputs': {}},
- '469': {'class_type': 'MarkdownNote', 'inputs': {'widget_0': 'taeltx2_3.safetensors'}},
- '465': {'class_type': 'LatentUpscaleModelLoader',
-         'inputs': {'widget_0': 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'}},
- '436': {'class_type': 'ResizeImageMaskNode',
-         'inputs': {'widget_0': 'scale by multiplier', 'widget_1': 256, 'widget_2': 'area', 'input': ['379', 0]}},
- '594': {'class_type': 'PrimitiveBoolean', 'inputs': {'widget_0': True}},
- '256': {'class_type': 'CFGGuider',
-         'inputs': {'widget_0': 2.5, 'model': ['563', 0], 'positive': ['549', 0], 'negative': ['549', 1]}},
- '107': {'class_type': 'LTXVConditioning',
-         'inputs': {'widget_0': 8, 'positive': ['545', 0], 'negative': ['545', 1], 'frame_rate': ['222', 0]}},
- '439': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_image_overlap'}},
- '442': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '438': {'class_type': 'LTXVImgToVideoInplace',
-         'inputs': {'widget_0': 1, 'widget_1': False, 'vae': ['442', 0], 'image': ['439', 0], 'latent': ['549', 2]}},
- '443': {'class_type': 'NormalizeAudioLoudness', 'inputs': {'widget_0': -16, 'audio': ['642', 0]}},
- '506': {'class_type': 'GetImageSizeAndCount', 'inputs': {'image': ['504', 0]}},
- '294': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_image', 'IMAGE': ['495', 0]}},
- '440': {'class_type': 'GetImageRangeFromBatch', 'inputs': {'widget_0': 0, 'widget_1': 1, 'images': ['512', 0]}},
- '285': {'class_type': 'SetNode', 'inputs': {'widget_0': 'compress_image', 'IMAGE': ['299', 0]}},
- '299': {'class_type': 'LTXVPreprocess', 'inputs': {'widget_0': 18, 'image': ['495', 0]}},
- '397': {'class_type': 'SetNode', 'inputs': {'widget_0': 'overlap_seconds', 'FLOAT': ['384', 0]}},
- '329': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_audio', 'AUDIO': ['443', 0]}},
- '384': {'class_type': 'SimpleCalculatorKJ',
-         'inputs': {'widget_0': 'a / b', 'variables.a': ['380', 0], 'variables.b': ['382', 5]}},
- '386': {'class_type': 'SimpleCalculatorKJ',
-         'inputs': {'widget_0': 'a - b', 'variables.a': ['382', 7], 'variables.b': ['384', 0]}},
- '380': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_frames'}},
- '379': {'class_type': 'GetImageRangeFromBatch',
-         'inputs': {'widget_0': -1, 'widget_1': 1, 'images': ['638', 0], 'num_frames': ['380', 0]}},
- '638': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_video'}},
- '377': {'class_type': 'TrimAudioDuration',
-         'inputs': {'widget_0': 0,
-                    'widget_1': 60,
-                    'audio': ['443', 0],
-                    'start_index': ['386', 0],
-                    'duration': ['384', 0]}},
- '566': {'class_type': 'GetImageRangeFromBatch', 'inputs': {'widget_0': 0, 'widget_1': 1, 'images': ['379', 0]}},
- '567': {'class_type': 'SetNode', 'inputs': {'widget_0': 'ref_image_overlap', 'IMAGE': ['566', 0]}},
- '565': {'class_type': 'VAEEncode', 'inputs': {'pixels': ['436', 0], 'vae': ['217', 0]}},
- '179': {'class_type': 'LTXVAudioVAEEncode', 'inputs': {'audio': ['377', 0], 'audio_vae': ['216', 0]}},
- '178': {'class_type': 'LTXVAudioVideoMask',
-         'inputs': {'widget_0': 24,
-                    'widget_1': 0,
-                    'widget_2': 15,
-                    'widget_3': 0,
-                    'widget_4': 15,
-                    'widget_5': 'pad',
-                    'widget_6': 'add',
-                    'video_latent': ['565', 0],
-                    'audio_latent': ['179', 0],
-                    'video_fps': ['223', 0],
-                    'video_start_time': ['514', 0],
-                    'video_end_time': ['357', 0],
-                    'audio_start_time': ['514', 0],
-                    'audio_end_time': ['357', 0]}},
- '545': {'class_type': 'LTXVAddLatentGuide',
-         'inputs': {'widget_0': -1,
-                    'widget_1': 1,
-                    'vae': ['555', 0],
-                    'positive': ['592', 0],
-                    'negative': ['110', 0],
-                    'latent': ['178', 0],
-                    'guiding_latent': ['546', 0]}},
- '573': {'class_type': 'GetNode', 'inputs': {'widget_0': 'negative'}},
- '572': {'class_type': 'GetNode', 'inputs': {'widget_0': 'positive'}},
- '549': {'class_type': 'LTXVCropGuides',
-         'inputs': {'positive': ['572', 0], 'negative': ['573', 0], 'latent': ['250', 0]}},
- '129': {'class_type': 'CFGGuider',
-         'inputs': {'widget_0': 2.5, 'model': ['563', 0], 'positive': ['107', 0], 'negative': ['107', 1]}},
- '220': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae'}},
- '125': {'class_type': 'LTXVSeparateAVLatent', 'inputs': {'av_latent': ['258', 0]}},
- '576': {'class_type': 'GetNode', 'inputs': {'widget_0': 'positive'}},
- '569': {'class_type': 'LTXVCropGuides',
-         'inputs': {'positive': ['576', 0], 'negative': ['577', 0], 'latent': ['125', 0]}},
- '577': {'class_type': 'GetNode', 'inputs': {'widget_0': 'negative'}},
- '394': {'class_type': 'TrimAudioDuration',
-         'inputs': {'widget_0': 0, 'widget_1': 2048, 'audio': ['425', 0], 'start_index': ['398', 0]}},
- '398': {'class_type': 'GetNode', 'inputs': {'widget_0': 'overlap_seconds'}},
- '453': {'class_type': 'SetNode', 'inputs': {'widget_0': 'final_audio', 'AUDIO': ['393', 0]}},
- '403': {'class_type': 'ImageBatchMulti', 'inputs': {'widget_0': 2, 'image_1': ['363', 0], 'image_2': ['306', 0]}},
- '363': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_video'}},
- '541': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_video'}},
- '393': {'class_type': 'AudioConcat', 'inputs': {'widget_0': 'after', 'audio1': ['392', 0], 'audio2': ['394', 0]}},
- '392': {'class_type': 'GetNode', 'inputs': {'widget_0': 'ref_audio'}},
- '451': {'class_type': 'SetNode', 'inputs': {'widget_0': 'final_video_cut', 'IMAGE': ['403', 0]}},
- '574': {'class_type': 'SetNode', 'inputs': {'widget_0': 'final_video_blend', 'IMAGE': ['536', 2]}},
- '527': {'class_type': 'VAEDecode', 'inputs': {'samples': ['569', 2], 'vae': ['220', 0]}},
- '127': {'class_type': 'VAEDecodeTiled', 'inputs': {'widget_0': 512, 'widget_1': 64, 'widget_2': 4096, 'widget_3': 8}},
- '219': {'class_type': 'GetNode', 'inputs': {'widget_0': 'vae_audio'}},
- '425': {'class_type': 'LTXVAudioVAEDecode', 'inputs': {'samples': ['125', 1], 'audio_vae': ['219', 0]}},
- '536': {'class_type': 'ImageBatchExtendWithOverlap',
-         'inputs': {'widget_0': 1,
-                    'widget_1': 'source',
-                    'widget_2': 'perceptual_crossfade',
-                    'source_images': ['541', 0],
-                    'new_images': ['528', 0],
-                    'overlap': ['542', 0]}},
- '306': {'class_type': 'GetImageRangeFromBatch',
-         'inputs': {'widget_0': 0, 'widget_1': 4096, 'images': ['528', 0], 'start_index': ['326', 0]}},
- '243': {'class_type': 'RandomNoise', 'inputs': {'widget_0': 432, 'widget_1': 'fixed'}},
- '115': {'class_type': 'RandomNoise', 'inputs': {'widget_0': 42, 'widget_1': 'fixed'}},
- '546': {'class_type': 'VAEEncode', 'inputs': {'pixels': ['556', 0], 'vae': ['555', 0]}},
- '464': {'class_type': 'LoraLoaderModelOnly',
-         'inputs': {'widget_0': 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors',
-                    'widget_1': 0.6,
-                    'model': ['474', 0]}},
- '640': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_audio'}},
- '641': {'class_type': 'GetNode', 'inputs': {'widget_0': 'fps'}},
- '628': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_video_cut'}},
- '581': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_video_blend'}},
- '579': {'class_type': 'GetNode', 'inputs': {'widget_0': 'final_audio'}},
- '592': {'class_type': 'CLIPTextEncode',
-         'inputs': {'widget_0': '= from prompt enhancer = ', 'clip': ['215', 0], 'text': ['599', 0]}},
- '563': {'class_type': 'LTX2_NAG',
-         'inputs': {'widget_0': 11,
-                    'widget_1': 0.25,
-                    'widget_2': 2.5,
-                    'widget_3': True,
-                    'model': ['368', 0],
-                    'nag_cond_video': ['110', 0],
-                    'nag_cond_audio': ['626', 0]}},
- '626': {'class_type': 'CLIPTextEncode',
-         'inputs': {'widget_0': ' distorted sound, saturated sound, loud sound', 'clip': ['215', 0]}},
- '110': {'class_type': 'CLIPTextEncode',
-         'inputs': {'widget_0': 'text, subtitles, logo, low quality, distorted, bad anatomy, oversaturated, pixelated, '
-                                'low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, '
-                                'signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial '
-                                'features, asymmetrical face, missing facial features, extra limbs, disfigured hands, '
-                                'blurry teeth, disfigured teeth',
-                    'clip': ['215', 0]}},
- '578': {'class_type': 'VHS_VideoCombine',
-         'inputs': {'images': ['581', 0], 'audio': ['579', 0], 'frame_rate': ['580', 0]}},
- '627': {'class_type': 'VHS_VideoCombine',
-         'inputs': {'images': ['628', 0], 'audio': ['640', 0], 'frame_rate': ['641', 0]}},
- '522': {'class_type': 'LTXVChunkFeedForward', 'inputs': {'widget_0': 2, 'widget_1': 4096, 'model': ['521', 0]}},
- '523': {'class_type': 'LTX2AttentionTunerPatch',
-         'inputs': {'widget_0': '',
-                    'widget_1': 1,
-                    'widget_2': 1,
-                    'widget_3': 1,
-                    'widget_4': 1,
-                    'widget_5': True,
-                    'model': ['522', 0]}},
- '519': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': '**A LITTLE USAGE TIP** \n'
-                                '\n'
-                                'If you want to start extending earlier (aka cut some from end of input video) you can '
-                                'use **frame_load_cap** in the video loader node and set max frames to use. And vice '
-                                'verse if you want to cut off some of the start of your input video you can use  '
-                                '**skip_first_frames** '}},
- '524': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': '**MAX SIZE**:  Max pixels of the output video (longest side). If lower ram/vram try '
-                                'reasonable sizes such as 768,  832 or 960. And if the original video is lower than '
-                                'that, set same as original video \n'
-                                '\n'
-                                '**EXTEND in seconds** : How much to add to your video. LTX works best with 5s, 10s or '
-                                '15s\n'
-                                '\n'
-                                'You can do multiple times though. For example first extend 10 seconds, then use the '
-                                'extended video and extend another 10 seconds and so on  (you should be able to do '
-                                'this for quite a long shot, but the quality and consistency might degrade over '
-                                'time)\n'}},
- '633': {'class_type': 'MarkdownNote',
-         'inputs': {'widget_0': 'The single pass workflow mode can work best for since 2-pass workflow the frames runs '
-                                'through 2 samplers and might introduce slight difference in color tones and sharpness '
-                                'compared input video. The blend frames output at end will help make that be more '
-                                'seamless though. \n'
-                                '\n'
-                                '2-pass workflow is usually a faster and easier on ram/vram though. Feel free to try '
-                                'both modes with an easy toggle on/off\n'}},
- '319': {'class_type': 'VHS_LoadVideo',
-         'inputs': {'file': 'ltx_smoke_guide.mp4',
-                    'video': 'ltx_smoke_guide.mp4',
-                    'widget_0': 'ltx_smoke_guide.mp4',
-                    'force_rate': ['221', 0]}},
- '512': {'class_type': 'ImageResizeKJv2',
-         'inputs': {'widget_0': 512,
-                    'widget_1': 512,
-                    'widget_2': 'lanczos',
-                    'widget_3': 'crop',
-                    'widget_4': '0, 0, 0',
-                    'widget_5': 'center',
-                    'widget_6': 64,
-                    'widget_7': 'cpu',
-                    'image': ['506', 0],
-                    'width': ['506', 1],
-                    'height': ['506', 2]}},
- '497': {'class_type': 'INTConstant', 'inputs': {'widget_0': 832}},
- '211': {'class_type': 'INTConstant', 'inputs': {'widget_0': 10}},
- '487': {'class_type': 'PrimitiveStringMultiline',
-         'inputs': {'widget_0': 'The Joker looks at the camera and talks, he says "You know what clownheads. This '
-                                'scene is not from the movie. Its from LTX 2 point 3". \n'
-                                '\n'
-                                'Then the Joker stands up with an LTX soda can in his hand. \n'
-                                '\n'
-                                'He drinks from the soda can, and then he says "Ahhh...  with a bit of LTX and '
-                                'Snickers, my mood changed. Lets all be friends." \n'
-                                '\n'
-                                'Then he laughs.\n'}},
- '642': {'class_type': 'LoadAudio', 'inputs': {'audio': 'speech_smoke.wav', 'widget_0': 'speech_smoke.wav'}}}
 
 READY_METADATA = {'model_assets': [],
  'unbound_inputs': {'seed': 4642},
@@ -371,18 +24,688 @@ READY_METADATA = {'model_assets': [],
                         'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.',
                         'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes '
                         'model_mmap_residency for LatentUpscaleModelManageable.',
-                        'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom '
-                        'node packs and service credentials are declared.'],
+                        'Keep community audio, lip-sync, and long-form workflows as ready templates until '
+                        'their custom node packs and service credentials are declared.'],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
-READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
+READY_REQUIREMENTS = {'models': [],
+ 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
 
 
-def build():
-    return build_api_ready_workflow(
-        API_WORKFLOW,
-        source_path=__file__,
-        workflow_id=READY_METADATA.get("ready_template", "video/ltx2_3_runexx_video_to_video_extend"),
-        ready_metadata=READY_METADATA,
-        requirements=READY_REQUIREMENTS,
+def build() -> VibeWorkflow:
+    """Build the workflow (auto-generated)."""
+    wf = VibeWorkflow(
+        READY_METADATA["ready_template"],
+        WorkflowSource(
+            id=READY_METADATA["ready_template"],
+            path=__file__,
+            source_type="ready_template",
+        ),
     )
+
+    randomnoise = _node(wf, 'RandomNoise', '115',
+        noise_seed=42,
+        control_after_generate='fixed',
+    )
+    vaedecodetiled = _node(wf, 'VAEDecodeTiled', '127',
+        tile_size=512,
+        overlap=64,
+        temporal_size=4096,
+        temporal_overlap=8,
+    )
+    ksamplerselect = _node(wf, 'KSamplerSelect', '137',
+        sampler_name='euler_ancestral',
+    )
+    intconstant = _node(wf, 'INTConstant', '211',
+        widget_0=10,
+    )
+    primitivefloat = _node(wf, 'PrimitiveFloat', '214',
+        value=8,
+    )
+    getnode = _node(wf, 'GetNode', '215',
+        widget_0='clip',
+    )
+    getnode_2 = _node(wf, 'GetNode', '216',
+        widget_0='vae_audio',
+    )
+    getnode_3 = _node(wf, 'GetNode', '217',
+        widget_0='vae',
+    )
+    getnode_4 = _node(wf, 'GetNode', '219',
+        widget_0='vae_audio',
+    )
+    getnode_5 = _node(wf, 'GetNode', '220',
+        widget_0='vae',
+    )
+    getnode_6 = _node(wf, 'GetNode', '221',
+        widget_0='fps',
+    )
+    getnode_7 = _node(wf, 'GetNode', '222',
+        widget_0='fps',
+    )
+    getnode_8 = _node(wf, 'GetNode', '223',
+        widget_0='fps',
+    )
+    getnode_9 = _node(wf, 'GetNode', '242',
+        widget_0='upscale_model',
+    )
+    randomnoise_2 = _node(wf, 'RandomNoise', '243',
+        noise_seed=432,
+        control_after_generate='fixed',
+    )
+    getnode_10 = _node(wf, 'GetNode', '244',
+        widget_0='vae',
+    )
+    ksamplerselect_2 = _node(wf, 'KSamplerSelect', '254',
+        sampler_name='euler',
+    )
+    intconstant_2 = _node(wf, 'INTConstant', '305',
+        widget_0=3,
+    )
+    getnode_11 = _node(wf, 'GetNode', '326',
+        widget_0='ref_frames',
+    )
+    getnode_12 = _node(wf, 'GetNode', '356',
+        widget_0='ext_seconds',
+    )
+    getnode_13 = _node(wf, 'GetNode', '363',
+        widget_0='ref_video',
+    )
+    getnode_14 = _node(wf, 'GetNode', '369',
+        widget_0='model',
+    )
+    getnode_15 = _node(wf, 'GetNode', '380',
+        widget_0='ref_frames',
+    )
+    getnode_16 = _node(wf, 'GetNode', '392',
+        widget_0='ref_audio',
+    )
+    getnode_17 = _node(wf, 'GetNode', '398',
+        widget_0='overlap_seconds',
+    )
+    getnode_18 = _node(wf, 'GetNode', '408',
+        widget_0='vae_tiny',
+    )
+    getnode_19 = _node(wf, 'GetNode', '439',
+        widget_0='ref_image_overlap',
+    )
+    getnode_20 = _node(wf, 'GetNode', '442',
+        widget_0='vae',
+    )
+    vaeloader = _node(wf, 'VAELoader', '463',
+        vae_name='LTX23_video_vae_bf16.safetensors',
+    )
+    latentupscalemodelloader = _node(wf, 'LatentUpscaleModelLoader', '465',
+        widget_0='ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
+    )
+    dualcliploader = _node(wf, 'DualCLIPLoader', '466',
+        clip_name1='gemma_3_12B_it_fp4_mixed.safetensors',
+        clip_name2='ltx-2.3_text_projection_bf16.safetensors',
+        type='ltxv',
+        device='default',
+    )
+    vaeloaderkj = _node(wf, 'VAELoaderKJ', '471',
+        widget_0='LTX23_audio_vae_bf16.safetensors',
+        widget_1='main_device',
+        widget_2='bf16',
+    )
+    vaeloader_2 = _node(wf, 'VAELoader', '473',
+        vae_name='taeltx2_3.safetensors',
+    )
+    unetloader = _node(wf, 'UNETLoader', '474',
+        unet_name='ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors',
+        weight_dtype='default',
+    )
+    unetloadergguf = _node(wf, 'UnetLoaderGGUF', '475',
+        widget_0='LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf',
+    )
+    dualcliploadergguf = _node(wf, 'DualCLIPLoaderGGUF', '477',
+        widget_0='gemma-3-12b-it-Q2_K.gguf',
+        widget_1='ltx-2.3_text_projection_bf16.safetensors',
+        widget_2='sdxl',
+    )
+    manualsigmas = _node(wf, 'ManualSigmas', '479',
+        widget_0='0.85, 0.7250, 0.4219, 0.0',
+    )
+    manualsigmas_2 = _node(wf, 'ManualSigmas', '480',
+        widget_0='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
+    )
+    primitivestringmultiline = _node(wf, 'PrimitiveStringMultiline', '487',
+        value='The Joker looks at the camera and talks, he says "You know what clownheads. This scene is not from the movie. Its from LTX 2 point 3". \n\nThen the Joker stands up with an LTX soda can in his hand. \n\nHe drinks from the soda can, and then he says "Ahhh...  with a bit of LTX and Snickers, my mood changed. Lets all be friends." \n\nThen he laughs.\n',
+    )
+    reroute = _node(wf, 'Reroute', '496')
+    intconstant_3 = _node(wf, 'INTConstant', '497',
+        widget_0=832,
+    )
+    getnode_21 = _node(wf, 'GetNode', '502',
+        widget_0='max_size',
+    )
+    getnode_22 = _node(wf, 'GetNode', '507',
+        widget_0='max_size',
+    )
+    getnode_23 = _node(wf, 'GetNode', '508',
+        widget_0='ref_image',
+    )
+    getnode_24 = _node(wf, 'GetNode', '514',
+        widget_0='overlap_seconds',
+    )
+    reroute_2 = _node(wf, 'Reroute', '528')
+    getnode_25 = _node(wf, 'GetNode', '541',
+        widget_0='ref_video',
+    )
+    getnode_26 = _node(wf, 'GetNode', '542',
+        widget_0='ref_frames',
+    )
+    getnode_27 = _node(wf, 'GetNode', '555',
+        widget_0='vae',
+    )
+    getnode_28 = _node(wf, 'GetNode', '572',
+        widget_0='positive',
+    )
+    getnode_29 = _node(wf, 'GetNode', '573',
+        widget_0='negative',
+    )
+    getnode_30 = _node(wf, 'GetNode', '576',
+        widget_0='positive',
+    )
+    getnode_31 = _node(wf, 'GetNode', '577',
+        widget_0='negative',
+    )
+    getnode_32 = _node(wf, 'GetNode', '579',
+        widget_0='final_audio',
+    )
+    getnode_33 = _node(wf, 'GetNode', '580',
+        widget_0='fps',
+    )
+    getnode_34 = _node(wf, 'GetNode', '581',
+        widget_0='final_video_blend',
+    )
+    primitiveboolean = _node(wf, 'PrimitiveBoolean', '594',
+        value=True,
+    )
+    getnode_35 = _node(wf, 'GetNode', '600',
+        widget_0='clip',
+    )
+    getnode_36 = _node(wf, 'GetNode', '602',
+        widget_0='enable_promptenhance',
+    )
+    getnode_37 = _node(wf, 'GetNode', '606',
+        widget_0='fps',
+    )
+    getnode_38 = _node(wf, 'GetNode', '628',
+        widget_0='final_video_cut',
+    )
+    getnode_39 = _node(wf, 'GetNode', '638',
+        widget_0='ref_video',
+    )
+    getnode_40 = _node(wf, 'GetNode', '640',
+        widget_0='final_audio',
+    )
+    getnode_41 = _node(wf, 'GetNode', '641',
+        widget_0='fps',
+    )
+    loadaudio = _node(wf, 'LoadAudio', '642',
+        audio='speech_smoke.wav',
+        widget_0='speech_smoke.wav',
+    )
+    cliptextencode = _node(wf, 'CLIPTextEncode', '110',
+        text='text, subtitles, logo, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth',
+        clip=getnode.out(0),
+    )
+    setnode_3 = _node(wf, 'SetNode', '209',
+        widget_0='ext_seconds',
+        INT=intconstant.out(0),
+    )
+    setnode_4 = _node(wf, 'SetNode', '210',
+        widget_0='fps',
+        FLOAT=primitivefloat.out(0),
+    )
+    getimagerangefrombatch = _node(wf, 'GetImageRangeFromBatch', '306',
+        widget_0=0,
+        widget_1=4096,
+        images=reroute_2.out(0),
+        start_index=getnode_11.out(0),
+    )
+    vhs_loadvideo = _node(wf, 'VHS_LoadVideo', '319',
+        file='ltx_smoke_guide.mp4',
+        video='ltx_smoke_guide.mp4',
+        widget_0='ltx_smoke_guide.mp4',
+        force_rate=getnode_6.out(0),
+    )
+    simplecalculatorkj = _node(wf, 'SimpleCalculatorKJ', '352',
+        widget_0='((round((a * b -1) / 8)) * 8) + 1 ',
+        _extras={'variables.a': intconstant.out(0), 'variables.b': primitivefloat.out(0)},
+    )
+    simplecalculatorkj_2 = _node(wf, 'SimpleCalculatorKJ', '357',
+        widget_0='a + b',
+        _extras={'variables.a': getnode_12.out(0), 'variables.b': getnode_24.out(0)},
+    )
+    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '368',
+        widget_0=8,
+        model=getnode_14.out(0),
+        vae=getnode_18.out(0),
+    )
+    getimagerangefrombatch_2 = _node(wf, 'GetImageRangeFromBatch', '379',
+        widget_0=-1,
+        widget_1=1,
+        images=getnode_39.out(0),
+        num_frames=getnode_15.out(0),
+    )
+    normalizeaudioloudness = _node(wf, 'NormalizeAudioLoudness', '443',
+        widget_0=-16,
+        audio=loadaudio.out(0),
+    )
+    setnode_16 = _node(wf, 'SetNode', '459',
+        widget_0='upscale_model',
+        LATENT_UPSCALE_MODEL=latentupscalemodelloader.out(0),
+    )
+    setnode_17 = _node(wf, 'SetNode', '460',
+        widget_0='vae_audio',
+        VAE=vaeloaderkj.out(0),
+    )
+    setnode_18 = _node(wf, 'SetNode', '461',
+        widget_0='vae',
+        VAE=vaeloader.out(0),
+    )
+    setnode_19 = _node(wf, 'SetNode', '462',
+        widget_0='clip',
+        CLIP=dualcliploader.out(0),
+    )
+    loraloadermodelonly = _node(wf, 'LoraLoaderModelOnly', '464',
+        lora_name='LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors',
+        strength_model=0.6,
+        model=unetloader.out(0),
+    )
+    setnode_20 = _node(wf, 'SetNode', '472',
+        widget_0='vae_tiny',
+        VAE=vaeloader_2.out(0),
+    )
+    setnode_22 = _node(wf, 'SetNode', '498',
+        widget_0='max_size',
+        INT=intconstant_3.out(0),
+    )
+    resizeimagesbylongeredge_2 = _node(wf, 'ResizeImagesByLongerEdge', '505',
+        widget_0=1536,
+        images=reroute.out(0),
+        longer_edge=getnode_22.out(0),
+    )
+    imagebatchextendwithoverlap = _node(wf, 'ImageBatchExtendWithOverlap', '536',
+        widget_0=1,
+        widget_1='source',
+        widget_2='perceptual_crossfade',
+        new_images=reroute_2.out(0),
+        overlap=getnode_26.out(0),
+        source_images=getnode_25.out(0),
+    )
+    vhs_videocombine = _node(wf, 'VHS_VideoCombine', '578',
+        audio=getnode_32.out(0),
+        frame_rate=getnode_33.out(0),
+        images=getnode_34.out(0),
+    )
+    n_6002fb3c_ab34_4ad8_894e_fccaa60fd8c9 = _node(wf, '6002fb3c-ab34-4ad8-894e-fccaa60fd8c9', '599',
+        clip=getnode_35.out(0),
+        image=getnode_23.out(0),
+        string_b=primitivestringmultiline.out(0),
+    )
+    setnode_25 = _node(wf, 'SetNode', '601',
+        widget_0='enable_promptenhance',
+        BOOLEAN=primitiveboolean.out(0),
+    )
+    simplecalculatorkj_6 = _node(wf, 'SimpleCalculatorKJ', '605',
+        widget_0='((round((a * b -1) / 8)) * 8) + 1 ',
+        _extras={'variables.a': intconstant_2.out(0), 'variables.b': getnode_37.out(0)},
+    )
+    cliptextencode_3 = _node(wf, 'CLIPTextEncode', '626',
+        text=' distorted sound, saturated sound, loud sound',
+        clip=getnode.out(0),
+    )
+    vhs_videocombine_2 = _node(wf, 'VHS_VideoCombine', '627',
+        audio=getnode_40.out(0),
+        frame_rate=getnode_41.out(0),
+        images=getnode_38.out(0),
+    )
+    setnode_9 = _node(wf, 'SetNode', '310',
+        widget_0='ref_frames',
+        INT=simplecalculatorkj_6.out(1),
+    )
+    setnode_11 = _node(wf, 'SetNode', '329',
+        widget_0='ref_audio',
+        AUDIO=normalizeaudioloudness.out(0),
+    )
+    setnode_12 = _node(wf, 'SetNode', '349',
+        widget_0='extended_frames',
+        INT=simplecalculatorkj.out(1),
+    )
+    vhs_videoinfo = _node(wf, 'VHS_VideoInfo', '382',
+        video_info=vhs_loadvideo.out(3),
+    )
+    imagebatchmulti = _node(wf, 'ImageBatchMulti', '403',
+        widget_0=2,
+        image_1=getnode_13.out(0),
+        image_2=getimagerangefrombatch.out(0),
+    )
+    resizeimagemasknode = _node(wf, 'ResizeImageMaskNode', '436',
+        widget_0='scale by multiplier',
+        widget_1=256,
+        widget_2='area',
+        input=getimagerangefrombatch_2.out(0),
+    )
+    vhs_videoinfo_2 = _node(wf, 'VHS_VideoInfo', '492',
+        video_info=vhs_loadvideo.out(3),
+    )
+    pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '520',
+        widget_0='auto',
+        widget_1=False,
+        model=loraloadermodelonly.out(0),
+    )
+    modelsamplingsd3 = _node(wf, 'ModelSamplingSD3', '526',
+        shift=13,
+        model=ltx2samplingpreviewoverride.out(0),
+    )
+    ltx2_nag = _node(wf, 'LTX2_NAG', '563',
+        widget_0=11,
+        widget_1=0.25,
+        widget_2=2.5,
+        widget_3=True,
+        model=ltx2samplingpreviewoverride.out(0),
+        nag_cond_audio=cliptextencode_3.out(0),
+        nag_cond_video=cliptextencode.out(0),
+    )
+    getimagerangefrombatch_5 = _node(wf, 'GetImageRangeFromBatch', '566',
+        widget_0=0,
+        widget_1=1,
+        images=getimagerangefrombatch_2.out(0),
+    )
+    setnode_24 = _node(wf, 'SetNode', '574',
+        widget_0='final_video_blend',
+        IMAGE=imagebatchextendwithoverlap.out(2),
+    )
+    cliptextencode_2 = _node(wf, 'CLIPTextEncode', '592',
+        widget_0='= from prompt enhancer = ',
+        text=n_6002fb3c_ab34_4ad8_894e_fccaa60fd8c9.out(0),
+        clip=getnode.out(0),
+    )
+    basicscheduler = _node(wf, 'BasicScheduler', '164',
+        scheduler=1,
+        steps=1,
+        denoise=1,
+        widget_1=8,
+        model=modelsamplingsd3.out(0),
+    )
+    simplecalculatorkj_3 = _node(wf, 'SimpleCalculatorKJ', '384',
+        widget_0='a / b',
+        _extras={'variables.a': getnode_15.out(0), 'variables.b': vhs_videoinfo.out(5)},
+    )
+    setnode_14 = _node(wf, 'SetNode', '451',
+        widget_0='final_video_cut',
+        IMAGE=imagebatchmulti.out(0),
+    )
+    simplecalculatorkj_5 = _node(wf, 'SimpleCalculatorKJ', '500',
+        widget_0='(a > c) or (b > c) ',
+        _extras={'variables.a': vhs_videoinfo_2.out(8), 'variables.b': vhs_videoinfo_2.out(9), 'variables.c': getnode_21.out(0)},
+    )
+    ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '521',
+        widget_0=True,
+        model=pathchsageattentionkj.out(0),
+    )
+    getimagerangefrombatch_4 = _node(wf, 'GetImageRangeFromBatch', '556',
+        widget_0=-1,
+        widget_1=1,
+        images=resizeimagemasknode.out(0),
+    )
+    vaeencode_2 = _node(wf, 'VAEEncode', '565',
+        pixels=resizeimagemasknode.out(0),
+        vae=getnode_3.out(0),
+    )
+    setnode_23 = _node(wf, 'SetNode', '567',
+        widget_0='ref_image_overlap',
+        IMAGE=getimagerangefrombatch_5.out(0),
+    )
+    simplecalculatorkj_4 = _node(wf, 'SimpleCalculatorKJ', '386',
+        widget_0='a - b',
+        _extras={'variables.a': vhs_videoinfo.out(7), 'variables.b': simplecalculatorkj_3.out(0)},
+    )
+    setnode_13 = _node(wf, 'SetNode', '397',
+        widget_0='overlap_seconds',
+        FLOAT=simplecalculatorkj_3.out(0),
+    )
+    lazyswitchkj = _node(wf, 'LazySwitchKJ', '504',
+        widget_0=False,
+        on_false=reroute.out(0),
+        on_true=resizeimagesbylongeredge_2.out(0),
+        switch=simplecalculatorkj_5.out(2),
+    )
+    ltxvchunkfeedforward = _node(wf, 'LTXVChunkFeedForward', '522',
+        widget_0=2,
+        widget_1=4096,
+        model=ltx2memoryefficientsageattentionpatch.out(0),
+    )
+    vaeencode = _node(wf, 'VAEEncode', '546',
+        pixels=getimagerangefrombatch_4.out(0),
+        vae=getnode_27.out(0),
+    )
+    trimaudioduration = _node(wf, 'TrimAudioDuration', '377',
+        widget_0=0,
+        widget_1=60,
+        audio=normalizeaudioloudness.out(0),
+        duration=simplecalculatorkj_3.out(0),
+        start_index=simplecalculatorkj_4.out(0),
+    )
+    getimagesizeandcount = _node(wf, 'GetImageSizeAndCount', '506',
+        image=lazyswitchkj.out(0),
+    )
+    ltx2attentiontunerpatch = _node(wf, 'LTX2AttentionTunerPatch', '523',
+        widget_0='',
+        widget_1=1,
+        widget_2=1,
+        widget_3=1,
+        widget_4=1,
+        widget_5=True,
+        model=ltxvchunkfeedforward.out(0),
+    )
+    ltxvaudiovaeencode = _node(wf, 'LTXVAudioVAEEncode', '179',
+        audio=trimaudioduration.out(0),
+        audio_vae=getnode_2.out(0),
+    )
+    setnode_21 = _node(wf, 'SetNode', '481',
+        widget_0='model',
+        MODEL=ltx2attentiontunerpatch.out(0),
+    )
+    imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '512',
+        widget_0=512,
+        widget_1=512,
+        widget_2='lanczos',
+        widget_3='crop',
+        widget_4='0, 0, 0',
+        widget_5='center',
+        widget_6=64,
+        widget_7='cpu',
+        height=getimagesizeandcount.out(2),
+        image=getimagesizeandcount.out(0),
+        width=getimagesizeandcount.out(1),
+    )
+    ltxvaudiovideomask = _node(wf, 'LTXVAudioVideoMask', '178',
+        widget_0=24,
+        widget_1=0,
+        widget_2=15,
+        widget_3=0,
+        widget_4=15,
+        widget_5='pad',
+        widget_6='add',
+        audio_end_time=simplecalculatorkj_2.out(0),
+        audio_latent=ltxvaudiovaeencode.out(0),
+        audio_start_time=getnode_24.out(0),
+        video_end_time=simplecalculatorkj_2.out(0),
+        video_fps=getnode_8.out(0),
+        video_latent=vaeencode_2.out(0),
+        video_start_time=getnode_24.out(0),
+    )
+    setnode = _node(wf, 'SetNode', '207',
+        widget_0='width',
+        INT=imageresizekjv2.out(1),
+    )
+    setnode_2 = _node(wf, 'SetNode', '208',
+        widget_0='height',
+        INT=imageresizekjv2.out(2),
+    )
+    setnode_10 = _node(wf, 'SetNode', '328',
+        widget_0='ref_video',
+        IMAGE=imageresizekjv2.out(0),
+    )
+    getimagerangefrombatch_3 = _node(wf, 'GetImageRangeFromBatch', '440',
+        widget_0=0,
+        widget_1=1,
+        images=imageresizekjv2.out(0),
+    )
+    resizeimagesbylongeredge = _node(wf, 'ResizeImagesByLongerEdge', '495',
+        widget_0=1536,
+        images=getimagerangefrombatch_3.out(0),
+    )
+    ltxvaddlatentguide = _node(wf, 'LTXVAddLatentGuide', '545',
+        widget_0=-1,
+        widget_1=1,
+        guiding_latent=vaeencode.out(0),
+        latent=ltxvaudiovideomask.out(0),
+        negative=cliptextencode.out(0),
+        positive=cliptextencode_2.out(0),
+        vae=getnode_27.out(0),
+    )
+    ltxvconditioning = _node(wf, 'LTXVConditioning', '107',
+        widget_0=8,
+        frame_rate=getnode_7.out(0),
+        negative=ltxvaddlatentguide.out(1),
+        positive=ltxvaddlatentguide.out(0),
+    )
+    ltxvconcatavlatent = _node(wf, 'LTXVConcatAVLatent', '109',
+        audio_latent=ltxvaudiovideomask.out(1),
+        video_latent=ltxvaddlatentguide.out(2),
+    )
+    setnode_8 = _node(wf, 'SetNode', '294',
+        widget_0='ref_image',
+        IMAGE=resizeimagesbylongeredge.out(0),
+    )
+    ltxvpreprocess = _node(wf, 'LTXVPreprocess', '299',
+        widget_0=18,
+        image=resizeimagesbylongeredge.out(0),
+    )
+    cfgguider = _node(wf, 'CFGGuider', '129',
+        cfg=2.5,
+        model=ltx2_nag.out(0),
+        negative=ltxvconditioning.out(1),
+        positive=ltxvconditioning.out(0),
+    )
+    setnode_5 = _node(wf, 'SetNode', '224',
+        widget_0='positive',
+        CONDITIONING=ltxvconditioning.out(0),
+    )
+    setnode_6 = _node(wf, 'SetNode', '225',
+        widget_0='negative',
+        CONDITIONING=ltxvconditioning.out(1),
+    )
+    setnode_7 = _node(wf, 'SetNode', '285',
+        widget_0='compress_image',
+        IMAGE=ltxvpreprocess.out(0),
+    )
+    samplercustomadvanced = _node(wf, 'SamplerCustomAdvanced', '113',
+        guider=cfgguider.out(0),
+        latent_image=ltxvconcatavlatent.out(0),
+        noise=randomnoise.out(0),
+        sampler=ksamplerselect.out(0),
+        sigmas=basicscheduler.out(0),
+    )
+    ltxvseparateavlatent_2 = _node(wf, 'LTXVSeparateAVLatent', '250',
+        av_latent=samplercustomadvanced.out(0),
+    )
+    ltxvcropguides = _node(wf, 'LTXVCropGuides', '549',
+        latent=ltxvseparateavlatent_2.out(0),
+        negative=getnode_29.out(0),
+        positive=getnode_28.out(0),
+    )
+    cfgguider_2 = _node(wf, 'CFGGuider', '256',
+        cfg=2.5,
+        model=ltx2_nag.out(0),
+        negative=ltxvcropguides.out(1),
+        positive=ltxvcropguides.out(0),
+    )
+    ltxvimgtovideoinplace = _node(wf, 'LTXVImgToVideoInplace', '438',
+        widget_0=1,
+        widget_1=False,
+        image=getnode_19.out(0),
+        latent=ltxvcropguides.out(2),
+        vae=getnode_20.out(0),
+    )
+    ltxvconcatavlatent_2 = _node(wf, 'LTXVConcatAVLatent', '251',
+        audio_latent=ltxvseparateavlatent_2.out(1),
+        video_latent=ltxvimgtovideoinplace.out(0),
+    )
+    samplercustomadvanced_2 = _node(wf, 'SamplerCustomAdvanced', '258',
+        guider=cfgguider_2.out(0),
+        latent_image=ltxvconcatavlatent_2.out(0),
+        noise=randomnoise_2.out(0),
+        sampler=ksamplerselect_2.out(0),
+        sigmas=manualsigmas.out(0),
+    )
+    ltxvseparateavlatent = _node(wf, 'LTXVSeparateAVLatent', '125',
+        av_latent=samplercustomadvanced_2.out(0),
+    )
+    ltxvaudiovaedecode = _node(wf, 'LTXVAudioVAEDecode', '425',
+        audio_vae=getnode_4.out(0),
+        samples=ltxvseparateavlatent.out(1),
+    )
+    ltxvcropguides_2 = _node(wf, 'LTXVCropGuides', '569',
+        latent=ltxvseparateavlatent.out(0),
+        negative=getnode_31.out(0),
+        positive=getnode_30.out(0),
+    )
+    trimaudioduration_2 = _node(wf, 'TrimAudioDuration', '394',
+        widget_0=0,
+        widget_1=2048,
+        audio=ltxvaudiovaedecode.out(0),
+        start_index=getnode_17.out(0),
+    )
+    vaedecode = _node(wf, 'VAEDecode', '527',
+        samples=ltxvcropguides_2.out(2),
+        vae=getnode_5.out(0),
+    )
+    audioconcat = _node(wf, 'AudioConcat', '393',
+        widget_0='after',
+        audio1=getnode_16.out(0),
+        audio2=trimaudioduration_2.out(0),
+    )
+    setnode_15 = _node(wf, 'SetNode', '453',
+        widget_0='final_audio',
+        AUDIO=audioconcat.out(0),
+    )
+
+    wf.finalize_metadata()
+    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    return wf
+
+
+def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
+    """Create a node, preserving the original node id from the source workflow.
+
+    `_extras` carries kwargs whose names are not valid Python identifiers
+    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
+    They are applied to the new node post-construction.
+    """
+    from vibecomfy.handles import Handle
+    builder = wf.node(class_type, **kwargs)
+    if _extras:
+        for key, value in _extras.items():
+            if isinstance(value, Handle):
+                wf.connect(value, f"{builder.node.id}.{key}")
+            else:
+                builder.node.inputs[key] = value
+    if builder.node.id != _id:
+        old_id = builder.node.id
+        node = wf.nodes.pop(old_id)
+        node.id = _id
+        wf.nodes[_id] = node
+        for edge in wf.edges:
+            if edge.to_node == old_id:
+                edge.to_node = _id
+            if edge.from_node == old_id:
+                edge.from_node = _id
+    return builder
+

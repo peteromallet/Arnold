@@ -1,4 +1,12 @@
 [
-  "9b9009e4-2d3d-445f-9be5-6063f465757e",
-  "SaveImage"
+  "CLIPLoader",
+  "CLIPTextEncode",
+  "CLIPTextEncode",
+  "EmptySD3LatentImage",
+  "KSampler",
+  "ModelSamplingAuraFlow",
+  "SaveImage",
+  "UNETLoader",
+  "VAEDecode",
+  "VAELoader"
 ]

@@ -1,6 +1,7 @@
 [
   "CLIPLoader",
   "CLIPTextEncode",
+  "CLIPTextEncode",
   "CLIPVisionEncode",
   "CLIPVisionLoader",
   "CreateVideo",

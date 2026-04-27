@@ -1,3 +1,4 @@
+# vibecomfy: manual — hand-authored reference, do not regenerate
 """z_image text-to-image template — hand-authored real Python.
 
 Sample of what a fully-converted ready_template should look like:
