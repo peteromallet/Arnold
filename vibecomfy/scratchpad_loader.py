@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from typing import Any
 
 from vibecomfy.schema import SchemaProvider
 
@@ -34,6 +35,31 @@ from vibecomfy.schema import get_schema_provider
 
 def build():
     workflow = {loader}({source_literal}{provider_arg})
+    # Edit this file with VibeWorkflow methods, for example:
+    # workflow.set_prompt("a cinematic robot painter")
+    # workflow.set_seed(123)
+    # workflow.set_steps(20)
+    return workflow
+
+
+async def main():
+    result = await run(build())
+    print(result.outputs)
+'''
+
+
+def render_scratchpad_from_dict(api_workflow: dict[str, Any], *, schema_provider: SchemaProvider | None = None) -> str:
+    provider_arg = ', schema_provider=get_schema_provider("auto")' if schema_provider is not None else ""
+    return f'''from vibecomfy.ingest.normalize import convert_to_vibe_format
+from vibecomfy.runtime import run
+from vibecomfy.schema import get_schema_provider
+
+
+API_WORKFLOW = {api_workflow!r}
+
+
+def build():
+    workflow = convert_to_vibe_format(API_WORKFLOW{provider_arg})
     # Edit this file with VibeWorkflow methods, for example:
     # workflow.set_prompt("a cinematic robot painter")
     # workflow.set_seed(123)

@@ -10,7 +10,7 @@ from vibecomfy.cli import build_parser
 from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
-from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list
+from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore
 import vibecomfy.node_packs_install as node_packs_install
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
@@ -355,6 +355,48 @@ def test_cmd_nodes_install_translates_install_result_to_exit_codes(
     assert f"ExamplePack: {status}" in captured.out
     if expected_code:
         assert "install issue" in captured.err
+    else:
+        assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code"),
+    [
+        ("installed", 0),
+        ("refreshed", 0),
+        ("skipped_dirty", 1),
+        ("failed", 1),
+    ],
+)
+def test_cmd_nodes_restore_translates_results_to_exit_codes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+    expected_code: int,
+) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text("ExamplePack abc123 https://example.test/example.git\n", encoding="utf-8")
+
+    def fake_restore_pack(entry):
+        assert entry.name == "ExamplePack"
+        assert entry.git_commit_sha == "abc123"
+        return node_packs_install.InstallResult(
+            name="ExamplePack",
+            status=status,  # type: ignore[arg-type]
+            git_commit_sha="abc123" if status in {"installed", "refreshed"} else None,
+            error="restore issue" if status in {"skipped_dirty", "failed"} else None,
+        )
+
+    monkeypatch.setattr(node_packs_install, "restore_pack", fake_restore_pack)
+
+    code = _cmd_nodes_restore(argparse.Namespace(lockfile=str(lockfile)))
+
+    captured = capsys.readouterr()
+    assert code == expected_code
+    assert f"ExamplePack: {status}" in captured.out
+    if expected_code:
+        assert "restore issue" in captured.err
     else:
         assert captured.err == ""
 

@@ -6,9 +6,10 @@ import sys
 from pathlib import Path
 
 from vibecomfy.patches.registry import find_applicable, register, registered_patches
+from vibecomfy.patches.ltx_lowvram import COMFY_CONFIGURATION, patch as ltx_lowvram
 from vibecomfy.patches.requirements import ensure_custom_nodes
 from vibecomfy.patches.types import Patch
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
 def test_patch_package_import_does_not_register_builtins() -> None:
@@ -56,3 +57,26 @@ def test_ensure_custom_nodes_appends_without_duplicates() -> None:
     ensure_custom_nodes(workflow, ("New",))
 
     assert workflow.requirements.custom_nodes == ["Existing", "New"]
+
+
+def test_ltx_lowvram_applies_to_positive_negative_and_policy_diff() -> None:
+    positive = VibeWorkflow("ltx", WorkflowSource("ltx"))
+    positive.add_node("LTXVLoader")
+    positive.nodes["4010"] = VibeNode(id="4010", class_type="AudioVAELoader", widgets={"widget_0": "old.safetensors"})
+    positive.nodes["3940"] = VibeNode(id="3940", class_type="CheckpointLoader", widgets={"widget_0": "old.safetensors"})
+    positive.metadata["ready_template"] = "video/ltx2_3_t2v"
+
+    negative = VibeWorkflow("plain", WorkflowSource("plain"))
+    negative.add_node("SaveImage", images="placeholder")
+
+    assert ltx_lowvram.applies_to(positive)
+    assert not ltx_lowvram.applies_to(negative)
+
+    ltx_lowvram.apply(positive)
+
+    assert positive.metadata["comfy_configuration"] == COMFY_CONFIGURATION
+    assert positive.metadata["smoke_resolution"] == "384x256x9_frames"
+    assert positive.metadata["external_python_marker"] == "external_python:video/ltx2_3_t2v"
+    assert positive.nodes["4010"].class_type == "LowVRAMAudioVAELoader"
+    assert positive.nodes["3940"].class_type == "LowVRAMCheckpointLoader"
+    assert "ComfyUI-LTXVideo" in positive.requirements.custom_nodes

@@ -102,24 +102,92 @@ handles = subgraph.opaque(
 
 The block sets `metadata.subgraph_class_type` to the UUID class type. Wire its returned handles like any other block output.
 
-## Ready Templates
+## Ready Templates and Recipes
 
 Ready templates should be hand-curated Python builders. Retiring `scripts/materialize_ready_templates.py` is intentional: the materializer was useful for bootstrapping, but it hid authoring decisions inside copied API dictionaries.
 
 `MarkdownNote` nodes are dropped during refactor because they are ComfyUI UI annotations with no execution effect. Snapshot tests filter them at capture time so runnable graph parity is compared without those notes.
 
-## Escape Hatches
+Ready templates change the handles a workflow exposes. Recipes decorate handles by composing ready templates and patches for worked examples. This is the Layer 2 form of the Layer 1 rule: changes-handles -> new template; decorates-handles -> patch.
 
-Every layer stays public and inspectable. Ops (when they ship) return concrete paths eagerly; for inspection, use the lower layers directly:
+## Artifacts and Ops
+
+The verb-native API is lazy. `image.t2i`, `video.t2v`, and `video.i2v` return typed `Artifact` objects (`Image` or `Video`) without running ComfyUI. `Artifact.run()` triggers execution; `Artifact.preview_workflow()` returns the editable `VibeWorkflow`.
 
 ```python
-from vibecomfy.registry.ready import workflow_from_ready
+from vibecomfy import image
+
+artifact = image.t2i("a small glass teapot")
+wf = artifact.preview_workflow()
+api = wf.compile("api")
+result = artifact.run(runtime="embedded")
+```
+
+The public escape-hatch chain is:
+
+```text
+op() -> Artifact -> preview_workflow() -> VibeWorkflow -> compile() -> API JSON -> run()
+```
+
+`audio.t2a` raises `NotImplementedError("no audio template registered")` until an audio ready template is routed. `image.edit` and `edit.qwen` also raise `NotImplementedError` in v1. `image.t2i(model="flux2_klein_9b_gguf")` and `image.edit(model in {"qwen", "flux2_klein_4b"})` are not yet exposed via the verb-native API; use `load_workflow_any("image/flux2_klein_9b_gguf_t2i")` or `load_workflow_any("edit/qwen_image_edit")` and edit the `VibeWorkflow` directly until MP-6 ships schema-backed UUID-subgraph input validation.
+
+## Router
+
+Ops call `router.pick(verb_kind, verb_name, **inputs)` implicitly. Callers can use it directly to inspect the route before loading or mutating a workflow.
+
+```python
+from vibecomfy import router
+
+result = router.pick("video", "i2v", model="ltx")
+```
+
+`RouterResult` contains `template_id`, `explicit_patches`, and `applicable_patches`. `explicit_patches` are part of the route. `applicable_patches` is the remaining gap reported by `find_applicable(workflow)` after loading the selected template; for as-shipped LTX templates it should be `[]` because the low-VRAM and resolution policy is already applied inline.
+
+## Plugin Discovery
+
+`ensure_plugins_loaded()` discovers plugins lazily from three sources:
+
+- project-local `./vibecomfy_extras/{blocks,patches,ops,recipes,ready_templates}/*.py`
+- user-global `~/.vibecomfy/{blocks,patches,ops,recipes,ready_templates}/*.py`
+- pip entry points in the `vibecomfy.plugins` group
+
+Entry-point callbacks receive `PluginAPI`. The API exposes `register_block`, `register_patch`, `register_op`, `register_route`, and `register_ready_root(path)`. Built-in ready-template ids win on collisions; plugin collisions warn instead of raising.
+
+## Metadata Contracts
+
+`wf.register_input(name, node_id, field, value=None)` records a public input target when `finalize_metadata()` cannot infer it from the node class alone. `OUTPUT_NODE_NAMES` includes image, video, and audio save nodes (`SaveVideo`, `SaveAudio`, `SaveAudioMP3`), and `finalize_metadata()` sorts outputs deterministically by numeric node id and then string node id.
+
+Prompt-bearing authored templates must register or infer `prompt` consistently:
+
+| Template | Prompt field |
+| --- | --- |
+| `image/z_image` | builder calls `register_input` on the UUID subgraph prompt widget |
+| `image/flux2_klein_4b_t2i` | builder calls `register_input` on `PrimitiveStringMultiline` |
+| `video/wan_t2v` | inferred from `CLIPTextEncode` |
+| `video/wan_i2v` | inferred from `CLIPTextEncode` |
+| `video/ltx2_3_t2v` | builder preserves prompt registration after LTX patches |
+| `video/ltx2_3_i2v` | builder preserves prompt registration after LTX patches |
+
+The UUID-opaque `flux2_klein_9b_gguf_t2i`, `qwen_image_edit`, and `flux2_klein_4b_image_edit_distilled` templates intentionally do not register prompt or instruction fields in v1.
+
+## JSON Output
+
+The commands `workflows list`, `nodes list`, `inspect`, `doctor`, `sources sync`, `analyze info`, and `analyze diff` support `--json`. Text output remains the default compatibility surface. `inspect --json` includes `applicable_patches`; `doctor --json` includes `suggested_patches`. For `analyze info` and `analyze diff`, `--json` is an alias for `--format json`, and an explicit `--format` wins.
+
+## Escape Hatches
+
+Every layer stays public and inspectable. Use `load_workflow_any()` for ready ids, scratchpads, JSON files, and indexed workflow references:
+
+```python
+from vibecomfy import load_workflow_any
 from vibecomfy.runtime import run_embedded_sync
 
-wf = workflow_from_ready("image/z_image")        # the editable IR
+wf = load_workflow_any("image/z_image")          # the editable IR
 api = wf.compile("api")                          # the dict ComfyUI accepts
 result = run_embedded_sync(wf)                   # actually run it
 path = result.outputs[0]                         # the saved file
 ```
 
 Pipelines are ordinary Python. Use blocks for new graph structure, patches for policy, and `compile("api")` only when handing the graph to ComfyUI.
+
+Agent-facing constraints live in [../AGENTS.md](../AGENTS.md).

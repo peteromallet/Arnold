@@ -26,6 +26,22 @@ VibeComfy is a Python package for discovering, converting, validating, and runni
 - Top-level command registration belongs in `vibecomfy/commands/__init__.py`.
 - Individual command modules should expose `register(subparsers)` and keep command execution in private `_cmd_*` helpers.
 - Keep command registration explicit. Do not add plugin discovery or dynamic filesystem scanning unless the task asks for it.
+- `workflows list`, `nodes list`, `inspect`, `doctor`, `sources sync`, `analyze info`, and `analyze diff` support `--json`; keep existing text output stable.
+
+## Layer 2 Authoring
+
+See [docs/authoring.md](docs/authoring.md) for the user-facing contract. Keep these agent rules aligned with that doc.
+
+- The public lazy ops are `image.t2i`, `video.t2v`, and `video.i2v`; they return typed `Artifact` objects without executing. `Artifact.run()` executes, and `Artifact.preview_workflow()` returns the editable `VibeWorkflow`.
+- The escape-hatch chain is `op() -> Artifact -> preview_workflow() -> VibeWorkflow -> compile() -> API JSON -> run()`. Every level is intentionally public.
+- `audio.t2a`, `image.edit`, and `edit.qwen` are `NotImplementedError` stubs in v1.
+- `image.t2i(model="flux2_klein_9b_gguf")` and `image.edit(model in {"qwen", "flux2_klein_4b"})` are not exposed via verb-native ops. Use `load_workflow_any("image/flux2_klein_9b_gguf_t2i")` or `load_workflow_any("edit/qwen_image_edit")` and edit the `VibeWorkflow` directly until MP-6 ships schema-backed UUID-subgraph input validation.
+- `router.pick(verb_kind, verb_name, **inputs)` returns `RouterResult(template_id, explicit_patches, applicable_patches)`. Treat `applicable_patches` as the remaining patch gap after loading; it should be empty for as-shipped LTX templates.
+- Plugin discovery is explicit and lazy through `ensure_plugins_loaded()`: project-local `./vibecomfy_extras/`, user-global `~/.vibecomfy/`, and pip entry points in `vibecomfy.plugins`. `PluginAPI` exposes `register_block`, `register_patch`, `register_op`, `register_route`, and `register_ready_root`.
+- Ready templates change handles; recipes decorate handles. This complements the Layer 1 rule: changes-handles -> template, decorates-handles -> patch.
+- `wf.register_input(name, node_id, field, value=None)` is the public helper for authored inputs that metadata inference cannot discover.
+- Prompt registration is expected for exactly these routed templates: `image/z_image`, `image/flux2_klein_4b_t2i`, `video/wan_t2v`, `video/wan_i2v`, `video/ltx2_3_t2v`, and `video/ltx2_3_i2v`.
+- `OUTPUT_NODE_NAMES` includes `SaveVideo`, `SaveAudio`, and `SaveAudioMP3`; `finalize_metadata()` sorts outputs by node id deterministically.
 
 ## Testing Expectations
 

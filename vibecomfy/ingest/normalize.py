@@ -4,11 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from vibecomfy.metadata import (
-    MODEL_KEYS,
     OUTPUT_NODE_NAMES,
-    PROMPT_KEYS,
-    SEED_KEYS,
-    STEP_KEYS,
     _infer_requirements,
     _register_common_inputs,
 )
@@ -110,6 +106,7 @@ def convert_to_vibe_format(
         _register_common_inputs(workflow, str(node_id), workflow.nodes[str(node_id)])
         if workflow.nodes[str(node_id)].class_type in OUTPUT_NODE_NAMES:
             workflow.outputs.append(VibeOutput(node_id=str(node_id), output_type=workflow.nodes[str(node_id)].class_type))
+    workflow.outputs.sort(key=lambda o: (int(o.node_id) if o.node_id.isdigit() else (1 << 30), o.node_id))
 
     for node_id, node in api_workflow.items():
         if not isinstance(node, dict):

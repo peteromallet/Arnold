@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from vibecomfy.commands._output import emit
 from vibecomfy.ingest.sources import sync_sources
 
 
@@ -11,8 +12,12 @@ def _cmd_sources_sync(args: argparse.Namespace) -> int:
         external=args.external,
         custom_nodes=args.custom_nodes,
     )
-    print(f"indexed official={result.official} external={result.external} nodes={result.nodes}")
-    return 0
+    payload = {"official": result.official, "external": result.external, "nodes": result.nodes}
+    return emit(
+        payload,
+        json=args.json,
+        text_renderer=lambda data: f"indexed official={data['official']} external={data['external']} nodes={data['nodes']}",
+    )
 
 
 def register(subparsers) -> None:
@@ -22,4 +27,5 @@ def register(subparsers) -> None:
     sync.add_argument("--official", default="workflow_corpus/official")
     sync.add_argument("--external", default="workflow_corpus/custom_nodes")
     sync.add_argument("--custom-nodes", default="custom_nodes")
+    sync.add_argument("--json", action="store_true")
     sync.set_defaults(func=_cmd_sources_sync)

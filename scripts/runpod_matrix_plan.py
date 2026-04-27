@@ -36,6 +36,7 @@ def build_corpus_matrix_plan(root: Path, *, scope: str = "all", manifest: str = 
         "wan_core",
         "image_core",
         "audio_core",
+        "qwen_tts",
         "qwen_image",
         "qwen_image_2512",
         "z_flux",
@@ -138,6 +139,8 @@ def _include_supplemental_for_scope(item: dict, scope: str) -> bool:
         return workflow_id.startswith("ltx2_3")
     if scope in {"image_core", "z_flux", "image_creation_types", "flux2", "flux2_4b", "flux2_9b"}:
         return workflow_id.startswith("flux2_klein")
+    if scope == "qwen_tts":
+        return workflow_id.startswith("qwen3_tts")
     return False
 
 
@@ -193,6 +196,8 @@ def _matches_core_scope(row: MatrixRow, scope: str) -> bool:
         return row.media == "image"
     if scope == "audio_core":
         return row.media == "audio"
+    if scope == "qwen_tts":
+        return row.id.startswith("qwen3_tts")
     if scope == "z_image":
         return row.id == "z_image"
     if scope == "qwen_image":

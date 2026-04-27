@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vibecomfy.handles import Handle
-from vibecomfy.schema.provider import SchemaProvider
+
+if TYPE_CHECKING:
+    from vibecomfy.schema.provider import SchemaProvider
 
 
 @dataclass(slots=True)
@@ -103,7 +105,12 @@ class VibeWorkflow:
             _register_common_inputs(self, node_id, node)
             if node.class_type in OUTPUT_NODE_NAMES:
                 self.outputs.append(VibeOutput(node_id=node_id, output_type=node.class_type))
+        self.outputs.sort(key=lambda o: (int(o.node_id) if o.node_id.isdigit() else (1 << 30), o.node_id))
         self.requirements = _infer_requirements(self)
+        return self
+
+    def register_input(self, name: str, node_id: str, field: str, value: Any = None) -> "VibeWorkflow":
+        self.inputs[name] = VibeInput(name=name, node_id=str(node_id), field=field, value=value)
         return self
 
     def set_input(self, name: str, value: Any) -> "VibeWorkflow":

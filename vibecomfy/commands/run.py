@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Any
 
-from vibecomfy.registry import load_workflow_reference
+from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.runtime.run import run_embedded_sync, run_sync
 from vibecomfy.runtime.session import find_active_session
 from vibecomfy.schema import get_schema_provider
@@ -25,6 +26,10 @@ _OVERRIDE_HINTS = {
 }
 
 
+def load_workflow_reference(value: str, **kwargs: Any):
+    return load_workflow_any(value)
+
+
 def _override_unwired_message(workflow_id: str, flag: str, override: str) -> str:
     hint = _OVERRIDE_HINTS[override]
     return (
@@ -37,9 +42,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         session_url = args.server_url
         if session_url is None and args.runtime in {"auto", "server"}:
             session_url = find_active_session("default")
+        schema_provider = get_schema_provider("auto", server_url=session_url)
         workflow = load_workflow_reference(
             args.path,
-            schema_provider=get_schema_provider("auto", server_url=session_url),
+            schema_provider=schema_provider,
             allow_scratchpad=True,
             ready=args.ready,
         )

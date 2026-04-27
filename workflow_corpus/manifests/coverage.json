@@ -517,6 +517,42 @@
       "source": "official_comfy_template_subgraph_materialized",
       "approach": "ACE-Step 1.5 text-to-audio song generation",
       "runtime_note": "Official subgraph materialized to API-shaped nodes for VibeComfy smoke execution."
+    },
+    {
+      "id": "qwen3_tts_custom_voice",
+      "path": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_custom_voice.json",
+      "source": "1038lab/ComfyUI-QwenTTS distilled API smoke template",
+      "model_family": "qwen3-tts",
+      "media": "audio",
+      "task": "text_to_speech_custom_voice",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "custom preset speaker text-to-speech",
+      "runtime_note": "Uses the smaller 0.6B Qwen3-TTS model for runtime smoke validation."
+    },
+    {
+      "id": "qwen3_tts_voice_design",
+      "path": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json",
+      "source": "1038lab/ComfyUI-QwenTTS distilled API smoke template",
+      "model_family": "qwen3-tts",
+      "media": "audio",
+      "task": "text_to_speech_voice_design",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "text-to-speech from a natural language voice description",
+      "runtime_note": "Voice design currently requires the 1.7B Qwen3-TTS path exposed by the custom node."
+    },
+    {
+      "id": "qwen3_tts_voice_clone",
+      "path": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json",
+      "source": "1038lab/ComfyUI-QwenTTS distilled API smoke template",
+      "model_family": "qwen3-tts",
+      "media": "audio",
+      "task": "text_to_speech_voice_clone",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "reference-audio voice cloning with a bundled smoke fixture",
+      "runtime_note": "Uses workflow_corpus/input/speech_smoke.wav as the reference clip for repeatable validation."
     }
   ]
 }

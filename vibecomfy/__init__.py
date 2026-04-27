@@ -1,10 +1,4 @@
-# Convention: ops return concrete paths (e.g. pathlib.Path) eagerly. For
-# workflow inspection, use the *_preview variant or workflow_from_ready /
-# workflow_from_file directly.
-from .runtime.run import run, run_sync
 from .handles import Handle
-from .registry.library import workflow_from_file, workflow_from_template
-from .registry.ready import ready_template_ids, workflow_from_ready
 from .workflow import (
     ValidationIssue,
     ValidationReport,
@@ -16,8 +10,22 @@ from .workflow import (
     WorkflowRequirements,
     WorkflowSource,
 )
+from . import blocks, patches, router
+from .artifacts import Artifact, Audio, Image, Latent, Mask, Video
+from .cli_loader import load_workflow_any
+from .extras import ensure_plugins_loaded
+from .ops import audio, edit, image, video
+from .registry.library import workflow_from_file, workflow_from_template
+from .registry.ready import ready_template_ids, workflow_from_ready
+from .runtime.run import run, run_sync
 
 __all__ = [
+    "Artifact",
+    "Image",
+    "Video",
+    "Audio",
+    "Latent",
+    "Mask",
     "Handle",
     "VibeWorkflow",
     "VibeNode",
@@ -32,6 +40,15 @@ __all__ = [
     "workflow_from_template",
     "workflow_from_ready",
     "ready_template_ids",
+    "load_workflow_any",
+    "ensure_plugins_loaded",
+    "image",
+    "video",
+    "audio",
+    "edit",
+    "blocks",
+    "patches",
+    "router",
     "run",
     "run_sync",
 ]

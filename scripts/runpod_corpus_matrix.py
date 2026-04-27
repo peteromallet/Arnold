@@ -284,9 +284,9 @@ while IFS=$'\\t' read -r id wf media; do
       if [ "$media" = "audio" ]; then
         # Audio workflows use model-specific text/audio encoder nodes; the
         # HiddenSwitch baseline override only targets image text encoders, so
-        # we strip --prompt/--steps for the baseline. The vibecomfy CLI now
-        # enforces the same rule itself, so vibe_override_args is unchanged.
+        # we strip --prompt/--steps for both execution paths.
         workflow_override_args=(--seed 123)
+        vibe_override_args=(--seed 123)
       fi
       workflow_timeout=2400
       ;;
@@ -386,6 +386,27 @@ done < "$1"
 }}
 printf 'id\tmedia\tstatus\tbaseline_seconds\tconvert_seconds\tvalidate_seconds\tvibecomfy_seconds\tmedia_files\tbytes\tfailure\n' > out/corpus_matrix/ready_results.tsv
 if grep -q '[^[:space:]]' out/corpus_matrix/core_workflows.tsv; then
+if [ "{scope}" = "qwen_tts" ]; then
+git clone https://github.com/1038lab/ComfyUI-QwenTTS.git custom_nodes/ComfyUI-QwenTTS
+git -C custom_nodes/ComfyUI-QwenTTS checkout d8122a8ba835b65fd65c113d2b273b1ad1579293
+$PY -m pip install 'transformers>=4.57,<5' accelerate librosa soundfile tiktoken sentencepiece einops openai-whisper
+"$PY" - <<'PY'
+from huggingface_hub import snapshot_download
+from pathlib import Path
+
+root = Path("models/TTS/Qwen3-TTS")
+root.mkdir(parents=True, exist_ok=True)
+for repo in [
+    "Qwen/Qwen3-TTS-Tokenizer-12Hz",
+    "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+    "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+]:
+    local_dir = root / repo.rsplit("/", 1)[-1]
+    snapshot_download(repo_id=repo, local_dir=local_dir)
+PY
+$PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
+else
 {_legacy_or_registry_block(core_stage_phase)}
 "$PY" - <<'PY'
 from huggingface_hub import hf_hub_download
@@ -444,6 +465,7 @@ for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
 {_registry_staging_fallback(core_stage_phase)}
+fi
 fi
 run_workflow_set out/corpus_matrix/core_workflows.tsv
 if grep -q '[^[:space:]]' out/corpus_matrix/gguf_workflows.tsv; then

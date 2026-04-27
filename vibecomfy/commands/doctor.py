@@ -10,15 +10,17 @@ import re
 import subprocess
 from typing import Any
 
+from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.commands._output import emit
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.ingest.loader import load_template
 from vibecomfy.model_assets import extract_from_raw_workflow
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
-from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.schema.format import format_issue
 from vibecomfy.workflow import VibeEdge, VibeWorkflow
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
+from vibecomfy.patches.registry import find_applicable
 
 _RAW_REF_RE = re.compile(r"^\w+\.\w+$")
 
@@ -26,9 +28,10 @@ _RAW_REF_RE = re.compile(r"^\w+\.\w+$")
 def _cmd_doctor(args: argparse.Namespace) -> int:
     lint = getattr(args, "lint", False)
     allow_drift = getattr(args, "allow_drift", False)
+    json_output = getattr(args, "json", False)
     schema_provider = get_schema_provider("auto")
     try:
-        workflow = load_workflow_reference(args.path, schema_provider=schema_provider, allow_scratchpad=True)
+        workflow = load_workflow_any(args.path)
     except Exception as exc:
         print("Layer: Python scratchpad import/build")
         print(f"Error: {type(exc).__name__}: {exc}")
@@ -37,26 +40,36 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     if lint:
         for warning in _lint_untyped_raw_refs(Path(args.path)):
             print(f"- untyped_raw_ref: {warning}")
+    suggested_patches = _patch_suggestions(workflow)
     drift_warnings, drift_errors = _nodepack_lockfile_drift()
     if drift_errors:
         if allow_drift:
-            print("Nodepack lockfile drift warnings:")
-            for warning in [*drift_warnings, *drift_errors]:
-                print(f"- {warning}")
-            return 0
-        print("Layer: nodepack lockfile drift")
-        for error in drift_errors:
-            print(f"- {error}")
-        return 1
-    if drift_warnings:
+            payload = {"status": "warning", "nodepack_drift": [*drift_warnings, *drift_errors], "suggested_patches": suggested_patches}
+            return emit(payload, json=json_output, text_renderer=_render_doctor_warning)
+        payload = {"status": "error", "layer": "nodepack lockfile drift", "errors": drift_errors, "suggested_patches": suggested_patches}
+        return emit(payload, json=json_output, text_renderer=_render_doctor_error) or 1
+    if drift_warnings and not json_output:
         print("Nodepack lockfile warnings:")
         for warning in drift_warnings:
             print(f"- {warning}")
     report = workflow.validate(schema_provider=schema_provider)
     if not report.ok:
-        print("Layer: VibeWorkflow validation")
-        for issue in report.issues:
-            print(f"- {format_issue(issue)}")
+        validation_issues = [format_issue(issue) for issue in report.issues]
+        payload = {
+            "status": "error",
+            "layer": "VibeWorkflow validation",
+            "errors": validation_issues,
+            "nodepack_warnings": drift_warnings,
+            "suggested_patches": suggested_patches,
+        }
+        if json_output:
+            emit(payload, json=True, text_renderer=_render_doctor_error)
+        else:
+            print("Layer: VibeWorkflow validation")
+            for issue in validation_issues:
+                print(f"- {issue}")
+        if json_output:
+            return 1
         missing_classes = {
             str(issue.detail.get("class_type"))
             for issue in report.issues
@@ -77,18 +90,58 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         return 1
     missing_models = _missing_model_warnings(workflow, args.path)
     if missing_models:
-        print("Missing models:")
-        for warning in missing_models:
-            print(f"- {warning}")
+        payload = {"status": "error", "missing_models": missing_models, "nodepack_warnings": drift_warnings, "suggested_patches": suggested_patches}
+        emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Missing models", data["missing_models"], data))
         return 1
     warnings = _doctor_warnings(workflow)
     if warnings:
-        print("Local checks passed with runtime warnings:")
-        for warning in warnings:
-            print(f"- {warning}")
+        payload = {"status": "warning", "warnings": warnings, "nodepack_warnings": drift_warnings, "suggested_patches": suggested_patches}
+        emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Local checks passed with runtime warnings", data["warnings"], data))
         return 0
-    print("No local issues found. Runtime/model/node failures require `vibecomfy run` logs.")
-    return 0
+    payload = {
+        "status": "ok",
+        "message": "No local issues found. Runtime/model/node failures require `vibecomfy run` logs.",
+        "nodepack_warnings": drift_warnings,
+        "suggested_patches": suggested_patches,
+    }
+    return emit(payload, json=json_output, text_renderer=_render_doctor_ok)
+
+
+def _patch_suggestions(workflow: VibeWorkflow) -> list[dict[str, str]]:
+    return [{"name": patch.name, "rationale": patch.rationale(workflow)} for patch in find_applicable(workflow)]
+
+
+def _render_suggested_patches(payload: dict[str, Any]) -> list[str]:
+    suggested = payload.get("suggested_patches") or []
+    if not suggested:
+        return []
+    lines = ["Suggested patches:"]
+    lines.extend(f"- {patch['name']}: {patch['rationale']}" for patch in suggested)
+    return lines
+
+
+def _render_doctor_ok(payload: dict[str, Any]) -> str:
+    return "\n".join([payload["message"], *_render_suggested_patches(payload)])
+
+
+def _render_doctor_warning(payload: dict[str, Any]) -> str:
+    if "nodepack_drift" in payload:
+        return _render_list_section("Nodepack lockfile drift warnings", payload["nodepack_drift"], payload)
+    return _render_list_section("Local checks passed with runtime warnings", payload.get("warnings", []), payload)
+
+
+def _render_doctor_error(payload: dict[str, Any]) -> str:
+    lines = [f"Layer: {payload.get('layer', 'doctor')}"]
+    lines.extend(f"- {error}" for error in payload.get("errors", []))
+    lines.extend(_render_suggested_patches(payload))
+    return "\n".join(lines)
+
+
+def _render_list_section(title: str, items: list[str], payload: dict[str, Any]) -> str:
+    lines = [f"{title}:"]
+    lines.extend(f"- {item}" for item in items)
+    lines.extend(_render_suggested_patches(payload))
+    return "\n".join(lines)
 
 
 def _read_doctor_lockfile() -> list[LockEntry]:
@@ -347,4 +400,5 @@ def register(subparsers) -> None:
     doctor.add_argument("path")
     doctor.add_argument("--lint", action="store_true", default=False)
     doctor.add_argument("--allow-drift", action="store_true", default=False)
+    doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(func=_cmd_doctor)

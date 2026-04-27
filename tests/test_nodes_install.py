@@ -4,8 +4,10 @@ import subprocess
 from pathlib import Path
 from typing import Sequence
 
+import pytest
+
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
-from vibecomfy.node_packs_install import install_pack, missing_packs_for_workflow
+from vibecomfy.node_packs_install import _known_schema_classes, install_pack, missing_packs_for_workflow, restore_pack
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -17,12 +19,17 @@ class FakeRunner:
         porcelain: str = "",
         fail_clone: bool = False,
         fail_pip: bool = False,
+        fail_cm_cli: bool = False,
+        cm_cli_checkout_dir: Path | None = None,
     ) -> None:
         self.sha = sha
         self.porcelain = porcelain
         self.fail_clone = fail_clone
         self.fail_pip = fail_pip
+        self.fail_cm_cli = fail_cm_cli
+        self.cm_cli_checkout_dir = cm_cli_checkout_dir
         self.calls: list[list[str]] = []
+        self.cwd_calls: list[str | Path | None] = []
 
     def __call__(
         self,
@@ -31,12 +38,20 @@ class FakeRunner:
         check: bool,
         capture_output: bool,
         text: bool,
+        cwd: str | Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         call = list(args)
         self.calls.append(call)
+        self.cwd_calls.append(cwd)
         assert check is True
         assert capture_output is True
         assert text is True
+        if call[:2] == ["cm-cli", "install"]:
+            if self.fail_cm_cli:
+                raise subprocess.CalledProcessError(1, call, stderr="cm-cli failed")
+            if self.cm_cli_checkout_dir is not None:
+                (self.cm_cli_checkout_dir / ".git").mkdir(parents=True)
+            return subprocess.CompletedProcess(call, 0, stdout="installed", stderr="")
         if call[:2] == ["git", "clone"]:
             if self.fail_clone:
                 raise subprocess.CalledProcessError(1, call, stderr="clone failed")
@@ -45,6 +60,11 @@ class FakeRunner:
             return subprocess.CompletedProcess(call, 0, stdout=self.porcelain, stderr="")
         if call[:4] == ["git", "-C", call[2], "rev-parse"]:
             return subprocess.CompletedProcess(call, 0, stdout=f"{self.sha}\n", stderr="")
+        if call[:4] == ["git", "-C", call[2], "fetch"]:
+            return subprocess.CompletedProcess(call, 0, stdout="", stderr="")
+        if call[:4] == ["git", "-C", call[2], "checkout"]:
+            self.sha = call[4]
+            return subprocess.CompletedProcess(call, 0, stdout="", stderr="")
         if len(call) >= 4 and call[1:4] == ["-m", "pip", "install"]:
             if self.fail_pip:
                 raise subprocess.CalledProcessError(1, call, stderr="pip failed")
@@ -61,6 +81,7 @@ def test_install_clones_and_upserts_on_success(tmp_path: Path) -> None:
         install_root=tmp_path / "custom_nodes",
         lockfile_path=lockfile,
         runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
     )
 
     assert result.status == "installed"
@@ -91,6 +112,7 @@ def test_install_no_lockfile_mutation_on_clone_failure(tmp_path: Path) -> None:
         install_root=tmp_path / "custom_nodes",
         lockfile_path=lockfile,
         runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
     )
 
     assert result.status == "failed"
@@ -109,6 +131,7 @@ def test_install_no_lockfile_mutation_on_pip_failure(tmp_path: Path) -> None:
         install_root=tmp_path / "custom_nodes",
         lockfile_path=lockfile,
         runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
     )
 
     assert result.status == "failed"
@@ -127,6 +150,7 @@ def test_install_idempotent_when_clean(tmp_path: Path) -> None:
         install_root=tmp_path / "custom_nodes",
         lockfile_path=lockfile,
         runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
     )
 
     assert result.status == "refreshed"
@@ -153,6 +177,7 @@ def test_install_refuses_dirty_without_force(tmp_path: Path) -> None:
         install_root=tmp_path / "custom_nodes",
         lockfile_path=lockfile,
         runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
     )
 
     assert result.status == "skipped_dirty"
@@ -172,6 +197,7 @@ def test_install_force_dirty_does_not_clone_and_upserts_head(tmp_path: Path) -> 
         install_root=tmp_path / "custom_nodes",
         lockfile_path=lockfile,
         runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
     )
 
     assert result.status == "refreshed"
@@ -194,6 +220,7 @@ def test_install_with_repo_url_infers_name_and_skips_pip_when_uncatalogued(tmp_p
         install_root=tmp_path / "custom_nodes",
         lockfile_path=lockfile,
         runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
     )
 
     assert result.name == "some-pack"
@@ -214,6 +241,143 @@ def test_install_with_repo_url_infers_name_and_skips_pip_when_uncatalogued(tmp_p
     ]
 
 
+def test_install_uses_cm_cli_when_available(tmp_path: Path) -> None:
+    install_dir = tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"
+    runner = FakeRunner(sha="cmclihead", cm_cli_checkout_dir=install_dir)
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    result = install_pack(
+        name="ComfyUI-VideoHelperSuite",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=lockfile,
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
+    )
+
+    assert result.status == "installed"
+    assert result.git_commit_sha == "cmclihead"
+    assert runner.calls[0] == ["cm-cli", "install", "ComfyUI-VideoHelperSuite"]
+    assert runner.cwd_calls[0] == tmp_path
+    assert not any(call[:2] == ["git", "clone"] for call in runner.calls)
+    assert not any(len(call) >= 4 and call[1:4] == ["-m", "pip", "install"] for call in runner.calls)
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-VideoHelperSuite",
+            git_commit_sha="cmclihead",
+            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        )
+    ]
+
+
+def test_install_cm_cli_failed_returns_failed(tmp_path: Path) -> None:
+    runner = FakeRunner(fail_cm_cli=True)
+    lockfile = tmp_path / "custom_nodes.lock"
+    original = "Existing abc https://example.test/existing.git\n"
+    lockfile.write_text(original, encoding="utf-8")
+
+    result = install_pack(
+        name="ComfyUI-VideoHelperSuite",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=lockfile,
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
+    )
+
+    assert result.status == "failed"
+    assert "cm-cli failed" in (result.error or "")
+    assert lockfile.read_text(encoding="utf-8") == original
+
+
+def test_install_cm_cli_succeeded_but_no_git_returns_failed(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    result = install_pack(
+        name="ComfyUI-VideoHelperSuite",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=lockfile,
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
+    )
+
+    assert result.status == "failed"
+    assert "cm-cli succeeded but" in (result.error or "")
+    assert "is not a git checkout" in (result.error or "")
+    assert read_lockfile(lockfile) == []
+
+
+def test_install_falls_back_to_clone_when_cm_cli_missing(tmp_path: Path) -> None:
+    runner = FakeRunner(sha="fallbackhead")
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    result = install_pack(
+        name="ComfyUI-KJNodes",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=lockfile,
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
+    )
+
+    assert result.status == "installed"
+    assert runner.calls[0] == [
+        "git",
+        "clone",
+        "https://github.com/kijai/ComfyUI-KJNodes.git",
+        str(tmp_path / "custom_nodes" / "ComfyUI-KJNodes"),
+    ]
+    assert any(len(call) >= 4 and call[1:4] == ["-m", "pip", "install"] for call in runner.calls)
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-KJNodes",
+            git_commit_sha="fallbackhead",
+            url="https://github.com/kijai/ComfyUI-KJNodes.git",
+        )
+    ]
+
+
+def test_restore_clones_and_checks_out_pinned_sha(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    entry = LockEntry("ExamplePack", "pinnedsha", "https://example.test/example.git")
+
+    result = restore_pack(entry, install_root=tmp_path / "custom_nodes", runner=runner)
+
+    assert result.status == "installed"
+    assert result.git_commit_sha == "pinnedsha"
+    assert runner.calls == [
+        ["git", "clone", "https://example.test/example.git", str(tmp_path / "custom_nodes" / "ExamplePack")],
+        ["git", "-C", str(tmp_path / "custom_nodes" / "ExamplePack"), "checkout", "pinnedsha"],
+    ]
+
+
+def test_restore_existing_clean_dir_at_correct_sha_is_noop(tmp_path: Path) -> None:
+    install_dir = tmp_path / "custom_nodes" / "ExamplePack"
+    install_dir.mkdir(parents=True)
+    runner = FakeRunner(sha="pinnedsha", porcelain="")
+    entry = LockEntry("ExamplePack", "pinnedsha", "https://example.test/example.git")
+
+    result = restore_pack(entry, install_root=tmp_path / "custom_nodes", runner=runner)
+
+    assert result.status == "refreshed"
+    assert result.git_commit_sha == "pinnedsha"
+    assert not any(call[:4] == ["git", "-C", str(install_dir), "checkout"] for call in runner.calls)
+
+
+def test_restore_existing_dirty_dir_returns_skipped(tmp_path: Path) -> None:
+    install_dir = tmp_path / "custom_nodes" / "ExamplePack"
+    install_dir.mkdir(parents=True)
+    lockfile = tmp_path / "custom_nodes.lock"
+    original = "ExamplePack pinnedsha https://example.test/example.git\n"
+    lockfile.write_text(original, encoding="utf-8")
+    runner = FakeRunner(porcelain=" M nodes.py\n")
+    entry = LockEntry("ExamplePack", "pinnedsha", "https://example.test/example.git")
+
+    result = restore_pack(entry, install_root=tmp_path / "custom_nodes", runner=runner)
+
+    assert result.status == "skipped_dirty"
+    assert lockfile.read_text(encoding="utf-8") == original
+    assert not any(call[:4] == ["git", "-C", str(install_dir), "checkout"] for call in runner.calls)
+
+
 def test_missing_packs_for_workflow_returns_resolved_and_unresolved(
     tmp_path: Path,
     monkeypatch,
@@ -232,3 +396,17 @@ def test_missing_packs_for_workflow_returns_resolved_and_unresolved(
 
     assert [pack.name for pack in packs] == ["ComfyUI-Qwen3-TTS"]
     assert unresolved == ["UnknownCustomNode"]
+
+
+def test_known_schema_classes_raises_when_missing(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match=r"node_index\.json not found .*vibecomfy sources sync"):
+        _known_schema_classes(tmp_path / "node_index.json")
+
+
+@pytest.mark.parametrize("content", ["{", '{"class_type": "SaveImage"}'])
+def test_known_schema_classes_raises_when_invalid(tmp_path: Path, content: str) -> None:
+    path = tmp_path / "node_index.json"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        _known_schema_classes(path)

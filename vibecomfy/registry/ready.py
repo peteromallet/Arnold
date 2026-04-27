@@ -2,21 +2,27 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import warnings
 
 from vibecomfy.workflow import VibeWorkflow
 
 
 READY_ROOT = Path(__file__).resolve().parents[2] / "ready_templates"
+_WARNED_COLLISIONS: set[str] = set()
 
 
 def ready_template_ids() -> list[str]:
-    if not READY_ROOT.exists():
-        return []
-    return sorted(
-        path.relative_to(READY_ROOT).with_suffix("").as_posix()
-        for path in READY_ROOT.rglob("*.py")
-        if path.name != "__init__.py" and not path.name.startswith("_")
-    )
+    seen: dict[str, Path] = {}
+    for root in _ready_roots():
+        if not root.exists():
+            continue
+        for path in _template_paths(root):
+            template_id = path.relative_to(root).with_suffix("").as_posix()
+            if template_id in seen:
+                _warn_collision(template_id, path, seen[template_id])
+                continue
+            seen[template_id] = path
+    return sorted(seen)
 
 
 def workflow_from_ready(template_id: str) -> VibeWorkflow:
@@ -37,17 +43,67 @@ def workflow_from_ready(template_id: str) -> VibeWorkflow:
 
 
 def _resolve_ready_path(template_id: str) -> Path:
-    candidates = [
-        READY_ROOT / f"{template_id}.py",
-        READY_ROOT / template_id,
-    ]
-    if "/" not in template_id:
-        candidates.extend(READY_ROOT.glob(f"*/{template_id}.py"))
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
+    for root in _ready_roots():
+        candidates = [
+            root / f"{template_id}.py",
+            root / template_id,
+        ]
+        if "/" not in template_id and root.exists():
+            candidates.extend(root.glob(f"*/{template_id}.py"))
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
     raise KeyError(f"Ready template not found: {template_id}")
 
 
 def _template_id_for_path(path: Path) -> str:
-    return path.relative_to(READY_ROOT).with_suffix("").as_posix()
+    resolved = path.resolve()
+    for root in _ready_roots():
+        try:
+            return resolved.relative_to(root.resolve()).with_suffix("").as_posix()
+        except ValueError:
+            continue
+    return path.with_suffix("").name
+
+
+def _ready_roots() -> list[Path]:
+    from vibecomfy.extras import ensure_plugins_loaded, registered_ready_roots
+
+    ensure_plugins_loaded()
+    roots = [
+        READY_ROOT,
+        Path.cwd() / "vibecomfy_extras" / "ready_templates",
+        Path.home() / ".vibecomfy" / "ready_templates",
+        *registered_ready_roots(),
+    ]
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        resolved = root.expanduser().resolve()
+        if resolved not in seen:
+            deduped.append(resolved)
+            seen.add(resolved)
+    return deduped
+
+
+def _template_paths(root: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in root.rglob("*.py")
+        if path.name != "__init__.py" and not path.name.startswith("_")
+    )
+
+
+def _warn_collision(template_id: str, candidate: Path, winner: Path) -> None:
+    if template_id in _WARNED_COLLISIONS:
+        return
+    warnings.warn(
+        f"Ready template id collision for {template_id!r}; using {winner} and ignoring {candidate}",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    _WARNED_COLLISIONS.add(template_id)
+
+
+def _reset_for_tests() -> None:
+    _WARNED_COLLISIONS.clear()

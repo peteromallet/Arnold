@@ -3,12 +3,14 @@ from __future__ import annotations
 import pytest
 
 from vibecomfy.blocks import Handles, block, block_spec, registered_blocks
-from vibecomfy.blocks.encoding import text_pair
+from vibecomfy.blocks.decode import vae as decode_vae
+from vibecomfy.blocks.encoding import clip_vision as encode_clip_vision, text_pair
 from vibecomfy.blocks.latent import HunyuanVideoShape, empty_hunyuan_video
-from vibecomfy.blocks.loaders import LoaderNames, load_image, unet_clip_vae
-from vibecomfy.blocks.save import image as save_image
-from vibecomfy.blocks.sampling import KSamplerSettings, ksampler
+from vibecomfy.blocks.loaders import LoaderNames, clip_vision as load_clip_vision, load_image, unet_clip_vae
+from vibecomfy.blocks.save import VideoSaveSettings, image as save_image, video as save_video
+from vibecomfy.blocks.sampling import KSamplerSettings, ksampler, model_sampling_sd3
 from vibecomfy.blocks.subgraph import opaque, ref
+from vibecomfy.blocks.video import VideoCreateSettings, create as create_video
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -157,3 +159,40 @@ def test_opaque_rejects_ambiguous_widget_sources() -> None:
             widgets_by_name={"widget_0": "literal"},
             widget_values=["literal"],
         )
+
+
+def test_block_compile_smoke_widget_keys() -> None:
+    workflow = VibeWorkflow("block-smoke", WorkflowSource("block-smoke"))
+
+    loaded = unet_clip_vae(
+        workflow,
+        names=LoaderNames(
+            unet_name="unet.safetensors",
+            clip_name="clip.safetensors",
+            vae_name="vae.safetensors",
+            clip_type="wan",
+        ),
+    )
+    vision = load_clip_vision(workflow, clip_name="clip_vision.safetensors")
+    image = load_image(workflow, image="example.png")
+    encoded = text_pair(workflow, clip=loaded.clip, positive="prompt", negative="negative")
+    vision_encoded = encode_clip_vision(workflow, clip_vision=vision.clip_vision, image=image.image)
+    latent = empty_hunyuan_video(workflow, shape=HunyuanVideoShape(width=320, height=192, length=9))
+    sampled_model = model_sampling_sd3(workflow, model=loaded.model)
+    sampled = ksampler(workflow, model=sampled_model.model, positive=encoded.positive, negative=encoded.negative, latent=latent.latent)
+    decoded = decode_vae(workflow, samples=sampled.samples, vae=loaded.vae)
+    video = create_video(workflow, images=decoded.images, settings=VideoCreateSettings(fps=12))
+    save_image(workflow, images=decoded.images, filename_prefix="smoke/image")
+    save_video(workflow, video=video.video, settings=VideoSaveSettings(filename_prefix="smoke/video"))
+
+    api = workflow.compile("api")
+
+    assert len(api) == 15
+    assert api["1"]["inputs"].keys() == {"widget_0", "widget_1"}
+    assert api["2"]["inputs"].keys() == {"widget_0", "widget_1", "widget_2"}
+    assert api["4"]["class_type"] == "CLIPVisionLoader"
+    assert api["6"]["inputs"]["widget_0"] == "prompt"
+    assert api["8"]["class_type"] == "CLIPVisionEncode"
+    assert api["9"]["inputs"].keys() == {"widget_0", "widget_1", "widget_2", "widget_3"}
+    assert api["14"]["class_type"] == "SaveImage"
+    assert api["15"]["class_type"] == "SaveVideo"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from vibecomfy.workflow import VibeInput, VibeNode, VibeWorkflow, WorkflowRequirements
 
@@ -10,7 +9,16 @@ PROMPT_KEYS = {"text", "prompt", "positive", "positive_prompt"}
 SEED_KEYS = {"seed", "noise_seed"}
 STEP_KEYS = {"steps"}
 MODEL_KEYS = {"ckpt_name", "model_name", "unet_name"}
-OUTPUT_NODE_NAMES = {"SaveImage", "PreviewImage", "SaveAnimatedWEBP", "SaveWEBM", "VHS_VideoCombine"}
+OUTPUT_NODE_NAMES = {
+    "SaveImage",
+    "PreviewImage",
+    "SaveAnimatedWEBP",
+    "SaveWEBM",
+    "VHS_VideoCombine",
+    "SaveVideo",
+    "SaveAudio",
+    "SaveAudioMP3",
+}
 
 # Class-type allowlist for the universal `--prompt` override.
 #

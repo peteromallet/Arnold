@@ -256,6 +256,52 @@ def test_corpus_matrix_plan_has_audio_scope(tmp_path: Path) -> None:
     assert format_rows(plan.core_rows) == "ace_step_1_5_t2a_song\tace.json\taudio"
 
 
+def test_corpus_matrix_plan_has_qwen_tts_scope(tmp_path: Path) -> None:
+    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    ready_dir = tmp_path / "ready_templates" / "audio"
+    manifest.parent.mkdir(parents=True)
+    ready_dir.mkdir(parents=True)
+    (ready_dir / "qwen3_tts_custom_voice.py").write_text("# ready\n", encoding="utf-8")
+    (ready_dir / "qwen3_tts_voice_clone.py").write_text("# ready\n", encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "workflows": [
+                    {"id": "ace_step_1_5_t2a_song", "path": "ace.json", "media": "audio", "task": "text_to_audio_song", "coverage_tier": "required"},
+                    {
+                        "id": "qwen3_tts_custom_voice",
+                        "path": "qwen-custom.json",
+                        "media": "audio",
+                        "task": "text_to_speech_custom_voice",
+                        "coverage_tier": "supplemental",
+                        "ready_template": True,
+                    },
+                    {
+                        "id": "qwen3_tts_voice_clone",
+                        "path": "qwen-clone.json",
+                        "media": "audio",
+                        "task": "text_to_speech_voice_clone",
+                        "coverage_tier": "supplemental",
+                        "ready_template": True,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    plan = build_corpus_matrix_plan(tmp_path, scope="qwen_tts")
+
+    assert format_rows(plan.core_rows) == (
+        "qwen3_tts_custom_voice\tqwen-custom.json\taudio\n"
+        "qwen3_tts_voice_clone\tqwen-clone.json\taudio"
+    )
+    assert format_ready_rows(plan.ready_rows, tmp_path) == (
+        "qwen3_tts_custom_voice\tready_templates/audio/qwen3_tts_custom_voice.py\taudio\n"
+        "qwen3_tts_voice_clone\tready_templates/audio/qwen3_tts_voice_clone.py\taudio"
+    )
+
+
 def test_corpus_matrix_plan_has_public_ltx_iclora_scope(tmp_path: Path) -> None:
     manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)

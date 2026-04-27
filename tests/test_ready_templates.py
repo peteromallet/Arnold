@@ -1,6 +1,30 @@
+from __future__ import annotations
+
+import json
+from collections import Counter
+from pathlib import Path
+
+import pytest
+
+from vibecomfy.ingest.normalize import convert_to_vibe_format
+from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
+from vibecomfy.patches.resolution import resolution
 from vibecomfy.registry.ready import ready_template_ids, workflow_from_ready
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+
+
+SNAPSHOT_IDS = (
+    "image/z_image",
+    "image/flux2_klein_4b_t2i",
+    "image/flux2_klein_9b_gguf_t2i",
+    "edit/qwen_image_edit",
+    "edit/flux2_klein_4b_image_edit_distilled",
+    "video/wan_t2v",
+    "video/wan_i2v",
+    "video/ltx2_3_t2v",
+    "video/ltx2_3_i2v",
+)
 
 
 def test_ready_template_ids_include_curated_workflows() -> None:
@@ -110,3 +134,59 @@ def test_ready_template_uses_real_python_before_comfy_compile() -> None:
 
     assert workflow.metadata["external_python_marker"] == marker
     assert any(node["inputs"].get("widget_0") == marker for node in api.values())
+
+
+@pytest.mark.parametrize("template_id", SNAPSHOT_IDS)
+def test_snapshotted_ready_template_graph_matches_pre_refactor_api(template_id: str) -> None:
+    workflow = workflow_from_ready(template_id)
+    actual = workflow.compile("api")
+    snapshot_name = template_id.rsplit("/", 1)[-1]
+    expected = json.loads((Path(__file__).parent / "snapshots" / f"{snapshot_name}.api.json").read_text(encoding="utf-8"))
+    if template_id.startswith("video/ltx2_3_"):
+        expected_workflow = convert_to_vibe_format(expected, workflow_id=template_id)
+        expected_workflow.metadata["ready_template"] = template_id
+        apply_ltx_lowvram(expected_workflow)
+        resolution(384, 256, 9).apply(expected_workflow)
+        expected = expected_workflow.compile("api")
+
+    assert _class_type_counter(actual) == _class_type_counter(expected)
+    assert _widget_value_counter(actual) == _widget_value_counter(expected)
+    assert _topology_counter(actual) == _topology_counter(expected)
+
+
+def _class_type_counter(api: dict) -> Counter[str]:
+    return Counter(node["class_type"] for node in api.values() if node.get("class_type") != "MarkdownNote")
+
+
+def _widget_value_counter(api: dict) -> Counter[tuple[str, str, str]]:
+    values: Counter[tuple[str, str, str]] = Counter()
+    for node in api.values():
+        class_type = node.get("class_type")
+        if class_type == "MarkdownNote":
+            continue
+        for key, value in node.get("inputs", {}).items():
+            if _is_link(value):
+                continue
+            values[(class_type, key, repr(value))] += 1
+    return values
+
+
+def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
+    topology: Counter[tuple[str, str, str, int]] = Counter()
+    for node_id, node in api.items():
+        class_type = node.get("class_type")
+        if class_type == "MarkdownNote":
+            continue
+        for key, value in node.get("inputs", {}).items():
+            if not _is_link(value):
+                continue
+            source = api.get(str(value[0]), {})
+            source_class = source.get("class_type")
+            if source_class == "MarkdownNote":
+                continue
+            topology[(class_type, key, source_class, int(value[1]))] += 1
+    return topology
+
+
+def _is_link(value: object) -> bool:
+    return isinstance(value, list) and len(value) == 2 and str(value[0]).isdigit()

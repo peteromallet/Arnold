@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+from vibecomfy.commands._output import emit
 from vibecomfy.commands.index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import SchemaIndexError, get_schema_provider
@@ -25,9 +26,7 @@ def _cmd_nodes_list(args: argparse.Namespace) -> int:
     except IndexReadError as exc:
         print_index_error(exc)
         return 1
-    for row in rows[: args.limit]:
-        print(row)
-    return 0
+    return emit(rows[: args.limit], json=args.json, text_renderer=lambda selected: "\n".join(str(row) for row in selected))
 
 
 def _cmd_nodes_spec(args: argparse.Namespace) -> int:
@@ -47,8 +46,12 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
 def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:
     schema_provider = get_schema_provider("auto")
     workflow = load_workflow_reference(args.path, schema_provider=schema_provider, allow_scratchpad=True)
-    missing_classes = node_packs_install.missing_class_types_for_workflow(workflow)
-    packs, unresolved = node_packs_install.missing_packs_for_workflow(workflow)
+    try:
+        missing_classes = node_packs_install.missing_class_types_for_workflow(workflow)
+        packs, unresolved = node_packs_install.missing_packs_for_workflow(workflow)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     return _print_install_plan(args.path, missing_classes, packs, unresolved, json_output=args.json)
 
 
@@ -109,8 +112,12 @@ def _cmd_nodes_ensure(args: argparse.Namespace) -> int:
     path = args.template or args.workflow
     schema_provider = get_schema_provider("auto")
     workflow = load_workflow_reference(path, schema_provider=schema_provider, allow_scratchpad=True)
-    missing_classes = node_packs_install.missing_class_types_for_workflow(workflow)
-    packs, unresolved = node_packs_install.missing_packs_for_workflow(workflow)
+    try:
+        missing_classes = node_packs_install.missing_class_types_for_workflow(workflow)
+        packs, unresolved = node_packs_install.missing_packs_for_workflow(workflow)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if args.dry_run:
         return _print_install_plan(path, missing_classes, packs, unresolved, json_output=False)
     if not missing_classes:
@@ -162,16 +169,22 @@ def _cmd_nodes_lock(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_nodes_restore(args: argparse.Namespace) -> int:
+    entries = read_lockfile(Path(args.lockfile))
+    ok = True
+    for entry in entries:
+        result = node_packs_install.restore_pack(entry)
+        detail = f" {result.git_commit_sha}" if result.git_commit_sha else ""
+        print(f"{result.name}: {result.status}{detail}")
+        if result.error:
+            print(result.error, file=sys.stderr)
+        ok = ok and result.status in {"installed", "refreshed"}
+    return 0 if ok else 1
+
+
 def _installed_nodepack_dir(name: str) -> Path | None:
-    candidates = (
-        Path("custom_nodes") / name,
-        Path("vendor") / "ComfyUI" / "custom_nodes" / name,
-        Path("vendor") / name,
-    )
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    return None
+    candidate = node_packs_install.DEFAULT_INSTALL_ROOT / name
+    return candidate if candidate.is_dir() else None
 
 
 def _git_head(pack_dir: Path) -> str | None:
@@ -202,6 +215,7 @@ def register(subparsers) -> None:
     nodes_sub = nodes.add_subparsers(dest="subcmd", required=True)
     nodes_list = nodes_sub.add_parser("list")
     nodes_list.add_argument("--limit", type=int, default=200)
+    nodes_list.add_argument("--json", action="store_true")
     nodes_list.set_defaults(func=_cmd_nodes_list)
     nodes_spec = nodes_sub.add_parser("spec")
     nodes_spec.add_argument("class_type")
@@ -225,3 +239,6 @@ def register(subparsers) -> None:
     nodes_lock.add_argument("--path", default="custom_nodes.lock")
     nodes_lock.add_argument("--with-source-sha256", action="store_true", default=False)
     nodes_lock.set_defaults(func=_cmd_nodes_lock)
+    nodes_restore = nodes_sub.add_parser("restore")
+    nodes_restore.add_argument("--lockfile", default="custom_nodes.lock")
+    nodes_restore.set_defaults(func=_cmd_nodes_restore)

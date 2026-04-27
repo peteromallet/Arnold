@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.materialize_ready_templates import _finalise_model_assets
+from vibecomfy.registry.ready_template import _finalise_model_assets
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 

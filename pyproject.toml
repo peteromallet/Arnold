@@ -31,6 +31,9 @@ runpod-launch = [
 [project.scripts]
 vibecomfy = "vibecomfy.cli:main"
 
+[project.entry-points."vibecomfy.plugins"]
+# my_plugin = "my_pkg:register"
+
 [tool.hatch.build.targets.wheel]
 packages = ["vibecomfy"]
 
@@ -41,6 +44,7 @@ addopts = "-m 'not gpu'"
 markers = [
   "gpu: marks tests that provision live GPU resources",
   "runpod: opt-in smoke tests that provision real RunPod GPU pods (requires --runpod and RUNPOD_API_KEY).",
+  "runpod_full: opt-in production-resolution matrix tests; multi-pod, ~$5-10 per run (requires --runpod-full and RUNPOD_API_KEY).",
 ]
 
 [tool.uv.sources]

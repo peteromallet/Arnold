@@ -6,7 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from vibecomfy.analysis import graph
-from vibecomfy.registry import load_workflow_reference
+from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.workflow import VibeWorkflow
 
@@ -15,61 +15,69 @@ ANALYSIS_FORMATS = ("text", "json", "tsv")
 
 
 def _load_workflow(value: str) -> VibeWorkflow:
-    return load_workflow_reference(value, schema_provider=get_schema_provider("auto"))
+    return load_workflow_any(value)
 
 
 def _cmd_info(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
-    return _emit(graph.analyze(workflow), args.format, text=_format_info)
+    return _emit(graph.analyze(workflow), _selected_format(args), text=_format_info)
 
 
 def _cmd_trace(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     rows = [_node_row(node) for node in graph.trace(workflow, _require(args.node_id, "--node-id"))]
-    return _emit(rows, args.format, text=_format_node_rows)
+    return _emit(rows, _selected_format(args), text=_format_node_rows)
 
 
 def _cmd_upstream(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     rows = sorted(graph.upstream(workflow, _require(args.node_id, "--node-id"), depth=args.max_depth))
-    return _emit(rows, args.format, text=lambda value: "\n".join(value) if value else "-")
+    return _emit(rows, _selected_format(args), text=lambda value: "\n".join(value) if value else "-")
 
 
 def _cmd_downstream(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     rows = sorted(graph.downstream(workflow, _require(args.node_id, "--node-id"), depth=args.max_depth))
-    return _emit(rows, args.format, text=lambda value: "\n".join(value) if value else "-")
+    return _emit(rows, _selected_format(args), text=lambda value: "\n".join(value) if value else "-")
 
 
 def _cmd_path(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     rows = graph.path(workflow, _require(args.src, "--src"), _require(args.dst, "--dst"))
-    return _emit(rows, args.format, text=lambda value: "\n".join(" -> ".join(row) for row in value) if value else "-")
+    return _emit(rows, _selected_format(args), text=lambda value: "\n".join(" -> ".join(row) for row in value) if value else "-")
 
 
 def _cmd_subgraph(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     node_ids = _node_ids(args.node_id)
     result = graph.subgraph(workflow, node_ids)
-    return _emit(_workflow_row(result), args.format, text=_format_subgraph)
+    return _emit(_workflow_row(result), _selected_format(args), text=_format_subgraph)
 
 
 def _cmd_values(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     rows = graph.values(workflow, args.node_id)
-    return _emit(rows, args.format, text=_format_values)
+    return _emit(rows, _selected_format(args), text=_format_values)
 
 
 def _cmd_diff(args: argparse.Namespace) -> int:
     left = _load_workflow(args.workflow)
     right = _load_workflow(_require(args.dst, "--dst"))
-    return _emit(graph.diff(left, right), args.format, text=_format_diff)
+    return _emit(graph.diff(left, right), _selected_format(args), text=_format_diff)
 
 
 def _cmd_unconnected(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     rows = graph.unconnected(workflow, schema_provider=get_schema_provider("auto"))
-    return _emit(rows, args.format, text=_format_dict_rows)
+    return _emit(rows, _selected_format(args), text=_format_dict_rows)
+
+
+def _selected_format(args: argparse.Namespace) -> str:
+    if getattr(args, "format", None) is not None:
+        return args.format
+    if getattr(args, "json", False):
+        return "json"
+    return "text"
 
 
 def _require(value: str | None, flag: str) -> str:
@@ -218,7 +226,7 @@ def _workflow_row(workflow: VibeWorkflow) -> dict[str, Any]:
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("workflow")
-    parser.add_argument("--format", choices=ANALYSIS_FORMATS, default="text")
+    parser.add_argument("--format", choices=ANALYSIS_FORMATS, default=None)
 
 
 def register(subparsers) -> None:
@@ -227,6 +235,7 @@ def register(subparsers) -> None:
 
     info = verbs.add_parser("info")
     _add_common(info)
+    info.add_argument("--json", action="store_true")
     info.set_defaults(func=_cmd_info)
 
     trace = verbs.add_parser("trace")
@@ -265,6 +274,7 @@ def register(subparsers) -> None:
     diff = verbs.add_parser("diff")
     _add_common(diff)
     diff.add_argument("--dst")
+    diff.add_argument("--json", action="store_true")
     diff.set_defaults(func=_cmd_diff)
 
     unconnected = verbs.add_parser("unconnected")

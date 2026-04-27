@@ -1,33 +1,58 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 
-from vibecomfy.commands._workflow_path import resolve_workflow_path
-from vibecomfy.ingest.loader import load_template
+from vibecomfy.commands._output import emit
+from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.ingest.normalize import detect_workflow_shape
-from vibecomfy.registry import load_workflow_reference
+from vibecomfy.patches.registry import find_applicable
 from vibecomfy.schema import get_schema_provider
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
-    path = resolve_workflow_path(args.workflow)
-    raw = load_template(path)
+    workflow = load_workflow_any(args.workflow)
+    raw = workflow.compile("api")
     shape = detect_workflow_shape(raw)
     schema_provider = get_schema_provider("auto")
-    workflow = load_workflow_reference(args.workflow, schema_provider=schema_provider)
-    print(f"id: {workflow.id}")
-    print(f"shape: {shape}")
-    print(f"nodes: {len(workflow.nodes)}")
-    print(f"edges: {len(workflow.edges)}")
-    print(f"inputs: {', '.join(workflow.inputs) or '-'}")
-    print(f"outputs: {', '.join(output.output_type for output in workflow.outputs) or '-'}")
-    print(f"models: {workflow.requirements.models}")
-    print(f"custom nodes: {workflow.requirements.custom_nodes}")
-    print(f"status: {'runnable' if workflow.validate(schema_provider=schema_provider).ok else 'unsupported'}")
-    return 0
+    report = workflow.validate(schema_provider=schema_provider)
+    applicable_patches = [
+        {"name": patch.name, "rationale": patch.rationale(workflow)}
+        for patch in find_applicable(workflow)
+    ]
+    payload = {
+        "id": workflow.id,
+        "shape": shape,
+        "nodes": len(workflow.nodes),
+        "edges": len(workflow.edges),
+        "inputs": sorted(workflow.inputs),
+        "outputs": [asdict(output) for output in workflow.outputs],
+        "models": workflow.requirements.models,
+        "custom_nodes": workflow.requirements.custom_nodes,
+        "status": "runnable" if report.ok else "unsupported",
+        "applicable_patches": applicable_patches,
+    }
+    return emit(payload, json=args.json, text_renderer=_render_inspect)
+
+
+def _render_inspect(payload: dict) -> str:
+    return "\n".join(
+        [
+            f"id: {payload['id']}",
+            f"shape: {payload['shape']}",
+            f"nodes: {payload['nodes']}",
+            f"edges: {payload['edges']}",
+            f"inputs: {', '.join(payload['inputs']) or '-'}",
+            f"outputs: {', '.join(output['output_type'] for output in payload['outputs']) or '-'}",
+            f"models: {payload['models']}",
+            f"custom nodes: {payload['custom_nodes']}",
+            f"status: {payload['status']}",
+        ]
+    )
 
 
 def register(subparsers) -> None:
     inspect = subparsers.add_parser("inspect")
     inspect.add_argument("workflow")
+    inspect.add_argument("--json", action="store_true")
     inspect.set_defaults(func=_cmd_inspect)

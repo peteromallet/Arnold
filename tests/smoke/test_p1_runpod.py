@@ -1,29 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import os
-import subprocess
-import sys
-import time
 
 import pytest
+
+from ._runpod_helpers import (
+    install_current_branch,
+    load_runpod_lifecycle,
+    pod_name,
+    require_runpod_api_key,
+)
 
 pytestmark = pytest.mark.runpod
 
 
 def test_p1_runpod_typed_handle_smoke() -> None:
-    if not os.environ.get("RUNPOD_API_KEY"):
-        pytest.skip("RUNPOD_API_KEY is required for the opt-in RunPod smoke test.")
-    lifecycle_root = os.environ.get("VIBECOMFY_RUNPOD_LIFECYCLE_ROOT")
-    if lifecycle_root:
-        sys.path.insert(0, lifecycle_root)
-    try:
-        runpod_lifecycle = importlib.import_module("runpod_lifecycle")
-    except ImportError:
-        pytest.skip(
-            "runpod_lifecycle is required; install it or set VIBECOMFY_RUNPOD_LIFECYCLE_ROOT to its source root."
-        )
+    require_runpod_api_key()
+    runpod_lifecycle = load_runpod_lifecycle()
     asyncio.run(_run_smoke(runpod_lifecycle))
 
 
@@ -35,43 +29,15 @@ async def _run_smoke(runpod_lifecycle) -> None:
     )
     pod = None
     try:
-        pod = await runpod_lifecycle.launch(config, name=f"vibecomfy-p1-{int(time.time())}")
+        pod = await runpod_lifecycle.launch(config, name=pod_name("p1", "z_image"))
         await pod.wait_ready(timeout=600)
-        await _install_current_branch(pod)
+        await install_current_branch(pod)
         code, stdout, stderr = await pod.exec_ssh(_REMOTE_SMOKE_COMMAND, timeout=1800)
         assert code == 0, f"remote smoke failed with {code}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         assert "VIBECOMFY_P1_OUTPUTS=" in stdout
     finally:
         if pod is not None:
             await pod.terminate()
-
-
-async def _install_current_branch(pod) -> None:
-    repo_url = os.environ.get("VIBECOMFY_RUNPOD_REPO_URL") or _git_output("config --get remote.origin.url")
-    if not repo_url:
-        pytest.skip("Set VIBECOMFY_RUNPOD_REPO_URL or configure git remote.origin.url for remote install.")
-    git_ref = os.environ.get("VIBECOMFY_RUNPOD_GIT_REF") or _git_output("rev-parse --abbrev-ref HEAD") or "HEAD"
-    if git_ref == "HEAD":
-        git_ref = _git_output("rev-parse HEAD") or "HEAD"
-    install_cmd = (
-        "python -m pip install --upgrade pip && "
-        f"python -m pip install --upgrade 'git+{repo_url}@{git_ref}'"
-    )
-    code, stdout, stderr = await pod.exec_ssh(install_cmd, timeout=900)
-    assert code == 0, f"remote install failed with {code}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
-
-
-def _git_output(args: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", *args.split()],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return result.stdout.strip() or None
 
 
 _REMOTE_SMOKE_COMMAND = r"""python - <<'PY'

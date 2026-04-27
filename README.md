@@ -58,3 +58,5 @@ python -m vibecomfy.cli run out/scratchpads/z_image.py --runtime embedded
 ```
 
 The local workflow corpus is rooted at `workflow_corpus/`. Ready Python templates are under `ready_templates/` and remain addressable with the `--ready` flags on `workflows list` and `run`.
+
+For the contribution/operator path for new templates and models, see [docs/adding_templates_models.md](docs/adding_templates_models.md).

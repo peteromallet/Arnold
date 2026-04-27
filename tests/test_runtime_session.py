@@ -1025,6 +1025,25 @@ def test_embedded_run_ensure_packs_skips_reload_when_nothing_missing(
     assert calls == ["queue"]
 
 
+def test_embedded_run_ensure_packs_raises_when_node_index_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def missing_index(_workflow):
+        raise FileNotFoundError("node_index.json not found at node_index.json; run `vibecomfy sources sync`")
+
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", missing_index)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        with pytest.raises(RuntimeError, match="ensure_packs: node_index.json not found"):
+            await session.run(_workflow(), ensure_packs=True)
+
+    asyncio.run(run_case())
+
+
 def test_server_reload_calls_stop_then_start() -> None:
     async def run_case() -> None:
         session = ServerSession()

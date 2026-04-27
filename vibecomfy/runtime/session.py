@@ -116,7 +116,10 @@ class EmbeddedSession:
             from vibecomfy.node_packs_install import install_pack, missing_packs_for_workflow
 
             # Dev convenience only; production should pre-stage nodepacks with `vibecomfy nodes ensure`.
-            packs, _unresolved = missing_packs_for_workflow(workflow)
+            try:
+                packs, _unresolved = missing_packs_for_workflow(workflow)
+            except (FileNotFoundError, ValueError) as exc:
+                raise RuntimeError("ensure_packs: " + str(exc)) from exc
             installed_or_refreshed = False
             for pack in packs:
                 result = install_pack(name=pack.name)
