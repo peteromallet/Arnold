@@ -107,7 +107,7 @@ def main() -> int:
                     )
                 )
                 continue
-            result = run_embedded_sync(wf)
+            result = run_embedded_sync(wf, backend="graphbuilder")
             if not result.outputs:
                 failures.append((tid, "run", "no outputs"))
         except Exception as exc:

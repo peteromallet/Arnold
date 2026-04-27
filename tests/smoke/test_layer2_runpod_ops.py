@@ -76,33 +76,35 @@ def check_outputs(label: str, outputs) -> None:
 def main() -> None:
     # Warmup runs in its own event loop. The verb-native art.run() calls below are
     # sync wrappers that internally call asyncio.run(), so they MUST execute at
-    # sync top-level — not from inside another running loop.
+    # sync top-level — not from inside another running loop. backend="graphbuilder"
+    # inlines subgraph definitions; "api" leaves them as UUID-typed nodes that
+    # HiddenSwitch ComfyUI rejects with missing_node_type.
     asyncio.run(warmup())
 
     art1 = image.t2i("a fox", width=512, height=512, steps=4)
     if not art1.preview_workflow().validate().ok:
         raise SystemExit("t2i z_image: validation failed")
-    res1 = art1.run()
+    res1 = art1.run(backend="graphbuilder")
     check_outputs("t2i z_image", res1.outputs)
 
     art2 = image.t2i("a fox", model="flux2_klein_4b", width=512, height=512, steps=4)
-    res2 = art2.run()
+    res2 = art2.run(backend="graphbuilder")
     check_outputs("t2i flux2_klein_4b", res2.outputs)
 
     art3 = video.t2v("a fox running", length=9, fps=8)
-    res3 = art3.run()
+    res3 = art3.run(backend="graphbuilder")
     check_outputs("t2v wan", res3.outputs)
 
     art4 = video.t2v("a fox running", model="ltx", length=9)
-    res4 = art4.run()
+    res4 = art4.run(backend="graphbuilder")
     check_outputs("t2v ltx", res4.outputs)
 
     art5 = video.i2v(res2.outputs[0], "make it move", length=9, fps=8)
-    res5 = art5.run()
+    res5 = art5.run(backend="graphbuilder")
     check_outputs("i2v wan", res5.outputs)
 
     art6 = video.i2v(res2.outputs[0], "make it move", model="ltx", length=9)
-    res6 = art6.run()
+    res6 = art6.run(backend="graphbuilder")
     check_outputs("i2v ltx", res6.outputs)
 
     print("VIBECOMFY_LAYER2_OPS_OUTPUTS=" + json.dumps([

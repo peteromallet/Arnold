@@ -280,7 +280,7 @@ def _build_remote_body(family_cfg: dict) -> str:
         "                artifact = verb(PROMPT, **kwargs)\n"
         "            # Light validation before run — surfaces wiring errors fast.\n"
         "            artifact.preview_workflow().validate()\n"
-        "            run_result = artifact.run()\n"
+        "            run_result = artifact.run(backend='graphbuilder')\n"
         "            outputs = list(getattr(run_result, 'outputs', []) or [])\n"
         "            if not outputs:\n"
         "                raise AssertionError(f'route {idx} ({verb_name}) produced zero outputs')\n"
