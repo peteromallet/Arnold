@@ -62,21 +62,27 @@ def resolve_repo_install_target() -> tuple[str, str]:
 
 
 async def install_current_branch(pod) -> None:
-    """Install the current vibecomfy branch + HiddenSwitch ComfyUI onto a ready pod.
+    """Clone vibecomfy + install HiddenSwitch ComfyUI onto a ready pod.
 
-    vibecomfy depends on the HiddenSwitch ``comfyui`` pip fork (with a vibecomfy-vendored
-    ComfyUI patch branch) and ``comfy-script``. Without these, ``import comfy`` fails
-    inside ``EmbeddedSession``. See ``scripts/runpod_validate.py`` for the canonical
-    install line.
+    A ``pip install git+...`` wheel is not enough: ``ready_templates/`` lives at the
+    repo root and is not shipped with the wheel; ``vibecomfy.registry.ready`` resolves
+    it from ``Path(__file__).parents[2]/'ready_templates'``, which only exists in a
+    checked-out repo. Mirrors ``scripts/runpod_validate.py``.
     """
     repo_url, git_ref = resolve_repo_install_target()
+    repo_dir = "/workspace/vibecomfy"
     install_cmd = (
         "set -e && "
+        f"rm -rf {repo_dir} && "
+        f"git clone --recurse-submodules {repo_url} {repo_dir} && "
+        f"cd {repo_dir} && "
+        f"git checkout {git_ref} && "
+        "git submodule update --init --recursive && "
         "python -m pip install --upgrade pip && "
         "python -m pip install "
         "'comfyui@git+https://github.com/peteromallet/ComfyUI.git@fix/latentupscale-model-mmap-residency' "
         "'comfy-script[default]' && "
-        f"python -m pip install --upgrade 'git+{repo_url}@{git_ref}'"
+        "python -m pip install -e ."
     )
     code, stdout, stderr = await pod.exec_ssh(install_cmd, timeout=1800)
     assert code == 0, f"remote install failed with {code}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
