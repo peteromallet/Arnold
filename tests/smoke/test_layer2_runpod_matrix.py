@@ -194,8 +194,12 @@ def _build_remote_body(family_cfg: dict) -> str:
     # Single-quoted heredoc so the inner Python is not subject to shell expansion.
     # Config is injected via json.loads on a triple-quoted literal — safe because
     # json.dumps escapes everything that matters inside a Python string literal.
+    # NOTE: write to a real file before exec'ing — if we pipe via `python -`,
+    # ComfyUI's internal pebble.ProcessPool workers fail to respawn (multiprocessing
+    # spawn re-imports `<stdin>` and crashes with FileNotFoundError /root/<stdin>),
+    # and any worker death (e.g. LTX OOM) cascades into BrokenProcessPool.
     return (
-        "python - <<'PY'\n"
+        "cat > /tmp/vibecomfy_matrix_runner.py <<'PY'\n"
         "from __future__ import annotations\n"
         "\n"
         "import asyncio\n"
@@ -350,6 +354,7 @@ def _build_remote_body(family_cfg: dict) -> str:
         "\n"
         "sys.exit(_main())\n"
         "PY\n"
+        "python /tmp/vibecomfy_matrix_runner.py\n"
     )
 
 
