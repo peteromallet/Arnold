@@ -18,6 +18,7 @@ import pytest
 
 from ._runpod_helpers import (
     install_current_branch,
+    launch_with_retry,
     load_runpod_lifecycle,
     pod_name,
     require_runpod_api_key,
@@ -145,7 +146,7 @@ async def _run_family(runpod_lifecycle, family_cfg: dict) -> dict:
     )
     pod = None
     try:
-        pod = await runpod_lifecycle.launch(config, name=pod_name("matrix", family))
+        pod = await launch_with_retry(runpod_lifecycle, config, pod_name("matrix", family))
         print(f"[layer2-matrix:{family}] pod_id={pod.id} gpu={gpu_type}")
         await asyncio.wait_for(_run_on_pod(pod, family_cfg), timeout=3600)
         return {"ok": True, "family": family, "pod_id": pod.id}
