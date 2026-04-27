@@ -62,13 +62,23 @@ def resolve_repo_install_target() -> tuple[str, str]:
 
 
 async def install_current_branch(pod) -> None:
-    """Install the current vibecomfy branch onto a ready pod via SSH."""
+    """Install the current vibecomfy branch + HiddenSwitch ComfyUI onto a ready pod.
+
+    vibecomfy depends on the HiddenSwitch ``comfyui`` pip fork (with a vibecomfy-vendored
+    ComfyUI patch branch) and ``comfy-script``. Without these, ``import comfy`` fails
+    inside ``EmbeddedSession``. See ``scripts/runpod_validate.py`` for the canonical
+    install line.
+    """
     repo_url, git_ref = resolve_repo_install_target()
     install_cmd = (
+        "set -e && "
         "python -m pip install --upgrade pip && "
+        "python -m pip install "
+        "'comfyui@git+https://github.com/peteromallet/ComfyUI.git@fix/latentupscale-model-mmap-residency' "
+        "'comfy-script[default]' && "
         f"python -m pip install --upgrade 'git+{repo_url}@{git_ref}'"
     )
-    code, stdout, stderr = await pod.exec_ssh(install_cmd, timeout=900)
+    code, stdout, stderr = await pod.exec_ssh(install_cmd, timeout=1800)
     assert code == 0, f"remote install failed with {code}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
 
 
