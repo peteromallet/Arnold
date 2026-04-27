@@ -57,9 +57,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import traceback
 
-from vibecomfy import image
-from vibecomfy.runtime import EmbeddedSession
+from vibecomfy import load_workflow_any
+from vibecomfy.runtime import EmbeddedSession, run_embedded_sync
 
 
 async def warmup() -> None:
@@ -70,21 +71,59 @@ async def warmup() -> None:
         await session.stop()
 
 
+def _resolve_path(path: str) -> str:
+    # ComfyUI may return paths relative to its output dir.
+    if os.path.isabs(path) and os.path.exists(path):
+        return path
+    candidates = [path, os.path.join("output", path), os.path.join(os.getcwd(), path)]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return path
+
+
 def main() -> None:
     asyncio.run(warmup())
 
-    art = image.t2i("a fox", width=512, height=512, steps=4)
-    if not art.preview_workflow().validate().ok:
-        raise SystemExit("z_image: validation failed")
-    res = art.run(backend="graphbuilder")
+    wf = load_workflow_any("image/z_image")
+    print("VIBECOMFY_Z_IMAGE_VALIDATE=" + json.dumps({"ok": wf.validate().ok}))
+    print("VIBECOMFY_Z_IMAGE_NODES=" + str(len(wf.nodes)))
+
+    try:
+        res = run_embedded_sync(wf, backend="graphbuilder")
+    except Exception as exc:
+        print("VIBECOMFY_Z_IMAGE_EXCEPTION=" + repr(exc))
+        traceback.print_exc()
+        raise SystemExit(1)
+
+    print("VIBECOMFY_Z_IMAGE_RUN_ID=" + res.run_id)
+    print("VIBECOMFY_Z_IMAGE_OUTPUTS_RAW=" + json.dumps(res.outputs))
+    print("VIBECOMFY_Z_IMAGE_LOG_PATH=" + res.log_path)
+
+    # Show comfy log tail to help diagnose silent crashes
+    if os.path.exists(res.log_path):
+        with open(res.log_path) as f:
+            tail = f.read()[-2000:]
+        print("=== COMFY LOG TAIL ===")
+        print(tail)
+        print("=== END LOG ===")
+
     if not res.outputs:
-        raise SystemExit("z_image: empty outputs")
+        print("VIBECOMFY_Z_IMAGE_FAIL=empty_outputs")
+        raise SystemExit(2)
+
+    resolved = []
     for path in res.outputs:
-        if not os.path.exists(path):
-            raise SystemExit(f"z_image: missing path {path}")
-        if os.path.getsize(path) <= 0:
-            raise SystemExit(f"z_image: zero-size path {path}")
-    print("VIBECOMFY_Z_IMAGE_OK=" + json.dumps(res.outputs))
+        rp = _resolve_path(path)
+        exists = os.path.exists(rp)
+        size = os.path.getsize(rp) if exists else 0
+        resolved.append({"raw": path, "resolved": rp, "exists": exists, "size": size})
+    print("VIBECOMFY_Z_IMAGE_RESOLVED=" + json.dumps(resolved))
+
+    if not all(r["exists"] and r["size"] > 0 for r in resolved):
+        raise SystemExit(3)
+
+    print("VIBECOMFY_Z_IMAGE_OK=" + json.dumps([r["resolved"] for r in resolved]))
 
 
 main()
