@@ -6,6 +6,7 @@ import os
 import pytest
 
 from ._runpod_helpers import (
+    ensure_node_packs,
     install_current_branch,
     load_runpod_lifecycle,
     pod_name,
@@ -32,6 +33,7 @@ async def _run_smoke(runpod_lifecycle) -> None:
         pod = await runpod_lifecycle.launch(config, name=pod_name("p1", "z_image"))
         await pod.wait_ready(timeout=600)
         await install_current_branch(pod)
+        await ensure_node_packs(pod, ("image/z_image",))
         code, stdout, stderr = await pod.exec_ssh(_REMOTE_SMOKE_COMMAND, timeout=1800)
         assert code == 0, f"remote smoke failed with {code}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         assert "VIBECOMFY_P1_OUTPUTS=" in stdout

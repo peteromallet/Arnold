@@ -17,6 +17,7 @@ import os
 import pytest
 
 from ._runpod_helpers import (
+    ensure_node_packs,
     install_current_branch,
     launch_with_retry,
     load_runpod_lifecycle,
@@ -31,6 +32,7 @@ _FAMILY_CONFIGS: list[dict] = [
     {
         "family": "z_image",
         "default_gpu": "NVIDIA GeForce RTX 4090",
+        "templates": ("image/z_image",),
         "routes": [
             {
                 "verb": "image.t2i",
@@ -43,6 +45,7 @@ _FAMILY_CONFIGS: list[dict] = [
     {
         "family": "flux_klein_4b",
         "default_gpu": "NVIDIA GeForce RTX 4090",
+        "templates": ("image/flux2_klein_4b_t2i",),
         "routes": [
             {
                 "verb": "image.t2i",
@@ -55,6 +58,7 @@ _FAMILY_CONFIGS: list[dict] = [
     {
         "family": "wan",
         "default_gpu": "NVIDIA GeForce RTX 4090",
+        "templates": ("video/wan_t2v", "video/wan_i2v"),
         "routes": [
             {
                 "verb": "video.t2v",
@@ -76,6 +80,7 @@ _FAMILY_CONFIGS: list[dict] = [
     {
         "family": "ltx",
         "default_gpu": "NVIDIA GeForce RTX 4090",
+        "templates": ("video/ltx2_3_t2v", "video/ltx2_3_i2v"),
         "routes": [
             # ltx patch overrides length to 9 and resolution to 384x256 — let the patch own it.
             {
@@ -166,6 +171,7 @@ async def _run_on_pod(pod, family_cfg: dict) -> None:
     family = family_cfg["family"]
     await pod.wait_ready(timeout=600)
     await install_current_branch(pod)
+    await ensure_node_packs(pod, family_cfg.get("templates", ()))
     body = _build_remote_body(family_cfg)
     code, stdout, stderr = await pod.exec_ssh(body, timeout=3300)
     if code != 0:

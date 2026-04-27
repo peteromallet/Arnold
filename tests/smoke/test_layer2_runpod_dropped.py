@@ -6,10 +6,18 @@ import os
 import pytest
 
 from ._runpod_helpers import (
+    ensure_node_packs,
     install_current_branch,
     load_runpod_lifecycle,
     pod_name,
     require_runpod_api_key,
+)
+
+
+_DROPPED_TEMPLATES = (
+    "image/flux2_klein_9b_gguf_t2i",
+    "edit/flux2_klein_4b_image_edit_distilled",
+    "edit/qwen_image_edit",
 )
 
 pytestmark = pytest.mark.runpod
@@ -41,6 +49,7 @@ async def _run_dropped(runpod_lifecycle) -> None:
 async def _run_body(pod) -> None:
     await pod.wait_ready(timeout=600)
     await install_current_branch(pod)
+    await ensure_node_packs(pod, _DROPPED_TEMPLATES)
     code, stdout, stderr = await pod.exec_ssh(_REMOTE_DROPPED_COMMAND, timeout=3000)
     assert "VIBECOMFY_LAYER2_DROPPED_FAILURES=" in stdout, (
         f"missing failure marker in stdout\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"

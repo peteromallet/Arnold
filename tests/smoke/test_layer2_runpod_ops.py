@@ -6,10 +6,21 @@ import os
 import pytest
 
 from ._runpod_helpers import (
+    ensure_node_packs,
     install_current_branch,
     load_runpod_lifecycle,
     pod_name,
     require_runpod_api_key,
+)
+
+
+_OPS_TEMPLATES = (
+    "image/z_image",
+    "image/flux2_klein_4b_t2i",
+    "video/wan_t2v",
+    "video/wan_i2v",
+    "video/ltx2_3_t2v",
+    "video/ltx2_3_i2v",
 )
 
 pytestmark = pytest.mark.runpod
@@ -32,6 +43,7 @@ async def _run(runpod_lifecycle) -> None:
         print(f"[layer2-ops] pod_id={pod.id}")
         await pod.wait_ready(timeout=600)
         await install_current_branch(pod)
+        await ensure_node_packs(pod, _OPS_TEMPLATES)
         await asyncio.wait_for(_remote(pod), timeout=3600)
     finally:
         print(f"[layer2-ops] terminating pod_id={pod.id}")

@@ -110,6 +110,77 @@ async def install_current_branch(pod, *, retries: int = 3) -> None:
     )
 
 
+async def ensure_node_packs(
+    pod, template_ids: tuple[str, ...] | list[str], *, timeout: int = 1200
+) -> None:
+    """Install custom-node packs declared by each template's applicable patches.
+
+    Loads each template on the pod, runs ``find_applicable`` + ``patch.apply``
+    so ``ensure_custom_nodes`` populates ``workflow.requirements.custom_nodes``,
+    then ``install_pack(name=...)`` for the union. Packs land in
+    ``/root/vibecomfy/custom_nodes/``, which matches
+    ``comfy.cmd.folder_paths.base_path`` when ComfyUI is started from there —
+    so the embedded session picks them up on first ``start()``.
+
+    Forces ``install_pack``'s git-clone path: cm-cli (which ``install_pack``
+    prefers when present) demands a real ComfyUI repo checkout via
+    ``COMFYUI_PATH``, but ComfyUI is pip-installed on the pod and has no such
+    checkout. cm-cli would fail with ``'{comfy_path}' is not a valid
+    'COMFYUI_PATH' location.``; the clone path works without that env var.
+    """
+    if not template_ids:
+        return
+    cmd = (
+        "set -e && cd /root/vibecomfy && python - <<'PY'\n"
+        "from __future__ import annotations\n"
+        "\n"
+        "import sys\n"
+        "\n"
+        "from vibecomfy import load_workflow_any\n"
+        "from vibecomfy.node_packs_install import install_pack\n"
+        "from vibecomfy.patches.registry import find_applicable\n"
+        "\n"
+        f"TEMPLATE_IDS = {tuple(template_ids)!r}\n"
+        "\n"
+        "needed: set[str] = set()\n"
+        "for tid in TEMPLATE_IDS:\n"
+        "    wf = load_workflow_any(tid)\n"
+        "    for patch in find_applicable(wf):\n"
+        "        patch.apply(wf)\n"
+        "    declared = list(getattr(getattr(wf, 'requirements', None), 'custom_nodes', None) or ())\n"
+        "    print(f'  declared by {tid}: {declared}')\n"
+        "    needed.update(declared)\n"
+        "\n"
+        "if not needed:\n"
+        "    print('VIBECOMFY_NODES_ENSURE_OK: no packs declared')\n"
+        "    sys.exit(0)\n"
+        "\n"
+        "no_cm_cli = lambda install_root, runner: None\n"
+        "failed: list[tuple[str, str, str | None]] = []\n"
+        "for name in sorted(needed):\n"
+        "    result = install_pack(name=name, cm_cli_resolver=no_cm_cli)\n"
+        "    sha = f' {result.git_commit_sha}' if result.git_commit_sha else ''\n"
+        "    print(f'  install_pack {name}: {result.status}{sha}')\n"
+        "    if result.error:\n"
+        "        print(f'    error: {result.error}')\n"
+        "    if result.status not in ('installed', 'refreshed'):\n"
+        "        failed.append((name, result.status, result.error))\n"
+        "\n"
+        "if failed:\n"
+        "    print('VIBECOMFY_NODES_ENSURE_FAIL=' + repr(failed))\n"
+        "    sys.exit(1)\n"
+        "print('VIBECOMFY_NODES_ENSURE_OK')\n"
+        "PY"
+    )
+    code, stdout, stderr = await pod.exec_ssh(cmd, timeout=timeout)
+    if code != 0:
+        raise AssertionError(
+            f"node-pack ensure failed code={code}\n"
+            f"templates={list(template_ids)}\n"
+            f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+        )
+
+
 async def launch_with_retry(
     runpod_lifecycle, config, name: str, *, retries: int = 4
 ):
@@ -148,7 +219,9 @@ def _git_output(args: str) -> str | None:
 
 __all__ = [
     "POD_NAME_PREFIX",
+    "ensure_node_packs",
     "install_current_branch",
+    "launch_with_retry",
     "load_runpod_lifecycle",
     "pod_name",
     "require_runpod_api_key",
