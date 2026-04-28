@@ -1,8 +1,7 @@
 """Typed-handle parity fixture — re-exports the converted ready_template build.
 
-After the JSON-flavored→real-Python conversion (per docs/megaplan_briefs/
-convert_templates_to_real_python.md), the ready_template *is* the typed
-parity reference.
+After the JSON-flavored→real-Python conversion the ready_template *is*
+the typed parity reference.
 """
 
 from __future__ import annotations

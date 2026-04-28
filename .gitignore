@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 
 # Generated indexes and runtime artifacts
+workflow_index.json
 template_index.json
 external_workflow_index.json
 node_index.json
@@ -23,3 +24,7 @@ custom_nodes/
 .desloppify/
 .megaplan/
 *.patch
+
+# Agent task briefs and prompts — historical scratchpads, not project docs
+docs/megaplan_briefs/
+docs/subagent_prompts/

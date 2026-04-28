@@ -466,8 +466,7 @@ def test_model_fingerprint_wan_snapshot() -> None:
     api = json.loads(Path("tests/snapshots/wan_t2v.api.json").read_text(encoding="utf-8"))
 
     # Post-conversion the snapshot uses canonical input names rather than
-    # positional widget_X. Expectations updated to match the converted shape
-    # (per docs/megaplan_briefs/convert_templates_to_real_python.md).
+    # positional widget_X. Expectations updated to match the converted shape.
     assert model_fingerprint(api) == (
         ("CLIPLoader", "clip_name", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
         ("CLIPLoader", "device", "default"),
