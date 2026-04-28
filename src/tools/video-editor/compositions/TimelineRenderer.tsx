@@ -1,4 +1,4 @@
-import { AbsoluteFill } from 'remotion';
+import { AbsoluteFill, Sequence } from 'remotion';
 import { memo, useMemo, type FC, type ReactNode } from 'react';
 import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils';
 import { getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils';
@@ -9,7 +9,23 @@ import { EffectLayerSequence } from '@/tools/video-editor/compositions/EffectLay
 import { TextClipSequence } from '@/tools/video-editor/compositions/TextClip';
 import { VisualClipSequence } from '@/tools/video-editor/compositions/VisualClip';
 import { UnknownClipPlaceholderSequence } from '@/tools/video-editor/compositions/UnknownClipPlaceholder';
+import {
+  THEME_PACKAGE_REGISTRY,
+  type ThemePackageClipType,
+} from '@banodoco/timeline-composition/registry.generated';
 
+// Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
+//
+// Mirrors `tools/remotion/src/HypeComposition.tsx:58-64` (lifted into
+// `packages/timeline-composition/typescript/src/TimelineComposition.tsx`).
+// Lookup chain for a clipType:
+//
+//   1. Reigh-native built-ins (effect-layer, text, media, hold) — same as
+//      pre-Sprint-5 behavior.
+//   2. THEME_PACKAGE_REGISTRY (codegenned from installed
+//      @banodoco/timeline-theme-* packages) — render the theme component.
+//   3. Sprint-3 loud placeholder — defensive fallback when the theme
+//      package isn't installed OR the clipType is unknown.
 const isBuiltinClipType = (value: string | undefined): boolean => {
   if (typeof value !== 'string') {
     return true; // legacy clips with no clipType default to media-equivalent dispatch
@@ -17,8 +33,45 @@ const isBuiltinClipType = (value: string | undefined): boolean => {
   return (BUILTIN_CLIP_TYPES as readonly string[]).includes(value);
 };
 
+const isThemePackageClipType = (value: string | undefined): value is ThemePackageClipType => {
+  if (typeof value !== 'string') return false;
+  return Object.prototype.hasOwnProperty.call(THEME_PACKAGE_REGISTRY, value);
+};
+
 const sortClipsByAt = (clips: ResolvedTimelineClip[]): ResolvedTimelineClip[] => {
   return [...clips].sort((left, right) => left.at - right.at);
+};
+
+type ThemeEffectSequenceProps = {
+  clip: ResolvedTimelineClip;
+  fps: number;
+};
+
+const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps }) => {
+  const entry = THEME_PACKAGE_REGISTRY[clip.clipType as ThemePackageClipType];
+  // Defensive: if the registry lookup somehow returned no entry, fall back
+  // to the loud placeholder. This is the second layer of the SD-025
+  // "loud placeholder" safety net for clipTypes that *are* in the
+  // registry but somehow fail to render.
+  if (!entry) {
+    return <UnknownClipPlaceholderSequence clip={clip} fps={fps} reason="unsupported" />;
+  }
+  const Component = entry.component as FC<{
+    clip: ResolvedTimelineClip;
+    params: unknown;
+    theme: unknown;
+    fps: number;
+  }>;
+  const durationInFrames = Math.max(1, Math.round(((clip.hold ?? 0) + ((clip.to ?? 0) - (clip.from ?? 0))) * fps)) || Math.max(1, Math.round((clip.hold ?? 1) * fps));
+  return (
+    <Sequence
+      key={clip.id}
+      from={Math.round(clip.at * fps)}
+      durationInFrames={durationInFrames}
+    >
+      <Component clip={clip} params={clip.params} theme={undefined} fps={fps} />
+    </Sequence>
+  );
 };
 
 const renderVisualTrack = (
@@ -48,10 +101,18 @@ const renderVisualTrack = (
           return <TextClipSequence key={clip.id} clip={clip} track={track} fps={fps} />;
         }
 
-        // SD-025 (Sprint 3): loud placeholder for unknown clipTypes.
-        // Built-in dispatch handles 'media' / 'hold' / 'text' / 'effect-layer';
-        // anything else is rendered as a labeled band so unknown clips are
-        // never a silent black void.
+        // EFFECT_REGISTRY dispatch (Sprint 5 / SD-026): if the clipType
+        // is provided by an installed theme package, render via the
+        // codegenned registry entry. Mirrors HypeComposition.tsx:58-64.
+        if (isThemePackageClipType(clip.clipType)) {
+          return <ThemeEffectSequence key={clip.id} clip={clip} fps={fps} />;
+        }
+
+        // SD-025 (Sprint 3): loud placeholder for unknown clipTypes that
+        // are NOT in BUILTIN_CLIP_TYPES and NOT in the theme registry —
+        // theme package missing, typo, or future clipType not yet
+        // supported. Surfaces as a labeled band rather than a silent
+        // black void.
         if (!isBuiltinClipType(clip.clipType)) {
           return (
             <UnknownClipPlaceholderSequence

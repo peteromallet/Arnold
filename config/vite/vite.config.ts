@@ -22,6 +22,11 @@ export default defineConfig(() => {
     server: {
       host: "::",
       port: port,
+      // Sprint 5: allow Vite to read from the sibling banodoco-workspace
+      // (timeline-theme-2rp file: link).
+      fs: {
+        allow: [path.resolve(__dirname, "../../../..")],
+      },
     },
     preview: {
       host: "0.0.0.0",
@@ -34,8 +39,28 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "../../src"),
+        // Sprint 5: deduplicate React / Remotion / @banodoco/* across the
+        // linked timeline-composition + timeline-theme-* packages so a
+        // single React runtime drives the @remotion/player preview.
+        "react": path.resolve(__dirname, "../../node_modules/react"),
+        "react-dom": path.resolve(__dirname, "../../node_modules/react-dom"),
+        "remotion": path.resolve(__dirname, "../../node_modules/remotion"),
+        "@remotion/layout-utils": path.resolve(__dirname, "../../node_modules/@remotion/layout-utils"),
+        "@banodoco/timeline-composition/registry.generated": path.resolve(
+          __dirname,
+          "../../node_modules/@banodoco/timeline-composition/typescript/src/registry.generated.ts",
+        ),
+        "@banodoco/timeline-composition/theme-api": path.resolve(
+          __dirname,
+          "../../node_modules/@banodoco/timeline-composition/typescript/src/theme-api.ts",
+        ),
+        "@banodoco/timeline-composition": path.resolve(__dirname, "../../node_modules/@banodoco/timeline-composition"),
+        // Workspace-primitive aliases (mirrors banodoco shell webpack-alias.mjs).
+        "@workspace-effects": path.resolve(__dirname, "../../../../banodoco-workspace/effects"),
+        "@workspace-animations": path.resolve(__dirname, "../../../../banodoco-workspace/animations"),
+        "@workspace-transitions": path.resolve(__dirname, "../../../../banodoco-workspace/transitions"),
       },
-      dedupe: ['react', 'react-dom', 'react-reconciler'],
+      dedupe: ['react', 'react-dom', 'react-reconciler', 'remotion', '@banodoco/timeline-composition', '@banodoco/timeline-theme-2rp'],
     },
     build: {
       outDir: "dist",
