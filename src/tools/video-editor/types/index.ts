@@ -1,3 +1,16 @@
+// Sprint 2: re-export the canonical shared types so Reigh and Banodoco agree at
+// the boundary. Reigh keeps richer locally-typed shapes for editor-internal use
+// (ResolvedTimelineConfig, ClipMeta, etc.) — only the persisted on-disk shape
+// must match the shared schema.
+export type {
+  TimelineConfigT as SharedTimelineConfig,
+  TimelineClipT as SharedTimelineClip,
+  ThemeOverridesT as SharedThemeOverrides,
+  TimelineOutputT as SharedTimelineOutput,
+  AssetEntryT as SharedAssetEntry,
+  ThemeT as SharedTheme,
+} from '@banodoco/timeline-schema';
+
 export type TimelineEffect = {
   fade_in?: number;
   fade_out?: number;
@@ -46,7 +59,14 @@ export type TrackBlendMode =
   | 'lighten'
   | 'soft-light'
   | 'hard-light';
-export type ClipType = 'media' | 'hold' | 'text' | 'effect-layer';
+// SD-024 (Sprint 2): clipType is widened to a string at the schema level.
+// The closed union of built-in clip types is retained as BUILTIN_CLIP_TYPES for
+// call sites that still narrow against the legacy four. Effect-id / theme-id
+// validation against a registry is Sprint 5; the editor's placeholder fallback
+// for unknown clipTypes is Sprint 3.
+export const BUILTIN_CLIP_TYPES = ['media', 'hold', 'text', 'effect-layer'] as const;
+export type BuiltinClipType = (typeof BUILTIN_CLIP_TYPES)[number];
+export type ClipType = string;
 
 export type TrackDefinition = {
   id: string;
@@ -123,6 +143,14 @@ export type TimelineClip = {
   continuous?: ClipContinuous;
   transition?: ClipTransition;
   effects?: TimelineEffect[] | Record<string, number>;
+  // Sprint 2: schema-lift fields. All optional; existing timelines without them
+  // round-trip unchanged. `params` carries effect/theme parameter blobs;
+  // `pool_id` / `clip_order` are Banodoco-arrangement provenance fields.
+  params?: Record<string, unknown>;
+  pool_id?: string;
+  clip_order?: number;
+  source_uuid?: string;
+  generation?: Record<string, unknown>;
 };
 
 export type TimelineOutput = {
@@ -178,11 +206,30 @@ export type PinnedShotGroup = {
   imageClipSnapshot?: PinnedShotImageClipSnapshot[];
 };
 
+// Sprint 2: theme overrides and generation defaults blocks. Open-shaped on
+// purpose — concrete schemas land with theme registry packages (Sprint 5+).
+export type ThemeOverrides = {
+  visual?: Record<string, unknown>;
+  generation?: Record<string, unknown>;
+  voice?: Record<string, unknown>;
+  audio?: Record<string, unknown>;
+  pacing?: Record<string, unknown>;
+};
+
+export type GenerationDefaults = Record<string, unknown>;
+
 export type TimelineConfig = {
   output: TimelineOutput;
   clips: TimelineClip[];
   tracks?: TrackDefinition[];
   pinnedShotGroups?: PinnedShotGroup[];
+  // Sprint 2: schema-lift fields. All optional. `theme` is a slug that
+  // resolves against the theme registry at render time; `theme_overrides`
+  // deep-merges onto the resolved theme; `generation_defaults` carries
+  // pipeline-wide generation knobs.
+  theme?: string;
+  theme_overrides?: ThemeOverrides;
+  generation_defaults?: GenerationDefaults;
 };
 
 export type AssetRegistryEntry = {

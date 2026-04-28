@@ -22,6 +22,12 @@ export const DEFAULT_VIDEO_TRACKS: TrackDefinition[] = [
 ];
 
 export function createDefaultTimelineConfig(): TimelineConfig {
+  // Sprint 2 schema-lift: `theme`, `theme_overrides`, and `generation_defaults`
+  // are intentionally left absent here. New timelines start with no theme bound
+  // (the editor today renders without a theme registry); the Theme chip in
+  // Sprint 3 is responsible for populating these once the user picks a theme.
+  // Keeping them undefined preserves byte-equivalence for every existing
+  // call site that snapshots a freshly-created config.
   return {
     output: {
       resolution: '1280x720',

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { repairConfig } from '@/tools/video-editor/lib/migrate';
 import { serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
-import type { ResolvedTimelineConfig, TimelineConfig } from '@/tools/video-editor/types';
+import type { ResolvedTimelineConfig, TimelineConfig, TimelineClip } from '@/tools/video-editor/types';
 
 describe('video-editor serialization', () => {
   it('preserves exact source fields and strips resolved-only data', () => {
@@ -107,6 +107,100 @@ describe('video-editor serialization', () => {
 
     expect(() => validateSerializedConfig(serialized)).not.toThrow();
     expect(serialized.pinnedShotGroups).toEqual(pinnedShotGroups);
+  });
+
+  // Sprint 2 schema-lift backward-compatibility guarantee: a pre-Sprint-2
+  // timeline (with only the four built-in clipTypes and no theme / overrides)
+  // round-trips through validateSerializedConfig untouched, and through
+  // serializeForDisk preserving every field. New optional fields stay absent
+  // unless the caller explicitly populates them.
+  it('round-trips a pre-Sprint-2 timeline without injecting new optional fields', () => {
+    const preSprint2Config: TimelineConfig = {
+      output: {
+        resolution: '1280x720',
+        fps: 30,
+        file: 'output.mp4',
+      },
+      tracks: [
+        { id: 'V1', kind: 'visual', label: 'V1' },
+      ],
+      clips: [
+        { id: 'clip-media', at: 0, track: 'V1', clipType: 'media', asset: 'a1', from: 0, to: 5 },
+        { id: 'clip-hold', at: 5, track: 'V1', clipType: 'hold', asset: 'a2', hold: 3 },
+        { id: 'clip-text', at: 8, track: 'V1', clipType: 'text', hold: 2, text: { content: 'hi' } },
+        { id: 'clip-fx', at: 10, track: 'V1', clipType: 'effect-layer', hold: 1 },
+      ],
+    };
+
+    expect(() => validateSerializedConfig(preSprint2Config)).not.toThrow();
+
+    // serializeForDisk preserves the closed clipType union and emits no new
+    // top-level fields when no `extras` are passed.
+    const resolved = {
+      output: preSprint2Config.output,
+      tracks: preSprint2Config.tracks ?? [],
+      clips: preSprint2Config.clips,
+      registry: {},
+    } as unknown as ResolvedTimelineConfig;
+    const round = serializeForDisk(resolved);
+    expect(round).toEqual(preSprint2Config);
+    expect(round).not.toHaveProperty('theme');
+    expect(round).not.toHaveProperty('theme_overrides');
+    expect(round).not.toHaveProperty('generation_defaults');
+  });
+
+  it('tolerates an open clipType string (Sprint 2 SD-024 widening)', () => {
+    const themedConfig: TimelineConfig = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        // Unknown clipType — Sprint 5 ships strict registry validation; for
+        // now the validator must NOT reject this.
+        { id: 'clip-themed', at: 0, track: 'V1', clipType: 'theme:karaoke-bouncing-ball', hold: 2 } as TimelineClip,
+      ],
+    };
+    expect(() => validateSerializedConfig(themedConfig)).not.toThrow();
+  });
+
+  it('round-trips Sprint 2 schema-lift fields when callers populate them', () => {
+    const resolved = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-1',
+          at: 0,
+          track: 'V1',
+          clipType: 'media',
+          asset: 'a1',
+          from: 0,
+          to: 5,
+          // Sprint 2 clip-level lift fields:
+          params: { intensity: 0.4 },
+          pool_id: 'pool-visual-a',
+          clip_order: 1,
+          source_uuid: 'abcd1234',
+        },
+      ],
+      registry: {},
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved, undefined, {
+      theme: 'cinema-noir',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'kling-1.6' },
+    });
+
+    expect(serialized.theme).toBe('cinema-noir');
+    expect(serialized.theme_overrides).toEqual({ visual: { canvas: { fps: 24 } } });
+    expect(serialized.generation_defaults).toEqual({ model: 'kling-1.6' });
+    expect(serialized.clips[0]).toMatchObject({
+      params: { intensity: 0.4 },
+      pool_id: 'pool-visual-a',
+      clip_order: 1,
+      source_uuid: 'abcd1234',
+    });
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
   });
 
   it('round-trips legacy pinnedShotGroups through repairConfig before serialization', () => {

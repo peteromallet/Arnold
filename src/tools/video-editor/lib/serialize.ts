@@ -31,6 +31,14 @@ export const TIMELINE_CLIP_FIELDS = [
   'continuous',
   'transition',
   'effects',
+  // Sprint 2 schema-lift additions (all optional). Listed here so the
+  // serializer survives them on round-trip and the closed-allowlist validator
+  // doesn't strip them silently.
+  'params',
+  'pool_id',
+  'clip_order',
+  'source_uuid',
+  'generation',
 ] as const;
 
 export type TimelineClipField = (typeof TIMELINE_CLIP_FIELDS)[number];
@@ -95,7 +103,18 @@ export const serializeTrackForDisk = (track: TrackDefinition): TrackDefinition =
   return serializedTrack as TrackDefinition;
 };
 
-const ALLOWED_TOP_LEVEL_KEYS = new Set(['output', 'clips', 'tracks', 'pinnedShotGroups']);
+// Sprint 2 schema-lift: tolerate the new optional top-level fields. The
+// validator does NOT enforce a clipType registry yet (SD-015 — strict
+// validation lands Sprint 5).
+const ALLOWED_TOP_LEVEL_KEYS = new Set([
+  'output',
+  'clips',
+  'tracks',
+  'pinnedShotGroups',
+  'theme',
+  'theme_overrides',
+  'generation_defaults',
+]);
 
 export const validateSerializedConfig = (config: TimelineConfig): void => {
   const topLevelKeys = Object.keys(config);
@@ -124,6 +143,10 @@ export const validateSerializedConfig = (config: TimelineConfig): void => {
 export const serializeForDisk = (
   resolved: ResolvedTimelineConfig,
   pinnedShotGroups?: TimelineConfig['pinnedShotGroups'],
+  // Sprint 2: optional carry-through of schema-lift top-level fields. Callers
+  // that don't pass these keep the prior behavior; existing timelines without
+  // them stay unchanged.
+  extras?: Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults'>,
 ): TimelineConfig => {
   const serialized: TimelineConfig = {
     output: { ...resolved.output },
@@ -133,6 +156,16 @@ export const serializeForDisk = (
 
   if (pinnedShotGroups && pinnedShotGroups.length > 0) {
     serialized.pinnedShotGroups = pinnedShotGroups;
+  }
+
+  if (extras?.theme !== undefined) {
+    serialized.theme = extras.theme;
+  }
+  if (extras?.theme_overrides !== undefined) {
+    serialized.theme_overrides = extras.theme_overrides;
+  }
+  if (extras?.generation_defaults !== undefined) {
+    serialized.generation_defaults = extras.generation_defaults;
   }
 
   validateSerializedConfig(serialized);
