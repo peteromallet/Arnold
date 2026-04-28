@@ -16,6 +16,46 @@ import { MediaErrorBoundary } from '@/tools/video-editor/compositions/MediaError
 import { computeViewportMediaLayout } from '@/tools/video-editor/lib/render-bounds';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
 
+// SD-025 (Sprint 3): inline missing-asset placeholder body. Mirrors the
+// styling of UnknownClipPlaceholder so the two loud cases look like a pair.
+// Lives inline (not a shared component) because VisualClip already wraps
+// content in a Sequence/AbsoluteFill upstream — we only need the visible
+// label here.
+const MissingAssetBody: FC<{ clipId: string; clipType: string }> = ({ clipId, clipType }) => (
+  <AbsoluteFill
+    data-testid="missing-asset-placeholder"
+    data-clip-id={clipId}
+    data-clip-type={clipType}
+    style={{
+      backgroundColor: '#5B0000',
+      borderTop: '2px solid #FF5252',
+      borderBottom: '2px solid #FF5252',
+      color: '#FFCDD2',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '12px 24px',
+      textAlign: 'center',
+      fontFamily:
+        'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+      fontSize: 14,
+      lineHeight: 1.4,
+      letterSpacing: '0.04em',
+    }}
+  >
+    <div
+      style={{
+        maxWidth: '80%',
+        padding: '8px 16px',
+        borderRadius: 4,
+        background: 'rgba(0, 0, 0, 0.45)',
+      }}
+    >
+      {`clipType '${clipType}' missing asset — clip will not appear in render`}
+    </div>
+  </AbsoluteFill>
+);
+
 type VisualClipProps = {
   clip: ResolvedTimelineClip;
   track: TrackDefinition;
@@ -89,13 +129,15 @@ const getIntrinsicMediaSize = (
 
 const VisualAsset: FC<VisualClipProps> = ({ clip, track, fps }) => {
   const { width: compositionWidth, height: compositionHeight } = useVideoConfig();
+  // SD-025: never silent-null when a built-in clip is missing its asset.
+  // Render a labeled red band so the gap is obvious in preview/export.
   if (!clip.assetEntry) {
-    return null;
+    return <MissingAssetBody clipId={clip.id} clipType={clip.clipType ?? 'media'} />;
   }
 
   const mediaSrc = getSanitizedMediaSrc(clip.assetEntry.src);
   if (!mediaSrc) {
-    return null;
+    return <MissingAssetBody clipId={clip.id} clipType={clip.clipType ?? 'media'} />;
   }
 
   const clipVolume = getSanitizedVolume(clip.volume);

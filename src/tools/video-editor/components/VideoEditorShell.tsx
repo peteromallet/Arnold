@@ -17,6 +17,7 @@ import { CompactPreview } from '@/tools/video-editor/components/CompactPreview';
 import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel';
 import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
 import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel';
+import { ThemeChip } from '@/tools/video-editor/components/ThemeChip';
 import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor';
 import {
   useTimelineChromeContext,
@@ -514,6 +515,7 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between px-3 py-3" data-shell-interaction="true">
       <span className="pointer-events-auto rounded bg-background/70 px-1.5 py-0.5 font-mono text-[11px] tracking-[0.08em] text-muted-foreground backdrop-blur-sm">{playback.formatTime(playback.currentTime)}</span>
       <div className="pointer-events-auto flex items-center gap-1">
+        <ThemeChip timeline={editorData.data?.config} />
         {mobileSinglePane && (
           <Dialog
             open={isMobilePropertiesOpen}

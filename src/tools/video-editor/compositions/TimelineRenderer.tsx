@@ -2,12 +2,20 @@ import { AbsoluteFill } from 'remotion';
 import { memo, useMemo, type FC, type ReactNode } from 'react';
 import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils';
 import { getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils';
-import type { ResolvedTimelineClip, ResolvedTimelineConfig, TrackDefinition } from '@/tools/video-editor/types';
+import { BUILTIN_CLIP_TYPES, type ResolvedTimelineClip, type ResolvedTimelineConfig, type TrackDefinition } from '@/tools/video-editor/types';
 import { AudioTrack } from '@/tools/video-editor/compositions/AudioTrack';
 import { AudioAnalysisProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider';
 import { EffectLayerSequence } from '@/tools/video-editor/compositions/EffectLayerSequence';
 import { TextClipSequence } from '@/tools/video-editor/compositions/TextClip';
 import { VisualClipSequence } from '@/tools/video-editor/compositions/VisualClip';
+import { UnknownClipPlaceholderSequence } from '@/tools/video-editor/compositions/UnknownClipPlaceholder';
+
+const isBuiltinClipType = (value: string | undefined): boolean => {
+  if (typeof value !== 'string') {
+    return true; // legacy clips with no clipType default to media-equivalent dispatch
+  }
+  return (BUILTIN_CLIP_TYPES as readonly string[]).includes(value);
+};
 
 const sortClipsByAt = (clips: ResolvedTimelineClip[]): ResolvedTimelineClip[] => {
   return [...clips].sort((left, right) => left.at - right.at);
@@ -38,6 +46,21 @@ const renderVisualTrack = (
 
         if (clip.clipType === 'text') {
           return <TextClipSequence key={clip.id} clip={clip} track={track} fps={fps} />;
+        }
+
+        // SD-025 (Sprint 3): loud placeholder for unknown clipTypes.
+        // Built-in dispatch handles 'media' / 'hold' / 'text' / 'effect-layer';
+        // anything else is rendered as a labeled band so unknown clips are
+        // never a silent black void.
+        if (!isBuiltinClipType(clip.clipType)) {
+          return (
+            <UnknownClipPlaceholderSequence
+              key={clip.id}
+              clip={clip}
+              fps={fps}
+              reason="unsupported"
+            />
+          );
         }
 
         const predecessor = index > 0 ? sortedClips[index - 1] : null;

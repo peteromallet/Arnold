@@ -6,6 +6,16 @@ import type {
   TrackDefinition,
 } from "../../../../src/tools/video-editor/types/index.ts";
 import type { ToolHandler, ToolResult } from "../types.ts";
+// Sprint 3 (SD-018): surgical CRUD ops moved to @banodoco/timeline-ops.
+// `moveClip` and `setClipProperty` here delegate to the shared package; the
+// handler-level result strings remain byte-equivalent so the LLM tool
+// schema (`tool-schemas.ts`) and the parsed-command output are unchanged.
+import {
+  moveClip as opsMoveClip,
+  setClipProperty as opsSetClipProperty,
+  type MutableClipProperty,
+} from "@banodoco/timeline-ops";
+import type { TimelineConfigT } from "@banodoco/timeline-schema";
 
 export type TimelineToolResult = ToolResult;
 
@@ -168,17 +178,16 @@ export function moveClip(
     return { result: "move_clip requires clipId and at." };
   }
 
-  const nextConfig = cloneConfig(config);
-  const clipIndex = getClipIndex(nextConfig, args.clipId);
-  if (clipIndex < 0) {
+  // Delegate to @banodoco/timeline-ops moveClip. Result string format is
+  // preserved byte-for-byte so the LLM-visible tool output is identical
+  // pre/post extraction (Sprint 3 snapshot test enforces this).
+  const opResult = opsMoveClip(config as unknown as TimelineConfigT, args.clipId, args.at);
+  if (!opResult.changed && opResult.detail?.reason === "not_found") {
     return { result: `Clip ${args.clipId} was not found.` };
   }
-
-  const previousAt = nextConfig.clips[clipIndex].at;
-  nextConfig.clips[clipIndex].at = roundSeconds(args.at);
-
+  const previousAt = opResult.detail?.previousAt as number;
   return {
-    config: nextConfig,
+    config: opResult.config as unknown as TimelineConfig,
     result: `Moved clip ${args.clipId} from ${roundSeconds(previousAt)}s to ${roundSeconds(args.at)}s.`,
   };
 }
@@ -325,25 +334,35 @@ export function setClipProperty(
     return { result: "set_clip_property requires clipId, property, and numeric value." };
   }
 
-  if (!MUTABLE_CLIP_PROPERTIES.includes(args.property as ClipProperty)) {
-    return {
-      result: `Property ${args.property} is not allowed. Use one of ${MUTABLE_CLIP_PROPERTIES.join(", ")}.`,
-    };
+  // Delegate to @banodoco/timeline-ops setClipProperty. The package owns
+  // the allow-list (mirrors MUTABLE_CLIP_PROPERTIES below for type
+  // narrowing). Result strings preserved byte-for-byte.
+  const opResult = opsSetClipProperty(
+    config as unknown as TimelineConfigT,
+    args.clipId,
+    args.property,
+    args.value,
+  );
+  if (!opResult.changed) {
+    if (opResult.detail?.reason === "property_not_allowed") {
+      return {
+        result: `Property ${args.property} is not allowed. Use one of ${MUTABLE_CLIP_PROPERTIES.join(", ")}.`,
+      };
+    }
+    if (opResult.detail?.reason === "not_found") {
+      return { result: `Clip ${args.clipId} was not found.` };
+    }
+    if (opResult.detail?.reason === "invalid_value") {
+      return { result: "set_clip_property requires clipId, property, and numeric value." };
+    }
   }
-
-  const nextConfig = cloneConfig(config);
-  const clipIndex = getClipIndex(nextConfig, args.clipId);
-  if (clipIndex < 0) {
-    return { result: `Clip ${args.clipId} was not found.` };
-  }
-
-  const clip = nextConfig.clips[clipIndex] as TimelineClip & Record<ClipProperty, number | undefined>;
-  const previousValue = clip[args.property as ClipProperty];
-  clip[args.property as ClipProperty] = args.value;
-
+  const previousValue = opResult.detail?.previousValue as number | undefined;
+  // Touch MutableClipProperty so the type alias isn't dead code.
+  const _typedProp: MutableClipProperty = args.property as MutableClipProperty;
+  void _typedProp;
   return {
-    config: nextConfig,
-    result: `Set ${args.property} on clip ${clip.id} from ${previousValue ?? "unset"} to ${args.value}.`,
+    config: opResult.config as unknown as TimelineConfig,
+    result: `Set ${args.property} on clip ${args.clipId} from ${previousValue ?? "unset"} to ${args.value}.`,
   };
 }
 
