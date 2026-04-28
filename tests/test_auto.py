@@ -772,6 +772,47 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     assert outcome.blocked_retries_used == 0
 
 
+def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -> None:
+    """When force-proceed is rejected by strict-notes, the auto driver should
+    surface a `human_required` outcome rather than a generic `failed`."""
+    plan = "strict-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    def escalated_status(plan_name: str, cwd=None, timeout=60):
+        return {
+            "success": True,
+            "step": "status",
+            "plan": plan_name,
+            "state": "critiqued",
+            "iteration": 1,
+            "summary": "Escalate awaiting override.",
+            "next_step": None,
+            "valid_next": ["override force-proceed", "override add-note", "override abort"],
+        }
+
+    def fake_run(args, cwd=None, timeout=None):
+        # The first override-force-proceed call should fail with the strict
+        # invariant error code in stderr.
+        if args[:2] == ["override", "force-proceed"]:
+            return 1, "", "CliError: escalate_requires_user_approval — user must approve"
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=escalated_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            on_escalate="force-proceed",
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "human_required", (
+        f"expected human_required outcome, got {outcome.status}: {outcome.reason}"
+    )
+    assert "strict-notes" in outcome.reason
+
+
 def test_last_history_step_result_handles_missing_and_corrupt(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()

@@ -736,6 +736,7 @@ def build_orchestrator_guidance(
     preflight_results: dict[str, bool],
     robustness: str,
     plan_name: str,
+    strict_notes: bool = False,
 ) -> str:
     """Return plain-language next-step guidance for the orchestrator."""
     recommendation = gate_payload["recommendation"]
@@ -760,7 +761,13 @@ def build_orchestrator_guidance(
         )
         guidance = f"Gate says PROCEED but preflight blocked. Fix: {failing_checks}."
     elif recommendation == "ESCALATE":
-        guidance = "Gate escalated. Ask the user: force-proceed, add-note, or abort."
+        if strict_notes:
+            guidance = (
+                "STRICT: gate escalated. Stop and ask the user. "
+                "Force-proceed requires --user-approved."
+            )
+        else:
+            guidance = "Gate escalated. Ask the user: force-proceed, add-note, or abort."
     elif recommendation == "ITERATE" and plateaued and recurring_critiques:
         guidance = (
             "Score plateaued with recurring critiques the loop can't fix. Consider "

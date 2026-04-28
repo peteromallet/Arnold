@@ -881,6 +881,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--project-dir", required=True)
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
+    init_parser.add_argument(
+        "--strict-notes",
+        action="store_true",
+        default=None,
+        help=(
+            "Reject force-proceed while unabsorbed user notes exist; turn ESCALATE "
+            "guidance into a hard human-required signal. Auto-on for --mode metaplan/doc."
+        ),
+    )
     init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
     init_parser.add_argument("--mode", choices=["code", "doc", "metaplan", "joke"], default=None,
                              help="Deliverable type: 'code' (source changes), 'doc' / 'metaplan' "
@@ -1014,6 +1023,19 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--reason", default="")
     override_parser.add_argument("--note")
     override_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
+    # strict-notes plumbing. Only meaningful for specific override_action values, but
+    # the override parser is flat (single positional + flags), so the flags live here.
+    override_parser.add_argument(
+        "--source",
+        choices=["user", "driver"],
+        default="user",
+        help="(add-note) Note source. Driver-attached notes don't block strict-notes force-proceed.",
+    )
+    override_parser.add_argument(
+        "--user-approved",
+        action="store_true",
+        help="(force-proceed) Acknowledge a strict-notes ESCALATE before forcing proceed.",
+    )
 
     verify_human_parser = subparsers.add_parser("verify-human", help="Record human verification for a criterion")
     verify_human_parser.add_argument("--plan")

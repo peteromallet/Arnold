@@ -91,6 +91,17 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     if auto_approve_value is None:
         auto_approve_value = get_effective("execution", "auto_approve")
     auto_approve = bool(auto_approve_value)
+    strict_notes_arg = getattr(args, "strict_notes", None)
+    strict_notes_explicit = strict_notes_arg is not None
+    if strict_notes_arg is None:
+        # Auto-on for design-doc / metaplan flows: in those modes a user note
+        # mid-flight almost always means "stop and reconsider" rather than
+        # "keep going." Code mode keeps the historical default (off).
+        if mode == "doc":
+            strict_notes_arg = True
+        else:
+            strict_notes_arg = get_effective("execution", "strict_notes")
+    strict_notes = bool(strict_notes_arg)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M")
     plan_name = args.name or f"{slugify(idea_text)}-{timestamp}"
     plan_dir = plans_root(root) / plan_name
@@ -109,6 +120,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
             "auto_approve": auto_approve,
             "robustness": robustness,
             "mode": mode,
+            "strict_notes": strict_notes,
             "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
         },
         "sessions": {},
@@ -134,6 +146,19 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     if from_doc_rel is not None:
         state["config"]["from_doc"] = from_doc_rel
         state["meta"]["imported_decisions"] = imported_decisions
+    if strict_notes and mode == "doc" and not strict_notes_explicit:
+        # Driver-source: marks the auto-enable for transparency without
+        # blocking force-proceed (driver notes don't count toward strict
+        # invariant 1).
+        _append_to_meta(
+            state,
+            "notes",
+            {
+                "timestamp": now_utc(),
+                "note": "strict-notes auto-enabled for metaplan/doc mode",
+                "source": "driver",
+            },
+        )
     for warning in parse_warnings:
         _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": warning})
     append_history(

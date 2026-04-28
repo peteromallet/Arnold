@@ -891,6 +891,22 @@ def test_build_orchestrator_guidance_escalate_requires_user_decision_when_not_au
     assert guidance == "Gate escalated. Ask the user: force-proceed, add-note, or abort."
 
 
+def test_orchestrator_guidance_escalate_strict() -> None:
+    """With strict_notes=True, ESCALATE guidance starts with 'STRICT:' and
+    references --user-approved."""
+    guidance = build_orchestrator_guidance(
+        gate_payload={"recommendation": "ESCALATE"},
+        signals=_signals(weighted_score=5.0, weighted_history=[4.0]),
+        preflight_passed=True,
+        preflight_results={"project_dir_exists": True},
+        robustness="standard",
+        plan_name="demo-plan",
+        strict_notes=True,
+    )
+    assert guidance.startswith("STRICT:")
+    assert "--user-approved" in guidance
+
+
 def test_build_orchestrator_guidance_iterate_plateaued_with_recurring_critiques() -> None:
     guidance = build_orchestrator_guidance(
         gate_payload={"recommendation": "ITERATE"},

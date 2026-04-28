@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from megaplan.types import (
     ROBUSTNESS_LEVELS,
@@ -38,10 +38,76 @@ from megaplan.evaluation import build_gate_artifact, build_gate_signals, run_gat
 
 from .shared import _append_to_meta, _attach_next_step_runtime
 
+
+_REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
+
+
+def _latest_revise_start_iso(plan_dir: Path, state: PlanState) -> str | None:
+    """Return the ISO-8601 timestamp of the most recent "absorption" event for
+    user notes — i.e., the start of the latest revise, or the timestamp of the
+    most recent structural-edit/replan override. Returns None when no
+    absorption event has happened yet (in that case, every user note is
+    unabsorbed).
+
+    Notes with timestamps strictly greater than the returned cutoff are
+    considered unabsorbed. When the cutoff is None, all user notes are
+    treated as unabsorbed regardless of timestamp.
+    """
+    candidates: list[str] = []
+    # Revise receipts: prefer metrics["start_timestamp_utc"] (added by the
+    # strict-notes audit-fields change) but fall back to the receipt's
+    # top-level timestamp_utc for back-compat with pre-existing receipts.
+    for receipt_path in plan_dir.glob("step_receipt_revise_v*.json"):
+        try:
+            import json as _json
+
+            data = _json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        metrics = data.get("metrics") if isinstance(data, dict) else None
+        ts = None
+        if isinstance(metrics, dict):
+            ts = metrics.get("start_timestamp_utc")
+        if not isinstance(ts, str) or not ts:
+            ts = data.get("timestamp_utc") if isinstance(data, dict) else None
+        if isinstance(ts, str) and ts:
+            candidates.append(ts)
+    # Structural-edit / replan overrides also "absorb" notes, since the user
+    # can no longer be reasoning about a stale step list after a structural
+    # change.
+    for entry in state.get("meta", {}).get("overrides", []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("action") in _REVISE_STRUCTURAL_OVERRIDE_ACTIONS:
+            ts = entry.get("timestamp")
+            if isinstance(ts, str) and ts:
+                candidates.append(ts)
+    if candidates:
+        return max(candidates)
+    return None
+
+
+def _unabsorbed_user_notes(plan_dir: Path, state: PlanState) -> list[dict]:
+    cutoff = _latest_revise_start_iso(plan_dir, state)
+    notes = state.get("meta", {}).get("notes", [])
+    user_notes = [
+        n
+        for n in notes
+        if isinstance(n, dict)
+        and n.get("source", "user") == "user"
+        and isinstance(n.get("timestamp"), str)
+    ]
+    if cutoff is None:
+        return user_notes
+    return [n for n in user_notes if n["timestamp"] > cutoff]
+
+
 def _override_add_note(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
     note = args.note
-    _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": note})
-    _append_to_meta(state, "overrides", {"action": "add-note", "timestamp": now_utc(), "note": note})
+    source = getattr(args, "source", None) or "user"
+    note_entry: dict[str, Any] = {"timestamp": now_utc(), "note": note, "source": source}
+    _append_to_meta(state, "notes", note_entry)
+    _append_to_meta(state, "overrides", {"action": "add-note", "timestamp": now_utc(), "note": note, "source": source})
     # Merge so a phase that saves between our load and write doesn't clobber
     # this note (and so we don't clobber any concurrent-override appends).
     save_state_merge_meta(plan_dir, state)
@@ -69,6 +135,36 @@ def _override_abort(root: Path, plan_dir: Path, state: PlanState, args: argparse
     }
 
 def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+    # Strict-notes invariants. Off by default; on for plans initialized with
+    # --strict-notes (and auto-on for --mode metaplan/doc). Two checks:
+    #   (1) Reject if any user-source note has been attached after the most
+    #       recent absorption event (revise / structural-edit / replan).
+    #   (2) If the last gate ESCALATEd, require explicit --user-approved.
+    # Note: finalize is not an override path; strict-notes does not block it.
+    if state["config"].get("strict_notes", False):
+        unabsorbed = _unabsorbed_user_notes(plan_dir, state)
+        if unabsorbed:
+            raise CliError(
+                "unabsorbed_notes_exist",
+                (
+                    f"strict_notes: {len(unabsorbed)} note(s) attached after the last "
+                    "revise; run revise (or replan / step-edit) before force-proceed."
+                ),
+                extra={
+                    "unabsorbed_note_timestamps": [
+                        n["timestamp"] for n in unabsorbed
+                    ]
+                },
+            )
+        last_recommendation = (state.get("last_gate") or {}).get("recommendation")
+        if last_recommendation == "ESCALATE" and not getattr(args, "user_approved", False):
+            raise CliError(
+                "escalate_requires_user_approval",
+                (
+                    "strict_notes: gate escalated and requires --user-approved "
+                    "before force-proceed."
+                ),
+            )
     if state["current_state"] == STATE_EXECUTED:
         # Force-proceed from review loop: mark as done despite review issues
         _append_to_meta(state, "overrides", {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason})
