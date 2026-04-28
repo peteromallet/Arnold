@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from vibecomfy import Image, Video, audio, edit, image, video
+from vibecomfy import Image, Video, image, video
 
 
 def test_image_t2i_returns_lazy_image_artifact_with_prompt_input() -> None:
@@ -23,15 +23,6 @@ def test_video_t2v_returns_lazy_video_artifact_with_save_video_output() -> None:
     workflow = artifact.preview_workflow()
 
     assert workflow.outputs[0].output_type == "SaveVideo"
-
-
-def test_deferred_edit_and_audio_ops_raise_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="load_workflow_any"):
-        image.edit("dummy.png", "hi")
-    with pytest.raises(NotImplementedError, match="load_workflow_any"):
-        edit.qwen("dummy.png", "hi")
-    with pytest.raises(NotImplementedError, match="no audio template registered"):
-        audio.t2a("hi")
 
 
 def test_flux_gguf_t2i_route_is_deferred() -> None:

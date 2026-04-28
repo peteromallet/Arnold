@@ -43,7 +43,7 @@ VibeComfy has two distinct authoring layers. Pick the right one before doing any
 | 1 | **Direct IR edits / setters** | `VibeWorkflow` methods | Raw graph editing: `set_prompt`, `set_seed`, `set_steps`, `add_node`, `connect`, `disconnect`, `replace_edge`, `register_input`, `finalize_metadata`. The lowest-level lever. | `VibeWorkflow` |
 | 2 | **Patches** (decorate) | `vibecomfy/patches/*.py` (`seed`, `resolution`, `save_prefix`, `gguf_unet`, `controlnet`, `ltx_lowvram`) | A `Patch(name, applies_to, apply, rationale)` that **decorates** an existing graph: tweaks a widget, splices a node into an edge, swaps a class. | `VibeWorkflow` (mutated) |
 | 3 | **Blocks** (extend) | `vibecomfy/blocks/*.py` (`encoding`, `sampling`, `decode`, `save`, `latent`, `loaders`, `subgraph`, `video`) | A function that mutates a workflow and returns typed `Handles`. Use when the call **changes** what handles are available (loader → `model/clip/vae`; sampler → `samples`; decode → `images`). | `Handles({"image": Handle(...)})` |
-| 4 | **Ops (verb-native)** | `vibecomfy/ops/{image,video,audio,edit}.py` | Lazy one-call entries: `image.t2i(prompt)`, `video.t2v(prompt)`, `video.i2v(image, prompt)`. Internally call `router.pick(...)` to choose a workflow + patches. | `Artifact` (`Image` / `Video`) |
+| 4 | **Ops (verb-native)** | `vibecomfy/ops/{image,video}.py` | Lazy one-call entries: `image.t2i(prompt)`, `video.t2v(prompt)`, `video.i2v(image, prompt)`. Internally call `router.pick(...)` to choose a workflow + patches. Audio and image-edit verbs are not yet wired up — for those, `load_workflow_any("audio/...")` or `load_workflow_any("edit/...")` and edit the IR directly. | `Artifact` (`Image` / `Video`) |
 | 5 | **Recipes** (compose) | `recipes/*.py` | Runnable Python that combines workflows + patches + blocks + ops + custom logic for one concrete result. The natural place to write user logic that spans multiple workflows. | usually a `VibeWorkflow` |
 
 Layer 1 rule: *changes-handles → block; decorates-handles → patch.*
@@ -264,10 +264,9 @@ result = router.pick("video", "i2v", model="ltx")    # RouterResult(template_id,
 
 ## Known limitations (don't fight these)
 
-- `image.edit`, `edit.qwen`, `audio.t2a` raise `NotImplementedError` in v1. Use `load_workflow_any("edit/qwen_image_edit")` and edit the `VibeWorkflow` directly.
+- Audio and image-edit verbs are not yet wired in the verb-native API. Use `load_workflow_any("audio/ace_step_1_5_t2a_song")` or `load_workflow_any("edit/qwen_image_edit")` and edit the `VibeWorkflow` directly.
 - `image.t2i(model="flux2_klein_9b_gguf")` not exposed via verb-native API yet — same workaround.
 - Named outputs `.out("IMAGE")` raise `NotImplementedError` until MP-6 schema integration. Use integer slots: `.out(0)`.
-- `wf.run_until(handle)` is gated on MP-6. Attach `SaveImage` / `PreviewImage` / `SaveAudio` manually.
 - `MarkdownNote` nodes are stripped during refactor (UI annotations only).
 
 ## Decision shortcut

@@ -14,8 +14,8 @@ from . import blocks, patches, router
 from .artifacts import Artifact, Audio, Image, Latent, Mask, Video
 from .cli_loader import load_workflow_any
 from .extras import ensure_plugins_loaded
-from .ops import audio, edit, image, video
-from .registry.library import workflow_from_file, workflow_from_template
+from .ops import image, video
+from .registry.library import workflow_from_file, workflow_from_id, workflow_from_template
 from .registry.ready import ready_template_ids, workflow_from_ready
 from .runtime.run import run, run_sync
 
@@ -37,6 +37,7 @@ __all__ = [
     "ValidationIssue",
     "ValidationReport",
     "workflow_from_file",
+    "workflow_from_id",
     "workflow_from_template",
     "workflow_from_ready",
     "ready_template_ids",
@@ -44,8 +45,6 @@ __all__ = [
     "ensure_plugins_loaded",
     "image",
     "video",
-    "audio",
-    "edit",
     "blocks",
     "patches",
     "router",

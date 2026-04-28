@@ -60,9 +60,3 @@ def test_named_output_requires_mp6_schema_integration() -> None:
         workflow.node("CLIPTextEncode", text="hello").out("CONDITIONING")
 
 
-def test_run_until_requires_mp6_output_type() -> None:
-    workflow = VibeWorkflow("handle-test", WorkflowSource("handle-test"))
-    handle = workflow.node("CLIPTextEncode", text="hello").out(0)
-
-    with pytest.raises(NotImplementedError, match="MP-6 schema integration"):
-        workflow.run_until(handle)

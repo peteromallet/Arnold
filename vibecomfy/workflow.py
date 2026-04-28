@@ -171,14 +171,6 @@ class VibeWorkflow:
         self.disconnect(to_ref)
         return self.connect(new_from_ref, to_ref)
 
-    def run_until(self, handle: Handle) -> Any:
-        if handle.output_type is None:
-            raise NotImplementedError(
-                "wf.run_until is gated on MP-6 schema integration; handle.output_type is None. "
-                "Manually attach SaveImage/PreviewImage/SaveAudio."
-            )
-        raise NotImplementedError("wf.run_until runner is not implemented yet; gated on MP-6.")
-
     def validate(self, schema_provider: SchemaProvider | None = None) -> ValidationReport:
         issues: list[ValidationIssue] = []
         if not self.nodes:

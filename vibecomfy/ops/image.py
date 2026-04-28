@@ -11,14 +11,6 @@ from vibecomfy.router import pick
 from vibecomfy.workflow import VibeInput, VibeOutput, VibeWorkflow
 
 
-_EDIT_UNAVAILABLE = (
-    "image.edit is not yet exposed via the verb-native API for the qwen/flux edit templates whose UUID subgraphs "
-    "lack a verified text input; use load_workflow_any('edit/qwen_image_edit') or "
-    "load_workflow_any('edit/flux2_klein_4b_image_edit_distilled') and edit the VibeWorkflow directly until MP-6 "
-    "ships schema-backed UUID-subgraph input validation"
-)
-
-
 def t2i(
     prompt: str,
     *,
@@ -68,14 +60,6 @@ def _t2i(
     )
 
 
-def edit(image: Any, instruction: str, *, model: str | None = None, **overrides: Any) -> Image:
-    return dispatch("image", "edit", image, instruction, model=model, **overrides)
-
-
-def _edit(image: Any, instruction: str, *, model: str | None = None, **overrides: Any) -> Image:
-    raise NotImplementedError(_EDIT_UNAVAILABLE)
-
-
 def _set_prompt_preserving_registration(workflow: VibeWorkflow, prompt: str, patches: list[Patch]) -> None:
     prompt_target = workflow.inputs.get("prompt")
     workflow.set_prompt(prompt)
@@ -108,7 +92,6 @@ def __getattr__(name: str) -> Any:
 
 
 register_op("image", "t2i", _t2i)
-register_op("image", "edit", _edit)
 
 
-__all__ = ["edit", "t2i"]
+__all__ = ["t2i"]
