@@ -59,7 +59,7 @@ PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "stalled" | "escalated" | "failed" | "aborted" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked"
+    status: str  # "done" | "stalled" | "escalated" | "failed" | "aborted" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required"
     plan: str
     final_state: str
     iterations: int
@@ -569,6 +569,26 @@ def drive(
                     )
                     if code != 0:
                         log(f"force-proceed failed (exit {code}): {err.strip() or out.strip()}")
+                        # Strict-notes invariants surface as specific error
+                        # codes — when we see them the right move is to
+                        # surrender to the human rather than treat the
+                        # subprocess failure as a generic auto-driver fault.
+                        combined_text = f"{out}\n{err}"
+                        strict_signals = (
+                            "unabsorbed_notes_exist",
+                            "escalate_requires_user_approval",
+                        )
+                        if any(signal in combined_text for signal in strict_signals):
+                            return _outcome(
+                                "human_required",
+                                final_state=state,
+                                iterations=iteration,
+                                reason=(
+                                    "force-proceed blocked by strict-notes — human "
+                                    "required to address notes or approve escalate"
+                                ),
+                                last_phase=last_phase,
+                            )
                         return _outcome(
                             "failed",
                             final_state=state,

@@ -48,6 +48,52 @@ def test_init_includes_next_step_runtime(plan_fixture: PlanFixture) -> None:
     assert "Expected duration:" in response["next_step_runtime"]["duration_hint"]
 
 
+def test_init_strict_notes_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--strict-notes should land in state['config']['strict_notes']."""
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+    make_args = make_args_factory(project_dir)
+    response = megaplan.handle_init(root, make_args(name="strict-on", strict_notes=True))
+    plan_dir = megaplan.plans_root(root) / response["plan"]
+    state = load_state(plan_dir)
+    assert state["config"]["strict_notes"] is True
+
+
+def test_init_metaplan_defaults_strict_notes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--mode metaplan (alias for doc) without --strict-notes should auto-enable it."""
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+    make_args = make_args_factory(project_dir)
+    response = megaplan.handle_init(
+        root,
+        make_args(
+            name="meta-default",
+            mode="metaplan",
+            output="design.md",
+        ),
+    )
+    plan_dir = megaplan.plans_root(root) / response["plan"]
+    state = load_state(plan_dir)
+    assert state["config"]["mode"] == "doc"
+    assert state["config"]["strict_notes"] is True
+
+
 def test_init_response_points_to_next_step_by_robustness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "root"
     project_dir = tmp_path / "project"

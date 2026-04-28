@@ -57,6 +57,8 @@ def make_args_factory(project_dir: Path) -> Callable[..., Namespace]:
             "note": None,
             "reason": "",
             "robustness": None,
+            "strict_notes": None,
+            "source": "user",
         }
         data.update(overrides)
         return Namespace(**data)

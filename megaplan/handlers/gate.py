@@ -287,6 +287,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             resolved=resolved,
         )
         gate_payload = worker.payload
+        strict_notes_flag = bool(state["config"].get("strict_notes", False))
         guidance = build_orchestrator_guidance(
             gate_payload=gate_payload,
             signals=signals_artifact["signals"],
@@ -294,6 +295,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             preflight_results=signals_artifact["preflight_results"],
             robustness=signals_artifact.get("robustness", "standard"),
             plan_name=state["name"],
+            strict_notes=strict_notes_flag,
         )
         gate_summary = build_gate_artifact(
             signals_artifact,
@@ -341,6 +343,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 preflight_results=signals_artifact["preflight_results"],
                 robustness=signals_artifact.get("robustness", "standard"),
                 plan_name=state["name"],
+                strict_notes=strict_notes_flag,
             )
             gate_summary = build_gate_artifact(
                 signals_artifact,

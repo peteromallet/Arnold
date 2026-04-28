@@ -47,6 +47,7 @@ class PlanConfig(TypedDict, total=False):
     allow_tiebreaker: bool
     tiebreaker_token_budget: int
     tiebreaker_time_budget_minutes: int
+    strict_notes: NotRequired[bool]
 
 
 class PlanMeta(TypedDict, total=False):
@@ -338,6 +339,7 @@ SCOPE_CREEP_TERMS = (
 DEFAULTS = {
     "execution.auto_approve": False,
     "execution.robustness": "standard",
+    "execution.strict_notes": False,
     "execution.worker_timeout_seconds": 7200,
     "execution.max_review_rework_cycles": 3,
     "execution.max_robust_review_rework_cycles": 2,
@@ -348,6 +350,7 @@ DEFAULTS = {
 
 _SETTABLE_BOOL = {
     "execution.auto_approve",
+    "execution.strict_notes",
 }
 
 _SETTABLE_ENUM = {

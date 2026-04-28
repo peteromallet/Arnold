@@ -30,6 +30,7 @@ from megaplan._core import (
     latest_plan_meta_path,
     latest_plan_path,
     load_plan_locked,
+    now_utc,
     read_json,
     require_state,
     save_flag_registry,
@@ -210,6 +211,12 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         has_gate, revise_transition = _resolve_revise_transition(state)
         previous_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
+        revise_start_iso = now_utc()
+        notes_consumed = [
+            n["timestamp"]
+            for n in state["meta"].get("notes", [])
+            if isinstance(n, dict) and "timestamp" in n
+        ]
         worker, agent, mode, refreshed = _pkg._run_worker(
             "revise",
             state,
@@ -218,6 +225,14 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             root=root,
             iteration=state["iteration"] + 1,
         )
+        # Record audit fields on the revise receipt: which notes existed at the
+        # moment we ran revise (so a future force-proceed can tell if notes
+        # arrived after the last revise) and when revise started.
+        worker.receipt_metrics = {
+            "start_timestamp_utc": revise_start_iso,
+            "notes_consumed": notes_consumed,
+            "notes_consumed_count": len(notes_consumed),
+        }
         payload = worker.payload
         validate_payload("revise", payload)
         payload["success_criteria"] = _merge_imported_decision_criteria(
@@ -350,6 +365,7 @@ def _validate_tiebreaker(
                 preflight_results=signals_artifact["preflight_results"],
                 robustness=signals_artifact.get("robustness", "standard"),
                 plan_name=state["name"],
+                strict_notes=bool(state["config"].get("strict_notes", False)),
             )
             new_summary = build_gate_artifact(
                 signals_artifact, retry_payload,
