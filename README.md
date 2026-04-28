@@ -1,62 +1,33 @@
 # VibeComfy
 
-VibeComfy is a Python package for discovering, normalizing, validating, analyzing, and running ComfyUI workflows through one editable intermediate representation: `VibeWorkflow`. JSON workflows are treated as input and output formats; edits and higher-level tooling should operate on `VibeWorkflow`.
+**VibeComfy is an agentic interface for you and your agent to build on top of ComfyUI.** You load a workflow (a ready template, an indexed JSON workflow, or one you author from scratch) into a single editable IR — `VibeWorkflow` — tweak it, and then build on top of it, combining it with other workflows and plain Python into an agentic loop. The goal is to make it as easy as possible to build complex creative loops on top of Comfy that run entirely locally.
 
-There are two core paths:
+![VibeComfy explainer](explainer.png)
 
-```text
-JSON/UI workflow source -> normalized API dict -> VibeWorkflow
-authored scratchpad -> VibeWorkflow -> Comfy API dict -> runtime queue
+## Give this to your agent to get started
+
+Paste this into your coding agent (Claude Code, Cursor, Codex, …):
+
+```
+Please set up VibeComfy for me:
+
+1. Clone https://github.com/peteromallet/VibeComfy into the current directory.
+2. Install it with `uv sync` (or `pip install -e .`). This pulls in ComfyUI
+   as a normal Python dependency via hiddenswitch/pip-and-uv-installable-ComfyUI.
+3. Run `python -m vibecomfy.cli sources sync` to build the indexes.
+4. Read .claude/skills/vibecomfy/SKILL.md to learn the authoring surface.
+5. Ask me what I'd like to create (image, video, or audio), then run a small
+   test generation end-to-end to confirm everything works. The
+   `image/z_image` ready template is a good cheap default for a first run.
 ```
 
-`convert` bridges the two paths by generating scratchpad files from ingested
-JSON/UI workflows. Generated scratchpads and run outputs live under `out/`.
+That's the whole install. The bundled skill at [`.claude/skills/vibecomfy/SKILL.md`](.claude/skills/vibecomfy/SKILL.md) teaches the agent the full surface — discovery, loading, editing, patches, blocks, recipes, and the embedded / server / RunPod runtimes.
 
-## Project Layout
+## Thanks
 
-- `vibecomfy/workflow.py`: the editable workflow IR, compile targets, validation report types, and convenience setters.
-- `vibecomfy/ingest/`: JSON and UI workflow loading, normalization, conversion, and index writing.
-- `vibecomfy/registry/`: lookup helpers for indexed workflows and ready Python templates.
-- `vibecomfy/runtime/`: embedded and server-backed Comfy runtime helpers.
-- `vibecomfy/commands/`: CLI command modules registered by `vibecomfy.cli`.
-- `vibecomfy/schema/`: schema-provider home for `/object_info` and local node metadata.
-- `vibecomfy/analysis/`: graph analysis primitives and CLI-backed inspection commands.
-- `vibecomfy/search/`: node and workflow search indexes, aliases, and ranking.
+VibeComfy is a thin Python authoring layer. The real work belongs to:
 
-See `docs/vibeworkflow.md` for the IR contract and `docs/old_vibecomfy_port_rationale.md` for the staged port rationale.
-
-## CLI
-
-Run commands with `python -m vibecomfy.cli ...` from the repository root. The installed console script is `vibecomfy = "vibecomfy.cli:main"` when the package is installed.
-
-- `sources sync`: index official workflows, external workflow examples, and custom-node examples.
-- `workflows list`: list indexed workflows; add `--ready` to list ready Python templates.
-- `nodes list`: list indexed Comfy node classes.
-- `inspect <workflow>`: show workflow metadata, requirements, inputs, and runnable status.
-- `convert <workflow> --out <path>`: generate a Python scratchpad from a workflow.
-- `validate <workflow>`: validate a JSON workflow or generated scratchpad.
-- `doctor <workflow>`: report workflow requirements and runtime readiness.
-- `runtime doctor`: check runtime dependencies.
-- `runtime smoke`: run a minimal runtime smoke check.
-- `run <workflow>`: execute through the embedded runtime by default; add `--ready` to run a ready Python template by id.
-- `logs tail`: tail recent run logs.
-- `analyze ...`: graph analysis commands such as `info`, `trace`, `path`, `values`, and `diff`.
-- `search <query>`: weighted node/workflow search with task aliases such as `i2v`, `controlnet`, `wan`, `ltx`, and `audio_reactive`.
-
-## Quick Start
-
-```bash
-python -m vibecomfy.cli sources sync
-python -m vibecomfy.cli workflows list --limit 5
-python -m vibecomfy.cli workflows list --ready --limit 5
-python -m vibecomfy.cli inspect z_image
-python -m vibecomfy.cli convert z_image --out out/scratchpads/z_image.py
-python -m vibecomfy.cli validate out/scratchpads/z_image.py
-python -m vibecomfy.cli analyze info workflow_corpus/official/image/z_image.json
-python -m vibecomfy.cli search wan --task i2v
-python -m vibecomfy.cli run out/scratchpads/z_image.py --runtime embedded
-```
-
-The local workflow corpus is rooted at `workflow_corpus/`. Ready Python templates are under `ready_templates/` and remain addressable with the `--ready` flags on `workflows list` and `run`.
-
-For the contribution/operator path for new templates and models, see [docs/adding_templates_models.md](docs/adding_templates_models.md).
+- **[`pip-and-uv-installable-ComfyUI`](https://github.com/hiddenswitch/pip-and-uv-installable-ComfyUI)** by [Dr. Pangloss / hiddenswitch](https://github.com/hiddenswitch) — the fork that makes ComfyUI installable as a normal Python package, which is what lets VibeComfy embed Comfy at all.
+- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)** by **comfyanonymous** and the wider Comfy community, plus the custom-node pack authors VibeComfy indexes (KJNodes, VideoHelperSuite, WanVideoWrapper, LTXVideo, rgthree, was-node-suite, and many more).
+- **The workflow builders** whose graphs the ready templates are based on — [Kijai](https://github.com/kijai), the [Comfy team's official examples](https://github.com/comfyanonymous/ComfyUI_examples), and many others across the community whose published workflows we adapted into the `ready_templates/` set.
+- **The open-source model authors** whose weights every workflow actually runs — Black Forest Labs (Flux), Tencent (Hunyuan), Alibaba (Wan, Qwen), Lightricks (LTX-Video), Stability AI (SD/SDXL), and the long tail of fine-tuners and LoRA authors releasing openly on Hugging Face and Civitai.
