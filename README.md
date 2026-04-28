@@ -2,7 +2,7 @@
 
 **VibeComfy is an agentic interface for you and your agent to build on top of ComfyUI.** You load a workflow (a ready template, an indexed JSON workflow, or one you author from scratch) into a single editable IR — `VibeWorkflow` — tweak it, and then build on top of it, combining it with other workflows and plain Python into an agentic loop. The goal is to make it as easy as possible to build complex creative loops on top of Comfy that run entirely locally.
 
-![VibeComfy explainer](explainer.png)
+![VibeComfy explainer](docs/assets/explainer.png)
 
 ## Give this to your agent to get started
 
@@ -34,7 +34,7 @@ VibeComfy is a thin Python authoring layer. The real work belongs to:
 
 ## Code quality
 
-![Code quality scorecard](scorecard.png)
+![Code quality scorecard](docs/assets/scorecard.png)
 
 ## License
 
