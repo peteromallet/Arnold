@@ -19,8 +19,18 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
     auth: { required: true, options: { allowJwtUserAuth: true } },
     ...NO_SESSION_RUNTIME_OPTIONS,
   },
-  async ({ auth, body, logger, supabaseAdmin }) => {
+  async ({ auth, body, logger, req, supabaseAdmin }) => {
     if (!auth?.userId) return jsonResponse({ error: "Authentication failed" }, 401);
+    // Sprint 7 (SD-022): re-extract the raw Bearer token so the
+    // delegateToBanodocoAgent tool can forward it to the orchestrator.
+    // The agent only sees this when the caller authenticated via JWT
+    // (auth.isJwtAuth === true); PAT-authenticated callers can't drive
+    // the bidirectional handoff in v1 because the worker requires a
+    // user JWT to verify against JWKS.
+    const rawAuthHeader = req.headers.get("Authorization") ?? "";
+    const userJwt = rawAuthHeader.startsWith("Bearer ") && auth.isJwtAuth
+      ? rawAuthHeader.slice("Bearer ".length)
+      : "";
     const sessionId = typeof body.session_id === "string" ? body.session_id.trim() : "";
     const userMessage = body.user_message === undefined || body.user_message === null
       ? undefined
@@ -68,6 +78,7 @@ serve((req) => withEdgeRequest<AgentInvocationBody>(
         userMessage: nextUserMessage,
         selectedClips: enrichedSelectedClips,
         supabaseAdmin,
+        userJwt,
         logger,
       });
       await persistSessionState(supabaseAdmin, {

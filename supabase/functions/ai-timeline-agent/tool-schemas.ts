@@ -397,6 +397,47 @@ export const TIMELINE_AGENT_TOOLS: TimelineAgentToolDefinition[] = [
     },
   },
   {
+    // Sprint 7 (SD-020 + SD-034 + SD-035): bidirectional handoff. Use for
+    // bulk generative authoring that's larger than a surgical edit.
+    // Returns "queued" immediately; the editor's realtime subscription
+    // picks up the worker's write.
+    type: "function",
+    function: {
+      name: "delegateToBanodocoAgent",
+      description:
+        "Delegates bulk generative authoring to a Banodoco worker. Use when the user asks for generation that's larger than a surgical edit (e.g. 'extend this hype reel by 15s', 'generate a new section in 2rp style', 'regenerate the closing montage'). Returns 'queued' immediately; the editor will refresh when the new TimelineConfig lands. Do NOT use for one-clip property edits — those go through `run` or `set_params`.",
+      parameters: {
+        type: "object",
+        properties: {
+          intent: {
+            type: "string",
+            description: "Natural-language description of the generative request. Forwarded verbatim to the Banodoco pipeline.",
+          },
+          brief_inputs: {
+            type: "object",
+            description: "Optional structured inputs (e.g. {transcript, sources}). Free-form; the worker normalises.",
+            additionalProperties: true,
+          },
+          theme_id: {
+            type: "string",
+            description: "Theme to author against (e.g. '2rp', 'arca-gidan'). Defaults to the timeline's current theme.",
+          },
+          scope: {
+            type: "string",
+            enum: ["full", "insert", "replace_range"],
+            description: "Whether to regenerate the whole timeline ('full'), insert a new section ('insert'), or replace a range ('replace_range').",
+          },
+          current_timeline_snapshot: {
+            type: "boolean",
+            description: "When true (default), include the current timeline as context for the worker. Set false to ask for a fresh authoring pass that ignores the current state.",
+          },
+        },
+        required: ["intent"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
     type: "function",
     function: {
       name: "get_tasks",

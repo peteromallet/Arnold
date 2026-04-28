@@ -39,6 +39,12 @@ import {
   resolveSelectedClipShot,
 } from "./tools/clips.ts";
 import { executeCreateTask } from "./tools/create-task.ts";
+import {
+  executeDelegateToBanodocoAgent,
+  findLatestPendingDelegate,
+  pollBanodocoTaskStatus,
+  summariseTaskStatusForChat,
+} from "./tools/delegateToBanodocoAgent.ts";
 import { executeDuplicateGeneration } from "./tools/duplicate-generation.ts";
 import { executeSearchLoras, executeSetLora } from "./tools/loras.ts";
 import { executeCommand } from "./tools/registry.ts";
@@ -180,6 +186,11 @@ export interface RunAgentLoopOptions {
   userMessage?: string;
   selectedClips?: SelectedClipPayload[];
   supabaseAdmin: SupabaseAdmin;
+  // Sprint 7 (SD-022): the raw user JWT, threaded through to
+  // delegateToBanodocoAgent so the orchestrator + worker can re-verify
+  // identity. Empty string when the caller authenticated via PAT or
+  // service-role; in that case the delegate tool will refuse.
+  userJwt?: string;
   logger: LoopLogger;
 }
 
@@ -438,11 +449,22 @@ export async function executeToolCall(
   generationContext?: GenerationContext,
   userId?: string,
   logger?: LoopLogger,
+  userJwt?: string,
 ): Promise<ToolResult> {
   const toolArgs = toolCall.args;
 
   if (toolCall.parseError) {
     return { result: toolCall.parseError };
+  }
+
+  // Sprint 7 (SD-020 + SD-034 + SD-035): bidirectional generative handoff.
+  if (toolCall.name === "delegateToBanodocoAgent") {
+    return await executeDelegateToBanodocoAgent(
+      toolArgs,
+      timelineState,
+      timelineId,
+      userJwt,
+    );
   }
 
   if (toolCall.name === "run") {
@@ -537,6 +559,7 @@ async function processToolCalls({
   supabaseAdmin,
   timelineId,
   userId,
+  userJwt,
   setActiveToolCallId,
   logger,
 }: {
@@ -550,6 +573,8 @@ async function processToolCalls({
   supabaseAdmin: SupabaseAdmin;
   timelineId: string;
   userId?: string;
+  // Sprint 7 (SD-022): forwarded to delegateToBanodocoAgent.
+  userJwt?: string;
   setActiveToolCallId: (toolCallId: string | null) => void;
   logger?: LoopLogger;
 }): Promise<{ hasError: boolean }> {
@@ -582,6 +607,7 @@ async function processToolCalls({
       generationContext,
       userId,
       logger,
+      userJwt,
     );
     setActiveToolCallId(null);
 
@@ -618,10 +644,49 @@ async function processToolCalls({
   return { hasError };
 }
 
+// Sprint 7 (SD-034 status path): if a delegateToBanodocoAgent tool call is
+// in flight (i.e. the most recent tool_result for that tool reports
+// "queued"), poll the orchestrator's task-status endpoint at the start of
+// each loop turn and surface the state transition as a chat message
+// before the LLM is asked for its next action. The LLM sees the status
+// update via the appended assistant turn and can react.
+async function maybeSurfaceBanodocoStatus(
+  turns: AgentTurn[],
+  userJwt: string | undefined,
+  logger: LoopLogger,
+): Promise<void> {
+  if (!userJwt) {
+    return;
+  }
+  const pending = findLatestPendingDelegate(turns);
+  if (!pending) {
+    return;
+  }
+  // Skip if the very last turn is already a status update for this task.
+  const last = turns[turns.length - 1];
+  if (
+    last?.role === "assistant"
+    && typeof last.content === "string"
+    && last.content.includes(pending.task_id)
+  ) {
+    return;
+  }
+  try {
+    const snap = await pollBanodocoTaskStatus(pending.task_id, userJwt);
+    const summary = summariseTaskStatusForChat(snap);
+    turns.push(createTurn("assistant", `[banodoco-status ${pending.task_id}] ${summary}`));
+  } catch (err) {
+    logger.warn?.("Failed to poll banodoco task status", {
+      task_id: pending.task_id,
+      error: toErrorMessage(err),
+    });
+  }
+}
+
 export async function runAgentLoop(
   options: RunAgentLoopOptions,
 ): Promise<RunAgentLoopResult> {
-  const { session, userMessage, selectedClips, supabaseAdmin, logger } = options;
+  const { session, userMessage, selectedClips, supabaseAdmin, userJwt, logger } = options;
   const effectiveSelectedClips = selectedClips?.length
     ? selectedClips
     : recoverSelectedClipsFromTurns(session.turns);
@@ -722,6 +787,11 @@ export async function runAgentLoop(
         break;
       }
 
+      // Sprint 7 (SD-034 status path): on each turn, check whether a
+      // banodoco task is pending and surface its status before invoking
+      // the LLM.
+      await maybeSurfaceBanodocoStatus(turns, userJwt, logger);
+
       const currentStatus = await loadSessionStatus(supabaseAdmin, session.id);
       if (currentStatus === "cancelled") {
         logger.info("Detected cancelled session during agent loop", {
@@ -783,6 +853,7 @@ export async function runAgentLoop(
         supabaseAdmin,
         timelineId: session.timeline_id,
         userId: session.user_id,
+        userJwt,
         setActiveToolCallId: (toolCallId) => { activeToolCallId = toolCallId; },
         logger,
       });

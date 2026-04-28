@@ -70,6 +70,8 @@ describe("LLM tool schema byte-equivalence (Sprint 3)", () => {
     expect(names).toEqual([
       "create_shot",
       "create_task",
+      // Sprint 7 (SD-020 + SD-034): bidirectional generative handoff.
+      "delegateToBanodocoAgent",
       "duplicate_generation",
       "get_tasks",
       "run",

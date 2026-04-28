@@ -24,6 +24,8 @@ const FALLBACK_TOOL_NAMES = new Set([
   "set_params",
   "set_theme",
   "set_theme_overrides",
+  // Sprint 7 (SD-020 + SD-034): bulk generative delegation.
+  "delegateToBanodocoAgent",
 ]);
 
 function cleanCommand(raw: string): string {
