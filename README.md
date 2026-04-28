@@ -31,3 +31,11 @@ VibeComfy is a thin Python authoring layer. The real work belongs to:
 - **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)** by **comfyanonymous** and the wider Comfy community, plus the custom-node pack authors VibeComfy indexes (KJNodes, VideoHelperSuite, WanVideoWrapper, LTXVideo, rgthree, was-node-suite, and many more).
 - **The workflow builders** whose graphs the ready templates are based on — [Kijai](https://github.com/kijai), the [Comfy team's official examples](https://github.com/comfyanonymous/ComfyUI_examples), and many others across the community whose published workflows we adapted into the `ready_templates/` set.
 - **The open-source model authors** whose weights every workflow actually runs — Black Forest Labs (Flux), Tencent (Hunyuan), Alibaba (Wan, Qwen), Lightricks (LTX-Video), Stability AI (SD/SDXL), and the long tail of fine-tuners and LoRA authors releasing openly on Hugging Face and Civitai.
+
+## Code quality
+
+![Code quality scorecard](scorecard.png)
+
+## License
+
+MIT — see [LICENSE](LICENSE).
