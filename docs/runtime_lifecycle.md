@@ -18,7 +18,7 @@ Validated local checks:
 
 ```bash
 vibecomfy runtime smoke --mode managed
-vibecomfy run examples/smoke_empty_image_red.json --runtime embedded --backend graphbuilder
+vibecomfy run tests/smoke_fixtures/smoke_empty_image_red.json --runtime embedded --backend graphbuilder
 ```
 
 The managed smoke started Comfy, read 1,202 node definitions from `/object_info`, and terminated. The embedded smoke workflows wrote PNG files under `output/`.

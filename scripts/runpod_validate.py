@@ -19,11 +19,11 @@ python3 -m vibecomfy.cli convert image_flux2_klein_text_to_image --out out/scrat
 python3 -m vibecomfy.cli validate out/scratchpads/image_flux2_klein_text_to_image.py
 python3 -m vibecomfy.cli runtime doctor
 python3 -m vibecomfy.cli runtime smoke --mode managed
-python3 -m vibecomfy.cli run examples/smoke_empty_image_red.json --runtime embedded --backend graphbuilder
-python3 -m vibecomfy.cli run examples/smoke_empty_image_green.json --runtime embedded --backend graphbuilder
-python3 -m vibecomfy.cli run examples/smoke_empty_image_blue.json --runtime embedded --backend graphbuilder
-python3 -m vibecomfy.cli run examples/smoke_empty_image_white.json --runtime embedded --backend graphbuilder
-python3 -m vibecomfy.cli run examples/smoke_empty_image_black.json --runtime embedded --backend graphbuilder
+python3 -m vibecomfy.cli run tests/smoke_fixtures/smoke_empty_image_red.json --runtime embedded --backend graphbuilder
+python3 -m vibecomfy.cli run tests/smoke_fixtures/smoke_empty_image_green.json --runtime embedded --backend graphbuilder
+python3 -m vibecomfy.cli run tests/smoke_fixtures/smoke_empty_image_blue.json --runtime embedded --backend graphbuilder
+python3 -m vibecomfy.cli run tests/smoke_fixtures/smoke_empty_image_white.json --runtime embedded --backend graphbuilder
+python3 -m vibecomfy.cli run tests/smoke_fixtures/smoke_empty_image_black.json --runtime embedded --backend graphbuilder
 ls -lh output/vibecomfy_smoke_*_*.png
 """
 

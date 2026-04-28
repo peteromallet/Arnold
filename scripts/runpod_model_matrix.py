@@ -22,8 +22,8 @@ OFFICIAL_CANDIDATES = [
 ]
 
 EXTERNAL_CANDIDATES = [
-    "examples/custom_kjnodes_label.json",
-    "examples/generated_webm_smoke.json",
+    "tests/smoke_fixtures/custom_kjnodes_label.json",
+    "tests/smoke_fixtures/generated_webm_smoke.json",
     "custom_nodes/ComfyUI-WanVideoWrapper/example_workflows/wanvideo_2_1_14B_T2V_example_03.json",
     "custom_nodes/ComfyUI-WanVideoWrapper/example_workflows/wanvideo_2_2_5B_T2V_controlnet_example.json",
 ]
