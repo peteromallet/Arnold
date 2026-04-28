@@ -1,6 +1,6 @@
 ---
 name: vibecomfy
-description: Drive the VibeComfy package to discover ComfyUI workflows, load ready Python templates, edit and compose them in a `VibeWorkflow` IR, validate, and execute either embedded locally or on a RunPod GPU. Use whenever the user wants to generate images / video / audio / edits via ComfyUI from Python, swap params on a template, splice templates together, write logic on top of a graph, or run one of the existing `ready_templates` end-to-end. Triggers: "run a workflow", "tweak this template", "combine wan and z_image", "generate an image / video / song", "compose a custom pipeline", "execute on RunPod", "build a recipe".
+description: 'Drive the VibeComfy package to discover ComfyUI workflows, load ready Python templates, edit and compose them in a `VibeWorkflow` IR, validate, and execute either embedded locally or on a RunPod GPU. Use whenever the user wants to generate images / video / audio / edits via ComfyUI from Python, swap params on a template, splice templates together, write logic on top of a graph, or run one of the existing `ready_templates` end-to-end. Triggers: "run a workflow", "tweak this template", "combine wan and z_image", "generate an image / video / song", "compose a custom pipeline", "execute on RunPod", "build a recipe".'
 ---
 
 # VibeComfy
