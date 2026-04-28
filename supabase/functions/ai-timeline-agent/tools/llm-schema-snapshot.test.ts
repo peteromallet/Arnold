@@ -20,7 +20,15 @@
 
 import { describe, expect, it } from "vitest";
 import { TIMELINE_AGENT_TOOLS } from "../tool-schemas.ts";
-import { handlers as timelineHandlers, timelineTools, moveClip, setClipProperty } from "./timeline.ts";
+import {
+  handlers as timelineHandlers,
+  moveClip,
+  setClipParams,
+  setClipProperty,
+  setTheme,
+  setThemeOverrides,
+  timelineTools,
+} from "./timeline.ts";
 import type { AssetRegistry, TimelineConfig } from "../../../../src/tools/video-editor/types/index.ts";
 
 function snapshotSchema(): string {
@@ -67,11 +75,15 @@ describe("LLM tool schema byte-equivalence (Sprint 3)", () => {
       "run",
       "search_loras",
       "set_lora",
+      // Sprint 4 (SD-018): themed-editing direct tools.
+      "set_params",
+      "set_theme",
+      "set_theme_overrides",
       "transform_image",
     ]);
   });
 
-  it("timelineHandlers keys match the closed parsed-command target set", () => {
+  it("timelineHandlers keys match the closed parsed-command target set + Sprint 4 themed ops", () => {
     const expected = [
       "add_media_clip",
       "add_text_clip",
@@ -81,7 +93,15 @@ describe("LLM tool schema byte-equivalence (Sprint 3)", () => {
       "move_clip",
       "query_timeline",
       "set_clip_property",
+      // Sprint 4 (SD-018): themed-editing handler keys live alongside the
+      // slash-command-routable set; the slash-command parser ignores
+      // them under Option B (command-parser.ts SETTABLE_PROPERTIES is
+      // media-only). Direct tool calls in loop.ts surface them to the
+      // LLM.
+      "set_params",
       "set_text_content",
+      "set_theme",
+      "set_theme_overrides",
       "split_clip",
       "swap_clip_asset",
       "trim_clip",
@@ -151,6 +171,60 @@ describe("LLM tool schema byte-equivalence (Sprint 3)", () => {
       value: 0.5,
     });
     expect(result.result).toBe("Clip missing was not found.");
+  });
+
+  it("set_params happy-path result string is stable", () => {
+    const config = makeConfig();
+    const result = setClipParams(config, makeRegistry(), {
+      clipId: "clip-x",
+      params: { kicker: "Spring 2RP", title: "Hello" },
+    });
+    expect(result.result).toBe("Set params on clip clip-x: kicker, title.");
+    // Confirm the patch landed on the clip.
+    const params = (result.config!.clips[0] as Record<string, unknown>).params as Record<string, unknown>;
+    expect(params.kicker).toBe("Spring 2RP");
+    expect(params.title).toBe("Hello");
+  });
+
+  it("set_params not-found message", () => {
+    const result = setClipParams(makeConfig(), makeRegistry(), {
+      clipId: "missing",
+      params: { kicker: "x" },
+    });
+    expect(result.result).toBe("Clip missing was not found.");
+    expect(result.config).toBeUndefined();
+  });
+
+  it("set_theme happy-path result string is stable", () => {
+    const config = { ...makeConfig(), theme: "2rp" } as unknown as TimelineConfig;
+    const result = setTheme(config, makeRegistry(), { themeId: "arca-gidan" });
+    expect(result.result).toBe(
+      "Switched theme from 2rp to arca-gidan. (Note: existing themed clips referencing the old theme's clipType may need remapping.)",
+    );
+    expect((result.config as unknown as { theme: string }).theme).toBe("arca-gidan");
+  });
+
+  it("set_theme rejects empty themeId", () => {
+    const result = setTheme(makeConfig(), makeRegistry(), { themeId: "" });
+    expect(result.result).toBe("set_theme requires a non-empty themeId.");
+  });
+
+  it("set_theme_overrides happy-path result string is stable", () => {
+    const result = setThemeOverrides(makeConfig(), makeRegistry(), {
+      overrides: { visual: { canvas: { fps: 60 } } },
+    });
+    expect(result.result).toBe("Updated theme_overrides keys: visual.");
+    expect(
+      (result.config as unknown as { theme_overrides: { visual: { canvas: { fps: number } } } })
+        .theme_overrides.visual.canvas.fps,
+    ).toBe(60);
+  });
+
+  it("set_theme_overrides rejects non-object overrides", () => {
+    const result = setThemeOverrides(makeConfig(), makeRegistry(), {
+      overrides: "not-an-object" as unknown as Record<string, unknown>,
+    });
+    expect(result.result).toBe("set_theme_overrides requires an overrides object.");
   });
 
   it("full schema snapshot is byte-equivalent to checked-in expected string", () => {

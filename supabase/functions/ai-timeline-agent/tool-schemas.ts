@@ -24,6 +24,76 @@ export const TIMELINE_AGENT_TOOLS: TimelineAgentToolDefinition[] = [
     },
   },
   {
+    // Sprint 4 (SD-018): themed-clip params editor. Use this for editing
+    // clip-level params blobs like {kicker, title, subtitle} on themed
+    // effects (section-hook, art-card, etc.). Numeric media properties
+    // (volume/speed/opacity/x/y/width/height) still go through `run` →
+    // set_clip_property.
+    type: "function",
+    function: {
+      name: "set_params",
+      description:
+        "Edit a themed clip's `params` object (e.g. kicker, title, subtitle on a section-hook clip). Shallow-merges the patch into the clip's existing params. Pass null for a key to clear it. Use this — not `run set_clip_property` — for any non-numeric themed-effect parameter.",
+      parameters: {
+        type: "object",
+        properties: {
+          clipId: {
+            type: "string",
+            description: "Target clip ID.",
+          },
+          params: {
+            type: "object",
+            description: "Patch object merged into the clip's params. Keys with null are deleted.",
+            additionalProperties: true,
+          },
+        },
+        required: ["clipId", "params"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    // Sprint 4 (SD-018): switch the active timeline theme.
+    type: "function",
+    function: {
+      name: "set_theme",
+      description:
+        "Switch the timeline's active theme (e.g. \"2rp\", \"arca-gidan\"). Existing themed clips referencing the old theme's clipType may need remapping; the tool warns the user when this happens.",
+      parameters: {
+        type: "object",
+        properties: {
+          themeId: {
+            type: "string",
+            description: "Theme slug to activate.",
+          },
+        },
+        required: ["themeId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    // Sprint 4 (SD-018): layered theme overrides without re-authoring.
+    type: "function",
+    function: {
+      name: "set_theme_overrides",
+      description:
+        "Deep-merge a theme_overrides patch onto the timeline (e.g. {visual: {canvas: {fps: 60}}}). Use to tweak palette / typography / canvas / pacing without forking the theme. Pass null at any depth to clear that key.",
+      parameters: {
+        type: "object",
+        properties: {
+          overrides: {
+            type: "object",
+            description: "Patch object deep-merged into theme_overrides. Null values clear keys at any depth.",
+            additionalProperties: true,
+          },
+        },
+        required: ["overrides"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
     type: "function",
     function: {
       name: "transform_image",

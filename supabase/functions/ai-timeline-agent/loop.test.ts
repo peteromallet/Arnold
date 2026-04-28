@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   executeSearchLoras: vi.fn(),
   executeSetLora: vi.fn(),
   executeTransformImage: vi.fn(),
+  saveTimelineConfigVersioned: vi.fn(),
 }));
 
 vi.mock("./tools/registry.ts", () => ({
@@ -29,6 +30,19 @@ vi.mock("./tools/loras.ts", () => ({
 vi.mock("./tools/transform-image.ts", () => ({
   executeTransformImage: (...args: unknown[]) => mocks.executeTransformImage(...args),
 }));
+
+// Sprint 4: integration tests for set_params/set_theme/set_theme_overrides
+// pass through the real timeline.ts handlers but stub the DB save so the
+// loop's versioned-save path is exercised without Supabase. We mock just
+// `saveTimelineConfigVersioned` (other db.ts exports are unused by the
+// new code paths).
+vi.mock("./db.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./db.ts")>();
+  return {
+    ...actual,
+    saveTimelineConfigVersioned: (...args: unknown[]) => mocks.saveTimelineConfigVersioned(...args),
+  };
+});
 
 import {
   buildToolErrorTurn,
@@ -181,6 +195,135 @@ describe("loop helpers", () => {
       selectedClips,
       supabaseAdmin,
     );
+  });
+
+  // ── Sprint 4 (SD-018): set_params / set_theme / set_theme_overrides ──
+
+  it("dispatches set_params and persists via saveTimelineConfigVersioned", async () => {
+    const initialConfig = {
+      theme: "2rp",
+      clips: [
+        { id: "clip-section-hook", at: 0, track: "V1", clipType: "section-hook" },
+      ],
+    };
+    const timelineState = {
+      config: initialConfig,
+      configVersion: 7,
+      registry: { assets: {} },
+      projectId: "project-1",
+    } as unknown as import("./types.ts").TimelineState;
+    const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
+
+    mocks.saveTimelineConfigVersioned.mockResolvedValue(8);
+
+    const result = await executeToolCall({
+      id: "set-params-1",
+      name: "set_params",
+      args: { clipId: "clip-section-hook", params: { kicker: "Spring 2RP", title: "A new renaissance" } },
+      parseError: null,
+    }, timelineState, supabaseAdmin, "timeline-1");
+
+    expect(result.result).toBe("Set params on clip clip-section-hook: kicker, title.");
+    expect(timelineState.configVersion).toBe(8);
+    const updated = (timelineState.config.clips[0] as Record<string, unknown>).params as Record<string, unknown>;
+    expect(updated.kicker).toBe("Spring 2RP");
+    expect(updated.title).toBe("A new renaissance");
+    expect(mocks.saveTimelineConfigVersioned).toHaveBeenCalledWith(
+      supabaseAdmin,
+      "timeline-1",
+      7,
+      expect.objectContaining({ clips: expect.any(Array) }),
+    );
+  });
+
+  it("dispatches set_theme and persists via saveTimelineConfigVersioned", async () => {
+    const timelineState = {
+      config: { theme: "2rp", clips: [] },
+      configVersion: 1,
+      registry: { assets: {} },
+      projectId: "project-1",
+    } as unknown as import("./types.ts").TimelineState;
+    const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
+    mocks.saveTimelineConfigVersioned.mockResolvedValue(2);
+
+    const result = await executeToolCall({
+      id: "set-theme-1",
+      name: "set_theme",
+      args: { themeId: "arca-gidan" },
+      parseError: null,
+    }, timelineState, supabaseAdmin, "timeline-1");
+
+    expect(result.result).toBe(
+      "Switched theme from 2rp to arca-gidan. (Note: existing themed clips referencing the old theme's clipType may need remapping.)",
+    );
+    expect(timelineState.config.theme).toBe("arca-gidan");
+    expect(timelineState.configVersion).toBe(2);
+  });
+
+  it("dispatches set_theme_overrides and persists via saveTimelineConfigVersioned", async () => {
+    const timelineState = {
+      config: { theme: "2rp", clips: [] },
+      configVersion: 5,
+      registry: { assets: {} },
+      projectId: "project-1",
+    } as unknown as import("./types.ts").TimelineState;
+    const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
+    mocks.saveTimelineConfigVersioned.mockResolvedValue(6);
+
+    const result = await executeToolCall({
+      id: "set-theme-overrides-1",
+      name: "set_theme_overrides",
+      args: { overrides: { visual: { canvas: { fps: 60 } } } },
+      parseError: null,
+    }, timelineState, supabaseAdmin, "timeline-1");
+
+    expect(result.result).toBe("Updated theme_overrides keys: visual.");
+    expect(
+      (timelineState.config as unknown as { theme_overrides: { visual: { canvas: { fps: number } } } })
+        .theme_overrides.visual.canvas.fps,
+    ).toBe(60);
+    expect(timelineState.configVersion).toBe(6);
+  });
+
+  it("set_params surfaces handler not-found without calling save", async () => {
+    const timelineState = {
+      config: { theme: "2rp", clips: [{ id: "clip-a", at: 0, track: "V1" }] },
+      configVersion: 1,
+      registry: { assets: {} },
+      projectId: "project-1",
+    } as unknown as import("./types.ts").TimelineState;
+    const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
+    mocks.saveTimelineConfigVersioned.mockResolvedValue(2);
+
+    const result = await executeToolCall({
+      id: "set-params-missing",
+      name: "set_params",
+      args: { clipId: "missing", params: { kicker: "x" } },
+      parseError: null,
+    }, timelineState, supabaseAdmin, "timeline-1");
+
+    expect(result.result).toBe("Clip missing was not found.");
+    expect(mocks.saveTimelineConfigVersioned).not.toHaveBeenCalled();
+  });
+
+  it("set_theme returns version-conflict message when save returns null", async () => {
+    const timelineState = {
+      config: { theme: "2rp", clips: [] },
+      configVersion: 1,
+      registry: { assets: {} },
+      projectId: "project-1",
+    } as unknown as import("./types.ts").TimelineState;
+    const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
+    mocks.saveTimelineConfigVersioned.mockResolvedValue(null);
+
+    const result = await executeToolCall({
+      id: "set-theme-conflict",
+      name: "set_theme",
+      args: { themeId: "arca-gidan" },
+      parseError: null,
+    }, timelineState, supabaseAdmin, "timeline-1");
+
+    expect(result.result).toBe("Version conflict. Please retry.");
   });
 
   it("builds a tool-specific assistant error turn", () => {

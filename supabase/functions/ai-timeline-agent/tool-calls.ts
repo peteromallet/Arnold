@@ -20,6 +20,10 @@ const FALLBACK_TOOL_NAMES = new Set([
   "set_lora",
   "create_shot",
   "get_tasks",
+  // Sprint 4 (SD-018): themed-editing direct tools.
+  "set_params",
+  "set_theme",
+  "set_theme_overrides",
 ]);
 
 function cleanCommand(raw: string): string {

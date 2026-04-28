@@ -12,7 +12,10 @@ import type { ToolHandler, ToolResult } from "../types.ts";
 // schema (`tool-schemas.ts`) and the parsed-command output are unchanged.
 import {
   moveClip as opsMoveClip,
+  setClipParams as opsSetClipParams,
   setClipProperty as opsSetClipProperty,
+  setThemeOverrides as opsSetThemeOverrides,
+  setTimelineTheme as opsSetTimelineTheme,
   type MutableClipProperty,
 } from "@banodoco/timeline-ops";
 import type { TimelineConfigT } from "@banodoco/timeline-schema";
@@ -747,6 +750,92 @@ export function batchAddText(
   };
 }
 
+// Sprint 4 (SD-018): three new ops for themed-clip / theme editing.
+// Each delegates to @banodoco/timeline-ops and renders a result string.
+
+export function setClipParams(
+  config: TimelineConfig,
+  _registry: AssetRegistry,
+  args: { clipId?: string; params?: unknown },
+): TimelineToolResult {
+  if (typeof args.clipId !== "string" || args.params === undefined || args.params === null
+      || typeof args.params !== "object" || Array.isArray(args.params)) {
+    return { result: "set_params requires clipId and a params object." };
+  }
+  const opResult = opsSetClipParams(
+    config as unknown as TimelineConfigT,
+    args.clipId,
+    args.params as Record<string, unknown>,
+  );
+  if (!opResult.changed) {
+    if (opResult.detail?.reason === "not_found") {
+      return { result: `Clip ${args.clipId} was not found.` };
+    }
+    if (opResult.detail?.reason === "invalid_value") {
+      return { result: "set_params requires clipId and a params object." };
+    }
+    if (opResult.detail?.reason === "empty_patch") {
+      return { result: `set_params received an empty params object for clip ${args.clipId}.` };
+    }
+  }
+  const appliedKeys = (opResult.detail?.appliedKeys as string[] | undefined) ?? Object.keys(args.params as Record<string, unknown>);
+  return {
+    config: opResult.config as unknown as TimelineConfig,
+    result: `Set params on clip ${args.clipId}: ${appliedKeys.join(", ")}.`,
+  };
+}
+
+export function setTheme(
+  config: TimelineConfig,
+  _registry: AssetRegistry,
+  args: { themeId?: string },
+): TimelineToolResult {
+  if (typeof args.themeId !== "string") {
+    return { result: "set_theme requires themeId." };
+  }
+  const opResult = opsSetTimelineTheme(config as unknown as TimelineConfigT, args.themeId);
+  if (!opResult.changed) {
+    if (opResult.detail?.reason === "invalid_value") {
+      return { result: "set_theme requires a non-empty themeId." };
+    }
+    // Theme already matches; return identity update so loop can no-op.
+    return { result: `Theme is already ${args.themeId}.` };
+  }
+  const previous = opResult.detail?.previousTheme as string | undefined;
+  return {
+    config: opResult.config as unknown as TimelineConfig,
+    result: `Switched theme from ${previous ?? "unset"} to ${args.themeId}. (Note: existing themed clips referencing the old theme's clipType may need remapping.)`,
+  };
+}
+
+export function setThemeOverrides(
+  config: TimelineConfig,
+  _registry: AssetRegistry,
+  args: { overrides?: unknown },
+): TimelineToolResult {
+  if (args.overrides === undefined || args.overrides === null
+      || typeof args.overrides !== "object" || Array.isArray(args.overrides)) {
+    return { result: "set_theme_overrides requires an overrides object." };
+  }
+  const opResult = opsSetThemeOverrides(
+    config as unknown as TimelineConfigT,
+    args.overrides as Record<string, unknown>,
+  );
+  if (!opResult.changed) {
+    if (opResult.detail?.reason === "invalid_value") {
+      return { result: "set_theme_overrides requires an overrides object." };
+    }
+    if (opResult.detail?.reason === "empty_patch") {
+      return { result: "set_theme_overrides received an empty overrides object." };
+    }
+  }
+  const appliedKeys = (opResult.detail?.appliedKeys as string[] | undefined) ?? Object.keys(args.overrides as Record<string, unknown>);
+  return {
+    config: opResult.config as unknown as TimelineConfig,
+    result: `Updated theme_overrides keys: ${appliedKeys.join(", ")}.`,
+  };
+}
+
 export const timelineTools = {
   add_media_clip: addMediaClip,
   add_text_clip: addTextClip,
@@ -756,7 +845,10 @@ export const timelineTools = {
   move_clip: moveClip,
   query_timeline: queryTimeline,
   set_clip_property: setClipProperty,
+  set_params: setClipParams,
   set_text_content: setTextContent,
+  set_theme: setTheme,
+  set_theme_overrides: setThemeOverrides,
   split_clip: splitClip,
   swap_clip_asset: swapClipAsset,
   trim_clip: trimClip,
@@ -772,7 +864,10 @@ export const handlers: Record<string, ToolHandler> = {
   move_clip: (args, ctx) => moveClip(ctx.config, ctx.registry, args),
   query_timeline: (_args, ctx) => queryTimeline(ctx.config, ctx.registry),
   set_clip_property: (args, ctx) => setClipProperty(ctx.config, ctx.registry, args),
+  set_params: (args, ctx) => setClipParams(ctx.config, ctx.registry, args),
   set_text_content: (args, ctx) => setTextContent(ctx.config, ctx.registry, args),
+  set_theme: (args, ctx) => setTheme(ctx.config, ctx.registry, args),
+  set_theme_overrides: (args, ctx) => setThemeOverrides(ctx.config, ctx.registry, args),
   split_clip: (args, ctx) => splitClip(ctx.config, ctx.registry, args),
   swap_clip_asset: (args, ctx) => swapClipAsset(ctx.config, ctx.registry, args),
   trim_clip: (args, ctx) => trimClip(ctx.config, ctx.registry, args),

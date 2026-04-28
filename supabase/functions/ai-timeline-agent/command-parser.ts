@@ -19,6 +19,7 @@ export type ParsedCommand =
   | { type: "generate"; prompt: string; count: number }
   | { type: "error"; message: string };
 
+// SD-018 Option B: media-only — themed-field edits go through set_params / set_theme / set_theme_overrides.
 const SETTABLE_PROPERTIES = new Set(["volume", "speed", "opacity", "x", "y", "width", "height"]);
 
 type CommandParser = (tokens: string[]) => ParsedCommand;

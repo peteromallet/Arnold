@@ -42,7 +42,13 @@ import { executeCreateTask } from "./tools/create-task.ts";
 import { executeDuplicateGeneration } from "./tools/duplicate-generation.ts";
 import { executeSearchLoras, executeSetLora } from "./tools/loras.ts";
 import { executeCommand } from "./tools/registry.ts";
-import { viewTimeline } from "./tools/timeline.ts";
+import {
+  setClipParams as setClipParamsHandler,
+  setTheme as setThemeHandler,
+  setThemeOverrides as setThemeOverridesHandler,
+  viewTimeline,
+} from "./tools/timeline.ts";
+import { saveTimelineConfigVersioned } from "./db.ts";
 import { executeTransformImage } from "./tools/transform-image.ts";
 import type {
   AgentSession,
@@ -476,6 +482,41 @@ export async function executeToolCall(
 
   if (toolCall.name === "get_tasks") {
     return await executeGetTasks(toolArgs, timelineState, supabaseAdmin);
+  }
+
+  // Sprint 4 (SD-018): direct themed-editing tools — set_params,
+  // set_theme, set_theme_overrides. These mutate timeline.config and need
+  // versioned save, mirroring the `run` tool's persistence path. They do
+  // NOT route through the slash-command parser because the parser is
+  // media-only (Option B); themed-field edits are intentionally
+  // chat-only.
+  if (
+    toolCall.name === "set_params"
+    || toolCall.name === "set_theme"
+    || toolCall.name === "set_theme_overrides"
+  ) {
+    timelineState.previousConfig = structuredClone(timelineState.config);
+    const handler = toolCall.name === "set_params"
+      ? setClipParamsHandler
+      : toolCall.name === "set_theme"
+        ? setThemeHandler
+        : setThemeOverridesHandler;
+    const result = handler(timelineState.config, timelineState.registry, toolArgs as never);
+    if (!result.config) {
+      return result;
+    }
+    const nextVersion = await saveTimelineConfigVersioned(
+      supabaseAdmin,
+      timelineId,
+      timelineState.configVersion,
+      result.config,
+    );
+    if (nextVersion === null) {
+      return { result: "Version conflict. Please retry." };
+    }
+    timelineState.config = result.config;
+    timelineState.configVersion = nextVersion;
+    return result;
   }
 
   return { result: `Unknown tool: ${toolCall.name}.` };
