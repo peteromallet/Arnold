@@ -58,6 +58,7 @@ def send_message(
     del attach_files
     context.reply_buffer.append(content)
     is_resident = context.transport is not None
+    # Resident sends must wait for Discord confirmation before filling the external id.
     message = context.store.create_message(
         epic_id=context.metadata.get("epic_id"),
         direction="outbound",

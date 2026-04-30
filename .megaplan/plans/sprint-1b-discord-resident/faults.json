@@ -11,7 +11,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-002",
@@ -24,7 +24,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-003",
@@ -36,7 +36,7 @@
       "status": "verified",
       "severity": "minor",
       "verified": true,
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-004",
@@ -49,7 +49,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-005",
@@ -61,7 +61,7 @@
       "status": "verified",
       "severity": "minor",
       "verified": true,
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-006",
@@ -70,7 +70,7 @@
       "severity_hint": "likely-significant",
       "evidence": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3).",
       "raised_in": "critique_v1.json",
-      "status": "verified",
+      "status": "disputed",
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
@@ -87,7 +87,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v3.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-008",
@@ -100,7 +100,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "verifiability-0",
@@ -124,7 +124,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "issue_hints-2",
@@ -137,7 +137,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "issue_hints-3",
@@ -150,7 +150,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "correctness-1",
@@ -163,7 +163,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v3.md",
-      "verified_in": "critique_v3.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "correctness-2",
@@ -176,7 +176,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v3.md",
-      "verified_in": "critique_v3.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "correctness-3",
@@ -189,7 +189,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "scope-1",
@@ -202,7 +202,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "scope-2",
@@ -215,7 +215,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "scope-3",
@@ -228,7 +228,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "all_locations-1",
@@ -241,7 +241,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "all_locations-2",
@@ -254,7 +254,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "callers-1",
@@ -267,7 +267,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "callers-2",
@@ -280,7 +280,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "callers-3",
@@ -293,7 +293,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v2.md",
-      "verified_in": "critique_v2.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-009",
@@ -306,7 +306,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v3.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-010",
@@ -318,7 +318,7 @@
       "status": "verified",
       "severity": "minor",
       "verified": true,
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-011",
@@ -331,7 +331,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v3.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-012",
@@ -344,7 +344,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v3.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "issue_hints",
@@ -409,7 +409,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v4.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "FLAG-014",
@@ -422,7 +422,7 @@
       "severity": "significant",
       "verified": true,
       "addressed_in": "plan_v4.md",
-      "verified_in": "critique_v4.json"
+      "verified_in": "review_v4.json"
     },
     {
       "id": "correctness",

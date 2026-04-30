@@ -255,6 +255,7 @@ class Reconciler:
         if not attachment_url:
             return self._orphan_storage(row, "missing_discord_attachment_url")
         try:
+            # Discord URLs are the bounded recovery source; expired URLs become orphaned rows.
             response = httpx.get(str(attachment_url), timeout=30)
             response.raise_for_status()
         except Exception as exc:

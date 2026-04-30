@@ -1,0 +1,532 @@
+{
+  "checks": [],
+  "pre_check_flags": [],
+  "verified_flag_ids": [
+    "FLAG-001",
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004",
+    "FLAG-005",
+    "FLAG-007",
+    "FLAG-008",
+    "FLAG-009",
+    "FLAG-010",
+    "FLAG-011",
+    "FLAG-012",
+    "FLAG-013",
+    "FLAG-014",
+    "issue_hints-1",
+    "issue_hints-2",
+    "issue_hints-3",
+    "correctness-1",
+    "correctness-2",
+    "correctness-3",
+    "scope-1",
+    "scope-2",
+    "scope-3",
+    "all_locations-1",
+    "all_locations-2",
+    "callers-1",
+    "callers-2",
+    "callers-3"
+  ],
+  "disputed_flag_ids": [
+    "FLAG-006"
+  ],
+  "review_verdict": "needs_rework",
+  "criteria": [
+    {
+      "name": "DM from a whitelisted user triggers a `run_turn` invocation and a Discord reply within 30s in a mocked end-to-end test",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_send_message_resident.py + tests/test_resident.py + tests/test_status_lifecycle.py exist and exercise the FakeDiscordTransport\u2192run_turn\u2192post_message path. Executor reports 85 passed; structural diff confirms the wiring."
+    },
+    {
+      "name": "DM from a non-whitelisted user produces no reply and writes a system_logs whitelist_rejected entry",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_whitelist.py exists; agent_kit/transport/discord.py implements the silent rejection + system_logs write."
+    },
+    {
+      "name": "Every inbound Discord message persists with a unique discord_message_id BEFORE any external IO; duplicate insert rejected",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_discord_ingestion_persist_first.py and tests/test_duplicate_inbound_dropped.py exist; agent_kit/transport/discord.py implements the persist-first transaction (commented at the voice/image branches)."
+    },
+    {
+      "name": "Voice ingestion sequence (persist-first transaction; Storage+Groq run after; update_message fills fields)",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_voice_pipeline.py + tests/test_discord_ingestion_persist_first.py + tests/test_discord_ingestion_ledger.py cover the sequence; transport implementation matches."
+    },
+    {
+      "name": "Image ingestion sequence (persist-first; images row only after upload; auto reference_key)",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_image_attachment_pipeline.py + tests/test_discord_ingestion_persist_first.py exist; transport branch creates messages row first, then images row post-upload."
+    },
+    {
+      "name": "Store.update_message present in Protocol and both store impls; tests/test_update_message.py verifies partial updates",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/ports.py exposes update_message; SQLiteStore + SupabaseStore implement it; tests/test_update_message.py exists."
+    },
+    {
+      "name": "Store.create_message accepts synthesize_outbound_id flag; default preserves Sprint 1a, False used by resident",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_create_message_synthesize_flag.py exists; agent_kit/tools/communication.py branches on transport to pass False in resident mode."
+    },
+    {
+      "name": "Unmodified tests/store_contract.py passes against both stores",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/store_contract.py is preserved (SD-006 honored); tests/test_supabase_store.py and tests/test_sqlite_store.py both reference it. Live Supabase contract is env-gated and skipped without SUPABASE_TEST_DB_URL."
+    },
+    {
+      "name": "tests/store_contract_v1b.py covers all new methods + image CRUD + idempotency uniqueness + request_body round-trip",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/store_contract_v1b.py present; sense check SC18 confirmed local coverage."
+    },
+    {
+      "name": "5 messages in 8s coalesce into a single turn with 5 trigger ids",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_coalescer.py present; resident.py MessageCoalescer implements 10s/30s/10-msg caps."
+    },
+    {
+      "name": "Mid-turn kill/restart marks prior turn abandoned and re-fires triggers under fresh turn",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_resident_recovery.py present; Reconciler in agent_kit/ledger.py handles abandoned turns."
+    },
+    {
+      "name": "view_image bytes rendered as Anthropic vision content block on next model call",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_loop_vision_blocks.py exists; agent_kit/loop.py vision detection in tool-result construction is the documented narrow extension."
+    },
+    {
+      "name": "Resident send_message: row committed with NULL discord_message_id inside audit txn; update_message fills it post-commit; ledger pending\u2192confirmed",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_send_message_resident.py present; agent_kit/tools/communication.py + agent_kit/tool_kit.py implement queued external callable run after commit."
+    },
+    {
+      "name": "Tool atomicity preserved (tests/test_tool_kit.py:27 unchanged)",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_tool_kit.py untouched. agent_kit/tool_kit.py keeps the body inside store.transaction(); tests/test_tool_kit_external_queue.py adds the new ledger ordering coverage."
+    },
+    {
+      "name": "Status message lifecycle (initial post \u2192 edits \u2192 final \u2705 Done. N tool calls.)",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_status_lifecycle.py + tests/test_status_formatter.py exist; agent_kit/resident.py implements on_turn_start status and post-tool-call edits."
+    },
+    {
+      "name": "Status throttling: 20 calls in 2s \u2264 ~4 edits",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_status_lifecycle.py covers debouncing; resident.py applies 1s debounce."
+    },
+    {
+      "name": "Mid-turn message in same turn re-prompts and widens triggered_by_message_ids",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_mid_turn_messages.py present; loop.py mid_turn_message_check fires at both checkpoints."
+    },
+    {
+      "name": "Explicit-send_message gating runs mid-turn check before any Discord post",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/loop.py gates explicit send_message tool call with mid_turn_message_check (verified by sense check SC5 + tests/test_run_turn_hooks.py)."
+    },
+    {
+      "name": "Anthropic idempotency-key replay using stored request_body",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_anthropic_replay.py present; agent_kit/ledger.py Reconciler reads request_body and replays via Model.complete_turn(idempotency_key=...)."
+    },
+    {
+      "name": "External reconciliation: anthropic/discord/groq/supabase_storage paths handled per SD-017",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_reconciler.py covers the four provider branches incl. SD-017 Storage URL re-fetch + orphan-on-expiry; agent_kit/ledger.py implements them."
+    },
+    {
+      "name": "Tool external-IO ordering verified by tests/test_tool_kit_external_queue.py",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Test file exists; audit_wrap structure matches the spec."
+    },
+    {
+      "name": "Discord ingestion-side IO ledgered (tests/test_discord_ingestion_ledger.py)",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Test file exists; transport records ingest:* keyed rows."
+    },
+    {
+      "name": "Persist-first ingestion test (tests/test_discord_ingestion_persist_first.py)",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Test file exists and instruments the ordering."
+    },
+    {
+      "name": "Duplicate inbound rejection (tests/test_duplicate_inbound_dropped.py)",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Test file present; relies on the unique discord_message_id constraint added in migration."
+    },
+    {
+      "name": "All Sprint 1a tests pass UNCHANGED",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_envelope.py, tests/test_ledger.py, tests/test_run_turn.py, tests/test_cli.py, tests/test_tool_kit.py exist with no diff entries; sense checks SC5/SC7 confirm invocation behavior preserved."
+    },
+    {
+      "name": "No literal Supabase service-role JWT, Discord/Anthropic/Groq key in any committed file",
+      "priority": "must",
+      "pass": "fail",
+      "evidence": "git ls-files + grep finds the unique JWT signature `xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY` (the secret portion of the leaked Supabase service-role token) STILL present in two tracked files: .megaplan/plans/sprint-1b-discord-resident/state.json (idea field) and .megaplan/plans/sprint-1b-discord-resident/execution_trace.jsonl. The leaked-prefix guard test would also fail because the same JWT prefix appears in tracked finalize.json/final.md/state.json/execution_trace.jsonl. Executor's redaction work covered plan_v3/plan_v4/gate.json/older sprint state files but missed the live state.json + execution_trace.jsonl that carry the user-supplied idea verbatim."
+    },
+    {
+      "name": "Existing Transport Protocol unchanged; PushTransport added separately",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "agent_kit/ports.py keeps Transport intact (receive/send/stream_event) and adds a separate PushTransport with start/stop/post_message/edit_message/download_attachment/fetch_recent_messages."
+    },
+    {
+      "name": "agent_kit/loop.py changes limited to the documented kwargs and detection blocks",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "Reading loop.py shows the new optional kwargs (triggered_by_message_ids, recovered_input_messages, on_turn_start, mid_turn_message_check, transport, blob, channel_id), idempotency_key threading, request_body persistence, mid-turn gating, and vision detection \u2014 no broader rewrites."
+    },
+    {
+      "name": "Each new module under ~400 lines",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "wc -l: agent_kit/store/supabase.py 399, agent_kit/resident.py 310, agent_kit/transport/discord.py 391."
+    },
+    {
+      "name": "Deferral note recorded for invocation-mode attachments + transcribe_voice + Discord URL expiry tradeoff",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "ideas/sprint_1c_attachments.md present and updated with the SD-017 orphan-on-expiry note."
+    },
+    {
+      "name": "Manual smoke against staging Discord + Supabase",
+      "priority": "info",
+      "pass": "deferred_human",
+      "evidence": "U5 in user_actions explicitly requires human staging interaction. Surfaced via T23 and not attempted automatically."
+    }
+  ],
+  "issues": [
+    "Tracked files .megaplan/plans/sprint-1b-discord-resident/state.json and .megaplan/plans/sprint-1b-discord-resident/execution_trace.jsonl still contain the full leaked Supabase service-role JWT (signature xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY). The secret-guard must-criterion fails and tests/test_no_leaked_secrets.py would fail when run."
+  ],
+  "rework_items": [
+    {
+      "task_id": "T2",
+      "issue": "Leaked Supabase service-role JWT is still committed to tracked plan-state files. The unique signature `xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY` and the Supabase JWT prefix `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI` appear in tracked files .megaplan/plans/sprint-1b-discord-resident/state.json (`idea` field), execution_trace.jsonl, finalize.json, and final.md.",
+      "expected": "No literal Supabase service-role JWT, Discord/Anthropic/Groq token in any tracked file. tests/test_no_leaked_secrets.py runs green. The user-supplied idea text in state.json/execution_trace.jsonl/final.md/finalize.json must have the JWT redacted (e.g., replaced with `<REDACTED_SERVICE_ROLE_JWT>`), and the secret guard's reference to the prefix should be expressed via a non-matching constant (e.g., concatenation or chr() build) so the guard itself does not trip its own check via the description.",
+      "actual": "git ls-files | xargs grep finds the full unique signature in two tracked files (state.json, execution_trace.jsonl) and the prefix in five tracked files (state.json, execution_trace.jsonl, final.md, finalize.json, finalize_snapshot.json indirectly via state). T2 was claimed done but redaction was incomplete.",
+      "evidence_file": ".megaplan/plans/sprint-1b-discord-resident/state.json",
+      "flag_id": "FLAG-006",
+      "source": "secret_guard_grep"
+    },
+    {
+      "task_id": "T21",
+      "issue": "Final verification claim that the JWT-prefix grep returns zero matches across tracked files is contradicted by the current repo state.",
+      "expected": "Run `git ls-files | xargs grep -l 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI'` and get an empty result, with tests/test_no_leaked_secrets.py passing.",
+      "actual": "Five tracked files match the prefix; two also contain the unique JWT signature. The secret-guard test would fail.",
+      "evidence_file": "tests/test_no_leaked_secrets.py",
+      "flag_id": "FLAG-006",
+      "source": "review_flag_reverify"
+    }
+  ],
+  "summary": "Implementation work for Sprint 1b is structurally solid: persist-first Discord ingestion, Supabase store + Storage blob, resident runner with coalescer/status/recovery, image tools, vision blocks, idempotency-key replay, SD-017 storage-orphan recovery, and the new test suite (store_contract_v1b, persist-first, duplicate-inbound, send_message resident, anthropic replay, etc.) all line up with the gate's settled decisions. Modules are within the 400-line target (399/310/391). However, the must-criterion that no literal Supabase service-role JWT appears in committed files is currently failing \u2014 the unique signature `xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY` and the JWT prefix are still in tracked .megaplan/plans/sprint-1b-discord-resident/{state.json, execution_trace.jsonl, finalize.json, final.md} files, and tests/test_no_leaked_secrets.py would fail when run against the present repo. T2/T21 redaction work was incomplete. Needs one more pass to redact those state-file occurrences and ensure the guard self-test does not re-introduce the prefix via its own task description.",
+  "task_verdicts": [
+    {
+      "task_id": "T22",
+      "reviewer_verdict": "Waived. user_actions.md is absent so before_execute checks could not be verified mechanically.",
+      "evidence_files": []
+    },
+    {
+      "task_id": "T1",
+      "reviewer_verdict": "Pass. pyproject.toml declares discord.py, supabase, groq, httpx, psycopg[binary]>=3.1, plus pytest-asyncio in the test extra. Editable install issue with --no-build-isolation is environmental, not a deliverable defect.",
+      "evidence_files": [
+        "pyproject.toml"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "reviewer_verdict": "Fail. .gitignore + secret guard exist, but redaction is incomplete: tracked state.json + execution_trace.jsonl still contain the full unique JWT signature, and tracked finalize.json/final.md/state.json contain the prefix. Test would fail.",
+      "evidence_files": [
+        ".megaplan/plans/sprint-1b-discord-resident/state.json",
+        ".megaplan/plans/sprint-1b-discord-resident/execution_trace.jsonl",
+        "tests/test_no_leaked_secrets.py"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "reviewer_verdict": "Pass. supabase/migrations/{001_core,002_images,003_external_requests_body}.sql present; SQLite mirrors at agent_kit/store/migrations/sqlite/{002_images,003_external_requests_body}.sql; SQLiteStore picks them up via apply_migrations.",
+      "evidence_files": [
+        "supabase/migrations/202604300001_001_core.sql",
+        "agent_kit/store/migrations/sqlite/002_images.sql",
+        "agent_kit/store/migrations/sqlite/003_external_requests_body.sql"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "reviewer_verdict": "Pass. AnthropicModel/loop.py thread idempotency_key; insert_pending takes request_body; system_seq lives in request_summary.",
+      "evidence_files": [
+        "agent_kit/loop.py",
+        "agent_kit/model/anthropic.py",
+        "agent_kit/ledger.py"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "reviewer_verdict": "Pass. run_turn signature exposes triggered_by_message_ids, recovered_input_messages, on_turn_start, mid_turn_message_check; explicit send_message gate present; tests/test_run_turn_hooks.py covers the new behavior.",
+      "evidence_files": [
+        "agent_kit/loop.py",
+        "tests/test_run_turn_hooks.py"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "reviewer_verdict": "Pass. ToolContext extended; communication.py branches on transport to set synthesize_outbound_id and queue resident callable; set_activity persists current_activity.",
+      "evidence_files": [
+        "agent_kit/tool_kit.py",
+        "agent_kit/tools/communication.py"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "reviewer_verdict": "Pass. audit_wrap keeps tool body inside store.transaction(); records pending rows pre-commit; runs callables post-commit; tests/test_tool_kit.py and tests/test_tool_kit_external_queue.py both present.",
+      "evidence_files": [
+        "agent_kit/tool_kit.py",
+        "tests/test_tool_kit_external_queue.py"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "reviewer_verdict": "Pass. ports.py adds the new Store/Blob methods and the separate PushTransport Protocol; existing Transport untouched.",
+      "evidence_files": [
+        "agent_kit/ports.py"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "reviewer_verdict": "Pass. SQLiteStore implements all v1b methods and the synthesize_outbound_id flag; verified via tests/test_create_message_synthesize_flag.py and tests/test_update_message.py.",
+      "evidence_files": [
+        "agent_kit/store/sqlite.py",
+        "tests/test_sqlite_store_v1b.py"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "reviewer_verdict": "Pass. agent_kit/store/supabase.py present at 399 lines, env-only credentials, row-based epic_locks, JSONB request_body, update_message, synthesize_outbound_id honored.",
+      "evidence_files": [
+        "agent_kit/store/supabase.py"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "reviewer_verdict": "Pass. agent_kit/blob/supabase_storage.py implements put/get/exists with deterministic paths.",
+      "evidence_files": [
+        "agent_kit/blob/supabase_storage.py"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "reviewer_verdict": "Pass. agent_kit/transport/discord.py (391 lines) does persist-first ingestion in one transaction, records ingest-keyed pending ledger rows including discord_attachment_url per SD-017, silently rejects non-DM, logs whitelist_rejected.",
+      "evidence_files": [
+        "agent_kit/transport/discord.py",
+        "tests/test_discord_ingestion_persist_first.py",
+        "tests/test_whitelist.py"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "reviewer_verdict": "Pass. agent_kit/resident.py contains MessageCoalescer, ResidentRunner, status hooks, mid-turn check, and Reconciler scheduler; status formatter golden test passes.",
+      "evidence_files": [
+        "agent_kit/resident.py",
+        "tests/test_status_formatter.py",
+        "tests/test_resident.py"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "reviewer_verdict": "Pass. agent_kit/ledger.py Reconciler covers all four providers, including SD-017 Storage URL re-fetch / mark_orphaned on expiry.",
+      "evidence_files": [
+        "agent_kit/ledger.py",
+        "tests/test_reconciler.py"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "reviewer_verdict": "Pass. agent_kit/tools/images.py registers list_images/view_image/send_image/update_image_metadata; auto-imported in loop.py.",
+      "evidence_files": [
+        "agent_kit/tools/images.py",
+        "tests/test_image_tools.py"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "reviewer_verdict": "Pass. loop.py emits Anthropic vision content blocks when media_type+image_bytes_b64 are present.",
+      "evidence_files": [
+        "agent_kit/loop.py",
+        "tests/test_loop_vision_blocks.py"
+      ]
+    },
+    {
+      "task_id": "T17",
+      "reviewer_verdict": "Pass. arnold/cli.py constructs SupabaseStore + SupabaseStorageBlob + DiscordTransport + Reconciler + ResidentRunner under `arnold resident`.",
+      "evidence_files": [
+        "arnold/cli.py",
+        "tests/test_cli.py"
+      ]
+    },
+    {
+      "task_id": "T18",
+      "reviewer_verdict": "Pass. tests/store_contract.py untouched; tests/store_contract_v1b.py covers v1b methods; both store backends run it (Supabase live skipped without SUPABASE_TEST_DB_URL, which is acceptable).",
+      "evidence_files": [
+        "tests/store_contract_v1b.py",
+        "tests/test_supabase_store.py",
+        "tests/test_sqlite_store_v1b.py"
+      ]
+    },
+    {
+      "task_id": "T19",
+      "reviewer_verdict": "Pass. All eight integration tests exist and structurally match the spec.",
+      "evidence_files": [
+        "tests/test_resident_recovery.py",
+        "tests/test_voice_pipeline.py",
+        "tests/test_image_attachment_pipeline.py",
+        "tests/test_status_lifecycle.py",
+        "tests/test_mid_turn_messages.py",
+        "tests/test_send_message_resident.py",
+        "tests/test_anthropic_replay.py",
+        "tests/test_duplicate_inbound_dropped.py"
+      ]
+    },
+    {
+      "task_id": "T20",
+      "reviewer_verdict": "Pass. ideas/sprint_1c_attachments.md captures the deferral and Discord-URL-expiry orphan tradeoff.",
+      "evidence_files": [
+        "ideas/sprint_1c_attachments.md"
+      ]
+    },
+    {
+      "task_id": "T21",
+      "reviewer_verdict": "Fail. The claim that the JWT-prefix grep is clean across tracked files is wrong: five tracked files still match the prefix and two contain the full unique JWT signature.",
+      "evidence_files": [
+        ".megaplan/plans/sprint-1b-discord-resident/state.json",
+        ".megaplan/plans/sprint-1b-discord-resident/execution_trace.jsonl"
+      ]
+    },
+    {
+      "task_id": "T23",
+      "reviewer_verdict": "Pass. Manual staging smoke surfaced rather than automated, as required.",
+      "evidence_files": [
+        ".megaplan/plans/sprint-1b-discord-resident/finalize.json"
+      ]
+    }
+  ],
+  "sense_check_verdicts": [
+    {
+      "sense_check_id": "SC1",
+      "verdict": "Confirmed. Deps and pytest-asyncio declared; environment-specific install path is not a deliverable concern."
+    },
+    {
+      "sense_check_id": "SC2",
+      "verdict": "Disputed. Guard exists but currently fails: tracked state.json/execution_trace.jsonl/final.md/finalize.json still contain the leaked JWT prefix (and full signature in two of those files)."
+    },
+    {
+      "sense_check_id": "SC3",
+      "verdict": "Confirmed. Both Supabase migrations and SQLite mirrors exist; SQLiteStore picks them up."
+    },
+    {
+      "sense_check_id": "SC4",
+      "verdict": "Confirmed. idempotency_key threading and request_body persistence live in loop.py + ledger.py + AnthropicModel."
+    },
+    {
+      "sense_check_id": "SC5",
+      "verdict": "Confirmed. Optional kwargs are present, mid-turn check fires before final-text and explicit send_message; invocation-mode tests untouched."
+    },
+    {
+      "sense_check_id": "SC6",
+      "verdict": "Confirmed. ToolContext extended; send_message branches; set_activity calls update_turn(current_activity=)."
+    },
+    {
+      "sense_check_id": "SC7",
+      "verdict": "Confirmed. audit_wrap keeps tool body in transaction; ledger pending recorded inside; callables run post-commit. tests/test_tool_kit.py untouched."
+    },
+    {
+      "sense_check_id": "SC8",
+      "verdict": "Confirmed. New methods live in Store Protocol; Blob.exists added; PushTransport is a separate Protocol."
+    },
+    {
+      "sense_check_id": "SC9",
+      "verdict": "Confirmed. SQLiteStore mirrors all new methods including synthesize_outbound_id."
+    },
+    {
+      "sense_check_id": "SC10",
+      "verdict": "Confirmed. SupabaseStore is psycopg-based, env-only, 399 lines, ON CONFLICT epic_locks acquire."
+    },
+    {
+      "sense_check_id": "SC11",
+      "verdict": "Confirmed. Storage blob implements put/get/exists with deterministic paths."
+    },
+    {
+      "sense_check_id": "SC12",
+      "verdict": "Confirmed. DiscordTransport persists messages row + ingestion ledger pending rows in one transaction; Storage row carries discord_attachment_url + deterministic_path; non-DM rejected silently; whitelist_rejected logged."
+    },
+    {
+      "sense_check_id": "SC13",
+      "verdict": "Confirmed. resident.py = 310 lines; coalescer + status formatter + reconciler scheduler all present."
+    },
+    {
+      "sense_check_id": "SC14",
+      "verdict": "Confirmed. Reconciler covers anthropic/discord/groq/supabase_storage with SD-017 retry-then-orphan."
+    },
+    {
+      "sense_check_id": "SC15",
+      "verdict": "Confirmed. Four image tools registered; loop.py auto-imports them."
+    },
+    {
+      "sense_check_id": "SC16",
+      "verdict": "Confirmed. Vision-block detection scoped to tool_result construction site."
+    },
+    {
+      "sense_check_id": "SC17",
+      "verdict": "Confirmed. arnold resident builds the resident stack from env."
+    },
+    {
+      "sense_check_id": "SC18",
+      "verdict": "Confirmed for local coverage; live Supabase contract skipped behind SUPABASE_TEST_DB_URL is acceptable per plan."
+    },
+    {
+      "sense_check_id": "SC19",
+      "verdict": "Confirmed. All eight integration test files exist and structure aligns with spec."
+    },
+    {
+      "sense_check_id": "SC20",
+      "verdict": "Confirmed. ideas/sprint_1c_attachments.md captures attachments/transcribe_voice/Discord-URL-expiry tradeoff."
+    },
+    {
+      "sense_check_id": "SC21",
+      "verdict": "Disputed. Module line counts and (per executor) pytest pass, but the claim that the leaked-prefix grep is clean is wrong \u2014 five tracked files still match. Final verification is therefore not green."
+    },
+    {
+      "sense_check_id": "SC22",
+      "verdict": "Waived. user_actions.md absent."
+    },
+    {
+      "sense_check_id": "SC23",
+      "verdict": "Confirmed. Manual staging smoke surfaced as user action U5."
+    }
+  ]
+}

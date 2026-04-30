@@ -1,7 +1,7 @@
 {
   "name": "sprint-1b-discord-resident",
   "idea": "# Sprint 1b \u2014 Discord resident mode + robustness\n\nAdd the second adapter for each port \u2014 Discord transport, Supabase store. This proves the port abstractions hold (two impls each) and unlocks resident-mode features: coalescing, recovery, voice/image attachments, live status messages.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to it for complete data model schemas, tool signatures, and architectural details. Especially the sections: Execution Modes, Multi-Message Handling, Status Message, Idempotency and Recovery, Images.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- Railway + Supabase setup; Supabase CLI for local dev\n- First Supabase migration files mirroring SQLite schema from Sprint 1a; `supabase db push` workflow\n- Supabase store adapter (second Store impl); same contract tests from 1a run green against both stores\n- Discord transport adapter (push, second Transport impl): bot account via discord.py; on_message handler for DMs; user whitelist\n- Multi-message coalescing \u2014 10s window, burst handling (resident-only)\n- Restart safety: messages persisted on receipt; recovery routine at startup + every 5min; abandoned turns marked; `external_requests` ledger table; idempotency-key generation (sha256-based); per-provider reconciliation\n- Voice message support: Groq Whisper (whisper-large-v3) integration; transcription stored in messages.content; original audio in Supabase Storage\n- Image attachment handling: Discord image detection; download to Supabase Storage; create images row with source='user_uploaded'; auto-assigned reference_key\n- Image tools: list_images, view_image, send_image, update_image_metadata\n- Live status message: loop sends status at turn start, edits after every tool call with count + last 3 tools + dynamic timestamp `<t:UNIX:R>`; set_activity tool annotates current step\n- Mid-turn message handling: messages persist immediately; status message gets annotation; bot prompted with mid-turn messages\n\n## Key New Tables\n\n### external_requests\nid, idempotency_key (unique), provider, endpoint, tool_call_id, turn_id, request_summary (json), status (pending|sent|confirmed|failed|orphaned), provider_request_id, provider_response_summary (json), attempt_count, first_attempted_at, last_attempted_at, completed_at, error_details (json)\n\nIdempotency key: sha256(turn_id:tool_call_id:provider:endpoint:canonical_args)[:16]\n\n### images\nid, epic_id, source (agent_generated|user_uploaded), prompt, storage_url, quality, size, created_at, reference_key (unique per epic), description, caption, in_body, active (default true), discord_attachment_id\n\n## Acceptance Criteria\n\n- DM bot from whitelisted account \u2192 response within 30s\n- DM from non-whitelisted \u2192 no response, log entry\n- Every inbound message persists with unique discord_message_id\n- Store port contract test suite runs green against Supabase impl unchanged from SQLite\n- 5 messages in 8s \u2192 processed as single burst (triggered_by_message_ids has 5 entries)\n- Kill server mid-turn, restart \u2192 triggering messages requeued under fresh turn; previous turn marked abandoned\n- Voice message (mocked) \u2192 transcribed via mocked Groq, was_voice_message=true\n- Image attachment (mocked) \u2192 downloaded to Storage, images row created with source=user_uploaded\n- view_image returns image bytes via Anthropic vision\n- send_image posts to Discord with caption\n- Status message: turn starts \u2192 status sent; each tool call \u2192 edited; set_activity updates; turn completes \u2192 \"Done. N tool calls.\"\n- Mid-turn message: persists immediately; status gets annotation; bot prompted with mid-turn messages\n\n## Tech Stack Additions\n- discord.py for Discord gateway\n- supabase-py for Supabase client\n- groq SDK for Whisper transcription\n- Supabase Storage for blob storage",
-  "current_state": "finalized",
+  "current_state": "done",
   "iteration": 4,
   "created_at": "2026-04-30T01:13:09Z",
   "config": {
@@ -45,8 +45,22 @@
       "id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
       "mode": "persistent",
       "created_at": "2026-04-30T03:37:38Z",
-      "last_used_at": "2026-04-30T04:53:20Z",
+      "last_used_at": "2026-04-30T05:04:13Z",
+      "refreshed": true
+    },
+    "codex_reviewer": {
+      "id": "019ddcbd-50db-7762-8120-1b11800495a6",
+      "mode": "persistent",
+      "created_at": "2026-04-30T04:58:24Z",
+      "last_used_at": "2026-04-30T04:58:24Z",
       "refreshed": false
+    },
+    "claude_reviewer": {
+      "id": "af8457cc-b331-4f9e-b011-57d4f1986b30",
+      "mode": "persistent",
+      "created_at": "2026-04-30T05:13:51Z",
+      "last_used_at": "2026-04-30T05:13:51Z",
+      "refreshed": true
     }
   },
   "plan_versions": [
@@ -511,6 +525,114 @@
       "artifact_hash": "sha256:9460468568a0c5e621b92bef42b15145ab56d85b9f9bcac2fc61feb587b1d5b8",
       "finalize_hash": "sha256:ce9953efda86d1fce24b3054c0be38d720d897bc63eca08a2a8bb949cf4dd475",
       "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T04:54:46Z",
+      "duration_ms": 71538,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:80ea0c34d82b77def25c828db41b8c11ddde00f84c2661f93426a54125ce18e7",
+      "finalize_hash": "sha256:d6f3b2c0f36546a4de72e460a30c45875674c655768745b357bd9013cab71edd",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T04:58:24Z",
+      "duration_ms": 216768,
+      "cost_usd": 0.0,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "019ddcbd-50db-7762-8120-1b11800495a6",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:d72a32b5a33ba9d06825905ceb1b52e01e92037976d715ea5f7dfa1deb2de662",
+      "finalize_hash": "sha256:f0f3bcacc32bcf2ede79b11a7d26eaf330066e1d39979bae23ba1d68b6f53770"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T05:04:13Z",
+      "duration_ms": 346701,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:840fc3e5dfbafe27899b6d0946d0a4b51f7d2275dc84a1beb787aa2edcabf13b",
+      "finalize_hash": "sha256:9812809cab6cf6f3b09f0db63c79c1504b81731617c163122990e4fb6156109b",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T05:06:48Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v4_raw.txt",
+      "message": "Output file tmpnkiy5nq4 was not valid JSON and no fallback found"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T05:06:56Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v4_raw.txt",
+      "message": "Codex API rejected request (HTTP 400). Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T05:07:01Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v4_raw.txt",
+      "message": "Codex API rejected request (HTTP 400). Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T05:07:06Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v4_raw.txt",
+      "message": "Codex API rejected request (HTTP 400). Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T05:07:11Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v4_raw.txt",
+      "message": "Prompt exceeded Codex context length. Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T05:08:28Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v4_raw.txt",
+      "message": "Prompt exceeded Codex context length. Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T05:13:51Z",
+      "duration_ms": 311106,
+      "cost_usd": 3.8563455,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "af8457cc-b331-4f9e-b011-57d4f1986b30",
+      "agent": "claude",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:7aea5a36e478f0379cef4bb7131ce230f70f0ca5cca2b86cbfb78a3809f992a9",
+      "finalize_hash": "sha256:300f1fe7847f743da4c2899382b4c7024cf057bbf0b1d171093ca9caef0af39e"
     }
   ],
   "meta": {
@@ -537,7 +659,7 @@
       [],
       []
     ],
-    "total_cost_usd": 10.731441,
+    "total_cost_usd": 14.587786,
     "overrides": [],
     "notes": [],
     "user_approved_gate": true
@@ -649,5 +771,6 @@
       "codex_available": true
     },
     "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting."
-  }
+  },
+  "active_step": null
 }

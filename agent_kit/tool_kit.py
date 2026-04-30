@@ -123,6 +123,7 @@ def audit_wrap(entry: ToolEntry) -> Callable[[ToolContext, JSONDict], ToolInvoca
         context.external_queue = []
         queued_requests: list[tuple[ExternalSpec, ExternalCallable, str]] = []
         ledger = Ledger(context.store)
+        # Keep tool writes and audit rows atomic; only provider IO runs post-commit.
         with context.store.transaction():
             raw_result = entry.func(context, **arguments)
             duration_ms = max(0, round((perf_counter() - started) * 1000))

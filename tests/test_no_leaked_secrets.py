@@ -53,4 +53,4 @@ def test_leaked_supabase_service_role_jwt_prefix_is_absent() -> None:
         if LEAKED_SUPABASE_JWT_PREFIX in content:
             offenders.append(str(path.relative_to(root)))
 
-    assert not offenders, "Leaked Supabase JWT prefix found in: " + ", ".join(offenders)
+    assert not offenders, "Leaked Supabase JWT prefix found in tracked files: " + ", ".join(offenders)

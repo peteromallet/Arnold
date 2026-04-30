@@ -5,6 +5,7 @@ from typing import Callable
 import pytest
 
 
+# Additive Sprint 1b contract coverage; the Sprint 1a contract stays unchanged.
 def run_store_contract_v1b(store_factory: Callable) -> None:
     store, conn = store_factory()
     conn.execute(

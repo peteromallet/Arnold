@@ -271,7 +271,7 @@ class Blob(Protocol):
 
 
 class PushTransport(Protocol):
-    """Push transport boundary for resident-mode adapters."""
+    """Push transport boundary for resident mode; pull Transport stays separate."""
 
     def start(self, handler: Callable[[JSONDict], Any]) -> None:
         ...

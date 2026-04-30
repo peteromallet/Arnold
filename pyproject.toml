@@ -10,6 +10,7 @@ readme = "planning-bot-spec.md"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic",
+    # Sprint 1b resident adapters: Discord gateway, Supabase Storage, Groq voice, and Postgres.
     "discord.py",
     "groq",
     "httpx",

@@ -32,7 +32,7 @@ Sprint 1b adds a *second* implementation behind each port and builds resident-mo
 ### Step 2: Secrets handling (`/.gitignore`)
 **Scope:** Small
 1. **Create/update** `.gitignore` to exclude `.env`, `.env.local`, `supabase/.branches/*`.
-2. **Validate** in CI/test bootstrap that no committed file matches the leaked JWT prefix `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI` (cheap grep guard; pytest fixture or `tools/check_no_secrets.sh`).
+2. **Validate** in CI/test bootstrap that no committed file matches the leaked JWT prefix `[REDACTED_SUPABASE_JWT_PREFIX]` (cheap grep guard; pytest fixture or `tools/check_no_secrets.sh`).
 3. **Action item** for the user (also recorded in `questions`): rotate the Supabase service-role key supplied in plain text in the idea block.
 
 ### Step 3: Supabase migration mirroring Sprint 1a (`supabase/migrations/<ts>_001_core.sql`)

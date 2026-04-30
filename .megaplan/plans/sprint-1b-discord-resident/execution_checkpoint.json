@@ -1,22 +1,36 @@
 {
   "latest_verification": {
     "commands_run": [
+      "python /tmp/repro_secret_guard.py && rm /tmp/repro_secret_guard.py",
+      "python -m pytest --tb=no -q --no-header tests/test_no_leaked_secrets.py",
       "python -m pytest --tb=no -q --no-header",
-      "wc -l agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/resident.py agent_kit/transport/discord.py",
-      "rg --hidden --glob '!.git/**' --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
-      "python -m py_compile agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/transport/discord.py arnold/cli.py",
-      "python /tmp/verify_sprint_1b_rework.py"
+      "python -m pip install -e '.[test]'",
+      "python -m pytest --tb=no -q --no-header",
+      "rg --hidden --glob '!.git/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+      "wc -l agent_kit/store/supabase.py agent_kit/resident.py agent_kit/transport/discord.py"
     ],
-    "executor_notes": "Full suite passed with 85 passed and 1 skipped; capped modules are <=400 lines; secret-prefix grep returned no matches; temporary rework verification script passed and was deleted.",
+    "executor_notes": "Rework passed: editable install with build isolation succeeded; full suite passed with 85 passed and 1 skipped; secret-prefix grep returned no matches; capped modules remain <=400 lines.",
     "status": "done"
   },
   "sense_check_acknowledgments": {
+    "SC1": "pyproject declares the Sprint 1b runtime/test deps and normal editable install succeeds.",
     "SC10": "SupabaseStore is implemented via direct psycopg, env-only SUPABASE_DB_URL, JSONB request_body handling, update_message, synthesize_outbound_id behavior, and <=400 lines.",
     "SC11": "SupabaseStorageBlob implements put/get/exists with env-only credentials and deterministic audio/image path generation when an idempotency key is supplied.",
     "SC17": "arnold resident is registered and builds the resident stack; --store supabase no longer returns the unsupported-store envelope.",
-    "SC21": "Full suite passed, secret grep clean, and the three required modules are <=400 lines."
+    "SC2": "Secret guard remains in tests/test_no_leaked_secrets.py and both pytest plus grep report no leaked prefix in tracked files.",
+    "SC21": "Full suite passed with 85 passed and 1 skipped; leaked-prefix grep clean; capped modules are 399, 310, and 391 lines."
   },
   "task_updates": {
+    "T1": {
+      "commands_run": [
+        "python -m pip install -e '.[test]'"
+      ],
+      "executor_notes": "Runtime/test deps are declared and editable install succeeds with normal build isolation; the earlier no-build-isolation bdist_wheel failure was an environment-path issue rather than dependency resolution.",
+      "files_changed": [
+        "pyproject.toml"
+      ],
+      "status": "done"
+    },
     "T10": {
       "commands_run": [
         "python -m pytest tests/test_supabase_adapters.py -q --tb=short --no-header",
@@ -56,15 +70,37 @@
       ],
       "status": "done"
     },
+    "T2": {
+      "commands_run": [
+        "python /tmp/repro_secret_guard.py && rm /tmp/repro_secret_guard.py",
+        "python -m pytest --tb=no -q --no-header tests/test_no_leaked_secrets.py",
+        "rg --hidden --glob '!.git/**' -n '<leaked Supabase JWT prefix regex>' . || true"
+      ],
+      "executor_notes": "Redacted the leaked Supabase token/prefix from tracked plan artifacts, kept the guard scanning tracked files, and confirmed both the reproduction script and pytest guard report zero offenders.",
+      "files_changed": [
+        "tests/test_no_leaked_secrets.py"
+      ],
+      "status": "done"
+    },
     "T21": {
       "commands_run": [
         "python -m pytest --tb=no -q --no-header",
-        "rg --hidden --glob '!.git/**' --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
-        "wc -l agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/resident.py agent_kit/transport/discord.py",
-        "python /tmp/verify_sprint_1b_rework.py"
+        "rg --hidden --glob '!.git/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "wc -l agent_kit/store/supabase.py agent_kit/resident.py agent_kit/transport/discord.py"
       ],
-      "executor_notes": "Full suite passed with 85 passed and 1 skipped. Sprint 1a module set passed with 22 tests. Secret-prefix grep returned no matches. agent_kit/store/supabase.py, agent_kit/resident.py, and agent_kit/transport/discord.py are each <=400 lines.",
-      "files_changed": [],
+      "executor_notes": "Full suite is green after rework (85 passed, 1 skipped), leaked-prefix grep returns no matches, and capped modules are 399/310/391 lines.",
+      "files_changed": [
+        "agent_kit/ledger.py",
+        "agent_kit/loop.py",
+        "agent_kit/ports.py",
+        "agent_kit/tool_kit.py",
+        "agent_kit/tools/communication.py",
+        "agent_kit/transport/discord.py",
+        "ideas/sprint_1c_attachments.md",
+        "pyproject.toml",
+        "tests/store_contract_v1b.py",
+        "tests/test_no_leaked_secrets.py"
+      ],
       "status": "done"
     }
   }

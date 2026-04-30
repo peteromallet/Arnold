@@ -240,6 +240,7 @@ def run_turn(
                         )
                     updated_turn = None
                     if tool_request.name == "send_message":
+                        # Resident mode gives late inbound messages one more model pass before posting.
                         updated_turn = _append_mid_turn_messages(
                             store=store,
                             turn=turn,

@@ -154,6 +154,7 @@ class DiscordTransport:
         path = f"audio/{epic_id}/{discord_id}.ogg"
         storage_endpoint = f"PUT {path}"
         groq_endpoint = "POST /audio/transcriptions"
+        # Commit the inbound row and replay ledger before any Storage or Groq call.
         with self.store.transaction():
             row = self.store.create_message(
                 epic_id=epic_id,
@@ -208,6 +209,7 @@ class DiscordTransport:
         ext = Path(str(getattr(attachment, "filename", ""))).suffix.lower() or ".png"
         path = f"images/{epic_id}/{discord_id}{ext}"
         endpoint = f"PUT {path}"
+        # Image rows are created only after the persisted message and upload confirm.
         with self.store.transaction():
             row = self.store.create_message(
                 epic_id=epic_id,
