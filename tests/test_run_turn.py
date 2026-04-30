@@ -6,6 +6,7 @@ from threading import Event
 from agent_kit.envelope import serialize_for_diff, stable_json_dumps
 from agent_kit.loop import run_turn
 from agent_kit.model import FakeModel
+from agent_kit.prompts import build_system_prompt
 from tests.helpers import create_store, insert_epic
 
 
@@ -44,6 +45,141 @@ def test_run_turn_tool_flow_events_join_tool_calls(tmp_path) -> None:
         event.tool_call_id for event in envelope.events
     }
     assert conn.execute("SELECT COUNT(*) FROM bot_turns").fetchone()[0] == 1
+
+
+def test_no_epic_turn_loads_global_feedback_into_hot_context(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    style = store.create_feedback(
+        kind="style",
+        content="Keep replies short.",
+        source="explicit_save_request",
+    )
+    observation = store.create_feedback(
+        kind="friction",
+        content="User had to repeat a section target.",
+        source="agent_observation",
+        context_snapshot={"user_message": "change X"},
+    )
+    model = FakeModel(script=[{"final_text": "done", "provider_request_id": "req_1"}])
+
+    envelope = run_turn(
+        epic_id=None,
+        input="Start a new thing.",
+        store=store,
+        model=model,
+        model_id="fake",
+    )
+
+    assert envelope.outcome == "completed"
+    assert model.calls[0]["system"] == build_system_prompt(model.calls[0]["hot_context"])
+    assert "Keep replies short." in model.calls[0]["system"]
+    assert "User had to repeat a section target." in model.calls[0]["system"]
+    assert model.calls[0]["hot_context"]["epic"] is None
+    assert [row["id"] for row in model.calls[0]["hot_context"]["active_feedback"]] == [
+        style["id"]
+    ]
+    assert [
+        row["id"] for row in model.calls[0]["hot_context"]["unresolved_observations"]
+    ] == [observation["id"]]
+    prompt_snapshot = json.loads(
+        conn.execute("SELECT prompt_snapshot FROM bot_turns").fetchone()["prompt_snapshot"]
+    )
+    assert prompt_snapshot["hot_context"]["active_feedback_count"] == 1
+    assert prompt_snapshot["hot_context"]["unresolved_observation_count"] == 1
+    assert prompt_snapshot["hot_context"]["recent_message_count"] == 0
+    assert prompt_snapshot["hot_context"]["recent_tool_call_count"] == 0
+
+
+def test_empty_model_response_without_progress_remains_error(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    envelope = run_turn(
+        epic_id=None,
+        input="hello",
+        store=store,
+        model=FakeModel(script=[{"final_text": "", "provider_request_id": "req_1"}]),
+        model_id="fake",
+    )
+
+    assert envelope.outcome == "errored"
+    assert envelope.error is not None
+    assert envelope.error.code == "empty_model_response"
+    assert envelope.reply == ""
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM system_logs WHERE event_type = ?",
+            ("end_of_turn_empty_response",),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_end_of_turn_default_ack_after_substantive_tool_work(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    envelope = run_turn(
+        epic_id=None,
+        input="save this: keep messages under 200 words",
+        store=store,
+        model=FakeModel(
+            script=[
+                {
+                    "tool_requests": [
+                        {
+                            "name": "save_feedback",
+                            "arguments": {
+                                "kind": "style",
+                                "content": "Keep messages under 200 words.",
+                                "source": "explicit_save_request",
+                            },
+                        }
+                    ],
+                    "provider_request_id": "req_1",
+                },
+                {"final_text": "", "provider_request_id": "req_2"},
+            ]
+        ),
+        model_id="fake",
+    )
+
+    assert envelope.outcome == "completed"
+    assert envelope.reply == "Done."
+    assert [
+        row["tool_name"]
+        for row in conn.execute(
+            "SELECT tool_name FROM tool_calls ORDER BY rowid"
+        ).fetchall()
+    ] == ["save_feedback", "send_message"]
+    assert [
+        row["event_type"]
+        for row in conn.execute(
+            """
+            SELECT event_type FROM system_logs
+            WHERE event_type LIKE 'end_of_turn_%'
+            ORDER BY rowid
+            """
+        ).fetchall()
+    ] == ["end_of_turn_no_message_sent", "end_of_turn_empty_response"]
+
+
+def test_end_of_turn_logs_body_unchanged_when_expected(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    insert_epic(conn)
+    envelope = run_turn(
+        epic_id="epic_1",
+        input="change the part about scope",
+        store=store,
+        model=FakeModel(script=[{"final_text": "I checked it.", "provider_request_id": "req_1"}]),
+        model_id="fake",
+    )
+
+    assert envelope.outcome == "completed"
+    assert envelope.reply == "I checked it."
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM system_logs WHERE event_type = ?",
+            ("end_of_turn_body_unchanged_when_expected",),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_state_delta_deterministic_for_same_input_and_seed(tmp_path) -> None:

@@ -188,6 +188,7 @@ class Reconciler:
         body = row.get("request_body") or {}
         result = self.model.complete_turn(
             model_id=body["model"],
+            system=body.get("system"),
             messages=body["messages"],
             tools=body["tools"],
             hot_context={},

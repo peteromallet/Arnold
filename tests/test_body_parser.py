@@ -97,3 +97,155 @@ def test_diffs_equivalent_ignores_line_endings_trailing_space_and_trailing_blank
 
     assert body.diffs_equivalent(left, right)
     assert not body.diffs_equivalent(right, "--- before\n+++ after\n@@\n-old\n+newer\n")
+
+
+def test_outline_includes_nested_headings_line_counts_and_ignores_fenced_headings() -> None:
+    parsed = body.parse(
+        "# Title\n"
+        "\n"
+        "```markdown\n"
+        "## Ignored\n"
+        "```\n"
+        "\n"
+        "## Goal\n"
+        "\n"
+        "Ship it.\n"
+        "\n"
+        "### User Value\n"
+        "Value line.\n"
+        "\n"
+        "#### Evidence\n"
+        "Proof line.\n"
+        "\n"
+        "## Context\n"
+        "\n"
+        "Context line.\n"
+    )
+
+    outline = body.outline(parsed)
+
+    assert outline["total_lines"] == 19
+    assert [section["name"] for section in outline["sections"]] == ["Goal", "Context"]
+    goal = outline["sections"][0]
+    assert goal["line_start"] == 7
+    assert goal["line_end"] == 16
+    assert goal["line_count"] == 10
+    assert goal["subheadings"] == [
+        {
+            "level": 3,
+            "name": "User Value",
+            "line_number": 11,
+            "line_count": 6,
+            "children": [
+                {
+                    "level": 4,
+                    "name": "Evidence",
+                    "line_number": 14,
+                    "line_count": 3,
+                    "children": [],
+                }
+            ],
+        }
+    ]
+
+
+def test_search_returns_line_context_and_parser_section_attribution() -> None:
+    parsed = body.parse(
+        "# Title\n"
+        "\n"
+        "needle in preamble\n"
+        "\n"
+        "```markdown\n"
+        "## Fake Section\n"
+        "needle inside code\n"
+        "```\n"
+        "\n"
+        "## Goal\n"
+        "\n"
+        "Goal text.\n"
+        "\n"
+        "### Details\n"
+        "Needle in details.\n"
+        "\n"
+        "## Context\n"
+        "No match.\n"
+    )
+
+    result = body.search(parsed, "needle", context_lines=1)
+
+    assert result["query"] == "needle"
+    assert result["results"] == [
+        {
+            "line_number": 3,
+            "line": "needle in preamble",
+            "section": "_preamble",
+            "subheading_path": [],
+            "context_before": [{"line_number": 2, "line": ""}],
+            "context_after": [{"line_number": 4, "line": ""}],
+        },
+        {
+            "line_number": 7,
+            "line": "needle inside code",
+            "section": "_preamble",
+            "subheading_path": [],
+            "context_before": [{"line_number": 6, "line": "## Fake Section"}],
+            "context_after": [{"line_number": 8, "line": "```"}],
+        },
+        {
+            "line_number": 15,
+            "line": "Needle in details.",
+            "section": "Goal",
+            "subheading_path": ["Details"],
+            "context_before": [{"line_number": 14, "line": "### Details"}],
+            "context_after": [{"line_number": 16, "line": ""}],
+        },
+    ]
+
+
+def test_search_empty_query_negative_context_and_tilde_fence_edges() -> None:
+    parsed = body.parse(
+        "# Title\n"
+        "\n"
+        "~~~markdown\n"
+        "## Ignored\n"
+        "needle inside tilde fence\n"
+        "~~~\n"
+        "\n"
+        "## Goal\n"
+        "\n"
+        "Needle in goal.\n"
+        "\n"
+        "### Detail\n"
+        "needle in detail.\n"
+    )
+
+    assert body.search(parsed, "", context_lines=2) == {"query": "", "results": []}
+
+    result = body.search(parsed, "needle", context_lines=-4)
+
+    assert result["results"] == [
+        {
+            "line_number": 5,
+            "line": "needle inside tilde fence",
+            "section": "_preamble",
+            "subheading_path": [],
+            "context_before": [],
+            "context_after": [],
+        },
+        {
+            "line_number": 10,
+            "line": "Needle in goal.",
+            "section": "Goal",
+            "subheading_path": [],
+            "context_before": [],
+            "context_after": [],
+        },
+        {
+            "line_number": 13,
+            "line": "needle in detail.",
+            "section": "Goal",
+            "subheading_path": ["Detail"],
+            "context_before": [],
+            "context_after": [],
+        },
+    ]

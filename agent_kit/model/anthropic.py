@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Sequence
+from hashlib import sha256
 
 from agent_kit.ports import (
     JSONDict,
@@ -24,6 +25,7 @@ class AnthropicModel:
         messages: Sequence[JSONDict],
         tools: Sequence[JSONDict],
         hot_context: JSONDict,
+        system: str | None = None,
         idempotency_key: str | None = None,
     ) -> ModelTurnResult:
         selected_model_id = model_id or self.model_id
@@ -33,6 +35,8 @@ class AnthropicModel:
             "message_count": len(messages),
             "tool_names": [tool.get("name") for tool in tools],
             "hot_context_keys": sorted(hot_context.keys()),
+            "system_present": system is not None,
+            "system_hash": _system_hash(system),
         }
         try:
             create_kwargs = {
@@ -41,6 +45,8 @@ class AnthropicModel:
                 "messages": list(messages),
                 "tools": _anthropic_tools(tools),
             }
+            if system is not None:
+                create_kwargs["system"] = system
             if idempotency_key is not None:
                 create_kwargs["extra_headers"] = {
                     "Idempotency-Key": idempotency_key,
@@ -150,6 +156,12 @@ def _get(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return getattr(value, key, None)
+
+
+def _system_hash(system: str | None) -> str | None:
+    if system is None:
+        return None
+    return sha256(system.encode("utf-8")).hexdigest()[:8]
 
 
 __all__ = ["AnthropicModel"]

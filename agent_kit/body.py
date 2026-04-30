@@ -8,6 +8,7 @@ import re
 
 
 HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
+ANY_SECTION_HEADING_RE = re.compile(r"^(#{2,6})\s+(.+?)\s*$")
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$")
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _PREAMBLE = "_preamble"
@@ -90,6 +91,7 @@ def validate_for_write(parsed: ParsedBody) -> None:
 
 def outline(parsed: ParsedBody) -> dict[str, object]:
     body_text = serialize(parsed)
+    section_spans = _section_line_spans(body_text)
     return {
         "title": parsed.title,
         "goal": parsed.goal_first_paragraph,
@@ -98,10 +100,52 @@ def outline(parsed: ParsedBody) -> dict[str, object]:
             {
                 "name": section.name,
                 "line_count": _line_count(section.raw),
+                "line_start": span["line_start"],
+                "line_end": span["line_end"],
+                "subheadings": _nested_subheadings(
+                    section_spans,
+                    span["line_start"],
+                    span["line_end"],
+                ),
             }
-            for section in parsed.sections
+            for section, span in zip(parsed.sections, section_spans)
         ],
     }
+
+
+def search(parsed: ParsedBody, query: str, context_lines: int = 2) -> dict[str, object]:
+    body_text = serialize(parsed)
+    needle = str(query or "").casefold()
+    context_size = max(int(context_lines), 0)
+    lines = body_text.splitlines()
+    section_spans = _section_line_spans(body_text)
+    results: list[dict[str, object]] = []
+    if not needle:
+        return {"query": query, "results": []}
+
+    for index, line in enumerate(lines):
+        if needle not in line.casefold():
+            continue
+        line_number = index + 1
+        start = max(0, index - context_size)
+        end = min(len(lines), index + context_size + 1)
+        results.append(
+            {
+                "line_number": line_number,
+                "line": line,
+                "section": _section_name_for_line(section_spans, line_number),
+                "subheading_path": _subheading_path_for_line(section_spans, line_number),
+                "context_before": [
+                    {"line_number": item + 1, "line": lines[item]}
+                    for item in range(start, index)
+                ],
+                "context_after": [
+                    {"line_number": item + 1, "line": lines[item]}
+                    for item in range(index + 1, end)
+                ],
+            }
+        )
+    return {"query": query, "results": results}
 
 
 def replace_section(parsed: ParsedBody, name: str, content: str) -> ParsedBody:
@@ -202,6 +246,122 @@ def _section_boundaries(text: str) -> list[tuple[int, int, str, str]]:
                     boundaries.append((offset, offset + len(line), match.group(1), line))
         offset += len(line)
     return boundaries
+
+
+def _section_line_spans(text: str) -> list[dict[str, object]]:
+    headings = _heading_infos(text)
+    top_level = [heading for heading in headings if heading["level"] == 2]
+    spans: list[dict[str, object]] = []
+    total_lines = _line_count(text)
+    for index, heading in enumerate(top_level):
+        next_start = (
+            int(top_level[index + 1]["line_number"])
+            if index + 1 < len(top_level)
+            else total_lines + 1
+        )
+        spans.append(
+            {
+                "name": heading["name"],
+                "line_start": heading["line_number"],
+                "line_end": max(int(heading["line_number"]), next_start - 1),
+                "headings": [
+                    item
+                    for item in headings
+                    if int(heading["line_number"]) <= int(item["line_number"]) < next_start
+                ],
+            }
+        )
+    return spans
+
+
+def _nested_subheadings(
+    section_spans: list[dict[str, object]],
+    line_start: object,
+    line_end: object,
+) -> list[dict[str, object]]:
+    section = next(
+        (
+            span
+            for span in section_spans
+            if span["line_start"] == line_start and span["line_end"] == line_end
+        ),
+        None,
+    )
+    if not section:
+        return []
+    headings = [
+        dict(item)
+        for item in section["headings"]  # type: ignore[index]
+        if int(item["level"]) > 2
+    ]
+    for index, heading in enumerate(headings):
+        next_line = int(line_end) + 1
+        for candidate in headings[index + 1 :]:
+            if int(candidate["level"]) <= int(heading["level"]):
+                next_line = int(candidate["line_number"])
+                break
+        heading["line_count"] = max(1, next_line - int(heading["line_number"]))
+        heading["children"] = []
+
+    roots: list[dict[str, object]] = []
+    stack: list[dict[str, object]] = []
+    for heading in headings:
+        while stack and int(stack[-1]["level"]) >= int(heading["level"]):
+            stack.pop()
+        if stack:
+            stack[-1]["children"].append(heading)  # type: ignore[index, union-attr]
+        else:
+            roots.append(heading)
+        stack.append(heading)
+    return roots
+
+
+def _heading_infos(text: str) -> list[dict[str, object]]:
+    headings: list[dict[str, object]] = []
+    fence: str | None = None
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if fence:
+            if stripped.startswith(fence):
+                fence = None
+            continue
+        fence_match = _FENCE_RE.match(line)
+        if fence_match:
+            fence = fence_match.group(1)
+            continue
+        match = ANY_SECTION_HEADING_RE.match(line)
+        if not match:
+            continue
+        headings.append(
+            {
+                "level": len(match.group(1)),
+                "name": match.group(2).strip(),
+                "line_number": line_number,
+            }
+        )
+    return headings
+
+
+def _section_name_for_line(section_spans: list[dict[str, object]], line_number: int) -> str:
+    for section in section_spans:
+        if int(section["line_start"]) <= line_number <= int(section["line_end"]):
+            return str(section["name"])
+    return _PREAMBLE
+
+
+def _subheading_path_for_line(section_spans: list[dict[str, object]], line_number: int) -> list[str]:
+    for section in section_spans:
+        if not (int(section["line_start"]) <= line_number <= int(section["line_end"])):
+            continue
+        path: list[str] = []
+        for heading in section["headings"]:  # type: ignore[index]
+            if int(heading["level"]) <= 2 or int(heading["line_number"]) > line_number:
+                continue
+            while len(path) >= int(heading["level"]) - 2:
+                path.pop()
+            path.append(str(heading["name"]))
+        return path
+    return []
 
 
 def _extract_title(preamble: str) -> str | None:

@@ -9,7 +9,7 @@ from typing import Any, Iterator, Sequence
 from uuid import uuid4
 JSONDict = dict[str, Any]
 
-_JSON_COLUMNS = {"arguments", "details", "error_details", "in_burst_with", "prompt_snapshot", "prior_state", "provider_response_summary", "request_body", "request_summary", "result", "state_at_turn", "transcription_metadata", "triggered_by_message_ids", "warnings_issued"}
+_JSON_COLUMNS = {"arguments", "context_snapshot", "details", "error_details", "in_burst_with", "prompt_snapshot", "prior_state", "provider_response_summary", "request_body", "request_summary", "result", "state_at_turn", "transcription_metadata", "triggered_by_message_ids", "warnings_issued"}
 
 
 class SupabaseStore:
@@ -185,21 +185,31 @@ class SupabaseStore:
             (epic_id, holder_id),
         )
 
-    def load_hot_context(self, epic_id: str) -> JSONDict:
-        epic = _normalize(self._conn.execute("SELECT * FROM epics WHERE id = %s", (epic_id,)).fetchone())
-        messages = _normalize_rows(
-            self._conn.execute(
-                "SELECT * FROM messages WHERE epic_id = %s ORDER BY sent_at DESC LIMIT 10",
-                (epic_id,),
-            ).fetchall()
-        )
-        tool_calls = _normalize_rows(
-            self._conn.execute(
-                "SELECT tool_calls.* FROM tool_calls JOIN bot_turns ON bot_turns.id = tool_calls.turn_id WHERE bot_turns.epic_id = %s ORDER BY tool_calls.called_at DESC LIMIT 10",
-                (epic_id,),
-            ).fetchall()
-        )
-        return {"epic": epic, "recent_messages": list(reversed(messages)), "recent_tool_calls": list(reversed(tool_calls))}
+    def load_hot_context(self, epic_id: str | None) -> JSONDict:
+        epic = None
+        messages: list[JSONDict] = []
+        tool_calls: list[JSONDict] = []
+        if epic_id is not None:
+            epic = _normalize(self._conn.execute("SELECT * FROM epics WHERE id = %s", (epic_id,)).fetchone())
+            messages = _normalize_rows(
+                self._conn.execute(
+                    "SELECT * FROM messages WHERE epic_id = %s ORDER BY sent_at DESC LIMIT 10",
+                    (epic_id,),
+                ).fetchall()
+            )
+            tool_calls = _normalize_rows(
+                self._conn.execute(
+                    "SELECT tool_calls.* FROM tool_calls JOIN bot_turns ON bot_turns.id = tool_calls.turn_id WHERE bot_turns.epic_id = %s ORDER BY tool_calls.called_at DESC LIMIT 10",
+                    (epic_id,),
+                ).fetchall()
+            )
+        return {
+            "epic": epic,
+            "recent_messages": list(reversed(messages)),
+            "recent_tool_calls": list(reversed(tool_calls)),
+            "active_feedback": self.list_feedback(epic_id=epic_id, active=True),
+            "unresolved_observations": self.list_observations(resolved=False, limit=5),
+        }
 
     def find_unprocessed_messages(self, epic_id: str, started_at: str, exclude_ids: Sequence[str]) -> list[JSONDict]:
         return _normalize_rows(
@@ -522,6 +532,100 @@ class SupabaseStore:
             ).fetchall()
         )
 
+    def create_feedback(
+        self,
+        *,
+        kind: str,
+        content: str,
+        source: str,
+        source_message_id: str | None = None,
+        epic_id: str | None = None,
+        turn_id: str | None = None,
+        context_snapshot: JSONDict | None = None,
+    ) -> JSONDict:
+        feedback_id = _new_id("fb")
+        self._conn.execute(
+            "INSERT INTO feedback (id, kind, content, source, source_message_id, epic_id, turn_id, context_snapshot) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                feedback_id,
+                kind,
+                content,
+                source,
+                source_message_id,
+                epic_id,
+                turn_id,
+                _json(context_snapshot) if context_snapshot is not None else None,
+            ),
+        )
+        return self.load_feedback(feedback_id) or {}
+
+    def load_feedback(self, feedback_id: str) -> JSONDict | None:
+        return _normalize(self._conn.execute("SELECT * FROM feedback WHERE id = %s", (feedback_id,)).fetchone())
+
+    def update_feedback(self, feedback_id: str, **changes: Any) -> JSONDict:
+        return self._update("feedback", "id", feedback_id, changes, _FEEDBACK_COLUMNS, self.load_feedback)
+
+    def list_feedback(
+        self,
+        *,
+        epic_id: str | None = None,
+        active: bool | None = None,
+        kinds: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        clauses = ["kind = ANY(%s)"]
+        params: list[Any] = [["style", "process", "epic_specific"]]
+        if epic_id is None:
+            clauses.append("epic_id IS NULL")
+            clauses.append("kind = ANY(%s)")
+            params.append(["style", "process"])
+        else:
+            clauses.append("((epic_id IS NULL AND kind = ANY(%s)) OR epic_id = %s)")
+            params.append(["style", "process"])
+            params.append(epic_id)
+        if active is not None:
+            clauses.append("active = %s")
+            params.append(active)
+        if kinds:
+            clauses.append("kind = ANY(%s)")
+            params.append(list(kinds))
+        limit_sql = " LIMIT %s" if limit is not None else ""
+        if limit is not None:
+            params.append(int(limit))
+        return _normalize_rows(
+            self._conn.execute(
+                f"SELECT * FROM feedback WHERE {' AND '.join(clauses)} ORDER BY created_at DESC, id DESC{limit_sql}",
+                params,
+            ).fetchall()
+        )
+
+    def list_observations(
+        self,
+        *,
+        resolved: bool | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        clauses = ["kind = ANY(%s)"]
+        params: list[Any] = [[
+            "friction",
+            "ambiguity",
+            "tool_failure",
+            "confusion",
+            "pattern_noticed",
+        ]]
+        if resolved is not None:
+            clauses.append("resolved = %s")
+            params.append(resolved)
+        limit_sql = " LIMIT %s" if limit is not None else ""
+        if limit is not None:
+            params.append(int(limit))
+        return _normalize_rows(
+            self._conn.execute(
+                f"SELECT * FROM feedback WHERE {' AND '.join(clauses)} ORDER BY created_at DESC, id DESC{limit_sql}",
+                params,
+            ).fetchall()
+        )
+
     def _mark_request(
         self,
         request_id: str,
@@ -593,6 +697,7 @@ _TURN_COLUMNS = {"epic_id", "triggered_by_message_ids", "prompt_snapshot", "prom
 _IMAGE_COLUMNS = {"prompt", "storage_url", "quality", "size", "reference_key", "description", "caption", "in_body", "active", "discord_attachment_id"}
 _EPIC_COLUMNS = {"title", "goal", "body", "state", "last_edited_at", "last_active_at", "planned_at"}
 _CHECKLIST_COLUMNS = {"content", "status", "position", "skip_reason", "superseded_by_item_id", "completed_at"}
+_FEEDBACK_COLUMNS = {"kind", "content", "source", "source_message_id", "epic_id", "turn_id", "context_snapshot", "active", "deactivation_reason", "resolved", "resolution_note", "resolved_at", "last_referenced_at", "last_applied_at"}
 
 
 def _connect(dsn: str) -> Any:

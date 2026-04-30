@@ -25,9 +25,10 @@ class MidTurnModel:
         messages: Sequence[JSONDict],
         tools: Sequence[JSONDict],
         hot_context: JSONDict,
+        system: str | None = None,
         idempotency_key: str | None = None,
     ) -> ModelTurnResult:
-        del model_id, tools, hot_context, idempotency_key
+        del model_id, system, tools, hot_context, idempotency_key
         self.calls.append(list(messages))
         if self.created_mid_message_id is None:
             row = self.store.create_message(

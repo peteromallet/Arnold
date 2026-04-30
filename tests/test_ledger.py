@@ -11,6 +11,7 @@ from agent_kit.loop import (
 )
 from agent_kit.model import FakeModel
 from agent_kit.ports import ProviderError
+from agent_kit.prompts import build_system_prompt
 from tests.helpers import create_store, insert_epic
 
 
@@ -101,11 +102,47 @@ def test_ledger_lifecycle_success_single_call(tmp_path) -> None:
     request_summary = json.loads(row["request_summary"])
     request_body = json.loads(row["request_body"])
     assert request_summary["system_seq"] == 1
+    assert request_summary["prompt_version"] == request_summary["system_hash"]
     assert request_body["model"] == "fake"
+    assert request_body["system"] == model.calls[0]["system"]
+    assert request_body["system"] == build_system_prompt(model.calls[0]["hot_context"])
     assert request_body["messages"] == [{"role": "user", "content": "hello"}]
     assert request_body["max_tokens"] == ANTHROPIC_MAX_TOKENS
     assert [tool["name"] for tool in request_body["tools"]]
     assert model_idempotency_keys(model) == [row["idempotency_key"]]
+
+
+def test_ledger_system_prompt_includes_hot_feedback_snapshot(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    store.create_feedback(
+        kind="style",
+        content="Keep replies under 200 words.",
+        source="explicit_save_request",
+    )
+    model = FakeModel(
+        script=[
+            {
+                "final_text": "done",
+                "provider_request_id": "req_feedback_prompt",
+            }
+        ]
+    )
+
+    run_turn(
+        epic_id=None,
+        input="hello",
+        store=store,
+        model=model,
+        model_id="fake",
+    )
+
+    row = conn.execute("SELECT * FROM external_requests").fetchone()
+    request_body = json.loads(row["request_body"])
+    request_summary = json.loads(row["request_summary"])
+    assert request_body["system"] == model.calls[0]["system"]
+    assert "Keep replies under 200 words." in request_body["system"]
+    assert request_summary["hot_context"]["active_feedback_count"] == 1
+    assert request_summary["prompt_version"] == request_summary["system_hash"]
 
 
 def model_idempotency_keys(model: FakeModel) -> list[str | None]:

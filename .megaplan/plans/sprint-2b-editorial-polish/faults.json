@@ -1,0 +1,61 @@
+{
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Hot context: global style/process feedback would be skipped on turns without an active epic. The plan only extends `load_hot_context(epic_id)` and the current loop bypasses that method entirely when `active_epic_id is None`, returning a hard-coded empty context instead. Since the spec says all active style/process feedback loads every turn and those preferences are cross-epic, this would fail for new-epic/no-epic turns and any invocation before epic selection.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Addressed the hot-context gap by making `load_hot_context` accept `None` and load global style/process feedback every turn. Addressed the prompt plumbing gap by expanding the plan to update the full model protocol, fake model, Anthropic adapter, ledger replay, and audited request body together. Also added file references to every step and tightened tests around no-epic feedback loading.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Prompt plumbing: adding a system prompt only in `loop.py` and `agent_kit/model/anthropic.py` is not enough for this codebase. The model boundary and fake model are part of the same call contract and are used heavily by the planned scripted integrations; if the loop starts passing `system` without updating `agent_kit/ports.py` and `agent_kit/model/fake.py`, tests will fail, and if the ledger request body is not updated the audited provider request will omit the prompt actually sent.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Addressed the hot-context gap by making `load_hot_context` accept `None` and load global style/process feedback every turn. Addressed the prompt plumbing gap by expanding the plan to update the full model protocol, fake model, Anthropic adapter, ledger replay, and audited request body together. Also added file references to every step and tightened tests around no-epic feedback loading.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 13: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 14: requires human verification (inspect_runtime_ui, observe_runtime_logs).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    }
+  ]
+}

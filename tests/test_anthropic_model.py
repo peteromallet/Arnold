@@ -34,6 +34,7 @@ def test_anthropic_model_forwards_idempotency_key_header() -> None:
 
     result = model.complete_turn(
         model_id="claude-test",
+        system="system rules",
         messages=[{"role": "user", "content": "hello"}],
         tools=[],
         hot_context={},
@@ -44,6 +45,9 @@ def test_anthropic_model_forwards_idempotency_key_header() -> None:
     assert client.messages.kwargs["extra_headers"] == {
         "Idempotency-Key": "idem_123",
     }
+    assert client.messages.kwargs["system"] == "system rules"
+    assert result.response_summary["request"]["system_present"] is True
+    assert result.response_summary["request"]["system_hash"] is not None
 
 
 def test_anthropic_model_omits_idempotency_header_when_absent() -> None:
@@ -58,3 +62,4 @@ def test_anthropic_model_omits_idempotency_header_when_absent() -> None:
     )
 
     assert "extra_headers" not in client.messages.kwargs
+    assert "system" not in client.messages.kwargs

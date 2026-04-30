@@ -1,8 +1,8 @@
 {
   "name": "sprint-2b-editorial-polish",
   "idea": "# Sprint 2b \u2014 Editorial polish\n\nThoughtful behaviors that distinguish a real editorial assistant from a body editor. Adds feedback system, end-of-turn checks, search tools, and agent observations.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to How to Work Each Checklist Item, Feedback System, End-of-Turn Checks, Communication Style, Persona sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: [REDACTED_SUPABASE_SERVICE_ROLE_JWT]\n\n## Scope\n\n- Table: feedback (single table for user feedback AND agent observations)\n- Per-item depth guidance in system prompt for all 18 checklist items\n- End-of-turn checks \u2014 five categories (no message sent, no tool calls, empty response, body unchanged when expected, checklist stall)\n- Show-changes pattern in responses\n- `search_in_body` tool \u2014 returns line numbers + surrounding context + section attribution\n- `get_body_outline` tool \u2014 section names + line counts\n- Feedback tools: save_feedback, apply_feedback, deactivate_feedback, list_feedback\n- Agent observation tools: record_observation, list_observations, mark_observation_resolved\n- Hot-context loading of active style + process feedback with last_applied_at AND recent unresolved observations\n- Agent-proposed-user-confirmed flow for saving feedback\n- Agent-only flow for observations (no user confirmation)\n\n## Feedback Table\nid, kind (style|process|epic_specific|friction|ambiguity|tool_failure|confusion|pattern_noticed), content, source (user_volunteered|agent_proposed_user_confirmed|explicit_save_request|agent_observation), source_message_id, epic_id, turn_id, context_snapshot (json: {user_message, bot_action_being_critiqued}), active (default true), deactivation_reason, resolved (default false), resolution_note, resolved_at, created_at, last_referenced_at, last_applied_at\n\nTwo semantic groups:\n- User feedback (style, process, epic_specific) \u2014 active \u2192 deactivated; tracked via last_applied_at\n- Agent observations (friction, ambiguity, tool_failure, confusion, pattern_noticed) \u2014 open \u2192 resolved; tracked via resolved_at\n\n## Acceptance Criteria\n\n- \"change the part about X\" \u2192 bot calls search_in_body, then get_epic for matching section, then edit_epic (verifiable via tool_calls sequence)\n- get_body_outline returns section names + line counts matching actual body\n- \"stop apologizing\" \u2192 bot proposes saving as style feedback, user confirms, row written; subsequent turn honors it via hot context\n- \"save this: keep messages under 200 words\" \u2192 bot saves immediately (explicit save)\n- apply_feedback(id) \u2192 last_applied_at updated\n- record_observation(kind='friction', ...) \u2192 row written with turn_id and context_snapshot; surfaces in hot context next turn\n- mark_observation_resolved(id, \"user clarified\") \u2192 resolved_at set, not in hot context\n- \"Show me the epic\" \u2192 render_epic called\n- End-of-turn check fires when bot tries to finish without sending message \u2192 default acknowledgment\n\n## Tests\n- Unit: search_in_body returns correct results; get_body_outline accuracy; feedback kind detection; end-of-turn check logic; observation writes\n- Integration: feedback save \u2192 apply \u2192 reload; observation recorded \u2192 reload \u2192 resolved\n- LLM-graded eval: 20 fixture turns with style violations; 20 turns checking body for filler",
-  "current_state": "initialized",
-  "iteration": 0,
+  "current_state": "done",
+  "iteration": 2,
   "created_at": "2026-04-30T01:13:12Z",
   "config": {
     "project_dir": "/Users/peteromalley/Documents/arnold-v2",
@@ -10,10 +10,67 @@
     "robustness": "light",
     "mode": "code",
     "strict_notes": false,
-    "agent": ""
+    "agent": "",
+    "profile": "all-codex",
+    "phase_model": [
+      "plan=codex",
+      "prep=codex",
+      "critique=codex",
+      "revise=codex",
+      "gate=codex",
+      "finalize=codex",
+      "execute=codex",
+      "loop_plan=codex",
+      "loop_execute=codex",
+      "review=codex",
+      "tiebreaker_researcher=codex",
+      "tiebreaker_challenger=codex"
+    ]
   },
-  "sessions": {},
-  "plan_versions": [],
+  "sessions": {
+    "codex_planner": {
+      "id": "019dde16-0397-7301-860a-3f170e2cdb1f",
+      "mode": "persistent",
+      "created_at": "2026-04-30T11:14:02Z",
+      "last_used_at": "2026-04-30T11:17:24Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019dde18-8cbb-73f3-99d3-101476803237",
+      "mode": "persistent",
+      "created_at": "2026-04-30T11:15:56Z",
+      "last_used_at": "2026-04-30T11:15:56Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019dde1b-a3fd-7d82-a110-e7e7e92858f4",
+      "mode": "persistent",
+      "created_at": "2026-04-30T11:18:44Z",
+      "last_used_at": "2026-04-30T11:18:44Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019dde1c-da1f-7c71-897e-a4896c13f971",
+      "mode": "persistent",
+      "created_at": "2026-04-30T11:21:00Z",
+      "last_used_at": "2026-04-30T12:01:51Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:85cb123fabbb41ec5b053d94b20ceac82095bb2a313c1ecfd26fb9e7d4ea5159",
+      "timestamp": "2026-04-30T11:14:02Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:b2846f2e17356c20d8426fe5907a2ae1fa9401f08aad1a11394a653d64bc6f24",
+      "timestamp": "2026-04-30T11:17:24Z"
+    }
+  ],
   "history": [
     {
       "step": "init",
@@ -25,16 +82,159 @@
         "claude": true,
         "codex": true
       }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T06:39:51Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Claude step failed: You've hit your org's monthly usage limit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T06:39:54Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Claude step failed: You've hit your org's monthly usage limit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T06:39:57Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Claude step failed: You've hit your org's monthly usage limit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T06:40:01Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Claude step failed: You've hit your org's monthly usage limit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T06:40:04Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "plan_v1_raw.txt",
+      "message": "Claude step failed: You've hit your org's monthly usage limit"
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T11:14:02Z",
+      "duration_ms": 166178,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde16-0397-7301-860a-3f170e2cdb1f",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:85cb123fabbb41ec5b053d94b20ceac82095bb2a313c1ecfd26fb9e7d4ea5159"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T11:15:56Z",
+      "duration_ms": 112990,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde18-8cbb-73f3-99d3-101476803237",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:9aeca41fd5d4c75d3df329268c798464a332b640cfa457660ae2cb50a33b59da",
+      "flags_count": 5
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T11:17:24Z",
+      "duration_ms": 86413,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde16-0397-7301-860a-3f170e2cdb1f",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:b2846f2e17356c20d8426fe5907a2ae1fa9401f08aad1a11394a653d64bc6f24",
+      "flags_addressed": [
+        "FLAG-001",
+        "FLAG-002"
+      ]
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T11:18:44Z",
+      "duration_ms": 76816,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde1b-a3fd-7d82-a110-e7e7e92858f4",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:798653e5f43476d36862af89760e718084722069965193c21c2349f7dcd6915d"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T11:59:56Z",
+      "duration_ms": 2469196,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019dde1c-da1f-7c71-897e-a4896c13f971",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:fa4a5b27d2225cdfafc557f8fcfdcd62bc652565f35d28b2c376cfd3c8280e13",
+      "finalize_hash": "sha256:261c340f6c4a0d9265079e1aa5b82554ac466dd936d32f052e05bbd3360f7f4f",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T12:01:51Z",
+      "duration_ms": 112843,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde1c-da1f-7c71-897e-a4896c13f971",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:9980f122162cb28eacf3a442019998a1fbbe60cc5cf64613a12e9f8cd21d68c3",
+      "finalize_hash": "sha256:43b1a855e107c7a4c1e288ebb965f2e2c53327e61b28d34c41777fe5854aa910",
+      "approval_mode": "auto_approve"
     }
   ],
   "meta": {
-    "significant_counts": [],
+    "significant_counts": [
+      2
+    ],
     "weighted_scores": [],
-    "plan_deltas": [],
-    "recurring_critiques": [],
+    "plan_deltas": [
+      72.21
+    ],
+    "recurring_critiques": [
+      []
+    ],
     "total_cost_usd": 0.0,
-    "overrides": [],
-    "notes": []
+    "overrides": [
+      {
+        "action": "set-profile",
+        "timestamp": "2026-04-30T11:11:02Z",
+        "from": null,
+        "to": "all-codex",
+        "reason": "switch to all-codex profile"
+      }
+    ],
+    "notes": [],
+    "user_approved_gate": true
   },
-  "last_gate": {}
+  "last_gate": {
+    "recommendation": "ITERATE"
+  }
 }

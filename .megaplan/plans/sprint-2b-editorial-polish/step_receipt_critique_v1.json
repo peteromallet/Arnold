@@ -1,0 +1,35 @@
+{
+  "receipt_id": "2050222b-6a4b-478a-9d62-4a3f410d5873",
+  "plan_id": "sprint-2b-editorial-polish",
+  "phase": "critique",
+  "iteration": 1,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T11:15:56.974094+00:00",
+  "profile_name": "all-codex",
+  "agent": "codex",
+  "agent_mode": "persistent",
+  "model_configured": "codex",
+  "model_actual": null,
+  "session_id": "019dde18-8cbb-73f3-99d3-101476803237",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "c7fc68534335ac82f1435676c615a655e5b26e86a612055df66720065ac363a8",
+  "prompt_hash_canonical": "6d5cf9d64b7f0ed10c80b54a09f94be85c7c01cb59f5d93824724bc1bd1db96d",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [
+    "sha256:85cb123fabbb41ec5b053d94b20ceac82095bb2a313c1ecfd26fb9e7d4ea5159"
+  ],
+  "cost_usd": 0.0,
+  "duration_ms": 112990,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "findings_per_check": {},
+    "severity_distribution": {},
+    "clean_checks_count": 0,
+    "flagged_checks_count": 0,
+    "rubber_stamp_ratio": 0.0
+  },
+  "scope_drift_severity": null
+}

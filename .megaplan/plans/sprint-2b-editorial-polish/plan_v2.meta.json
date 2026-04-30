@@ -1,0 +1,155 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T11:17:24Z",
+  "hash": "sha256:b2846f2e17356c20d8426fe5907a2ae1fa9401f08aad1a11394a653d64bc6f24",
+  "changes_summary": "Addressed the hot-context gap by making `load_hot_context` accept `None` and load global style/process feedback every turn. Addressed the prompt plumbing gap by expanding the plan to update the full model protocol, fake model, Anthropic adapter, ledger replay, and audited request body together. Also added file references to every step and tightened tests around no-epic feedback loading.",
+  "flags_addressed": [
+    "FLAG-001",
+    "FLAG-002"
+  ],
+  "questions": [
+    "Should `list_feedback` include the spec\u2019s `priority` filter even though the provided Sprint 2b table schema has no `priority` column?",
+    "What exact default acknowledgment should the end-of-turn check send when substantive work happened but no message was sent?",
+    "Should `source_message_id` be required for user feedback saved from Discord messages, or nullable as the table schema suggests for invocation-mode/manual saves?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "SQLite and Supabase migrations create a unified `feedback` table with all specified columns, valid kind/source constraints, JSON context snapshots, and useful hot-context indexes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Both store adapters expose feedback and observation CRUD methods, and store contract tests pass for SQLite and Supabase behavior.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`load_hot_context(None)` loads active style/process feedback, and the loop uses it for no-epic/new-epic turns instead of a hard-coded empty context.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The model protocol, fake model, Anthropic adapter, ledger replay, and loop request body all include the system prompt consistently.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`get_body_outline` returns section names, subheadings, and line counts matching fixture markdown bodies.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`search_in_body` returns correct 1-based line numbers, surrounding context, and section attribution for fixture bodies, including headings inside fenced code blocks.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The `change the part about X` scripted integration records the tool sequence `search_in_body`, `get_epic`, then `edit_epic`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Feedback tools support explicit save, apply timestamp update, deactivate, and list filtering; invalid feedback/observation kind mixing is rejected.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Observation tools write `source='agent_observation'` with `turn_id` and `context_snapshot`, surface unresolved observations in next-turn hot context, and hide them after resolution.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Active style/process feedback and current-epic feedback load into hot context with `last_applied_at` information, and `apply_feedback` updates that timestamp.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "A scripted `Show me the epic` turn records a `render_epic` tool call.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "End-of-turn checks send a default acknowledgment when the loop would otherwise finish after substantive work without an outbound message.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Existing editorial core behavior remains green, including section-level edits, expected diff mismatch handling, revert, model replay, and mid-turn message checks.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The prompt/hot-context implementation includes persona, communication style, checklist depth guidance, feedback discipline, show-changes behavior, body search workflow, and self-observation guidance from the spec.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "New deterministic tests are preferred over live-model tests in default CI; LLM-graded evals are isolated behind an explicit marker or environment flag.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Implementation keeps the current tool registry, store protocol, and loop architecture intact without introducing a parallel memory or editing subsystem.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Manual Discord smoke test confirms resident-mode feedback save and hot-context behavior against the configured Supabase project.",
+      "priority": "info",
+      "requires": [
+        "inspect_runtime_ui",
+        "observe_runtime_logs"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The Supabase service key is redacted and must not be committed or required for local tests.",
+    "The existing Python `agent_kit` architecture remains the target.",
+    "The table schema in the idea is authoritative over older tool text that mentions feedback priority.",
+    "Prompt-driven behaviors are verified with scripted fake-model integrations and optional LLM evals, not response rewriting.",
+    "Global `style` and `process` feedback must load even when no epic has been selected.",
+    "Agent observations are loaded per current epic in hot context; global observations remain retrievable via tools.",
+    "The current `##` body parser remains the source of truth."
+  ],
+  "delta_from_previous_percent": 72.21,
+  "structure_warnings": []
+}

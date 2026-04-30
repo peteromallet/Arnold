@@ -10,7 +10,22 @@
     "robustness": "light",
     "mode": "code",
     "strict_notes": false,
-    "agent": ""
+    "agent": "",
+    "profile": "all-codex",
+    "phase_model": [
+      "plan=codex",
+      "prep=codex",
+      "critique=codex",
+      "revise=codex",
+      "gate=codex",
+      "finalize=codex",
+      "execute=codex",
+      "loop_plan=codex",
+      "loop_execute=codex",
+      "review=codex",
+      "tiebreaker_researcher=codex",
+      "tiebreaker_challenger=codex"
+    ]
   },
   "sessions": {},
   "plan_versions": [],
@@ -33,7 +48,15 @@
     "plan_deltas": [],
     "recurring_critiques": [],
     "total_cost_usd": 0.0,
-    "overrides": [],
+    "overrides": [
+      {
+        "action": "set-profile",
+        "timestamp": "2026-04-30T11:11:03Z",
+        "from": null,
+        "to": "all-codex",
+        "reason": "switch to all-codex profile"
+      }
+    ],
     "notes": []
   },
   "last_gate": {}

@@ -55,12 +55,14 @@ class FakeModel:
         messages: Sequence[JSONDict],
         tools: Sequence[JSONDict],
         hot_context: JSONDict,
+        system: str | None = None,
         idempotency_key: str | None = None,
     ) -> ModelTurnResult:
         self.call_count += 1
         self.calls.append(
             {
                 "model_id": model_id,
+                "system": system,
                 "messages": list(messages),
                 "tools": list(tools),
                 "hot_context": hot_context,

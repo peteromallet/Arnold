@@ -18,6 +18,7 @@ def test_anthropic_replay_uses_stored_request_body_and_idempotency_key(tmp_path)
         request_summary={"system_seq": 7},
         request_body={
             "model": "fake-replay",
+            "system": "stored system prompt",
             "messages": [{"role": "user", "content": "stored prompt"}],
             "tools": [{"name": "send_message", "schema": {"type": "object"}}],
             "max_tokens": 1024,
@@ -32,6 +33,7 @@ def test_anthropic_replay_uses_stored_request_body_and_idempotency_key(tmp_path)
     Reconciler(store, model=model).run_once()
 
     assert model.calls[0]["model_id"] == "fake-replay"
+    assert model.calls[0]["system"] == "stored system prompt"
     assert model.calls[0]["idempotency_key"] == "idem_anthropic_1"
     assert model.calls[0]["messages"] == [{"role": "user", "content": "stored prompt"}]
     assert model.calls[0]["tools"] == [

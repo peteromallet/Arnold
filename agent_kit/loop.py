@@ -9,22 +9,30 @@ from typing import Callable, Sequence
 from uuid import uuid4
 
 from agent_kit import body
+from agent_kit.end_of_turn import (
+    DEFAULT_END_OF_TURN_ACKNOWLEDGMENT,
+    EndOfTurnToolCall,
+    evaluate_end_of_turn,
+)
 from agent_kit.envelope import Envelope, EnvelopeError, Event, StateDelta
 from agent_kit.ledger import Ledger
 from agent_kit.logging import log
 from agent_kit.ports import Blob, JSONDict, Model, ProviderError, PushTransport, Store
+from agent_kit.prompts import (
+    DEFAULT_PROMPT_VERSION,
+    build_system_prompt,
+    system_prompt_version,
+)
 from agent_kit.tool_kit import ToolContext, registry
 import agent_kit.tools.communication  # noqa: F401
 import agent_kit.tools.editorial  # noqa: F401
+import agent_kit.tools.feedback  # noqa: F401
 import agent_kit.tools.editorial_reads  # noqa: F401
 import agent_kit.tools.images  # noqa: F401
 
 
 ANTHROPIC_MESSAGES_ENDPOINT = "POST /v1/messages"
 ANTHROPIC_MAX_TOKENS = 4096
-DEFAULT_PROMPT_VERSION = "sprint1a"
-
-
 def run_turn(
     *,
     epic_id: str | None = None,
@@ -76,6 +84,9 @@ def run_turn(
     reply_buffer: list[str] = []
     context: ToolContext | None = None
     state_before = "unknown"
+    body_before: str | None = None
+    checklist_before: list[JSONDict] = []
+    tool_calls_this_turn: list[EndOfTurnToolCall] = []
     try:
         if recovered_input_messages is not None:
             initial_user_prompt = _messages_prompt(recovered_input_messages)
@@ -93,13 +104,15 @@ def run_turn(
         else:
             turn_message_ids = list(triggered_by_message_ids)
 
-        hot_context = (
-            store.load_hot_context(active_epic_id)
-            if active_epic_id is not None
-            else {"epic": None, "recent_messages": [], "recent_tool_calls": []}
-        )
+        hot_context = store.load_hot_context(active_epic_id)
         epic = hot_context.get("epic") or {}
         state_before = epic.get("state", "unknown")
+        body_before = str(epic.get("body") or "") if epic else None
+        checklist_before = (
+            store.list_checklist_items(active_epic_id)
+            if active_epic_id is not None
+            else []
+        )
         turn = store.create_turn(
             epic_id=active_epic_id,
             triggered_by_message_ids=turn_message_ids,
@@ -125,6 +138,7 @@ def run_turn(
                 "outcome": "completed",
                 "questions": [],
                 "channel_id": channel_id,
+                "user_message": initial_user_prompt,
             },
             transport=transport,
             blob=blob,
@@ -140,8 +154,11 @@ def run_turn(
         while True:
             model_call_seq += 1
             tool_definitions = list(registry.definitions())
+            system_prompt = build_system_prompt(hot_context)
+            prompt_version = system_prompt_version(system_prompt)
             request_body = {
                 "model": model_id,
+                "system": system_prompt,
                 "messages": list(messages),
                 "tools": tool_definitions,
                 "max_tokens": ANTHROPIC_MAX_TOKENS,
@@ -152,6 +169,9 @@ def run_turn(
                 "tool_names": [definition["name"] for definition in tool_definitions],
                 "input_length": len(input),
                 "system_seq": model_call_seq,
+                "hot_context": _summarize_hot_context(hot_context),
+                "prompt_version": prompt_version,
+                "system_hash": prompt_version,
             }
             request_id, idempotency_key = ledger.record_pending(
                 provider="anthropic",
@@ -164,6 +184,7 @@ def run_turn(
             try:
                 result = model.complete_turn(
                     model_id=model_id,
+                    system=system_prompt,
                     messages=messages,
                     tools=tool_definitions,
                     hot_context=hot_context,
@@ -270,6 +291,7 @@ def run_turn(
                             context,
                             tool_request.arguments,
                         )
+                        tool_calls_this_turn.append(_end_of_turn_tool_call(invocation.tool_call))
                         active_epic_id = context.metadata.get("epic_id", active_epic_id)
                     except Exception as exc:
                         log(
@@ -326,7 +348,6 @@ def run_turn(
                 continue
 
             if result.final_text is not None:
-                final_text = result.final_text or "Done."
                 updated_turn = _append_mid_turn_messages(
                     store=store,
                     turn=turn,
@@ -336,39 +357,34 @@ def run_turn(
                 if updated_turn is not None:
                     turn = updated_turn
                     continue
-                if not reply_buffer:
-                    registry.invoke(
-                        "send_message",
-                        context,
-                        {"content": final_text},
-                    )
-                    active_epic_id = context.metadata.get("epic_id", active_epic_id)
-                store.update_turn(turn["id"], status="completed")
-                _log_epic_outline_if_needed(store, active_epic_id, turn, events)
-                return _envelope(
-                    turn_id=turn["id"],
-                    epic_id=active_epic_id,
+                return _finish_after_model_response(
+                    store=store,
+                    turn=turn,
+                    context=context,
+                    active_epic_id=active_epic_id,
                     state_before=state_before,
-                    state_after=state_before,
+                    body_before=body_before,
+                    checklist_before=checklist_before,
+                    tool_calls_this_turn=tool_calls_this_turn,
                     reply_buffer=reply_buffer,
                     events=events,
-                    outcome="completed",
+                    final_text=result.final_text,
+                    initial_user_prompt=initial_user_prompt,
                 )
 
-            store.update_turn(turn["id"], status="failed", reasoning="model returned no action")
-            return _envelope(
-                turn_id=turn["id"],
-                epic_id=active_epic_id,
+            return _finish_after_model_response(
+                store=store,
+                turn=turn,
+                context=context,
+                active_epic_id=active_epic_id,
                 state_before=state_before,
-                state_after=state_before,
+                body_before=body_before,
+                checklist_before=checklist_before,
+                tool_calls_this_turn=tool_calls_this_turn,
                 reply_buffer=reply_buffer,
                 events=events,
-                outcome="errored",
-                error=EnvelopeError(
-                    code="empty_model_response",
-                    message="Model returned neither final text nor tool requests.",
-                    retryable=True,
-                ),
+                final_text=None,
+                initial_user_prompt=initial_user_prompt,
             )
     finally:
         if lock_acquired and epic_id is not None:
@@ -400,6 +416,132 @@ def _abort_turn(
         events=events,
         outcome="aborted",
     )
+
+
+def _finish_after_model_response(
+    *,
+    store: Store,
+    turn: JSONDict,
+    context: ToolContext,
+    active_epic_id: str | None,
+    state_before: str,
+    body_before: str | None,
+    checklist_before: list[JSONDict],
+    tool_calls_this_turn: list[EndOfTurnToolCall],
+    reply_buffer: list[str],
+    events: list[Event],
+    final_text: str | None,
+    initial_user_prompt: str,
+) -> Envelope:
+    body_after = _current_body(store, active_epic_id)
+    checklist_after = (
+        store.list_checklist_items(active_epic_id)
+        if active_epic_id is not None
+        else []
+    )
+    decision = evaluate_end_of_turn(
+        user_message=initial_user_prompt,
+        response_text=final_text,
+        reply_sent=bool(reply_buffer),
+        tool_calls=tool_calls_this_turn,
+        body_before=body_before,
+        body_after=body_after,
+        checklist_before=checklist_before,
+        checklist_after=checklist_after,
+    )
+
+    if decision.should_error_empty_response:
+        _log_end_of_turn_findings(
+            store=store,
+            turn_id=str(turn["id"]),
+            epic_id=active_epic_id,
+            findings=decision.findings,
+        )
+        store.update_turn(turn["id"], status="failed", reasoning="model returned no action")
+        return _envelope(
+            turn_id=turn["id"],
+            epic_id=active_epic_id,
+            state_before=state_before,
+            state_after=state_before,
+            reply_buffer=reply_buffer,
+            events=events,
+            outcome="errored",
+            error=EnvelopeError(
+                code="empty_model_response",
+                message="Model returned neither final text nor tool requests.",
+                retryable=True,
+            ),
+        )
+
+    outbound_text = (final_text or "").strip()
+    if not outbound_text and decision.should_send_default_acknowledgment:
+        outbound_text = DEFAULT_END_OF_TURN_ACKNOWLEDGMENT
+
+    if outbound_text and not reply_buffer:
+        invocation = registry.invoke(
+            "send_message",
+            context,
+            {"content": outbound_text},
+        )
+        tool_calls_this_turn.append(_end_of_turn_tool_call(invocation.tool_call))
+        active_epic_id = context.metadata.get("epic_id", active_epic_id)
+
+    _log_end_of_turn_findings(
+        store=store,
+        turn_id=str(turn["id"]),
+        epic_id=active_epic_id,
+        findings=decision.findings,
+    )
+    store.update_turn(turn["id"], status="completed")
+    _log_epic_outline_if_needed(store, active_epic_id, turn, events)
+    return _envelope(
+        turn_id=turn["id"],
+        epic_id=active_epic_id,
+        state_before=state_before,
+        state_after=state_before,
+        reply_buffer=reply_buffer,
+        events=events,
+        outcome="completed",
+    )
+
+
+def _current_body(store: Store, epic_id: str | None) -> str | None:
+    if epic_id is None:
+        return None
+    epic = store.load_epic(epic_id)
+    if not epic:
+        return None
+    return str(epic.get("body") or "")
+
+
+def _end_of_turn_tool_call(tool_call: JSONDict) -> EndOfTurnToolCall:
+    return EndOfTurnToolCall(
+        name=str(tool_call.get("tool_name") or ""),
+        operation_kind=str(tool_call.get("operation_kind") or ""),
+        result=tool_call.get("result") if isinstance(tool_call.get("result"), dict) else {},
+    )
+
+
+def _log_end_of_turn_findings(
+    *,
+    store: Store,
+    turn_id: str,
+    epic_id: str | None,
+    findings: Sequence[object],
+) -> None:
+    for finding in findings:
+        category = getattr(finding, "category", "unknown")
+        message = getattr(finding, "message", "End-of-turn check finding.")
+        details = getattr(finding, "details", {})
+        store.log_system_event(
+            level="warn",
+            category="system",
+            event_type=f"end_of_turn_{category}",
+            message=str(message),
+            details=details if isinstance(details, dict) else {},
+            turn_id=turn_id,
+            epic_id=epic_id,
+        )
 
 
 def _envelope(
@@ -550,4 +692,6 @@ def _summarize_hot_context(hot_context: dict) -> dict:
         "epic_state": epic.get("state"),
         "recent_message_count": len(hot_context.get("recent_messages", [])),
         "recent_tool_call_count": len(hot_context.get("recent_tool_calls", [])),
+        "active_feedback_count": len(hot_context.get("active_feedback", [])),
+        "unresolved_observation_count": len(hot_context.get("unresolved_observations", [])),
     }

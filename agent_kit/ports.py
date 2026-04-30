@@ -155,7 +155,7 @@ class Store(Protocol):
     def release_epic_lock(self, epic_id: str, *, holder_id: str) -> None:
         ...
 
-    def load_hot_context(self, epic_id: str) -> JSONDict:
+    def load_hot_context(self, epic_id: str | None) -> JSONDict:
         ...
 
     def find_unprocessed_messages(
@@ -332,6 +332,43 @@ class Store(Protocol):
     ) -> list[JSONDict]:
         ...
 
+    def create_feedback(
+        self,
+        *,
+        kind: str,
+        content: str,
+        source: str,
+        source_message_id: str | None = None,
+        epic_id: str | None = None,
+        turn_id: str | None = None,
+        context_snapshot: JSONDict | None = None,
+    ) -> JSONDict:
+        ...
+
+    def load_feedback(self, feedback_id: str) -> JSONDict | None:
+        ...
+
+    def update_feedback(self, feedback_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def list_feedback(
+        self,
+        *,
+        epic_id: str | None = None,
+        active: bool | None = None,
+        kinds: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        ...
+
+    def list_observations(
+        self,
+        *,
+        resolved: bool | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        ...
+
 
 class Model(Protocol):
     """Model adapter boundary.
@@ -348,6 +385,7 @@ class Model(Protocol):
         messages: Sequence[JSONDict],
         tools: Sequence[JSONDict],
         hot_context: JSONDict,
+        system: str | None = None,
         idempotency_key: str | None = None,
     ) -> ModelTurnResult:
         ...

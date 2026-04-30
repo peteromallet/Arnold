@@ -380,6 +380,76 @@ def test_editorial_loop_acceptance_criteria(tmp_path) -> None:
     assert str(store.load_epic(epic_id)["body"]) == whole_body_before
 
 
+def test_body_outline_and_search_read_tools_are_registered_and_stable() -> None:
+    store = SQLiteStore(":memory:")
+    epic = store.create_epic(
+        title="Editorial Title",
+        goal="Editorial goal",
+        body=(
+            "# Editorial Title\n"
+            "\n"
+            "## Goal\n"
+            "\n"
+            "Editorial goal.\n"
+            "\n"
+            "### Detail\n"
+            "Needle appears here.\n"
+        ),
+    )
+    turn = store.create_turn(epic_id=epic["id"], triggered_by_message_ids=[])
+    context = ToolContext(store=store, turn_id=turn["id"], events=[])
+
+    tool_names = {definition["name"] for definition in registry.definitions()}
+    assert {"get_body_outline", "search_in_body"} <= tool_names
+
+    outline = registry.invoke("get_body_outline", context, {"epic_id": epic["id"]}).result
+    assert outline["epic_id"] == epic["id"]
+    assert outline["outline"]["sections"][0]["name"] == "Goal"
+    assert outline["outline"]["sections"][0]["line_count"] == 6
+    assert outline["outline"]["sections"][0]["subheadings"][0]["name"] == "Detail"
+
+    found = registry.invoke(
+        "search_in_body",
+        context,
+        {"epic_id": epic["id"], "query": "needle", "context_lines": 1},
+    ).result
+    assert found["results"] == [
+        {
+            "line_number": 8,
+            "line": "Needle appears here.",
+            "section": "Goal",
+            "subheading_path": ["Detail"],
+            "context_before": [{"line_number": 7, "line": "### Detail"}],
+            "context_after": [],
+        }
+    ]
+
+    empty = registry.invoke(
+        "search_in_body",
+        context,
+        {"epic_id": epic["id"], "query": "missing", "context_lines": 1},
+    ).result
+    assert empty == {"epic_id": epic["id"], "query": "missing", "results": []}
+
+    missing_outline = registry.invoke(
+        "get_body_outline",
+        context,
+        {"epic_id": "epic_missing"},
+    ).result
+    assert missing_outline == {"error": "epic_not_found", "epic_id": "epic_missing"}
+    missing_search = registry.invoke(
+        "search_in_body",
+        context,
+        {"epic_id": "epic_missing", "query": "needle"},
+    ).result
+    assert missing_search == {
+        "error": "epic_not_found",
+        "epic_id": "epic_missing",
+        "query": "needle",
+        "results": [],
+    }
+
+
 def test_editorial_cli_no_epic_bootstrap(tmp_path) -> None:
     script = [
         {

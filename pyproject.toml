@@ -41,3 +41,6 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
+markers = [
+    "llm_eval: optional live or model-graded evaluation tests gated by ARNOLD_RUN_LLM_EVALS",
+]

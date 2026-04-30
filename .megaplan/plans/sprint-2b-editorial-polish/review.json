@@ -1,0 +1,116 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": [],
+  "criteria": [
+    {
+      "name": "SQLite and Supabase migrations create a unified `feedback` table with all specified columns, valid kind/source constraints, JSON context snapshots, and useful hot-context indexes.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Both store adapters expose feedback and observation CRUD methods, and store contract tests pass for SQLite and Supabase behavior.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`load_hot_context(None)` loads active style/process feedback, and the loop uses it for no-epic/new-epic turns instead of a hard-coded empty context.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The model protocol, fake model, Anthropic adapter, ledger replay, and loop request body all include the system prompt consistently.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`get_body_outline` returns section names, subheadings, and line counts matching fixture markdown bodies.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`search_in_body` returns correct 1-based line numbers, surrounding context, and section attribution for fixture bodies, including headings inside fenced code blocks.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The `change the part about X` scripted integration records the tool sequence `search_in_body`, `get_epic`, then `edit_epic`.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Feedback tools support explicit save, apply timestamp update, deactivate, and list filtering; invalid feedback/observation kind mixing is rejected.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Observation tools write `source='agent_observation'` with `turn_id` and `context_snapshot`, surface unresolved observations in next-turn hot context, and hide them after resolution.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Active style/process feedback and current-epic feedback load into hot context with `last_applied_at` information, and `apply_feedback` updates that timestamp.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "A scripted `Show me the epic` turn records a `render_epic` tool call.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "End-of-turn checks send a default acknowledgment when the loop would otherwise finish after substantive work without an outbound message.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Existing editorial core behavior remains green, including section-level edits, expected diff mismatch handling, revert, model replay, and mid-turn message checks.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The prompt/hot-context implementation includes persona, communication style, checklist depth guidance, feedback discipline, show-changes behavior, body search workflow, and self-observation guidance from the spec.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "New deterministic tests are preferred over live-model tests in default CI; LLM-graded evals are isolated behind an explicit marker or environment flag.",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Implementation keeps the current tool registry, store protocol, and loop architecture intact without introducing a parallel memory or editing subsystem.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Manual Discord smoke test confirms resident-mode feedback save and hot-context behavior against the configured Supabase project.",
+      "priority": "info",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Light robustness: review skipped; stub written for artifact parity.",
+  "task_verdicts": [],
+  "sense_check_verdicts": []
+}

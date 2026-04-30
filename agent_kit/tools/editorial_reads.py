@@ -74,6 +74,17 @@ SEARCH_TOOL_CALLS_SCHEMA = {
     },
 }
 
+SEARCH_IN_BODY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["epic_id", "query"],
+    "properties": {
+        "epic_id": {"type": "string"},
+        "query": {"type": "string"},
+        "context_lines": {"type": "integer"},
+    },
+}
+
 
 @register_tool(
     "get_epic",
@@ -103,6 +114,45 @@ def get_section_names(context: ToolContext, epic_id: str) -> JSONDict:
         return {"error": "epic_not_found", "epic_id": epic_id}
     parsed = body.parse(str(epic.get("body") or ""))
     return {"section_names": [section.name for section in parsed.sections]}
+
+
+@register_tool(
+    "get_body_outline",
+    schema=EPIC_ID_SCHEMA,
+    operation_kind="read",
+)
+def get_body_outline(context: ToolContext, epic_id: str) -> JSONDict:
+    epic = context.store.load_epic(epic_id)
+    if not epic:
+        return {"error": "epic_not_found", "epic_id": epic_id}
+    parsed = body.parse(str(epic.get("body") or ""))
+    return {
+        "epic_id": epic_id,
+        "outline": body.outline(parsed),
+    }
+
+
+@register_tool(
+    "search_in_body",
+    schema=SEARCH_IN_BODY_SCHEMA,
+    operation_kind="read",
+)
+def search_in_body(
+    context: ToolContext,
+    epic_id: str,
+    query: str,
+    context_lines: int = 2,
+) -> JSONDict:
+    epic = context.store.load_epic(epic_id)
+    if not epic:
+        return {"error": "epic_not_found", "epic_id": epic_id, "query": query, "results": []}
+    parsed = body.parse(str(epic.get("body") or ""))
+    result = body.search(parsed, query, context_lines=context_lines)
+    return {
+        "epic_id": epic_id,
+        "query": query,
+        "results": result["results"],
+    }
 
 
 @register_tool(
@@ -292,11 +342,13 @@ def _parse_time(value: str) -> datetime:
 
 
 __all__ = [
+    "get_body_outline",
     "get_epic",
     "get_epic_at_time",
     "get_history",
     "get_recent_turns",
     "get_section_names",
     "get_self_understanding",
+    "search_in_body",
     "search_tool_calls",
 ]

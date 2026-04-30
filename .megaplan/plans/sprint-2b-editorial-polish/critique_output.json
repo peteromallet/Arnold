@@ -1,0 +1,21 @@
+{
+  "checks": [],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Hot context: global style/process feedback would be skipped on turns without an active epic. The plan only extends `load_hot_context(epic_id)` and the current loop bypasses that method entirely when `active_epic_id is None`, returning a hard-coded empty context instead. Since the spec says all active style/process feedback loads every turn and those preferences are cross-epic, this would fail for new-epic/no-epic turns and any invocation before epic selection.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/loop.py` currently uses `store.load_hot_context(active_epic_id) if active_epic_id is not None else {\"epic\": None, \"recent_messages\": [], \"recent_tool_calls\": []}`. `planning-bot-spec.md` Feedback System says all active `style` and `process` feedback are loaded every turn."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Prompt plumbing: adding a system prompt only in `loop.py` and `agent_kit/model/anthropic.py` is not enough for this codebase. The model boundary and fake model are part of the same call contract and are used heavily by the planned scripted integrations; if the loop starts passing `system` without updating `agent_kit/ports.py` and `agent_kit/model/fake.py`, tests will fail, and if the ledger request body is not updated the audited provider request will omit the prompt actually sent.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/ports.py` and `agent_kit/model/fake.py` define `complete_turn(..., model_id, messages, tools, hot_context, idempotency_key)` with no system argument. `agent_kit/loop.py` records pending Anthropic `request_body` with `model`, `messages`, `tools`, and `max_tokens` only. The plan's Step 7 names `templates.py`, `loop.py`, and `model/anthropic.py`, but not the protocol/fake adapter or ledger request snapshot."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

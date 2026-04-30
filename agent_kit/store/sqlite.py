@@ -16,6 +16,7 @@ _MIGRATIONS_DIR = Path(__file__).parent / "migrations" / "sqlite"
 
 _JSON_COLUMNS = {
     "arguments",
+    "context_snapshot",
     "details",
     "error_details",
     "in_burst_with",
@@ -358,43 +359,49 @@ class SQLiteStore:
         )
         self._commit_if_needed()
 
-    def load_hot_context(self, epic_id: str) -> JSONDict:
-        epic = _decode_row(
-            self._conn.execute(
-                "SELECT * FROM epics WHERE id = ?",
-                (epic_id,),
-            ).fetchone()
-        )
-        messages = [
-            _decode_row(row)
-            for row in self._conn.execute(
-                """
-                SELECT * FROM messages
-                WHERE epic_id = ?
-                ORDER BY sent_at DESC
-                LIMIT 10
-                """,
-                (epic_id,),
-            ).fetchall()
-        ]
-        tool_calls = [
-            _decode_row(row)
-            for row in self._conn.execute(
-                """
-                SELECT tool_calls.*
-                FROM tool_calls
-                JOIN bot_turns ON bot_turns.id = tool_calls.turn_id
-                WHERE bot_turns.epic_id = ?
-                ORDER BY tool_calls.called_at DESC
-                LIMIT 10
-                """,
-                (epic_id,),
-            ).fetchall()
-        ]
+    def load_hot_context(self, epic_id: str | None) -> JSONDict:
+        epic = None
+        messages: list[JSONDict | None] = []
+        tool_calls: list[JSONDict | None] = []
+        if epic_id is not None:
+            epic = _decode_row(
+                self._conn.execute(
+                    "SELECT * FROM epics WHERE id = ?",
+                    (epic_id,),
+                ).fetchone()
+            )
+            messages = [
+                _decode_row(row)
+                for row in self._conn.execute(
+                    """
+                    SELECT * FROM messages
+                    WHERE epic_id = ?
+                    ORDER BY sent_at DESC
+                    LIMIT 10
+                    """,
+                    (epic_id,),
+                ).fetchall()
+            ]
+            tool_calls = [
+                _decode_row(row)
+                for row in self._conn.execute(
+                    """
+                    SELECT tool_calls.*
+                    FROM tool_calls
+                    JOIN bot_turns ON bot_turns.id = tool_calls.turn_id
+                    WHERE bot_turns.epic_id = ?
+                    ORDER BY tool_calls.called_at DESC
+                    LIMIT 10
+                    """,
+                    (epic_id,),
+                ).fetchall()
+            ]
         return {
             "epic": epic,
             "recent_messages": list(reversed(messages)),
             "recent_tool_calls": list(reversed(tool_calls)),
+            "active_feedback": self.list_feedback(epic_id=epic_id, active=True),
+            "unresolved_observations": self.list_observations(resolved=False, limit=5),
         }
 
     def find_unprocessed_messages(
@@ -892,6 +899,123 @@ class SQLiteStore:
             ).fetchall()
         ]
 
+    def create_feedback(
+        self,
+        *,
+        kind: str,
+        content: str,
+        source: str,
+        source_message_id: str | None = None,
+        epic_id: str | None = None,
+        turn_id: str | None = None,
+        context_snapshot: JSONDict | None = None,
+    ) -> JSONDict:
+        feedback_id = _new_id("fb")
+        self._conn.execute(
+            """
+            INSERT INTO feedback (
+                id, kind, content, source, source_message_id, epic_id, turn_id,
+                context_snapshot
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                feedback_id,
+                kind,
+                content,
+                source,
+                source_message_id,
+                epic_id,
+                turn_id,
+                _json_dumps(context_snapshot) if context_snapshot is not None else None,
+            ),
+        )
+        self._commit_if_needed()
+        return self.load_feedback(feedback_id) or {}
+
+    def load_feedback(self, feedback_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM feedback WHERE id = ?",
+                (feedback_id,),
+            ).fetchone()
+        )
+
+    def update_feedback(self, feedback_id: str, **changes: Any) -> JSONDict:
+        return self._update("feedback", "id", feedback_id, changes, _FEEDBACK_COLUMNS, self.load_feedback)
+
+    def list_feedback(
+        self,
+        *,
+        epic_id: str | None = None,
+        active: bool | None = None,
+        kinds: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        clauses = ["kind IN ('style', 'process', 'epic_specific')"]
+        params: list[Any] = []
+        if epic_id is None:
+            clauses.append("epic_id IS NULL")
+            clauses.append("kind IN ('style', 'process')")
+        else:
+            clauses.append("((epic_id IS NULL AND kind IN ('style', 'process')) OR epic_id = ?)")
+            params.append(epic_id)
+        if active is not None:
+            clauses.append("active = ?")
+            params.append(int(active))
+        if kinds:
+            placeholders = ", ".join("?" for _ in kinds)
+            clauses.append(f"kind IN ({placeholders})")
+            params.extend(kinds)
+        limit_sql = f" LIMIT {int(limit)}" if limit is not None else ""
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM feedback
+                WHERE {' AND '.join(clauses)}
+                ORDER BY created_at DESC, id DESC
+                {limit_sql}
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def list_observations(
+        self,
+        *,
+        resolved: bool | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        clauses = [
+            """
+            kind IN (
+                'friction',
+                'ambiguity',
+                'tool_failure',
+                'confusion',
+                'pattern_noticed'
+            )
+            """
+        ]
+        params: list[Any] = []
+        if resolved is not None:
+            clauses.append("resolved = ?")
+            params.append(int(resolved))
+        limit_sql = f" LIMIT {int(limit)}" if limit is not None else ""
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM feedback
+                WHERE {' AND '.join(clauses)}
+                ORDER BY created_at DESC, id DESC
+                {limit_sql}
+                """,
+                params,
+            ).fetchall()
+        ]
+
     def _next_invocation_message_id(self, turn_id: str) -> str:
         count = self._conn.execute(
             """
@@ -1095,4 +1219,20 @@ _CHECKLIST_COLUMNS = {
     "skip_reason",
     "superseded_by_item_id",
     "completed_at",
+}
+_FEEDBACK_COLUMNS = {
+    "kind",
+    "content",
+    "source",
+    "source_message_id",
+    "epic_id",
+    "turn_id",
+    "context_snapshot",
+    "active",
+    "deactivation_reason",
+    "resolved",
+    "resolution_note",
+    "resolved_at",
+    "last_referenced_at",
+    "last_applied_at",
 }
