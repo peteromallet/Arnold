@@ -1,0 +1,52 @@
+{
+  "task_updates": [
+    {
+      "id": "T13",
+      "status": "done",
+      "executor_notes": "Imported agent_kit.tools.editorial and agent_kit.tools.editorial_reads from loop.py with # noqa: F401 beside the existing tool imports. Verified py_compile, import-time registry contents for all editorial read/write tools, and existing loop/CLI plus store/body/envelope modules.",
+      "files_changed": [
+        "agent_kit/loop.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/loop.py agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py",
+        "python - <<'PY' ... editorial loop registration checks ... PY",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q",
+        "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q",
+        "python -m pytest tests/test_body_parser.py tests/test_envelope.py -q",
+        "python -m pytest -x",
+        "git diff --check"
+      ],
+      "task_id": "T13"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC13",
+      "executor_note": "Yes. loop.py imports both agent_kit.tools.editorial and agent_kit.tools.editorial_reads with # noqa: F401 alongside communication/images, and import-time registry checks confirm all editorial tools are registered.",
+      "sense_check_id": "SC13"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-2a-editorial-core/execution_batch_5.json",
+  "verification": {
+    "targeted": [
+      "python -m py_compile agent_kit/loop.py agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py: passed",
+      "python - <<'PY' ... editorial loop registration checks ... PY: passed",
+      "python -m pytest tests/test_cli.py tests/test_run_turn.py -q: 8 passed",
+      "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q: 7 passed",
+      "python -m pytest tests/test_body_parser.py tests/test_envelope.py -q: 10 passed",
+      "git diff --check: passed"
+    ],
+    "full_suite": "python -m pytest -x stopped at known pre-existing tests/test_no_leaked_secrets.py::test_leaked_supabase_service_role_jwt_prefix_is_absent; 46 passed, 1 skipped before that failure."
+  },
+  "deviations": [
+    "Used python -m pytest rather than bare pytest because prior batches established the bare pytest shim runs under Python 3.8 while this project requires Python >=3.11.",
+    "Full suite still fails at the pre-existing leaked Supabase JWT prefix check in .megaplan/plans/sprint-1b-discord-resident/*; this batch did not modify those files.",
+    "Advisory quality: agent_kit/loop.py adds unused imports: agent_kit.tools.communication, agent_kit.tools.editorial, agent_kit.tools.editorial_reads, agent_kit.tools.images.",
+    "Advisory quality: code changes lacked test updates: agent_kit/loop.py.",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .megaplan/plans/sprint-2a-editorial-core/execution_batch_5.json, agent_kit/loop.py",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/sprint-2a-editorial-core/.plan.lock, .megaplan/plans/sprint-2a-editorial-core/critique_output.json, .megaplan/plans/sprint-2a-editorial-core/critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/execution_audit.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_1.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_4.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_5.json, .megaplan/plans/sprint-2a-editorial-core/faults.json, .megaplan/plans/sprint-2a-editorial-core/final.md, .megaplan/plans/sprint-2a-editorial-core/finalize.json, .megaplan/plans/sprint-2a-editorial-core/finalize_snapshot.json, .megaplan/plans/sprint-2a-editorial-core/gate.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v1.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v2.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v3.json, .megaplan/plans/sprint-2a-editorial-core/plan_v1.md, .megaplan/plans/sprint-2a-editorial-core/plan_v1.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v2.md, .megaplan/plans/sprint-2a-editorial-core/plan_v2.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v3.md, .megaplan/plans/sprint-2a-editorial-core/plan_v3.meta.json, .megaplan/plans/sprint-2a-editorial-core/state.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_finalize_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_plan_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v3.json",
+    "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment."
+  ]
+}

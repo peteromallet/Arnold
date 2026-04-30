@@ -1,0 +1,288 @@
+{
+  "version": 3,
+  "timestamp": "2026-04-30T05:38:50Z",
+  "hash": "sha256:33bb09fb290f12367fca1eaddad96d341f1e122c4b5e5e8ec360da747c64ca93",
+  "changes_summary": "Rev 3 closes the bootstrap-API-consistency cluster the gate flagged in rev 2. The fix is one cohesive thread of `Optional[str]` through every public boundary the no-epic mode touches: (1) Phase 3 Step 7.2 explicitly updates `Store.create_turn` Protocol + both adapter signatures to `epic_id: str | None` (callers-2). (2) New Phase 5 Step 14.3 introduces an `active_epic_id` local in `loop.py` that every `_envelope(...)` and `_abort_turn(...)` call site reads, refreshed after every tool invocation, so envelopes returned from a successful bootstrap turn carry the new id and envelopes returned from errored/aborted no-epic turns carry `None` (correctness, FLAG-001, issue_hints-1). (3) New Phase 5 Step 15 changes `Envelope.epic_id` to `Optional[str]` and relaxes `envelope.schema.json` to accept null/omitted (FLAG-005, all_locations). (4) New Phase 5 Step 16 makes CLI `--epic` optional and threads through the exception envelope path (callers-1). (5) New Step 19 adds a JSON schema regression test for the no-epic envelope. (6) Phase 6 integration test gains explicit assertions: Turn-1 envelope has `epic_id==new_id`, no-epic CLI subprocess succeeds, errored no-epic envelope has `epic_id=None` and validates against the schema. (7) `body_version` (issue_hints-2) is promoted from quiet deferral to an explicit accepted-tradeoff in the Overview constraints, citing spec \u00a71311\u20131320 vs \u00a72606. No scope growth \u2014 all changes are tightening the existing bootstrap path; nothing pulled forward from later sprints.",
+  "flags_addressed": [
+    {
+      "id": "FLAG-001",
+      "resolution": "addressed",
+      "reason": "Step 14.3 introduces an active_epic_id local that every _envelope() and _abort_turn() call site reads, refreshed after every tool invocation. Step 15 makes Envelope.epic_id Optional[str] so envelopes from no-epic-but-no-create turns serialise validly. Integration test Step 18 asserts the Turn-1 envelope has the new id and the errored-no-epic envelope has epic_id=None."
+    },
+    {
+      "id": "FLAG-005",
+      "resolution": "addressed",
+      "reason": "Phase 5 Steps 14\u201316 explicitly enumerate every public boundary that needed updating: Store.create_turn signature (Step 7.2 + 8.4 + 9.2), Envelope dataclass (Step 15.1), envelope JSON schema (Step 15.2), CLI --epic (Step 16). Step 19 adds a schema regression test."
+    },
+    {
+      "id": "issue_hints-1",
+      "resolution": "addressed",
+      "reason": "Same fix as FLAG-001 + FLAG-005: active_epic_id handoff in loop.py + Envelope.epic_id: Optional[str] + schema relaxation. Bootstrap turn now returns a valid envelope with the newly-created epic id; failure paths return a valid envelope with epic_id=None."
+    },
+    {
+      "id": "issue_hints-2",
+      "resolution": "addressed",
+      "reason": "Promoted body_version deferral from a quiet assumption to an explicit accepted tradeoff in the Overview constraints. Rationale: the main Data Model in spec \u00a71311\u20131320 does not define body_version; only the example test in \u00a72606 references it. The audit trail in epic_events.body_edit already captures every body mutation atomically with title/goal updates, satisfying the title/body sync acceptance test without introducing a new column."
+    },
+    {
+      "id": "all_locations",
+      "resolution": "addressed",
+      "reason": "Step 7.2 (Store.create_turn signature), Step 15.1 (Envelope dataclass), Step 15.2 (envelope.schema.json), and Step 16.1\u20133 (arnold/cli.py argparse + run + exception paths) are now enumerated as explicit subitems with file:line references."
+    },
+    {
+      "id": "correctness",
+      "resolution": "addressed",
+      "reason": "Step 14.3 introduces active_epic_id as the source of truth for every envelope/abort return path inside loop.py; the local is refreshed after every tool invocation so create_epic's retro-stamp propagates to all downstream returns (final response, defer, error, abort)."
+    },
+    {
+      "id": "callers-1",
+      "resolution": "addressed",
+      "reason": "Step 16.1 makes CLI --epic optional (default=None); Step 16.3 passes args.epic (now Optional[str]) into the exception envelope; with Envelope.epic_id: Optional[str] from Step 15.1, the error envelope serialises correctly when --epic is omitted."
+    },
+    {
+      "id": "callers-2",
+      "resolution": "addressed",
+      "reason": "Step 7.2 updates Store.create_turn in the Protocol + both adapter signatures to epic_id: str | None. Step 8.4 and 9.2 confirm the existing INSERT statements already pass through unchanged (DB columns are nullable). Step 10 adds a contract-test assertion that create_turn(epic_id=None) succeeds."
+    },
+    {
+      "id": "correctness-1",
+      "resolution": "addressed",
+      "reason": "Carried over from rev 2: parser split into lenient parse() + strict validate_for_write(); preserved in rev 3 (Step 4)."
+    },
+    {
+      "id": "correctness-2",
+      "resolution": "addressed",
+      "reason": "Carried over from rev 2: reverted_to events store full pre-revert body+title+goal+checklist snapshot; preserved in rev 3 (Step 11.4)."
+    },
+    {
+      "id": "correctness-3",
+      "resolution": "addressed",
+      "reason": "Carried over from rev 2: create_epic uses parsed.title and parsed.goal_first_paragraph for column writes; preserved in rev 3 (Step 11.2)."
+    },
+    {
+      "id": "scope-1",
+      "resolution": "addressed",
+      "reason": "Carried over from rev 2: read tools register with operation_kind='read'; preserved in rev 3 (Step 12.1)."
+    },
+    {
+      "id": "scope-2",
+      "resolution": "addressed",
+      "reason": "Carried over from rev 2: edit_epic.changes.meta returns meta_not_supported with hint to use body sections; preserved in rev 3 (Step 11.3)."
+    },
+    {
+      "id": "callers",
+      "resolution": "addressed",
+      "reason": "Carried over from rev 2: existing run_turn callers (test_run_turn, resident mode) keep passing concrete epic_ids; the no-epic path is purely additive. Rev 3 strengthens this with the active_epic_id handoff so callers can rely on a consistent envelope contract."
+    }
+  ],
+  "questions": [
+    "Should the no-epic bootstrap path also handle 'user typed a question that doesn't warrant creating an epic' (greetings, meta-questions)? Plan currently treats a turn that ends with active_epic_id still None and outcome='completed' as a valid no-op (epic_outline log skipped, envelope.epic_id is None). Confirm that's acceptable, or should run_turn reject completion when active_epic_id is None and the bot didn't call defer_to_caller?",
+    "JSON schema relaxation: Step 15.2 changes envelope.schema.json's epic_id to {type: [string, null]} and removes it from required. Are downstream consumers of the schema (subagent contract, test suites in other projects) tolerant of this loosening, or should we keep epic_id required and instead use a sentinel string like '__pending__' for the bootstrap window? The Optional approach is cleaner; flagging the alternative in case existing consumers can't tolerate null."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Postgres migration 004 and SQLite migration 004 create checklist_items and epic_events with the columns, CHECK constraints, FK ON DELETE behaviour, and indexes specified in spec \u00a71322 and \u00a71381.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "body.parse() is lenient and returns a ParsedBody for empty input, plain-text input, bodies with no '##' headings, bodies missing '# Title', and bodies missing '## Goal' \u2014 without raising. Read tools and get_epic_at_time work against these inputs.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "body.validate_for_write() raises BodyValidationError('body_missing_required_section: title') when parsed.title is None or empty, and 'body_missing_required_section: goal' when parsed.goal_first_paragraph is None or empty. Write tools surface this as a structured tool result error.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Body parser round-trip identity holds: serialize(parse(body)) == body for \u22656 fixture bodies including preamble-only (no '##'), single section, full design-doc template, sub-headings, fenced code containing '##', and a body with non-empty preamble before the first section.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "_preamble section addressing covers the '# Title' line per spec \u00a72606: replace_section(parsed, '_preamble', '# New Title\\n') round-trips to ParsedBody with title='New Title'; replace_section(parsed, '_preamble', '') round-trips to title=None and validate_for_write rejects it.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "create_epic creates an epics row whose title and goal columns equal parse(rendered_template).title and .goal_first_paragraph respectively (not the raw arguments), seeds 18 default checklist items with status='open' and source='default_seed', and writes one 'created' epic_event sharing a transaction_id.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "run_turn(epic_id=None, input=...) executes without acquiring an epic_locks row, creates an inbound message and bot_turn with epic_id=NULL, and \u2014 when create_epic fires within the turn \u2014 retro-stamps both rows with the new epic_id by the time the turn completes.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "After a successful no-epic bootstrap turn, the returned Envelope has epic_id == <new_id> (proves active_epic_id is updated before the envelope is built); after a no-epic turn that errors before creating an epic, the Envelope has epic_id is None and validates against envelope.schema.json.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Store.create_turn Protocol signature and both adapter signatures accept epic_id: str | None; create_turn(epic_id=None) succeeds in the contract test against both SQLiteStore and SupabaseStore.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Envelope.epic_id is typed Optional[str], envelope.schema.json no longer requires epic_id and accepts {string, null} for the field; an Envelope built with epic_id=None serialises and validates against the schema.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "arnold turn CLI accepts an omitted --epic flag and runs end-to-end without errors; the exception envelope path serialises correctly when --epic is omitted (epic_id=None in the resulting envelope).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic body section operations leave every non-targeted section byte-identical (verified by parsing prior_state captured in the body_edit event and comparing every other section's serialised form).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic with expected_diff that does not match (after \\n + trailing-whitespace + trailing-blank-line normalisation) refuses to commit, returns the actual diff, and leaves epics.body, title, goal, and checklist_items untouched.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic with expected_diff that matches commits normally and writes one event per affected family (body_edit, checklist_change) sharing a single transaction_id.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic rejects changes.meta with error='meta_not_supported' and a hint string referencing body.sections._preamble or body.sections.Goal; epics row is unchanged.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "revert(epic_id) with no event_id undoes the entire most-recent transaction (body, title, goal, and checklist together) and appends a 'reverted_to' event whose prior_state captures the full pre-revert body, title, goal, and checklist; the resulting body is byte-equal to the pre-edit body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "get_epic_at_time(epic_id, T) returns body and checklist state equal to what was committed at the most recent event with occurred_at <= T \u2014 including timestamps that fall just before a revert (verifies reverted_to.prior_state captures enough state for backward replay).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "get_recent_turns(5) returns the 5 most-recent bot_turns rows (most-recent first) with summaries; search_tool_calls(tool_name='edit_epic', epic_id=X) returns every edit_epic call against epic X with arguments and timestamps.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "All read tools (get_epic, get_section_names, get_history, get_self_understanding, get_epic_at_time, get_recent_turns, search_tool_calls) record operation_kind='read' in tool_calls; all write tools (create_epic, edit_epic, revert, render_epic) record operation_kind='write'.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "After every turn whose tool_calls include create_epic, edit_epic, or revert, exactly one system_logs row exists with category='application', event_type='epic_outline', turn_id=<that turn>, and details containing title plus a sections array with name + line_count for every section in the body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "10-turn FakeModel-driven integration fixture in tests/test_editorial_loop.py runs end-to-end starting from epic_id=None, exercises all six default sections, exercises both expected_diff match and mismatch, exercises title editing via _preamble, exercises revert with backward replay across the revert, asserts the bootstrap envelope contract, and covers every Sprint 2a acceptance criterion in spec \u00a7131\u2013142.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "All pre-existing tests in tests/ continue to pass (no regression in Sprint 1a/1b functionality, including resident-mode test_resident*, test_discord_*, test_run_turn, and test_cli variants).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Both Store adapters expose _EPIC_COLUMNS and _CHECKLIST_COLUMNS allowed-column sets and route update_epic / update_checklist_item through the existing _update helper; _MESSAGE_COLUMNS and _TURN_COLUMNS include 'epic_id' so the bootstrap retro-stamp passes column safety.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Body parser and section-op modules stay focused: the public surface is parse, serialize, validate_for_write, the section ops, compute_diff, diffs_equivalent, outline. No tool-layer or Store imports leak into agent_kit/body.py.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "edit_epic rejects requests mixing two body op flavours (e.g. new_content + sections) with error='body_op_conflict' rather than silently picking one.",
+      "priority": "should",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "agent_kit/body.py stays under ~450 lines and has no third-party dependencies beyond the standard library (difflib, re).",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Sprint 2a stays invocation-mode only; no resident-mode behaviour changes.",
+    "Sprints, sprint_items, codebases, code_artifacts, feedback, second_opinions, and image generation are out of scope. edit_epic.changes.sprints and changes.state return not_yet_supported.",
+    "edit_epic.changes.meta is rejected with meta_not_supported and a hint to edit via body.sections._preamble (title) or body.sections.Goal (goal); title/goal are derived columns whose only writer is the body parser.",
+    "_preamble is the raw text from byte 0 up to (but not including) the first ## line, INCLUDING the # Title line and any leading text. replace_section('_preamble', '# New Title\\n') is the canonical title-edit path per spec \u00a72606. rename_section from/to '_preamble' is rejected.",
+    "parse() is lenient and never raises. validate_for_write() is the only place that raises body_missing_required_section, called only on write paths.",
+    "Default body template ships with one variant (design-doc); create_epic constructs the body from the template, then derives epics.title and epics.goal from parse() output \u2014 raw args are template inputs only.",
+    "Default checklist seed is unconditional (18 items); adaptation lives in the bot's prompt, not server-side at create time.",
+    "expected_diff equivalence: \\n line endings, strip trailing whitespace per line, drop trailing blank lines, then byte-equal compare.",
+    "render_epic supports format='markdown' only in v1; 'html' returns not_yet_supported. Image-reference resolution is a Sprint 6 no-op.",
+    "epic_outline log fires on any turn whose tool_calls include create_epic, edit_epic, or revert; pure-read turns and failed turns skip the log.",
+    "Single-writer concurrency via existing epic_locks + per-edit_epic store.transaction is sufficient. The new no-epic mode skips lock acquisition entirely (no lock contention possible before an epic exists).",
+    "Bootstrap consistency is threaded through every public boundary: run_turn(epic_id: str | None), Store.create_turn(epic_id: str | None), Envelope.epic_id: str | None (with envelope.schema.json relaxed to accept null/omitted), CLI --epic optional. The internal active_epic_id local in loop.py drives every envelope/abort return so a successful bootstrap turn returns the new id and a failed/empty no-epic turn returns None.",
+    "spec test #7 (planning-bot-spec.md:2606) references a body_version column. The main Data Model section (\u00a71311\u20131320) does not define this column. Sprint 2a covers the title/body sync semantics the test cares about (atomic title update with body, audit captures the change) via epic_events.body_edit; introducing a body_version column is deferred as an explicit accepted tradeoff. Adding it later is an additive migration and a one-line UPDATE inside edit_epic.",
+    "All read tools register with operation_kind='read'; write tools register with operation_kind='write'.",
+    "The existing megaplan/ directory is harness state and is left untouched."
+  ],
+  "delta_from_previous_percent": 41.24,
+  "structure_warnings": []
+}

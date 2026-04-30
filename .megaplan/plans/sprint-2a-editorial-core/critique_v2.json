@@ -1,0 +1,138 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Verified the revised plan still honors the explicit instruction not to invoke or activate megaplan. It mentions the existing `.megaplan/` directory only as harness state and does not propose running the megaplan CLI, reading the megaplan skill, or starting a nested plan.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the revised no-epic bootstrap against `agent_kit/loop.py`, `agent_kit/envelope.py`, and `agent_kit/envelope.schema.json`. The plan adds `run_turn(epic_id=None)` and retro-stamps the DB rows after `create_epic`, which addresses the storage side of natural-language epic creation, but it does not say to update the local `epic_id` used by `_envelope()` or to allow a nullable/late-bound envelope id; as written, a successful bootstrap turn can still return an invalid envelope with `epic_id=None` even though the schema requires a non-empty string.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified the revised `_preamble` definition against the spec's title/body sync example at `planning-bot-spec.md:2606`. The plan now defines `_preamble` as raw text from byte 0 up to the first `##`, explicitly including the `# Title` line, and adds tests for `replace_section('_preamble', '# New Title\\n')`, which resolves the prior section-addressing concern.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the body_version mention in `planning-bot-spec.md:2606-2611` against the current migrations. The current schema has no `body_version` column and the revised plan explicitly defers it while covering title/body sync via audit events; this is a spec divergence, even if likely acceptable for Sprint 2a because the main Data Model section does not define the column.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Verified the parser revision against the spec's body parsing rules in `planning-bot-spec.md:503-514`. The plan now cleanly separates lenient `parse()` from strict `validate_for_write()`, so malformed or legacy bodies can be read and round-tripped while writes still reject missing title or Goal, resolving the prior parser/validation correctness issue.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the revised revert/time-travel design against the `epic_events.prior_state` contract. `reverted_to` now stores full pre-revert body and checklist snapshots, and `get_epic_at_time` explicitly restores that snapshot when walking backward across a revert, which supplies the missing information from the prior plan.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked `create_epic` title/goal handling against `planning-bot-spec.md:1314-1316`. The revised plan now passes `parsed.title` and `parsed.goal_first_paragraph` to `store.create_epic`, treating raw title and goal arguments only as template inputs, which satisfies the parser-derived column invariant.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the revised no-epic branch against abort, provider-error, tool-error, defer, and final-response returns in `agent_kit/loop.py`. Those code paths currently call `_abort_turn()` or `_envelope()` with the original local `epic_id` parameter, so the plan needs an explicit local `active_epic_id = context.metadata.get('epic_id')` handoff before every envelope return or an envelope schema change; otherwise no-epic turns that create an epic, defer, error, or finish without creating one can serialize invalid or misleading envelopes.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Verified the read-tool audit fix against `agent_kit/tool_kit.py`, where `register_tool` defaults `operation_kind` to `'write'`. The revised plan now requires all editorial read tools to register with `operation_kind='read'` and adds an integration assertion for the recorded `tool_calls.operation_kind`, resolving the prior audit-semantics gap.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified `changes.meta` handling against the spec's `edit_epic` shape. The revised plan explicitly rejects `changes.meta` with `meta_not_supported` and points callers to body section edits for title and goal, so the divergence from the spec is now intentional and test-covered rather than silent.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the revised no-epic support against resident-mode code in `agent_kit/resident.py` and Discord ingestion in `agent_kit/transport/discord.py`. The plan scopes no-epic mode to invocation/CLI and leaves resident paths requiring concrete epic ids derived from Discord messages, which contains the change and avoids broadening Sprint 2a into resident epic-selection behavior.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Verified the tool registration glue. The revised plan still imports `agent_kit.tools.editorial` and `agent_kit.tools.editorial_reads` for side effects in `agent_kit/loop.py`, matching the existing `communication` and `images` registration pattern.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the adapter column-safety fix against `agent_kit/store/supabase.py`. The revised plan now adds `_EPIC_COLUMNS` and `_CHECKLIST_COLUMNS`, routes updates through `_update`, and extends `_MESSAGE_COLUMNS` and `_TURN_COLUMNS` with `epic_id` for bootstrap retro-stamping, which addresses the prior missing-supporting-infrastructure concern for Supabase.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked all locations touched by `run_turn(epic_id=None)`: `agent_kit/ports.py` still types `create_turn(epic_id: str)`, `agent_kit/envelope.py` types `Envelope.epic_id: str`, `agent_kit/envelope.schema.json` requires a non-empty string, and `arnold/cli.py` currently requires `--epic`. The revised plan mentions CLI no-epic plumbing but does not explicitly include the protocol/envelope/schema changes needed to keep all call boundaries consistent.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked existing Python and CLI callers of `run_turn`. The revised plan is additive for existing tests and resident callers that still pass concrete epic ids, and it adds a new CLI no-epic path for bootstrap, but it must also update the CLI exception envelope path because `arnold/cli.py` currently builds an error envelope with `epic_id=args.epic`; with optional `--epic`, that can become missing or `None` unless explicitly handled.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked current callers of `store.create_turn` in tests, resident recovery, and the loop. Existing callers pass concrete ids, while the new no-epic loop path passes `None`; the database allows NULL for `bot_turns.epic_id`, but the `Store` protocol and both adapter signatures are still typed as `str`, so the plan should explicitly update those signatures to `str | None` to match the intended caller values.",
+          "flagged": true
+        },
+        {
+          "detail": "Rechecked nested transaction use through `ToolRegistry.audit_wrap`. The revised integration plan exercises a multi-row tool write plus its audited `tool_calls` row, which is the right place to validate the nested `store.transaction()` behavior for SQLite savepoints and psycopg transaction contexts.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Editorial bootstrap: Rev 2 adds no-epic DB bootstrapping, but the envelope and local loop plumbing still assume a concrete epic id, so natural-language epic creation can complete with an invalid or stale envelope id.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`Envelope.epic_id` and `envelope.schema.json` require a non-empty string, while `loop.py` return paths call `_envelope(..., epic_id=epic_id)` using the original parameter. Rev 2 updates `context.metadata['epic_id']` after `create_epic` but does not explicitly update the local id used for envelope returns or alter the schema for no-epic message-only turns."
+    },
+    {
+      "id": "FLAG-005",
+      "concern": "Bootstrap API consistency: the plan changes `run_turn` to accept `epic_id=None` but does not explicitly update all public/protocol boundaries that currently require a concrete epic id.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/ports.py` has `Store.create_turn(epic_id: str)`, `agent_kit/envelope.py` has `Envelope.epic_id: str`, `agent_kit/envelope.schema.json` requires `epic_id` as a non-empty string, and `arnold/cli.py` currently requires `--epic` and uses `args.epic` in the error envelope path."
+    },
+    {
+      "id": "FLAG-006",
+      "concern": "Body version: the revised plan deliberately skips `body_version` even though the spec's Sprint 2a title/goal sync adversarial tests mention incrementing it.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "`planning-bot-spec.md:2606` and `planning-bot-spec.md:2611` say title/goal body edits should increment `body_version`, while current migrations do not define that column and Rev 2 states it will cover audit/title-update semantics without introducing `body_version`."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 19: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004"
+  ],
+  "disputed_flag_ids": []
+}

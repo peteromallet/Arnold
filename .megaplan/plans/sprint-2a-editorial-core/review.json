@@ -1,0 +1,425 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [
+    {
+      "id": "PRECHECK-DIFF_SIZE_SANITY",
+      "check": "diff_size_sanity",
+      "detail": "Diff size looks larger than expected: changed_lines=2771, expected\u224810, ratio=277.10, files=19, hunks=51.",
+      "severity": "significant",
+      "evidence_file": "agent_kit/envelope.py"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-001",
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004",
+    "FLAG-005",
+    "FLAG-007"
+  ],
+  "disputed_flag_ids": [
+    "verifiability-0",
+    "FLAG-006"
+  ],
+  "criteria": [
+    {
+      "name": "Postgres and SQLite editorial migrations",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Both 004 migrations create checklist_items and epic_events with required columns, checks, FKs, prior_state JSON/TEXT, and indexes."
+    },
+    {
+      "name": "Lenient body.parse and read paths",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/body.py parse() catches malformed input and returns ParsedBody; read tools use body.parse only. Targeted tests passed."
+    },
+    {
+      "name": "Strict validate_for_write errors",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "validate_for_write raises exact title/goal messages; write tools convert them to structured body_missing_required_section results."
+    },
+    {
+      "name": "Body parser round-trip identity",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_body_parser.py covers six required fixtures; pytest target passed."
+    },
+    {
+      "name": "_preamble includes title line",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "replace_section('_preamble', ...) reparses title-inclusive preamble; tests cover title replacement and removal rejection."
+    },
+    {
+      "name": "create_epic row, parsed title/goal, seed checklist, created event",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "create_epic writes parsed.title/goal_first_paragraph, seeds 18 default_seed items, and records created with initial snapshot."
+    },
+    {
+      "name": "run_turn(epic_id=None) bootstrap storage",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "loop skips locks/hot context for None, creates nullable rows, and create_epic retro-stamps inbound message and turn."
+    },
+    {
+      "name": "Bootstrap and errored no-epic envelopes",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "active_epic_id is refreshed after tool invocation; envelope schema accepts omitted/null epic_id; integration tests cover success and error paths."
+    },
+    {
+      "name": "Store.create_turn Optional signature",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Protocol, SQLiteStore, and SupabaseStore accept epic_id: str | None; contract tests cover create_turn(None)."
+    },
+    {
+      "name": "Envelope Optional epic_id schema",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Envelope.epic_id is optional, schema removes it from required and accepts string/null; regression test validates omitted and explicit null."
+    },
+    {
+      "name": "CLI omitted --epic path",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "arnold/cli.py defaults --epic to None; tests/test_editorial_loop.py runs python -m arnold without --epic successfully."
+    },
+    {
+      "name": "Section edit preserves non-target sections",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Integration compares raw section bytes from body_edit prior_state for non-target sections; targeted tests passed."
+    },
+    {
+      "name": "expected_diff mismatch refuses write",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "edit_epic checks diffs_equivalent before transaction writes and returns actual_diff; integration asserts unchanged DB."
+    },
+    {
+      "name": "expected_diff match commits transaction",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Integration exercises matching expected_diff on Goal section and verifies commit/event behavior."
+    },
+    {
+      "name": "meta edits rejected",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "edit_epic returns meta_not_supported with _preamble/Goal hint before loading or mutating epic."
+    },
+    {
+      "name": "revert latest transaction snapshot",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "revert captures pre-revert body/title/goal/checklist in reverted_to prior_state and applies prior body/checklist in reverse."
+    },
+    {
+      "name": "get_epic_at_time replay",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "editorial_reads replays body_edit/checklist_change/reverted_to/created; integration covers turn 5, before revert, and before creation initial state."
+    },
+    {
+      "name": "get_recent_turns and search_tool_calls",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Store adapters implement both queries; integration asserts 5 most-recent turns and edit_epic call search results."
+    },
+    {
+      "name": "Tool operation_kind audit semantics",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "All editorial read tools register read and write tools register write; integration asserts persisted tool_calls values."
+    },
+    {
+      "name": "Turn-end epic_outline log",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "loop logs application epic_outline after completed create/edit/revert turns with title, sections, and line counts; integration asserts one per touching turn."
+    },
+    {
+      "name": "10-turn FakeModel integration fixture",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_editorial_loop.py covers no-epic bootstrap, six sections, expected_diff match/mismatch, _preamble title edit, revert, replay, read tools, audit kinds, and outline logs; passed locally."
+    },
+    {
+      "name": "Pre-existing tests continue to pass",
+      "priority": "must",
+      "pass": "waived",
+      "evidence": "Full python -m pytest -x rerun reached 49 passed/1 skipped then stopped on known unrelated secret-scan failure in .megaplan/plans/sprint-1b-discord-resident, not files modified by this implementation."
+    },
+    {
+      "name": "Store adapter column guards",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Both adapters define _EPIC_COLUMNS/_CHECKLIST_COLUMNS, route updates through _update, and include epic_id in message/turn allowed columns."
+    },
+    {
+      "name": "Focused body module surface",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "agent_kit/body.py is stdlib-only and contains parser, serializer, validation, section ops, diff helpers, and outline; no Store/tool imports."
+    },
+    {
+      "name": "Mixed body ops rejected",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "edit_epic computes body op names across supported forms and returns body_op_conflict when more than one is present."
+    },
+    {
+      "name": "Body module size/dependencies",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "agent_kit/body.py is 253 lines and imports only dataclasses, difflib, and re from stdlib."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Approved. The Sprint 2a implementation satisfies the must criteria. The only full-suite failure reproduced is the pre-existing secret-scan hit in prior .megaplan sprint artifacts, not this diff. FLAG-006 remains an accepted body_version deferral per settled decision SD-015, not an implementation blocker.",
+  "task_verdicts": [
+    {
+      "task_id": "T1",
+      "reviewer_verdict": "Pass. Postgres migration matches required editorial tables and indexes.",
+      "evidence_files": [
+        "supabase/migrations/202604300004_004_editorial_core.sql"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "reviewer_verdict": "Pass. SQLite migration and prior_state JSON registration are present.",
+      "evidence_files": [
+        "agent_kit/store/migrations/sqlite/004_editorial_core.sql",
+        "agent_kit/store/sqlite.py",
+        "agent_kit/store/supabase.py"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "reviewer_verdict": "Pass. Supabase truncate fixture includes new tables.",
+      "evidence_files": [
+        "tests/test_supabase_store.py"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "reviewer_verdict": "Pass. Body parser implements lenient parse, strict validation, section ops, and diff helpers.",
+      "evidence_files": [
+        "agent_kit/body.py"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "reviewer_verdict": "Pass. Template and 18 checklist seed items are implemented.",
+      "evidence_files": [
+        "agent_kit/templates.py"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "reviewer_verdict": "Pass. Parser tests cover required fixtures and passed.",
+      "evidence_files": [
+        "tests/test_body_parser.py"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "reviewer_verdict": "Pass. Store Protocol includes editorial surface and nullable create_turn.",
+      "evidence_files": [
+        "agent_kit/ports.py"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "reviewer_verdict": "Pass. SupabaseStore implements editorial persistence surface and guards.",
+      "evidence_files": [
+        "agent_kit/store/supabase.py"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "reviewer_verdict": "Pass. SQLiteStore mirrors editorial persistence surface and guards.",
+      "evidence_files": [
+        "agent_kit/store/sqlite.py"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "reviewer_verdict": "Pass. Store contract covers new surface and create_turn(None).",
+      "evidence_files": [
+        "tests/store_contract.py"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "reviewer_verdict": "Pass. Write tools implement create/edit/revert/render semantics.",
+      "evidence_files": [
+        "agent_kit/tools/editorial.py"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "reviewer_verdict": "Pass. Read tools implement section/history/replay/search semantics with read operation_kind.",
+      "evidence_files": [
+        "agent_kit/tools/editorial_reads.py"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "reviewer_verdict": "Pass. Loop imports editorial tool modules for registration.",
+      "evidence_files": [
+        "agent_kit/loop.py"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "reviewer_verdict": "Pass. No-epic run_turn and active_epic_id handoff implemented.",
+      "evidence_files": [
+        "agent_kit/loop.py"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "reviewer_verdict": "Pass. Envelope/schema nullable epic_id implemented.",
+      "evidence_files": [
+        "agent_kit/envelope.py",
+        "agent_kit/envelope.schema.json"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "reviewer_verdict": "Pass. CLI --epic is optional and no-epic path is documented.",
+      "evidence_files": [
+        "arnold/cli.py"
+      ]
+    },
+    {
+      "task_id": "T17",
+      "reviewer_verdict": "Pass. epic_outline logging is implemented and gated correctly.",
+      "evidence_files": [
+        "agent_kit/loop.py"
+      ]
+    },
+    {
+      "task_id": "T18",
+      "reviewer_verdict": "Pass. Editorial loop integration test covers acceptance criteria and passed.",
+      "evidence_files": [
+        "tests/test_editorial_loop.py",
+        "arnold/__main__.py"
+      ]
+    },
+    {
+      "task_id": "T19",
+      "reviewer_verdict": "Pass. Envelope null/omitted schema regression test added.",
+      "evidence_files": [
+        "tests/test_envelope.py"
+      ]
+    },
+    {
+      "task_id": "T20",
+      "reviewer_verdict": "Pass with caveat. Targeted suites pass; full suite stops on unrelated pre-existing secret-scan failure.",
+      "evidence_files": [
+        "tests/test_no_leaked_secrets.py"
+      ]
+    },
+    {
+      "task_id": "T21",
+      "reviewer_verdict": "Pass. Optional live Supabase action was surfaced as human-provided infra.",
+      "evidence_files": [
+        ".megaplan/plans/sprint-2a-editorial-core/finalize.json"
+      ]
+    }
+  ],
+  "sense_check_verdicts": [
+    {
+      "sense_check_id": "SC1",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC2",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC3",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC4",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC5",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC6",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC7",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC8",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC9",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC10",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC11",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC12",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC13",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC14",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC15",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC16",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC17",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC18",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC19",
+      "verdict": "Confirmed."
+    },
+    {
+      "sense_check_id": "SC20",
+      "verdict": "Confirmed with caveat: full suite blocked by unrelated pre-existing secret-scan failure, while targeted Sprint 2a suites passed."
+    },
+    {
+      "sense_check_id": "SC21",
+      "verdict": "Confirmed."
+    }
+  ]
+}

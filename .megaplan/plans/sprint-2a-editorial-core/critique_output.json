@@ -1,0 +1,127 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Verified the revised plan still honors the explicit instruction not to invoke or activate megaplan. It treats the existing `.megaplan/` directory as harness state only and does not propose running the megaplan CLI, reading the megaplan skill, or starting a nested planning harness.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the no-epic bootstrap repair against the current loop, envelope, schema, protocol, and CLI boundaries. Rev 3 now explicitly changes `run_turn` to accept `epic_id: str | None`, introduces an `active_epic_id` local for all envelope/abort returns, changes `Store.create_turn` to accept `str | None`, relaxes `Envelope.epic_id` and `envelope.schema.json`, and makes CLI `--epic` optional, which addresses the prior bootstrap-envelope and public-boundary gaps.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the body_version mention in `planning-bot-spec.md:2606-2611` against the rev 3 plan. The plan now makes deferring `body_version` an explicit accepted tradeoff, but the spec's title/goal sync examples still say body edits increment `body_version`; this remains a divergence for the gate to accept rather than a resolved implementation requirement.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Verified the parser design against the body parsing rules in `planning-bot-spec.md:503-514`. Rev 3 keeps the lenient `parse()` plus strict `validate_for_write()` split, so malformed and no-section bodies can be read and round-tripped while writes still reject missing title or Goal.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the revert/time-travel repair. Rev 3 preserves full pre-revert body, title, goal, and checklist snapshots in `reverted_to.prior_state`, and `get_epic_at_time` restores that snapshot when walking backward across a revert, which closes the missing-state bug from the earlier plan.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked title/goal column derivation against `planning-bot-spec.md:1311-1320`. Rev 3 keeps `create_epic` and `edit_epic` writing `epics.title` and `epics.goal` exclusively from parsed body values, so the parser remains the only writer of those derived columns.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked `get_epic_at_time` behavior against `planning-bot-spec.md:1678`. The spec says if no events exist before the requested timestamp, the tool returns the epic's initial state; Rev 3 instead says that when backward replay rolls past the `created` event it returns empty/None body and checklist. That may be reasonable for timestamps before the epic existed, but it is a concrete semantic divergence from the written spec.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Verified the read-tool audit scope against `agent_kit/tool_kit.py`, where `register_tool` defaults to `operation_kind='write'`. Rev 3 explicitly registers all editorial read tools with `operation_kind='read'` and includes operation-kind assertions in the integration test, so the audit semantics are covered.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the `changes.meta` scope decision against the spec's `edit_epic` object. Rev 3 intentionally rejects `changes.meta` with `meta_not_supported` and a hint to edit body sections for title or goal, which contains the scope and makes the spec divergence explicit and test-covered.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked no-epic behavior against resident-mode code in `agent_kit/resident.py` and Discord ingestion in `agent_kit/transport/discord.py`. Rev 3 keeps no-epic mode scoped to invocation/CLI and leaves resident flows tied to concrete epic ids, so it does not broaden Sprint 2a into resident epic-selection or Discord routing work.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Verified the tool registration locations. Rev 3 still adds `agent_kit.tools.editorial` and `agent_kit.tools.editorial_reads` imports in `agent_kit/loop.py`, matching the existing side-effect registration pattern used by `communication` and `images` tools.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the Supabase adapter support locations. Rev 3 retains `_EPIC_COLUMNS` and `_CHECKLIST_COLUMNS`, routes `update_epic` and `update_checklist_item` through `_update`, and extends `_MESSAGE_COLUMNS` and `_TURN_COLUMNS` with `epic_id` for bootstrap retro-stamping, which covers the prior adapter-glue issue.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the Optional epic id thread across all previously missed public boundaries. Rev 3 enumerates `Store.create_turn`, `Envelope.epic_id`, `envelope.schema.json`, `arnold/cli.py` argument parsing, the CLI exception envelope path, and a schema regression test for no-epic envelopes, so the earlier boundary mismatch is addressed.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Checked existing callers of `run_turn` in tests, CLI, and resident mode. Rev 3 is additive for callers that still pass a concrete epic id, and it adds explicit tests for the new no-epic Python and CLI callers, including the successful create path and the errored no-epic envelope path.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked callers of `Store.create_turn`. Rev 3 updates the protocol and both adapter signatures to accept `epic_id: str | None`, and adds a contract assertion that `create_turn(epic_id=None)` succeeds, matching the new no-epic loop caller while preserving existing concrete-id callers.",
+          "flagged": false
+        },
+        {
+          "detail": "Rechecked nested transaction use through `ToolRegistry.audit_wrap`. The plan continues to rely on nested `store.transaction()` blocks inside audited tools, and its integration test explicitly covers a multi-row tool mutation plus the audited `tool_calls` row, which is enough for this sprint's standard robustness level.",
+          "flagged": false
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-006",
+      "concern": "Body version: the revised plan deliberately skips `body_version` even though the spec's Sprint 2a title/goal sync adversarial tests mention incrementing it.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "`planning-bot-spec.md:2606` and `planning-bot-spec.md:2611` say title/goal body edits should increment `body_version`, while current migrations do not define that column and Rev 3 explicitly defers it as an accepted tradeoff."
+    },
+    {
+      "id": "FLAG-007",
+      "concern": "History semantics: `get_epic_at_time` behavior before the created event differs from the spec's stated fallback to the epic's initial state.",
+      "category": "correctness",
+      "severity_hint": "likely-minor",
+      "evidence": "`planning-bot-spec.md:1678` says if no events exist before the timestamp, return the epic's initial state. Rev 3 says backward replay that rolls past `created` returns empty/None body and checklist."
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-001",
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004",
+    "FLAG-005"
+  ],
+  "disputed_flag_ids": []
+}

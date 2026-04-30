@@ -7,7 +7,6 @@
   "required": [
     "envelope_version",
     "turn_id",
-    "epic_id",
     "epic_state_before",
     "epic_state_after",
     "reply",
@@ -27,8 +26,11 @@
       "minLength": 1
     },
     "epic_id": {
-      "type": "string",
-      "minLength": 1
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 0
     },
     "epic_state_before": {
       "type": "string"

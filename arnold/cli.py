@@ -41,8 +41,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arnold")
     subparsers = parser.add_subparsers(dest="command")
 
-    turn = subparsers.add_parser("turn")
-    turn.add_argument("--epic", required=True)
+    turn = subparsers.add_parser(
+        "turn",
+        description="Run one Arnold turn. Omit --epic to start a new epic via natural language; the bot must call create_epic first.",
+    )
+    turn.add_argument(
+        "--epic",
+        default=None,
+        help="Existing epic id. Omit to start a new epic via natural language; the bot must call create_epic first.",
+    )
     input_group = turn.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--input")
     input_group.add_argument("--from-stdin", action="store_true")

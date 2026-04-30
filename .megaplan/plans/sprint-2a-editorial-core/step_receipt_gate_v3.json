@@ -1,0 +1,36 @@
+{
+  "receipt_id": "09a14e4e-7dd8-448e-90fd-81456a9a3252",
+  "plan_id": "sprint-2a-editorial-core",
+  "phase": "gate",
+  "iteration": 3,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T05:43:25.749459+00:00",
+  "profile_name": null,
+  "agent": "claude",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "272e7d91-ae87-4a08-a03f-65165b208ce2",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "59eb84b8f99f49c21a63e54feafff8403927a78a7781a7c7bdd5bfe410bb1d78",
+  "prompt_hash_canonical": "c777e503d1f1a54d85136db5bf6d150d5e65f766cc8870b9bc767325e9eb94fc",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [
+    "sha256:c09a9e0cd03350cef8a317ac90541f6b4eda88e789b3c6eb2d9bd906bd7334b0",
+    "sha256:415f1e08232898f9fa48ab6bcc7aa735a936514677f83439bd75887cd81126d1",
+    "sha256:8b98220b244e7348c021ff7cb82f52a58191c7c5c42218756e051918e8945e3a"
+  ],
+  "cost_usd": 1.3888927500000001,
+  "duration_ms": 141867,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "recommendation": "PROCEED",
+    "blocking_flags_resolved": 0,
+    "blocking_flags_remaining": 0,
+    "override_forced": false
+  },
+  "scope_drift_severity": null
+}

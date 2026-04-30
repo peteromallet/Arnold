@@ -1,0 +1,363 @@
+{
+  "robustness": "standard",
+  "signals": {
+    "iteration": 1,
+    "idea": "# Sprint 2a \u2014 Editorial core\n\nBot maintains an epic body and checklist for one epic, with section-level body editing. Minimum to have an editorial conversation.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to it for complete details on Body Structure and Editing, Body Templates, The Checklist as Guide, and Data Model sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: [REDACTED_SUPABASE_SERVICE_ROLE_JWT]\n\n## Scope\n\n- Tables: checklist_items, epic_events (with transaction_id)\n- Body parser/serializer \u2014 markdown \u2194 structured sections with ## heading delimiters; enforces heading hierarchy (# for title only, ## for sections, ### for sub-headings)\n- Turn-end epic outline emitted to system_logs at info level\n- Default body template (design doc) \u2014 Goal, Principles, Context, Key Decisions, Open Questions, Deliverable\n- `edit_epic` tool \u2014 body (whole + section ops) + checklist; supports:\n  - Write whole body\n  - Write specific sections\n  - Append to a section\n  - Add new section with position\n  - Rename/remove sections\n  - `expected_diff` parameter for server-enforced diff verification (unified diff format)\n- `create_epic`, `revert` (transaction-grouped), `render_epic` tools\n- Read tools: `get_epic` (with section addressing), `get_section_names`, `get_history`, `get_self_understanding`\n- History tools: `get_epic_at_time`, `get_recent_turns`, `search_tool_calls`\n- Default checklist seed \u2014 18 items with adaptation logic\n- Title and goal are derived columns from body parsing (# Title and ## Goal first paragraph)\n\n## Key Data Model\n\n### checklist_items\nid, epic_id, content, status (open|done|skipped|superseded), position, source (bot_inferred|user_requested|carried_over|default_seed|second_opinion), skip_reason, superseded_by_item_id, created_at, completed_at\n\n### epic_events\nid, epic_id, transaction_id (uuid), event_type, summary, prior_state (json), turn_id, occurred_at\nEvent types: body_edit, checklist_change, sprints_change, state_change, forced_handoff, created, code_referenced, codebase_added, image_generated, second_opinion_requested, reverted_to, sprint_status_change\n\n## Body Parser Rules\n- Section boundaries are ## headings (level-2 markdown)\n- Section names are case-sensitive\n- Pre-section content is \"_preamble\"\n- Sub-sections (### and below) are part of parent section\n- No ## headings \u2192 whole body is _preamble\n- # Title and ## Goal are required structural elements; missing \u2192 write rejected\n- Code blocks containing ## are NOT section boundaries\n\n## Acceptance Criteria\n\n- Create an epic via natural language \u2192 epics row created, default checklist seeded with 18 items, body initialized\n- 10-turn scripted conversation (mocked Anthropic) produces body with all 6 default sections\n- Section-level edit \u2192 only that section changes; other sections byte-identical\n- Whole body edit \u2192 diff captured in event; revert restores prior version exactly\n- \"revert that\" \u2192 most recent transaction undone, new reverted_to event logged\n- expected_diff mismatch \u2192 server refuses write, returns actual diff\n- expected_diff match \u2192 server commits normally\n- get_epic_at_time(epic_id, T) \u2192 returns body/checklist state as of time T\n- get_recent_turns(5) \u2192 returns 5 most recent turns with summaries\n- search_tool_calls(tool_name='edit_epic', epic_id=X) \u2192 returns matching calls\n- Turn-end system_logs row with event_type='epic_outline' containing title + section list + line counts\n\n## Tests\n- Unit: body parser (markdown \u2192 sections \u2192 markdown roundtrip is identity); section operations; edit_epic validation; transaction_id grouping; expected_diff comparison; epic-at-time replay\n- Integration: 10-turn fixture conversation against local Supabase with mocked Anthropic; revert end-to-end",
+    "significant_flags": 12,
+    "unresolved_flags": [
+      {
+        "id": "FLAG-001",
+        "concern": "Editorial bootstrap: `create_epic` is planned as a normal tool, but the current loop requires an existing epic before the model can call any tool, so natural-language epic creation has no executable path.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-002",
+        "concern": "Body parser/validation: the plan makes `parse()` reject missing `# Title`, conflicting with the spec's parseable `_preamble` fallback and with read/time-travel tools that need to inspect malformed or legacy bodies.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-003",
+        "concern": "History replay: `reverted_to` events do not store enough prior state to support backward `get_epic_at_time` reconstruction across a revert.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints-1",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked Sprint 2a acceptance in `planning-bot-spec.md` lines 132-142 against the current loop entrypoint in `agent_kit/loop.py`. The plan includes a `create_epic` tool, but it does not address that `run_turn` currently requires an existing `epic_id`, acquires an `epic_locks` row for it before any model/tool call, and creates inbound messages/turns tied to that id; this leaves the acceptance criterion 'Create an epic via natural language' without a concrete bootstrap path when there is no epic yet.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints-2",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the spec's additional Sprint 2a title/body sync test at `planning-bot-spec.md` lines 2606-2607. The plan defines `_preamble` as text between the title line and the first `##`, so section replacement of `_preamble` cannot replace `# Title`; that diverges from the spec example `edit_epic(body: { sections: { _preamble: { replace: '# New Title\\n' } } })` and leaves title editing via section addressing underspecified.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: I checked the body parsing rules in `planning-bot-spec.md` lines 503-514 against Phase 2. The spec separates parsing from write validation: bodies with no `##` headings are parseable as `_preamble`, while writes are rejected if they lack `# Title` or non-empty `## Goal`; the plan instead makes `parse()` raise when the first non-blank line is not `# <title>`, which conflicts with its own round-trip fixtures for preamble-only/no-section bodies and would break read tools on malformed legacy content.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: I checked `get_epic_at_time` and `revert` semantics against the `epic_events.prior_state` contract in `planning-bot-spec.md` lines 1030-1032 and 1381-1399. The plan stores only metadata on `reverted_to` events (`reverted_transaction_id` and ids), then proposes backward replay from current state; a later `reverted_to` event actually mutates body/checklist, but its event does not contain the pre-revert state needed to undo that mutation when reconstructing a timestamp just before the revert, so time travel across reverts will be incorrect.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness-3",
+        "concern": "Are the proposed changes technically correct?: I reviewed the `create_epic` plan against the Data Model requirement in `planning-bot-spec.md` lines 1314-1316. The plan says `create_epic` constructs the body and calls parse/validate, but then passes title and goal columns supplied by the caller into `Store.create_epic`; to satisfy 'the parser is the only writer of epics.title and epics.goal', the tool should explicitly use the parsed title and parsed Goal first paragraph for the insert, not the raw arguments.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "scope-1",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: I searched the current tool system in `agent_kit/tool_kit.py` and existing tools in `agent_kit/tools/communication.py`. The plan follows the existing registry/audit pattern for new tools, but it does not mention marking the new read tools with `operation_kind='read'`; if omitted, `@register_tool` defaults to write, which would pollute audit semantics for `get_epic`, `get_history`, `get_recent_turns`, and `search_tool_calls`.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "scope-2",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: I checked the spec's tool surface around `edit_epic` in `planning-bot-spec.md` lines 1703-1740. The plan deliberately returns `not_yet_supported` for `changes.sprints` and `changes.state`, which is a scoped Sprint 2a tradeoff because sprints/state gating are later sprint work, but it also omits `changes.meta` handling from the schema discussion even though the spec's change object includes `meta?: { title?, goal? }`; this should be either intentionally rejected or mapped to body edits so callers do not get silent schema drift.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: I checked `agent_kit/store/supabase.py` and `agent_kit/store/sqlite.py` helper patterns. The plan says to add new store methods, but it does not call out adding allowed-column sets or guarded updates for `epics`, `checklist_items`, and `epic_events` in the Supabase adapter analogous to `_MESSAGE_COLUMNS`, `_TURN_COLUMNS`, and `_IMAGE_COLUMNS`; without that supporting adapter glue, update helpers will either be unavailable or bypass the existing column-safety pattern.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: I inspected `agent_kit/loop.py` and `tests/test_run_turn.py`; current callers of `run_turn` always provide an `epic_id`, and test helpers seed an `epics` row first. The planned `create_epic` tool does not fit this caller contract for a brand-new epic: using a non-existent id would fail the current lock/message foreign-key path, while using an existing placeholder epic would make the create tool semantically odd unless the loop/CLI grows an explicit no-epic or inbox mode.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "resolved_flags": [],
+    "weighted_score": 16.0,
+    "weighted_history": [],
+    "plan_delta_from_previous": null,
+    "recurring_critiques": [],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 1. Weighted score trajectory: 16.0. Plan deltas: n/a. Recurring critiques: 0. Resolved flags: 0. Open significant flags: 12.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "warnings": [],
+  "criteria_check": {
+    "count": 16,
+    "items": [
+      {
+        "criterion": "Postgres migration 004 and SQLite migration 004 create checklist_items and epic_events with the columns, CHECK constraints, FK ON DELETE behaviour, and indexes specified in spec \u00a71322 and \u00a71381.",
+        "priority": "must",
+        "requires": [
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Body parser round-trip identity holds: serialize(parse(body)) == body for \u22656 fixture bodies including preamble-only, single section, full design-doc template, sub-headings, fenced code containing '##', and a body with non-empty preamble.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Body parser rejects writes that would leave '# Title' missing or '## Goal' first paragraph empty, with errors body_missing_required_section: title and \u2026: goal respectively.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "create_epic creates an epics row with parser-derived title and goal, seeds 18 default checklist items with status='open' and source='default_seed', and writes one 'created' epic_event sharing a transaction_id.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "edit_epic body section operations leave every non-targeted section byte-identical (verified by parsing prior_state captured in the body_edit event and comparing every other section's serialised form).",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "edit_epic with expected_diff that does not match (after \\n + trailing-whitespace normalisation) refuses to commit, returns the actual diff, and leaves epics.body, title, goal, and checklist_items untouched.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "edit_epic with expected_diff that matches commits normally and writes one event per affected family (body_edit, checklist_change) sharing a single transaction_id.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "revert(epic_id) with no event_id undoes the entire most-recent transaction (body and checklist together) and appends a 'reverted_to' event with a new transaction_id; the resulting body is byte-equal to the pre-edit body.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "get_epic_at_time(epic_id, T) returns body and checklist state equal to what was committed at the most recent event with occurred_at <= T (verified against an explicit replay computed inside the test fixture).",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "get_recent_turns(5) returns the 5 most-recent bot_turns rows (most-recent first) with summaries; search_tool_calls(tool_name='edit_epic', epic_id=X) returns every edit_epic call against epic X with arguments and timestamps.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "After every turn whose tool_calls include create_epic, edit_epic, or revert, exactly one system_logs row exists with category='application', event_type='epic_outline', turn_id=<that turn>, and details containing title plus a sections array with name + line_count for every section in the body.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "10-turn FakeModel-driven integration fixture in tests/test_editorial_loop.py runs end-to-end, exercises all six default sections, exercises both expected_diff match and mismatch paths, and exercises revert; final assertions cover every Sprint 2a acceptance criterion in spec \u00a7131\u2013142.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "All pre-existing tests in tests/ continue to pass (no regression in Sprint 1a/1b functionality).",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Body parser and section-op modules stay focused: the public surface is parse, serialize, the section ops, validate_required, compute_diff, diffs_equivalent, outline. No tool-layer or Store imports leak into agent_kit/body.py.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "edit_epic rejects requests mixing two body op flavours (e.g. new_content + sections) with a clear error rather than silently picking one.",
+        "priority": "should",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "agent_kit/body.py stays under ~400 lines and has no third-party dependencies beyond the standard library (difflib, re).",
+        "priority": "should",
+        "requires": [
+          "read_files"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Editorial bootstrap: `create_epic` is planned as a normal tool, but the current loop requires an existing epic before the model can call any tool, so natural-language epic creation has no executable path.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/loop.py` calls `store.acquire_epic_lock(epic_id)` and `store.create_message(epic_id=epic_id, ...)` before the model/tool loop; `epic_locks.epic_id` and messages reference `epics(id)`, while Sprint 2a acceptance requires creating an epic via natural language.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Body parser/validation: the plan makes `parse()` reject missing `# Title`, conflicting with the spec's parseable `_preamble` fallback and with read/time-travel tools that need to inspect malformed or legacy bodies.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Spec lines 503-514 say no `##` headings means whole body is `_preamble` and write rejection happens if missing title/Goal after a body edit; Phase 2 says `parse()` raises on missing first-line title.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "History replay: `reverted_to` events do not store enough prior state to support backward `get_epic_at_time` reconstruction across a revert.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The plan stores only `{'reverted_transaction_id', 'reverted_event_ids'}` for `reverted_to`, but the same revert mutates body/checklist; backward replay from current state needs the state immediately before that revert to reconstruct timestamps before it.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "issue_hints-1",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked Sprint 2a acceptance in `planning-bot-spec.md` lines 132-142 against the current loop entrypoint in `agent_kit/loop.py`. The plan includes a `create_epic` tool, but it does not address that `run_turn` currently requires an existing `epic_id`, acquires an `epic_locks` row for it before any model/tool call, and creates inbound messages/turns tied to that id; this leaves the acceptance criterion 'Create an epic via natural language' without a concrete bootstrap path when there is no epic yet.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked Sprint 2a acceptance in `planning-bot-spec.md` lines 132-142 against the current loop entrypoint in `agent_kit/loop.py`. The plan includes a `create_epic` tool, but it does not address that `run_turn` currently requires an existing `epic_id`, acquires an `epic_locks` row for it before any model/tool call, and creates inbound messages/turns tied to that id; this leaves the acceptance criterion 'Create an epic via natural language' without a concrete bootstrap path when there is no epic yet.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "issue_hints-2",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the spec's additional Sprint 2a title/body sync test at `planning-bot-spec.md` lines 2606-2607. The plan defines `_preamble` as text between the title line and the first `##`, so section replacement of `_preamble` cannot replace `# Title`; that diverges from the spec example `edit_epic(body: { sections: { _preamble: { replace: '# New Title\\n' } } })` and leaves title editing via section addressing underspecified.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the spec's additional Sprint 2a title/body sync test at `planning-bot-spec.md` lines 2606-2607. The plan defines `_preamble` as text between the title line and the first `##`, so section replacement of `_preamble` cannot replace `# Title`; that diverges from the spec example `edit_epic(body: { sections: { _preamble: { replace: '# New Title\\n' } } })` and leaves title editing via section addressing underspecified.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "correctness-1",
+      "concern": "Are the proposed changes technically correct?: I checked the body parsing rules in `planning-bot-spec.md` lines 503-514 against Phase 2. The spec separates parsing from write validation: bodies with no `##` headings are parseable as `_preamble`, while writes are rejected if they lack `# Title` or non-empty `## Goal`; the plan instead makes `parse()` raise when the first non-blank line is not `# <title>`, which conflicts with its own round-trip fixtures for preamble-only/no-section bodies and would break read tools on malformed legacy content.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "I checked the body parsing rules in `planning-bot-spec.md` lines 503-514 against Phase 2. The spec separates parsing from write validation: bodies with no `##` headings are parseable as `_preamble`, while writes are rejected if they lack `# Title` or non-empty `## Goal`; the plan instead makes `parse()` raise when the first non-blank line is not `# <title>`, which conflicts with its own round-trip fixtures for preamble-only/no-section bodies and would break read tools on malformed legacy content.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "correctness-2",
+      "concern": "Are the proposed changes technically correct?: I checked `get_epic_at_time` and `revert` semantics against the `epic_events.prior_state` contract in `planning-bot-spec.md` lines 1030-1032 and 1381-1399. The plan stores only metadata on `reverted_to` events (`reverted_transaction_id` and ids), then proposes backward replay from current state; a later `reverted_to` event actually mutates body/checklist, but its event does not contain the pre-revert state needed to undo that mutation when reconstructing a timestamp just before the revert, so time travel across reverts will be incorrect.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "I checked `get_epic_at_time` and `revert` semantics against the `epic_events.prior_state` contract in `planning-bot-spec.md` lines 1030-1032 and 1381-1399. The plan stores only metadata on `reverted_to` events (`reverted_transaction_id` and ids), then proposes backward replay from current state; a later `reverted_to` event actually mutates body/checklist, but its event does not contain the pre-revert state needed to undo that mutation when reconstructing a timestamp just before the revert, so time travel across reverts will be incorrect.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "correctness-3",
+      "concern": "Are the proposed changes technically correct?: I reviewed the `create_epic` plan against the Data Model requirement in `planning-bot-spec.md` lines 1314-1316. The plan says `create_epic` constructs the body and calls parse/validate, but then passes title and goal columns supplied by the caller into `Store.create_epic`; to satisfy 'the parser is the only writer of epics.title and epics.goal', the tool should explicitly use the parsed title and parsed Goal first paragraph for the insert, not the raw arguments.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "I reviewed the `create_epic` plan against the Data Model requirement in `planning-bot-spec.md` lines 1314-1316. The plan says `create_epic` constructs the body and calls parse/validate, but then passes title and goal columns supplied by the caller into `Store.create_epic`; to satisfy 'the parser is the only writer of epics.title and epics.goal', the tool should explicitly use the parsed title and parsed Goal first paragraph for the insert, not the raw arguments.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "scope-1",
+      "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: I searched the current tool system in `agent_kit/tool_kit.py` and existing tools in `agent_kit/tools/communication.py`. The plan follows the existing registry/audit pattern for new tools, but it does not mention marking the new read tools with `operation_kind='read'`; if omitted, `@register_tool` defaults to write, which would pollute audit semantics for `get_epic`, `get_history`, `get_recent_turns`, and `search_tool_calls`.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "I searched the current tool system in `agent_kit/tool_kit.py` and existing tools in `agent_kit/tools/communication.py`. The plan follows the existing registry/audit pattern for new tools, but it does not mention marking the new read tools with `operation_kind='read'`; if omitted, `@register_tool` defaults to write, which would pollute audit semantics for `get_epic`, `get_history`, `get_recent_turns`, and `search_tool_calls`.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "scope-2",
+      "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: I checked the spec's tool surface around `edit_epic` in `planning-bot-spec.md` lines 1703-1740. The plan deliberately returns `not_yet_supported` for `changes.sprints` and `changes.state`, which is a scoped Sprint 2a tradeoff because sprints/state gating are later sprint work, but it also omits `changes.meta` handling from the schema discussion even though the spec's change object includes `meta?: { title?, goal? }`; this should be either intentionally rejected or mapped to body edits so callers do not get silent schema drift.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "I checked the spec's tool surface around `edit_epic` in `planning-bot-spec.md` lines 1703-1740. The plan deliberately returns `not_yet_supported` for `changes.sprints` and `changes.state`, which is a scoped Sprint 2a tradeoff because sprints/state gating are later sprint work, but it also omits `changes.meta` handling from the schema discussion even though the spec's change object includes `meta?: { title?, goal? }`; this should be either intentionally rejected or mapped to body edits so callers do not get silent schema drift.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "all_locations",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: I checked `agent_kit/store/supabase.py` and `agent_kit/store/sqlite.py` helper patterns. The plan says to add new store methods, but it does not call out adding allowed-column sets or guarded updates for `epics`, `checklist_items`, and `epic_events` in the Supabase adapter analogous to `_MESSAGE_COLUMNS`, `_TURN_COLUMNS`, and `_IMAGE_COLUMNS`; without that supporting adapter glue, update helpers will either be unavailable or bypass the existing column-safety pattern.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "I checked `agent_kit/store/supabase.py` and `agent_kit/store/sqlite.py` helper patterns. The plan says to add new store methods, but it does not call out adding allowed-column sets or guarded updates for `epics`, `checklist_items`, and `epic_events` in the Supabase adapter analogous to `_MESSAGE_COLUMNS`, `_TURN_COLUMNS`, and `_IMAGE_COLUMNS`; without that supporting adapter glue, update helpers will either be unavailable or bypass the existing column-safety pattern.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "callers",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: I inspected `agent_kit/loop.py` and `tests/test_run_turn.py`; current callers of `run_turn` always provide an `epic_id`, and test helpers seed an `epics` row first. The planned `create_epic` tool does not fit this caller contract for a brand-new epic: using a non-existent id would fail the current lock/message foreign-key path, while using an existing placeholder epic would make the create tool semantically odd unless the loop/CLI grows an explicit no-epic or inbox mode.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "I inspected `agent_kit/loop.py` and `tests/test_run_turn.py`; current callers of `run_turn` always provide an `epic_id`, and test helpers seed an `epics` row first. The planned `create_epic` tool does not fit this caller contract for a brand-new epic: using a non-existent id would fail the current lock/message foreign-key path, while using an existing placeholder epic would make the create tool semantically odd unless the loop/CLI grows an explicit no-epic or inbox mode.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ]
+}

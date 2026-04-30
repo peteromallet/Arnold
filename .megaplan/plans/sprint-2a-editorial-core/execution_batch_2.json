@@ -1,0 +1,158 @@
+{
+  "output": "Batch 2 complete. Implemented the SQLite editorial migration, JSON column registration, Supabase truncate update, parser regression tests, no-epic loop/CLI path, and envelope schema regression test. Checkpoint written to `.megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json`.",
+  "files_changed": [
+    "agent_kit/store/migrations/sqlite/004_editorial_core.sql",
+    "agent_kit/store/sqlite.py",
+    "agent_kit/store/supabase.py",
+    "tests/test_supabase_store.py",
+    "tests/test_body_parser.py",
+    "agent_kit/loop.py",
+    "arnold/cli.py",
+    "tests/test_envelope.py",
+    ".megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json"
+  ],
+  "commands_run": [
+    "python -m pytest tests/test_body_parser.py -q",
+    "python -m pytest tests/test_envelope.py -q",
+    "python -m py_compile agent_kit/loop.py arnold/cli.py agent_kit/store/sqlite.py agent_kit/store/supabase.py",
+    "python -m pytest tests/test_cli.py tests/test_run_turn.py -q",
+    "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q",
+    "python - <<'PY' ... no-epic CLI smoke ... PY",
+    "python - <<'PY' ... sqlite migration smoke ... PY",
+    "python -m pytest -x",
+    "python -m pytest tests/test_supabase_store.py -q",
+    "python -m arnold.cli turn --help",
+    "python - <<'PY' ... T2 static checks ... PY",
+    "python - <<'PY' ... T3 static checks ... PY",
+    "python - <<'PY' ... T14 static checks ... PY",
+    "python - <<'PY' ... checkpoint json ok ... PY",
+    "git diff --check -- agent_kit/loop.py arnold/cli.py agent_kit/store/sqlite.py agent_kit/store/supabase.py tests/test_supabase_store.py tests/test_envelope.py tests/test_body_parser.py agent_kit/store/migrations/sqlite/004_editorial_core.sql"
+  ],
+  "deviations": [
+    "Used `python -m pytest` for verification because the bare `pytest` shim was established in batch 1 as Python 3.8 while this project requires Python >=3.11.",
+    "Full suite under Python 3.11 stopped at the same pre-existing `tests/test_no_leaked_secrets.py::test_leaked_supabase_service_role_jwt_prefix_is_absent` failure, reporting leaked Supabase JWT prefixes in `.megaplan/plans/sprint-1b-discord-resident/*`. This batch did not modify those files.",
+    "`python -m pytest tests/test_supabase_store.py -q` skipped because `SUPABASE_TEST_DB_URL` is not set; static checks verified the truncate block edit.",
+    "Advisory quality: agent_kit/store/sqlite.py has similar functions mark_failed and mark_orphaned (85% similarity).",
+    "Advisory quality: agent_kit/loop.py adds unused imports: agent_kit.tools.communication, agent_kit.tools.images.",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/sprint-2a-editorial-core/.plan.lock, .megaplan/plans/sprint-2a-editorial-core/critique_output.json, .megaplan/plans/sprint-2a-editorial-core/critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/execution_audit.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_1.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json, .megaplan/plans/sprint-2a-editorial-core/faults.json, .megaplan/plans/sprint-2a-editorial-core/final.md, .megaplan/plans/sprint-2a-editorial-core/finalize.json, .megaplan/plans/sprint-2a-editorial-core/finalize_snapshot.json, .megaplan/plans/sprint-2a-editorial-core/gate.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v1.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v2.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v3.json, .megaplan/plans/sprint-2a-editorial-core/plan_v1.md, .megaplan/plans/sprint-2a-editorial-core/plan_v1.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v2.md, .megaplan/plans/sprint-2a-editorial-core/plan_v2.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v3.md, .megaplan/plans/sprint-2a-editorial-core/plan_v3.meta.json, .megaplan/plans/sprint-2a-editorial-core/state.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_finalize_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_plan_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v3.json",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Added SQLite 004_editorial_core.sql with checklist_items and epic_events, CHECK constraints, FK behavior, indexes, and prior_state as TEXT. Added prior_state to _JSON_COLUMNS in both SQLiteStore and SupabaseStore. Verified by static checks and SQLite migration smoke against a fresh database.",
+      "files_changed": [
+        "agent_kit/store/migrations/sqlite/004_editorial_core.sql",
+        "agent_kit/store/sqlite.py",
+        "agent_kit/store/supabase.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... sqlite migration smoke ... PY",
+        "python - <<'PY' ... T2 static checks ... PY"
+      ],
+      "auto_attributed_files": true
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Added checklist_items and epic_events to the Supabase truncate block before parent tables. Static check confirmed both names are in the TRUNCATE block before epics. Live Supabase test file skips without SUPABASE_TEST_DB_URL.",
+      "files_changed": [
+        "tests/test_supabase_store.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... T3 static checks ... PY",
+        "python -m pytest tests/test_supabase_store.py -q"
+      ],
+      "auto_attributed_files": true
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Added parser tests covering six roundtrip fixtures, section ops preserving untouched sections, _preamble title replacement/removal validation, five lenient parse cases, fenced ## as preamble-only, and diffs_equivalent boundary cases. The full test file passes.",
+      "files_changed": [
+        "tests/test_body_parser.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_body_parser.py -q"
+      ],
+      "auto_attributed_files": true
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Updated run_turn to accept epic_id=None, skip lock/hot-context when no epic exists, carry active_epic_id through envelope/abort paths, capture inbound_message_id, and refresh active_epic_id after every registry.invoke call. Existing CLI/run_turn modules and no-epic CLI smoke pass.",
+      "files_changed": [
+        "agent_kit/loop.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/loop.py arnold/cli.py agent_kit/store/sqlite.py agent_kit/store/supabase.py",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q",
+        "python - <<'PY' ... no-epic CLI smoke ... PY",
+        "python - <<'PY' ... T14 static checks ... PY"
+      ],
+      "auto_attributed_files": true
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Made --epic optional with default None and help text documenting no-epic bootstrap. Existing run path and exception envelope continue to pass args.epic through; no-epic CLI smoke returned a valid completed envelope without epic_id.",
+      "files_changed": [
+        "arnold/cli.py"
+      ],
+      "commands_run": [
+        "python -m arnold.cli turn --help",
+        "python - <<'PY' ... no-epic CLI smoke ... PY",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q"
+      ],
+      "auto_attributed_files": true
+    },
+    {
+      "task_id": "T19",
+      "status": "done",
+      "executor_notes": "Added envelope schema regression test for Envelope(epic_id=None), validating both omitted epic_id from to_json/_drop_none and explicit epic_id:null against envelope.schema.json. The full envelope test file passes.",
+      "files_changed": [
+        "tests/test_envelope.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_envelope.py -q"
+      ],
+      "auto_attributed_files": true
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Yes. SQLite migration mirrors the editorial tables using SQLite-compatible types with prior_state TEXT, and prior_state is registered in _JSON_COLUMNS in both adapters."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Yes. checklist_items and epic_events are in the TRUNCATE block before parent tables they reference; the Supabase test module skips without SUPABASE_TEST_DB_URL."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Yes. tests/test_body_parser.py covers all requested roundtrip, _preamble, lenient parse, fence, section-op, and diff equivalence cases."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "Yes. active_epic_id is local state for envelope/abort paths, lock acquisition is skipped when epic_id is None, no-epic hot context is synthesized, inbound_message_id is captured, and active_epic_id refreshes after both registry.invoke calls."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "Yes. --epic now defaults to None, help documents omitted --epic bootstrap, and the CLI smoke confirms args.epic=None produces a valid no-epic envelope."
+    },
+    {
+      "sense_check_id": "SC19",
+      "executor_note": "Yes. The regression test constructs Envelope(epic_id=None), serializes through to_json(), validates omitted epic_id, then validates an explicit epic_id:null payload."
+    }
+  ]
+}

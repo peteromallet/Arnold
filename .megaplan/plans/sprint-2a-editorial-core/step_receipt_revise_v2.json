@@ -1,0 +1,31 @@
+{
+  "receipt_id": "b59423f0-4f52-411e-847a-55bdafe2f5f3",
+  "plan_id": "sprint-2a-editorial-core",
+  "phase": "revise",
+  "iteration": 2,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T05:29:21.625523+00:00",
+  "profile_name": null,
+  "agent": "claude",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "bdea3c85-e5aa-40ad-906d-be1e77f6a46b",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "233e003cfed33b312a3ce0c9d369e335c88fa7802304ea5ecedd42ec803aea6d",
+  "prompt_hash_canonical": "a5f9816750ee8b891b0b013b1beb7b8d58cf6ec63ac40986ab04ac2702562472",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [],
+  "cost_usd": 1.6841852499999999,
+  "duration_ms": 333372,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "start_timestamp_utc": "2026-04-30T05:23:47Z",
+    "notes_consumed": [],
+    "notes_consumed_count": 0
+  },
+  "scope_drift_severity": null
+}

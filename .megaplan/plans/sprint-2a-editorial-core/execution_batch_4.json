@@ -1,0 +1,87 @@
+{
+  "task_updates": [
+    {
+      "id": "T10",
+      "status": "done",
+      "executor_notes": "Extended the shared store contract with nullable create_turn persistence, create_epic, seed_checklist, epic event recording, transaction event lookup, event filtering, latest_transaction_id, and ordering assertions. Verified through the full SQLite store contract modules; Supabase contract module still skips without SUPABASE_TEST_DB_URL.",
+      "files_changed": [
+        "tests/store_contract.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_sqlite_store.py -q",
+        "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q",
+        "python -m pytest tests/test_supabase_store.py -q"
+      ],
+      "task_id": "T10"
+    },
+    {
+      "id": "T11",
+      "status": "done",
+      "executor_notes": "Added editorial write tools create_epic, edit_epic, revert, and render_epic with write operation_kind registration, explicit schemas, parsed title/goal writes, expected_diff refusal before writes, body op conflict/meta/state/sprints error branches, checklist event snapshots, and reverted_to pre-revert snapshots. Verified by py_compile and a SQLite tool smoke covering create/edit expected_diff mismatch and match, meta/conflict errors, revert prior_state, render_epic, and registry operation kinds.",
+      "files_changed": [
+        "agent_kit/tools/editorial.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py tests/store_contract.py",
+        "python - <<'PY' ... editorial tool smoke ... PY"
+      ],
+      "task_id": "T11"
+    },
+    {
+      "id": "T12",
+      "status": "done",
+      "executor_notes": "Added editorial read tools get_epic, get_section_names, get_history, get_self_understanding, get_epic_at_time, get_recent_turns, and search_tool_calls with read operation_kind registration. get_epic_at_time replays body_edit, checklist_change, reverted_to, and created snapshots backward using lenient body parsing. Verified by py_compile and SQLite tool smoke covering read payloads, pre-creation initial state replay, recent turns, search delegation, and registry operation kinds.",
+      "files_changed": [
+        "agent_kit/tools/editorial_reads.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py tests/store_contract.py",
+        "python - <<'PY' ... editorial tool smoke ... PY"
+      ],
+      "task_id": "T12"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC10",
+      "executor_note": "Yes. The shared store contract now covers create_epic, seed_checklist, record_epic_event, list/filter events, events_by_transaction, latest_transaction_id, event ordering, and create_turn(epic_id=None) persisted as NULL.",
+      "sense_check_id": "SC10"
+    },
+    {
+      "id": "SC11",
+      "executor_note": "Yes. create_epic writes parsed title/goal, edit_epic rejects meta/body conflicts and refuses expected_diff mismatches before writing, revert captures full pre-revert body/title/goal/checklist, and all four write tools register with operation_kind='write'.",
+      "sense_check_id": "SC11"
+    },
+    {
+      "id": "SC12",
+      "executor_note": "Yes. All seven read tools register with operation_kind='read'; get_epic_at_time returns the created initial body/checklist snapshot before creation and replays body_edit, checklist_change, and reverted_to prior_state snapshots.",
+      "sense_check_id": "SC12"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-2a-editorial-core/execution_batch_4.json",
+  "verification": {
+    "targeted": [
+      "python -m py_compile agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py tests/store_contract.py: passed",
+      "python -m pytest tests/test_sqlite_store.py -q: 4 passed",
+      "python - <<'PY' ... editorial tool smoke ... PY: passed",
+      "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q: 7 passed",
+      "python -m pytest tests/test_body_parser.py tests/test_envelope.py -q: 10 passed",
+      "python -m pytest tests/test_supabase_store.py -q: 1 skipped because SUPABASE_TEST_DB_URL is not set",
+      "git diff --check: passed"
+    ],
+    "full_suite": "python -m pytest -x stopped at known pre-existing tests/test_no_leaked_secrets.py::test_leaked_supabase_service_role_jwt_prefix_is_absent; 46 passed, 1 skipped before that failure."
+  },
+  "deviations": [
+    "Used python -m pytest rather than bare pytest because prior batches established the bare pytest shim runs under Python 3.8 while this project requires Python >=3.11.",
+    "Full suite still fails at the pre-existing leaked Supabase JWT prefix check in .megaplan/plans/sprint-1b-discord-resident/*; this batch did not modify those files.",
+    "tests/test_supabase_store.py skipped because SUPABASE_TEST_DB_URL is not set.",
+    "Advisory quality: agent_kit/tools/editorial.py grew by 414 lines (threshold 200).",
+    "Advisory quality: agent_kit/tools/editorial_reads.py grew by 302 lines (threshold 200).",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .megaplan/plans/sprint-2a-editorial-core/execution_batch_4.json, agent_kit/tools/editorial.py, agent_kit/tools/editorial_reads.py, tests/store_contract.py",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/sprint-2a-editorial-core/.plan.lock, .megaplan/plans/sprint-2a-editorial-core/critique_output.json, .megaplan/plans/sprint-2a-editorial-core/critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/execution_audit.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_1.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_4.json, .megaplan/plans/sprint-2a-editorial-core/faults.json, .megaplan/plans/sprint-2a-editorial-core/final.md, .megaplan/plans/sprint-2a-editorial-core/finalize.json, .megaplan/plans/sprint-2a-editorial-core/finalize_snapshot.json, .megaplan/plans/sprint-2a-editorial-core/gate.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v1.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v2.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v3.json, .megaplan/plans/sprint-2a-editorial-core/plan_v1.md, .megaplan/plans/sprint-2a-editorial-core/plan_v1.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v2.md, .megaplan/plans/sprint-2a-editorial-core/plan_v2.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v3.md, .megaplan/plans/sprint-2a-editorial-core/plan_v3.meta.json, .megaplan/plans/sprint-2a-editorial-core/state.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_finalize_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_plan_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v3.json",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment."
+  ]
+}

@@ -186,6 +186,57 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-012",
+      "subsystem": "data-model",
+      "concern": "body_version column from spec \u00a72606 example is deferred; sprint 2a covers title/body sync semantics via epic_events audit trail instead.",
+      "flag_ids": [
+        "issue_hints-2"
+      ],
+      "plan_ids": [
+        "sprint-2a-editorial-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T05:43:25Z",
+      "updated_at": "2026-04-30T05:43:25Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-013",
+      "subsystem": "data-model",
+      "concern": "rev 3 makes body_version deferral explicit; gate-level acceptance recorded.",
+      "flag_ids": [
+        "issue_hints"
+      ],
+      "plan_ids": [
+        "sprint-2a-editorial-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T05:43:25Z",
+      "updated_at": "2026-04-30T05:43:25Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-014",
+      "subsystem": "history-replay",
+      "concern": "get_epic_at_time pre-creation semantics: spec \u00a71678 says 'returns initial state' for t before any events; rev 3 says 'return empty/none'.",
+      "flag_ids": [
+        "correctness"
+      ],
+      "plan_ids": [
+        "sprint-2a-editorial-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T05:43:25Z",
+      "updated_at": "2026-04-30T05:43:25Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

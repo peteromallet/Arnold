@@ -9,7 +9,7 @@ from typing import Any, Iterator, Sequence
 from uuid import uuid4
 JSONDict = dict[str, Any]
 
-_JSON_COLUMNS = {"arguments", "details", "error_details", "in_burst_with", "prompt_snapshot", "provider_response_summary", "request_body", "request_summary", "result", "state_at_turn", "transcription_metadata", "triggered_by_message_ids", "warnings_issued"}
+_JSON_COLUMNS = {"arguments", "details", "error_details", "in_burst_with", "prompt_snapshot", "prior_state", "provider_response_summary", "request_body", "request_summary", "result", "state_at_turn", "transcription_metadata", "triggered_by_message_ids", "warnings_issued"}
 
 
 class SupabaseStore:
@@ -102,7 +102,7 @@ class SupabaseStore:
     def create_turn(
         self,
         *,
-        epic_id: str,
+        epic_id: str | None,
         triggered_by_message_ids: Sequence[str],
         prompt_snapshot: JSONDict | None = None,
         prompt_version: str | None = None,
@@ -290,6 +290,238 @@ class SupabaseStore:
     def update_image(self, image_id: str, **changes: Any) -> JSONDict:
         return self._update("images", "id", image_id, changes, _IMAGE_COLUMNS, self.load_image)
 
+    def create_epic(
+        self,
+        *,
+        title: str,
+        goal: str,
+        body: str,
+        state: str = "shaping",
+    ) -> JSONDict:
+        epic_id = _new_id("epic")
+        self._conn.execute(
+            "INSERT INTO epics (id, title, goal, body, state) VALUES (%s, %s, %s, %s, %s)",
+            (epic_id, title, goal, body, state),
+        )
+        return self.load_epic(epic_id) or {}
+
+    def load_epic(self, epic_id: str) -> JSONDict | None:
+        return _normalize(self._conn.execute("SELECT * FROM epics WHERE id = %s", (epic_id,)).fetchone())
+
+    def update_epic(self, epic_id: str, **changes: Any) -> JSONDict:
+        return self._update("epics", "id", epic_id, changes, _EPIC_COLUMNS, self.load_epic)
+
+    def seed_checklist(self, epic_id: str, items: Sequence[str]) -> list[JSONDict]:
+        rows = [
+            {
+                "content": content,
+                "status": "open",
+                "position": position,
+                "source": "default_seed",
+            }
+            for position, content in enumerate(items, start=1)
+        ]
+        return self.add_checklist_items(epic_id, rows)
+
+    def list_checklist_items(self, epic_id: str, *, status: str | None = None) -> list[JSONDict]:
+        clauses = ["epic_id = %s"]
+        params: list[Any] = [epic_id]
+        if status is not None:
+            clauses.append("status = %s")
+            params.append(status)
+        return _normalize_rows(
+            self._conn.execute(
+                f"SELECT * FROM checklist_items WHERE {' AND '.join(clauses)} ORDER BY position, id",
+                params,
+            ).fetchall()
+        )
+
+    def update_checklist_item(self, item_id: str, **changes: Any) -> JSONDict:
+        return self._update(
+            "checklist_items",
+            "id",
+            item_id,
+            changes,
+            _CHECKLIST_COLUMNS,
+            self._load_checklist_item,
+        )
+
+    def add_checklist_items(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        added: list[JSONDict] = []
+        for offset, item in enumerate(items, start=1):
+            item_id = str(item.get("id") or _new_id("check"))
+            self._conn.execute(
+                """
+                INSERT INTO checklist_items (
+                    id, epic_id, content, status, position, source,
+                    skip_reason, superseded_by_item_id, created_at, completed_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, now()), %s)
+                """,
+                (
+                    item_id,
+                    epic_id,
+                    item["content"],
+                    item.get("status", "open"),
+                    item.get("position", offset),
+                    item.get("source", "bot_inferred"),
+                    item.get("skip_reason"),
+                    item.get("superseded_by_item_id"),
+                    item.get("created_at"),
+                    item.get("completed_at"),
+                ),
+            )
+            added.append(self._load_checklist_item(item_id) or {})
+        return added
+
+    def delete_checklist_items(self, item_ids: Sequence[str]) -> None:
+        if not item_ids:
+            return
+        self._conn.execute(
+            "DELETE FROM checklist_items WHERE id = ANY(%s)",
+            (list(item_ids),),
+        )
+
+    def replace_checklist(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        with self.transaction():
+            self._conn.execute("DELETE FROM checklist_items WHERE epic_id = %s", (epic_id,))
+            return self.add_checklist_items(epic_id, items)
+
+    def record_epic_event(
+        self,
+        *,
+        epic_id: str,
+        transaction_id: str,
+        event_type: str,
+        summary: str,
+        prior_state: JSONDict | None,
+        turn_id: str | None,
+    ) -> JSONDict:
+        event_id = _new_id("evt")
+        self._conn.execute(
+            """
+            INSERT INTO epic_events (
+                id, epic_id, transaction_id, event_type, summary, prior_state,
+                turn_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event_id,
+                epic_id,
+                transaction_id,
+                event_type,
+                summary,
+                _json(prior_state) if prior_state is not None else None,
+                turn_id,
+            ),
+        )
+        return self._load_epic_event(event_id) or {}
+
+    def list_epic_events(
+        self,
+        epic_id: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        kinds: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        clauses = ["epic_id = %s"]
+        params: list[Any] = [epic_id]
+        if since is not None:
+            clauses.append("occurred_at >= %s")
+            params.append(since)
+        if until is not None:
+            clauses.append("occurred_at <= %s")
+            params.append(until)
+        if kinds:
+            clauses.append("event_type = ANY(%s)")
+            params.append(list(kinds))
+        limit_sql = " LIMIT %s" if limit is not None else ""
+        if limit is not None:
+            params.append(int(limit))
+        return _normalize_rows(
+            self._conn.execute(
+                f"SELECT * FROM epic_events WHERE {' AND '.join(clauses)} ORDER BY occurred_at, id{limit_sql}",
+                params,
+            ).fetchall()
+        )
+
+    def latest_transaction_id(self, epic_id: str) -> str | None:
+        row = self._conn.execute(
+            """
+            SELECT transaction_id FROM epic_events
+            WHERE epic_id = %s
+            ORDER BY occurred_at DESC, id DESC
+            LIMIT 1
+            """,
+            (epic_id,),
+        ).fetchone()
+        return str(row["transaction_id"]) if row is not None else None
+
+    def events_by_transaction(self, transaction_id: str) -> list[JSONDict]:
+        return _normalize_rows(
+            self._conn.execute(
+                """
+                SELECT * FROM epic_events
+                WHERE transaction_id = %s
+                ORDER BY occurred_at, id
+                """,
+                (transaction_id,),
+            ).fetchall()
+        )
+
+    def list_recent_turns(self, *, n: int = 10, epic_id: str | None = None) -> list[JSONDict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if epic_id is not None:
+            clauses.append("epic_id = %s")
+            params.append(epic_id)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(n))
+        return _normalize_rows(
+            self._conn.execute(
+                f"SELECT * FROM bot_turns {where_sql} ORDER BY started_at DESC, id DESC LIMIT %s",
+                params,
+            ).fetchall()
+        )
+
+    def search_tool_calls_by(
+        self,
+        *,
+        tool_name: str | None = None,
+        epic_id: str | None = None,
+        since: str | None = None,
+        limit: int = 20,
+    ) -> list[JSONDict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if tool_name is not None:
+            clauses.append("tool_calls.tool_name = %s")
+            params.append(tool_name)
+        if epic_id is not None:
+            clauses.append("bot_turns.epic_id = %s")
+            params.append(epic_id)
+        if since is not None:
+            clauses.append("tool_calls.called_at >= %s")
+            params.append(since)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(limit))
+        return _normalize_rows(
+            self._conn.execute(
+                f"""
+                SELECT tool_calls.*
+                FROM tool_calls
+                JOIN bot_turns ON bot_turns.id = tool_calls.turn_id
+                {where_sql}
+                ORDER BY tool_calls.called_at DESC, tool_calls.id DESC
+                LIMIT %s
+                """,
+                params,
+            ).fetchall()
+        )
+
     def _mark_request(
         self,
         request_id: str,
@@ -349,10 +581,18 @@ class SupabaseStore:
     def _load_external_request(self, request_id: str) -> JSONDict | None:
         return _normalize(self._conn.execute("SELECT * FROM external_requests WHERE id = %s", (request_id,)).fetchone())
 
+    def _load_checklist_item(self, item_id: str) -> JSONDict | None:
+        return _normalize(self._conn.execute("SELECT * FROM checklist_items WHERE id = %s", (item_id,)).fetchone())
 
-_MESSAGE_COLUMNS = {"discord_message_id", "content", "audio_storage_url", "transcription_metadata", "has_image_attachment", "has_code_attachment", "in_burst_with", "was_voice_message", "bot_turn_id"}
-_TURN_COLUMNS = {"triggered_by_message_ids", "prompt_snapshot", "prompt_version", "reasoning", "final_output_message_id", "status_message_id", "status", "state_at_turn", "plan_edited", "code_consulted", "image_generated", "second_opinion_requested", "message_sent", "warnings_issued", "current_activity", "completed_at", "model_version"}
+    def _load_epic_event(self, event_id: str) -> JSONDict | None:
+        return _normalize(self._conn.execute("SELECT * FROM epic_events WHERE id = %s", (event_id,)).fetchone())
+
+
+_MESSAGE_COLUMNS = {"epic_id", "discord_message_id", "content", "audio_storage_url", "transcription_metadata", "has_image_attachment", "has_code_attachment", "in_burst_with", "was_voice_message", "bot_turn_id"}
+_TURN_COLUMNS = {"epic_id", "triggered_by_message_ids", "prompt_snapshot", "prompt_version", "reasoning", "final_output_message_id", "status_message_id", "status", "state_at_turn", "plan_edited", "code_consulted", "image_generated", "second_opinion_requested", "message_sent", "warnings_issued", "current_activity", "completed_at", "model_version"}
 _IMAGE_COLUMNS = {"prompt", "storage_url", "quality", "size", "reference_key", "description", "caption", "in_body", "active", "discord_attachment_id"}
+_EPIC_COLUMNS = {"title", "goal", "body", "state", "last_edited_at", "last_active_at", "planned_at"}
+_CHECKLIST_COLUMNS = {"content", "status", "position", "skip_reason", "superseded_by_item_id", "completed_at"}
 
 
 def _connect(dsn: str) -> Any:

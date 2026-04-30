@@ -1,0 +1,249 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T05:29:21Z",
+  "hash": "sha256:a4f9c4cd1cf6af5e87ed6539a12c6f6715dab0ac1709e41c7a3f49d3a926ae78",
+  "changes_summary": "Rev 2 addresses all 12 open critique flags by editing the existing six-phase structure rather than restructuring. Key changes: (1) added a no-epic mode to `run_turn` (epic_id=None), with `create_epic` retro-stamping the inbound message and bot_turn (FLAG-001/issue_hints-1/callers); (2) split parser into lenient `parse()` + strict `validate_for_write()` so reads/time-travel survive malformed bodies (FLAG-002/correctness-1); (3) redefined `_preamble` to include the `# Title` line per spec \u00a72606, making `replace_section('_preamble', ...)` the canonical title-edit path (issue_hints-2); (4) `reverted_to` events now snapshot full pre-revert body + checklist in `prior_state` so backward replay works across reverts (FLAG-003/correctness-2); (5) `create_epic` writes `epics.title`/`goal` exclusively from parsed values, never raw args (correctness-3); (6) read tools register with `operation_kind='read'` (scope-1); (7) `edit_epic.changes.meta` is explicitly rejected with `meta_not_supported` and a hint to use body sections (scope-2); (8) added `_EPIC_COLUMNS` and `_CHECKLIST_COLUMNS` to both Store adapters and extended `_MESSAGE_COLUMNS`/`_TURN_COLUMNS` to allow the bootstrap `epic_id` retro-stamp (all_locations). Integration test gained explicit assertions for each critique fix (title-via-preamble, time-travel-across-revert, meta_not_supported, operation_kind values).",
+  "flags_addressed": [
+    {
+      "id": "FLAG-001",
+      "resolution": "addressed",
+      "reason": "run_turn now accepts epic_id=None; lock acquisition and load_hot_context are skipped; create_epic retro-stamps the inbound message and bot_turn rows. CLI gets a no-epic invocation path. Integration test exercises the bootstrap turn end-to-end."
+    },
+    {
+      "id": "FLAG-002",
+      "resolution": "addressed",
+      "reason": "Parser split: parse() is now explicitly lenient and never raises; validate_for_write() is strict and called only by write paths. Round-trip fixtures and time-travel/read tools exercise the lenient path."
+    },
+    {
+      "id": "FLAG-003",
+      "resolution": "addressed",
+      "reason": "revert now captures the full pre-revert body + checklist snapshot in the new reverted_to event's prior_state, so backward replay across a revert restores the immediately-pre-revert state. Integration test asserts get_epic_at_time(T_just_before_revert) matches the captured snapshot."
+    },
+    {
+      "id": "issue_hints-1",
+      "resolution": "addressed",
+      "reason": "Same fix as FLAG-001: run_turn(epic_id=None) is a first-class mode and create_epic retro-stamps the message + turn after commit."
+    },
+    {
+      "id": "issue_hints-2",
+      "resolution": "addressed",
+      "reason": "_preamble is redefined to include the # Title line and any leading text up to the first ## heading, matching spec \u00a72606. replace_section('_preamble', '# New Title\\n') is the canonical title-edit path; rename_section to/from _preamble is rejected. Integration test exercises the title-via-preamble case."
+    },
+    {
+      "id": "correctness-1",
+      "resolution": "addressed",
+      "reason": "Same fix as FLAG-002: parse() is lenient, validate_for_write() is strict and only used on writes. Read tools and get_epic_at_time work against legacy/malformed bodies without raising."
+    },
+    {
+      "id": "correctness-2",
+      "resolution": "addressed",
+      "reason": "Same fix as FLAG-003: reverted_to event prior_state now contains the full pre-revert state."
+    },
+    {
+      "id": "correctness-3",
+      "resolution": "addressed",
+      "reason": "create_epic now passes parsed.title and parsed.goal_first_paragraph (not the raw arguments) to store.create_epic. The body parser is the only writer of epics.title and epics.goal, matching spec \u00a71314\u20131316."
+    },
+    {
+      "id": "scope-1",
+      "resolution": "addressed",
+      "reason": "All read tools (get_epic, get_section_names, get_history, get_self_understanding, get_epic_at_time, get_recent_turns, search_tool_calls) register with operation_kind='read'. Integration test asserts correct operation_kind in tool_calls rows."
+    },
+    {
+      "id": "scope-2",
+      "resolution": "addressed",
+      "reason": "edit_epic explicitly rejects changes.meta with error='meta_not_supported' and a hint pointing to body.sections._preamble (for title) or body.sections.Goal (for goal). Asserted in the integration test."
+    },
+    {
+      "id": "all_locations",
+      "resolution": "addressed",
+      "reason": "Both adapters gain module-level _EPIC_COLUMNS and _CHECKLIST_COLUMNS constants wired through the existing _update helper, mirroring _MESSAGE_COLUMNS/_TURN_COLUMNS/_IMAGE_COLUMNS. _MESSAGE_COLUMNS and _TURN_COLUMNS are extended to include 'epic_id' so the bootstrap retro-stamp uses guarded updates."
+    },
+    {
+      "id": "callers",
+      "resolution": "addressed",
+      "reason": "Same fix as FLAG-001: run_turn callers can pass epic_id=None for the bootstrap; existing callers (tests/test_run_turn.py) keep passing an epic_id and remain unchanged. The no-epic path is purely additive."
+    }
+  ],
+  "questions": [
+    "Should the no-epic bootstrap path also handle 'user typed a question that doesn't warrant creating an epic' (e.g., greetings, meta-questions)? Plan currently assumes the bot either calls create_epic or sends a message-only response; a turn that ends with epic_id still NULL is treated as a successful no-op (epic_outline log skipped). Is that acceptable, or should we reject turn completion if epic_id is still NULL after the model loop?",
+    "spec test #7 (planning-bot-spec.md:2606) references a body_version column that does not exist in the current schema. Plan defers introducing body_version, covering the audit/title-update semantics another way. Confirm body_version is fine to skip in Sprint 2a, or pull it forward as a one-line column add in migration 004?",
+    "get_epic_at_time across reverts: the plan handles the simple case (body+checklist snapshot in reverted_to.prior_state lets backward replay restore the immediate pre-revert state). Does the spec require correct reconstruction at timestamps that fall *between* a body_edit event and a revert that undoes it (e.g., T was after the edit but before the revert)? Backward replay handles that naturally; flagging in case the desired semantics differ."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Postgres migration 004 and SQLite migration 004 create checklist_items and epic_events with the columns, CHECK constraints, FK ON DELETE behaviour, and indexes specified in spec \u00a71322 and \u00a71381.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "body.parse() is lenient and returns a ParsedBody for empty input, plain-text input, bodies with no '##' headings, bodies missing '# Title', and bodies missing '## Goal' \u2014 without raising. Integration tools (get_epic, get_epic_at_time) work against these inputs.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "body.validate_for_write() raises BodyValidationError('body_missing_required_section: title') when parsed.title is None or empty, and 'body_missing_required_section: goal' when parsed.goal_first_paragraph is None or empty. Write tools surface this as a structured tool result error.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Body parser round-trip identity holds: serialize(parse(body)) == body for \u22656 fixture bodies including preamble-only (no '##'), single section, full design-doc template, sub-headings, fenced code containing '##', and a body with non-empty preamble before the first section.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "_preamble section addressing covers the '# Title' line per spec \u00a72606: replace_section(parsed, '_preamble', '# New Title\\n') round-trips to ParsedBody with title='New Title'; replace_section(parsed, '_preamble', '') round-trips to title=None and validate_for_write rejects it with body_missing_required_section: title.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "create_epic creates an epics row whose title and goal columns equal parse(rendered_template).title and .goal_first_paragraph respectively (not the raw input arguments), seeds 18 default checklist items with status='open' and source='default_seed', and writes one 'created' epic_event sharing a transaction_id.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "run_turn(epic_id=None, input=...) executes without acquiring an epic_locks row, creates an inbound message and bot_turn with epic_id=NULL, and \u2014 when create_epic fires within the turn \u2014 retro-stamps both rows with the new epic_id by the time the turn completes.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic body section operations leave every non-targeted section byte-identical (verified by parsing prior_state captured in the body_edit event and comparing every other section's serialised form).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic with expected_diff that does not match (after \\n + trailing-whitespace + trailing-blank-line normalisation) refuses to commit, returns the actual diff, and leaves epics.body, title, goal, and checklist_items untouched.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic with expected_diff that matches commits normally and writes one event per affected family (body_edit, checklist_change) sharing a single transaction_id.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic rejects changes.meta with error='meta_not_supported' and a hint string referencing body.sections._preamble or body.sections.Goal; epics row is unchanged.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "revert(epic_id) with no event_id undoes the entire most-recent transaction (body, title, goal, and checklist together) and appends a 'reverted_to' event whose prior_state captures the full pre-revert body and checklist; the resulting body is byte-equal to the pre-edit body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "get_epic_at_time(epic_id, T) returns body and checklist state equal to what was committed at the most recent event with occurred_at <= T \u2014 including timestamps that fall just before a revert (verifies reverted_to.prior_state captures enough state for backward replay).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "get_recent_turns(5) returns the 5 most-recent bot_turns rows (most-recent first) with summaries; search_tool_calls(tool_name='edit_epic', epic_id=X) returns every edit_epic call against epic X with arguments and timestamps.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "All read tools (get_epic, get_section_names, get_history, get_self_understanding, get_epic_at_time, get_recent_turns, search_tool_calls) record operation_kind='read' in tool_calls; all write tools (create_epic, edit_epic, revert, render_epic) record operation_kind='write'.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "After every turn whose tool_calls include create_epic, edit_epic, or revert, exactly one system_logs row exists with category='application', event_type='epic_outline', turn_id=<that turn>, and details containing title plus a sections array with name + line_count for every section in the body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "10-turn FakeModel-driven integration fixture in tests/test_editorial_loop.py runs end-to-end starting from epic_id=None, exercises all six default sections, exercises both expected_diff match and mismatch, exercises title editing via _preamble, exercises revert with backward replay across the revert, and asserts every Sprint 2a acceptance criterion in spec \u00a7131\u2013142.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "All pre-existing tests in tests/ continue to pass (no regression in Sprint 1a/1b functionality, including resident-mode test_resident*, test_discord_*, and test_run_turn variants).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Both Store adapters expose _EPIC_COLUMNS and _CHECKLIST_COLUMNS allowed-column sets and route update_epic / update_checklist_item through the existing _update helper, matching the _MESSAGE_COLUMNS / _TURN_COLUMNS / _IMAGE_COLUMNS pattern. _MESSAGE_COLUMNS and _TURN_COLUMNS include 'epic_id' so the bootstrap retro-stamp passes column safety.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Body parser and section-op modules stay focused: the public surface is parse, serialize, validate_for_write, the section ops, compute_diff, diffs_equivalent, outline. No tool-layer or Store imports leak into agent_kit/body.py.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "edit_epic rejects requests mixing two body op flavours (e.g. new_content + sections) with error='body_op_conflict' rather than silently picking one.",
+      "priority": "should",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "agent_kit/body.py stays under ~450 lines and has no third-party dependencies beyond the standard library (difflib, re).",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Sprint 2a stays invocation-mode only; no resident-mode behaviour changes.",
+    "Sprints, sprint_items, codebases, code_artifacts, feedback, second_opinions, and image generation are out of scope. edit_epic.changes.sprints and changes.state return not_yet_supported.",
+    "edit_epic.changes.meta is explicitly rejected with meta_not_supported and a hint to edit via body.sections._preamble (for title) or body.sections.Goal (for goal); title and goal are derived columns whose only writer is the body parser.",
+    "_preamble is the raw text from byte 0 up to (but not including) the first ## line, INCLUDING the # Title line and any blank/leading lines before the first section. replace_section('_preamble', '# New Title\\n') is the canonical title-edit path per spec \u00a72606. rename_section from/to '_preamble' is rejected.",
+    "parse() is lenient and never raises on missing #/## headings, malformed input, or empty bodies. validate_for_write() is the only place that raises body_missing_required_section, and is called only on write paths.",
+    "Default body template ships with one variant (design-doc); create_epic accepts (title, goal) and constructs the body from the template, then derives epics.title and epics.goal from parse() output \u2014 raw args are template inputs only.",
+    "Default checklist seed is unconditional (all 18 items); adaptation lives in the bot's prompt/decisions, not server-side at create time.",
+    "expected_diff equivalence: line endings normalised to \\n, per-line trailing whitespace stripped, trailing blank lines dropped, then byte-equal compare.",
+    "render_epic supports format='markdown' only in v1; format='html' returns not_yet_supported. Image-reference resolution is a Sprint 6 no-op.",
+    "epic_outline log fires on any turn whose tool_calls include create_epic, edit_epic, or revert; pure-read turns and failed turns skip the log.",
+    "Single-writer concurrency via existing epic_locks + per-edit_epic store.transaction is sufficient. The new no-epic mode skips lock acquisition entirely (no lock contention possible before an epic exists).",
+    "run_turn gains an Optional epic_id parameter (None = no-epic mode). Existing callers in tests/test_run_turn.py and resident mode keep passing a concrete epic_id and remain unchanged. Bootstrap retro-stamps the inbound message and bot_turn with the new epic_id once create_epic commits.",
+    "spec test #7 (planning-bot-spec.md:2606) references body_version, but that column does not exist in the current schema; we cover the title/body sync semantics (title updates atomically with body, audit captures the change) without introducing body_version. Adding the column is deferred unless a later sprint requires it.",
+    "All read tools register with operation_kind='read'; write tools register with operation_kind='write'. The default ('write') is overridden explicitly so audit semantics are correct.",
+    "The existing megaplan/ directory is harness state and is left untouched; CLAUDE.md's prohibition applies to creating one, not the existing path."
+  ],
+  "delta_from_previous_percent": 60.45,
+  "structure_warnings": []
+}

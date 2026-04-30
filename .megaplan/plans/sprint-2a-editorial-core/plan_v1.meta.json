@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-30T05:19:39Z",
+  "hash": "sha256:55da79b2775c5dfce81878da5a6ed5d307144229a858dbb11d6d4e334c7b5a2e",
+  "questions": [
+    "Tool surface scope: the brief lists `get_history`, `get_self_understanding`, `get_epic_at_time`, `get_recent_turns`, `search_tool_calls`, `get_section_names` as read tools but the spec also mentions `get_body_outline` and `search_in_body`. Spec \u00a7163 explicitly defers those last two to Sprint 2b. Plan defers them \u2014 confirm that's correct and we're not pulling them forward.",
+    "Locking semantics: an `edit_epic` mutates `epics.body` and inserts events while the existing `epic_locks` row is held by the turn (loop.py acquires it). Are concurrent invocation-mode runs against the same epic in scope for Sprint 2a, or is single-writer-by-construction acceptable (matching Sprint 1b's posture)?",
+    "`get_epic_at_time` reconstruction: spec \u00a71678 says \"replays epic_events\". Since we only store `prior_state` (not post-state), the natural implementation is to replay *backwards* from the current state \u2014 undoing every event with `occurred_at > T`. That gives the exact spec semantics. Confirm this read direction is fine, or do you want a forward-replay path that records post_state on every event?",
+    "Default checklist seed adaptation: the brief mentions \"default checklist seed \u2014 18 items with adaptation logic.\" Sprint 2a's acceptance criterion only requires the bot to seed all 18. Adaptation (drop #1 if obvious, drop #6 if no codebase, etc.) seems to belong in the bot's prompt/decision-making, not server-side at create time. Should the seed code be unconditional in v1, with adaptation deferred to the system prompt later in this sprint or Sprint 2b?",
+    "Sprints/state path in `edit_epic`: Sprint 4 owns `state.target` gating and the full sprints schema. Plan returns `not_yet_supported` if the bot calls those paths in Sprint 2a. Acceptable, or should we accept-and-store-only (so the server doesn't reject mid-transaction if the bot speculatively includes them)?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Postgres migration 004 and SQLite migration 004 create checklist_items and epic_events with the columns, CHECK constraints, FK ON DELETE behaviour, and indexes specified in spec \u00a71322 and \u00a71381.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Body parser round-trip identity holds: serialize(parse(body)) == body for \u22656 fixture bodies including preamble-only, single section, full design-doc template, sub-headings, fenced code containing '##', and a body with non-empty preamble.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Body parser rejects writes that would leave '# Title' missing or '## Goal' first paragraph empty, with errors body_missing_required_section: title and \u2026: goal respectively.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "create_epic creates an epics row with parser-derived title and goal, seeds 18 default checklist items with status='open' and source='default_seed', and writes one 'created' epic_event sharing a transaction_id.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic body section operations leave every non-targeted section byte-identical (verified by parsing prior_state captured in the body_edit event and comparing every other section's serialised form).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic with expected_diff that does not match (after \\n + trailing-whitespace normalisation) refuses to commit, returns the actual diff, and leaves epics.body, title, goal, and checklist_items untouched.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "edit_epic with expected_diff that matches commits normally and writes one event per affected family (body_edit, checklist_change) sharing a single transaction_id.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "revert(epic_id) with no event_id undoes the entire most-recent transaction (body and checklist together) and appends a 'reverted_to' event with a new transaction_id; the resulting body is byte-equal to the pre-edit body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "get_epic_at_time(epic_id, T) returns body and checklist state equal to what was committed at the most recent event with occurred_at <= T (verified against an explicit replay computed inside the test fixture).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "get_recent_turns(5) returns the 5 most-recent bot_turns rows (most-recent first) with summaries; search_tool_calls(tool_name='edit_epic', epic_id=X) returns every edit_epic call against epic X with arguments and timestamps.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "After every turn whose tool_calls include create_epic, edit_epic, or revert, exactly one system_logs row exists with category='application', event_type='epic_outline', turn_id=<that turn>, and details containing title plus a sections array with name + line_count for every section in the body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "10-turn FakeModel-driven integration fixture in tests/test_editorial_loop.py runs end-to-end, exercises all six default sections, exercises both expected_diff match and mismatch paths, and exercises revert; final assertions cover every Sprint 2a acceptance criterion in spec \u00a7131\u2013142.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "All pre-existing tests in tests/ continue to pass (no regression in Sprint 1a/1b functionality).",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Body parser and section-op modules stay focused: the public surface is parse, serialize, the section ops, validate_required, compute_diff, diffs_equivalent, outline. No tool-layer or Store imports leak into agent_kit/body.py.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "edit_epic rejects requests mixing two body op flavours (e.g. new_content + sections) with a clear error rather than silently picking one.",
+      "priority": "should",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "agent_kit/body.py stays under ~400 lines and has no third-party dependencies beyond the standard library (difflib, re).",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Sprint 2a is invocation-mode only \u2014 no Discord/resident-mode behavior changes. Resident send_message and friends keep working but no new resident wiring is needed.",
+    "Sprints, state transitions, codebases, code_artifacts, feedback, second_opinions, and image generation are explicitly out of scope. edit_epic returns 'not_yet_supported' when the bot includes changes.sprints or changes.state.",
+    "Default body template ships with one variant (design-doc); the create_epic tool's `template` parameter from spec \u00a7534 is deferred since only one value would be valid. If needed later, it's an additive change.",
+    "Default checklist seed is unconditional in v1 \u2014 all 18 items inserted on every create_epic. Adaptation logic (drop items based on goal phrasing) is the bot's job via subsequent edit_epic calls and lives in the system prompt, not server-side.",
+    "expected_diff comparison normalises line endings to \\n and strips trailing whitespace per line per spec \u00a7494; trailing blank lines are also dropped before equality.",
+    "get_epic_at_time uses backwards-replay from the current state (undo every event with occurred_at > T) since prior_state is the only snapshot we record. Tied timestamps order by (occurred_at, id).",
+    "get_self_understanding ships a 5-field summary (goal, state, open checklist count, section names, last 3 events) \u2014 the full 7-section structure described in spec \u00a71068 lands as later-sprint enrichment.",
+    "render_epic supports format='markdown' only in v1; format='html' returns 'not_yet_supported'. Image-reference resolution is a no-op until Sprint 6.",
+    "epic_outline log fires for any turn whose tool_calls touched create_epic, edit_epic, or revert \u2014 pure-read turns don't emit the log, matching the spec wording 'turn that touched an epic'.",
+    "Single-writer concurrency is acceptable; the existing `epic_locks` mechanism plus the per-edit_epic store.transaction wrapper is sufficient. No additional locking is added in Sprint 2a.",
+    "The repo's existing `megaplan/` directory is harness state and is left untouched; CLAUDE.md's prohibition applies to creating it, not to its presence."
+  ],
+  "structure_warnings": []
+}

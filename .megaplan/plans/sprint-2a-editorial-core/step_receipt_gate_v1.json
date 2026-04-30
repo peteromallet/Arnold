@@ -1,0 +1,34 @@
+{
+  "receipt_id": "7bdf8ade-2a4d-469d-aaa5-137a70020df3",
+  "plan_id": "sprint-2a-editorial-core",
+  "phase": "gate",
+  "iteration": 1,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T05:23:46.510048+00:00",
+  "profile_name": null,
+  "agent": "claude",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "272e7d91-ae87-4a08-a03f-65165b208ce2",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "27f82ef2ecd1690a51b643fea148d628dfd7e4c488479f45628def4696cd6152",
+  "prompt_hash_canonical": "893867edaaa57f674522094bba5615427b0a71d60065dc3afe5b54052c6613e1",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [
+    "sha256:c09a9e0cd03350cef8a317ac90541f6b4eda88e789b3c6eb2d9bd906bd7334b0"
+  ],
+  "cost_usd": 0.431264,
+  "duration_ms": 47906,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "recommendation": "ITERATE",
+    "blocking_flags_resolved": 0,
+    "blocking_flags_remaining": 0,
+    "override_forced": false
+  },
+  "scope_drift_severity": null
+}

@@ -1,0 +1,38 @@
+{
+  "task_updates": [
+    {
+      "id": "T18",
+      "status": "done",
+      "executor_notes": "Added the editorial loop integration coverage for the 10-turn SQLite/FakeModel flow, no-epic bootstrap, CLI no-epic subprocess, errored no-epic schema validation, all six section edits, _preamble title edit, expected_diff match/mismatch, checklist update/revert, history replay, recent turns, tool-call search, operation_kind auditing, meta rejection, and epic_outline logs. Added arnold/__main__.py for the required python -m arnold turn path and fixed epic_outline details persistence so system_logs.details contains sections directly. Verified tests/test_editorial_loop.py passes, py_compile passes for touched modules, git diff --check passes, and full python -m pytest -x runs until the known pre-existing leaked Supabase JWT prefix failure in .megaplan/plans/sprint-1b-discord-resident/*.",
+      "files_changed": [
+        "agent_kit/loop.py",
+        "arnold/__main__.py",
+        "tests/test_editorial_loop.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_editorial_loop.py -q",
+        "python -m pytest -x",
+        "python -m py_compile arnold/__main__.py agent_kit/loop.py tests/test_editorial_loop.py",
+        "git diff --check",
+        "git status --short"
+      ],
+      "task_id": "T18"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC18",
+      "executor_note": "Yes. The integration tests cover bootstrap envelope == new_id, CLI subprocess no-epic path, errored-no-epic envelope schema validity, all six sections via section ops, _preamble title edit, expected_diff match and mismatch, revert with full reverted_to prior_state, get_epic_at_time across turn 5, before revert, and before creation, get_recent_turns, search_tool_calls, operation_kind values, meta_not_supported, and epic_outline logs.",
+      "verdict": "passed",
+      "sense_check_id": "SC18"
+    }
+  ],
+  "deviations": [
+    "Advisory quality: tests/test_editorial_loop.py grew by 538 lines (threshold 200).",
+    "Advisory quality: agent_kit/loop.py adds unused imports: agent_kit.tools.communication, agent_kit.tools.editorial, agent_kit.tools.editorial_reads, agent_kit.tools.images.",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .megaplan/plans/sprint-2a-editorial-core/execution_batch_6.json, agent_kit/loop.py, arnold/__main__.py, tests/test_editorial_loop.py",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/sprint-2a-editorial-core/.plan.lock, .megaplan/plans/sprint-2a-editorial-core/critique_output.json, .megaplan/plans/sprint-2a-editorial-core/critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/execution_audit.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_1.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_4.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_5.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_6.json, .megaplan/plans/sprint-2a-editorial-core/faults.json, .megaplan/plans/sprint-2a-editorial-core/final.md, .megaplan/plans/sprint-2a-editorial-core/finalize.json, .megaplan/plans/sprint-2a-editorial-core/finalize_snapshot.json, .megaplan/plans/sprint-2a-editorial-core/gate.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v1.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v2.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v3.json, .megaplan/plans/sprint-2a-editorial-core/plan_v1.md, .megaplan/plans/sprint-2a-editorial-core/plan_v1.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v2.md, .megaplan/plans/sprint-2a-editorial-core/plan_v2.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v3.md, .megaplan/plans/sprint-2a-editorial-core/plan_v3.meta.json, .megaplan/plans/sprint-2a-editorial-core/state.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_finalize_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_plan_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v3.json",
+    "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment."
+  ]
+}

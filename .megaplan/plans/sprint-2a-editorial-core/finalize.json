@@ -1,0 +1,898 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Create Postgres migration `supabase/migrations/202604300004_004_editorial_core.sql` adding `checklist_items` (id TEXT PK, epic_id TEXT NOT NULL FK\u2192epics ON DELETE CASCADE, content TEXT NOT NULL, status TEXT CHECK IN ('open','done','skipped','superseded'), position INTEGER NOT NULL, source TEXT CHECK IN ('bot_inferred','user_requested','carried_over','default_seed','second_opinion'), skip_reason TEXT, superseded_by_item_id TEXT FK\u2192checklist_items, created_at TIMESTAMPTZ DEFAULT now(), completed_at TIMESTAMPTZ; index (epic_id,status,position)) and `epic_events` (id TEXT PK, epic_id TEXT NOT NULL FK\u2192epics ON DELETE CASCADE, transaction_id TEXT NOT NULL, event_type TEXT CHECK IN the 12 listed kinds, summary TEXT NOT NULL, prior_state JSONB, turn_id TEXT FK\u2192bot_turns ON DELETE SET NULL, occurred_at TIMESTAMPTZ DEFAULT now(); indexes (epic_id, occurred_at DESC) and (transaction_id)). Match spec \u00a71322 and \u00a71381 exactly.",
+      "depends_on": [],
+      "status": "done",
+      "executor_notes": "Added Postgres migration 202604300004_004_editorial_core.sql with checklist_items and epic_events, requested CHECK constraints, FK delete behavior, and indexes. Smoke-checked all 12 event_type values and required index/FK text.",
+      "files_changed": [
+        "supabase/migrations/202604300004_004_editorial_core.sql"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... migration smoke ... PY"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "supabase/migrations/202604300004_004_editorial_core.sql"
+      ],
+      "reviewer_verdict": "Pass. Postgres migration matches required editorial tables and indexes.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T2",
+      "description": "Create SQLite mirror `agent_kit/store/migrations/sqlite/004_editorial_core.sql` (TEXT for everything, prior_state TEXT JSON blob, equivalent CHECK constraints and indexes). Register `prior_state` in `_JSON_COLUMNS` in both `agent_kit/store/sqlite.py:17` and `agent_kit/store/supabase.py:12` (verify the exact line locations).",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "executor_notes": "Added SQLite 004_editorial_core.sql with checklist_items and epic_events, CHECK constraints, FK behavior, indexes, and prior_state as TEXT. Added prior_state to _JSON_COLUMNS in both SQLiteStore and SupabaseStore. Verified by static checks and SQLite migration smoke against a fresh database.",
+      "files_changed": [
+        "agent_kit/store/migrations/sqlite/004_editorial_core.sql",
+        "agent_kit/store/sqlite.py",
+        "agent_kit/store/supabase.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... sqlite migration smoke ... PY",
+        "python - <<'PY' ... T2 static checks ... PY"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/store/migrations/sqlite/004_editorial_core.sql",
+        "agent_kit/store/sqlite.py",
+        "agent_kit/store/supabase.py"
+      ],
+      "reviewer_verdict": "Pass. SQLite migration and prior_state JSON registration are present.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T3",
+      "description": "Add `checklist_items` and `epic_events` to the `TRUNCATE TABLE \u2026 RESTART IDENTITY CASCADE` block in `tests/test_supabase_store.py` (around line 33).",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "executor_notes": "Added checklist_items and epic_events to the Supabase truncate block before parent tables. Static check confirmed both names are in the TRUNCATE block before epics. Live Supabase test file skips without SUPABASE_TEST_DB_URL.",
+      "files_changed": [
+        "tests/test_supabase_store.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... T3 static checks ... PY",
+        "python -m pytest tests/test_supabase_store.py -q"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "tests/test_supabase_store.py"
+      ],
+      "reviewer_verdict": "Pass. Supabase truncate fixture includes new tables.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T4",
+      "description": "Create `agent_kit/body.py` with public surface only: `parse(body) -> ParsedBody` (lenient, never raises; ParsedBody has title|None, goal_first_paragraph|None, preamble (raw text from byte 0 up to but not including first `##`, INCLUDING `# Title` line), sections list); `serialize(parsed) -> str` (round-trip identity); `validate_for_write(parsed)` raising `BodyValidationError('body_missing_required_section: title'|'\u2026goal')`; `outline(parsed)`; section ops `replace_section`, `append_to_section`, `add_section(position='after:Foo'|'before:Foo'|'start'|'end')`, `remove_section`, `rename_section`, `reorder` with typed errors `SectionNotFound`/`SectionExists`/`InvalidPosition`; `_preamble` addressable for replace; rename to/from `_preamble` rejected; `compute_diff` (difflib unified_diff with n=3); `diffs_equivalent` (\\r\\n\u2192\\n, strip trailing whitespace per line, drop trailing blank lines). Heading regex `^##\\s+(.+?)\\s*$` at top level only; track ``` and ~~~ fences so fenced `##` is not a section boundary; sub-sections (### and below) part of parent; section names case-sensitive. No third-party deps beyond stdlib (difflib, re). No imports of Store/ports/tool_kit. Stay under ~450 lines.",
+      "depends_on": [],
+      "status": "done",
+      "executor_notes": "Added stdlib-only body parser/editor module. Smoke covered lenient parse cases, identity roundtrip, _preamble title handling, fenced ## handling, required validation messages, section byte preservation, and diff equivalence. File is 253 lines.",
+      "files_changed": [
+        "agent_kit/body.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... body/template smoke ... PY",
+        "python -m py_compile agent_kit/body.py agent_kit/templates.py agent_kit/ports.py agent_kit/envelope.py"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/body.py"
+      ],
+      "reviewer_verdict": "Pass. Body parser implements lenient parse, strict validation, section ops, and diff helpers.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T5",
+      "description": "Create `agent_kit/templates.py` with `DEFAULT_BODY_TEMPLATE(title, goal) -> str` emitting a six-section design-doc skeleton (Goal, Principles, Context, Key Decisions, Open Questions, Deliverable; `# Title` first line and `## Goal` first paragraph populated from args), and `DEFAULT_CHECKLIST_SEED: list[str]` of the 18 items from spec \u00a7634, all `source='default_seed'`, `status='open'`, positions 1\u201318. No adaptation logic in v1.",
+      "depends_on": [],
+      "status": "done",
+      "executor_notes": "Added DEFAULT_BODY_TEMPLATE with # Title plus the six requested sections and populated Goal first paragraph. Added the 18 default checklist seed strings in spec order; v1 contains no adaptation logic.",
+      "files_changed": [
+        "agent_kit/templates.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... body/template smoke ... PY"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/templates.py"
+      ],
+      "reviewer_verdict": "Pass. Template and 18 checklist seed items are implemented.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T6",
+      "description": "Create `tests/test_body_parser.py` covering: round-trip identity for \u22656 fixtures (preamble-only, single section, six-section template, sub-headings, fenced ` ```\\n## Inside\\n``` `, non-empty preamble before first `##`); section ops leave non-targeted sections byte-equal; `_preamble` covers title (`replace_section('_preamble', '# New Title\\n')` \u2192 title=='New Title'; replace with `''` \u2192 title=None and `validate_for_write` raises `body_missing_required_section: title`); lenient parse on `''`, `'just text\\n'`, `'## Goal\\n\\ngoal\\n'` (no title), `'# Title\\n'` (no Goal), `'# Title\\n\\n## NotGoal\\n\\nx\\n'` \u2014 all return ParsedBody without raising and `validate_for_write` rejects each; code-fence guard parses as single preamble; `diffs_equivalent` true on \\r\\n / trailing-space / trailing-blank-line differences only, false on real content delta.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "executor_notes": "Added parser tests covering six roundtrip fixtures, section ops preserving untouched sections, _preamble title replacement/removal validation, five lenient parse cases, fenced ## as preamble-only, and diffs_equivalent boundary cases. The full test file passes.",
+      "files_changed": [
+        "tests/test_body_parser.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_body_parser.py -q"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "tests/test_body_parser.py"
+      ],
+      "reviewer_verdict": "Pass. Parser tests cover required fixtures and passed.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T7",
+      "description": "Extend `Store` Protocol in `agent_kit/ports.py` with the editorial surface: `create_epic(*, title, goal, body, state='shaping')`, `load_epic(epic_id)`, `update_epic(epic_id, **changes)` guarded by `_EPIC_COLUMNS = {'title','goal','body','state','last_edited_at','last_active_at','planned_at'}`, `seed_checklist(epic_id, items)`, `list_checklist_items(epic_id, *, status=None)`, `update_checklist_item(item_id, **changes)` guarded by `_CHECKLIST_COLUMNS = {'content','status','position','skip_reason','superseded_by_item_id','completed_at'}`, `add_checklist_items`, `delete_checklist_items`, `replace_checklist`, `record_epic_event(*, epic_id, transaction_id, event_type, summary, prior_state, turn_id)`, `list_epic_events(epic_id, *, since=None, until=None, kinds=None, limit=None)` ordered `(occurred_at, id) ASC`, `latest_transaction_id(epic_id)`, `events_by_transaction(transaction_id)`, `list_recent_turns(*, n=10, epic_id=None)`, `search_tool_calls_by(*, tool_name=None, epic_id=None, since=None, limit=20)`. Update `Store.create_turn` Protocol signature to `epic_id: str | None`. Verify `create_message`, `update_message`, `update_turn`, `log_system_event` already accept `epic_id: str | None`.",
+      "depends_on": [],
+      "status": "done",
+      "executor_notes": "Extended Store Protocol with editorial methods, _EPIC_COLUMNS/_CHECKLIST_COLUMNS guard sets, and create_turn(epic_id: str | None). Existing create_message, update_message, update_turn, and log_system_event already accept nullable epic_id through kwargs or explicit typing.",
+      "files_changed": [
+        "agent_kit/ports.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/body.py agent_kit/templates.py agent_kit/ports.py agent_kit/envelope.py",
+        "python -m pytest tests/test_envelope.py tests/test_ports_v1b.py -q"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/ports.py"
+      ],
+      "reviewer_verdict": "Pass. Store Protocol includes editorial surface and nullable create_turn.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T8",
+      "description": "Implement the new Store surface in `agent_kit/store/supabase.py` using existing `_normalize`/`_json` helpers and `_new_id` (prefixes `'epic'`, `'check'`, `'evt'`). Add module-level `_EPIC_COLUMNS` and `_CHECKLIST_COLUMNS` next to `_MESSAGE_COLUMNS`/`_TURN_COLUMNS`/`_IMAGE_COLUMNS`; route `update_epic` and `update_checklist_item` through `self._update`. Add `'epic_id'` to `_TURN_COLUMNS` and `_MESSAGE_COLUMNS`. Confirm `create_turn` accepts `epic_id: str | None` and the existing INSERT (around `agent_kit/store/supabase.py:113`) passes it through (Postgres allows NULL on `bot_turns.epic_id`).",
+      "depends_on": [
+        "T7",
+        "T2"
+      ],
+      "status": "done",
+      "executor_notes": "Implemented SupabaseStore editorial methods, epic/checklist column guards, epic_id guarded-update support on messages/turns, nullable create_turn(epic_id), and id prefixes epic/check/evt. Verified by py_compile, static method/constant/prefix checks, and the Supabase test module skip behavior without SUPABASE_TEST_DB_URL.",
+      "files_changed": [
+        "agent_kit/store/supabase.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/sqlite.py agent_kit/store/supabase.py agent_kit/loop.py",
+        "python - <<'PY' ... static store checks ... PY",
+        "python - <<'PY' ... T8/T9/T17 static checks ... PY",
+        "python -m pytest tests/test_supabase_store.py -q",
+        "git diff --check"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/store/supabase.py"
+      ],
+      "reviewer_verdict": "Pass. SupabaseStore implements editorial persistence surface and guards.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T9",
+      "description": "Mirror T8 in `agent_kit/store/sqlite.py`: same methods, same `_EPIC_COLUMNS`/`_CHECKLIST_COLUMNS` constants, same `'epic_id'` additions to `_MESSAGE_COLUMNS`/`_TURN_COLUMNS`. Confirm `'prior_state'` is in `_JSON_COLUMNS` (added in T2) and `create_turn` accepts `epic_id: str | None`.",
+      "depends_on": [
+        "T7",
+        "T2"
+      ],
+      "status": "done",
+      "executor_notes": "Implemented SQLiteStore editorial methods mirroring SupabaseStore, added epic/checklist column guards, epic_id guarded-update support on messages/turns, nullable create_turn(epic_id), and preserved prior_state JSON decoding. Verified by py_compile, static checks, SQLite editorial surface smoke, and existing SQLite store test modules.",
+      "files_changed": [
+        "agent_kit/store/sqlite.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/sqlite.py agent_kit/store/supabase.py agent_kit/loop.py",
+        "python - <<'PY' ... static store checks ... PY",
+        "python - <<'PY' ... sqlite editorial surface smoke ... PY",
+        "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q",
+        "git diff --check"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/store/sqlite.py"
+      ],
+      "reviewer_verdict": "Pass. SQLiteStore mirrors editorial persistence surface and guards.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T10",
+      "description": "Extend `tests/store_contract.py` with a tail block that creates an epic, seeds checklist, appends events with shared `transaction_id`s, lists/filters events, queries `latest_transaction_id`, verifies ordering. Add explicit assertion that `create_turn(epic_id=None)` succeeds and the row stores NULL.",
+      "depends_on": [
+        "T8",
+        "T9"
+      ],
+      "status": "done",
+      "executor_notes": "Extended the shared store contract with nullable create_turn persistence, create_epic, seed_checklist, epic event recording, transaction event lookup, event filtering, latest_transaction_id, and ordering assertions. Verified through the full SQLite store contract modules; Supabase contract module still skips without SUPABASE_TEST_DB_URL.",
+      "files_changed": [
+        "tests/store_contract.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_sqlite_store.py -q",
+        "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q",
+        "python -m pytest tests/test_supabase_store.py -q"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "tests/store_contract.py"
+      ],
+      "reviewer_verdict": "Pass. Store contract covers new surface and create_turn(None).",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T11",
+      "description": "Create `agent_kit/tools/editorial.py` with write tools registered via `@register_tool(operation_kind='write')` and explicit JSON schemas: (1) `create_epic(context, title, goal)` \u2014 build body via `templates.DEFAULT_BODY_TEMPLATE(title, goal)`, `parsed = body.parse(rendered)`, `body.validate_for_write(parsed)` (return structured `{'error':'body_missing_required_section', 'field': \u2026}` on `BodyValidationError`); inside `store.transaction()` call `store.create_epic(title=parsed.title, goal=parsed.goal_first_paragraph, body=rendered, state='shaping')` (parsed values, never raw args), `store.seed_checklist(epic['id'], DEFAULT_CHECKLIST_SEED)`, `store.record_epic_event(... event_type='created', summary='Epic created with default design-doc template', prior_state=None, turn_id=context.turn_id)`; retro-stamp `store.update_message(context.metadata['inbound_message_id'], epic_id=epic['id'])` and `store.update_turn(context.turn_id, epic_id=epic['id'])`; set `context.metadata['epic_id']=epic['id']`; return `{epic_id, title, goal, section_names, checklist_count:18, transaction_id}`. (2) `edit_epic(context, epic_id, changes, change_summary, expected_diff?)` \u2014 reject `changes.sprints`/`changes.state` with `not_yet_supported`; reject `changes.meta` with `meta_not_supported` and hint to use `body.sections._preamble` (title) or `body.sections.Goal` (goal); reject mixed body ops (`new_content | sections | append | remove_sections | rename_section | reorder`) with `body_op_conflict`; body path load\u2192parse\u2192apply\u2192serialise\u2192`validate_for_write`\u2192`compute_diff`; if `expected_diff` provided and not `diffs_equivalent` return `{'error':'expected_diff_mismatch', 'actual_diff':...}` and DO NOT write; checklist path snapshot capture; one `store.transaction()` with `transaction_id=uuid4().hex`, `update_epic(epic_id, body=new_body, title=new_parsed.title, goal=new_parsed.goal_first_paragraph, last_edited_at=now())` + `record_epic_event(event_type='body_edit', prior_state={'body':old,'title':old_title,'goal':old_goal})` and per-item checklist ops + `record_epic_event(event_type='checklist_change', prior_state={'items':[...full snapshot...]})`; return `{transaction_id, diff, section_names, change_summary}`. (3) `revert(context, epic_id, event_id?=None)` \u2014 resolve via `events_by_transaction(latest_transaction_id(epic_id))` or by target event's `transaction_id`; capture pre-revert `prior_state = {'body': current_body, 'title': current_title, 'goal': current_goal, 'checklist': [...full snapshot...], 'reverted_transaction_id': txn, 'reverted_event_ids': [...]}`; apply each target event's `prior_state` in reverse (`body_edit`\u2192`update_epic`, `checklist_change`\u2192`replace_checklist`); append `reverted_to` event with the captured pre-revert prior_state; return `{transaction_id, reverted_event_count, summary}`. (4) `render_epic(context, epic_id, format='markdown')` \u2014 markdown returns body as-is; html returns `not_yet_supported`.",
+      "depends_on": [
+        "T4",
+        "T5",
+        "T7",
+        "T8",
+        "T9"
+      ],
+      "status": "done",
+      "executor_notes": "Added editorial write tools create_epic, edit_epic, revert, and render_epic with write operation_kind registration, explicit schemas, parsed title/goal writes, expected_diff refusal before writes, body op conflict/meta/state/sprints error branches, checklist event snapshots, and reverted_to pre-revert snapshots. Verified by py_compile and a SQLite tool smoke covering create/edit expected_diff mismatch and match, meta/conflict errors, revert prior_state, render_epic, and registry operation kinds.",
+      "files_changed": [
+        "agent_kit/tools/editorial.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py tests/store_contract.py",
+        "python - <<'PY' ... editorial tool smoke ... PY"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/tools/editorial.py"
+      ],
+      "reviewer_verdict": "Pass. Write tools implement create/edit/revert/render semantics.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T12",
+      "description": "Create `agent_kit/tools/editorial_reads.py` with read tools registered via `@register_tool(operation_kind='read')`: `get_epic(epic_id, sections=None)` returns `{title, goal, body_full, sections, section_names, state}` using lenient `parse()` (handles legacy/malformed); `get_section_names(epic_id)`; `get_history(epic_id, kind=None, since=None)` returning `list_epic_events(...)` reversed; `get_self_understanding(epic_id)` returns `{goal, state, open_checklist_count, section_names, recent_events: last 3}` with inline note that spec \u00a71068 7-section structure lights up incrementally; `get_epic_at_time(epic_id, timestamp)` \u2014 backward replay from current state, walk events with `occurred_at > timestamp` in descending order, undo using `prior_state` for each (`body_edit`\u2192restore body/title/goal; `checklist_change`\u2192restore items; `reverted_to`\u2192restore from captured pre-revert snapshot; for `created`, when replay rolls past the created event return that event's initial state \u2014 i.e. the template body + 18-item seed checklist captured in prior_state \u2014 rather than empty/None per spec \u00a71678; tied timestamps order by `(occurred_at,id) ASC`); `get_recent_turns(n=10, epic_id=None)` delegates to `store.list_recent_turns` and attaches `change_summary` aggregated from `epic_events.summary` rows with that `turn_id`; `search_tool_calls(tool_name=None, epic_id=None, since=None, limit=20)` delegates to `store.search_tool_calls_by(...)`.",
+      "depends_on": [
+        "T4",
+        "T7",
+        "T8",
+        "T9"
+      ],
+      "status": "done",
+      "executor_notes": "Added editorial read tools get_epic, get_section_names, get_history, get_self_understanding, get_epic_at_time, get_recent_turns, and search_tool_calls with read operation_kind registration. get_epic_at_time replays body_edit, checklist_change, reverted_to, and created snapshots backward using lenient body parsing. Verified by py_compile and SQLite tool smoke covering read payloads, pre-creation initial state replay, recent turns, search delegation, and registry operation kinds.",
+      "files_changed": [
+        "agent_kit/tools/editorial_reads.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py tests/store_contract.py",
+        "python - <<'PY' ... editorial tool smoke ... PY"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/tools/editorial_reads.py"
+      ],
+      "reviewer_verdict": "Pass. Read tools implement section/history/replay/search semantics with read operation_kind.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T13",
+      "description": "Add `import agent_kit.tools.editorial  # noqa: F401` and `import agent_kit.tools.editorial_reads  # noqa: F401` near `agent_kit/loop.py:16` so the new tools register at import time alongside the existing communication tool imports.",
+      "depends_on": [
+        "T11",
+        "T12"
+      ],
+      "status": "done",
+      "executor_notes": "Imported agent_kit.tools.editorial and agent_kit.tools.editorial_reads from loop.py with # noqa: F401 beside the existing tool imports. Verified py_compile, import-time registry contents for all editorial read/write tools, and existing loop/CLI plus store/body/envelope modules.",
+      "files_changed": [
+        "agent_kit/loop.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/loop.py agent_kit/tools/editorial.py agent_kit/tools/editorial_reads.py",
+        "python - <<'PY' ... editorial loop registration checks ... PY",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q",
+        "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q",
+        "python -m pytest tests/test_body_parser.py tests/test_envelope.py -q",
+        "python -m pytest -x",
+        "git diff --check"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/loop.py"
+      ],
+      "reviewer_verdict": "Pass. Loop imports editorial tool modules for registration.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T14",
+      "description": "In `agent_kit/loop.py`, change `run_turn(epic_id: str, \u2026)` \u2192 `run_turn(epic_id: str | None = None, \u2026)`. Wrap `acquire_epic_lock` and the lock-contended early return (lines ~43\u201365) in `if epic_id is not None:` \u2014 when None, skip both. Introduce local `active_epic_id: str | None = epic_id`. Replace every `_envelope(...)` and `_abort_turn(...)` call site (lines ~50, 54, 80, 93, 175, 201, 268, 275, 301, 333, 344, 376) so they read `active_epic_id` instead of the parameter. After every `registry.invoke` call, refresh `active_epic_id = context.metadata.get('epic_id', active_epic_id)`. Inbound message creation (lines ~79\u201385): when epic_id None, create with `epic_id=None`; capture `context.metadata['inbound_message_id'] = inbound['id']`. Turn creation (lines ~92\u2013102): call `store.create_turn(epic_id=active_epic_id, \u2026)`. Hot context (line ~89): when epic_id None, skip `load_hot_context` and synthesize `hot_context = {'epic': None, 'recent_messages': [], 'recent_tool_calls': []}`. Lock release: existing path runs only when lock was acquired, so no change needed for the no-epic branch.",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "executor_notes": "Updated run_turn to accept epic_id=None, skip lock/hot-context when no epic exists, carry active_epic_id through envelope/abort paths, capture inbound_message_id, and refresh active_epic_id after every registry.invoke call. Existing CLI/run_turn modules and no-epic CLI smoke pass.",
+      "files_changed": [
+        "agent_kit/loop.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/loop.py arnold/cli.py agent_kit/store/sqlite.py agent_kit/store/supabase.py",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q",
+        "python - <<'PY' ... no-epic CLI smoke ... PY",
+        "python - <<'PY' ... T14 static checks ... PY"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/loop.py"
+      ],
+      "reviewer_verdict": "Pass. No-epic run_turn and active_epic_id handoff implemented.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T15",
+      "description": "Change `Envelope.epic_id: str` \u2192 `Envelope.epic_id: str | None = None` at `agent_kit/envelope.py:51`. In `agent_kit/envelope.schema.json`, remove `'epic_id'` from the top-level `required` array (around line 7) and change the `epic_id` property (around line 29) to `{\"type\": [\"string\", \"null\"], \"minLength\": 0}` so omitted/null/string all validate. Existing `_drop_none` in `to_dict()` (around `agent_kit/envelope.py:112`) already strips None values from JSON output, so a no-epic envelope serialises without an `epic_id` key \u2014 verify and rely on this.",
+      "depends_on": [],
+      "status": "done",
+      "executor_notes": "Changed Envelope.epic_id to str | None = None, relaxed schema to allow omitted/null/string epic_id, and verified _drop_none omits epic_id when None. Existing envelope tests pass.",
+      "files_changed": [
+        "agent_kit/envelope.py",
+        "agent_kit/envelope.schema.json"
+      ],
+      "commands_run": [
+        "pytest tests/test_envelope.py -q",
+        "python - <<'PY' ... Envelope(epic_id=None) smoke ... PY",
+        "python -m pytest tests/test_envelope.py tests/test_ports_v1b.py -q"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/envelope.py",
+        "agent_kit/envelope.schema.json"
+      ],
+      "reviewer_verdict": "Pass. Envelope/schema nullable epic_id implemented.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T16",
+      "description": "In `arnold/cli.py`: change `turn.add_argument('--epic', required=True)` (around line 45) to `turn.add_argument('--epic', default=None)`. Update run path (around line 90) to pass `epic_id=args.epic` (will be None when omitted). Update exception envelope (around lines 99\u2013112) to keep `epic_id=args.epic`; with `Envelope.epic_id: Optional[str]` from T15, the error envelope serialises correctly. Update help text to mention 'omit `--epic` to start a new epic via natural language; the bot must call `create_epic` first.'",
+      "depends_on": [
+        "T15"
+      ],
+      "status": "done",
+      "executor_notes": "Made --epic optional with default None and help text documenting no-epic bootstrap. Existing run path and exception envelope continue to pass args.epic through; no-epic CLI smoke returned a valid completed envelope without epic_id.",
+      "files_changed": [
+        "arnold/cli.py"
+      ],
+      "commands_run": [
+        "python -m arnold.cli turn --help",
+        "python - <<'PY' ... no-epic CLI smoke ... PY",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "arnold/cli.py"
+      ],
+      "reviewer_verdict": "Pass. CLI --epic is optional and no-epic path is documented.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T17",
+      "description": "In `agent_kit/loop.py`, after `update_turn(status='completed', \u2026)` and before the envelope return, emit the turn-end outline log: if `active_epic_id is not None` AND any `tool_call` this turn had `tool_name in {'create_epic','edit_epic','revert'}`, then `parsed = body.parse(store.load_epic(active_epic_id)['body'])`, `details = body.outline(parsed)`, and call `log(store, 'info', 'application', 'epic_outline', f'Epic outline: {parsed.title or \"(untitled)\"}', details=details, turn_id=turn['id'], epic_id=active_epic_id)`. Skip on `status='failed'` and on turns where `active_epic_id` is still None at the end.",
+      "depends_on": [
+        "T14",
+        "T4"
+      ],
+      "status": "done",
+      "executor_notes": "Added completed-turn epic_outline logging gated on active_epic_id and create_epic/edit_epic/revert tool-call events. Details come from body.outline and include title, sections with line counts, and total_lines. Verified by loop smoke covering emitted and skipped cases, py_compile, and CLI/run_turn test modules.",
+      "files_changed": [
+        "agent_kit/loop.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/sqlite.py agent_kit/store/supabase.py agent_kit/loop.py",
+        "python - <<'PY' ... epic outline loop smoke ... PY",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q",
+        "python -m pytest tests/test_body_parser.py tests/test_envelope.py -q",
+        "git diff --check"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "agent_kit/loop.py"
+      ],
+      "reviewer_verdict": "Pass. epic_outline logging is implemented and gated correctly.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T18",
+      "description": "Create `tests/test_editorial_loop.py` \u2014 10-turn fixture using `FakeModel(script=\u2026)` and `SQLiteStore`. Turn 1: `run_turn(epic_id=None, input='Make me an auth flow design epic')` \u2192 tool_use `create_epic(title='Auth flow design', goal='Decide on auth provider and token storage')` \u2192 final text; assert envelope `epic_id == new_id` (verifies active_epic_id handoff) and inbound message + bot_turn rows have epic_id retro-stamped. Turns 2\u20139: `run_turn(epic_id=new_id)` exercising `edit_epic` against ALL six default sections via `sections` ops, plus a `_preamble` replace that updates the title, plus an `append`, plus a `checklist.update` marking 3 items done; include one `expected_diff` match and one mismatch. Turn 10: `revert` (most recent transaction) \u2192 `send_message`. Assertions covering every Sprint 2a acceptance criterion: bootstrap envelope, no-epic CLI subprocess via `python -m arnold turn --input '...'` returns exit 0 with `epic_id` in JSON (use existing FakeModel env var path from `arnold/cli.py:188`), errored no-epic envelope has `epic_id is None` and validates against schema; epics row + 18 default_seed checklist items + one `created` event after Turn 1; all six sections present; section-only edits leave others byte-identical (verified via `body_edit.prior_state`); whole-body edit then manual revert returns prior body byte-equal; `reverted_to.prior_state` contains body+title+goal+checklist (FLAG-003); `expected_diff` mismatch returns error and leaves DB unchanged; `expected_diff` match commits; title-via-_preamble turn updates `epics.title` and prior_state captures old title; `get_epic_at_time(T_after_turn_5)` matches hand-rolled replay; `get_epic_at_time(T_just_before_revert)` matches pre-revert state; `get_epic_at_time(T_before_creation)` returns the initial template body + 18-item seed (per spec \u00a71678); `get_recent_turns(5)` returns 5 most-recent first; `search_tool_calls(tool_name='edit_epic', epic_id=\u2026)` returns \u22653 rows; `tool_calls.operation_kind` is 'read' for read tools and 'write' for write tools; `edit_epic(changes={'meta':{'title':'X'}})` returns `error='meta_not_supported'`; one `system_logs` row per touching turn with `event_type='epic_outline'`, `category='application'`, `details.sections` containing all six default headings.",
+      "depends_on": [
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T2",
+        "T3",
+        "T10"
+      ],
+      "status": "done",
+      "executor_notes": "Added the editorial loop integration coverage for the 10-turn SQLite/FakeModel flow, no-epic bootstrap, CLI no-epic subprocess, errored no-epic schema validation, all six section edits, _preamble title edit, expected_diff match/mismatch, checklist update/revert, history replay, recent turns, tool-call search, operation_kind auditing, meta rejection, and epic_outline logs. Added arnold/__main__.py for the required python -m arnold turn path and fixed epic_outline details persistence so system_logs.details contains sections directly. Verified tests/test_editorial_loop.py passes, py_compile passes for touched modules, git diff --check passes, and full python -m pytest -x runs until the known pre-existing leaked Supabase JWT prefix failure in .megaplan/plans/sprint-1b-discord-resident/*.",
+      "files_changed": [
+        "agent_kit/loop.py",
+        "arnold/__main__.py",
+        "tests/test_editorial_loop.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_editorial_loop.py -q",
+        "python -m pytest -x",
+        "python -m py_compile arnold/__main__.py agent_kit/loop.py tests/test_editorial_loop.py",
+        "git diff --check",
+        "git status --short"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "tests/test_editorial_loop.py",
+        "arnold/__main__.py"
+      ],
+      "reviewer_verdict": "Pass. Editorial loop integration test covers acceptance criteria and passed.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T19",
+      "description": "Add a JSON schema regression test (in existing `tests/test_envelope.py` if present, otherwise new file). Construct `Envelope(epic_id=None, ...)`, serialise via `to_json()`, validate against `agent_kit/envelope.schema.json` using `jsonschema` (already in `[project.optional-dependencies].test`). Assert validation passes both with `epic_id` omitted (via `_drop_none`) and with explicit `epic_id=null`.",
+      "depends_on": [
+        "T15"
+      ],
+      "status": "done",
+      "executor_notes": "Added envelope schema regression test for Envelope(epic_id=None), validating both omitted epic_id from to_json/_drop_none and explicit epic_id:null against envelope.schema.json. The full envelope test file passes.",
+      "files_changed": [
+        "tests/test_envelope.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_envelope.py -q"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "tests/test_envelope.py"
+      ],
+      "reviewer_verdict": "Pass. Envelope null/omitted schema regression test added.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T20",
+      "description": "Run validation: `pytest tests/test_body_parser.py -x`, then `pytest tests/test_envelope.py tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -x`, then `pytest tests/test_editorial_loop.py -x`, then `pytest -x` for the full suite (must include resident-mode `test_resident*`, `test_discord_*`, `test_run_turn` variants, `test_cli` with no regressions). Read failures, fix the root cause in code, re-run until all pass. Additionally, write a short throwaway script that bootstraps an epic from `epic_id=None` via the CLI/loop to confirm the no-epic flow works end-to-end against SQLite, run it, then delete the script. Do not skip tests or use `--no-verify` to bypass failures.",
+      "depends_on": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T9",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T19"
+      ],
+      "status": "done",
+      "executor_notes": "Ran the required targeted validation modules with python -m pytest: body parser passed 6/6, envelope/sqlite store/sqlite v1b passed 11/11, and editorial loop passed 3/3. Created and ran a throwaway no-epic CLI bootstrap script against SQLite; it returned an epic_id and verified 18 checklist rows, then the script was deleted. Ran the full suite with python -m pytest -x; it reached tests/test_no_leaked_secrets.py after resident/discord/run_turn/cli/editorial coverage had passed, then stopped on the known pre-existing leaked Supabase JWT prefix in .megaplan/plans/sprint-1b-discord-resident/*. git diff --check passed. No task-scoped source changes were made in this batch.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest tests/test_body_parser.py -x",
+        "python -m pytest tests/test_envelope.py tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -x",
+        "python -m pytest tests/test_editorial_loop.py -x",
+        "python .tmp_t20_no_epic_bootstrap.py && rm .tmp_t20_no_epic_bootstrap.py",
+        "python -m pytest -x",
+        "git diff --check",
+        "git status --short"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [
+        "tests/test_no_leaked_secrets.py"
+      ],
+      "reviewer_verdict": "Pass with caveat. Targeted suites pass; full suite stops on unrelated pre-existing secret-scan failure.",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T21",
+      "description": "Surface after_execute user_actions to the user:\n- U1: Optional: provide `SUPABASE_TEST_DB_URL` so the executor can run `pytest tests/test_supabase_store.py` against a real Supabase instance (the spec mentions URL https://yhwflvadmefhkshwbfnf.supabase.co and a service role key). The SQLite contract test in T10 covers the same surface and is the primary CI signal; the Supabase run is an extra confidence check. Skip this user action if you don't want to exercise the Postgres adapter live.\nDo not perform them yourself \u2014 these require human action. Mark this task done once they have been clearly communicated.",
+      "depends_on": [
+        "T20"
+      ],
+      "status": "done",
+      "executor_notes": "Surfaced U1 to the user: optionally provide SUPABASE_TEST_DB_URL to run python -m pytest tests/test_supabase_store.py against a live Supabase/Postgres instance. The SQLite contract coverage from T10 is the primary CI signal; live Supabase is extra confidence. No executor action was taken because credentials/infra are human-provided.",
+      "files_changed": [
+        ".megaplan/debt.json",
+        ".megaplan/plans/sprint-2a-editorial-core/.plan.lock",
+        ".megaplan/plans/sprint-2a-editorial-core/critique_output.json",
+        ".megaplan/plans/sprint-2a-editorial-core/critique_v1.json",
+        ".megaplan/plans/sprint-2a-editorial-core/critique_v2.json",
+        ".megaplan/plans/sprint-2a-editorial-core/critique_v3.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_audit.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_1.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_4.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_5.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_6.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_7.json",
+        ".megaplan/plans/sprint-2a-editorial-core/execution_batch_8.json",
+        ".megaplan/plans/sprint-2a-editorial-core/faults.json",
+        ".megaplan/plans/sprint-2a-editorial-core/final.md",
+        ".megaplan/plans/sprint-2a-editorial-core/finalize.json",
+        ".megaplan/plans/sprint-2a-editorial-core/finalize_snapshot.json",
+        ".megaplan/plans/sprint-2a-editorial-core/gate.json",
+        ".megaplan/plans/sprint-2a-editorial-core/gate_signals_v1.json",
+        ".megaplan/plans/sprint-2a-editorial-core/gate_signals_v2.json",
+        ".megaplan/plans/sprint-2a-editorial-core/gate_signals_v3.json",
+        ".megaplan/plans/sprint-2a-editorial-core/plan_v1.md",
+        ".megaplan/plans/sprint-2a-editorial-core/plan_v1.meta.json",
+        ".megaplan/plans/sprint-2a-editorial-core/plan_v2.md",
+        ".megaplan/plans/sprint-2a-editorial-core/plan_v2.meta.json",
+        ".megaplan/plans/sprint-2a-editorial-core/plan_v3.md",
+        ".megaplan/plans/sprint-2a-editorial-core/plan_v3.meta.json",
+        ".megaplan/plans/sprint-2a-editorial-core/state.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v1.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v2.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v3.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_finalize_v3.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v1.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v2.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v3.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_plan_v1.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v2.json",
+        ".megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v3.json"
+      ],
+      "commands_run": [],
+      "evidence_files": [
+        ".megaplan/plans/sprint-2a-editorial-core/finalize.json"
+      ],
+      "reviewer_verdict": "Pass. Optional live Supabase action was surfaced as human-provided infra.",
+      "auto_attributed_files": true
+    }
+  ],
+  "watch_items": [
+    "Bootstrap thread: Optional[str] must be coherent across run_turn signature, Store.create_turn (Protocol + both adapters), Envelope.epic_id, envelope.schema.json, and CLI --epic. Skipping any one boundary breaks the contract.",
+    "active_epic_id local in loop.py is the source of truth for every _envelope() / _abort_turn() return after T14. Refresh it after every registry.invoke. A successful bootstrap turn MUST return Envelope.epic_id == new_id; an errored no-epic turn MUST return epic_id=None and validate against the schema.",
+    "Parser split: parse() is lenient (never raises). validate_for_write() is the only place that raises body_missing_required_section. Read tools and get_epic_at_time MUST only call parse(). Conflating these breaks legacy/malformed body inspection (FLAG-002, correctness-1).",
+    "_preamble includes the # Title line per spec \u00a72606. replace_section('_preamble', '# New Title\\n') is the canonical title-edit path. rename_section to/from _preamble must be rejected.",
+    "create_epic must write epics.title and epics.goal exclusively from parsed.title and parsed.goal_first_paragraph \u2014 never from raw args. Spec \u00a71314\u20131316: parser is the only writer of these columns (correctness-3).",
+    "reverted_to events MUST capture full pre-revert {body, title, goal, checklist} snapshot in prior_state. Otherwise get_epic_at_time across a revert is incorrect (FLAG-003 / correctness-2). The integration test asserts get_epic_at_time(T_just_before_revert).",
+    "Read tools register with operation_kind='read'. Write tools register with operation_kind='write'. Default in @register_tool is write \u2014 omitting the kwarg pollutes audit semantics (scope-1).",
+    "edit_epic.changes.meta is rejected with meta_not_supported and a hint pointing to body.sections._preamble (title) or body.sections.Goal (goal). Do not silently map to body edits (scope-2).",
+    "Mutually-exclusive body op flavours: any payload mixing new_content / sections / append / remove_sections / rename_section / reorder returns body_op_conflict.",
+    "expected_diff equivalence: \\r\\n\u2192\\n, strip trailing whitespace per line, drop trailing blank lines, then byte-equal compare. Mismatch must NOT write.",
+    "Accepted tradeoff: body_version (spec \u00a72606 example) is intentionally deferred. Audit trail in epic_events.body_edit captures body+title+goal atomically; that satisfies the title/body sync acceptance test. Future addition is an additive migration. (DEBT: data-model)",
+    "Accepted tradeoff: get_epic_at_time(T_before_creation) returns the initial template body + 18-item seed checklist (the snapshot the created event captures in its prior_state) per spec \u00a71678 reading. Plan v3 said 'empty/None' \u2014 adopt the spec reading. Integration test asserts this. (DEBT: history-replay)",
+    "Out of scope for Sprint 2a: sprints, sprint_items, codebases, code_artifacts, feedback, second_opinions, image generation. edit_epic.changes.sprints and changes.state return not_yet_supported.",
+    "CLAUDE.md: do NOT create a megaplan/ directory in the project root. The existing one is harness state.",
+    "Existing run_turn callers (test_run_turn, resident mode) keep passing concrete epic_ids. The no-epic path is purely additive \u2014 no regression in Sprint 1a/1b.",
+    "Column safety: _EPIC_COLUMNS, _CHECKLIST_COLUMNS, plus 'epic_id' in _MESSAGE_COLUMNS / _TURN_COLUMNS, must be added to BOTH adapters so update_epic / update_checklist_item / retro-stamp pass guarded-update checks.",
+    "Body parser must stay under ~450 lines, stdlib-only (difflib, re), and import nothing from Store/ports/tool_kit.",
+    "Code-fence guard: bodies containing fenced ``` or ~~~ blocks where ## appears inside a fence must NOT split into sections.",
+    "JSON schema regression test (T19) is required so future schema edits don't silently re-tighten epic_id."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Does the Postgres migration create both tables with the exact CHECK constraints, FK ON DELETE behaviour, and indexes from spec \u00a71322 / \u00a71381? Are the 12 event_type values present?",
+      "executor_note": "Yes. Migration creates both tables with the requested CHECK lists, cascade/set-null FK behavior, and indexes; the 12 event types are present.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Does the SQLite migration mirror the Postgres schema (TEXT for everything, prior_state TEXT JSON), and is 'prior_state' added to _JSON_COLUMNS in BOTH sqlite.py and supabase.py?",
+      "executor_note": "Yes. SQLite migration mirrors the editorial tables using SQLite-compatible types with prior_state TEXT, and prior_state is registered in _JSON_COLUMNS in both adapters.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Are checklist_items and epic_events both included in the TRUNCATE \u2026 RESTART IDENTITY CASCADE block, and are they ordered correctly w.r.t. tables that reference them?",
+      "executor_note": "Yes. checklist_items and epic_events are in the TRUNCATE block before parent tables they reference; the Supabase test module skips without SUPABASE_TEST_DB_URL.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Is parse() truly lenient (never raises on '', plain text, no-##, no-#, missing-Goal)? Does validate_for_write raise BodyValidationError with the exact message format 'body_missing_required_section: title' / '\u2026 goal'? Does _preamble include the # Title line? Are fenced ## blocks NOT treated as section boundaries? Is the file <450 lines and stdlib-only?",
+      "executor_note": "Yes. parse() is lenient for empty/plain/missing structural bodies, validate_for_write raises the exact title/goal messages, _preamble includes # Title, fenced ## lines are ignored as boundaries, and body.py is stdlib-only at 253 lines.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does DEFAULT_BODY_TEMPLATE produce exactly the six sections (Goal, Principles, Context, Key Decisions, Open Questions, Deliverable) with # Title and ## Goal first paragraph populated? Is DEFAULT_CHECKLIST_SEED exactly 18 items in spec \u00a7634 order with source='default_seed' and positions 1\u201318?",
+      "executor_note": "Yes. The template emits # Title and exactly Goal, Principles, Context, Key Decisions, Open Questions, Deliverable with Goal populated. The seed has exactly 18 strings in spec order for later insertion as default_seed/open positions 1-18.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Do the parser tests cover all 6 round-trip fixtures, the _preamble title round-trip (replace with '# New Title\\n' AND replace with ''), all 5 lenient-parse cases, the code-fence guard, and the diffs_equivalent boundary cases?",
+      "executor_note": "Yes. tests/test_body_parser.py covers all requested roundtrip, _preamble, lenient parse, fence, section-op, and diff equivalence cases.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Are all 15 new methods declared in the Protocol with correct signatures? Is Store.create_turn(epic_id: str|None) updated? Are _EPIC_COLUMNS and _CHECKLIST_COLUMNS guard sets specified?",
+      "executor_note": "Yes. The Store Protocol now declares the requested editorial methods, create_turn accepts str | None, and the two guard sets are specified in ports.py.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Does SupabaseStore implement every new method, route update_epic / update_checklist_item through self._update with the new column guards, add 'epic_id' to _MESSAGE_COLUMNS and _TURN_COLUMNS, and use the correct id prefixes ('epic', 'check', 'evt')?",
+      "executor_note": "Yes. SupabaseStore implements the new editorial surface, update_epic/update_checklist_item route through self._update with _EPIC_COLUMNS/_CHECKLIST_COLUMNS, epic_id is in _MESSAGE_COLUMNS/_TURN_COLUMNS, and ids use epic/check/evt prefixes.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Does SQLiteStore mirror SupabaseStore exactly (same methods, same column guards, same epic_id additions, prior_state in _JSON_COLUMNS, create_turn accepts None)?",
+      "executor_note": "Yes. SQLiteStore mirrors the Supabase editorial surface, uses the same guards and epic_id column support, keeps prior_state in _JSON_COLUMNS, and create_turn accepts/stores None.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Does the contract test cover create_epic + seed_checklist + record_epic_event + list_epic_events + latest_transaction_id + ordering, AND assert create_turn(epic_id=None) succeeds with NULL stored?",
+      "executor_note": "Yes. The shared store contract now covers create_epic, seed_checklist, record_epic_event, list/filter events, events_by_transaction, latest_transaction_id, event ordering, and create_turn(epic_id=None) persisted as NULL.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "question": "Does create_epic write epics.title/goal from parsed values (not raw args)? Does edit_epic reject meta with meta_not_supported, mixed body ops with body_op_conflict, and produce expected_diff_mismatch without writing? Does revert capture full pre-revert {body,title,goal,checklist} in prior_state? Are all four registered with operation_kind='write'?",
+      "executor_note": "Yes. create_epic writes parsed title/goal, edit_epic rejects meta/body conflicts and refuses expected_diff mismatches before writing, revert captures full pre-revert body/title/goal/checklist, and all four write tools register with operation_kind='write'.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "question": "Are all 7 read tools registered with operation_kind='read'? Does get_epic_at_time return the initial state (template body + 18-item seed) for T_before_creation per spec \u00a71678? Does it correctly undo body_edit / checklist_change / reverted_to using prior_state?",
+      "executor_note": "Yes. All seven read tools register with operation_kind='read'; get_epic_at_time returns the created initial body/checklist snapshot before creation and replays body_edit, checklist_change, and reverted_to prior_state snapshots.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "question": "Are both editorial modules imported with `# noqa: F401` near loop.py:16 alongside the existing tool imports?",
+      "executor_note": "Yes. loop.py imports both agent_kit.tools.editorial and agent_kit.tools.editorial_reads with # noqa: F401 alongside communication/images, and import-time registry checks confirm all editorial tools are registered.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "question": "Is active_epic_id introduced as a local that EVERY _envelope/_abort_turn site reads (12 enumerated call sites)? Is it refreshed after every registry.invoke? Is lock acquisition wrapped in `if epic_id is not None`? Does hot context get synthesized as empty when epic_id is None? Is inbound_message_id captured into context.metadata?",
+      "executor_note": "Yes. active_epic_id is local state for envelope/abort paths, lock acquisition is skipped when epic_id is None, no-epic hot context is synthesized, inbound_message_id is captured, and active_epic_id refreshes after both registry.invoke calls.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "question": "Is Envelope.epic_id typed Optional[str] with default None? Is 'epic_id' removed from the schema's required array AND its type relaxed to ['string','null']? Does _drop_none correctly strip None from to_dict() output?",
+      "executor_note": "Yes. Envelope.epic_id is Optional with default None, epic_id is no longer required in the schema, the property accepts string/null, and to_dict() drops None epic_id.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "question": "Is --epic argparse default None (no longer required)? Does the exception envelope path handle args.epic=None correctly? Is the help text updated?",
+      "executor_note": "Yes. --epic now defaults to None, help documents omitted --epic bootstrap, and the CLI smoke confirms args.epic=None produces a valid no-epic envelope.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC17",
+      "task_id": "T17",
+      "question": "Does the epic_outline log fire only on completed turns whose tool_calls include create_epic/edit_epic/revert AND active_epic_id is not None? Does details contain title + sections array (name + line_count) + total_lines from body.outline()? Is it skipped for failed turns?",
+      "executor_note": "Yes. epic_outline logging is gated to completed turns with active_epic_id and create_epic/edit_epic/revert tool events, uses body.outline details, and is skipped for failed/no-epic paths.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC18",
+      "task_id": "T18",
+      "question": "Does the integration test cover EVERY Sprint 2a acceptance criterion (spec \u00a7131\u2013142) plus the critique-driven additions: bootstrap envelope == new_id, CLI subprocess no-epic path, errored-no-epic envelope=None+schema-valid, all 6 sections via section ops, _preamble title edit, expected_diff match+mismatch, revert with reverted_to.prior_state full snapshot, get_epic_at_time across revert AND before creation, get_recent_turns, search_tool_calls, operation_kind values, meta_not_supported, epic_outline log?",
+      "executor_note": "Yes. The integration tests cover bootstrap envelope == new_id, CLI subprocess no-epic path, errored-no-epic envelope schema validity, all six sections via section ops, _preamble title edit, expected_diff match and mismatch, revert with full reverted_to prior_state, get_epic_at_time across turn 5, before revert, and before creation, get_recent_turns, search_tool_calls, operation_kind values, meta_not_supported, and epic_outline logs.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC19",
+      "task_id": "T19",
+      "question": "Does the regression test construct Envelope(epic_id=None), serialise via to_json(), and validate against envelope.schema.json with jsonschema, asserting both omitted and explicit-null forms pass?",
+      "executor_note": "Yes. The regression test constructs Envelope(epic_id=None), serializes through to_json(), validates omitted epic_id, then validates an explicit epic_id:null payload.",
+      "verdict": "Confirmed."
+    },
+    {
+      "id": "SC20",
+      "task_id": "T20",
+      "question": "Did the executor run the full pytest suite (NOT just targeted files), confirm zero failures including resident-mode + discord + run_turn + cli regressions, and exercise the no-epic bootstrap end-to-end via a throwaway script that was then deleted?",
+      "executor_note": "No zero-failure confirmation is possible because the full suite still stops at the known pre-existing tests/test_no_leaked_secrets.py leaked Supabase JWT prefix check in .megaplan/plans/sprint-1b-discord-resident/*. The targeted Sprint 2a modules passed, resident/discord/run_turn/cli tests executed before that failure passed, and the no-epic bootstrap was exercised with a throwaway script that was deleted.",
+      "verdict": "Confirmed with caveat: full suite blocked by unrelated pre-existing secret-scan failure, while targeted Sprint 2a suites passed."
+    },
+    {
+      "id": "SC21",
+      "task_id": "T21",
+      "question": "Were all after_execute user_actions clearly surfaced to the user without the executor performing them?",
+      "executor_note": "Yes. The only after_execute user action was surfaced as optional live Supabase validation requiring human-provided SUPABASE_TEST_DB_URL; it was not performed by the executor.",
+      "verdict": "Confirmed."
+    }
+  ],
+  "user_actions": [
+    {
+      "id": "U1",
+      "description": "Optional: provide `SUPABASE_TEST_DB_URL` so the executor can run `pytest tests/test_supabase_store.py` against a real Supabase instance (the spec mentions URL https://yhwflvadmefhkshwbfnf.supabase.co and a service role key). The SQLite contract test in T10 covers the same surface and is the primary CI signal; the Supabase run is an extra confidence check. Skip this user action if you don't want to exercise the Postgres adapter live.",
+      "phase": "after_execute",
+      "blocks_task_ids": null,
+      "rationale": "Live Supabase access is a credentials/infra concern \u2014 the executor cannot acquire a service role key on its own.",
+      "requires_human_only_reason": null
+    }
+  ],
+  "meta_commentary": "Execute phases in strict order: schema \u2192 parser+templates \u2192 store \u2192 tools \u2192 loop bootstrap \u2192 integration. The hardest concept to keep straight is the Optional[str] thread for the bootstrap path; if any boundary (Protocol, adapter, Envelope dataclass, JSON schema, CLI) is not updated, the integration test in T18 will fail with a schema-validation error or a type mismatch. Treat T14 + T15 + T16 as one logical change set even though they edit different files.\n\nTwo accepted tradeoffs are baked into the plan and must be honored, not \"fixed\": (1) `body_version` is deferred \u2014 DO NOT add the column or increment logic; the audit trail in epic_events.body_edit covers the title/body sync semantics. (2) `get_epic_at_time(T_before_creation)` returns the initial template body + 18-item seed checklist (i.e. the snapshot the `created` event captures in its prior_state) \u2014 NOT empty/None. Plan v3 had the older \"empty\" wording; the integration test in T18 asserts the spec \u00a71678 reading.\n\nThe parser split is the second most error-prone area: `parse()` is lenient and never raises; `validate_for_write()` is the only function that raises `body_missing_required_section`. Read tools and `get_epic_at_time` MUST call only `parse()`. If you find yourself catching a parser exception inside a read path, you've gotten this wrong.\n\nWhen implementing `revert`, capture the pre-revert state BEFORE applying the inverse mutations. The captured `{body, title, goal, checklist}` snapshot goes into the `reverted_to` event's `prior_state` so a subsequent `get_epic_at_time` call at a timestamp just before the revert can reconstruct correctly. Verify this end-to-end with the `T_just_before_revert` assertion in T18.\n\n`create_epic` retro-stamps the inbound message and bot_turn rows AND sets `context.metadata['epic_id']` so the loop's `active_epic_id` refresh after `registry.invoke` picks up the new id. The Turn-1 envelope assertion in T18 (`envelope.epic_id == new_id`) is the canary for this thread.\n\nFor `edit_epic`, `changes.meta` returns `meta_not_supported` with a hint pointing at `body.sections._preamble` (title) or `body.sections.Goal` (goal). `changes.sprints` and `changes.state` return `not_yet_supported`. Mixed body op flavours return `body_op_conflict`. These three error branches are explicit and have integration test coverage.\n\nOperation_kind: every read tool registers with `operation_kind='read'`; every write tool with `operation_kind='write'`. The default in `@register_tool` is `write`, so omitting the kwarg silently mis-attributes reads. T18 asserts the recorded values in `tool_calls`.\n\nCLAUDE.md forbids creating a `megaplan/` directory in the project root \u2014 the existing one is harness state. Do not touch it. Do not create wrapper packages there.\n\nThe final test task (T20) must run the FULL suite, not just targeted files, so Sprint 1a/1b regressions surface immediately. The throwaway script requirement (bootstrap an epic via no-epic path) is a manual sanity check beyond the unit/integration tests \u2014 write it, run it, delete it.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Phase 1 Step 1 \u2014 Postgres migration 004 for checklist_items + epic_events",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 1 Step 2 \u2014 SQLite mirror migration + register prior_state in _JSON_COLUMNS",
+        "finalize_item_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 1 Step 3 \u2014 extend Supabase truncate fixture",
+        "finalize_item_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 2 Step 4 \u2014 body parser module (lenient parse + strict validate + section ops + diff helpers)",
+        "finalize_item_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 2 Step 5 \u2014 default body template + 18-item checklist seed",
+        "finalize_item_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 2 Step 6 \u2014 parser unit tests (round-trip, section ops, _preamble title, lenient parse, code-fence, diff equivalence)",
+        "finalize_item_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 3 Step 7 \u2014 extend Store Protocol with epic/checklist/event/turn methods + create_turn(epic_id: str|None)",
+        "finalize_item_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 3 Step 8 \u2014 implement on SupabaseStore with column-safety constants",
+        "finalize_item_ids": [
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 3 Step 9 \u2014 implement on SQLiteStore",
+        "finalize_item_ids": [
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 3 Step 10 \u2014 extend store contract test (new surface + create_turn(None))",
+        "finalize_item_ids": [
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 4 Step 11 \u2014 editorial write tools (create_epic, edit_epic, revert, render_epic)",
+        "finalize_item_ids": [
+          "T11"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 4 Step 12 \u2014 editorial read tools with operation_kind='read'",
+        "finalize_item_ids": [
+          "T12"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 4 Step 13 \u2014 register editorial imports in loop.py",
+        "finalize_item_ids": [
+          "T13"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 5 Step 14 \u2014 no-epic mode in run_turn with active_epic_id local handoff",
+        "finalize_item_ids": [
+          "T14"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 5 Step 15 \u2014 Envelope.epic_id Optional + JSON schema relaxation",
+        "finalize_item_ids": [
+          "T15"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 5 Step 16 \u2014 CLI --epic optional + exception envelope path",
+        "finalize_item_ids": [
+          "T16"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 5 Step 17 \u2014 turn-end epic_outline log",
+        "finalize_item_ids": [
+          "T17"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 6 Step 18 \u2014 10-turn integration fixture with all acceptance criteria",
+        "finalize_item_ids": [
+          "T18"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 6 Step 19 \u2014 JSON schema regression test for Envelope(epic_id=None)",
+        "finalize_item_ids": [
+          "T19"
+        ]
+      },
+      {
+        "plan_step_summary": "Phase 6 Step 20 \u2014 run targeted tests then full regression",
+        "finalize_item_ids": [
+          "T20",
+          "U1"
+        ]
+      },
+      {
+        "plan_step_summary": "Surface after_execute user_actions",
+        "finalize_item_ids": [
+          "T21"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "Every plan step (1\u201320) maps to exactly one task. T20 covers Step 20's required test runs (body parser, envelope, sqlite store, editorial loop, full regression) and includes the throwaway no-epic bootstrap script per the test-task requirement. U1 covers the optional Supabase live test that requires human-provided credentials and cannot be executed by the agent.",
+    "coverage_complete": true
+  },
+  "baseline_test_command": "pytest --tb=no -q --no-header",
+  "baseline_test_failures": [],
+  "baseline_test_note": "Baseline test suite (Sprint 1a + 1b) is expected to pass on the current main branch (`pytest -x`). The executor should run this BEFORE starting work to confirm a clean baseline; any failures observed pre-implementation are pre-existing and not caused by Sprint 2a. After implementation, the same command must pass with the new editorial tests included. No baseline failures were captured during planning."
+}

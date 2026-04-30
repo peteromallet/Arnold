@@ -32,6 +32,8 @@ def _truncate(conn) -> None:
         conn.execute(
             """
             TRUNCATE TABLE
+              checklist_items,
+              epic_events,
               external_requests,
               tool_calls,
               messages,

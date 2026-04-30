@@ -8,12 +8,15 @@ from threading import Event as ThreadingEvent
 from typing import Callable, Sequence
 from uuid import uuid4
 
+from agent_kit import body
 from agent_kit.envelope import Envelope, EnvelopeError, Event, StateDelta
 from agent_kit.ledger import Ledger
 from agent_kit.logging import log
 from agent_kit.ports import Blob, JSONDict, Model, ProviderError, PushTransport, Store
 from agent_kit.tool_kit import ToolContext, registry
 import agent_kit.tools.communication  # noqa: F401
+import agent_kit.tools.editorial  # noqa: F401
+import agent_kit.tools.editorial_reads  # noqa: F401
 import agent_kit.tools.images  # noqa: F401
 
 
@@ -24,7 +27,7 @@ DEFAULT_PROMPT_VERSION = "sprint1a"
 
 def run_turn(
     *,
-    epic_id: str,
+    epic_id: str | None = None,
     input: str,
     store: Store,
     model: Model,
@@ -40,29 +43,33 @@ def run_turn(
     channel_id: str | None = None,
 ) -> Envelope:
     holder_id = f"turn_holder_{uuid4().hex}"
-    if not store.acquire_epic_lock(epic_id, holder_id=holder_id, timeout_seconds=60):
-        log(
-            store,
-            "warn",
-            "system",
-            "epic_lock_contended",
-            "Epic is already locked by another turn.",
-            epic_id=epic_id,
-        )
-        return Envelope(
-            turn_id=f"turn_lock_{uuid4().hex}",
-            epic_id=epic_id,
-            epic_state_before="unknown",
-            epic_state_after="unknown",
-            reply="",
-            state_delta=StateDelta(),
-            outcome="errored",
-            error=EnvelopeError(
-                code="epic_locked",
-                message="Epic is already locked by another turn.",
-                retryable=True,
-            ),
-        )
+    active_epic_id: str | None = epic_id
+    lock_acquired = False
+    if epic_id is not None:
+        lock_acquired = store.acquire_epic_lock(epic_id, holder_id=holder_id, timeout_seconds=60)
+        if not lock_acquired:
+            log(
+                store,
+                "warn",
+                "system",
+                "epic_lock_contended",
+                "Epic is already locked by another turn.",
+                epic_id=active_epic_id,
+            )
+            return Envelope(
+                turn_id=f"turn_lock_{uuid4().hex}",
+                epic_id=active_epic_id,
+                epic_state_before="unknown",
+                epic_state_after="unknown",
+                reply="",
+                state_delta=StateDelta(),
+                outcome="errored",
+                error=EnvelopeError(
+                    code="epic_locked",
+                    message="Epic is already locked by another turn.",
+                    retryable=True,
+                ),
+            )
 
     turn = None
     events: list[Event] = []
@@ -77,7 +84,7 @@ def run_turn(
 
         if triggered_by_message_ids is None:
             inbound = store.create_message(
-                epic_id=epic_id,
+                epic_id=active_epic_id,
                 direction="inbound",
                 content=input,
                 discord_message_id=f"inv_in_{uuid4().hex}",
@@ -86,11 +93,15 @@ def run_turn(
         else:
             turn_message_ids = list(triggered_by_message_ids)
 
-        hot_context = store.load_hot_context(epic_id)
+        hot_context = (
+            store.load_hot_context(active_epic_id)
+            if active_epic_id is not None
+            else {"epic": None, "recent_messages": [], "recent_tool_calls": []}
+        )
         epic = hot_context.get("epic") or {}
         state_before = epic.get("state", "unknown")
         turn = store.create_turn(
-            epic_id=epic_id,
+            epic_id=active_epic_id,
             triggered_by_message_ids=turn_message_ids,
             prompt_snapshot={
                 "input": initial_user_prompt,
@@ -110,7 +121,7 @@ def run_turn(
             on_event=on_event,
             reply_buffer=reply_buffer,
             metadata={
-                "epic_id": epic_id,
+                "epic_id": active_epic_id,
                 "outcome": "completed",
                 "questions": [],
                 "channel_id": channel_id,
@@ -118,9 +129,11 @@ def run_turn(
             transport=transport,
             blob=blob,
         )
+        if triggered_by_message_ids is None:
+            context.metadata["inbound_message_id"] = inbound["id"]
 
         if _is_cancelled(cancel_event):
-            return _abort_turn(store, turn, epic_id, state_before, events, reply_buffer)
+            return _abort_turn(store, turn, active_epic_id, state_before, events, reply_buffer)
 
         model_call_seq = 0
         messages = [{"role": "user", "content": initial_user_prompt}]
@@ -165,14 +178,14 @@ def run_turn(
                     "provider_error",
                     "Model provider returned an error.",
                     turn_id=turn["id"],
-                    epic_id=epic_id,
+                    epic_id=active_epic_id,
                     error_details=exc.error_details,
                     provider_request_id=exc.provider_request_id,
                 )
                 store.update_turn(turn["id"], status="failed", reasoning=str(exc.error_details))
                 return _envelope(
                     turn_id=turn["id"],
-                    epic_id=epic_id,
+                    epic_id=active_epic_id,
                     state_before=state_before,
                     state_after=state_before,
                     reply_buffer=reply_buffer,
@@ -192,13 +205,13 @@ def run_turn(
                     "transport_error",
                     "Model transport or SDK call failed.",
                     turn_id=turn["id"],
-                    epic_id=epic_id,
+                    epic_id=active_epic_id,
                     error_type=type(exc).__name__,
                 )
                 store.update_turn(turn["id"], status="failed", reasoning=str(exc))
                 return _envelope(
                     turn_id=turn["id"],
-                    epic_id=epic_id,
+                    epic_id=active_epic_id,
                     state_before=state_before,
                     state_after=state_before,
                     reply_buffer=reply_buffer,
@@ -224,7 +237,7 @@ def run_turn(
             )
 
             if _is_cancelled(cancel_event):
-                return _abort_turn(store, turn, epic_id, state_before, events, reply_buffer)
+                return _abort_turn(store, turn, active_epic_id, state_before, events, reply_buffer)
 
             if result.tool_requests:
                 reenter_model_loop = False
@@ -233,7 +246,7 @@ def run_turn(
                         return _abort_turn(
                             store,
                             turn,
-                            epic_id,
+                            active_epic_id,
                             state_before,
                             events,
                             reply_buffer,
@@ -257,6 +270,7 @@ def run_turn(
                             context,
                             tool_request.arguments,
                         )
+                        active_epic_id = context.metadata.get("epic_id", active_epic_id)
                     except Exception as exc:
                         log(
                             store,
@@ -265,14 +279,14 @@ def run_turn(
                             "tool_call_failed",
                             "Tool invocation failed.",
                             turn_id=turn["id"],
-                            epic_id=epic_id,
+                            epic_id=active_epic_id,
                             tool_name=tool_request.name,
                             error_type=type(exc).__name__,
                         )
                         store.update_turn(turn["id"], status="failed", reasoning=str(exc))
                         return _envelope(
                             turn_id=turn["id"],
-                            epic_id=epic_id,
+                            epic_id=active_epic_id,
                             state_before=state_before,
                             state_after=state_before,
                             reply_buffer=reply_buffer,
@@ -296,9 +310,10 @@ def run_turn(
                     if context.metadata.get("stop_requested"):
                         questions = list(context.metadata.get("questions", []))
                         store.update_turn(turn["id"], status="completed")
+                        _log_epic_outline_if_needed(store, active_epic_id, turn, events)
                         return _envelope(
                             turn_id=turn["id"],
-                            epic_id=epic_id,
+                            epic_id=active_epic_id,
                             state_before=state_before,
                             state_after=state_before,
                             reply_buffer=reply_buffer,
@@ -327,10 +342,12 @@ def run_turn(
                         context,
                         {"content": final_text},
                     )
+                    active_epic_id = context.metadata.get("epic_id", active_epic_id)
                 store.update_turn(turn["id"], status="completed")
+                _log_epic_outline_if_needed(store, active_epic_id, turn, events)
                 return _envelope(
                     turn_id=turn["id"],
-                    epic_id=epic_id,
+                    epic_id=active_epic_id,
                     state_before=state_before,
                     state_after=state_before,
                     reply_buffer=reply_buffer,
@@ -341,7 +358,7 @@ def run_turn(
             store.update_turn(turn["id"], status="failed", reasoning="model returned no action")
             return _envelope(
                 turn_id=turn["id"],
-                epic_id=epic_id,
+                epic_id=active_epic_id,
                 state_before=state_before,
                 state_after=state_before,
                 reply_buffer=reply_buffer,
@@ -354,7 +371,8 @@ def run_turn(
                 ),
             )
     finally:
-        store.release_epic_lock(epic_id, holder_id=holder_id)
+        if lock_acquired and epic_id is not None:
+            store.release_epic_lock(epic_id, holder_id=holder_id)
 
 
 async def arun_turn(*args, **kwargs) -> Envelope:
@@ -367,7 +385,7 @@ __all__ = ["Envelope", "arun_turn", "run_turn"]
 def _abort_turn(
     store: Store,
     turn: dict,
-    epic_id: str,
+    epic_id: str | None,
     state_before: str,
     events: list[Event],
     reply_buffer: list[str],
@@ -387,7 +405,7 @@ def _abort_turn(
 def _envelope(
     *,
     turn_id: str,
-    epic_id: str,
+    epic_id: str | None,
     state_before: str,
     state_after: str,
     reply_buffer: list[str],
@@ -493,6 +511,36 @@ def _tool_result_content(tool_name: str, result: JSONDict) -> JSONDict | list[JS
         "tool_name": tool_name,
         "result": result,
     }
+
+
+def _log_epic_outline_if_needed(
+    store: Store,
+    active_epic_id: str | None,
+    turn: JSONDict,
+    events: list[Event],
+) -> None:
+    if active_epic_id is None:
+        return
+    if not any(
+        event.name in {"create_epic", "edit_epic", "revert"}
+        and event.tool_call_id is not None
+        for event in events
+    ):
+        return
+    epic = store.load_epic(active_epic_id)
+    if not epic:
+        return
+    parsed = body.parse(str(epic.get("body") or ""))
+    details = body.outline(parsed)
+    store.log_system_event(
+        level="info",
+        category="application",
+        event_type="epic_outline",
+        message=f"Epic outline: {parsed.title or '(untitled)'}",
+        details=details,
+        turn_id=turn["id"],
+        epic_id=active_epic_id,
+    )
 
 
 def _summarize_hot_context(hot_context: dict) -> dict:

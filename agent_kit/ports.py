@@ -9,6 +9,16 @@ from typing import Any, Callable, Protocol, Sequence
 
 JSONDict = dict[str, Any]
 
+_EPIC_COLUMNS = {"title", "goal", "body", "state", "last_edited_at", "last_active_at", "planned_at"}
+_CHECKLIST_COLUMNS = {
+    "content",
+    "status",
+    "position",
+    "skip_reason",
+    "superseded_by_item_id",
+    "completed_at",
+}
+
 
 @dataclass(frozen=True)
 class ProviderError(Exception):
@@ -93,7 +103,7 @@ class Store(Protocol):
     def create_turn(
         self,
         *,
-        epic_id: str,
+        epic_id: str | None,
         triggered_by_message_ids: Sequence[str],
         prompt_snapshot: JSONDict | None = None,
         prompt_version: str | None = None,
@@ -234,6 +244,92 @@ class Store(Protocol):
         ...
 
     def update_image(self, image_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def create_epic(
+        self,
+        *,
+        title: str,
+        goal: str,
+        body: str,
+        state: str = "shaping",
+    ) -> JSONDict:
+        ...
+
+    def load_epic(self, epic_id: str) -> JSONDict | None:
+        ...
+
+    def update_epic(self, epic_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def seed_checklist(self, epic_id: str, items: Sequence[str]) -> list[JSONDict]:
+        ...
+
+    def list_checklist_items(
+        self,
+        epic_id: str,
+        *,
+        status: str | None = None,
+    ) -> list[JSONDict]:
+        ...
+
+    def update_checklist_item(self, item_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def add_checklist_items(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        ...
+
+    def delete_checklist_items(self, item_ids: Sequence[str]) -> None:
+        ...
+
+    def replace_checklist(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        ...
+
+    def record_epic_event(
+        self,
+        *,
+        epic_id: str,
+        transaction_id: str,
+        event_type: str,
+        summary: str,
+        prior_state: JSONDict | None,
+        turn_id: str | None,
+    ) -> JSONDict:
+        ...
+
+    def list_epic_events(
+        self,
+        epic_id: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        kinds: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        ...
+
+    def latest_transaction_id(self, epic_id: str) -> str | None:
+        ...
+
+    def events_by_transaction(self, transaction_id: str) -> list[JSONDict]:
+        ...
+
+    def list_recent_turns(
+        self,
+        *,
+        n: int = 10,
+        epic_id: str | None = None,
+    ) -> list[JSONDict]:
+        ...
+
+    def search_tool_calls_by(
+        self,
+        *,
+        tool_name: str | None = None,
+        epic_id: str | None = None,
+        since: str | None = None,
+        limit: int = 20,
+    ) -> list[JSONDict]:
         ...
 
 

@@ -1,0 +1,97 @@
+{
+  "task_updates": [
+    {
+      "id": "T8",
+      "status": "done",
+      "executor_notes": "Implemented SupabaseStore editorial methods, epic/checklist column guards, epic_id guarded-update support on messages/turns, nullable create_turn(epic_id), and id prefixes epic/check/evt. Verified by py_compile, static method/constant/prefix checks, and the Supabase test module skip behavior without SUPABASE_TEST_DB_URL.",
+      "files_changed": [
+        "agent_kit/store/supabase.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/sqlite.py agent_kit/store/supabase.py agent_kit/loop.py",
+        "python - <<'PY' ... static store checks ... PY",
+        "python - <<'PY' ... T8/T9/T17 static checks ... PY",
+        "python -m pytest tests/test_supabase_store.py -q",
+        "git diff --check"
+      ],
+      "task_id": "T8"
+    },
+    {
+      "id": "T9",
+      "status": "done",
+      "executor_notes": "Implemented SQLiteStore editorial methods mirroring SupabaseStore, added epic/checklist column guards, epic_id guarded-update support on messages/turns, nullable create_turn(epic_id), and preserved prior_state JSON decoding. Verified by py_compile, static checks, SQLite editorial surface smoke, and existing SQLite store test modules.",
+      "files_changed": [
+        "agent_kit/store/sqlite.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/sqlite.py agent_kit/store/supabase.py agent_kit/loop.py",
+        "python - <<'PY' ... static store checks ... PY",
+        "python - <<'PY' ... sqlite editorial surface smoke ... PY",
+        "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q",
+        "git diff --check"
+      ],
+      "task_id": "T9"
+    },
+    {
+      "id": "T17",
+      "status": "done",
+      "executor_notes": "Added completed-turn epic_outline logging gated on active_epic_id and create_epic/edit_epic/revert tool-call events. Details come from body.outline and include title, sections with line counts, and total_lines. Verified by loop smoke covering emitted and skipped cases, py_compile, and CLI/run_turn test modules.",
+      "files_changed": [
+        "agent_kit/loop.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/sqlite.py agent_kit/store/supabase.py agent_kit/loop.py",
+        "python - <<'PY' ... epic outline loop smoke ... PY",
+        "python -m pytest tests/test_cli.py tests/test_run_turn.py -q",
+        "python -m pytest tests/test_body_parser.py tests/test_envelope.py -q",
+        "git diff --check"
+      ],
+      "task_id": "T17"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC8",
+      "executor_note": "Yes. SupabaseStore implements the new editorial surface, update_epic/update_checklist_item route through self._update with _EPIC_COLUMNS/_CHECKLIST_COLUMNS, epic_id is in _MESSAGE_COLUMNS/_TURN_COLUMNS, and ids use epic/check/evt prefixes.",
+      "sense_check_id": "SC8"
+    },
+    {
+      "id": "SC9",
+      "executor_note": "Yes. SQLiteStore mirrors the Supabase editorial surface, uses the same guards and epic_id column support, keeps prior_state in _JSON_COLUMNS, and create_turn accepts/stores None.",
+      "sense_check_id": "SC9"
+    },
+    {
+      "id": "SC17",
+      "executor_note": "Yes. epic_outline logging is gated to completed turns with active_epic_id and create_epic/edit_epic/revert tool events, uses body.outline details, and is skipped for failed/no-epic paths.",
+      "sense_check_id": "SC17"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json",
+  "verification": {
+    "targeted": [
+      "python -m pytest tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q: 7 passed",
+      "python -m pytest tests/test_cli.py tests/test_run_turn.py -q: 8 passed",
+      "python -m pytest tests/test_body_parser.py tests/test_envelope.py -q: 10 passed",
+      "python -m pytest tests/test_supabase_store.py -q: 1 skipped because SUPABASE_TEST_DB_URL is not set",
+      "git diff --check: passed"
+    ],
+    "full_suite": "python -m pytest -x stopped at known pre-existing tests/test_no_leaked_secrets.py::test_leaked_supabase_service_role_jwt_prefix_is_absent; 46 passed, 1 skipped before that failure."
+  },
+  "deviations": [
+    "Used python -m pytest rather than bare pytest because prior batches established the bare pytest shim runs under Python 3.8 while this project requires Python >=3.11.",
+    "Full suite still fails at the pre-existing leaked Supabase JWT prefix check in .megaplan/plans/sprint-1b-discord-resident/*; this batch did not modify those files.",
+    "Advisory quality: agent_kit/store/sqlite.py grew by 330 lines (threshold 200).",
+    "Advisory quality: agent_kit/store/supabase.py grew by 240 lines (threshold 200).",
+    "Advisory quality: agent_kit/loop.py adds unused imports: agent_kit.tools.communication, agent_kit.tools.images.",
+    "Advisory quality: code changes lacked test updates: agent_kit/loop.py, agent_kit/store/sqlite.py, agent_kit/store/supabase.py.",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json, agent_kit/loop.py, agent_kit/store/sqlite.py, agent_kit/store/supabase.py",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/sprint-2a-editorial-core/.plan.lock, .megaplan/plans/sprint-2a-editorial-core/critique_output.json, .megaplan/plans/sprint-2a-editorial-core/critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/execution_audit.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_1.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json, .megaplan/plans/sprint-2a-editorial-core/faults.json, .megaplan/plans/sprint-2a-editorial-core/final.md, .megaplan/plans/sprint-2a-editorial-core/finalize.json, .megaplan/plans/sprint-2a-editorial-core/finalize_snapshot.json, .megaplan/plans/sprint-2a-editorial-core/gate.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v1.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v2.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v3.json, .megaplan/plans/sprint-2a-editorial-core/plan_v1.md, .megaplan/plans/sprint-2a-editorial-core/plan_v1.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v2.md, .megaplan/plans/sprint-2a-editorial-core/plan_v2.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v3.md, .megaplan/plans/sprint-2a-editorial-core/plan_v3.meta.json, .megaplan/plans/sprint-2a-editorial-core/state.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_finalize_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_plan_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v3.json",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment."
+  ]
+}

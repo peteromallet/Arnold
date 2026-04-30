@@ -70,6 +70,24 @@ def test_envelope_error_shape_validates() -> None:
     validate(envelope.to_dict(), schema)
 
 
+def test_envelope_epic_id_may_be_omitted_or_explicit_null() -> None:
+    envelope = Envelope(
+        turn_id="turn_1",
+        epic_state_before="unknown",
+        epic_state_after="unknown",
+        reply="",
+        epic_id=None,
+    )
+    schema = json.loads(Path("agent_kit/envelope.schema.json").read_text())
+
+    omitted = json.loads(envelope.to_json())
+    assert "epic_id" not in omitted
+    validate(omitted, schema)
+
+    explicit_null = {**omitted, "epic_id": None}
+    validate(explicit_null, schema)
+
+
 def test_serialize_for_diff_strips_only_declared_nondeterminism() -> None:
     envelope = Envelope(
         turn_id="turn_1",
@@ -98,4 +116,3 @@ def test_serialize_for_diff_strips_only_declared_nondeterminism() -> None:
     assert "text" not in projected["events"][0]
     assert projected["events"][0]["ts"] == "stable"
     assert projected["state_delta"]["body_diff"] == "diff"
-

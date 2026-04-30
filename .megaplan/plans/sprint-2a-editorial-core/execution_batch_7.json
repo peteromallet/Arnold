@@ -1,0 +1,34 @@
+{
+  "task_updates": [
+    {
+      "id": "T20",
+      "status": "done",
+      "executor_notes": "Ran the required targeted validation modules with python -m pytest: body parser passed 6/6, envelope/sqlite store/sqlite v1b passed 11/11, and editorial loop passed 3/3. Created and ran a throwaway no-epic CLI bootstrap script against SQLite; it returned an epic_id and verified 18 checklist rows, then the script was deleted. Ran the full suite with python -m pytest -x; it reached tests/test_no_leaked_secrets.py after resident/discord/run_turn/cli/editorial coverage had passed, then stopped on the known pre-existing leaked Supabase JWT prefix in .megaplan/plans/sprint-1b-discord-resident/*. git diff --check passed. No task-scoped source changes were made in this batch.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest tests/test_body_parser.py -x",
+        "python -m pytest tests/test_envelope.py tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -x",
+        "python -m pytest tests/test_editorial_loop.py -x",
+        "python .tmp_t20_no_epic_bootstrap.py && rm .tmp_t20_no_epic_bootstrap.py",
+        "python -m pytest -x",
+        "git diff --check",
+        "git status --short"
+      ],
+      "task_id": "T20"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC20",
+      "executor_note": "No zero-failure confirmation is possible because the full suite still stops at the known pre-existing tests/test_no_leaked_secrets.py leaked Supabase JWT prefix check in .megaplan/plans/sprint-1b-discord-resident/*. The targeted Sprint 2a modules passed, resident/discord/run_turn/cli tests executed before that failure passed, and the no-epic bootstrap was exercised with a throwaway script that was deleted.",
+      "verdict": "blocked_by_pre_existing_failure",
+      "sense_check_id": "SC20"
+    }
+  ],
+  "deviations": [
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .megaplan/plans/sprint-2a-editorial-core/execution_batch_7.json",
+    "Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): T20",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/debt.json, .megaplan/plans/sprint-2a-editorial-core/.plan.lock, .megaplan/plans/sprint-2a-editorial-core/critique_output.json, .megaplan/plans/sprint-2a-editorial-core/critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/execution_audit.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_1.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_2.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_3.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_4.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_5.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_6.json, .megaplan/plans/sprint-2a-editorial-core/execution_batch_7.json, .megaplan/plans/sprint-2a-editorial-core/faults.json, .megaplan/plans/sprint-2a-editorial-core/final.md, .megaplan/plans/sprint-2a-editorial-core/finalize.json, .megaplan/plans/sprint-2a-editorial-core/finalize_snapshot.json, .megaplan/plans/sprint-2a-editorial-core/gate.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v1.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v2.json, .megaplan/plans/sprint-2a-editorial-core/gate_signals_v3.json, .megaplan/plans/sprint-2a-editorial-core/plan_v1.md, .megaplan/plans/sprint-2a-editorial-core/plan_v1.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v2.md, .megaplan/plans/sprint-2a-editorial-core/plan_v2.meta.json, .megaplan/plans/sprint-2a-editorial-core/plan_v3.md, .megaplan/plans/sprint-2a-editorial-core/plan_v3.meta.json, .megaplan/plans/sprint-2a-editorial-core/state.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_critique_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_finalize_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_gate_v3.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_plan_v1.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v2.json, .megaplan/plans/sprint-2a-editorial-core/step_receipt_revise_v3.json",
+    "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment."
+  ]
+}

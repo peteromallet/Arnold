@@ -1,8 +1,8 @@
 {
   "name": "sprint-2a-editorial-core",
   "idea": "# Sprint 2a \u2014 Editorial core\n\nBot maintains an epic body and checklist for one epic, with section-level body editing. Minimum to have an editorial conversation.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to it for complete details on Body Structure and Editing, Body Templates, The Checklist as Guide, and Data Model sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: [REDACTED_SUPABASE_SERVICE_ROLE_JWT]\n\n## Scope\n\n- Tables: checklist_items, epic_events (with transaction_id)\n- Body parser/serializer \u2014 markdown \u2194 structured sections with ## heading delimiters; enforces heading hierarchy (# for title only, ## for sections, ### for sub-headings)\n- Turn-end epic outline emitted to system_logs at info level\n- Default body template (design doc) \u2014 Goal, Principles, Context, Key Decisions, Open Questions, Deliverable\n- `edit_epic` tool \u2014 body (whole + section ops) + checklist; supports:\n  - Write whole body\n  - Write specific sections\n  - Append to a section\n  - Add new section with position\n  - Rename/remove sections\n  - `expected_diff` parameter for server-enforced diff verification (unified diff format)\n- `create_epic`, `revert` (transaction-grouped), `render_epic` tools\n- Read tools: `get_epic` (with section addressing), `get_section_names`, `get_history`, `get_self_understanding`\n- History tools: `get_epic_at_time`, `get_recent_turns`, `search_tool_calls`\n- Default checklist seed \u2014 18 items with adaptation logic\n- Title and goal are derived columns from body parsing (# Title and ## Goal first paragraph)\n\n## Key Data Model\n\n### checklist_items\nid, epic_id, content, status (open|done|skipped|superseded), position, source (bot_inferred|user_requested|carried_over|default_seed|second_opinion), skip_reason, superseded_by_item_id, created_at, completed_at\n\n### epic_events\nid, epic_id, transaction_id (uuid), event_type, summary, prior_state (json), turn_id, occurred_at\nEvent types: body_edit, checklist_change, sprints_change, state_change, forced_handoff, created, code_referenced, codebase_added, image_generated, second_opinion_requested, reverted_to, sprint_status_change\n\n## Body Parser Rules\n- Section boundaries are ## headings (level-2 markdown)\n- Section names are case-sensitive\n- Pre-section content is \"_preamble\"\n- Sub-sections (### and below) are part of parent section\n- No ## headings \u2192 whole body is _preamble\n- # Title and ## Goal are required structural elements; missing \u2192 write rejected\n- Code blocks containing ## are NOT section boundaries\n\n## Acceptance Criteria\n\n- Create an epic via natural language \u2192 epics row created, default checklist seeded with 18 items, body initialized\n- 10-turn scripted conversation (mocked Anthropic) produces body with all 6 default sections\n- Section-level edit \u2192 only that section changes; other sections byte-identical\n- Whole body edit \u2192 diff captured in event; revert restores prior version exactly\n- \"revert that\" \u2192 most recent transaction undone, new reverted_to event logged\n- expected_diff mismatch \u2192 server refuses write, returns actual diff\n- expected_diff match \u2192 server commits normally\n- get_epic_at_time(epic_id, T) \u2192 returns body/checklist state as of time T\n- get_recent_turns(5) \u2192 returns 5 most recent turns with summaries\n- search_tool_calls(tool_name='edit_epic', epic_id=X) \u2192 returns matching calls\n- Turn-end system_logs row with event_type='epic_outline' containing title + section list + line counts\n\n## Tests\n- Unit: body parser (markdown \u2192 sections \u2192 markdown roundtrip is identity); section operations; edit_epic validation; transaction_id grouping; expected_diff comparison; epic-at-time replay\n- Integration: 10-turn fixture conversation against local Supabase with mocked Anthropic; revert end-to-end",
-  "current_state": "initialized",
-  "iteration": 0,
+  "current_state": "done",
+  "iteration": 3,
   "created_at": "2026-04-30T01:13:10Z",
   "config": {
     "project_dir": "/Users/peteromalley/Documents/arnold-v2",
@@ -12,8 +12,70 @@
     "strict_notes": false,
     "agent": ""
   },
-  "sessions": {},
-  "plan_versions": [],
+  "sessions": {
+    "claude_planner": {
+      "id": "bdea3c85-e5aa-40ad-906d-be1e77f6a46b",
+      "mode": "persistent",
+      "created_at": "2026-04-30T05:19:39Z",
+      "last_used_at": "2026-04-30T05:38:50Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019ddcd4-1d07-75d2-bf78-bda008c7a316",
+      "mode": "persistent",
+      "created_at": "2026-04-30T05:22:57Z",
+      "last_used_at": "2026-04-30T05:41:01Z",
+      "refreshed": false
+    },
+    "claude_gatekeeper": {
+      "id": "272e7d91-ae87-4a08-a03f-65165b208ce2",
+      "mode": "persistent",
+      "created_at": "2026-04-30T05:23:46Z",
+      "last_used_at": "2026-04-30T05:43:25Z",
+      "refreshed": false
+    },
+    "claude_finalizer": {
+      "id": "b0eaab1f-2a07-4de5-b9d9-92f0c5b579e4",
+      "mode": "persistent",
+      "created_at": "2026-04-30T05:52:39Z",
+      "last_used_at": "2026-04-30T05:52:39Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019ddcf2-50b7-7762-bf70-787e008a2d8b",
+      "mode": "persistent",
+      "created_at": "2026-04-30T05:58:22Z",
+      "last_used_at": "2026-04-30T06:30:28Z",
+      "refreshed": false
+    },
+    "codex_reviewer": {
+      "id": "019ddd14-f27e-7c21-99b3-2274e5e87e22",
+      "mode": "persistent",
+      "created_at": "2026-04-30T06:33:35Z",
+      "last_used_at": "2026-04-30T06:33:35Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:55da79b2775c5dfce81878da5a6ed5d307144229a858dbb11d6d4e334c7b5a2e",
+      "timestamp": "2026-04-30T05:19:39Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:a4f9c4cd1cf6af5e87ed6539a12c6f6715dab0ac1709e41c7a3f49d3a926ae78",
+      "timestamp": "2026-04-30T05:29:21Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:33bb09fb290f12367fca1eaddad96d341f1e122c4b5e5e8ec360da747c64ca93",
+      "timestamp": "2026-04-30T05:38:50Z"
+    }
+  ],
   "history": [
     {
       "step": "init",
@@ -25,16 +87,422 @@
         "claude": true,
         "codex": true
       }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T05:19:39Z",
+      "duration_ms": 315307,
+      "cost_usd": 2.3577147500000004,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "bdea3c85-e5aa-40ad-906d-be1e77f6a46b",
+      "agent": "claude",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:55da79b2775c5dfce81878da5a6ed5d307144229a858dbb11d6d4e334c7b5a2e"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T05:22:57Z",
+      "duration_ms": 196129,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddcd4-1d07-75d2-bf78-bda008c7a316",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:c09a9e0cd03350cef8a317ac90541f6b4eda88e789b3c6eb2d9bd906bd7334b0",
+      "flags_count": 14
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T05:23:46Z",
+      "duration_ms": 47906,
+      "cost_usd": 0.431264,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "272e7d91-ae87-4a08-a03f-65165b208ce2",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:53f710cf0b0ac4b7862d9b630d749dcfd7240333adb42f74a9b71067f8aae59b",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T05:29:21Z",
+      "duration_ms": 333372,
+      "cost_usd": 1.6841852499999999,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "bdea3c85-e5aa-40ad-906d-be1e77f6a46b",
+      "agent": "claude",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:a4f9c4cd1cf6af5e87ed6539a12c6f6715dab0ac1709e41c7a3f49d3a926ae78",
+      "flags_addressed": [
+        {
+          "id": "FLAG-001",
+          "resolution": "addressed",
+          "reason": "run_turn now accepts epic_id=None; lock acquisition and load_hot_context are skipped; create_epic retro-stamps the inbound message and bot_turn rows. CLI gets a no-epic invocation path. Integration test exercises the bootstrap turn end-to-end."
+        },
+        {
+          "id": "FLAG-002",
+          "resolution": "addressed",
+          "reason": "Parser split: parse() is now explicitly lenient and never raises; validate_for_write() is strict and called only by write paths. Round-trip fixtures and time-travel/read tools exercise the lenient path."
+        },
+        {
+          "id": "FLAG-003",
+          "resolution": "addressed",
+          "reason": "revert now captures the full pre-revert body + checklist snapshot in the new reverted_to event's prior_state, so backward replay across a revert restores the immediately-pre-revert state. Integration test asserts get_epic_at_time(T_just_before_revert) matches the captured snapshot."
+        },
+        {
+          "id": "issue_hints-1",
+          "resolution": "addressed",
+          "reason": "Same fix as FLAG-001: run_turn(epic_id=None) is a first-class mode and create_epic retro-stamps the message + turn after commit."
+        },
+        {
+          "id": "issue_hints-2",
+          "resolution": "addressed",
+          "reason": "_preamble is redefined to include the # Title line and any leading text up to the first ## heading, matching spec \u00a72606. replace_section('_preamble', '# New Title\\n') is the canonical title-edit path; rename_section to/from _preamble is rejected. Integration test exercises the title-via-preamble case."
+        },
+        {
+          "id": "correctness-1",
+          "resolution": "addressed",
+          "reason": "Same fix as FLAG-002: parse() is lenient, validate_for_write() is strict and only used on writes. Read tools and get_epic_at_time work against legacy/malformed bodies without raising."
+        },
+        {
+          "id": "correctness-2",
+          "resolution": "addressed",
+          "reason": "Same fix as FLAG-003: reverted_to event prior_state now contains the full pre-revert state."
+        },
+        {
+          "id": "correctness-3",
+          "resolution": "addressed",
+          "reason": "create_epic now passes parsed.title and parsed.goal_first_paragraph (not the raw arguments) to store.create_epic. The body parser is the only writer of epics.title and epics.goal, matching spec \u00a71314\u20131316."
+        },
+        {
+          "id": "scope-1",
+          "resolution": "addressed",
+          "reason": "All read tools (get_epic, get_section_names, get_history, get_self_understanding, get_epic_at_time, get_recent_turns, search_tool_calls) register with operation_kind='read'. Integration test asserts correct operation_kind in tool_calls rows."
+        },
+        {
+          "id": "scope-2",
+          "resolution": "addressed",
+          "reason": "edit_epic explicitly rejects changes.meta with error='meta_not_supported' and a hint pointing to body.sections._preamble (for title) or body.sections.Goal (for goal). Asserted in the integration test."
+        },
+        {
+          "id": "all_locations",
+          "resolution": "addressed",
+          "reason": "Both adapters gain module-level _EPIC_COLUMNS and _CHECKLIST_COLUMNS constants wired through the existing _update helper, mirroring _MESSAGE_COLUMNS/_TURN_COLUMNS/_IMAGE_COLUMNS. _MESSAGE_COLUMNS and _TURN_COLUMNS are extended to include 'epic_id' so the bootstrap retro-stamp uses guarded updates."
+        },
+        {
+          "id": "callers",
+          "resolution": "addressed",
+          "reason": "Same fix as FLAG-001: run_turn callers can pass epic_id=None for the bootstrap; existing callers (tests/test_run_turn.py) keep passing an epic_id and remain unchanged. The no-epic path is purely additive."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T05:31:57Z",
+      "duration_ms": 154601,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddcd4-1d07-75d2-bf78-bda008c7a316",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:415f1e08232898f9fa48ab6bcc7aa735a936514677f83439bd75887cd81126d1",
+      "flags_count": 10
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T05:33:07Z",
+      "duration_ms": 68023,
+      "cost_usd": 0.8113947499999999,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "272e7d91-ae87-4a08-a03f-65165b208ce2",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:2703b6e37a196d91d9689330e2f7e6c953efcf0343246ce669bfb167e0bb79b1",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T05:38:50Z",
+      "duration_ms": 340930,
+      "cost_usd": 2.6757502499999997,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "bdea3c85-e5aa-40ad-906d-be1e77f6a46b",
+      "agent": "claude",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:33bb09fb290f12367fca1eaddad96d341f1e122c4b5e5e8ec360da747c64ca93",
+      "flags_addressed": [
+        {
+          "id": "FLAG-001",
+          "resolution": "addressed",
+          "reason": "Step 14.3 introduces an active_epic_id local that every _envelope() and _abort_turn() call site reads, refreshed after every tool invocation. Step 15 makes Envelope.epic_id Optional[str] so envelopes from no-epic-but-no-create turns serialise validly. Integration test Step 18 asserts the Turn-1 envelope has the new id and the errored-no-epic envelope has epic_id=None."
+        },
+        {
+          "id": "FLAG-005",
+          "resolution": "addressed",
+          "reason": "Phase 5 Steps 14\u201316 explicitly enumerate every public boundary that needed updating: Store.create_turn signature (Step 7.2 + 8.4 + 9.2), Envelope dataclass (Step 15.1), envelope JSON schema (Step 15.2), CLI --epic (Step 16). Step 19 adds a schema regression test."
+        },
+        {
+          "id": "issue_hints-1",
+          "resolution": "addressed",
+          "reason": "Same fix as FLAG-001 + FLAG-005: active_epic_id handoff in loop.py + Envelope.epic_id: Optional[str] + schema relaxation. Bootstrap turn now returns a valid envelope with the newly-created epic id; failure paths return a valid envelope with epic_id=None."
+        },
+        {
+          "id": "issue_hints-2",
+          "resolution": "addressed",
+          "reason": "Promoted body_version deferral from a quiet assumption to an explicit accepted tradeoff in the Overview constraints. Rationale: the main Data Model in spec \u00a71311\u20131320 does not define body_version; only the example test in \u00a72606 references it. The audit trail in epic_events.body_edit already captures every body mutation atomically with title/goal updates, satisfying the title/body sync acceptance test without introducing a new column."
+        },
+        {
+          "id": "all_locations",
+          "resolution": "addressed",
+          "reason": "Step 7.2 (Store.create_turn signature), Step 15.1 (Envelope dataclass), Step 15.2 (envelope.schema.json), and Step 16.1\u20133 (arnold/cli.py argparse + run + exception paths) are now enumerated as explicit subitems with file:line references."
+        },
+        {
+          "id": "correctness",
+          "resolution": "addressed",
+          "reason": "Step 14.3 introduces active_epic_id as the source of truth for every envelope/abort return path inside loop.py; the local is refreshed after every tool invocation so create_epic's retro-stamp propagates to all downstream returns (final response, defer, error, abort)."
+        },
+        {
+          "id": "callers-1",
+          "resolution": "addressed",
+          "reason": "Step 16.1 makes CLI --epic optional (default=None); Step 16.3 passes args.epic (now Optional[str]) into the exception envelope; with Envelope.epic_id: Optional[str] from Step 15.1, the error envelope serialises correctly when --epic is omitted."
+        },
+        {
+          "id": "callers-2",
+          "resolution": "addressed",
+          "reason": "Step 7.2 updates Store.create_turn in the Protocol + both adapter signatures to epic_id: str | None. Step 8.4 and 9.2 confirm the existing INSERT statements already pass through unchanged (DB columns are nullable). Step 10 adds a contract-test assertion that create_turn(epic_id=None) succeeds."
+        },
+        {
+          "id": "correctness-1",
+          "resolution": "addressed",
+          "reason": "Carried over from rev 2: parser split into lenient parse() + strict validate_for_write(); preserved in rev 3 (Step 4)."
+        },
+        {
+          "id": "correctness-2",
+          "resolution": "addressed",
+          "reason": "Carried over from rev 2: reverted_to events store full pre-revert body+title+goal+checklist snapshot; preserved in rev 3 (Step 11.4)."
+        },
+        {
+          "id": "correctness-3",
+          "resolution": "addressed",
+          "reason": "Carried over from rev 2: create_epic uses parsed.title and parsed.goal_first_paragraph for column writes; preserved in rev 3 (Step 11.2)."
+        },
+        {
+          "id": "scope-1",
+          "resolution": "addressed",
+          "reason": "Carried over from rev 2: read tools register with operation_kind='read'; preserved in rev 3 (Step 12.1)."
+        },
+        {
+          "id": "scope-2",
+          "resolution": "addressed",
+          "reason": "Carried over from rev 2: edit_epic.changes.meta returns meta_not_supported with hint to use body sections; preserved in rev 3 (Step 11.3)."
+        },
+        {
+          "id": "callers",
+          "resolution": "addressed",
+          "reason": "Carried over from rev 2: existing run_turn callers (test_run_turn, resident mode) keep passing concrete epic_ids; the no-epic path is purely additive. Rev 3 strengthens this with the active_epic_id handoff so callers can rely on a consistent envelope contract."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T05:41:01Z",
+      "duration_ms": 129550,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddcd4-1d07-75d2-bf78-bda008c7a316",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:8b98220b244e7348c021ff7cb82f52a58191c7c5c42218756e051918e8945e3a",
+      "flags_count": 5
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T05:43:25Z",
+      "duration_ms": 141867,
+      "cost_usd": 1.3888927500000001,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "272e7d91-ae87-4a08-a03f-65165b208ce2",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:63df0c2c71f38ac3b4ccd98f9b2c04471159134070b339ec6c2b73de4d345a6a",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T05:52:39Z",
+      "duration_ms": 551304,
+      "cost_usd": 1.7536325,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "b0eaab1f-2a07-4de5-b9d9-92f0c5b579e4",
+      "agent": "claude",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:875f923d989e71b3f6d2997f6d8042f369216406a63db0e5d0587f154507fe59"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T06:30:28Z",
+      "duration_ms": 2266606,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddcf2-50b7-7762-bf70-787e008a2d8b",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:5f72c9c9abdcacd86e76e541b8a8943d957eba9045d1750e2501378bff83f0d5",
+      "finalize_hash": "sha256:29cb100415f05d9d9e1dc0284c08d6bfecdf38987733a24a7cc24867ce76e982",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T06:33:35Z",
+      "duration_ms": 185234,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddd14-f27e-7c21-99b3-2274e5e87e22",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:58e5ddbf7dfd5e37462904c45b012197c8a478687c1365264a279dea2b41bc3e",
+      "finalize_hash": "sha256:84b80cdc8a2386bf7bae7549851c89fb986cdbad6318a0cae201d803ce2d2bdf"
     }
   ],
   "meta": {
-    "significant_counts": [],
-    "weighted_scores": [],
-    "plan_deltas": [],
-    "recurring_critiques": [],
-    "total_cost_usd": 0.0,
+    "significant_counts": [
+      12,
+      14,
+      13
+    ],
+    "weighted_scores": [
+      16.0,
+      16.0,
+      16.0
+    ],
+    "plan_deltas": [
+      60.45,
+      41.24
+    ],
+    "recurring_critiques": [
+      [],
+      [],
+      [
+        "body version: the revised plan deliberately skips `body_version` even though the spec's sprint 2a title/goal sync adversarial tests mention incrementing it."
+      ]
+    ],
+    "total_cost_usd": 11.102835,
     "overrides": [],
-    "notes": []
+    "notes": [],
+    "user_approved_gate": true
   },
-  "last_gate": {}
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "Iteration 3 has converged. Of the original 12 + 7 critique items raised over the loop, 5 are formally resolved and 11 are marked \"addressed\" by rev 3 with concrete plan edits (parser split, _preamble semantics, reverted_to snapshot, parser-only title/goal write, operation_kind, meta rejection, column safety, Optional[str] threaded through Store.create_turn / Envelope / envelope.schema.json / CLI, active_epic_id local handoff in loop.py, JSON schema regression test). Only two genuinely new minor concerns remain: `correctness` (get_epic_at_time behavior at pre-creation timestamps) and `issue_hints` (body_version deferral acknowledgment) \u2014 both are scope-level tradeoffs the gate is asked to ratify, not plan-quality defects. Score stable at 16.0 across 3 iters, plan delta declining (60% \u2192 41%), no addressed_then_reopened churn (every fuzzy group has reopened_count=0), no debt overlap with the escalated `callable-api` subsystem (Sprint 1a-only). Iteration pressure shows convergence; further revision would chase pedantic edges. Proceed to execution with the two minor concerns explicitly accepted.",
+    "reprompted": false,
+    "signals_assessment": "Score trajectory 16.0 \u2192 16.0 \u2192 16.0 (stable floor while final cluster resolves). Plan delta 60.45% \u2192 41.24% (convergence). 5 flags formally resolved; 11 marked addressed in rev 3 with file:line-cited fixes; 2 genuinely open in iteration 3 (`correctness` for get_epic_at_time edge case at pre-creation timestamps, `issue_hints` for body_version deferral acknowledgement) \u2014 both small tradeoffs the gate is asked to accept. No reopened flags across all 20 fuzzy groups (addressed_then_reopened_count=0 everywhere). Preflight clean (project dir writable, both Claude and Codex available, success criteria present, no structure warnings). No debt overlap with the escalated `callable-api` subsystem.",
+    "warnings": [
+      "During execution, when implementing get_epic_at_time, prefer the spec \u00a71678 reading: if no events have occurred_at <= T, return the epic's earliest known state (body + initial-seed checklist as captured at create time) rather than an empty/None body. This is a one-line tweak in the backward-replay walk \u2014 if the descending walk consumes the `created` event, return that event's snapshot rather than empty. The integration test should assert get_epic_at_time(epic_id, T_before_creation) returns the body+checklist as of the create event, not None.",
+      "body_version is deferred as an explicit accepted tradeoff. If a future sprint or the bot's prompt actually needs version-stamping on body edits, this is an additive migration (add `body_version INTEGER DEFAULT 1` to epics, increment inside edit_epic's update) and a non-breaking schema change. Don't treat the deferral as permanent.",
+      "issue_hints-1, all_locations, callers, callers-1, callers-2 etc. show status='addressed' in the unresolved list \u2014 this appears to be a harness reporting quirk (the resolution metadata recorded the rev 3 fix). The substantive Optional[str] threading is concretely in the plan at Steps 7.2, 8.4, 9.2, 14.3, 15.1, 15.2, 16.1\u201316.3, and 19. Reviewers in the next stage can verify by reading those step labels."
+    ],
+    "settled_decisions": [
+      {
+        "id": "SD-001",
+        "decision": "Sprint 2a is invocation-mode only; no resident-mode behaviour changes.",
+        "rationale": "Settled across all three iterations; not contested."
+      },
+      {
+        "id": "SD-002",
+        "decision": "edit_epic.changes.sprints and changes.state return not_yet_supported; full handling lands in Sprint 4.",
+        "rationale": "Explicit scope boundary; Sprint 4 owns sprint and state-transition gating."
+      },
+      {
+        "id": "SD-003",
+        "decision": "edit_epic.changes.meta is rejected with error='meta_not_supported' and a hint pointing to body.sections._preamble (title) or body.sections.Goal (goal); title/goal are derived columns whose only writer is the body parser.",
+        "rationale": "Resolves scope-2; integration test asserts the rejection and the unchanged epics row."
+      },
+      {
+        "id": "SD-004",
+        "decision": "Default checklist seed is unconditional (18 items); adaptation lives in the bot's prompt, not server-side.",
+        "rationale": "Acceptance criterion only requires seeding 18; adaptation is a bot-side concern."
+      },
+      {
+        "id": "SD-005",
+        "decision": "Body parser splits into lenient parse() + strict validate_for_write(); read tools and time-travel use parse() and never raise on malformed/legacy bodies.",
+        "rationale": "Resolves FLAG-002 and correctness-1; round-trip identity and lenient-input fixtures both pass."
+      },
+      {
+        "id": "SD-006",
+        "decision": "_preamble includes the # Title line and any leading text up to the first ## heading; replace_section('_preamble', '# New Title\\n') is the canonical title-edit path per spec \u00a72606; rename_section to/from _preamble is rejected.",
+        "rationale": "Resolves FLAG-004 and issue_hints-2 (rev 1)."
+      },
+      {
+        "id": "SD-007",
+        "decision": "create_epic writes epics.title and epics.goal exclusively from parse() output; raw title/goal arguments are template inputs only.",
+        "rationale": "Resolves correctness-3; satisfies spec \u00a71314\u20131316 'parser is the only writer of epics.title and epics.goal'."
+      },
+      {
+        "id": "SD-008",
+        "decision": "reverted_to events store full pre-revert body, title, goal, and checklist snapshot in prior_state so backward replay across reverts is correct.",
+        "rationale": "Resolves FLAG-003 and correctness-2; integration test asserts get_epic_at_time at T_just_before_revert."
+      },
+      {
+        "id": "SD-009",
+        "decision": "Read tools register with operation_kind='read'; write tools register with operation_kind='write'.",
+        "rationale": "Resolves scope-1; integration test asserts the recorded operation_kind values."
+      },
+      {
+        "id": "SD-010",
+        "decision": "Both Store adapters expose _EPIC_COLUMNS and _CHECKLIST_COLUMNS guarded-update sets; _MESSAGE_COLUMNS and _TURN_COLUMNS gain 'epic_id' so the bootstrap retro-stamp uses guarded updates.",
+        "rationale": "Resolves all_locations (rev 1); matches existing _MESSAGE_COLUMNS/_TURN_COLUMNS/_IMAGE_COLUMNS pattern."
+      },
+      {
+        "id": "SD-011",
+        "decision": "expected_diff equivalence: \\n line endings, strip trailing whitespace per line, drop trailing blank lines, then byte-equal compare.",
+        "rationale": "Spec \u00a7494; not contested."
+      },
+      {
+        "id": "SD-012",
+        "decision": "epic_outline log fires on turns whose tool_calls include create_epic, edit_epic, or revert; pure-read and failed turns skip the log.",
+        "rationale": "Matches spec wording 'turn that touched an epic'; not contested."
+      },
+      {
+        "id": "SD-013",
+        "decision": "Optional[str] is threaded through every public boundary the no-epic mode touches: run_turn signature, Store.create_turn signature in the Protocol and both adapters, Envelope.epic_id, envelope.schema.json (epic_id removed from required, type relaxed to {string, null}), and CLI --epic argparse + exception envelope path.",
+        "rationale": "Resolves FLAG-001/005, all_locations, callers/callers-1/callers-2, issue_hints-1, correctness (envelope handoff). Step 19 adds a JSON schema regression test."
+      },
+      {
+        "id": "SD-014",
+        "decision": "loop.py uses an active_epic_id local refreshed after every tool invocation as the source of truth for every _envelope(...) and _abort_turn(...) return path; this guarantees a successful bootstrap turn returns the new id and a failed/empty no-epic turn returns None.",
+        "rationale": "Resolves the local-id-vs-parameter mismatch flagged across iterations 2 and 3."
+      },
+      {
+        "id": "SD-015",
+        "decision": "body_version (spec \u00a72606 example) is intentionally deferred. Title/body sync is covered by the epic_events.body_edit audit trail capturing body+title+goal atomically.",
+        "rationale": "Canonical Data Model (\u00a71311\u20131320) does not define body_version. Adding later is a one-line additive migration."
+      },
+      {
+        "id": "SD-016",
+        "decision": "get_epic_at_time(epic_id, T) returns the initial state (body + 18-item seed checklist as captured at the created event) when T is before the created event, matching spec \u00a71678; the plan's earlier 'return empty' wording is refined during execution.",
+        "rationale": "Resolves the lone open correctness flag in iteration 3."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting. Recurring critiques (body version: the revised plan deliberately skips `body_version` even though the spec's sprint 2a title/goal sync adversarial tests mention incrementing it.); the loop likely can't fix these, so judge if they are real blockers."
+  }
 }

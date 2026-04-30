@@ -48,10 +48,10 @@ class Event:
 @dataclass(frozen=True)
 class Envelope:
     turn_id: str
-    epic_id: str
     epic_state_before: str
     epic_state_after: str
     reply: str
+    epic_id: str | None = None
     state_delta: StateDelta = field(default_factory=StateDelta)
     questions: list[str] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)

@@ -20,6 +20,7 @@ _JSON_COLUMNS = {
     "error_details",
     "in_burst_with",
     "prompt_snapshot",
+    "prior_state",
     "provider_response_summary",
     "request_body",
     "request_summary",
@@ -179,25 +180,12 @@ class SQLiteStore:
         ]
 
     def update_message(self, message_id: str, **changes: Any) -> JSONDict:
-        if not changes:
-            return self.load_message(message_id) or {}
-        normalized = {
-            key: _to_sql_value(key, value)
-            for key, value in changes.items()
-        }
-        assignments = ", ".join(f"{key} = ?" for key in normalized)
-        values = list(normalized.values()) + [message_id]
-        self._conn.execute(
-            f"UPDATE messages SET {assignments} WHERE id = ?",
-            values,
-        )
-        self._commit_if_needed()
-        return self.load_message(message_id) or {}
+        return self._update("messages", "id", message_id, changes, _MESSAGE_COLUMNS, self.load_message)
 
     def create_turn(
         self,
         *,
-        epic_id: str,
+        epic_id: str | None,
         triggered_by_message_ids: Sequence[str],
         prompt_snapshot: JSONDict | None = None,
         prompt_version: str | None = None,
@@ -227,25 +215,13 @@ class SQLiteStore:
         return self._load_turn(turn_id) or {}
 
     def update_turn(self, turn_id: str, **changes: Any) -> JSONDict:
-        if not changes:
-            return self._load_turn(turn_id) or {}
-        normalized = {
-            key: _to_sql_value(key, value)
-            for key, value in changes.items()
-        }
+        normalized = dict(changes)
         if (
             normalized.get("status") in {"completed", "failed", "abandoned"}
             and "completed_at" not in normalized
         ):
             normalized["completed_at"] = _now()
-        assignments = ", ".join(f"{key} = ?" for key in normalized)
-        values = list(normalized.values()) + [turn_id]
-        self._conn.execute(
-            f"UPDATE bot_turns SET {assignments} WHERE id = ?",
-            values,
-        )
-        self._commit_if_needed()
-        return self._load_turn(turn_id) or {}
+        return self._update("bot_turns", "id", turn_id, normalized, _TURN_COLUMNS, self._load_turn)
 
     def find_abandoned_turns(self, older_than_seconds: int) -> list[JSONDict]:
         cutoff = _format_datetime(
@@ -652,20 +628,269 @@ class SQLiteStore:
         ]
 
     def update_image(self, image_id: str, **changes: Any) -> JSONDict:
-        if not changes:
-            return self.load_image(image_id) or {}
-        normalized = {
-            key: _to_sql_value(key, value)
-            for key, value in changes.items()
-        }
-        assignments = ", ".join(f"{key} = ?" for key in normalized)
-        values = list(normalized.values()) + [image_id]
+        return self._update("images", "id", image_id, changes, _IMAGE_COLUMNS, self.load_image)
+
+    def create_epic(
+        self,
+        *,
+        title: str,
+        goal: str,
+        body: str,
+        state: str = "shaping",
+    ) -> JSONDict:
+        epic_id = _new_id("epic")
         self._conn.execute(
-            f"UPDATE images SET {assignments} WHERE id = ?",
-            values,
+            """
+            INSERT INTO epics (id, title, goal, body, state)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (epic_id, title, goal, body, state),
         )
         self._commit_if_needed()
-        return self.load_image(image_id) or {}
+        return self.load_epic(epic_id) or {}
+
+    def load_epic(self, epic_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM epics WHERE id = ?",
+                (epic_id,),
+            ).fetchone()
+        )
+
+    def update_epic(self, epic_id: str, **changes: Any) -> JSONDict:
+        return self._update("epics", "id", epic_id, changes, _EPIC_COLUMNS, self.load_epic)
+
+    def seed_checklist(self, epic_id: str, items: Sequence[str]) -> list[JSONDict]:
+        rows = [
+            {
+                "content": content,
+                "status": "open",
+                "position": position,
+                "source": "default_seed",
+            }
+            for position, content in enumerate(items, start=1)
+        ]
+        return self.add_checklist_items(epic_id, rows)
+
+    def list_checklist_items(self, epic_id: str, *, status: str | None = None) -> list[JSONDict]:
+        params: list[Any] = [epic_id]
+        status_sql = ""
+        if status is not None:
+            status_sql = " AND status = ?"
+            params.append(status)
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM checklist_items
+                WHERE epic_id = ?{status_sql}
+                ORDER BY position, id
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def update_checklist_item(self, item_id: str, **changes: Any) -> JSONDict:
+        return self._update(
+            "checklist_items",
+            "id",
+            item_id,
+            changes,
+            _CHECKLIST_COLUMNS,
+            self._load_checklist_item,
+        )
+
+    def add_checklist_items(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        added: list[JSONDict] = []
+        for offset, item in enumerate(items, start=1):
+            item_id = str(item.get("id") or _new_id("check"))
+            self._conn.execute(
+                """
+                INSERT INTO checklist_items (
+                    id, epic_id, content, status, position, source,
+                    skip_reason, superseded_by_item_id, created_at, completed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), ?)
+                """,
+                (
+                    item_id,
+                    epic_id,
+                    item["content"],
+                    item.get("status", "open"),
+                    item.get("position", offset),
+                    item.get("source", "bot_inferred"),
+                    item.get("skip_reason"),
+                    item.get("superseded_by_item_id"),
+                    item.get("created_at"),
+                    item.get("completed_at"),
+                ),
+            )
+            added.append(self._load_checklist_item(item_id) or {})
+        self._commit_if_needed()
+        return added
+
+    def delete_checklist_items(self, item_ids: Sequence[str]) -> None:
+        if not item_ids:
+            return
+        placeholders = ", ".join("?" for _ in item_ids)
+        self._conn.execute(
+            f"DELETE FROM checklist_items WHERE id IN ({placeholders})",
+            list(item_ids),
+        )
+        self._commit_if_needed()
+
+    def replace_checklist(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        with self.transaction():
+            self._conn.execute("DELETE FROM checklist_items WHERE epic_id = ?", (epic_id,))
+            return self.add_checklist_items(epic_id, items)
+
+    def record_epic_event(
+        self,
+        *,
+        epic_id: str,
+        transaction_id: str,
+        event_type: str,
+        summary: str,
+        prior_state: JSONDict | None,
+        turn_id: str | None,
+    ) -> JSONDict:
+        event_id = _new_id("evt")
+        self._conn.execute(
+            """
+            INSERT INTO epic_events (
+                id, epic_id, transaction_id, event_type, summary, prior_state,
+                turn_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                epic_id,
+                transaction_id,
+                event_type,
+                summary,
+                _json_dumps(prior_state) if prior_state is not None else None,
+                turn_id,
+            ),
+        )
+        self._commit_if_needed()
+        return self._load_epic_event(event_id) or {}
+
+    def list_epic_events(
+        self,
+        epic_id: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        kinds: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        clauses = ["epic_id = ?"]
+        params: list[Any] = [epic_id]
+        if since is not None:
+            clauses.append("occurred_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("occurred_at <= ?")
+            params.append(until)
+        if kinds:
+            placeholders = ", ".join("?" for _ in kinds)
+            clauses.append(f"event_type IN ({placeholders})")
+            params.extend(kinds)
+        limit_sql = f" LIMIT {int(limit)}" if limit is not None else ""
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM epic_events
+                WHERE {' AND '.join(clauses)}
+                ORDER BY occurred_at, id
+                {limit_sql}
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def latest_transaction_id(self, epic_id: str) -> str | None:
+        row = self._conn.execute(
+            """
+            SELECT transaction_id FROM epic_events
+            WHERE epic_id = ?
+            ORDER BY occurred_at DESC, id DESC
+            LIMIT 1
+            """,
+            (epic_id,),
+        ).fetchone()
+        return str(row["transaction_id"]) if row is not None else None
+
+    def events_by_transaction(self, transaction_id: str) -> list[JSONDict]:
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                """
+                SELECT * FROM epic_events
+                WHERE transaction_id = ?
+                ORDER BY occurred_at, id
+                """,
+                (transaction_id,),
+            ).fetchall()
+        ]
+
+    def list_recent_turns(self, *, n: int = 10, epic_id: str | None = None) -> list[JSONDict]:
+        params: list[Any] = []
+        where_sql = ""
+        if epic_id is not None:
+            where_sql = "WHERE epic_id = ?"
+            params.append(epic_id)
+        params.append(int(n))
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM bot_turns
+                {where_sql}
+                ORDER BY started_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def search_tool_calls_by(
+        self,
+        *,
+        tool_name: str | None = None,
+        epic_id: str | None = None,
+        since: str | None = None,
+        limit: int = 20,
+    ) -> list[JSONDict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if tool_name is not None:
+            clauses.append("tool_calls.tool_name = ?")
+            params.append(tool_name)
+        if epic_id is not None:
+            clauses.append("bot_turns.epic_id = ?")
+            params.append(epic_id)
+        if since is not None:
+            clauses.append("tool_calls.called_at >= ?")
+            params.append(since)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(limit))
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT tool_calls.*
+                FROM tool_calls
+                JOIN bot_turns ON bot_turns.id = tool_calls.turn_id
+                {where_sql}
+                ORDER BY tool_calls.called_at DESC, tool_calls.id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        ]
 
     def _next_invocation_message_id(self, turn_id: str) -> str:
         count = self._conn.execute(
@@ -728,6 +953,49 @@ class SQLiteStore:
             ).fetchone()
         )
 
+    def _load_checklist_item(self, item_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM checklist_items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        )
+
+    def _load_epic_event(self, event_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM epic_events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+        )
+
+    def _update(
+        self,
+        table: str,
+        key_column: str,
+        row_id: str,
+        changes: dict[str, Any],
+        allowed: set[str],
+        loader,
+    ) -> JSONDict:
+        if not changes:
+            return loader(row_id) or {}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unsupported {table} columns: {', '.join(sorted(unknown))}")
+        normalized = {
+            key: _to_sql_value(key, value)
+            for key, value in changes.items()
+        }
+        assignments = ", ".join(f"{key} = ?" for key in normalized)
+        values = list(normalized.values()) + [row_id]
+        self._conn.execute(
+            f"UPDATE {table} SET {assignments} WHERE {key_column} = ?",
+            values,
+        )
+        self._commit_if_needed()
+        return loader(row_id) or {}
+
     def _commit_if_needed(self) -> None:
         if self._transaction_depth == 0:
             self._conn.commit()
@@ -765,3 +1033,66 @@ def _now() -> str:
 
 def _format_datetime(value: datetime) -> str:
     return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+_MESSAGE_COLUMNS = {
+    "epic_id",
+    "discord_message_id",
+    "content",
+    "audio_storage_url",
+    "transcription_metadata",
+    "has_image_attachment",
+    "has_code_attachment",
+    "in_burst_with",
+    "was_voice_message",
+    "bot_turn_id",
+}
+_TURN_COLUMNS = {
+    "epic_id",
+    "triggered_by_message_ids",
+    "prompt_snapshot",
+    "prompt_version",
+    "reasoning",
+    "final_output_message_id",
+    "status_message_id",
+    "status",
+    "state_at_turn",
+    "plan_edited",
+    "code_consulted",
+    "image_generated",
+    "second_opinion_requested",
+    "message_sent",
+    "warnings_issued",
+    "current_activity",
+    "completed_at",
+    "model_version",
+}
+_IMAGE_COLUMNS = {
+    "prompt",
+    "storage_url",
+    "quality",
+    "size",
+    "reference_key",
+    "description",
+    "caption",
+    "in_body",
+    "active",
+    "discord_attachment_id",
+}
+_EPIC_COLUMNS = {
+    "title",
+    "goal",
+    "body",
+    "state",
+    "last_edited_at",
+    "last_active_at",
+    "planned_at",
+}
+_CHECKLIST_COLUMNS = {
+    "content",
+    "status",
+    "position",
+    "skip_reason",
+    "superseded_by_item_id",
+    "completed_at",
+}
