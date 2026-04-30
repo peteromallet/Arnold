@@ -1,0 +1,122 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": [],
+  "criteria": [
+    {
+      "name": "Ambiguous messages with five active epics select the most recently edited active epic within 24 hours when exactly one qualifying default exists.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Epic selection occurs before `run_turn` lock acquisition, or an explicitly tested safe switch path re-acquires the selected epic lock before any mutation.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Inbound and outbound message rows for a routed real epic are attached to the selected epic rather than left on the synthetic/default Discord conversation key.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "When no clear epic context exists, the bot asks a clarification question instead of mutating or responding under a guessed real epic.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Switching from one epic to another includes the destination epic title in the outbound message.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`list_epics`, `search_epics`, and `search_messages` are implemented as Store protocol methods and exposed as tools without bypassing `agent_kit/ports.py`.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "SQLite and Supabase store adapters both support `list_epics`, `search_epics`, and `search_messages` with compatible result shapes.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Both SQLite and Supabase migrations add indexed full-text search or the repository's established equivalent for `messages.content`.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`search_messages` returns the expected hit IDs for 10 seeded full-text search queries in the supported store test mode or contract suite.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Reference phrases such as \u201cthe second one\u201d and \u201cthat point\u201d resolve against the last outbound bot message in at least 9 of 10 unit fixtures.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "\u201cshow me what you know about X\u201d returns a structured summary containing every section required by `planning-bot-spec.md`.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Mode detection produces distinct response policy inputs for Deep-thinking, Brainstorming, and Executing.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "LLM-graded epic-selection eval reaches at least 27 correct out of 30 canned scenarios.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "LLM-graded ambiguity eval verifies the bot asks rather than guesses on 10 deliberately ambiguous cases.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Existing repository tests continue to pass after Sprint 3 changes.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Search and selection logic is kept in deterministic modules with focused unit tests rather than embedded only in prompts.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Tool outputs contain enough context for disambiguation without exposing unnecessary internal or cross-user data.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Manual product review confirms the three user modes feel meaningfully different without becoming verbose or performative.",
+      "priority": "info",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Light robustness: review skipped; stub written for artifact parity.",
+  "task_verdicts": [],
+  "sense_check_verdicts": []
+}

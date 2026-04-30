@@ -1,0 +1,42 @@
+{
+  "checks": [],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Epic routing/locking: selection must happen before the current resident `epic_id` lock or re-acquire the selected epic lock",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The plan places the epic-selection module \"before or during response planning\" but does not call out the current resident routing/locking contract. `DiscordTransport.on_message` persists inbound rows with `_message_epic_id(message)`, which defaults to `discord_user_<author>` (`agent_kit/transport/discord.py`), `ArnoldResident.handle_transport_message` then coalesces by `payload[\"epic_id\"]` and calls `run_turn(epic_id=epic_id)` (`agent_kit/resident.py`), and `run_turn` acquires exactly that initial epic lock before loading hot context (`agent_kit/loop.py`). If Sprint 3 chooses a different real epic inside the model/planning phase, edits can proceed without holding the selected epic's lock, and inbound/outbound message rows may remain attached to the synthetic conversation key rather than the selected epic. The plan needs an explicit insertion point for selection before lock/turn creation, or a safe switch path that updates message/turn epic IDs and obtains/releases the selected epic lock."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Store/search portability: message search must be implemented through the Store protocol for both SQLite and Supabase, not only as a Supabase migration/helper",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The plan's database foundation focuses on a Supabase migration and Supabase/test DB seeds, but this repo has mirrored SQLite and Supabase store implementations plus migrations (`agent_kit/store/migrations/sqlite/001_core.sql`, `supabase/migrations/202604300001_001_core.sql`, `agent_kit/store/sqlite.py`, `agent_kit/store/supabase.py`). The spec marks `search_messages` as a both-modes read tool, and current tool code depends on `Store` protocol methods (`agent_kit/ports.py`) with contract tests for both adapters. A Supabase-only search path would leave invocation-mode SQLite without `search_messages`, fail local/unit coverage, or force the tool to bypass the store abstraction."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 12: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 13: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 14: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

@@ -1,0 +1,171 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T12:08:34Z",
+  "hash": "sha256:e41f8190bba4cc51f9b60a7bdd683e81a80059440491fa9a350b15d87cd851f9",
+  "changes_summary": "Revised the plan around the two critique flags: epic selection is now explicitly pre-turn and lock-safe in `resident.py`/`loop.py`, and search/list tools now go through the Store protocol with both SQLite and Supabase migrations/adapters instead of a Supabase-only path.",
+  "flags_addressed": [
+    "FLAG-001",
+    "FLAG-002"
+  ],
+  "questions": [
+    "Which timestamp should define \u201cmost recently edited epic\u201d: explicit epic `updated_at`, last message timestamp, last bot-applied mutation timestamp, or another project-specific field?",
+    "Should full-text search include all messages visible to the current user/conversation, or only messages attached to active epics?",
+    "For reference resolution, is it acceptable to store structured metadata for future bot outputs, or must Sprint 3 resolve references only from already-stored raw text?",
+    "What exact conversation gap threshold should trigger acknowledgment if `planning-bot-spec.md` leaves it flexible?",
+    "Should user mode be sticky across turns until changed, or apply only to the message where the mode is detected?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Ambiguous messages with five active epics select the most recently edited active epic within 24 hours when exactly one qualifying default exists.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Epic selection occurs before `run_turn` lock acquisition, or an explicitly tested safe switch path re-acquires the selected epic lock before any mutation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Inbound and outbound message rows for a routed real epic are attached to the selected epic rather than left on the synthetic/default Discord conversation key.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "When no clear epic context exists, the bot asks a clarification question instead of mutating or responding under a guessed real epic.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Switching from one epic to another includes the destination epic title in the outbound message.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`list_epics`, `search_epics`, and `search_messages` are implemented as Store protocol methods and exposed as tools without bypassing `agent_kit/ports.py`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "SQLite and Supabase store adapters both support `list_epics`, `search_epics`, and `search_messages` with compatible result shapes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Both SQLite and Supabase migrations add indexed full-text search or the repository's established equivalent for `messages.content`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`search_messages` returns the expected hit IDs for 10 seeded full-text search queries in the supported store test mode or contract suite.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Reference phrases such as \u201cthe second one\u201d and \u201cthat point\u201d resolve against the last outbound bot message in at least 9 of 10 unit fixtures.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "\u201cshow me what you know about X\u201d returns a structured summary containing every section required by `planning-bot-spec.md`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Mode detection produces distinct response policy inputs for Deep-thinking, Brainstorming, and Executing.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "LLM-graded epic-selection eval reaches at least 27 correct out of 30 canned scenarios.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "LLM-graded ambiguity eval verifies the bot asks rather than guesses on 10 deliberately ambiguous cases.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Existing repository tests continue to pass after Sprint 3 changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Search and selection logic is kept in deterministic modules with focused unit tests rather than embedded only in prompts.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Tool outputs contain enough context for disambiguation without exposing unnecessary internal or cross-user data.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Manual product review confirms the three user modes feel meaningfully different without becoming verbose or performative.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The critique's file paths reflect the current repo shape: `agent_kit/transport/discord.py`, `agent_kit/resident.py`, `agent_kit/loop.py`, `agent_kit/ports.py`, `agent_kit/store/sqlite.py`, and `agent_kit/store/supabase.py`.",
+    "The service-role key from the brief must not be committed, logged, or embedded in tests; local tests should use existing environment configuration or test credentials.",
+    "The 24h default applies only when the user message is ambiguous; explicit epic names or corrections override recency.",
+    "Active epics exclude archived/done/deleted epics if such status fields exist.",
+    "Reference resolution should prefer the current conversation's last outbound bot message, scoped to the selected epic/conversation context.",
+    "Search tools must work in both invocation/local SQLite mode and Supabase mode via the Store abstraction.",
+    "If inbound Discord messages are persisted before final epic routing, the implementation may add a minimal Store method to reassign the inbound message to the selected epic before `run_turn`."
+  ],
+  "delta_from_previous_percent": 83.77,
+  "structure_warnings": []
+}

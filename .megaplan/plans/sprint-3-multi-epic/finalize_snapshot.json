@@ -1,0 +1,506 @@
+{
+  "tasks": [
+    {
+      "id": "T13",
+      "description": "Read user_actions.md. For each before_execute action, programmatically verify completion using bash tools \u2014 grep .env for required keys, query the migrations table, curl the dev server, etc. Reading the file does NOT count as verification; you must run a command. For actions that genuinely cannot be verified mechanically (manual UI checks), explicitly ask the user. If anything is incomplete or unverifiable, mark this task blocked with reason and STOP.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    },
+    {
+      "id": "T1",
+      "description": "Audit `planning-bot-spec.md` and the current routing/store code to pin Sprint 3 contracts: epic selection rules, reference behavior, user modes, understanding summaries, switch announcements, gap acknowledgment threshold, Discord inbound persistence, resident coalescing, `run_turn` lock acquisition, `Store` conventions, schema fields, migration style, and whether persisted inbound messages need reassignment after routing.",
+      "depends_on": [
+        "T13"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T2",
+      "description": "Extend `agent_kit/ports.py` with Store protocol methods for `list_epics`, `search_epics`, and `search_messages`, using stable portable result shapes containing IDs, title/content snippets, status, timestamps, direction, rank where applicable, and disambiguation metadata. Add a minimal message epic reassignment method only if T1 confirms inbound rows are persisted before final selected-epic routing.",
+      "depends_on": [
+        "T13",
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T3",
+      "description": "Add full-text search migrations for both stores: SQLite migration under `agent_kit/store/migrations/sqlite/` using FTS5 or the repo's established SQLite FTS pattern for `messages.content`, and Supabase migration under `supabase/migrations/` using PostgreSQL full-text search with a GIN index or generated/search-vector column. Keep visibility/scoping aligned with existing message reads.",
+      "depends_on": [
+        "T13",
+        "T1",
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T4",
+      "description": "Implement the new Store methods in `agent_kit/store/sqlite.py` and `agent_kit/store/supabase.py`, including deterministic ranking/tie-breakers and compatible result shapes. Implement message epic reassignment in both adapters if T2 added it.",
+      "depends_on": [
+        "T13",
+        "T2",
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T5",
+      "description": "Implement deterministic pre-turn epic routing before resident payload coalescing and before `run_turn` lock acquisition. Inputs must include message text, author/conversation identity, recent active epics, current/default context, and previous selected epic. Explicit epic names/correction phrases override recency; ambiguous messages select the single most recently edited active epic within 24 hours; unclear context must produce clarification behavior instead of mutating a guessed real epic.",
+      "depends_on": [
+        "T13",
+        "T1",
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T6",
+      "description": "Wire selected-epic lock safety and switch announcements through `agent_kit/resident.py` and `agent_kit/loop.py`: call `run_turn(epic_id=...)` with the selected real epic, update queued payloads and persisted inbound rows before execution when routing changes, ensure outbound rows attach to the selected epic, reject or safely defer late unsafe epic switches, and include the destination epic title in outbound messages only when an actual switch occurs.",
+      "depends_on": [
+        "T13",
+        "T5"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T7",
+      "description": "Register `list_epics`, `search_epics`, and `search_messages` read tools through the existing tool registry under `agent_kit/tools/` or the actual registry found during T1. Tool handlers must call only the Store protocol methods, return concise stable payloads for disambiguation/user summaries, and avoid direct adapter SQL or cross-user data exposure.",
+      "depends_on": [
+        "T13",
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T8",
+      "description": "Implement reference resolution against the most recent outbound bot message in the same conversation/selected-epic context. Resolve phrases such as `the second one`, `that point`, and `the last option` using structured outbound metadata when available, otherwise parse common raw-text structures including numbered lists, bullets, headings, and short option lists. Return resolved target plus ambiguity state so low-confidence cases ask for clarification.",
+      "depends_on": [
+        "T13",
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T9",
+      "description": "Implement user mode detection and conversation gap acknowledgment in the prompt/policy builder path found during T1. Detect Deep-thinking, Brainstorming, and Executing separately from epic routing, pass distinct response policy inputs for each mode, decide stickiness according to the spec or T1 finding, and add the specified gap acknowledgment only when the configured threshold is crossed.",
+      "depends_on": [
+        "T13",
+        "T1",
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T10",
+      "description": "Implement `show me what you know about X` understanding summaries. Resolve `X` through explicit epic matching, `search_epics`, and `search_messages`; ground output in stored epic/message data; and return every structured section required by `planning-bot-spec.md` without unsupported synthesis.",
+      "depends_on": [
+        "T13",
+        "T7",
+        "T9"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T11",
+      "description": "Add or extend focused project tests for the new behavior: Store contract/migration coverage for SQLite and Supabase adapters, seeded search corpus with 10 expected hit IDs, pre-turn routing and selected-epic lock safety, inbound/outbound row attachment, unsafe late-switch protection, epic selection fixtures with five active epics, reference resolver fixtures, mode detection fixtures, switch announcement assertions, multi-epic switching/search/summary integration, 30 canned epic-selection eval scenarios requiring at least 27 correct, and 10 ambiguity scenarios requiring clarification instead of guessing.",
+      "depends_on": [
+        "T13",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T9",
+        "T10"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T12",
+      "description": "Run verification and fix until passing: run the most relevant existing Store contract tests first for SQLite, then Supabase adapter tests if credentials/config are available, then routing/lock-safety tests, unit tests for epic selection/reference resolution/mode detection, integration tests for switching/search tools/understanding summaries, LLM-graded evals for epic selection and ambiguity handling, and finally the repository's broader lint/test suite. Also write a short throwaway script that exercises the Sprint 3 routing/search/reference scenario end to end, run it, confirm behavior, and delete the script before finalizing.",
+      "depends_on": [
+        "T13",
+        "T11"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T14",
+      "description": "Surface after_execute user_actions to the user:\n- U2: After code review/merge approval, apply the Supabase migration to the intended Supabase environment using the team's normal deployment process.\n- U3: Manually review a short live or staging conversation for the three user modes to confirm the responses feel meaningfully different without becoming verbose or performative.\nDo not perform them yourself \u2014 these require human action. Mark this task done once they have been clearly communicated.",
+      "depends_on": [
+        "T12"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Do not invoke nested megaplan tooling; treat repository mentions of megaplan as implementation context only.",
+    "Epic selection must happen before `run_turn` acquires the epic lock, or any later switch path must be explicitly lock-safe and tested.",
+    "Inbound Discord messages may already be persisted under a synthetic/default key; if so, reassign both payload and stored row before queueing/running the selected real epic turn.",
+    "Define `most recently edited epic` from the real schema/spec before implementation. Candidate fields may include `epics.updated_at`, latest message timestamp, or last bot-applied mutation timestamp.",
+    "Ambiguous messages should select a real epic only when exactly one safe qualifying default exists within 24 hours; otherwise ask for clarification.",
+    "Explicit epic names and correction phrases override recency and must not be mistaken for user mode signals.",
+    "Switch announcements must include the destination epic title only on actual epic changes, not every routed message.",
+    "Search/list tools must go through `Store` in `agent_kit/ports.py`; no Supabase-only helper or direct tool SQL.",
+    "SQLite and Supabase result shapes must remain compatible enough for shared tests and model/tool callers.",
+    "Full-text search must respect existing user/conversation/epic visibility boundaries and avoid cross-user leakage.",
+    "Reference resolution should prefer structured outbound metadata when present but must pass raw-text fixtures for existing stored messages.",
+    "Mode behavior should be distinct but not performative: Deep-thinking measured/substantive, Brainstorming exploratory, Executing direct/minimal.",
+    "Do not commit, log, or embed the redacted Supabase service-role key; use existing environment configuration for Supabase tests.",
+    "Debt watch: avoid worsening known attachment-ingestion recovery gaps; Sprint 3 should not promise deterministic storage reissue without durable payload source material.",
+    "LLM-graded evals must be deterministic and cheap enough for normal verification where the repo supports that."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Did the audit identify the exact pre-turn insertion point, the real schema timestamp to use for recency, the gap threshold/mode stickiness rules, and whether message reassignment is required?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Do the Store protocol method signatures and result shapes contain enough metadata for disambiguation while remaining portable across SQLite and Supabase?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Do both migrations add indexed full-text search for `messages.content` using each store's native approach without bypassing existing visibility assumptions?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Do SQLite and Supabase implementations return compatible, deterministic results for list/search calls, including stable tie-breakers and any required reassignment behavior?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Can an ambiguous message with five active epics route to the single most recently edited active epic within 24 hours before resident coalescing and before the lock is acquired?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Are `run_turn`, persisted inbound rows, queued payloads, locks, outbound rows, and switch announcements all using the same selected epic ID/title?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Are the new read tools registered through the existing tool system and calling only Store protocol methods with no adapter-specific SQL in tool handlers?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Does the resolver correctly handle numbered lists, bullets, headings, mixed prose/list structures, and ambiguous `that point` cases against only the last outbound bot message in scope?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Are mode signals separated from epic routing, and does the prompt/policy path receive distinct inputs for Deep-thinking, Brainstorming, and Executing plus the correct gap acknowledgment state?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Does `show me what you know about X` resolve the right epic/message evidence and include every spec-required summary section without unsupported claims?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "question": "Do the added/extended tests cover store search, routing/lock safety, row attachment, unsafe switches, reference resolution, mode detection, switch announcements, summaries, and the required eval thresholds?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "question": "Did the focused tests, relevant integration tests, LLM-graded evals, throwaway reproduction script, and broader repo test/lint suite pass after any fixes and reruns?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "question": "Were all before_execute user_actions programmatically verified before execution proceeded?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "question": "Were all after_execute user_actions clearly surfaced to the user without the executor performing them?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "user_actions": [
+    {
+      "id": "U1",
+      "description": "Provide Supabase test credentials or ensure the repo's expected Supabase environment variables are set before running Supabase adapter/contract tests. Do not paste or commit the service-role key into source files, fixtures, or logs.",
+      "phase": "before_execute",
+      "blocks_task_ids": [
+        "T12"
+      ],
+      "rationale": "SQLite work can proceed without this, but Supabase verification requires configured credentials.",
+      "requires_human_only_reason": null
+    },
+    {
+      "id": "U2",
+      "description": "After code review/merge approval, apply the Supabase migration to the intended Supabase environment using the team's normal deployment process.",
+      "phase": "after_execute",
+      "blocks_task_ids": null,
+      "rationale": "Repository code can add migration SQL, but production/staging DB migration execution is an operational action outside repo editing.",
+      "requires_human_only_reason": null
+    },
+    {
+      "id": "U3",
+      "description": "Manually review a short live or staging conversation for the three user modes to confirm the responses feel meaningfully different without becoming verbose or performative.",
+      "phase": "after_execute",
+      "blocks_task_ids": null,
+      "rationale": "This covers the subjective product-quality criterion that automated tests cannot fully verify.",
+      "requires_human_only_reason": null
+    }
+  ],
+  "meta_commentary": "Execute in dependency order and keep the routing/locking invariant central: the selected epic ID must be known before `run_turn` loads context or mutates state. Prefer small deterministic helpers for epic selection, reference resolution, and mode detection so the behavior is unit-testable instead of buried only in prompts. Treat `planning-bot-spec.md` as behavioral authority where the approved plan leaves questions open; when the spec is flexible, document the chosen interpretation in code/tests. Keep Supabase secrets out of all files and logs, and do SQLite verification first so implementation can proceed even if Supabase credentials are unavailable.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Audit spec and current routing contract",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Audit Store abstraction and migrations",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Extend Store protocol for epic/message reads",
+        "finalize_item_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Add full-text search to both stores",
+        "finalize_item_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Implement store methods in both adapters",
+        "finalize_item_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Add deterministic epic routing before turn creation",
+        "finalize_item_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Enforce selected-epic locking and switch announcements",
+        "finalize_item_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Register read tools through Store",
+        "finalize_item_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Implement reference resolution against last bot output",
+        "finalize_item_ids": [
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Implement user mode reading and conversation gap acknowledgment",
+        "finalize_item_ids": [
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Implement `show me what you know about X` summaries",
+        "finalize_item_ids": [
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Add store contract and migration tests",
+        "finalize_item_ids": [
+          "T11",
+          "T12",
+          "U1"
+        ]
+      },
+      {
+        "plan_step_summary": "Add routing and lock-safety tests",
+        "finalize_item_ids": [
+          "T11",
+          "T12"
+        ]
+      },
+      {
+        "plan_step_summary": "Add focused behavior tests",
+        "finalize_item_ids": [
+          "T11",
+          "T12"
+        ]
+      },
+      {
+        "plan_step_summary": "Add integration and LLM-graded evals",
+        "finalize_item_ids": [
+          "T11",
+          "T12"
+        ]
+      },
+      {
+        "plan_step_summary": "Verify before_execute user_actions",
+        "finalize_item_ids": [
+          "T13"
+        ]
+      },
+      {
+        "plan_step_summary": "Surface after_execute user_actions",
+        "finalize_item_ids": [
+          "T14"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All 15 approved plan steps are mapped to execution tasks. Human actions are limited to Supabase credential setup, operational migration application, and subjective manual mode review; all code, migrations, tests, and verification remain executor tasks. U1 may be skipped only if the repository already has Supabase test configuration available in the environment.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": [],
+  "baseline_test_command": "pytest --tb=no -q --no-header",
+  "baseline_test_note": "No baseline tests were run during briefing generation; T12 is the execution verification task."
+}

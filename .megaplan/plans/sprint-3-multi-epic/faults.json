@@ -1,0 +1,61 @@
+{
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Epic routing/locking: selection must happen before the current resident `epic_id` lock or re-acquire the selected epic lock",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan around the two critique flags: epic selection is now explicitly pre-turn and lock-safe in `resident.py`/`loop.py`, and search/list tools now go through the Store protocol with both SQLite and Supabase migrations/adapters instead of a Supabase-only path.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Store/search portability: message search must be implemented through the Store protocol for both SQLite and Supabase, not only as a Supabase migration/helper",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan around the two critique flags: epic selection is now explicitly pre-turn and lock-safe in `resident.py`/`loop.py`, and search/list tools now go through the Store protocol with both SQLite and Supabase migrations/adapters instead of a Supabase-only path.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 12: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 13: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 14: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    }
+  ]
+}

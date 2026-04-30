@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-30T12:05:15Z",
+  "hash": "sha256:1b6c9a87fc90e81290049d0079853020f6e2131e36685b5b9093cfa4224cd993",
+  "questions": [
+    "Which timestamp should define \u201cmost recently edited epic\u201d: an explicit epic `updated_at`, last message timestamp, last bot-applied mutation timestamp, or another project-specific field?",
+    "Should full-text search include only messages in active epics, or all messages visible to the current user/conversation?",
+    "For reference resolution, is it acceptable to store structured metadata for future bot outputs, or must Sprint 3 resolve references only from already-stored raw text?",
+    "What exact conversation gap threshold should trigger acknowledgment if `planning-bot-spec.md` leaves it flexible?",
+    "Should user mode be sticky across turns until changed, or apply only to the message where the mode is detected?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Ambiguous messages with five active epics select the most recently edited active epic within 24 hours when exactly one qualifying default exists.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "When no clear epic context exists, the bot asks a clarification question instead of mutating or responding under a guessed epic.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Switching from one epic to another includes the destination epic title in the outbound message.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`list_epics`, `search_epics`, and `search_messages` tools are registered and return stable, documented output shapes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Messages content has a full-text search index or equivalent Supabase-supported indexed search path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`search_messages` returns the expected hit IDs for 10 seeded full-text search queries.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Reference phrases such as \u201cthe second one\u201d and \u201cthat point\u201d resolve against the last outbound bot message in at least 9 of 10 unit fixtures.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "\u201cshow me what you know about X\u201d returns a structured summary containing every section required by `planning-bot-spec.md`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Mode detection produces distinct response policy inputs for Deep-thinking, Brainstorming, and Executing.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "LLM-graded epic-selection eval reaches at least 27 correct out of 30 canned scenarios.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "LLM-graded ambiguity eval verifies the bot asks rather than guesses on 10 deliberately ambiguous cases.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Existing repository tests continue to pass after Sprint 3 changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Search and selection logic is kept in deterministic modules with focused unit tests rather than embedded only in prompts.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Tool outputs contain enough context for disambiguation without exposing unnecessary internal or cross-user data.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Manual product review confirms the three user modes feel meaningfully different without becoming verbose or performative.",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The repo already has a Supabase-backed message and epic persistence layer plus a test harness that can seed data.",
+    "The service-role key from the brief should not be committed, logged, or embedded in tests; local tests should use existing environment configuration or test credentials.",
+    "The 24h default applies only when the user message is ambiguous; explicit epic names or corrections override recency.",
+    "Active epics exclude archived/done/deleted epics if such status fields exist.",
+    "Reference resolution should prefer the current conversation\u2019s last outbound bot message, not global bot output across conversations.",
+    "The implementation should update tests and eval fixtures as needed rather than narrowing scope to preserve current test assumptions."
+  ],
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}

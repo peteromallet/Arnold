@@ -1,0 +1,7 @@
+{
+  "recommendation": "ITERATE",
+  "rationale": "Light robustness: single revision pass to incorporate critique feedback.",
+  "signals_assessment": "",
+  "warnings": [],
+  "settled_decisions": []
+}
