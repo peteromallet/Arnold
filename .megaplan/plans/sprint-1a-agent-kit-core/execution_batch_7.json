@@ -1,0 +1,56 @@
+{
+  "status": "completed",
+  "batch": 7,
+  "files_changed": [
+    "arnold/cli.py",
+    ".megaplan/plans/sprint-1a-agent-kit-core/execution_batch_7.json"
+  ],
+  "commands_run": [
+    "python -m compileall -q agent_kit arnold megaplan tests",
+    "rg -n -- \"--attach|attachments=|click\" arnold agent_kit tests || true",
+    "python -m arnold.cli turn --epic epic_1 --input hello --db <tmp-db> --model-id fake --stream-events",
+    "python -m arnold.cli turn --store supabase --epic epic_1 --input hello",
+    "printf 'from stdin' | python -m arnold.cli turn --epic epic_stdin --from-stdin --db <tmp-db> --model-id fake",
+    "python -m pytest",
+    "python -m arnold.cli turn --epic epic_blocked --input hello --db <tmp-db> --model-id fake",
+    "python -m arnold.cli turn --epic epic_errored --input hello --db <tmp-db> --model-id fake",
+    "rg -n \"print\\(\" agent_kit arnold megaplan || true",
+    "rg -n \"yhwfl|service key|service_key|eyJ[A-Za-z0-9_-]+\" agent_kit arnold megaplan tests || true"
+  ],
+  "task_updates": [
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "Added argparse CLI in `arnold/cli.py` for `arnold turn` with `--epic`, mutually exclusive `--input`/`--from-stdin`, `--stream-events`, `--store sqlite|supabase`, `--db`, and CLI-only `ARNOLD_MODEL_ID` defaulting for `--model-id`. Verified completed streaming, stdin, blocked_on_caller, provider-error, and unsupported Supabase envelope paths; full current pytest suite passes with 8 tests.",
+      "files_changed": [
+        "arnold/cli.py"
+      ],
+      "commands_run": [
+        "python -m compileall -q agent_kit arnold megaplan tests",
+        "python -m arnold.cli turn --epic epic_1 --input hello --db <tmp-db> --model-id fake --stream-events",
+        "python -m arnold.cli turn --store supabase --epic epic_1 --input hello",
+        "printf 'from stdin' | python -m arnold.cli turn --epic epic_stdin --from-stdin --db <tmp-db> --model-id fake",
+        "python -m arnold.cli turn --epic epic_blocked --input hello --db <tmp-db> --model-id fake",
+        "python -m arnold.cli turn --epic epic_errored --input hello --db <tmp-db> --model-id fake",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "Passed. CLI omits `--attach`, uses argparse, writes valid envelope JSON to stdout for tested outcomes, streams event NDJSON using the same event encoder, returns Supabase as `errored`/`unsupported_store`, installs a SIGINT cancellation handler, and delegates orchestration to `run_turn`."
+    }
+  ],
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 7/9: Project directory is not a git repository.",
+    "Advisory observation skip after batch 7/9: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

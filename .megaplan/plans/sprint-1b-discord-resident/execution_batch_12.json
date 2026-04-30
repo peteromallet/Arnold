@@ -1,0 +1,43 @@
+{
+  "task_updates": [
+    {
+      "id": "T19",
+      "status": "done",
+      "executor_notes": "Added all eight requested integration test modules. Verification: T19 integration modules passed with 10 tests. Full suite initially had one transient test_run_turn assertion; tests/test_run_turn.py passed immediately after, and the full suite rerun passed with 82 passed and 1 skipped.",
+      "files_changed": [
+        "tests/test_resident_recovery.py",
+        "tests/test_voice_pipeline.py",
+        "tests/test_image_attachment_pipeline.py",
+        "tests/test_status_lifecycle.py",
+        "tests/test_mid_turn_messages.py",
+        "tests/test_send_message_resident.py",
+        "tests/test_anthropic_replay.py",
+        "tests/test_duplicate_inbound_dropped.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_resident_recovery.py tests/test_voice_pipeline.py tests/test_image_attachment_pipeline.py tests/test_status_lifecycle.py tests/test_mid_turn_messages.py tests/test_send_message_resident.py tests/test_anthropic_replay.py tests/test_duplicate_inbound_dropped.py -q --tb=short --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "python -m pytest tests/test_run_turn.py -q --tb=short --no-header",
+        "python -m pytest --tb=short -q --no-header",
+        "python -m json.tool .megaplan/plans/sprint-1b-discord-resident/execution_batch_12.json"
+      ],
+      "task_id": "T19"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC19",
+      "task_id": "T19",
+      "executor_note": "Yes. All eight integration test modules exist and pass: recovery, voice pipeline, image pipeline, status lifecycle, mid-turn final-text and explicit-send_message variants, resident send_message post-commit update, Anthropic replay, and duplicate inbound handling.",
+      "verdict": "pass",
+      "sense_check_id": "SC19"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-1b-discord-resident/execution_batch_12.json",
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 12/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 12/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

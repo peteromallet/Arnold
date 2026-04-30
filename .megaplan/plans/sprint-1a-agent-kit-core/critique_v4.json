@@ -1,0 +1,267 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Verified repository state: the repo is still documentation-only outside `.megaplan`, with `planning-bot-spec.md` and `ideas/` as the relevant source context. The plan remains appropriately framed as a greenfield implementation.",
+          "flagged": false
+        },
+        {
+          "detail": "Attachments: the plan still diverges from the full spec's Sprint 1a Callable API by omitting `--attach` and Python `attachments=`, but this revision cites SD-010 as a user-resolved tiebreaker and explicitly says future critique should treat the divergence as settled accepted scope. Under the provided debt guidance, I am not re-flagging this accepted tradeoff in this pass.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified secret handling remains called out: the plan continues to explicitly prohibit committing the Supabase service key from the idea file to code, tests, fixtures, logs, or downstream prompts.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified the repository context again: the project still contains only `planning-bot-spec.md`, sprint idea files, and `.megaplan` harness metadata, so the plan is correctly framed as a greenfield Python package bootstrap rather than a modification to existing implementation code.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Attachments: the revised plan explicitly removes `--attach`, Python `attachments=`, LocalBlobStore, and attachment tests from Sprint 1a and keeps only the `Blob` port. That is internally clear and follows the shorter sprint idea scope, but it still diverges from `planning-bot-spec.md`, whose Sprint 1a readiness gate says attachment-passing protocol is locked and whose Callable API states attachment support is Sprint 1a acceptance.",
+          "flagged": true,
+          "status": "open"
+        },
+        {
+          "detail": "Verified the prior ledger package-layout issue: the plan now includes `agent_kit/ledger.py`, Store primitives for `external_requests`, and `tests/test_ledger.py`, so the required ledger skeleton is no longer omitted.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Verified the user constraints for this review: I read repository files and the critique template directly and did not invoke the megaplan CLI, activate the megaplan skill, or start a nested planning harness.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Verified FLAG-007 at the plan level: the revised model adapter introduces `ProviderError(error_details=...)` for observable provider errors, `run_turn` maps that to `external_requests.status='failed'`, and tests now cover success, provider-error, and crash-pending ledger paths. This resolves the prior failure-state ambiguity.",
+          "flagged": false
+        },
+        {
+          "detail": "Model-call idempotency: Step 12 records an `external_requests` row before each main `Model.complete_turn(...)` call using the system idempotency key formula `sha256(turn_id + ':system:' + provider + ':' + endpoint)[:16]`. If one turn performs multiple model calls during tool-use chaining, those rows will collide on `UNIQUE(idempotency_key)` unless the implementation guarantees exactly one `Model.complete_turn` call per turn or includes an attempt/sequence discriminator in the keying strategy.",
+          "flagged": true
+        },
+        {
+          "detail": "Tool event shape: Step 9 says the audit wrapper emits a corresponding `Event` for every tool call, while Step 10 says `set_activity` emits an `activity` event only. The plan should specify whether `set_activity` produces a `tool_call` event, an `activity` event, or both, because acceptance checks require tool calls to appear in `tool_calls` and envelope events while the spec also treats `activity` as a progress event.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified streaming and abort fixes remain intact: streamed NDJSON uses the same event objects and encoder as the envelope, and aborted turns return envelope `outcome='aborted'` while storing `bot_turns.status='abandoned'` by design.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified the streaming-equivalence fix: Step 13 now says streaming uses the same event objects and encoder as the envelope, and Step 15 asserts parsed NDJSON is byte-identical to the final envelope `events` array with no `serialize_for_diff` projection. This resolves the prior concern that stream/envelope mismatches could be hidden.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Verified the abort-path clarification: Step 12 and the reviewer notes now state that `bot_turns.status='abandoned'` and envelope `outcome='aborted'` intentionally coexist, and Step 15 tests exit code 3 plus a valid stdout envelope. That addresses the prior risk that abort might be only statically mapped or internally inconsistent.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "External request failure state: the plan says a model exception leaves the `external_requests` row in `pending`; this matches the crash-before-confirmation recovery model, but for normal provider errors the spec's lifecycle also has `status='failed'` and `error_details`. Because Sprint 1a tests only forced model exceptions, implementers should ensure intentional provider error responses are not indistinguishable from crash-pending rows if the adapter can observe the error.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Verified invocation-mode `set_activity`: the plan still emits an activity event and does not mutate `bot_turns.current_activity`, matching the invocation-mode tool semantics in the spec.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Verified FLAG-006 at the plan level: the revised migration now creates `external_requests` with the full spec schema, including `endpoint`, `turn_id`, provider request/response summaries, attempt count, completed/error fields, and the spec's index set. This resolves the prior schema-churn concern.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the ledger behavior is now in Sprint 1a scope: `run_turn` records the main Anthropic request as a system-level `external_requests` row and tests all three ledger lifecycle paths. Reconciliation remains Sprint 1b, which is consistent with the plan's declared scope split.",
+          "flagged": false
+        },
+        {
+          "detail": "The plan still avoids Discord and Supabase implementations and keeps store/model/transport/blob behavior behind ports, which is consistent with the idea's intent to prove the substrate against CLI and SQLite first.",
+          "flagged": false
+        },
+        {
+          "detail": "No existing implementation code handles the same concepts, so there are no related call sites or modules in the repository that this plan fails to update.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified FLAG-003 at the plan level: `run_turn` now records a system-level `external_requests` row for each main Anthropic call before invoking the model and marks it confirmed after success, with a ledger test asserting `tool_call_id IS NULL`, `provider='anthropic'`, and pending-to-confirmed behavior.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "External requests schema: the plan's Sprint-1a-minimal table omits several fields from the spec's schema, notably `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `completed_at`, and `error_details`. Since the plan now creates this table in Sprint 1a, this partial schema could force avoidable migration churn or make Sprint 1b reconciliation harder, especially because the spec's idempotency key includes provider endpoint and system requests are linked to turns.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Verified `defer_to_caller` remains in scope despite the shorter idea listing only `send_message` and `set_activity`; retaining it is consistent with the full spec and necessary to exercise the `blocked_on_caller` outcome path.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "The plan continues to avoid Discord and Supabase implementations in Sprint 1a, which is consistent with the idea's goal of proving the substrate against CLI plus SQLite before Sprint 1b adapters land.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Verified full ledger infrastructure coverage: the plan updates migrations, Store protocol, SQLite store adapter, `agent_kit/ledger.py`, Anthropic/Fake model behavior, `run_turn`, unit tests, and integration tests for external request lifecycle handling.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified public API and packaging remain covered: `pyproject.toml`, regular `megaplan` package ownership, `megaplan.arnold` re-exports, `arnold` CLI entry point, and import-path tests are all included.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the CLI remains a thin wrapper in the plan: option parsing, store/model construction, signal handling, streaming serialization, and exit-code mapping stay in `arnold.cli`, while orchestration is kept in `agent_kit.loop`.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified FLAG-005 at the plan level: Step 1 now makes an explicit regular-package decision for `megaplan/` with an owned `__init__.py`, and the plan states why it is not using a namespace package. The packaging concern is no longer left as an open question.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Verified the public import path support: Step 4 keeps `megaplan.arnold` and `arnold.__init__` re-exports, and Step 15 includes an import-path test verifying `run_turn`, `arun_turn`, and `Envelope` resolve to the intended objects.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Verified model configuration remains wired through the right locations: the Anthropic adapter takes `model_id` as a constructor argument, the CLI reads `ARNOLD_MODEL_ID` / `--model-id`, and tests use `FakeModel`, so no network or hardcoded provider call is required for test execution.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Verified the store contract support remains in the plan: `tests/store_contract.py` is still parametrized over a `store_factory` fixture and intended to be reused by the Supabase adapter in Sprint 1b.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "CLI callers are covered for the settled Sprint 1a surface: `--input`/`--from-stdin`, `--stream-events`, `--store`, `--db`, `--model-id`, SIGINT cancellation, and all four exit outcomes are planned and tested. Attachment CLI callers are intentionally deferred under SD-010, so I am not re-flagging them.",
+          "flagged": false
+        },
+        {
+          "detail": "Python callers are covered for the settled Sprint 1a surface: `run_turn`, `arun_turn`, `on_event`, and optional `cancel_event` are planned, and the import path is tested through `megaplan.arnold`. Attachment caller forms are intentionally absent under SD-010.",
+          "flagged": false
+        },
+        {
+          "detail": "Model adapter callers now have explicit failure semantics: the loop can distinguish `ProviderError` from generic exceptions and maps them to failed vs pending ledger rows. FakeModel scripting covers both caller-observable cases in tests.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "CLI caller shape: the revised CLI implements `arnold turn --epic <id> [--input | --from-stdin] [--stream-events] [--store sqlite|supabase] [--db PATH] [--model-id ID]` and explicitly omits `--attach` in Sprint 1a. This matches the narrowed plan but not the full Callable API attachment surface.",
+          "flagged": true,
+          "status": "open"
+        },
+        {
+          "detail": "Python caller shape: the plan supports `run_turn` / `arun_turn` via `megaplan.arnold` and an optional `cancel_event`, plus `on_event`; attachment arguments are explicitly absent in Sprint 1a. The cancellation and event callback callers are covered, while attachment callers from the full spec are deferred.",
+          "flagged": true,
+          "status": "open"
+        },
+        {
+          "detail": "Verified the prior raw-bytes attachment caller concern is mooted by the descope: because no Python `attachments=` parameter ships in Sprint 1a, there are no raw-byte or tuple-overridden attachment cases for this plan to test in the current sprint.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Exit-code callers are covered end to end: Step 15 scripts `FakeModel` for completed, errored, blocked_on_caller, and aborted, and Step 13 requires a valid envelope on stdout for every outcome.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-008",
+      "concern": "Model-call ledger: system-level external request idempotency keys may collide if a single turn makes multiple Anthropic calls.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Step 12 records a row before each main `Model.complete_turn(...)` call, while Step 7 uses the spec's system key formula based only on `turn_id`, provider, and endpoint. Multiple calls in one turn would share `sha256(turn_id + ':system:' + provider + ':' + endpoint)[:16]` and violate `UNIQUE(idempotency_key)`."
+    },
+    {
+      "id": "FLAG-009",
+      "concern": "Event contract: `set_activity` event emission is ambiguous relative to the audit wrapper's one-event-per-tool-call behavior.",
+      "category": "correctness",
+      "severity_hint": "likely-minor",
+      "evidence": "Step 9 says the audit wrapper emits a corresponding Event for every tool call; Step 10 says `set_activity` emits an `activity` event only. Acceptance requires tool calls to be represented in `tool_calls` and envelope events, while the spec also defines `activity` as a progress event."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 16: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 18: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 19: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-006",
+    "FLAG-007",
+    "scope",
+    "correctness"
+  ],
+  "disputed_flag_ids": [
+    "FLAG-001",
+    "issue_hints",
+    "issue_hints-1",
+    "callers-1",
+    "callers-2"
+  ]
+}

@@ -1,0 +1,430 @@
+{
+  "robustness": "standard",
+  "signals": {
+    "iteration": 5,
+    "idea": "# Sprint 1a \u2014 agent_kit core + invocation mode\n\nBuild the foundational Python package for Arnold, a Discord planning bot. This sprint proves the substrate against the cheapest possible adapter (CLI over SQLite) before Discord/Supabase land in Sprint 1b.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to it for complete data model schemas, tool signatures, and architectural details.**\n\n## Supabase (for later sprints)\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- `agent_kit/` package skeleton:\n  - `ports.py` \u2014 Transport, Store, Model, Blob protocol definitions (abstract interfaces)\n  - `loop.py` \u2014 transport-agnostic `run_turn` function\n  - `tool_kit.py` \u2014 tool registry + audit-wrap decorator\n  - `ledger.py` \u2014 event store skeleton\n- `Envelope` dataclass + JSON schema (outcome: completed/blocked_on_caller/errored/aborted, events array, state_delta, reply)\n- CLI transport adapter (pull mode): `arnold turn --epic <id> --input \"text\"` command; NDJSON event streaming with `--stream-events`; exit codes per envelope outcome (0=completed, 2=blocked, 1=errored, 3=aborted)\n- SQLite store adapter: schema for epics, messages, bot_turns, tool_calls, system_logs tables (resident-mode-only columns nullable); migrations under `agent_kit/store/migrations/sqlite/`\n- Anthropic model adapter: Claude Opus 4.7 wired to the loop\n- Centralized logger module writing to system_logs via the Store port\n- Agentic loop skeleton: receive \u2192 reason \u2192 respond, returns an envelope\n- Minimal tool surface: `send_message` (writes to reply buffer in invocation mode), `set_activity` (emits event)\n- Test harness: pytest setup, ephemeral SQLite per test, mocked Anthropic client\n\n## Key Data Model Tables (this sprint)\n\n### epics\nid, title, goal, body (markdown), state (shaping|sprinting|planned|paused|archived), created_at, last_edited_at, last_active_at, planned_at\n\n### messages\nid, epic_id, direction (inbound|outbound), content, sent_at, discord_message_id (unique), has_code_attachment, has_image_attachment, in_burst_with, was_voice_message, audio_storage_url, transcription_metadata\n\n### bot_turns\nid, epic_id, triggered_by_message_ids (uuid array), prompt_snapshot, prompt_version, reasoning, final_output_message_id, status_message_id, status (in_progress|completed|failed|abandoned), state_at_turn, started_at, completed_at, model_version\n\n### tool_calls\nid, turn_id, tool_name, operation_kind (read|write), arguments (json), result (json), called_at, duration_ms\n\n### system_logs\nid, level (debug|info|warn|error), category, event_type, message, details (json), turn_id, epic_id, occurred_at\n\n## Acceptance Criteria\n\n- `arnold turn --epic <id> --input \"hello\"` returns a valid envelope on stdout; exit code 0 for completed, 2 for blocked_on_caller, 1 for errored, 3 for aborted\n- Every Anthropic call recorded in bot_turns; every tool call recorded in tool_calls; envelope events array matches tool_calls rows\n- Same input + same store state + same model seed \u2192 identical state_delta (deterministic-structure test)\n- Python `run_turn(...)` produces a byte-equivalent envelope to the CLI for the same input\n- `--stream-events` emits NDJSON to stderr with one event per tool call; final envelope on stdout matches\n- Test suite runs green via pytest against ephemeral SQLite\n\n## Tests\n\n- Unit: envelope schema validation; Store port contract tests against SQLite impl; tool_kit audit-wrap atomicity\n- Integration: full receive\u2192reason\u2192respond loop with mocked Anthropic; verify envelope contents and DB state\n- Integration: CLI \u2194 Python equivalence \u2014 invoke same input both ways, assert envelopes match (modulo non-deterministic reply text)\n\n## Tech Stack\n- Python 3.11+\n- pytest for testing\n- anthropic SDK for Claude Opus 4.7\n- SQLite for local store\n- Click or argparse for CLI\n- dataclasses for data structures",
+    "significant_flags": 5,
+    "unresolved_flags": [
+      {
+        "id": "FLAG-001",
+        "concern": "Attachments: recurring debt: Sprint 1a now explicitly descopes invocation-mode attachment passing, but that still contradicts the full spec's locked Sprint 1a Callable API.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "disputed"
+      },
+      {
+        "id": "issue_hints-1",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Callable API: The spec's Sprint 1a readiness gate and Callable API section explicitly include attachment passing via CLI `--attach` and Python `attachments=`, including BlobStore pre-processing for images/audio before the turn starts. The plan defines a `Blob` port but does not schedule any CLI `--attach`, Python `attachments`, local blob implementation, or attachment tests, so it would miss part of the spec's Sprint 1a callable API acceptance.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "disputed"
+      },
+      {
+        "id": "callers-1",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: CLI caller shape: the revised CLI implements `arnold turn --epic <id> [--input | --from-stdin] [--stream-events] [--store sqlite|supabase] [--db PATH] [--model-id ID]` and explicitly omits `--attach` in Sprint 1a. This matches the narrowed plan but not the full Callable API attachment surface.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "disputed"
+      },
+      {
+        "id": "callers-2",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Python caller shape: the plan supports `run_turn` / `arun_turn` via `megaplan.arnold` and an optional `cancel_event`, plus `on_event`; attachment arguments are explicitly absent in Sprint 1a. The cancellation and event callback callers are covered, while attachment callers from the full spec are deferred.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "disputed"
+      },
+      {
+        "id": "issue_hints",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Attachments: the revised plan explicitly removes `--attach`, Python `attachments=`, LocalBlobStore, and attachment tests from Sprint 1a and keeps only the `Blob` port. That is internally clear and follows the shorter sprint idea scope, but it still diverges from `planning-bot-spec.md`, whose Sprint 1a readiness gate says attachment-passing protocol is locked and whose Callable API states attachment support is Sprint 1a acceptance.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "disputed"
+      }
+    ],
+    "resolved_flags": [
+      {
+        "id": "FLAG-002",
+        "concern": "Public API: The plan leaves the documented `megaplan.arnold` import path and `arun_turn` coroutine unresolved even though the spec says the Sprint 1a callable API is locked.",
+        "resolution": "Revised the plan to address all 14 open flags: (1) added a dedicated step locking the `megaplan.arnold` public import path with `run_turn`, `arun_turn`, and `Envelope` re-exports plus an import-path test (FLAG-002, correctness-1); (2) added an explicit `agent_kit/ledger.py` skeleton step and an `external_requests` table in migrations, with a written decision that scaffolding ships in 1a and reconciliation is deferred to 1b (FLAG-003, issue_hints-2, scope-1); (3) added a local Blob store, an attachment ingestion module, repeatable CLI `--attach`, Python `attachments=`, and attachment integration tests, with audio gracefully erroring until 1b (FLAG-001, issue_hints-1, callers-1); (4) tightened the determinism story: `state_delta` byte-equivalence is asserted unconditionally, while CLI\u2194Python equivalence is asserted on a `serialize_for_diff` projection that strips `reply`/`events.text`/timestamps (correctness-2); (5) removed the `bot_turns.current_activity` mutation from invocation-mode `set_activity` to honor mode-divergent semantics (correctness-3); (6) promoted model-string configurability from an assumption to an explicit step \u2014 adapter takes it as a constructor argument and the CLI reads `ARNOLD_MODEL_ID`, with no hardcoding in tests (all_locations-1); (7) restructured `tests/store_contract.py` as a parametrized, store-agnostic suite reusable unchanged in 1b (all_locations-2); (8) defined a real abort path via cooperative cancellation flag plus CLI `SIGINT` handler, with an integration test that exercises the `aborted` exit code (callers-2). The `defer_to_caller` tool is retained (scope-2 confirmed). Plan structure, scope, and execution order preserved; no scope creep beyond what the locked spec requires."
+      },
+      {
+        "id": "FLAG-003",
+        "concern": "Ledger/recovery: recurring debt: the ledger scaffold is added, but the plan does not record the main Anthropic model call in `external_requests` even though the spec defines system-level external request rows with `tool_call_id=null`.",
+        "resolution": "Narrowed the plan back to the user's sprint idea and addressed the recurring debt flags. (1) Attachments are deferred to Sprint 1b: removed `LocalBlobStore`, `attachments.py`, `--attach` CLI flag, Python `attachments=` argument, image/audio ingestion, and attachment integration tests; the `Blob` port is retained because the idea explicitly lists it (FLAG-001, issue_hints, issue_hints-1, callers \u2014 addressed via descope). (2) `run_turn` now writes one `external_requests` row per main Anthropic call (`tool_call_id=null`, provider='anthropic', pending\u2192confirmed) so the ledger captures the only guaranteed external API call in Sprint 1a; reconciliation logic stays in 1b (FLAG-003, scope-1, scope). (3) Tightened streaming equivalence: streamed NDJSON is byte-identical to the envelope's `events` array; `serialize_for_diff` is now used only for CLI\u2194Python envelope equivalence, never for stream-vs-envelope comparison (correctness-1). (4) Clarified abort outcome: `bot_turns.status='abandoned'` and envelope `outcome='aborted'` coexist by design, valid envelope still printed on stdout with exit code 3 (correctness-2). (5) Settled the megaplan package decision: regular owned package with own `__init__.py` (not a PEP 420 namespace package); the megaplan harness this repo runs inside is a separate distribution and does not collide at import time (all_locations). Plan structure preserved; scope is now closer to the original idea."
+      },
+      {
+        "id": "FLAG-004",
+        "concern": "Event streaming: the revised tests still allow projected comparison for streamed events versus final envelope events, which weakens the exact stream/envelope equality requirement.",
+        "resolution": "Step 14 says streamed NDJSON lines equal final envelope events exactly, but Step 16 says to compare stream events post-`serialize_for_diff`; acceptance requires final stdout envelope events to match streamed events."
+      },
+      {
+        "id": "issue_hints-2",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Event ledger: The sprint scope explicitly names `agent_kit/ledger.py` as an event store skeleton, but the implementation plan only covers `tool_kit.py`, SQLite store, logging, tools, model, loop, and CLI. Without a planned `ledger.py`, an executor could satisfy tool auditing while omitting a required package surface from the scope.",
+        "resolution": "Revised the plan to address all 14 open flags: (1) added a dedicated step locking the `megaplan.arnold` public import path with `run_turn`, `arun_turn`, and `Envelope` re-exports plus an import-path test (FLAG-002, correctness-1); (2) added an explicit `agent_kit/ledger.py` skeleton step and an `external_requests` table in migrations, with a written decision that scaffolding ships in 1a and reconciliation is deferred to 1b (FLAG-003, issue_hints-2, scope-1); (3) added a local Blob store, an attachment ingestion module, repeatable CLI `--attach`, Python `attachments=`, and attachment integration tests, with audio gracefully erroring until 1b (FLAG-001, issue_hints-1, callers-1); (4) tightened the determinism story: `state_delta` byte-equivalence is asserted unconditionally, while CLI\u2194Python equivalence is asserted on a `serialize_for_diff` projection that strips `reply`/`events.text`/timestamps (correctness-2); (5) removed the `bot_turns.current_activity` mutation from invocation-mode `set_activity` to honor mode-divergent semantics (correctness-3); (6) promoted model-string configurability from an assumption to an explicit step \u2014 adapter takes it as a constructor argument and the CLI reads `ARNOLD_MODEL_ID`, with no hardcoding in tests (all_locations-1); (7) restructured `tests/store_contract.py` as a parametrized, store-agnostic suite reusable unchanged in 1b (all_locations-2); (8) defined a real abort path via cooperative cancellation flag plus CLI `SIGINT` handler, with an integration test that exercises the `aborted` exit code (callers-2). The `defer_to_caller` tool is retained (scope-2 confirmed). Plan structure, scope, and execution order preserved; no scope creep beyond what the locked spec requires."
+      },
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: Model-call idempotency: Step 12 records an `external_requests` row before each main `Model.complete_turn(...)` call using the system idempotency key formula `sha256(turn_id + ':system:' + provider + ':' + endpoint)[:16]`. If one turn performs multiple model calls during tool-use chaining, those rows will collide on `UNIQUE(idempotency_key)` unless the implementation guarantees exactly one `Model.complete_turn` call per turn or includes an attempt/sequence discriminator in the keying strategy.",
+        "resolution": "Two correctness fixes; the disputed attachment flags stay settled per SD-010. (1) **Idempotency-key collision (correctness-1, FLAG-008):** Step 7's system idempotency-key formula now includes a per-turn `system_seq` ordinal, so multi-call tool-use turns produce distinct keys instead of colliding on `UNIQUE(idempotency_key)`. The loop (Step 12) owns the counter, increments it per `Model.complete_turn(...)` call, and passes it via `Ledger.record_pending(..., system_seq=...)`. `FakeModel` is required to support multi-call sequences (Step 11) and a new integration test (Step 15.5 'tool-use chaining') asserts two distinct rows with `system_seq=1` and `system_seq=2` both transition `pending\u2192confirmed`. The extension of the spec's bare formula is documented in the ledger module and the plan notes. (2) **`set_activity` event shape (correctness-2):** the tool registry now carries an `event_kind` per entry (Step 9). `set_activity` is registered with `event_kind='activity'`; `send_message` and `defer_to_caller` with `'tool_call'`. The audit wrapper writes a `tool_calls` row (preserving the audit invariant) and emits exactly one envelope event whose `kind` matches the registry entry. Step 10 explicitly states `set_activity` does not emit an additional `tool_call`-kind event, and Step 15.6 asserts the event-shape invariant. The acceptance criterion is restated in Step 2.4 and Step 10.4: every `tool_calls` row has exactly one envelope event with matching `tool_call_id`, regardless of `kind`. Plan structure preserved."
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: Tool event shape: Step 9 says the audit wrapper emits a corresponding `Event` for every tool call, while Step 10 says `set_activity` emits an `activity` event only. The plan should specify whether `set_activity` produces a `tool_call` event, an `activity` event, or both, because acceptance checks require tool calls to appear in `tool_calls` and envelope events while the spec also treats `activity` as a progress event.",
+        "resolution": "Two correctness fixes; the disputed attachment flags stay settled per SD-010. (1) **Idempotency-key collision (correctness-1, FLAG-008):** Step 7's system idempotency-key formula now includes a per-turn `system_seq` ordinal, so multi-call tool-use turns produce distinct keys instead of colliding on `UNIQUE(idempotency_key)`. The loop (Step 12) owns the counter, increments it per `Model.complete_turn(...)` call, and passes it via `Ledger.record_pending(..., system_seq=...)`. `FakeModel` is required to support multi-call sequences (Step 11) and a new integration test (Step 15.5 'tool-use chaining') asserts two distinct rows with `system_seq=1` and `system_seq=2` both transition `pending\u2192confirmed`. The extension of the spec's bare formula is documented in the ledger module and the plan notes. (2) **`set_activity` event shape (correctness-2):** the tool registry now carries an `event_kind` per entry (Step 9). `set_activity` is registered with `event_kind='activity'`; `send_message` and `defer_to_caller` with `'tool_call'`. The audit wrapper writes a `tool_calls` row (preserving the audit invariant) and emits exactly one envelope event whose `kind` matches the registry entry. Step 10 explicitly states `set_activity` does not emit an additional `tool_call`-kind event, and Step 15.6 asserts the event-shape invariant. The acceptance criterion is restated in Step 2.4 and Step 10.4: every `tool_calls` row has exactly one envelope event with matching `tool_call_id`, regardless of `kind`. Plan structure preserved."
+      },
+      {
+        "id": "correctness-3",
+        "concern": "Are the proposed changes technically correct?: Schema fields: The plan calls out some nullable resident-mode columns such as `status_message_id` and `current_activity`, but Step 8 also plans to update `bot_turns.current_activity` for `set_activity` even though the Sprint 1a tool semantics say invocation-mode `set_activity` emits an activity event and otherwise has no side effect. This is not fatal if implemented as harmless bookkeeping, but it diverges from the mode-divergent behavior in the spec.",
+        "resolution": "Revised the plan to address all 14 open flags: (1) added a dedicated step locking the `megaplan.arnold` public import path with `run_turn`, `arun_turn`, and `Envelope` re-exports plus an import-path test (FLAG-002, correctness-1); (2) added an explicit `agent_kit/ledger.py` skeleton step and an `external_requests` table in migrations, with a written decision that scaffolding ships in 1a and reconciliation is deferred to 1b (FLAG-003, issue_hints-2, scope-1); (3) added a local Blob store, an attachment ingestion module, repeatable CLI `--attach`, Python `attachments=`, and attachment integration tests, with audio gracefully erroring until 1b (FLAG-001, issue_hints-1, callers-1); (4) tightened the determinism story: `state_delta` byte-equivalence is asserted unconditionally, while CLI\u2194Python equivalence is asserted on a `serialize_for_diff` projection that strips `reply`/`events.text`/timestamps (correctness-2); (5) removed the `bot_turns.current_activity` mutation from invocation-mode `set_activity` to honor mode-divergent semantics (correctness-3); (6) promoted model-string configurability from an assumption to an explicit step \u2014 adapter takes it as a constructor argument and the CLI reads `ARNOLD_MODEL_ID`, with no hardcoding in tests (all_locations-1); (7) restructured `tests/store_contract.py` as a parametrized, store-agnostic suite reusable unchanged in 1b (all_locations-2); (8) defined a real abort path via cooperative cancellation flag plus CLI `SIGINT` handler, with an integration test that exercises the `aborted` exit code (callers-2). The `defer_to_caller` tool is retained (scope-2 confirmed). Plan structure, scope, and execution order preserved; no scope creep beyond what the locked spec requires."
+      },
+      {
+        "id": "scope-1",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Recovery/idempotency scope: The full spec says underlying `external_requests` ledger mechanisms apply in invocation mode and reconciliation runs on every process boot, while later Sprint 1b acceptance makes the full recovery tests explicit. The Sprint 1a idea did not list `external_requests`, and the plan omits it entirely except for a vague `ledger.py` omission, so this is a scope tension between the detailed spec and the narrower sprint idea that should be settled before execution.",
+        "resolution": "Narrowed the plan back to the user's sprint idea and addressed the recurring debt flags. (1) Attachments are deferred to Sprint 1b: removed `LocalBlobStore`, `attachments.py`, `--attach` CLI flag, Python `attachments=` argument, image/audio ingestion, and attachment integration tests; the `Blob` port is retained because the idea explicitly lists it (FLAG-001, issue_hints, issue_hints-1, callers \u2014 addressed via descope). (2) `run_turn` now writes one `external_requests` row per main Anthropic call (`tool_call_id=null`, provider='anthropic', pending\u2192confirmed) so the ledger captures the only guaranteed external API call in Sprint 1a; reconciliation logic stays in 1b (FLAG-003, scope-1, scope). (3) Tightened streaming equivalence: streamed NDJSON is byte-identical to the envelope's `events` array; `serialize_for_diff` is now used only for CLI\u2194Python envelope equivalence, never for stream-vs-envelope comparison (correctness-1). (4) Clarified abort outcome: `bot_turns.status='abandoned'` and envelope `outcome='aborted'` coexist by design, valid envelope still printed on stdout with exit code 3 (correctness-2). (5) Settled the megaplan package decision: regular owned package with own `__init__.py` (not a PEP 420 namespace package); the megaplan harness this repo runs inside is a separate distribution and does not collide at import time (all_locations). Plan structure preserved; scope is now closer to the original idea."
+      },
+      {
+        "id": "scope-2",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Tool surface: The idea's minimal tool surface lists only `send_message` and `set_activity`, while the full spec and Testing section also call out `defer_to_caller` enforcement for Sprint 1a. The plan includes `defer_to_caller`, which is broader than the idea but consistent with the full spec and necessary for `blocked_on_caller` outcome coverage.",
+        "resolution": "Revised the plan to address all 14 open flags: (1) added a dedicated step locking the `megaplan.arnold` public import path with `run_turn`, `arun_turn`, and `Envelope` re-exports plus an import-path test (FLAG-002, correctness-1); (2) added an explicit `agent_kit/ledger.py` skeleton step and an `external_requests` table in migrations, with a written decision that scaffolding ships in 1a and reconciliation is deferred to 1b (FLAG-003, issue_hints-2, scope-1); (3) added a local Blob store, an attachment ingestion module, repeatable CLI `--attach`, Python `attachments=`, and attachment integration tests, with audio gracefully erroring until 1b (FLAG-001, issue_hints-1, callers-1); (4) tightened the determinism story: `state_delta` byte-equivalence is asserted unconditionally, while CLI\u2194Python equivalence is asserted on a `serialize_for_diff` projection that strips `reply`/`events.text`/timestamps (correctness-2); (5) removed the `bot_turns.current_activity` mutation from invocation-mode `set_activity` to honor mode-divergent semantics (correctness-3); (6) promoted model-string configurability from an assumption to an explicit step \u2014 adapter takes it as a constructor argument and the CLI reads `ARNOLD_MODEL_ID`, with no hardcoding in tests (all_locations-1); (7) restructured `tests/store_contract.py` as a parametrized, store-agnostic suite reusable unchanged in 1b (all_locations-2); (8) defined a real abort path via cooperative cancellation flag plus CLI `SIGINT` handler, with an integration test that exercises the `aborted` exit code (callers-2). The `defer_to_caller` tool is retained (scope-2 confirmed). Plan structure, scope, and execution order preserved; no scope creep beyond what the locked spec requires."
+      },
+      {
+        "id": "all_locations-1",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Model configuration: The plan hardcodes or defaults to model string `claude-opus-4-7`, matching the current spec text. Because this value is provider-specific and could change, the plan should ensure it is configurable at the model adapter boundary rather than baked into tests or CLI behavior; the plan only says 'configurable default' in assumptions, not in implementation steps.",
+        "resolution": "Revised the plan to address all 14 open flags: (1) added a dedicated step locking the `megaplan.arnold` public import path with `run_turn`, `arun_turn`, and `Envelope` re-exports plus an import-path test (FLAG-002, correctness-1); (2) added an explicit `agent_kit/ledger.py` skeleton step and an `external_requests` table in migrations, with a written decision that scaffolding ships in 1a and reconciliation is deferred to 1b (FLAG-003, issue_hints-2, scope-1); (3) added a local Blob store, an attachment ingestion module, repeatable CLI `--attach`, Python `attachments=`, and attachment integration tests, with audio gracefully erroring until 1b (FLAG-001, issue_hints-1, callers-1); (4) tightened the determinism story: `state_delta` byte-equivalence is asserted unconditionally, while CLI\u2194Python equivalence is asserted on a `serialize_for_diff` projection that strips `reply`/`events.text`/timestamps (correctness-2); (5) removed the `bot_turns.current_activity` mutation from invocation-mode `set_activity` to honor mode-divergent semantics (correctness-3); (6) promoted model-string configurability from an assumption to an explicit step \u2014 adapter takes it as a constructor argument and the CLI reads `ARNOLD_MODEL_ID`, with no hardcoding in tests (all_locations-1); (7) restructured `tests/store_contract.py` as a parametrized, store-agnostic suite reusable unchanged in 1b (all_locations-2); (8) defined a real abort path via cooperative cancellation flag plus CLI `SIGINT` handler, with an integration test that exercises the `aborted` exit code (callers-2). The `defer_to_caller` tool is retained (scope-2 confirmed). Plan structure, scope, and execution order preserved; no scope creep beyond what the locked spec requires."
+      },
+      {
+        "id": "all_locations-2",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Store contract support: The plan creates `tests/store_contract.py`, but does not explicitly plan reusable fixtures or a contract shape that can be reused unchanged against Supabase in Sprint 1b, even though Sprint 1b acceptance depends on the original SQLite contract suite passing against the Supabase implementation unchanged.",
+        "resolution": "Revised the plan to address all 14 open flags: (1) added a dedicated step locking the `megaplan.arnold` public import path with `run_turn`, `arun_turn`, and `Envelope` re-exports plus an import-path test (FLAG-002, correctness-1); (2) added an explicit `agent_kit/ledger.py` skeleton step and an `external_requests` table in migrations, with a written decision that scaffolding ships in 1a and reconciliation is deferred to 1b (FLAG-003, issue_hints-2, scope-1); (3) added a local Blob store, an attachment ingestion module, repeatable CLI `--attach`, Python `attachments=`, and attachment integration tests, with audio gracefully erroring until 1b (FLAG-001, issue_hints-1, callers-1); (4) tightened the determinism story: `state_delta` byte-equivalence is asserted unconditionally, while CLI\u2194Python equivalence is asserted on a `serialize_for_diff` projection that strips `reply`/`events.text`/timestamps (correctness-2); (5) removed the `bot_turns.current_activity` mutation from invocation-mode `set_activity` to honor mode-divergent semantics (correctness-3); (6) promoted model-string configurability from an assumption to an explicit step \u2014 adapter takes it as a constructor argument and the CLI reads `ARNOLD_MODEL_ID`, with no hardcoding in tests (all_locations-1); (7) restructured `tests/store_contract.py` as a parametrized, store-agnostic suite reusable unchanged in 1b (all_locations-2); (8) defined a real abort path via cooperative cancellation flag plus CLI `SIGINT` handler, with an integration test that exercises the `aborted` exit code (callers-2). The `defer_to_caller` tool is retained (scope-2 confirmed). Plan structure, scope, and execution order preserved; no scope creep beyond what the locked spec requires."
+      },
+      {
+        "id": "FLAG-005",
+        "concern": "Public API packaging: the plan has not settled whether `megaplan` is a regular or namespace package, creating a possible top-level package collision with the surrounding megaplan harness/ecosystem.",
+        "resolution": "Step 1 declares a `megaplan` package and Step 4 creates `megaplan/arnold/__init__.py`, while plan questions still ask whether this should be a regular package or PEP 420 namespace package."
+      },
+      {
+        "id": "scope",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: External requests schema: the plan's Sprint-1a-minimal table omits several fields from the spec's schema, notably `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `completed_at`, and `error_details`. Since the plan now creates this table in Sprint 1a, this partial schema could force avoidable migration churn or make Sprint 1b reconciliation harder, especially because the spec's idempotency key includes provider endpoint and system requests are linked to turns.",
+        "resolution": "Two concrete plan-quality fixes; the attachment flags are treated as accepted tradeoff per gate-settled SD-010. (1) Completed `external_requests` schema (Step 5) to match the full spec exactly: added `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `first_attempted_at`, `completed_at`, `error_details`, plus the spec's full index set including UNIQUE(idempotency_key). The idempotency key generation in `Ledger.record_pending` now follows the spec's SHA256[:16] formula including `endpoint` so 1b reconciliation matches without churn. (2) Distinguished provider-error vs crash lifecycle (Steps 6, 7, 11, 12, 15): the Anthropic adapter raises `ProviderError(error_details=...)` for parseable provider error responses and propagates raw exceptions for transport failures; `run_turn` calls `mark_failed` on `ProviderError` (status='failed', error_details populated) and leaves rows `pending` only on true crashes; ledger tests now cover all three lifecycles (success, failed, pending). Plan structure preserved; no scope changes."
+      },
+      {
+        "id": "all_locations",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Package layout: the revised plan declares `agent_kit`, `arnold`, and a top-level `megaplan` package. This matches the documented import path, but it creates a real top-level package named `megaplan` in a repo that is already being run inside a megaplan harness; the plan asks whether to use a namespace package, so the collision/ownership decision remains open and should be resolved before implementation.",
+        "resolution": "Narrowed the plan back to the user's sprint idea and addressed the recurring debt flags. (1) Attachments are deferred to Sprint 1b: removed `LocalBlobStore`, `attachments.py`, `--attach` CLI flag, Python `attachments=` argument, image/audio ingestion, and attachment integration tests; the `Blob` port is retained because the idea explicitly lists it (FLAG-001, issue_hints, issue_hints-1, callers \u2014 addressed via descope). (2) `run_turn` now writes one `external_requests` row per main Anthropic call (`tool_call_id=null`, provider='anthropic', pending\u2192confirmed) so the ledger captures the only guaranteed external API call in Sprint 1a; reconciliation logic stays in 1b (FLAG-003, scope-1, scope). (3) Tightened streaming equivalence: streamed NDJSON is byte-identical to the envelope's `events` array; `serialize_for_diff` is now used only for CLI\u2194Python envelope equivalence, never for stream-vs-envelope comparison (correctness-1). (4) Clarified abort outcome: `bot_turns.status='abandoned'` and envelope `outcome='aborted'` coexist by design, valid envelope still printed on stdout with exit code 3 (correctness-2). (5) Settled the megaplan package decision: regular owned package with own `__init__.py` (not a PEP 420 namespace package); the megaplan harness this repo runs inside is a separate distribution and does not collide at import time (all_locations). Plan structure preserved; scope is now closer to the original idea."
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Python attachment inputs: the spec allows `attachments: list[Path | bytes | tuple[bytes, mime_type]]`; the plan accepts these types, but raw `bytes` have no filename or MIME type. The plan says to MIME-sniff with explicit override, which is a reasonable path, but the tests should include raw bytes without override and a tuple override to ensure both ambiguous and explicit caller forms behave predictably.",
+        "resolution": "Narrowed the plan back to the user's sprint idea and addressed the recurring debt flags. (1) Attachments are deferred to Sprint 1b: removed `LocalBlobStore`, `attachments.py`, `--attach` CLI flag, Python `attachments=` argument, image/audio ingestion, and attachment integration tests; the `Blob` port is retained because the idea explicitly lists it (FLAG-001, issue_hints, issue_hints-1, callers \u2014 addressed via descope). (2) `run_turn` now writes one `external_requests` row per main Anthropic call (`tool_call_id=null`, provider='anthropic', pending\u2192confirmed) so the ledger captures the only guaranteed external API call in Sprint 1a; reconciliation logic stays in 1b (FLAG-003, scope-1, scope). (3) Tightened streaming equivalence: streamed NDJSON is byte-identical to the envelope's `events` array; `serialize_for_diff` is now used only for CLI\u2194Python envelope equivalence, never for stream-vs-envelope comparison (correctness-1). (4) Clarified abort outcome: `bot_turns.status='abandoned'` and envelope `outcome='aborted'` coexist by design, valid envelope still printed on stdout with exit code 3 (correctness-2). (5) Settled the megaplan package decision: regular owned package with own `__init__.py` (not a PEP 420 namespace package); the megaplan harness this repo runs inside is a separate distribution and does not collide at import time (all_locations). Plan structure preserved; scope is now closer to the original idea."
+      },
+      {
+        "id": "FLAG-006",
+        "concern": "External requests schema: the newly planned Sprint-1a-minimal `external_requests` table is materially narrower than the spec schema and may undercut Sprint 1b reconciliation/idempotency work.",
+        "resolution": "The spec schema includes `endpoint`, `turn_id`, provider request/response summaries, attempt count, completed/error fields, and indexes including `(turn_id)`; the revised migration plans only `id`, nullable `tool_call_id`, `provider`, `idempotency_key`, `status`, `request_summary`, timestamps, and `provider_metadata`."
+      },
+      {
+        "id": "FLAG-007",
+        "concern": "External request status handling: model exceptions are left as `pending`, but the plan does not distinguish observable provider failures from crash-pending rows using the spec's `failed` status and error details.",
+        "resolution": "The spec lifecycle marks error responses as `failed` with `error_details`; revised Step 12 says on model exception the row stays `pending` and Step 15 only tests that forced model exception path."
+      },
+      {
+        "id": "correctness",
+        "concern": "Are the proposed changes technically correct?: External request failure state: the plan says a model exception leaves the `external_requests` row in `pending`; this matches the crash-before-confirmation recovery model, but for normal provider errors the spec's lifecycle also has `status='failed'` and `error_details`. Because Sprint 1a tests only forced model exceptions, implementers should ensure intentional provider error responses are not indistinguishable from crash-pending rows if the adapter can observe the error.",
+        "resolution": "Two concrete plan-quality fixes; the attachment flags are treated as accepted tradeoff per gate-settled SD-010. (1) Completed `external_requests` schema (Step 5) to match the full spec exactly: added `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `first_attempted_at`, `completed_at`, `error_details`, plus the spec's full index set including UNIQUE(idempotency_key). The idempotency key generation in `Ledger.record_pending` now follows the spec's SHA256[:16] formula including `endpoint` so 1b reconciliation matches without churn. (2) Distinguished provider-error vs crash lifecycle (Steps 6, 7, 11, 12, 15): the Anthropic adapter raises `ProviderError(error_details=...)` for parseable provider error responses and propagates raw exceptions for transport failures; `run_turn` calls `mark_failed` on `ProviderError` (status='failed', error_details populated) and leaves rows `pending` only on true crashes; ledger tests now cover all three lifecycles (success, failed, pending). Plan structure preserved; no scope changes."
+      },
+      {
+        "id": "FLAG-008",
+        "concern": "Model-call ledger: system-level external request idempotency keys may collide if a single turn makes multiple Anthropic calls.",
+        "resolution": "Two correctness fixes; the disputed attachment flags stay settled per SD-010. (1) **Idempotency-key collision (correctness-1, FLAG-008):** Step 7's system idempotency-key formula now includes a per-turn `system_seq` ordinal, so multi-call tool-use turns produce distinct keys instead of colliding on `UNIQUE(idempotency_key)`. The loop (Step 12) owns the counter, increments it per `Model.complete_turn(...)` call, and passes it via `Ledger.record_pending(..., system_seq=...)`. `FakeModel` is required to support multi-call sequences (Step 11) and a new integration test (Step 15.5 'tool-use chaining') asserts two distinct rows with `system_seq=1` and `system_seq=2` both transition `pending\u2192confirmed`. The extension of the spec's bare formula is documented in the ledger module and the plan notes. (2) **`set_activity` event shape (correctness-2):** the tool registry now carries an `event_kind` per entry (Step 9). `set_activity` is registered with `event_kind='activity'`; `send_message` and `defer_to_caller` with `'tool_call'`. The audit wrapper writes a `tool_calls` row (preserving the audit invariant) and emits exactly one envelope event whose `kind` matches the registry entry. Step 10 explicitly states `set_activity` does not emit an additional `tool_call`-kind event, and Step 15.6 asserts the event-shape invariant. The acceptance criterion is restated in Step 2.4 and Step 10.4: every `tool_calls` row has exactly one envelope event with matching `tool_call_id`, regardless of `kind`. Plan structure preserved."
+      },
+      {
+        "id": "FLAG-009",
+        "concern": "Event contract: `set_activity` event emission is ambiguous relative to the audit wrapper's one-event-per-tool-call behavior.",
+        "resolution": "Step 9 says the audit wrapper emits a corresponding Event for every tool call; Step 10 says `set_activity` emits an `activity` event only. Acceptance requires tool calls to be represented in `tool_calls` and envelope events, while the spec also defines `activity` as a progress event."
+      }
+    ],
+    "weighted_score": 8.5,
+    "weighted_history": [
+      22.5,
+      16.5,
+      11.0,
+      14.5
+    ],
+    "plan_delta_from_previous": 43.54,
+    "recurring_critiques": [
+      "criterion 18: requires human verification (subjective_judgment)."
+    ],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 5. Weighted score trajectory: 22.5 -> 16.5 -> 11.0 -> 14.5 -> 8.5. Plan deltas: 75.2%, 53.0%, 38.7%, 43.5%. Recurring critiques: 1. Resolved flags: 20. Open significant flags: 5.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "warnings": [
+    "Iteration 5: high iteration count."
+  ],
+  "criteria_check": {
+    "count": 23,
+    "items": [
+      {
+        "criterion": "`arnold turn --epic <id> --input \"hello\"` writes one valid envelope JSON object to stdout and exits 0 when outcome is `completed`.",
+        "priority": "must",
+        "requires": [
+          "run_shell",
+          "run_tests",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "CLI exit codes map exactly to envelope outcomes (completed=0, errored=1, blocked_on_caller=2, aborted=3) for all four outcomes, each exercised by an integration test that drives the actual code path including a real cooperative-cancellation abort. A valid envelope is printed to stdout for every outcome.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "run_shell",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "On abort, `bot_turns.status='abandoned'` and the envelope's `outcome='aborted'` coexist; the abort integration test asserts both invariants.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "SQLite migrations create `epics`, `messages`, `bot_turns`, `tool_calls`, `system_logs`, `epic_locks`, and `external_requests` with the full spec schema (including `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `first_attempted_at`, `last_attempted_at`, `completed_at`, `error_details`) and the spec's full index set.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Every executed tool is recorded in `tool_calls`, every model turn is recorded in `bot_turns`, and every `tool_calls` row has exactly one envelope event with a matching `tool_call_id` (the event's `kind` is `'tool_call'` for ordinary tools and `'activity'` for `set_activity`).",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "The `external_requests` ledger handles tool-use chaining: a single turn that performs multiple `Model.complete_turn(...)` calls produces multiple distinct rows with idempotency keys discriminated by `system_seq`, none of which violates `UNIQUE(idempotency_key)`. Integration test scripts a multi-call turn and asserts `system_seq=1` and `system_seq=2` rows both transition `pending\u2192confirmed`.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Each main Anthropic `Model.complete_turn(...)` call writes one `external_requests` row with `tool_call_id IS NULL`, `provider='anthropic'`, `endpoint='POST /v1/messages'`, `turn_id` matching the `bot_turns` row, idempotency_key per the extended system formula `sha256(turn_id + ':system:' + provider + ':' + endpoint + ':' + str(system_seq))[:16]`. Lifecycle: success \u2192 `confirmed` with `provider_response_summary`; observable provider error \u2192 `failed` with `error_details`; transport/crash exception \u2192 row remains `pending` with `error_details IS NULL`. All three paths covered by integration tests.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "`set_activity` writes a `tool_calls` row and emits exactly one envelope event with `kind='activity'` carrying the description; no additional `tool_call`-kind event is emitted for that invocation.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Same input + same SQLite state + same FakeModel seed produces byte-identical `state_delta` across repeated invocations.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Python `run_turn(...)` and CLI `arnold turn ...` produce byte-equivalent envelopes for the same fixture under `serialize_for_diff` (which strips spec-declared non-deterministic fields). Raw envelope is not byte-compared.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "run_shell",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "`--stream-events` emits one NDJSON stderr line per progress event for both `tool_call` and `activity` event kinds; the parsed streamed events are byte-identical to the envelope's final `events` array (no projection).",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "run_shell",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "Tool audit wrapping is atomic: an injected failure leaves neither the DB mutation nor its `tool_calls` audit row committed.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The locked public import path `from megaplan.arnold import run_turn, arun_turn, Envelope` resolves to the same callables exported from `agent_kit.loop`, and `arun_turn` is an async coroutine.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "`agent_kit/ledger.py` exposes `record_pending(..., system_seq=...)`, `mark_confirmed`, `mark_failed`, and a Sprint-1b reconciliation stub; the tool-call key formula matches the spec verbatim and the system key formula is the documented spec extension including `system_seq`.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The Anthropic model adapter distinguishes provider error responses (raises `ProviderError` with `error_details`) from transport/SDK exceptions (propagates the original exception); `FakeModel` supports both error modes and multi-call tool-use scripting.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Invocation-mode `set_activity` does NOT mutate `bot_turns.current_activity`, honoring the spec's mode-divergent semantics.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The `Blob` port is defined in `agent_kit/ports.py` for Sprint 1b consumption; no `LocalBlobStore`, `--attach`, or `attachments=` ships in 1a (per SD-010).",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "The model id used by the Anthropic adapter is configurable at the adapter boundary (constructor argument plus `ARNOLD_MODEL_ID` env var honored by the CLI); no test or adapter hardcodes the id.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The store contract test module (`tests/store_contract.py`) is parametrized over a `store_factory` fixture and is reusable unchanged with a Supabase factory in Sprint 1b.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "The full test suite passes with ephemeral SQLite and FakeModel, without network access.",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The CLI remains a thin wrapper over `agent_kit.loop.run_turn` plus signal handling and exit-code serialization, with no duplicated turn orchestration logic.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "Sprint 1b seams stay clear: store/model/transport/blob behavior is behind ports and no Discord or Supabase assumptions leak into `run_turn`.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      },
+      {
+        "criterion": "No Supabase service key or other secret from the idea file is committed into code, tests, fixtures, logs, or prompts passed downstream.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Attachments: recurring debt: Sprint 1a now explicitly descopes invocation-mode attachment passing, but that still contradicts the full spec's locked Sprint 1a Callable API.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "planning-bot-spec.md Sprint 1a readiness gate lists attachment-passing protocol for invocation mode, and the Callable API says CLI `--attach` and Python `attachments=` are Sprint 1a acceptance. The revised plan explicitly says no `--attach`, no Python `attachments=`, no LocalBlobStore, and no attachment ingestion in Sprint 1a.",
+      "raised_in": "critique_v3.json",
+      "status": "disputed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v3.md"
+    },
+    {
+      "id": "issue_hints-1",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Callable API: The spec's Sprint 1a readiness gate and Callable API section explicitly include attachment passing via CLI `--attach` and Python `attachments=`, including BlobStore pre-processing for images/audio before the turn starts. The plan defines a `Blob` port but does not schedule any CLI `--attach`, Python `attachments`, local blob implementation, or attachment tests, so it would miss part of the spec's Sprint 1a callable API acceptance.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Narrowed the plan back to the user's sprint idea and addressed the recurring debt flags. (1) Attachments are deferred to Sprint 1b: removed `LocalBlobStore`, `attachments.py`, `--attach` CLI flag, Python `attachments=` argument, image/audio ingestion, and attachment integration tests; the `Blob` port is retained because the idea explicitly lists it (FLAG-001, issue_hints, issue_hints-1, callers \u2014 addressed via descope). (2) `run_turn` now writes one `external_requests` row per main Anthropic call (`tool_call_id=null`, provider='anthropic', pending\u2192confirmed) so the ledger captures the only guaranteed external API call in Sprint 1a; reconciliation logic stays in 1b (FLAG-003, scope-1, scope). (3) Tightened streaming equivalence: streamed NDJSON is byte-identical to the envelope's `events` array; `serialize_for_diff` is now used only for CLI\u2194Python envelope equivalence, never for stream-vs-envelope comparison (correctness-1). (4) Clarified abort outcome: `bot_turns.status='abandoned'` and envelope `outcome='aborted'` coexist by design, valid envelope still printed on stdout with exit code 3 (correctness-2). (5) Settled the megaplan package decision: regular owned package with own `__init__.py` (not a PEP 420 namespace package); the megaplan harness this repo runs inside is a separate distribution and does not collide at import time (all_locations). Plan structure preserved; scope is now closer to the original idea.",
+      "raised_in": "critique_v1.json",
+      "status": "disputed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v3.md"
+    },
+    {
+      "id": "callers-1",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: CLI caller shape: the revised CLI implements `arnold turn --epic <id> [--input | --from-stdin] [--stream-events] [--store sqlite|supabase] [--db PATH] [--model-id ID]` and explicitly omits `--attach` in Sprint 1a. This matches the narrowed plan but not the full Callable API attachment surface.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "CLI caller shape: the revised CLI implements `arnold turn --epic <id> [--input | --from-stdin] [--stream-events] [--store sqlite|supabase] [--db PATH] [--model-id ID]` and explicitly omits `--attach` in Sprint 1a. This matches the narrowed plan but not the full Callable API attachment surface.",
+      "raised_in": "critique_v3.json",
+      "status": "disputed",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v2.md",
+      "verified_in": "critique_v2.json"
+    },
+    {
+      "id": "callers-2",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Python caller shape: the plan supports `run_turn` / `arun_turn` via `megaplan.arnold` and an optional `cancel_event`, plus `on_event`; attachment arguments are explicitly absent in Sprint 1a. The cancellation and event callback callers are covered, while attachment callers from the full spec are deferred.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Python caller shape: the plan supports `run_turn` / `arun_turn` via `megaplan.arnold` and an optional `cancel_event`, plus `on_event`; attachment arguments are explicitly absent in Sprint 1a. The cancellation and event callback callers are covered, while attachment callers from the full spec are deferred.",
+      "raised_in": "critique_v3.json",
+      "status": "disputed",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v2.md",
+      "verified_in": "critique_v2.json"
+    },
+    {
+      "id": "issue_hints",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Attachments: the revised plan explicitly removes `--attach`, Python `attachments=`, LocalBlobStore, and attachment tests from Sprint 1a and keeps only the `Blob` port. That is internally clear and follows the shorter sprint idea scope, but it still diverges from `planning-bot-spec.md`, whose Sprint 1a readiness gate says attachment-passing protocol is locked and whose Callable API states attachment support is Sprint 1a acceptance.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Attachments: the revised plan explicitly removes `--attach`, Python `attachments=`, LocalBlobStore, and attachment tests from Sprint 1a and keeps only the `Blob` port. That is internally clear and follows the shorter sprint idea scope, but it still diverges from `planning-bot-spec.md`, whose Sprint 1a readiness gate says attachment-passing protocol is locked and whose Callable API states attachment support is Sprint 1a acceptance.",
+      "raised_in": "critique_v3.json",
+      "status": "disputed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v3.md"
+    }
+  ]
+}

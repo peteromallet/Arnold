@@ -1,0 +1,16 @@
+{
+  "findings": [],
+  "files_in_diff": [],
+  "files_claimed": [
+    "agent_kit/blob/__init__.py",
+    "agent_kit/blob/supabase_storage.py",
+    "agent_kit/store/__init__.py",
+    "agent_kit/store/supabase.py",
+    "agent_kit/transport/discord.py",
+    "arnold/cli.py",
+    "tests/test_supabase_adapters.py",
+    "tests/test_supabase_store.py"
+  ],
+  "skipped": true,
+  "reason": "Project directory is not a git repository."
+}

@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-30T03:00:36Z",
+  "hash": "sha256:0a5c2541bde093079300b80b5a76ca3bc8120194bf551bf2d4b80f857b6a7d37",
+  "questions": [
+    "Discord whitelist source: env var `DISCORD_USER_WHITELIST` (comma-separated Discord user IDs)? Or read from a `users` table? (Plan assumes env var.)",
+    "Supabase access from Python: do you want a single direct `psycopg`/`psycopg2` connection (cleanest for transactions + advisory locks), or supabase-py's REST client (no multi-statement transactions; would force every atomic op into a Postgres function)? (Plan assumes direct psycopg, with supabase-py only for Storage.)",
+    "Mid-turn messages \u2014 is it acceptable for the resident loop to handle them as a *follow-up turn* triggered immediately after the current turn completes (instead of injecting them mid-prompt as the spec describes)? The spec's mid-prompt injection requires modifying `run_turn` to support an end-of-turn re-prompt; the follow-up-turn approach satisfies the acceptance criteria with a smaller surface change.",
+    "For the Supabase epic lock, do you want row-based (`epic_locks` table, mirrors SQLite, observable, recoverable) or Postgres native `pg_advisory_lock` (session-scoped, auto-released on connection close)? (Plan assumes row-based for parity with SQLite and to keep the recovery scan working.)",
+    "Should `images` migrations be added to BOTH the SQLite migrations dir and the Supabase migrations dir this sprint, or only Supabase? (Plan adds to both \u2014 the contract tests need it on both stores; if SQLite is now considered deprecated for Sprint 1b+, we can skip the SQLite migration and adjust the contract test to skip image methods on SQLite.)"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "DM from a whitelisted user triggers a `run_turn` invocation and a Discord reply within 30s in a mocked end-to-end test (FakeDiscordTransport + FakeModel + SQLiteStore)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "DM from a non-whitelisted user produces no Discord reply and writes a `system_logs` row at level=info, category=application, event_type=whitelist_rejected",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Every inbound Discord message persists with a unique `discord_message_id` before any LLM call, and a duplicate `discord_message_id` insert is rejected by the DB unique constraint",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`run_store_contract(...)` (the unchanged contract suite) passes against both `SQLiteStore` and `SupabaseStore`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "5 inbound messages within 8s coalesce into a single turn whose `triggered_by_message_ids` has 5 entries",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Killing the runner mid-turn and restarting causes the prior turn to be marked `abandoned` in `bot_turns` and its trigger messages to be re-processed under a fresh `turn_id`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Mocked Groq voice-message pipeline produces a `messages` row with `was_voice_message=true`, `content=<transcription>`, and `audio_storage_url` populated",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Mocked Discord image-attachment pipeline downloads to (mock) Supabase Storage and creates an `images` row with `source='user_uploaded'` and an auto-assigned `reference_key` matching `^img_user_upload_\\d+$`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`view_image` returns image bytes that the Anthropic adapter encodes as an Anthropic vision content block in the next request",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`send_image` (resident) posts to a fake Discord transport with the supplied caption and records an `external_requests` row with provider='discord' that transitions pending\u2192confirmed",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Status message lifecycle: turn start \u2192 fake transport sees an initial post; each tool call \u2192 an edit (subject to 1s debounce); `set_activity` \u2192 next edit reflects new 'Currently:' line; turn complete \u2192 final edit text starts with '\u2705 Done.' and contains tool_call count",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Status throttling: 20 tool calls within 2s produce at most ~4 Discord edit calls (1s debounce + final), not 20",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Mid-turn message: a message arriving while a turn is in flight is persisted immediately, the status message gets a '\ud83d\udce5 Received' annotation line, and a follow-up turn is invoked containing the new message in its `triggered_by_message_ids`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "External-request reconciliation passes for Anthropic (idempotency-key replay), Discord (post-hoc message lookup \u2192 confirmed; not found \u2192 orphaned), Groq (deterministic re-issue), Supabase Storage (HEAD-based confirm)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Existing Sprint 1a tests (`tests/test_sqlite_store.py`, `tests/test_run_turn.py`, `tests/test_envelope.py`, `tests/test_ledger.py`, `tests/test_cli.py`, `tests/test_tool_kit.py`) all pass unchanged",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`agent_kit/loop.py` changes are minimal \u2014 only the optional `triggered_by_message_ids`/`pre_persisted` parameters are added; resident-mode mid-turn handling lives in the new `agent_kit/resident.py`",
+      "priority": "should",
+      "requires": [
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Each new module is under ~400 lines (`agent_kit/store/supabase.py`, `agent_kit/resident.py`, `agent_kit/transport/discord.py`)",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Manual smoke against staging Discord + staging Supabase: whitelisted DM replies within 30s; voice DM transcribes; image attachment lands in Storage with `images` row; mid-turn DM gets the \ud83d\udce5 annotation",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Discord user whitelist is supplied via env var `DISCORD_USER_WHITELIST` (comma-separated Discord user IDs); changing it requires a restart.",
+    "Supabase access uses a direct `psycopg` (psycopg3) connection for store ops (transactions, advisory-style row locks, recovery scans). The supabase-py client is used only for Storage.",
+    "Mid-turn messages are handled by spawning a follow-up turn after the current turn completes, not by injecting them mid-prompt into the in-flight turn. This satisfies all listed acceptance criteria with no rewrite of `run_turn`'s control flow.",
+    "The Supabase epic lock uses the same `epic_locks` row-based pattern as SQLite (not Postgres `pg_advisory_lock`) so the recovery scan can clean stuck locks across process restarts.",
+    "The new `images` table is added to BOTH the SQLite and Supabase migration trees this sprint, so the contract tests stay store-agnostic.",
+    "Voice messages are detected via the Discord attachment `voice_message` flag; non-voice audio attachments are out of scope for auto-transcription this sprint (covered by spec adversarial test #14, deferred to a future iteration unless the user wants it included).",
+    "Local Supabase dev uses Docker via `supabase start`; tests that need Supabase are skipped when `SUPABASE_TEST_DB_URL` is not set so CI without infra still runs.",
+    "`view_image` returns base64-encoded bytes via the result envelope; the Anthropic adapter is responsible for repackaging into a vision block. No new Blob fetch happens inside `agent_kit/model/anthropic.py`.",
+    "Reconciliation runs at startup and every 5 minutes via an asyncio task scheduled by `ResidentRunner`. Invocation-mode (CLI) does not run the periodic timer \u2014 the spec allows the caller to handle retry, and the boot-time scan is enough.",
+    "GitHub reconciliation is left as a no-op log this sprint \u2014 the v1 GitHub use is read-only and not exercised in Sprint 1b acceptance criteria."
+  ],
+  "structure_warnings": []
+}

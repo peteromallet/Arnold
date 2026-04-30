@@ -1,0 +1,38 @@
+{
+  "receipt_id": "e54a2aa5-c6c7-4930-b068-8e86dea9e6d2",
+  "plan_id": "sprint-1a-agent-kit-core",
+  "phase": "gate",
+  "iteration": 5,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T01:55:59.909398+00:00",
+  "profile_name": null,
+  "agent": "claude",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "63de8963-17c0-42ca-8eed-4e3d1de93e00",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "d5382a1458efc6d6084678e6b9acf803950f5f9b4af729a79908b70ee6fba918",
+  "prompt_hash_canonical": "b3b17993972687bbfc96b53cb9aac6f03679528cfbcdf952cad107c57e934dda",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [
+    "sha256:b4dea8151c6e99506d64f5be3277ede6a724ea4a38cccb10145d6f53711aee32",
+    "sha256:fe04884420f1e32630681a73bba55a78bbfc5af9c7bce66c57dde410218e2618",
+    "sha256:ac62858121d1f60a8702b88370a45d332b4ec400a157fb41afbb062bfcdd2b31",
+    "sha256:4346037a8d8161dd62885f1dba89e465c5790b3b1808b3f98a4d9cf854d6dba1",
+    "sha256:e14c18d0e12827dc579978c0660720f8412a3f9f441e5612313368a397b4f9c5"
+  ],
+  "cost_usd": 0.6474485000000001,
+  "duration_ms": 89351,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "recommendation": "PROCEED",
+    "blocking_flags_resolved": 0,
+    "blocking_flags_remaining": 0,
+    "override_forced": false
+  },
+  "scope_drift_severity": null
+}

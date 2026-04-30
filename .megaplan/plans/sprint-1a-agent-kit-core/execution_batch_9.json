@@ -1,0 +1,55 @@
+{
+  "status": "completed",
+  "batch": 9,
+  "files_changed": [
+    ".megaplan/plans/sprint-1a-agent-kit-core/execution_batch_9.json"
+  ],
+  "commands_run": [
+    "python -m pytest tests/test_envelope.py tests/test_megaplan_arnold_import.py",
+    "python -m pytest tests/test_sqlite_store.py tests/test_tool_kit.py",
+    "python -m pytest tests/test_ledger.py tests/test_run_turn.py",
+    "python -m pytest tests/test_cli.py",
+    "python -m pytest",
+    "python scripts/_repro_sprint1a.py",
+    "python -m compileall -q agent_kit arnold megaplan tests",
+    "python -m pytest",
+    "rg -n -- \"--attach|attachments=|click\" arnold agent_kit tests || true",
+    "rg -n \"print\\(\" agent_kit arnold megaplan || true",
+    "rg -n \"yhwfl|service key|service_key|eyJ[A-Za-z0-9_-]+\" agent_kit arnold megaplan tests || true"
+  ],
+  "task_updates": [
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Ran the required staged validation order and full pytest suite successfully. Final full suite passed with 22 tests. Created a throwaway repro script, ran it to confirm the acceptance smoke with CLI exit 0, valid completed envelope JSON, one bot_turns row, and one confirmed matching external_requests row, then deleted the script and reran full pytest successfully.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest tests/test_envelope.py tests/test_megaplan_arnold_import.py",
+        "python -m pytest tests/test_sqlite_store.py tests/test_tool_kit.py",
+        "python -m pytest tests/test_ledger.py tests/test_run_turn.py",
+        "python -m pytest tests/test_cli.py",
+        "python -m pytest",
+        "python scripts/_repro_sprint1a.py",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "Passed. Full pytest suite is green offline with FakeModel and ephemeral SQLite: 22 tests passed. The throwaway repro script confirmed `arnold turn` equivalent CLI smoke behavior and was deleted afterward."
+    }
+  ],
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 9/9: Project directory is not a git repository.",
+    "Advisory observation skip after batch 9/9: Project directory is not a git repository.",
+    "Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): T16",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "type": "object",
+  "properties": {
+    "skip": {
+      "type": "boolean"
+    },
+    "task_summary": {
+      "type": "string"
+    },
+    "key_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "point": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "relevance": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          }
+        },
+        "required": [
+          "point",
+          "source",
+          "relevance"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "relevant_code": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "functions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "file_path",
+          "why",
+          "functions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "test_expectations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "what_it_checks": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "fail_to_pass",
+              "pass_to_pass"
+            ]
+          }
+        },
+        "required": [
+          "test_id",
+          "what_it_checks",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "primary_criterion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "suggested_approach": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "skip",
+    "task_summary",
+    "key_evidence",
+    "relevant_code",
+    "test_expectations",
+    "constraints",
+    "primary_criterion",
+    "suggested_approach"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,288 @@
+{
+  "type": "object",
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "done",
+              "skipped",
+              "blocked"
+            ]
+          },
+          "executor_notes": {
+            "type": "string"
+          },
+          "files_changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commands_run": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "auto_attributed_files": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "evidence_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reviewer_verdict": {
+            "type": "string"
+          },
+          "stance": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "challenge_engaged": {
+                "type": "string"
+              },
+              "angle_taken": {
+                "type": "string"
+              },
+              "what_changed": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "challenge_engaged",
+              "angle_taken",
+              "what_changed"
+            ],
+            "additionalProperties": false
+          },
+          "stop_signal": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "requested": {
+                "type": "boolean"
+              },
+              "defense": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "requested",
+              "defense"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "depends_on",
+          "status",
+          "executor_notes",
+          "files_changed",
+          "commands_run",
+          "auto_attributed_files",
+          "evidence_files",
+          "reviewer_verdict",
+          "stance",
+          "stop_signal"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "watch_items": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sense_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "executor_note": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "question",
+          "executor_note",
+          "verdict"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "user_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "before_execute",
+              "after_execute"
+            ]
+          },
+          "blocks_task_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "rationale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requires_human_only_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "phase",
+          "blocks_task_ids",
+          "rationale",
+          "requires_human_only_reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "meta_commentary": {
+      "type": "string"
+    },
+    "validation": {
+      "type": "object",
+      "properties": {
+        "plan_steps_covered": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "plan_step_summary": {
+                "type": "string"
+              },
+              "finalize_item_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "plan_step_summary",
+              "finalize_item_ids"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "orphan_tasks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completeness_notes": {
+          "type": "string"
+        },
+        "coverage_complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "plan_steps_covered",
+        "orphan_tasks",
+        "completeness_notes",
+        "coverage_complete"
+      ],
+      "additionalProperties": false
+    },
+    "baseline_test_failures": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "baseline_test_command": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "baseline_test_note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "tasks",
+    "watch_items",
+    "sense_checks",
+    "user_actions",
+    "meta_commentary",
+    "validation",
+    "baseline_test_failures",
+    "baseline_test_command",
+    "baseline_test_note"
+  ],
+  "additionalProperties": false
+}

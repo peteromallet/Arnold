@@ -1,0 +1,251 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Verified the revised plan now keeps `tests/store_contract.py` unchanged and moves Sprint 1b store-method coverage to `tests/store_contract_v1b.py`; this addresses the prior contract-test proof issue while preserving the spec requirement that the original Sprint 1a contract suite run unchanged against Supabase.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the revised plan replaces the prior follow-up-turn shortcut with an `on_pre_finalize` same-turn re-prompt and retroactive `triggered_by_message_ids` widening, matching the mid-turn behavior required by `planning-bot-spec.md` lines 822-843 for the final-text path.",
+          "flagged": false
+        },
+        {
+          "detail": "External request coverage: the idea requires restart safety with an `external_requests` ledger and per-provider reconciliation, including Groq and Supabase Storage. The revised plan routes tool-originated external IO through the new audit queue, but Discord ingestion still performs voice transcription and Storage uploads directly in `DiscordTransport` without a clear pending ledger row, so crashes during voice/image ingestion would not be reconciled by the mechanism planned in Step 16.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Store contract: the idea and spec require the original Store port contract suite to run green against Supabase unchanged, but the plan Step 4 explicitly changes `tests/store_contract.py` to add ledger, image, and recovery coverage. That may be useful coverage, but it no longer proves that the Sprint 1a contract suite was reusable unchanged as required by `planning-bot-spec.md` lines 90 and 2549.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Mid-turn handling: the plan asks whether follow-up-turn handling is acceptable and then assumes it, but the spec says product decisions are locked and specifically requires mid-turn messages to surface in an end-of-turn check before the bot finalizes, then be retroactively added to the same turn's `triggered_by_message_ids` (`planning-bot-spec.md` lines 822-843). This is a direct behavior divergence from the plan requirements, not merely an implementation detail.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Recurring debt: callable-api: the codebase still has no `--attach`, `run_turn(..., attachments=...)`, local Blob implementation, or caller-uploaded image source, while Sprint 1b plans image tools and Blob storage. The prior Sprint 1a attachment deferral is known accepted debt, but this plan broadens image/Blob work without containing the invocation-mode attachment gap described in `planning-bot-spec.md` lines 1895-1908.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "The revised plan fixes the missing psycopg dependency by adding `psycopg[binary]>=3.1` in Step 1, which is consistent with the direct psycopg Supabase-store decision and resolves the prior dependency issue.",
+          "flagged": false
+        },
+        {
+          "detail": "Tool audit atomicity regression: Step 8 proposes running the tool body outside a transaction, then opening a transaction only to insert `external_requests` and `tool_calls`. Existing tools mutate the store inside the tool function, for example `send_message` calls `context.store.create_message(...)` at `agent_kit/tools/communication.py` lines 59-66 and `tests/test_tool_kit.py` lines 27-34 deliberately checks rollback of a mutation made inside a failing tool. Moving tool bodies out of the audit transaction would break the Sprint 1a invariant that mutation and `tool_calls` row commit together.",
+          "flagged": true
+        },
+        {
+          "detail": "Anthropic reconciliation remains incomplete: Step 5 adds an `idempotency_key` parameter and header, but Step 16 says the reconciler reconstructs the Anthropic request from `request_summary`. The current loop's request summary contains only model, message_count, tool_names, and input_length (`agent_kit/loop.py` lines 103-108), while the spec defines `request_summary` as not the full body; without storing the full request payload or enough replay material, the reconciler cannot safely reissue the same `messages`/`tools` body with the same idempotency key.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Supabase dependency wiring: Step 6 chooses a direct `psycopg` connection for the store, but Step 1 only adds `discord.py`, `supabase`, `groq`, `httpx`, and `pytest-asyncio`; the current `pyproject.toml` only has `anthropic` at lines 11-13. Without adding `psycopg` or `psycopg[binary]`, the planned `SupabaseStore` cannot import its database driver at runtime.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "External request reconciliation: the plan says Anthropic/OpenAI recovery will replay with the same `Idempotency-Key`, but the existing `AnthropicModel.complete_turn` takes only `model_id`, `messages`, `tools`, and `hot_context` and calls `client.messages.create(...)` without any idempotency header path. The plan does not include an Anthropic adapter API change or client wrapper capable of replaying by ledger key, so the stated reconciliation path is not implementable from the current model boundary.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Tool-call external side effects: `agent_kit/tool_kit.py` lines 110-121 runs every tool function inside `store.transaction()` and only records `tool_calls` after the function returns. The plan's resident `send_image` and Discord `send_message` semantics need `external_requests` insertion before external calls and confirmation after, so doing Discord posts inside existing audited tool bodies would either hold DB transactions across network calls or violate the ledger ordering described in `planning-bot-spec.md` lines 2473-2480 unless the tool runtime is explicitly reworked.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Verified the revised plan adds `on_turn_start` immediately after `create_turn`, which gives the resident runner a concrete turn id before the first model call and addresses the prior initial-status-message lifecycle gap.",
+          "flagged": false
+        },
+        {
+          "detail": "Mid-turn finalization still has an uncovered path: Step 6 invokes `on_pre_finalize` when the model has produced `final_text`, but the existing loop also lets the model explicitly request the `send_message` tool during the tool phase (`agent_kit/loop.py` lines 193-259). Since `send_message` can post to Discord in resident mode under the revised Step 7, an explicit `send_message` tool call could send a response before the end-of-turn mid-turn check runs.",
+          "flagged": true
+        },
+        {
+          "detail": "Scope containment for invocation attachments is now explicit: the revised plan states that `--attach`, `run_turn(..., attachments=...)`, `LocalBlobStore`, caller-uploaded images, the `transcribe_voice` tool, and non-voice-audio path are deferred and recorded in Step 22. That contains the known callable-api debt instead of broadening it in this sprint.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Resident status lifecycle is broader than wrapping `run_turn`: the current `run_turn` creates the `bot_turns` row internally at `agent_kit/loop.py` lines 62-81 and emits no `turn_start` event before tool calls. Step 14 says the runner posts a status at turn start, captures the Discord id, and calls `store.update_turn(turn_id, status_message_id=...)`, but the runner has no turn id until after `run_turn` has already started and there is no planned hook for that moment.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Mid-turn processing is not only a coalescer concern: the existing loop sends the final response as soon as `result.final_text` appears or `send_message` is invoked (`agent_kit/loop.py` lines 261-278), with no end-of-turn query before finalization. The plan's follow-up-turn shortcut leaves the current response able to go out before contradictory mid-turn messages are considered, which the spec explicitly tries to prevent.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Voice support scope is incomplete relative to the idea: the idea lists a `transcribe_voice` tool and the spec has a `transcribe_voice(audio_url)` tool entry, but the plan only implements automatic Discord voice ingestion through the transport and does not add or test a registered `transcribe_voice` tool. If product scope truly excludes manual/non-voice audio transcription this sprint, the plan should call that out because the spec adversarial test for non-voice audio expects a preserved file and a user-facing prompt.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Verified the revised plan avoids mutating the existing pull-style `Transport` Protocol and instead adds a separate `PushTransport`; this addresses the prior concern about breaking CLI/invocation call sites that bypass transport today.",
+          "flagged": false
+        },
+        {
+          "detail": "Reconciliation API glue is incomplete: Step 16 calls `transport.fetch_recent_messages(...)` for Discord reconciliation, but Step 9's new `PushTransport` methods only include `start`, `stop`, `post_message`, `edit_message`, and `download_attachment`. The same issue exists for Storage reconciliation: Step 16 calls `Blob.exists(path)`, but the current Blob Protocol has only `put` and `get` at `agent_kit/ports.py` lines 193-200 and Step 12 says it implements the existing Blob Protocol.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified the revised plan adds optional `transport`, `blob`, and `external_queue` fields to `ToolContext`, which gives image tools and resident communication tools a concrete dependency-injection path missing from the first plan.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "ToolContext plumbing is missing: `agent_kit/tool_kit.py` lines 29-36 only provides `store`, `turn_id`, events, reply buffer, and metadata. The planned image tools need Blob access, `send_image` needs resident transport access, and `send_message` needs to be mode-divergent, but the plan does not extend `ToolContext` or provide another dependency injection path for Blob/Discord clients.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Transport port changes need broad call-site and test updates: `agent_kit/ports.py` lines 50-60 currently defines only pull-style `receive`, `send`, and `stream_event`, while `arnold/cli.py` bypasses Transport entirely and calls `run_turn` directly. The plan adds push methods to the Protocol, but does not define a CLI/pull transport adapter or explain how existing invocation code remains conformant after the Protocol changes.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Status activity persistence requires changing the existing `set_activity` tool, not just the resident runner: `agent_kit/tools/communication.py` currently truncates and returns a description but does not update `bot_turns.current_activity`. Step 14 mentions extending it, which is the right location to touch; tests should cover both the DB column update and the existing invocation event shape because `tests/test_run_turn.py` already asserts activity event behavior.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Checked current `run_turn` callers and the revised kwargs: adding optional `triggered_by_message_ids`, `recovered_input_messages`, `on_turn_start`, and `on_pre_finalize` can be backward-compatible for existing CLI/tests because all current callers use keyword arguments and can omit the new parameters.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked current model adapters: `FakeModel.complete_turn` and `AnthropicModel.complete_turn` both need signature updates for `idempotency_key`; the revised plan explicitly updates both, so existing tests can keep using `FakeModel` if the new parameter defaults to `None`.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked current tool callers through `ToolRegistry.invoke`: callers expect the wrapper to execute the tool function inside the transaction, and `tests/test_tool_kit.py` verifies this with a failing tool that writes a message then raises. The revised Step 8 changes that caller contract globally, so it must either keep DB-mutating tool bodies inside the audit transaction and queue only external side effects, or refactor every mutating tool to return a mutation spec instead of writing directly.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked all `run_turn` callers with `rg`: existing callers in `arnold/cli.py` and tests pass only `epic_id`, `input`, `store`, `model`, optional `model_id`, `on_event`, and `cancel_event`. The plan's new `triggered_by_message_ids` and `pre_persisted` parameters can be backward-compatible if optional, but resident recovery needs a way to load persisted message contents and skip `create_message`; otherwise `run_turn` will still create a synthetic inbound message at `agent_kit/loop.py` lines 62-67 and lose the original Discord ids.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked `send_message` callers: it is invoked both when the model explicitly requests it and automatically when final text is returned (`agent_kit/loop.py` lines 261-268). The current tool only appends to `reply_buffer` and creates a DB row with a synthetic invocation id; the plan does not specify how these existing call paths become Discord posts in resident mode, so the acceptance criterion for a whitelisted DM response within 30 seconds is not satisfied by the planned transport alone.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked `insert_pending` callers: only `Ledger.record_pending` currently inserts external requests, and it derives system-call keys with a `system_seq` ordinal. The plan correctly notes that Sprint 1b reconciliation must preserve this extension, but any replayer must also persist or reconstruct the original `system_seq`; the existing `external_requests.request_summary` does not store that ordinal unless the plan adds it explicitly.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-007",
+      "concern": "External reconciliation: Anthropic replay still lacks durable request payloads even though the plan now threads an idempotency header.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Step 16 reconstructs Anthropic replay from `request_summary`, but current `run_turn` records only model/message_count/tool_names/input_length and the spec says request_summary is not the full body. Replaying with the same idempotency key still needs the original messages/tools payload or an equivalent durable request body."
+    },
+    {
+      "id": "FLAG-009",
+      "concern": "Tool atomicity: the proposed three-stage audit wrapper moves tool bodies outside the DB transaction and would break existing mutation-plus-tool_call atomicity.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/tool_kit.py` currently wraps `entry.func(...)` and `record_tool_call(...)` in one transaction; `tests/test_tool_kit.py` asserts a message written by a failing tool is rolled back. Revised Step 8 runs the tool body before the transaction, so existing direct store writes would commit without a matching `tool_calls` row on failure."
+    },
+    {
+      "id": "FLAG-010",
+      "concern": "Reconciliation interfaces: the plan uses methods not present in the planned `PushTransport` and existing `Blob` protocols.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "Step 16 calls `transport.fetch_recent_messages(...)` and `Blob.exists(path)`, but Step 9's `PushTransport` list omits fetch/history and Step 12 says `SupabaseStorageBlob` implements the existing Blob Protocol, which only has `put` and `get`."
+    },
+    {
+      "id": "FLAG-011",
+      "concern": "Mid-turn finalization: `on_pre_finalize` only gates the final-text auto-send path, not explicit resident `send_message` tool calls.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "The current loop invokes tool requests before final-text handling; if a model requests `send_message` directly, revised Step 7 can post to Discord during the tool phase before Step 6's final-text-only `on_pre_finalize` hook runs."
+    },
+    {
+      "id": "FLAG-012",
+      "concern": "External request ledger: Discord ingestion-side Groq transcription and Storage uploads are not clearly recorded in `external_requests`, so those provider calls are outside the planned recovery mechanism.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Step 13 performs voice download, Storage upload, and Groq transcription directly in the Discord transport before handing a persisted message id to the resident runner. Step 8's ledger/external queue covers tool-originated IO only, while Step 16 expects pending `groq` and `supabase_storage` rows to reconcile."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 23: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-001",
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004",
+    "FLAG-005",
+    "FLAG-006",
+    "FLAG-008",
+    "issue_hints-1",
+    "issue_hints-2",
+    "issue_hints-3",
+    "correctness-1",
+    "correctness-3",
+    "scope-1",
+    "scope-2",
+    "scope-3",
+    "all_locations-1",
+    "all_locations-2",
+    "callers-1",
+    "callers-2",
+    "callers-3"
+  ],
+  "disputed_flag_ids": []
+}

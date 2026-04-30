@@ -1,0 +1,36 @@
+{
+  "receipt_id": "0f3a5e13-f756-4e95-b7ac-5308e4dd8e9f",
+  "plan_id": "sprint-1b-discord-resident",
+  "phase": "gate",
+  "iteration": 3,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T03:22:40.471722+00:00",
+  "profile_name": null,
+  "agent": "claude",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "ea94b932-01d3-4960-86a7-44f6f2294fa2",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "c3965fb2302b88f05f0c2a6f9c24d0f3be9a61111d08567f727281381aad1311",
+  "prompt_hash_canonical": "6d2e97d27d27af74af4b007deed3700c3e7bd9dbf00d11dfd914304522f527b4",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [
+    "sha256:ba52c7a59150d41aca77ff3d6e9893bc877864fc6973b70ddb18a89901ed3a37",
+    "sha256:bc4332c890be05e80b976169e8c4662e5e10566e9023cd81056a62c67422a853",
+    "sha256:d80f99dff49c7db44f0d03bcf62c17929820c4a3ba797bec1e82967efe98f2b4"
+  ],
+  "cost_usd": 0.631511,
+  "duration_ms": 70733,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "recommendation": "ITERATE",
+    "blocking_flags_resolved": 0,
+    "blocking_flags_remaining": 0,
+    "override_forced": false
+  },
+  "scope_drift_severity": null
+}

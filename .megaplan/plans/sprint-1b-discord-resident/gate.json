@@ -1,0 +1,653 @@
+{
+  "passed": true,
+  "criteria_check": {
+    "count": 31,
+    "items": [
+      {
+        "criterion": "DM from a whitelisted user triggers a `run_turn` invocation and a Discord reply within 30s in a mocked end-to-end test (FakeDiscordTransport + FakeModel + SQLiteStore)",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "DM from a non-whitelisted user produces no Discord reply and writes a `system_logs` row at level=info, category=application, event_type=whitelist_rejected",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Every inbound Discord message persists with a unique `discord_message_id` BEFORE any external IO (Storage upload, Groq transcription, image-row creation) runs; a duplicate `discord_message_id` insert is rejected by the DB unique constraint, and the second delivery does NOT trigger duplicate Storage/Groq calls",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Voice ingestion sequence: (1) `messages` row exists with `was_voice_message=true`, `content=\"\"`, `audio_storage_url=NULL` AND two pending `external_requests` rows (provider=supabase_storage, provider=groq) all committed in one transaction; (2) Storage and Groq calls run AFTER commit; (3) `update_message` fills `content=<transcription>`, `audio_storage_url`, `transcription_metadata` after each call confirms",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Image ingestion sequence: (1) `messages` row exists with `has_image_attachment=true` AND a pending `external_requests` row (provider=supabase_storage) committed in one transaction; (2) Storage upload runs AFTER commit; (3) `images` row with `source='user_uploaded'` and auto-assigned `reference_key` matching `^img_user_upload_\\d+$` is created only after upload succeeds",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`Store.update_message(message_id, **changes)` partial-update method is part of the Store Protocol and implemented on both `SQLiteStore` and `SupabaseStore`; `tests/test_update_message.py` verifies updates to `discord_message_id`, `content`, `audio_storage_url`, `transcription_metadata`, `has_image_attachment` keep row identity stable",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`Store.create_message` accepts `synthesize_outbound_id: bool = True`; default preserves Sprint 1a `inv_<turn_id>_<N>` behavior (invocation-mode `send_message`); `False` leaves `discord_message_id` NULL on outbound rows (resident-mode `send_message`). Verified in `tests/test_create_message_synthesize_flag.py`",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The unmodified `tests/store_contract.py` from Sprint 1a passes against both `SQLiteStore` and `SupabaseStore`",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The new `tests/store_contract_v1b.py` (covering find_abandoned_turns, find_pending_external_requests, mark_orphaned, find_unprocessed_messages, load_messages, update_message, create_message(synthesize_outbound_id=False), image CRUD, idempotency-key uniqueness, and `request_body` round-trip) passes against both stores",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "5 inbound messages within 8s coalesce into a single turn whose `triggered_by_message_ids` has 5 entries",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Killing the runner mid-turn and restarting causes the prior turn to be marked `abandoned` and its trigger messages to be re-processed under a fresh `turn_id`",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`view_image` result with media_type + base64 bytes is rendered into an Anthropic vision content block on the next model call",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Resident `send_message` posts via the injected push transport: row is committed with `discord_message_id=NULL` inside the audit transaction (via `synthesize_outbound_id=False`); `update_message` fills `discord_message_id` AFTER commit (`store.transaction_depth == 0` when the queued callable runs); `external_requests` row transitions pending\u2192confirmed",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Existing tool atomicity preserved: a tool that mutates the store and then raises rolls back the mutation AND does not record a `tool_calls` row \u2014 the Sprint 1a test at `tests/test_tool_kit.py:27` passes UNCHANGED",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Status message lifecycle: `on_turn_start` posts initial status; each tool call \u2192 status edit (1s debounce); `set_activity` updates `bot_turns.current_activity`; turn complete \u2192 final edit text starts with '\u2705 Done.' and contains tool_call count",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Status throttling: 20 tool calls within 2s produce at most ~4 Discord edit calls",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Mid-turn message in the SAME turn: arrives during tool phase \u2192 persisted; status gets '\ud83d\udce5 Received'; `mid_turn_message_check` causes `run_turn` to re-prompt with the spec block AND widen the existing turn's `triggered_by_message_ids` (NOT a follow-up turn)",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Explicit-send_message gating: when the model issues a `send_message` tool call while unprocessed mid-turn messages exist, the loop runs the mid-turn check FIRST and re-prompts before any Discord post fires",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Anthropic idempotency-key replay: the reconciler reissues `model.complete_turn` with the stored `idempotency_key` and the FULL `messages`/`tools`/`model` body taken from `external_requests.request_body`. Verified via `tests/test_anthropic_replay.py`",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "External-request reconciliation passes for Anthropic (replay via stored body+key), Discord (post-hoc message lookup via `transport.fetch_recent_messages` \u2192 confirmed; not found \u2192 orphaned), Groq (deterministic re-issue), Supabase Storage (HEAD via `Blob.exists` \u2192 confirmed; missing \u2192 re-issue)",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Tool external-IO ordering: ledger row is `pending` before commit; DB transaction commits before any queued external callable runs; ledger row is `confirmed` after the callable returns. Verified via `tests/test_tool_kit_external_queue.py`",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Discord ingestion-side IO is ledgered: `tests/test_discord_ingestion_ledger.py` asserts pending rows are inserted before each Storage/Groq call and transitioned to confirmed/failed afterwards",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Persist-first ingestion: `tests/test_discord_ingestion_persist_first.py` asserts the inbound `messages` row exists in the DB BEFORE any Storage upload, Groq call, or `images` row creation runs (uses an instrumented store that records the insert order)",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Duplicate inbound rejection: re-delivering the same Discord message via `on_message` does NOT trigger a second Storage upload or Groq call; the duplicate insert is caught by the unique constraint and logged. Verified via `tests/test_duplicate_inbound_dropped.py`",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "All Sprint 1a tests pass UNCHANGED (`tests/test_envelope.py`, `tests/test_ledger.py`, `tests/test_run_turn.py`, `tests/test_cli.py`, `tests/test_tool_kit.py`, the existing assertions in `tests/test_sqlite_store.py`); only additive new test cases are added",
+        "priority": "must",
+        "requires": [
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "No literal Supabase service-role JWT, Discord bot token, Anthropic key, or Groq key appears in any committed file under the repo (migrations, tests, fixtures, docs)",
+        "priority": "must",
+        "requires": [
+          "run_shell"
+        ]
+      },
+      {
+        "criterion": "The existing `Transport` Protocol in `agent_kit/ports.py` is unchanged. `PushTransport` is added as a separate Protocol",
+        "priority": "should",
+        "requires": [
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "`agent_kit/loop.py` changes are limited to the optional kwargs (`triggered_by_message_ids`, `recovered_input_messages`, `on_turn_start`, `mid_turn_message_check`), the `idempotency_key` thread, the `request_body` recording, the explicit-send_message gating block, the `system_seq` field add to `request_summary`, and the vision-block detection in tool-result construction",
+        "priority": "should",
+        "requires": [
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "Each new module is under ~400 lines (`agent_kit/store/supabase.py`, `agent_kit/resident.py`, `agent_kit/transport/discord.py`)",
+        "priority": "should",
+        "requires": [
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "A deferral note is recorded for invocation-mode attachments (`--attach`, `attachments=`, `LocalBlobStore`) and the `transcribe_voice` tool / non-voice-audio path",
+        "priority": "should",
+        "requires": [
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Manual smoke against staging Discord + staging Supabase: whitelisted DM replies within 30s; voice DM transcribes; image attachment lands in Storage with `images` row; mid-turn DM updates the status message in the same turn",
+        "priority": "info",
+        "requires": [
+          "subjective_judgment"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "issue_hints",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Recovery coverage for ingestion-side Storage uploads remains underspecified: the plan records pending Storage rows before uploading, but the described `request_body` for those rows only includes deterministic paths, not the original Discord attachment URL or another durable byte source. If the process crashes before the upload completes, `supabase_storage` reconciliation can detect the object is missing but cannot reissue the upload deterministically from the stored row.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Recovery coverage for ingestion-side Storage uploads remains underspecified: the plan records pending Storage rows before uploading, but the described `request_body` for those rows only includes deterministic paths, not the original Discord attachment URL or another durable byte source. If the process crashes before the upload completes, `supabase_storage` reconciliation can detect the object is missing but cannot reissue the upload deterministically from the stored row.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "scope",
+      "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: The remaining Storage reissue issue applies to both voice and image attachments, not just one branch: voice Storage upload needs source audio bytes to recover, and image Storage upload needs source image bytes to recover. The plan should store a retrievable source reference in `request_body` or deliberately mark crash-before-download/upload as orphaned rather than promising deterministic reissue.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The remaining Storage reissue issue applies to both voice and image attachments, not just one branch: voice Storage upload needs source audio bytes to recover, and image Storage upload needs source image bytes to recover. The plan should store a retrievable source reference in `request_body` or deliberately mark crash-before-download/upload as orphaned rather than promising deterministic reissue.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "all_locations",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: Supporting infrastructure for Storage reissue is still incomplete: the plan adds `Blob.exists`, but not a corresponding way for the reconciler to obtain the original attachment payload from the ledger row. Since Discord attachment URLs can be transient, the missing source field is not just a local adapter detail; it affects the recovery contract across `DiscordTransport`, `external_requests.request_body`, and `Reconciler`.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Supporting infrastructure for Storage reissue is still incomplete: the plan adds `Blob.exists`, but not a corresponding way for the reconciler to obtain the original attachment payload from the ledger row. Since Discord attachment URLs can be transient, the missing source field is not just a local adapter detail; it affects the recovery contract across `DiscordTransport`, `external_requests.request_body`, and `Reconciler`.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "callers",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the planned Storage reconciliation caller: `Reconciler` can call `blob.exists(ref)`, but when it needs to reissue a missing upload it has no planned argument source for `blob.put(...)` because the pending request row does not carry the original attachment bytes or a durable fetchable source. That caller path remains under-specified.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the planned Storage reconciliation caller: `Reconciler` can call `blob.exists(ref)`, but when it needs to reissue a missing upload it has no planned argument source for `blob.put(...)` because the pending request row does not carry the original attachment bytes or a durable fetchable source. That caller path remains under-specified.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "correctness",
+      "concern": "Are the proposed changes technically correct?: Storage reconciliation cannot be correct for crash-before-upload unless the ledger row stores enough replay material. Step 16 says `supabase_storage` reconciliation does `blob.exists(ref)` and reissues if missing, but Step 13's pending Storage rows for voice/image ingestion do not store the attachment bytes, a durable local blob, or even explicitly the Discord attachment URL in `request_body`; without that, the reissue branch has no input.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Storage reconciliation cannot be correct for crash-before-upload unless the ledger row stores enough replay material. Step 16 says `supabase_storage` reconciliation does `blob.exists(ref)` and reissues if missing, but Step 13's pending Storage rows for voice/image ingestion do not store the attachment bytes, a durable local blob, or even explicitly the Discord attachment URL in `request_body`; without that, the reissue branch has no input.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": true,
+      "addressed_in": "plan_v4.md",
+      "verified_in": "critique_v4.json"
+    },
+    {
+      "id": "FLAG-015",
+      "concern": "Storage recovery: pending Supabase Storage ingestion rows do not store enough source material to reissue a missing upload after a crash.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The revised plan persists Storage pending rows before upload and Step 16 promises `blob.exists(ref)` then reissue if missing, but Step 13's voice/image request bodies only describe deterministic paths. Without original bytes, a durable local source, or at least an explicit Discord attachment URL plus expiry handling, the reconciler cannot perform the reissue branch.",
+      "raised_in": "critique_v4.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ],
+  "recommendation": "PROCEED",
+  "rationale": "Iteration 4 with weighted score 9.0 (down from 35.0 \u2192 17.5 \u2192 11.0 \u2192 9.0), 28/35 prior flags resolved, plan delta 49%, zero recurring/reopened critiques. All 6 remaining flags describe the SAME single issue: ingestion-side Supabase Storage uploads don't have explicit source-byte material in `request_body` for crash-before-upload reissue. This is a real but bounded plan-quality observation that I'm accepting as a documented tradeoff with explicit fallback semantics. Rationale for accept_tradeoff: (a) The failure window is narrow \u2014 crash strictly between persisting the `messages`+ledger transaction and finishing the Storage upload. (b) The inbound `messages` row IS durable across the crash (the iteration-3 persist-first design ensures that), so the user is never silently dropped. (c) The Discord CDN attachment URL is naturally available at ingestion time and is the obvious source material \u2014 the plan should add `request_body={\"discord_attachment_url\": <attachment.url>, \"deterministic_path\": ...}` for ingestion Storage rows and have the reconciler fetch from that URL when reissuing. Discord attachment URLs do expire (~24h with new signed-URL rules), so the reconciler must `mark_orphaned` + `system_logs` warn entry on fetch failure. This is straightforward to spec in implementation and is the implementer's call within the existing plan structure. (d) Standard robustness budget at iteration 4 with score 9.0 doesn't justify another full iteration to add 2-3 sentences to Step 13.4 and Step 16; the implementer can resolve this design point during execution. (e) Iteration Pressure Analysis: FG-001..FG-005 each have 1 member flag across 4 iterations and addressed_then_reopened = 0 \u2014 does not meet TIEBREAKER threshold (which requires \u22652 reopened OR \u22652 member flags across \u22652 iterations). The pattern is \"new edge cases each iteration,\" not \"same flag re-litigated\" \u2014 typical late-iteration nitpicker drift. Settle the Storage recovery design as listed below and move to execution.",
+  "signals_assessment": "Continued strong improvement with diminishing flag count: weighted score 35.0 \u2192 17.5 \u2192 11.0 \u2192 9.0 (-74% cumulative), plan delta 49% with the change concentrated on one specific subsystem each iteration, 28 prior flags resolved with zero reopened. The 6 unresolved flags this iteration all describe a single design point (ingestion Storage upload source-byte durability) and represent new visibility, not recurring churn \u2014 typical late-iteration narrowing. Iteration Pressure analysis shows FG-001..FG-005 each at 1 member flag \u00d7 4 iterations \u00d7 0 reopened, which does not meet TIEBREAKER thresholds (need \u22652 member flags or \u22652 reopened). Preflight clean. No new debt subsystems escalated. Score 9.0 is low enough at iteration 4 that the marginal cost of another iteration outweighs the value, especially since the resolution is a documented design tradeoff that the implementer can apply directly.",
+  "warnings": [
+    "Implementer must add `discord_attachment_url` to `request_body` on ingestion Storage pending rows so the reconciler has a fetch source. If `Blob.exists(deterministic_path)` is False at reconciler time AND the Discord URL fetch fails (expired/404), the row must be `mark_orphaned` with a `system_logs` warn entry at category=recovery \u2014 do NOT silently retry forever.",
+    "Add a smoke test that simulates crash-before-Storage-upload to verify the orphaned + log path works end-to-end, even if it's marked info-priority.",
+    "Storage recovery limitation should be noted in the Step 22.2 deferral file alongside the existing attachment debt: \"Voice/image ingestion crash-before-upload + Discord URL expiry results in orphaned ledger rows; manual user re-send is the recovery path. Future sprint may add ingestion-time bytes-to-tmpfile fallback.\"",
+    "Service-role JWT in idea block must still be rotated by the user before this code is deployed against production Supabase."
+  ],
+  "settled_decisions": [
+    {
+      "id": "SD-001",
+      "decision": "Discord whitelist via env var DISCORD_USER_WHITELIST.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-002",
+      "decision": "Supabase store uses direct psycopg3; supabase-py only for Storage.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-003",
+      "decision": "Supabase epic lock uses row-based epic_locks table.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-004",
+      "decision": "images table on both stores.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-005",
+      "decision": "Mid-turn handling implements spec same-turn end-of-turn re-prompt via mid_turn_message_check hook in run_turn, gating both final-text and explicit send_message tool calls.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-006",
+      "decision": "tests/store_contract.py UNCHANGED; new method coverage in tests/store_contract_v1b.py.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-007",
+      "decision": "PushTransport added as a NEW Protocol alongside existing Transport.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-008",
+      "decision": "Image and voice scope is Discord-only this sprint.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-009",
+      "decision": "ToolContext gains optional transport, blob, external_queue fields.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-010",
+      "decision": "Audit wrapper keeps tool body inside store.transaction(); only post-commit network callables queued.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-011",
+      "decision": "external_requests gets nullable request_body JSONB column.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-012",
+      "decision": "Discord ingestion-side IO is ledgered with discord_message_id-keyed idempotency.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-013",
+      "decision": "Blob.exists and PushTransport.fetch_recent_messages published in Protocols.",
+      "rationale": "Carried."
+    },
+    {
+      "id": "SD-014",
+      "decision": "Store.update_message added to Protocol; consumed by resident send_message, send_image, voice/image ingestion.",
+      "rationale": "Carried from iteration 4."
+    },
+    {
+      "id": "SD-015",
+      "decision": "Store.create_message accepts synthesize_outbound_id flag (default True preserves Sprint 1a behavior; False used by resident send_message).",
+      "rationale": "Carried from iteration 4."
+    },
+    {
+      "id": "SD-016",
+      "decision": "DiscordTransport.on_message persists messages row + ingestion ledger pending rows in one transaction BEFORE any external IO; update_message fills post-processing fields after each external call confirms.",
+      "rationale": "Carried from iteration 4."
+    },
+    {
+      "id": "SD-017",
+      "decision": "Ingestion Storage pending rows include `discord_attachment_url` in request_body alongside `deterministic_path`. On reconciler reissue: if Blob.exists(path) is False, the reconciler attempts to fetch from the Discord URL and re-upload. If the Discord URL is unreachable (expired/404), the reconciler calls mark_orphaned and writes a system_logs warn entry at category=recovery. The persisted inbound `messages` row remains durable so the user can re-send.",
+      "rationale": "Resolves the iteration-4 Storage recovery flag cluster as accepted tradeoff. Discord URL expiry is a known limitation; orphaned + log is the documented recovery path. Future sprint may add tmpfile bytes fallback if the orphaned rate is meaningful."
+    }
+  ],
+  "override_forced": false,
+  "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting.",
+  "robustness": "standard",
+  "signals": {
+    "iteration": 4,
+    "idea": "# Sprint 1b \u2014 Discord resident mode + robustness\n\nAdd the second adapter for each port \u2014 Discord transport, Supabase store. This proves the port abstractions hold (two impls each) and unlocks resident-mode features: coalescing, recovery, voice/image attachments, live status messages.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to it for complete data model schemas, tool signatures, and architectural details. Especially the sections: Execution Modes, Multi-Message Handling, Status Message, Idempotency and Recovery, Images.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- Railway + Supabase setup; Supabase CLI for local dev\n- First Supabase migration files mirroring SQLite schema from Sprint 1a; `supabase db push` workflow\n- Supabase store adapter (second Store impl); same contract tests from 1a run green against both stores\n- Discord transport adapter (push, second Transport impl): bot account via discord.py; on_message handler for DMs; user whitelist\n- Multi-message coalescing \u2014 10s window, burst handling (resident-only)\n- Restart safety: messages persisted on receipt; recovery routine at startup + every 5min; abandoned turns marked; `external_requests` ledger table; idempotency-key generation (sha256-based); per-provider reconciliation\n- Voice message support: Groq Whisper (whisper-large-v3) integration; transcription stored in messages.content; original audio in Supabase Storage\n- Image attachment handling: Discord image detection; download to Supabase Storage; create images row with source='user_uploaded'; auto-assigned reference_key\n- Image tools: list_images, view_image, send_image, update_image_metadata\n- Live status message: loop sends status at turn start, edits after every tool call with count + last 3 tools + dynamic timestamp `<t:UNIX:R>`; set_activity tool annotates current step\n- Mid-turn message handling: messages persist immediately; status message gets annotation; bot prompted with mid-turn messages\n\n## Key New Tables\n\n### external_requests\nid, idempotency_key (unique), provider, endpoint, tool_call_id, turn_id, request_summary (json), status (pending|sent|confirmed|failed|orphaned), provider_request_id, provider_response_summary (json), attempt_count, first_attempted_at, last_attempted_at, completed_at, error_details (json)\n\nIdempotency key: sha256(turn_id:tool_call_id:provider:endpoint:canonical_args)[:16]\n\n### images\nid, epic_id, source (agent_generated|user_uploaded), prompt, storage_url, quality, size, created_at, reference_key (unique per epic), description, caption, in_body, active (default true), discord_attachment_id\n\n## Acceptance Criteria\n\n- DM bot from whitelisted account \u2192 response within 30s\n- DM from non-whitelisted \u2192 no response, log entry\n- Every inbound message persists with unique discord_message_id\n- Store port contract test suite runs green against Supabase impl unchanged from SQLite\n- 5 messages in 8s \u2192 processed as single burst (triggered_by_message_ids has 5 entries)\n- Kill server mid-turn, restart \u2192 triggering messages requeued under fresh turn; previous turn marked abandoned\n- Voice message (mocked) \u2192 transcribed via mocked Groq, was_voice_message=true\n- Image attachment (mocked) \u2192 downloaded to Storage, images row created with source=user_uploaded\n- view_image returns image bytes via Anthropic vision\n- send_image posts to Discord with caption\n- Status message: turn starts \u2192 status sent; each tool call \u2192 edited; set_activity updates; turn completes \u2192 \"Done. N tool calls.\"\n- Mid-turn message: persists immediately; status gets annotation; bot prompted with mid-turn messages\n\n## Tech Stack Additions\n- discord.py for Discord gateway\n- supabase-py for Supabase client\n- groq SDK for Whisper transcription\n- Supabase Storage for blob storage",
+    "significant_flags": 6,
+    "unresolved_flags": [
+      {
+        "id": "issue_hints",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Recovery coverage for ingestion-side Storage uploads remains underspecified: the plan records pending Storage rows before uploading, but the described `request_body` for those rows only includes deterministic paths, not the original Discord attachment URL or another durable byte source. If the process crashes before the upload completes, `supabase_storage` reconciliation can detect the object is missing but cannot reissue the upload deterministically from the stored row.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "scope",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: The remaining Storage reissue issue applies to both voice and image attachments, not just one branch: voice Storage upload needs source audio bytes to recover, and image Storage upload needs source image bytes to recover. The plan should store a retrievable source reference in `request_body` or deliberately mark crash-before-download/upload as orphaned rather than promising deterministic reissue.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Supporting infrastructure for Storage reissue is still incomplete: the plan adds `Blob.exists`, but not a corresponding way for the reconciler to obtain the original attachment payload from the ledger row. Since Discord attachment URLs can be transient, the missing source field is not just a local adapter detail; it affects the recovery contract across `DiscordTransport`, `external_requests.request_body`, and `Reconciler`.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked the planned Storage reconciliation caller: `Reconciler` can call `blob.exists(ref)`, but when it needs to reissue a missing upload it has no planned argument source for `blob.put(...)` because the pending request row does not carry the original attachment bytes or a durable fetchable source. That caller path remains under-specified.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness",
+        "concern": "Are the proposed changes technically correct?: Storage reconciliation cannot be correct for crash-before-upload unless the ledger row stores enough replay material. Step 16 says `supabase_storage` reconciliation does `blob.exists(ref)` and reissues if missing, but Step 13's pending Storage rows for voice/image ingestion do not store the attachment bytes, a durable local blob, or even explicitly the Discord attachment URL in `request_body`; without that, the reissue branch has no input.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-015",
+        "concern": "Storage recovery: pending Supabase Storage ingestion rows do not store enough source material to reissue a missing upload after a crash.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "resolved_flags": [
+      {
+        "id": "FLAG-001",
+        "concern": "Mid-turn handling: plan replaces the spec's same-turn end-of-turn prompt with a follow-up turn, allowing responses and writes to complete before new user input is considered.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "FLAG-002",
+        "concern": "Resident Discord replies: transport `post_message` is planned, but existing `send_message` call paths are not wired to use it, so resident turns may only write synthetic invocation messages.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "FLAG-003",
+        "concern": "Supabase store dependencies: direct psycopg is selected for store operations but is missing from the dependency plan.",
+        "resolution": "Plan Step 6 chooses direct `psycopg`; Plan Step 1 omits it; current `pyproject.toml` dependencies only include `anthropic`."
+      },
+      {
+        "id": "FLAG-004",
+        "concern": "Status message lifecycle: the runner cannot post and store the initial status message id at turn start without a new run-loop hook or external turn creation API.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "FLAG-005",
+        "concern": "Contract-test proof: modifying `tests/store_contract.py` conflicts with the requirement that the original Sprint 1a Store contract suite run unchanged against Supabase.",
+        "resolution": "The idea says the same contract tests from 1a run green against both stores; the plan Step 4 appends new coverage to that same contract."
+      },
+      {
+        "id": "FLAG-006",
+        "concern": "Secrets management: the plan input includes a Supabase service-role key in plain text, which should not be committed into migrations, docs, tests, or plan artifacts and should be rotated.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "FLAG-007",
+        "concern": "External reconciliation: Anthropic replay still lacks durable request payloads even though the plan now threads an idempotency header.",
+        "resolution": "Tightened the audit wrapper design (Step 8) to KEEP the tool body inside the existing transaction \u2014 only post-commit network IO is queued \u2014 preserving the Sprint 1a rollback test (closes correctness-1, FLAG-009, callers). Added a durable `request_body` JSONB column to `external_requests` via a new migration (Step 4); the loop now persists the full Anthropic messages/tools payload at `record_pending` time so the reconciler can replay with the stored idempotency key (closes FLAG-007, correctness-2). Renamed the resident-mode hook from `on_pre_finalize` to `mid_turn_message_check` and made `run_turn` invoke it both at final-text time AND before each explicit `send_message` tool call, so the resident `send_message` cannot bypass the spec's same-turn check (closes FLAG-011, scope). Added a `Ledger` instance to `DiscordTransport` and required ingestion-side voice/Storage/Groq calls to record pending `external_requests` rows keyed off `discord_message_id`; reconciler covers them like any other pending row (closes FLAG-012, issue_hints). Extended `Blob` Protocol with `exists()` and `PushTransport` Protocol with `fetch_recent_messages()` since the reconciler calls both (closes all_locations). Dropped reliance on `request_summary` for replay material; kept it for diagnostic shape only."
+      },
+      {
+        "id": "FLAG-008",
+        "concern": "Callable API: Recurring debt: image/Blob work is added for Sprint 1b but invocation-mode attachment passing remains unplanned.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "issue_hints-1",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Store contract: the idea and spec require the original Store port contract suite to run green against Supabase unchanged, but the plan Step 4 explicitly changes `tests/store_contract.py` to add ledger, image, and recovery coverage. That may be useful coverage, but it no longer proves that the Sprint 1a contract suite was reusable unchanged as required by `planning-bot-spec.md` lines 90 and 2549.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "issue_hints-2",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Mid-turn handling: the plan asks whether follow-up-turn handling is acceptable and then assumes it, but the spec says product decisions are locked and specifically requires mid-turn messages to surface in an end-of-turn check before the bot finalizes, then be retroactively added to the same turn's `triggered_by_message_ids` (`planning-bot-spec.md` lines 822-843). This is a direct behavior divergence from the plan requirements, not merely an implementation detail.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "issue_hints-3",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Recurring debt: callable-api: the codebase still has no `--attach`, `run_turn(..., attachments=...)`, local Blob implementation, or caller-uploaded image source, while Sprint 1b plans image tools and Blob storage. The prior Sprint 1a attachment deferral is known accepted debt, but this plan broadens image/Blob work without containing the invocation-mode attachment gap described in `planning-bot-spec.md` lines 1895-1908.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: Tool audit atomicity regression: Step 8 proposes running the tool body outside a transaction, then opening a transaction only to insert `external_requests` and `tool_calls`. Existing tools mutate the store inside the tool function, for example `send_message` calls `context.store.create_message(...)` at `agent_kit/tools/communication.py` lines 59-66 and `tests/test_tool_kit.py` lines 27-34 deliberately checks rollback of a mutation made inside a failing tool. Moving tool bodies out of the audit transaction would break the Sprint 1a invariant that mutation and `tool_calls` row commit together.",
+        "resolution": "Tightened the audit wrapper design (Step 8) to KEEP the tool body inside the existing transaction \u2014 only post-commit network IO is queued \u2014 preserving the Sprint 1a rollback test (closes correctness-1, FLAG-009, callers). Added a durable `request_body` JSONB column to `external_requests` via a new migration (Step 4); the loop now persists the full Anthropic messages/tools payload at `record_pending` time so the reconciler can replay with the stored idempotency key (closes FLAG-007, correctness-2). Renamed the resident-mode hook from `on_pre_finalize` to `mid_turn_message_check` and made `run_turn` invoke it both at final-text time AND before each explicit `send_message` tool call, so the resident `send_message` cannot bypass the spec's same-turn check (closes FLAG-011, scope). Added a `Ledger` instance to `DiscordTransport` and required ingestion-side voice/Storage/Groq calls to record pending `external_requests` rows keyed off `discord_message_id`; reconciler covers them like any other pending row (closes FLAG-012, issue_hints). Extended `Blob` Protocol with `exists()` and `PushTransport` Protocol with `fetch_recent_messages()` since the reconciler calls both (closes all_locations). Dropped reliance on `request_summary` for replay material; kept it for diagnostic shape only."
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: Anthropic reconciliation remains incomplete: Step 5 adds an `idempotency_key` parameter and header, but Step 16 says the reconciler reconstructs the Anthropic request from `request_summary`. The current loop's request summary contains only model, message_count, tool_names, and input_length (`agent_kit/loop.py` lines 103-108), while the spec defines `request_summary` as not the full body; without storing the full request payload or enough replay material, the reconciler cannot safely reissue the same `messages`/`tools` body with the same idempotency key.",
+        "resolution": "Tightened the audit wrapper design (Step 8) to KEEP the tool body inside the existing transaction \u2014 only post-commit network IO is queued \u2014 preserving the Sprint 1a rollback test (closes correctness-1, FLAG-009, callers). Added a durable `request_body` JSONB column to `external_requests` via a new migration (Step 4); the loop now persists the full Anthropic messages/tools payload at `record_pending` time so the reconciler can replay with the stored idempotency key (closes FLAG-007, correctness-2). Renamed the resident-mode hook from `on_pre_finalize` to `mid_turn_message_check` and made `run_turn` invoke it both at final-text time AND before each explicit `send_message` tool call, so the resident `send_message` cannot bypass the spec's same-turn check (closes FLAG-011, scope). Added a `Ledger` instance to `DiscordTransport` and required ingestion-side voice/Storage/Groq calls to record pending `external_requests` rows keyed off `discord_message_id`; reconciler covers them like any other pending row (closes FLAG-012, issue_hints). Extended `Blob` Protocol with `exists()` and `PushTransport` Protocol with `fetch_recent_messages()` since the reconciler calls both (closes all_locations). Dropped reliance on `request_summary` for replay material; kept it for diagnostic shape only."
+      },
+      {
+        "id": "correctness-3",
+        "concern": "Are the proposed changes technically correct?: Tool-call external side effects: `agent_kit/tool_kit.py` lines 110-121 runs every tool function inside `store.transaction()` and only records `tool_calls` after the function returns. The plan's resident `send_image` and Discord `send_message` semantics need `external_requests` insertion before external calls and confirmation after, so doing Discord posts inside existing audited tool bodies would either hold DB transactions across network calls or violate the ledger ordering described in `planning-bot-spec.md` lines 2473-2480 unless the tool runtime is explicitly reworked.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "scope-1",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Resident status lifecycle is broader than wrapping `run_turn`: the current `run_turn` creates the `bot_turns` row internally at `agent_kit/loop.py` lines 62-81 and emits no `turn_start` event before tool calls. Step 14 says the runner posts a status at turn start, captures the Discord id, and calls `store.update_turn(turn_id, status_message_id=...)`, but the runner has no turn id until after `run_turn` has already started and there is no planned hook for that moment.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "scope-2",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Mid-turn processing is not only a coalescer concern: the existing loop sends the final response as soon as `result.final_text` appears or `send_message` is invoked (`agent_kit/loop.py` lines 261-278), with no end-of-turn query before finalization. The plan's follow-up-turn shortcut leaves the current response able to go out before contradictory mid-turn messages are considered, which the spec explicitly tries to prevent.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "scope-3",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Voice support scope is incomplete relative to the idea: the idea lists a `transcribe_voice` tool and the spec has a `transcribe_voice(audio_url)` tool entry, but the plan only implements automatic Discord voice ingestion through the transport and does not add or test a registered `transcribe_voice` tool. If product scope truly excludes manual/non-voice audio transcription this sprint, the plan should call that out because the spec adversarial test for non-voice audio expects a preserved file and a user-facing prompt.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "all_locations-1",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: ToolContext plumbing is missing: `agent_kit/tool_kit.py` lines 29-36 only provides `store`, `turn_id`, events, reply buffer, and metadata. The planned image tools need Blob access, `send_image` needs resident transport access, and `send_message` needs to be mode-divergent, but the plan does not extend `ToolContext` or provide another dependency injection path for Blob/Discord clients.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "all_locations-2",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Transport port changes need broad call-site and test updates: `agent_kit/ports.py` lines 50-60 currently defines only pull-style `receive`, `send`, and `stream_event`, while `arnold/cli.py` bypasses Transport entirely and calls `run_turn` directly. The plan adds push methods to the Protocol, but does not define a CLI/pull transport adapter or explain how existing invocation code remains conformant after the Protocol changes.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "callers-1",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked all `run_turn` callers with `rg`: existing callers in `arnold/cli.py` and tests pass only `epic_id`, `input`, `store`, `model`, optional `model_id`, `on_event`, and `cancel_event`. The plan's new `triggered_by_message_ids` and `pre_persisted` parameters can be backward-compatible if optional, but resident recovery needs a way to load persisted message contents and skip `create_message`; otherwise `run_turn` will still create a synthetic inbound message at `agent_kit/loop.py` lines 62-67 and lose the original Discord ids.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "callers-2",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked `send_message` callers: it is invoked both when the model explicitly requests it and automatically when final text is returned (`agent_kit/loop.py` lines 261-268). The current tool only appends to `reply_buffer` and creates a DB row with a synthetic invocation id; the plan does not specify how these existing call paths become Discord posts in resident mode, so the acceptance criterion for a whitelisted DM response within 30 seconds is not satisfied by the planned transport alone.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "callers-3",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked `insert_pending` callers: only `Ledger.record_pending` currently inserts external requests, and it derives system-call keys with a `system_seq` ordinal. The plan correctly notes that Sprint 1b reconciliation must preserve this extension, but any replayer must also persist or reconstruct the original `system_seq`; the existing `external_requests.request_summary` does not store that ordinal unless the plan adds it explicitly.",
+        "resolution": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3)."
+      },
+      {
+        "id": "FLAG-009",
+        "concern": "Tool atomicity: the proposed three-stage audit wrapper moves tool bodies outside the DB transaction and would break existing mutation-plus-tool_call atomicity.",
+        "resolution": "Tightened the audit wrapper design (Step 8) to KEEP the tool body inside the existing transaction \u2014 only post-commit network IO is queued \u2014 preserving the Sprint 1a rollback test (closes correctness-1, FLAG-009, callers). Added a durable `request_body` JSONB column to `external_requests` via a new migration (Step 4); the loop now persists the full Anthropic messages/tools payload at `record_pending` time so the reconciler can replay with the stored idempotency key (closes FLAG-007, correctness-2). Renamed the resident-mode hook from `on_pre_finalize` to `mid_turn_message_check` and made `run_turn` invoke it both at final-text time AND before each explicit `send_message` tool call, so the resident `send_message` cannot bypass the spec's same-turn check (closes FLAG-011, scope). Added a `Ledger` instance to `DiscordTransport` and required ingestion-side voice/Storage/Groq calls to record pending `external_requests` rows keyed off `discord_message_id`; reconciler covers them like any other pending row (closes FLAG-012, issue_hints). Extended `Blob` Protocol with `exists()` and `PushTransport` Protocol with `fetch_recent_messages()` since the reconciler calls both (closes all_locations). Dropped reliance on `request_summary` for replay material; kept it for diagnostic shape only."
+      },
+      {
+        "id": "FLAG-010",
+        "concern": "Reconciliation interfaces: the plan uses methods not present in the planned `PushTransport` and existing `Blob` protocols.",
+        "resolution": "Step 16 calls `transport.fetch_recent_messages(...)` and `Blob.exists(path)`, but Step 9's `PushTransport` list omits fetch/history and Step 12 says `SupabaseStorageBlob` implements the existing Blob Protocol, which only has `put` and `get`."
+      },
+      {
+        "id": "FLAG-011",
+        "concern": "Mid-turn finalization: `on_pre_finalize` only gates the final-text auto-send path, not explicit resident `send_message` tool calls.",
+        "resolution": "Tightened the audit wrapper design (Step 8) to KEEP the tool body inside the existing transaction \u2014 only post-commit network IO is queued \u2014 preserving the Sprint 1a rollback test (closes correctness-1, FLAG-009, callers). Added a durable `request_body` JSONB column to `external_requests` via a new migration (Step 4); the loop now persists the full Anthropic messages/tools payload at `record_pending` time so the reconciler can replay with the stored idempotency key (closes FLAG-007, correctness-2). Renamed the resident-mode hook from `on_pre_finalize` to `mid_turn_message_check` and made `run_turn` invoke it both at final-text time AND before each explicit `send_message` tool call, so the resident `send_message` cannot bypass the spec's same-turn check (closes FLAG-011, scope). Added a `Ledger` instance to `DiscordTransport` and required ingestion-side voice/Storage/Groq calls to record pending `external_requests` rows keyed off `discord_message_id`; reconciler covers them like any other pending row (closes FLAG-012, issue_hints). Extended `Blob` Protocol with `exists()` and `PushTransport` Protocol with `fetch_recent_messages()` since the reconciler calls both (closes all_locations). Dropped reliance on `request_summary` for replay material; kept it for diagnostic shape only."
+      },
+      {
+        "id": "FLAG-012",
+        "concern": "External request ledger: Discord ingestion-side Groq transcription and Storage uploads are not clearly recorded in `external_requests`, so those provider calls are outside the planned recovery mechanism.",
+        "resolution": "Tightened the audit wrapper design (Step 8) to KEEP the tool body inside the existing transaction \u2014 only post-commit network IO is queued \u2014 preserving the Sprint 1a rollback test (closes correctness-1, FLAG-009, callers). Added a durable `request_body` JSONB column to `external_requests` via a new migration (Step 4); the loop now persists the full Anthropic messages/tools payload at `record_pending` time so the reconciler can replay with the stored idempotency key (closes FLAG-007, correctness-2). Renamed the resident-mode hook from `on_pre_finalize` to `mid_turn_message_check` and made `run_turn` invoke it both at final-text time AND before each explicit `send_message` tool call, so the resident `send_message` cannot bypass the spec's same-turn check (closes FLAG-011, scope). Added a `Ledger` instance to `DiscordTransport` and required ingestion-side voice/Storage/Groq calls to record pending `external_requests` rows keyed off `discord_message_id`; reconciler covers them like any other pending row (closes FLAG-012, issue_hints). Extended `Blob` Protocol with `exists()` and `PushTransport` Protocol with `fetch_recent_messages()` since the reconciler calls both (closes all_locations). Dropped reliance on `request_summary` for replay material; kept it for diagnostic shape only."
+      },
+      {
+        "id": "FLAG-013",
+        "concern": "Inbound persistence: voice and image attachment ingestion still performs external work before the inbound `messages` row with unique `discord_message_id` is created.",
+        "resolution": "All 7 open flags shared one root cause: messages-row CRUD in the resident path. Fixed as a coherent set: (1) `Store.update_message(message_id, **changes)` added to the Protocol and implemented on both stores (closes FLAG-014, all_locations); (2) `create_message` gains a `synthesize_outbound_id: bool = True` parameter \u2014 invocation-mode passes True (preserves Sprint 1a synthetic-id behavior), resident-mode `send_message` passes False so `discord_message_id` stays NULL until Discord confirms (closes correctness, callers); (3) `DiscordTransport.on_message` now persists the inbound `messages` row FIRST (with `was_voice_message`/`has_image_attachment` flags set at create time, content/audio fields placeholder), in the SAME transaction as the ingestion ledger pending rows, BEFORE any Storage/Groq/image-row external IO; `update_message` fills the post-processing fields after each external call confirms (closes FLAG-013, issue_hints, scope). Added `tests/test_create_message_synthesize_flag.py`, `tests/test_update_message.py`, `tests/test_discord_ingestion_persist_first.py`, and `tests/test_duplicate_inbound_dropped.py` to lock the new behavior in. Promoted persist-first inbound ordering to a top-level overview decision and made the create-then-update flow explicit in Steps 7, 13.4, 17."
+      },
+      {
+        "id": "FLAG-014",
+        "concern": "Message update API: planned resident send and attachment flows require updating `messages` rows, but the Store Protocol does not include `update_message` and SQLite currently auto-generates outbound synthetic IDs.",
+        "resolution": "All 7 open flags shared one root cause: messages-row CRUD in the resident path. Fixed as a coherent set: (1) `Store.update_message(message_id, **changes)` added to the Protocol and implemented on both stores (closes FLAG-014, all_locations); (2) `create_message` gains a `synthesize_outbound_id: bool = True` parameter \u2014 invocation-mode passes True (preserves Sprint 1a synthetic-id behavior), resident-mode `send_message` passes False so `discord_message_id` stays NULL until Discord confirms (closes correctness, callers); (3) `DiscordTransport.on_message` now persists the inbound `messages` row FIRST (with `was_voice_message`/`has_image_attachment` flags set at create time, content/audio fields placeholder), in the SAME transaction as the ingestion ledger pending rows, BEFORE any Storage/Groq/image-row external IO; `update_message` fills the post-processing fields after each external call confirms (closes FLAG-013, issue_hints, scope). Added `tests/test_create_message_synthesize_flag.py`, `tests/test_update_message.py`, `tests/test_discord_ingestion_persist_first.py`, and `tests/test_duplicate_inbound_dropped.py` to lock the new behavior in. Promoted persist-first inbound ordering to a top-level overview decision and made the create-then-update flow explicit in Steps 7, 13.4, 17."
+      }
+    ],
+    "weighted_score": 9.0,
+    "weighted_history": [
+      35.0,
+      17.5,
+      11.0
+    ],
+    "plan_delta_from_previous": 48.63,
+    "recurring_critiques": [],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 4. Weighted score trajectory: 35.0 -> 17.5 -> 11.0 -> 9.0. Plan deltas: 77.1%, 56.2%, 48.6%. Recurring critiques: 0. Resolved flags: 28. Open significant flags: 6.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "flag_resolutions": [
+    {
+      "flag_id": "issue_hints",
+      "action": "accept_tradeoff",
+      "evidence": "",
+      "rationale": "Settled per SD-017: ingestion Storage pending rows will include `discord_attachment_url` in request_body. If both the deterministic Storage path AND the Discord URL fetch fail, the row is marked orphaned and a system_logs warn entry is written. This is a documented limitation \u2014 crash-before-upload + Discord URL expiry = user re-sends \u2014 not silent data loss, since the inbound messages row remains durable from the persist-first transaction."
+    },
+    {
+      "flag_id": "scope",
+      "action": "accept_tradeoff",
+      "evidence": "",
+      "rationale": "Same as issue_hints: SD-017 applies uniformly to voice and image Storage upload branches. Both store discord_attachment_url; both fall through to mark_orphaned on URL expiry. The plan no longer promises deterministic reissue across all crash windows; it promises reissue when the Discord URL is still reachable, otherwise orphaned with a recovery log."
+    },
+    {
+      "flag_id": "all_locations",
+      "action": "accept_tradeoff",
+      "evidence": "",
+      "rationale": "SD-017 closes the cross-component contract: DiscordTransport writes discord_attachment_url into request_body, Reconciler reads it for the reissue branch, mark_orphaned + system_logs handle the failure mode. No new Protocol method needed beyond Blob.put which already accepts bytes \u2014 the reconciler's reissue path fetches via httpx and feeds bytes to Blob.put."
+    },
+    {
+      "flag_id": "callers",
+      "action": "accept_tradeoff",
+      "evidence": "",
+      "rationale": "Reconciler.put_storage caller path is now well-defined per SD-017: input is bytes fetched from row.request_body['discord_attachment_url']. If the fetch fails, it does not call blob.put at all \u2014 it calls mark_orphaned. The caller is no longer under-specified; it explicitly handles both branches."
+    },
+    {
+      "flag_id": "correctness",
+      "action": "accept_tradeoff",
+      "evidence": "",
+      "rationale": "Storage reconciliation correctness is now a documented two-branch decision (SD-017): if Discord URL is reachable, deterministic reissue; if not, orphaned + log. The plan no longer claims unconditional reissue. This is the pragmatic correct behavior given Discord CDN URL TTLs and the bounded crash window."
+    },
+    {
+      "flag_id": "FLAG-015",
+      "action": "accept_tradeoff",
+      "evidence": "",
+      "rationale": "Same root resolution as the cluster above (SD-017). Source material in request_body becomes discord_attachment_url; expired URL = orphaned + log. The plan-quality gap is closed by the explicit two-branch design rather than by inventing a durable bytes store, which would be premature for this sprint."
+    }
+  ],
+  "resolved_flag_ids": [],
+  "resolution_summary": "",
+  "reprompted": false
+}

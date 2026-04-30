@@ -1,0 +1,653 @@
+{
+  "name": "sprint-1b-discord-resident",
+  "idea": "# Sprint 1b \u2014 Discord resident mode + robustness\n\nAdd the second adapter for each port \u2014 Discord transport, Supabase store. This proves the port abstractions hold (two impls each) and unlocks resident-mode features: coalescing, recovery, voice/image attachments, live status messages.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to it for complete data model schemas, tool signatures, and architectural details. Especially the sections: Execution Modes, Multi-Message Handling, Status Message, Idempotency and Recovery, Images.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- Railway + Supabase setup; Supabase CLI for local dev\n- First Supabase migration files mirroring SQLite schema from Sprint 1a; `supabase db push` workflow\n- Supabase store adapter (second Store impl); same contract tests from 1a run green against both stores\n- Discord transport adapter (push, second Transport impl): bot account via discord.py; on_message handler for DMs; user whitelist\n- Multi-message coalescing \u2014 10s window, burst handling (resident-only)\n- Restart safety: messages persisted on receipt; recovery routine at startup + every 5min; abandoned turns marked; `external_requests` ledger table; idempotency-key generation (sha256-based); per-provider reconciliation\n- Voice message support: Groq Whisper (whisper-large-v3) integration; transcription stored in messages.content; original audio in Supabase Storage\n- Image attachment handling: Discord image detection; download to Supabase Storage; create images row with source='user_uploaded'; auto-assigned reference_key\n- Image tools: list_images, view_image, send_image, update_image_metadata\n- Live status message: loop sends status at turn start, edits after every tool call with count + last 3 tools + dynamic timestamp `<t:UNIX:R>`; set_activity tool annotates current step\n- Mid-turn message handling: messages persist immediately; status message gets annotation; bot prompted with mid-turn messages\n\n## Key New Tables\n\n### external_requests\nid, idempotency_key (unique), provider, endpoint, tool_call_id, turn_id, request_summary (json), status (pending|sent|confirmed|failed|orphaned), provider_request_id, provider_response_summary (json), attempt_count, first_attempted_at, last_attempted_at, completed_at, error_details (json)\n\nIdempotency key: sha256(turn_id:tool_call_id:provider:endpoint:canonical_args)[:16]\n\n### images\nid, epic_id, source (agent_generated|user_uploaded), prompt, storage_url, quality, size, created_at, reference_key (unique per epic), description, caption, in_body, active (default true), discord_attachment_id\n\n## Acceptance Criteria\n\n- DM bot from whitelisted account \u2192 response within 30s\n- DM from non-whitelisted \u2192 no response, log entry\n- Every inbound message persists with unique discord_message_id\n- Store port contract test suite runs green against Supabase impl unchanged from SQLite\n- 5 messages in 8s \u2192 processed as single burst (triggered_by_message_ids has 5 entries)\n- Kill server mid-turn, restart \u2192 triggering messages requeued under fresh turn; previous turn marked abandoned\n- Voice message (mocked) \u2192 transcribed via mocked Groq, was_voice_message=true\n- Image attachment (mocked) \u2192 downloaded to Storage, images row created with source=user_uploaded\n- view_image returns image bytes via Anthropic vision\n- send_image posts to Discord with caption\n- Status message: turn starts \u2192 status sent; each tool call \u2192 edited; set_activity updates; turn completes \u2192 \"Done. N tool calls.\"\n- Mid-turn message: persists immediately; status gets annotation; bot prompted with mid-turn messages\n\n## Tech Stack Additions\n- discord.py for Discord gateway\n- supabase-py for Supabase client\n- groq SDK for Whisper transcription\n- Supabase Storage for blob storage",
+  "current_state": "finalized",
+  "iteration": 4,
+  "created_at": "2026-04-30T01:13:09Z",
+  "config": {
+    "project_dir": "/Users/peteromalley/Documents/arnold-v2",
+    "auto_approve": true,
+    "robustness": "standard",
+    "mode": "code",
+    "strict_notes": false,
+    "agent": ""
+  },
+  "sessions": {
+    "claude_planner": {
+      "id": "5f0c6b3b-88b4-45f1-87aa-64796bfc13f2",
+      "mode": "persistent",
+      "created_at": "2026-04-30T03:00:36Z",
+      "last_used_at": "2026-04-30T03:27:48Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019ddc54-ce51-7502-9f84-38972e32381c",
+      "mode": "persistent",
+      "created_at": "2026-04-30T03:03:41Z",
+      "last_used_at": "2026-04-30T03:29:13Z",
+      "refreshed": false
+    },
+    "claude_gatekeeper": {
+      "id": "ea94b932-01d3-4960-86a7-44f6f2294fa2",
+      "mode": "persistent",
+      "created_at": "2026-04-30T03:04:39Z",
+      "last_used_at": "2026-04-30T03:30:58Z",
+      "refreshed": false
+    },
+    "claude_finalizer": {
+      "id": "989ce964-3df5-4971-baa8-fff515cb7bf6",
+      "mode": "persistent",
+      "created_at": "2026-04-30T03:36:40Z",
+      "last_used_at": "2026-04-30T03:36:40Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "mode": "persistent",
+      "created_at": "2026-04-30T03:37:38Z",
+      "last_used_at": "2026-04-30T04:53:20Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:0a5c2541bde093079300b80b5a76ca3bc8120194bf551bf2d4b80f857b6a7d37",
+      "timestamp": "2026-04-30T03:00:36Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:9a8a7846a72436a3d5fedc93e1291c514ac9bacc707a57d329b4628057058dfb",
+      "timestamp": "2026-04-30T03:10:15Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:bcf3e0723e0d3c5f405a0f8f32474047c71dde0292a9cd8845ff685eadb5b6ef",
+      "timestamp": "2026-04-30T03:19:45Z"
+    },
+    {
+      "version": 4,
+      "file": "plan_v4.md",
+      "hash": "sha256:6f698e6bbaba86aa593a60848ce1cf25229b54b9dc4991fb1384677d5561e344",
+      "timestamp": "2026-04-30T03:27:48Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-30T01:13:09Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T03:00:36Z",
+      "duration_ms": 315955,
+      "cost_usd": 2.3057309999999998,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "5f0c6b3b-88b4-45f1-87aa-64796bfc13f2",
+      "agent": "claude",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:0a5c2541bde093079300b80b5a76ca3bc8120194bf551bf2d4b80f857b6a7d37"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T03:03:41Z",
+      "duration_ms": 183454,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc54-ce51-7502-9f84-38972e32381c",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:ba52c7a59150d41aca77ff3d6e9893bc877864fc6973b70ddb18a89901ed3a37",
+      "flags_count": 23
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T03:04:39Z",
+      "duration_ms": 56407,
+      "cost_usd": 0.6294262500000001,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "ea94b932-01d3-4960-86a7-44f6f2294fa2",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:2fd8a4c77593cdd1e1afed4db5f5ffa36f2fe90a84289fbc8ca7573c201597ef",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T03:10:15Z",
+      "duration_ms": 335035,
+      "cost_usd": 1.7737465000000001,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "5f0c6b3b-88b4-45f1-87aa-64796bfc13f2",
+      "agent": "claude",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:9a8a7846a72436a3d5fedc93e1291c514ac9bacc707a57d329b4628057058dfb",
+      "flags_addressed": [
+        {
+          "id": "FLAG-001",
+          "resolution": "addressed",
+          "reason": "Replaced the follow-up-turn shortcut with the spec's same-turn end-of-turn re-prompt via the new `on_pre_finalize` hook in `run_turn` (Step 6); resident runner queries unprocessed messages and `run_turn` widens `triggered_by_message_ids` retroactively before any final send."
+        },
+        {
+          "id": "FLAG-002",
+          "resolution": "addressed",
+          "reason": "Step 7 makes `send_message` mode-divergent via a new optional `transport` field on `ToolContext`. Resident path queues a Discord post through the external-queue mechanism added in Step 8."
+        },
+        {
+          "id": "FLAG-004",
+          "resolution": "addressed",
+          "reason": "Step 6 adds `on_turn_start: Callable[[turn_dict], None]` to `run_turn`, invoked synchronously after `create_turn`. Resident runner uses it to post the initial status message and persist `bot_turns.status_message_id` (Step 14.3)."
+        },
+        {
+          "id": "FLAG-006",
+          "resolution": "addressed",
+          "reason": "Step 2 prohibits committing secrets, adds .gitignore entries, requires env-only access in adapters, and records a user action item to rotate the leaked Supabase service key. No literal keys appear in any plan-driven file."
+        },
+        {
+          "id": "FLAG-007",
+          "resolution": "addressed",
+          "reason": "Step 5 extends `Model.complete_turn` with `idempotency_key` and updates `AnthropicModel` to forward it as the `Idempotency-Key` header. The loop already has the key from `Ledger.record_pending`; just threads it through. `Reconciler` (Step 16) replays using the stored ledger key."
+        },
+        {
+          "id": "FLAG-008",
+          "resolution": "addressed",
+          "reason": "Narrowed scope: image and voice work this sprint is Discord-only. Invocation-mode attachments (`--attach`, `run_turn(attachments=)`, `LocalBlobStore`, caller-uploaded images per spec 1895-1908) remain explicitly deferred with a note in Step 22.2. The plan does not broaden Blob/image surface beyond Discord ingestion + the four image tools."
+        },
+        {
+          "id": "issue_hints-1",
+          "resolution": "addressed",
+          "reason": "Reverted the change to `tests/store_contract.py` \u2014 it stays unchanged from Sprint 1a (Step 20.1). New Sprint 1b method coverage moved to a separate `tests/store_contract_v1b.py` (Step 20.2). Both stores now demonstrably pass the original contract suite without modification."
+        },
+        {
+          "id": "issue_hints-2",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-001: spec's same-turn end-of-turn check is implemented via the `on_pre_finalize` hook; the prior turn's `triggered_by_message_ids` is widened retroactively, satisfying spec lines 822-843."
+        },
+        {
+          "id": "issue_hints-3",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-008: scope contained. Invocation-mode attachment debt explicitly deferred and recorded in Step 22.2 rather than expanded."
+        },
+        {
+          "id": "correctness-1",
+          "resolution": "addressed",
+          "reason": "Step 1 adds `psycopg[binary]>=3.1` to runtime dependencies."
+        },
+        {
+          "id": "correctness-2",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-007: `Model.complete_turn` gains `idempotency_key`; Anthropic adapter forwards it; reconciler replays via the model's normal API rather than bypassing it."
+        },
+        {
+          "id": "correctness-3",
+          "resolution": "addressed",
+          "reason": "Step 8 restructures `audit_wrap` into three stages: tool body (no txn), DB-only audit txn (commits before any network IO), and post-commit external queue. Network IO never holds a transaction. Spec ordering at lines 2473-2480 is followed."
+        },
+        {
+          "id": "scope-1",
+          "resolution": "addressed",
+          "reason": "Step 6's `on_turn_start` hook gives the resident runner the `turn_id` it needs to post the initial status message before tool calls. Step 14.3 wires this end-to-end."
+        },
+        {
+          "id": "scope-2",
+          "resolution": "addressed",
+          "reason": "Step 6's `on_pre_finalize` hook prevents `run_turn` from finalizing while unprocessed mid-turn messages exist; the model is re-prompted with the spec block, in the same turn, before any `send_message` fires."
+        },
+        {
+          "id": "scope-3",
+          "resolution": "addressed",
+          "reason": "Plan now explicitly states (Overview + Step 22.2) that voice support this sprint is Discord ingestion only; the `transcribe_voice` tool and the non-voice-audio adversarial path are deferred."
+        },
+        {
+          "id": "all_locations-1",
+          "resolution": "addressed",
+          "reason": "Step 7 extends `ToolContext` with optional `transport`, `blob`, and `external_queue` fields. Image tools and resident `send_message` consume these; invocation-mode tools see `None` and behave unchanged."
+        },
+        {
+          "id": "all_locations-2",
+          "resolution": "addressed",
+          "reason": "Step 9 adds a NEW `PushTransport` Protocol rather than mutating the existing pull-style `Transport`. CLI continues to bypass `Transport` as it does today; no broad call-site updates required."
+        },
+        {
+          "id": "callers-1",
+          "resolution": "addressed",
+          "reason": "Step 6 adds `triggered_by_message_ids` AND `recovered_input_messages` to `run_turn`; Step 9 adds `Store.load_messages(message_ids)`. Resident dispatch and recovery rebuild input from persisted message rows rather than letting `run_turn` synthesize a fresh inbound message."
+        },
+        {
+          "id": "callers-2",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-002: `send_message` is mode-divergent via injected transport. The auto-invocation path at `agent_kit/loop.py:264` continues to call `send_message`, which now routes to Discord in resident mode and to the reply buffer in invocation mode."
+        },
+        {
+          "id": "callers-3",
+          "resolution": "addressed",
+          "reason": "Step 5.3 persists `system_seq` into `external_requests.request_summary`. Step 16 replays via the row's stored `idempotency_key` directly (rather than re-deriving), which is the more robust path; the persisted `system_seq` is retained for diagnostic and audit purposes."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T03:12:35Z",
+      "duration_ms": 138086,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc54-ce51-7502-9f84-38972e32381c",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:bc4332c890be05e80b976169e8c4662e5e10566e9023cd81056a62c67422a853",
+      "flags_count": 12
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T03:13:36Z",
+      "duration_ms": 59912,
+      "cost_usd": 0.54232625,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "ea94b932-01d3-4960-86a7-44f6f2294fa2",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:8e846dbb897b67c99dc185fa9bc9e0a2cacabf9f81439b460b05c7f572ba0bba",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T03:19:45Z",
+      "duration_ms": 366764,
+      "cost_usd": 1.2870327499999998,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "5f0c6b3b-88b4-45f1-87aa-64796bfc13f2",
+      "agent": "claude",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:bcf3e0723e0d3c5f405a0f8f32474047c71dde0292a9cd8845ff685eadb5b6ef",
+      "flags_addressed": [
+        {
+          "id": "FLAG-007",
+          "resolution": "addressed",
+          "reason": "Step 4 adds a `request_body` JSONB column to `external_requests`; Step 5 has the loop persist the full canonical Anthropic body (`model`, `messages`, `tools`, `max_tokens`) at `record_pending` time; Step 16 reconstructs the Anthropic replay from this column rather than from the small `request_summary`. Anthropic dedupe via the stored `idempotency_key` works against the durable body."
+        },
+        {
+          "id": "correctness-1",
+          "resolution": "addressed",
+          "reason": "Step 8 keeps the tool body INSIDE the existing `store.transaction()` exactly as in Sprint 1a. Only post-commit network callables are queued. The existing rollback test at `tests/test_tool_kit.py:27` is preserved verbatim and listed as a test that must keep passing."
+        },
+        {
+          "id": "correctness-2",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-007: durable `request_body` column gives the reconciler the full message/tool body needed to reissue with the stored idempotency key. Plan also adds a dedicated `tests/test_anthropic_replay.py` that asserts the stub Anthropic receives the original body."
+        },
+        {
+          "id": "FLAG-009",
+          "resolution": "addressed",
+          "reason": "Audit wrapper redesigned to keep mutation+tool_calls atomic in the same transaction as before. Network IO is the only thing moved post-commit. Existing rollback semantics are preserved."
+        },
+        {
+          "id": "FLAG-011",
+          "resolution": "addressed",
+          "reason": "Step 6.2 makes `run_turn` run the mid-turn check at TWO checkpoints: (a) before final-text auto-send, and (b) BEFORE each explicit `send_message` tool invocation. An explicit model-issued `send_message` cannot post to Discord while unprocessed mid-turn messages exist."
+        },
+        {
+          "id": "FLAG-012",
+          "resolution": "addressed",
+          "reason": "Step 13.2 makes `DiscordTransport` take a `Ledger` and inserts pending `external_requests` rows for every ingestion-side IO call (Storage upload, Groq transcription) keyed off `discord_message_id` (new `ingest_message_id` branch in `derive_idempotency_key`). Step 13.4 walks through the per-attachment ledger sequence. Recovery scan (Step 16) reconciles them like any other pending row."
+        },
+        {
+          "id": "issue_hints",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-012: ingestion-side IO is now ledgered. Restart safety covers voice transcription, Storage upload, and image upload; the reconciler's per-provider dispatch already handles `groq` and `supabase_storage` rows."
+        },
+        {
+          "id": "scope",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-011: the mid-turn check now gates explicit `send_message` tool calls in addition to the final-text path. The 'still has uncovered path' from iteration 2 is closed."
+        },
+        {
+          "id": "all_locations",
+          "resolution": "addressed",
+          "reason": "Step 9.2 adds `Blob.exists(ref) -> bool` to the `Blob` Protocol. Step 9.3 adds `fetch_recent_messages(channel_id, since, until) -> list[JSONDict]` to the new `PushTransport` Protocol. Both methods are now part of the published interfaces the reconciler calls."
+        },
+        {
+          "id": "callers",
+          "resolution": "addressed",
+          "reason": "Same as correctness-1 / FLAG-009: tool body still runs inside the audit transaction, so the `ToolRegistry.invoke` caller contract is unchanged. Existing tools that mutate the store directly (e.g. `send_message` invocation path) keep working without refactoring. The new external-queue mechanism is purely additive: tools that don't queue anything see no behavioral change."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T03:21:28Z",
+      "duration_ms": 101604,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc54-ce51-7502-9f84-38972e32381c",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:d80f99dff49c7db44f0d03bcf62c17929820c4a3ba797bec1e82967efe98f2b4",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T03:22:40Z",
+      "duration_ms": 70733,
+      "cost_usd": 0.631511,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "ea94b932-01d3-4960-86a7-44f6f2294fa2",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:7e9ec889c755b04d68073df57277ef0ace5652c1d1ce19bc4d54be28a7e69226",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T03:27:48Z",
+      "duration_ms": 306473,
+      "cost_usd": 1.2579265,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "5f0c6b3b-88b4-45f1-87aa-64796bfc13f2",
+      "agent": "claude",
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:6f698e6bbaba86aa593a60848ce1cf25229b54b9dc4991fb1384677d5561e344",
+      "flags_addressed": [
+        {
+          "id": "FLAG-013",
+          "resolution": "addressed",
+          "reason": "Step 13.4 reorders ingestion: every voice and image branch now does `store.create_message(...)` FIRST in transaction 1 (with the unique `discord_message_id`), THEN runs Storage/Groq/image-row external IO, THEN `store.update_message(...)` to fill post-processing fields. Spec lines 79 and 2455-2459 are honored: gateway-replay duplicates collide on the unique constraint immediately; recovery sees persisted-but-unprocessed messages."
+        },
+        {
+          "id": "FLAG-014",
+          "resolution": "addressed",
+          "reason": "Step 9.1 adds `Store.update_message(message_id, **changes)` to the Protocol. Step 10.3 and Step 11.3 implement it on both stores. Three consumers now use it: resident `send_message` (Step 7.2 fills `discord_message_id` post-confirm), voice ingestion (Step 13.4 fills `content`/`audio_storage_url`/`transcription_metadata` post-Groq), `send_image` (Step 17 fills `discord_message_id` post-Discord-post)."
+        },
+        {
+          "id": "issue_hints",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-013: ingestion order is now persist-first. Plan also wraps the inbound `messages` insert + ingestion ledger pending rows in a single transaction so a crash before external IO leaves a recoverable state."
+        },
+        {
+          "id": "scope",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-013: image ingestion path is also persist-first (Step 13.4 image branch). The `messages` row with `has_image_attachment=True` exists before any Storage upload runs, so duplicate gateway events collide on the unique constraint and no orphaned Storage/image-row work happens."
+        },
+        {
+          "id": "all_locations",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-014: `update_message` is now part of the Store Protocol, implemented on both stores, and tested (`tests/test_update_message.py`). All three consumer flows (resident `send_message`, voice ingestion, `send_image`) call it explicitly."
+        },
+        {
+          "id": "callers",
+          "resolution": "addressed",
+          "reason": "Step 9.1 adds `synthesize_outbound_id: bool = True` to `Store.create_message`. Invocation-mode `send_message` (Step 7.2) passes `True` to preserve Sprint 1a synthetic-id behavior. Resident-mode `send_message` passes `False` so `discord_message_id` stays NULL until Discord confirms. `tests/test_create_message_synthesize_flag.py` (Step 20.5) locks both behaviors."
+        },
+        {
+          "id": "correctness",
+          "resolution": "addressed",
+          "reason": "Same as callers: the `synthesize_outbound_id` parameter is the explicit caller-level switch. Step 11.2 modifies `SQLiteStore.create_message` (`agent_kit/store/sqlite.py:101`) to gate `_next_invocation_message_id` behind the new flag, with `True` as the default so Sprint 1a behavior and tests are unchanged."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T03:29:13Z",
+      "duration_ms": 83469,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc54-ce51-7502-9f84-38972e32381c",
+      "agent": "codex",
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:23701fea696b927bda561378c8ad952f02ebfd651944dd75b7118b6d0c0a881d",
+      "flags_count": 7
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T03:30:58Z",
+      "duration_ms": 103369,
+      "cost_usd": 0.771501,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "ea94b932-01d3-4960-86a7-44f6f2294fa2",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:5909145304b56c8a5a8e736a50d67dabb26b6b894cf66e7fbb54bc1ccd6c6c3f",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T03:36:40Z",
+      "duration_ms": 339673,
+      "cost_usd": 1.53224125,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "989ce964-3df5-4971-baa8-fff515cb7bf6",
+      "agent": "claude",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:5f3f3c9fa2ec2d15a50221d8be9de702a561f39a98d13c25ae16526e103caf2c"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T04:30:03Z",
+      "duration_ms": 3201245,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:816434d22bfd86ffbaf645d7421e45dadcd4f211268d64d581d1de1a9d372af9",
+      "finalize_hash": "sha256:730874c2d3069fa85ace2c635901049b7ec9b47a2f41fd5b17e00c815191f06e",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T04:41:39Z",
+      "duration_ms": 694716,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:9ac221ce4b6b6be8fffd34a00386500c2d56bc1ea7fdf5f3735b451951b31fff",
+      "finalize_hash": "sha256:c670ef26cc6478899d7b86a73c91cfc18a71ebf31b70c26a3eb5ecad227a5fdd",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T04:48:19Z",
+      "duration_ms": 110567,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:048ebf9d0b91938f65f77b37be03bd3c62b822b61768288798bcf9cabe5db722",
+      "finalize_hash": "sha256:0e3b91aac6dc982337d6fa41ada560673ec88fc1ab96dedb6e6b25584d68aaef",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T04:49:28Z",
+      "duration_ms": 68208,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:048ebf9d0b91938f65f77b37be03bd3c62b822b61768288798bcf9cabe5db722",
+      "finalize_hash": "sha256:0e3b91aac6dc982337d6fa41ada560673ec88fc1ab96dedb6e6b25584d68aaef",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T04:53:20Z",
+      "duration_ms": 109592,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019ddc75-d024-7440-92fb-e2231dd5cb66",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:9460468568a0c5e621b92bef42b15145ab56d85b9f9bcac2fc61feb587b1d5b8",
+      "finalize_hash": "sha256:ce9953efda86d1fce24b3054c0be38d720d897bc63eca08a2a8bb949cf4dd475",
+      "approval_mode": "auto_approve"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      20,
+      10,
+      7,
+      6
+    ],
+    "weighted_scores": [
+      35.0,
+      17.5,
+      11.0,
+      9.0
+    ],
+    "plan_deltas": [
+      77.12,
+      56.24,
+      48.63
+    ],
+    "recurring_critiques": [
+      [],
+      [],
+      [],
+      []
+    ],
+    "total_cost_usd": 10.731441,
+    "overrides": [],
+    "notes": [],
+    "user_approved_gate": true
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "Iteration 4 with weighted score 9.0 (down from 35.0 \u2192 17.5 \u2192 11.0 \u2192 9.0), 28/35 prior flags resolved, plan delta 49%, zero recurring/reopened critiques. All 6 remaining flags describe the SAME single issue: ingestion-side Supabase Storage uploads don't have explicit source-byte material in `request_body` for crash-before-upload reissue. This is a real but bounded plan-quality observation that I'm accepting as a documented tradeoff with explicit fallback semantics. Rationale for accept_tradeoff: (a) The failure window is narrow \u2014 crash strictly between persisting the `messages`+ledger transaction and finishing the Storage upload. (b) The inbound `messages` row IS durable across the crash (the iteration-3 persist-first design ensures that), so the user is never silently dropped. (c) The Discord CDN attachment URL is naturally available at ingestion time and is the obvious source material \u2014 the plan should add `request_body={\"discord_attachment_url\": <attachment.url>, \"deterministic_path\": ...}` for ingestion Storage rows and have the reconciler fetch from that URL when reissuing. Discord attachment URLs do expire (~24h with new signed-URL rules), so the reconciler must `mark_orphaned` + `system_logs` warn entry on fetch failure. This is straightforward to spec in implementation and is the implementer's call within the existing plan structure. (d) Standard robustness budget at iteration 4 with score 9.0 doesn't justify another full iteration to add 2-3 sentences to Step 13.4 and Step 16; the implementer can resolve this design point during execution. (e) Iteration Pressure Analysis: FG-001..FG-005 each have 1 member flag across 4 iterations and addressed_then_reopened = 0 \u2014 does not meet TIEBREAKER threshold (which requires \u22652 reopened OR \u22652 member flags across \u22652 iterations). The pattern is \"new edge cases each iteration,\" not \"same flag re-litigated\" \u2014 typical late-iteration nitpicker drift. Settle the Storage recovery design as listed below and move to execution.",
+    "reprompted": false,
+    "signals_assessment": "Continued strong improvement with diminishing flag count: weighted score 35.0 \u2192 17.5 \u2192 11.0 \u2192 9.0 (-74% cumulative), plan delta 49% with the change concentrated on one specific subsystem each iteration, 28 prior flags resolved with zero reopened. The 6 unresolved flags this iteration all describe a single design point (ingestion Storage upload source-byte durability) and represent new visibility, not recurring churn \u2014 typical late-iteration narrowing. Iteration Pressure analysis shows FG-001..FG-005 each at 1 member flag \u00d7 4 iterations \u00d7 0 reopened, which does not meet TIEBREAKER thresholds (need \u22652 member flags or \u22652 reopened). Preflight clean. No new debt subsystems escalated. Score 9.0 is low enough at iteration 4 that the marginal cost of another iteration outweighs the value, especially since the resolution is a documented design tradeoff that the implementer can apply directly.",
+    "warnings": [
+      "Implementer must add `discord_attachment_url` to `request_body` on ingestion Storage pending rows so the reconciler has a fetch source. If `Blob.exists(deterministic_path)` is False at reconciler time AND the Discord URL fetch fails (expired/404), the row must be `mark_orphaned` with a `system_logs` warn entry at category=recovery \u2014 do NOT silently retry forever.",
+      "Add a smoke test that simulates crash-before-Storage-upload to verify the orphaned + log path works end-to-end, even if it's marked info-priority.",
+      "Storage recovery limitation should be noted in the Step 22.2 deferral file alongside the existing attachment debt: \"Voice/image ingestion crash-before-upload + Discord URL expiry results in orphaned ledger rows; manual user re-send is the recovery path. Future sprint may add ingestion-time bytes-to-tmpfile fallback.\"",
+      "Service-role JWT in idea block must still be rotated by the user before this code is deployed against production Supabase."
+    ],
+    "settled_decisions": [
+      {
+        "id": "SD-001",
+        "decision": "Discord whitelist via env var DISCORD_USER_WHITELIST.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-002",
+        "decision": "Supabase store uses direct psycopg3; supabase-py only for Storage.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-003",
+        "decision": "Supabase epic lock uses row-based epic_locks table.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-004",
+        "decision": "images table on both stores.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-005",
+        "decision": "Mid-turn handling implements spec same-turn end-of-turn re-prompt via mid_turn_message_check hook in run_turn, gating both final-text and explicit send_message tool calls.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-006",
+        "decision": "tests/store_contract.py UNCHANGED; new method coverage in tests/store_contract_v1b.py.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-007",
+        "decision": "PushTransport added as a NEW Protocol alongside existing Transport.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-008",
+        "decision": "Image and voice scope is Discord-only this sprint.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-009",
+        "decision": "ToolContext gains optional transport, blob, external_queue fields.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-010",
+        "decision": "Audit wrapper keeps tool body inside store.transaction(); only post-commit network callables queued.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-011",
+        "decision": "external_requests gets nullable request_body JSONB column.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-012",
+        "decision": "Discord ingestion-side IO is ledgered with discord_message_id-keyed idempotency.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-013",
+        "decision": "Blob.exists and PushTransport.fetch_recent_messages published in Protocols.",
+        "rationale": "Carried."
+      },
+      {
+        "id": "SD-014",
+        "decision": "Store.update_message added to Protocol; consumed by resident send_message, send_image, voice/image ingestion.",
+        "rationale": "Carried from iteration 4."
+      },
+      {
+        "id": "SD-015",
+        "decision": "Store.create_message accepts synthesize_outbound_id flag (default True preserves Sprint 1a behavior; False used by resident send_message).",
+        "rationale": "Carried from iteration 4."
+      },
+      {
+        "id": "SD-016",
+        "decision": "DiscordTransport.on_message persists messages row + ingestion ledger pending rows in one transaction BEFORE any external IO; update_message fills post-processing fields after each external call confirms.",
+        "rationale": "Carried from iteration 4."
+      },
+      {
+        "id": "SD-017",
+        "decision": "Ingestion Storage pending rows include `discord_attachment_url` in request_body alongside `deterministic_path`. On reconciler reissue: if Blob.exists(path) is False, the reconciler attempts to fetch from the Discord URL and re-upload. If the Discord URL is unreachable (expired/404), the reconciler calls mark_orphaned and writes a system_logs warn entry at category=recovery. The persisted inbound `messages` row remains durable so the user can re-send.",
+        "rationale": "Resolves the iteration-4 Storage recovery flag cluster as accepted tradeoff. Discord URL expiry is a known limitation; orphaned + log is the documented recovery path. Future sprint may add tmpfile bytes fallback if the orphaned rate is meaningful."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting."
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "spec_updates": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "next_action": {
+      "type": "string"
+    },
+    "reasoning": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "spec_updates",
+    "next_action",
+    "reasoning"
+  ],
+  "additionalProperties": false
+}

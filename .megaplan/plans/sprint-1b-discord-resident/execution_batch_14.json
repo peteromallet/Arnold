@@ -1,0 +1,29 @@
+{
+  "task_updates": [
+    {
+      "id": "T23",
+      "status": "done",
+      "executor_notes": "Clearly surfaced U5 as a human-only manual staging smoke test without performing it: DM from a whitelisted user should reply within 30s; DM from a non-whitelisted user should produce no reply and a system_logs row; a voice DM should populate messages.content with transcription; an image attachment should land in Supabase Storage and create an images row with source='user_uploaded'; and a second message during a long tool-call turn should update status with the received-message annotation and re-prompt within the same turn.",
+      "files_changed": [],
+      "commands_run": [],
+      "task_id": "T23"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC23",
+      "task_id": "T23",
+      "executor_note": "Yes. The after_execute U5 manual staging smoke actions were clearly surfaced to the user, and no attempt was made to perform them because they require real Discord, Supabase, Anthropic, and Groq staging resources plus human judgment.",
+      "verdict": "pass",
+      "sense_check_id": "SC23"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-1b-discord-resident/execution_batch_14.json",
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 14/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 14/14: Project directory is not a git repository.",
+    "Done tasks missing both files_changed and commands_run: T23",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

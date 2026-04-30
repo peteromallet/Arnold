@@ -1,0 +1,105 @@
+{
+  "output": "Batch 2 completed where possible. T1 is blocked only on editable-install verification because package index access is unavailable; T2 is completed and verified.",
+  "files_changed": [
+    "pyproject.toml",
+    ".gitignore",
+    "tests/test_no_leaked_secrets.py",
+    "ideas/sprint-1a-agent-kit-core.md",
+    "ideas/sprint-1b-discord-resident.md",
+    "ideas/sprint-2a-editorial-core.md",
+    "ideas/sprint-2b-editorial-polish.md",
+    "ideas/sprint-3-multi-epic.md",
+    "ideas/sprint-4-sprint-mode.md",
+    "ideas/sprint-5-codebase-research.md",
+    "ideas/sprint-6-images-second-opinion.md",
+    ".megaplan/plans/sprint-1b-discord-resident/execution_batch_2.json"
+  ],
+  "commands_run": [
+    "sed -n '1,220p' pyproject.toml",
+    "test -f .gitignore && sed -n '1,220p' .gitignore || true",
+    "rg --files tests | sort",
+    "pytest --tb=no -q --no-header",
+    "pytest -q --no-header --tb=short",
+    "python --version",
+    "python3 --version",
+    "command -v python3.11 || true; command -v python3.12 || true; command -v uv || true",
+    "python -m pytest --tb=no -q --no-header",
+    "python -m pip install -e '.[test]'",
+    "python -m pip install --no-build-isolation -e '.[test]'",
+    "python -m pip show wheel || true",
+    "/opt/homebrew/bin/python3.12 -m pip --version && /opt/homebrew/bin/python3.12 -m pip show wheel || true",
+    "/opt/homebrew/bin/python3.12 -m pip install -e '.[test]'",
+    "python -m pip show discord.py supabase groq httpx psycopg pytest-asyncio || true",
+    "perl -0pi -e 's/^- Service key: eyJhbGciOi[^\\n]*/- Service key: <redacted; use SUPABASE_SERVICE_KEY env>/mg' ideas/*.md",
+    "python -m pytest tests/test_no_leaked_secrets.py -q --tb=short",
+    "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+    "python - <<'PY' ... parse pyproject dependency sets ... PY",
+    "python -m pytest --tb=no -q --no-header"
+  ],
+  "deviations": [
+    "Initial bare `pytest` used Python 3.8 despite the project requiring Python >=3.11; `python -m pytest` under Python 3.11 passed before edits and after edits.",
+    "T1 editable install verification could not complete because network access to the package index is unavailable. A no-build-isolation retry also failed because the active environment lacks wheel/bdist_wheel.",
+    "T2 guard found pre-existing leaked service-key lines in `ideas/*.md`; these source files were redacted to an env-only placeholder. Hidden `.megaplan` harness artifacts also contain historical prompt copies, but the source guard excludes harness-owned artifacts.",
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "1/2 batch tasks have no executor update \u2014 tracking is incomplete.",
+    "Advisory observation skip before batch 2/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 2/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "blocked",
+      "executor_notes": "Dependency declarations were updated and verified by parsing `pyproject.toml`: runtime dependencies now include discord.py, supabase, groq, httpx, and psycopg[binary]>=3.1; the test extra includes pytest-asyncio. Editable install verification was attempted with `python -m pip install -e '.[test]'` and `python -m pip install --no-build-isolation -e '.[test]'`, but could not complete in this network-restricted environment. The first attempt failed fetching build dependencies from the package index; the no-build-isolation attempt failed because the active environment lacks wheel/bdist_wheel. Existing package inspection showed only httpx is currently installed among the new dependencies.",
+      "files_changed": [
+        "pyproject.toml"
+      ],
+      "commands_run": [
+        "sed -n '1,220p' pyproject.toml",
+        "python -m pytest --tb=no -q --no-header",
+        "python -m pip install -e '.[test]'",
+        "python -m pip install --no-build-isolation -e '.[test]'",
+        "python -m pip show discord.py supabase groq httpx psycopg pytest-asyncio || true",
+        "python - <<'PY' ... parse pyproject dependency sets ... PY",
+        "python -m pytest --tb=no -q --no-header"
+      ],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": ".gitignore now excludes .env, .env.local, and supabase/.branches/*. Added tests/test_no_leaked_secrets.py, which scans git-tracked files when available and otherwise scans source files while excluding local env/cache/harness artifacts. The guard initially found existing leaked service-key lines in ideas/*.md; those lines were redacted to an env-only placeholder. Verification: source-tree grep for the leaked Supabase JWT prefix returned zero matches, and `python -m pytest --tb=no -q --no-header` passed with 23 tests.",
+      "files_changed": [
+        ".gitignore",
+        "tests/test_no_leaked_secrets.py",
+        "ideas/sprint-1a-agent-kit-core.md",
+        "ideas/sprint-1b-discord-resident.md",
+        "ideas/sprint-2a-editorial-core.md",
+        "ideas/sprint-2b-editorial-polish.md",
+        "ideas/sprint-3-multi-epic.md",
+        "ideas/sprint-4-sprint-mode.md",
+        "ideas/sprint-5-codebase-research.md",
+        "ideas/sprint-6-images-second-opinion.md"
+      ],
+      "commands_run": [
+        "test -f .gitignore && sed -n '1,220p' .gitignore || true",
+        "rg --files tests | sort",
+        "perl -0pi -e 's/^- Service key: eyJhbGciOi[^\\n]*/- Service key: <redacted; use SUPABASE_SERVICE_KEY env>/mg' ideas/*.md",
+        "python -m pytest tests/test_no_leaked_secrets.py -q --tb=short",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python -m pytest --tb=no -q --no-header"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Partially. pyproject.toml contains all required runtime and test dependencies, but successful editable install could not be verified because network access to the package index is unavailable and the active local environment lacks wheel for no-build-isolation editable metadata."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Yes. .gitignore includes .env, .env.local, and supabase/.branches/*. The new pytest guard fails on the leaked Supabase JWT prefix, existing source leaks in ideas/*.md were redacted, a direct source-tree grep returned zero matches, and the full test suite passed."
+    }
+  ]
+}

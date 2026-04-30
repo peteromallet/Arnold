@@ -1,0 +1,71 @@
+{
+  "output": "Batch 3 completed. Added Supabase local config, Supabase migrations, SQLite mirror migrations, JSON column registration, and migration tracking for repeat-safe SQLite migration application.",
+  "files_changed": [
+    "agent_kit/store/sqlite.py",
+    "agent_kit/store/migrations/sqlite/002_images.sql",
+    "agent_kit/store/migrations/sqlite/003_external_requests_body.sql",
+    "supabase/config.toml",
+    "supabase/migrations/202604300001_001_core.sql",
+    "supabase/migrations/202604300002_002_images.sql",
+    "supabase/migrations/202604300003_003_external_requests_body.sql",
+    ".megaplan/plans/sprint-1b-discord-resident/execution_batch_3.json"
+  ],
+  "commands_run": [
+    "python -m pytest --tb=no -q --no-header",
+    "sed -n '1,260p' agent_kit/store/migrations/sqlite/001_core.sql",
+    "sed -n '1,560p' agent_kit/store/sqlite.py",
+    "sed -n '1,260p' tests/store_contract.py && sed -n '1,220p' tests/test_sqlite_store.py",
+    "find agent_kit/store -maxdepth 4 -type f -print | sort && find supabase -maxdepth 4 -type f -print 2>/dev/null | sort || true",
+    "python - <<'PY' ... check sqlite version and ALTER TABLE IF NOT EXISTS support ... PY",
+    "python - <<'PY' ... fresh SQLiteStore schema check ... PY",
+    "python - <<'PY' ... SQLiteStore migration pickup/idempotence schema check ... PY",
+    "python -m pytest tests/test_sqlite_store.py -q --tb=no --no-header",
+    "find supabase -maxdepth 3 -type f -print | sort && find agent_kit/store/migrations/sqlite -maxdepth 1 -type f -print | sort",
+    "python -m pytest --tb=no -q --no-header",
+    "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+    "python - <<'PY' ... migration file content smoke checks ... PY"
+  ],
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 3/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 3/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Authored Supabase local config and three Supabase migrations: 001_core mirrors the SQLite core schema with JSONB, timestamptz defaults, BOOLEAN flags, matching checks/indexes, and row-based epic_locks; 002_images adds the images table with required source check and indexes including the partial unique active reference key; 003_external_requests_body adds nullable JSONB request_body. Added SQLite mirror migrations for images and nullable TEXT request_body, registered request_body in _JSON_COLUMNS, and added schema_migrations tracking so SQLiteStore.apply_migrations picks up 002/003 once and remains safe on repeated store initialization. Verification: fresh SQLiteStore showed images table, request_body column, image indexes, and applied migration records for 001/002/003; second initialization on the same DB succeeded. `python -m pytest tests/test_sqlite_store.py -q --tb=no --no-header` passed, and the full `python -m pytest --tb=no -q --no-header` suite passed with 23 tests. Source-tree leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "agent_kit/store/sqlite.py",
+        "agent_kit/store/migrations/sqlite/002_images.sql",
+        "agent_kit/store/migrations/sqlite/003_external_requests_body.sql",
+        "supabase/config.toml",
+        "supabase/migrations/202604300001_001_core.sql",
+        "supabase/migrations/202604300002_002_images.sql",
+        "supabase/migrations/202604300003_003_external_requests_body.sql"
+      ],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header",
+        "sed -n '1,260p' agent_kit/store/migrations/sqlite/001_core.sql",
+        "sed -n '1,560p' agent_kit/store/sqlite.py",
+        "find agent_kit/store -maxdepth 4 -type f -print | sort && find supabase -maxdepth 4 -type f -print 2>/dev/null | sort || true",
+        "python - <<'PY' ... check sqlite version and ALTER TABLE IF NOT EXISTS support ... PY",
+        "python - <<'PY' ... fresh SQLiteStore schema check ... PY",
+        "python - <<'PY' ... SQLiteStore migration pickup/idempotence schema check ... PY",
+        "python -m pytest tests/test_sqlite_store.py -q --tb=no --no-header",
+        "find supabase -maxdepth 3 -type f -print | sort && find agent_kit/store/migrations/sqlite -maxdepth 1 -type f -print | sort",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... migration file content smoke checks ... PY"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Yes. Supabase 001_core, 002_images, and 003_external_requests_body exist with JSONB/timestamptz/BOOLEAN Postgres schema and required indexes; SQLite mirrors for 002 and 003 exist; request_body is registered in _JSON_COLUMNS; and SQLiteStore.apply_migrations picked up 001/002/003 on a fresh DB and skipped them safely on a second initialization."
+    }
+  ]
+}

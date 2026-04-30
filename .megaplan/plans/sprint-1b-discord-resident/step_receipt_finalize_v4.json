@@ -1,0 +1,31 @@
+{
+  "receipt_id": "ab4ccf9f-5d77-4cd0-a8df-a56e1cebdac7",
+  "plan_id": "sprint-1b-discord-resident",
+  "phase": "finalize",
+  "iteration": 4,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T03:36:40.272894+00:00",
+  "profile_name": null,
+  "agent": "claude",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "989ce964-3df5-4971-baa8-fff515cb7bf6",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "1e06e95cbf4f6bee7b35245218b3e23b19c5d8806063a14c26aa5bb086c74685",
+  "prompt_hash_canonical": "039b6a4da7405465d1dbb6be6075f066cf8779ba3e90be5d1aa67f6c79257c78",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [],
+  "cost_usd": 1.53224125,
+  "duration_ms": 339673,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "tasks_count": 23,
+    "sense_checks_count": 23,
+    "per_task_evidence_file_count": 0
+  },
+  "scope_drift_severity": null
+}

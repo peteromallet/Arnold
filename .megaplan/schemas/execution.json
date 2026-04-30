@@ -1,0 +1,103 @@
+{
+  "type": "object",
+  "properties": {
+    "output": {
+      "type": "string"
+    },
+    "files_changed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commands_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deviations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "task_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "done",
+              "skipped",
+              "blocked"
+            ]
+          },
+          "executor_notes": {
+            "type": "string"
+          },
+          "files_changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commands_run": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "auto_attributed_files": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task_id",
+          "status",
+          "executor_notes",
+          "files_changed",
+          "commands_run",
+          "auto_attributed_files"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "sense_check_acknowledgments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sense_check_id": {
+            "type": "string"
+          },
+          "executor_note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sense_check_id",
+          "executor_note"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "output",
+    "files_changed",
+    "commands_run",
+    "deviations",
+    "task_updates",
+    "sense_check_acknowledgments"
+  ],
+  "additionalProperties": false
+}

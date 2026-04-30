@@ -1,0 +1,71 @@
+{
+  "output": "Batch 6 complete. Implemented T12 and T14, and checkpointed results to `.megaplan/plans/sprint-1a-agent-kit-core/execution_batch_6.json`.",
+  "files_changed": [
+    "agent_kit/loop.py",
+    "tests/__init__.py",
+    "tests/test_envelope.py",
+    "tests/store_contract.py",
+    "tests/test_sqlite_store.py",
+    "tests/test_tool_kit.py",
+    ".megaplan/plans/sprint-1a-agent-kit-core/execution_batch_6.json"
+  ],
+  "commands_run": [
+    "python -m pytest tests/test_envelope.py tests/test_sqlite_store.py tests/test_tool_kit.py",
+    "python -m compileall -q agent_kit arnold megaplan tests",
+    "python - <<'PY' ... run_turn verification ... PY",
+    "python -m pytest",
+    "rg -n \"print\\(\" agent_kit arnold megaplan || true",
+    "rg -n \"yhwfl|service key|eyJ[A-Za-z0-9_-]+\" agent_kit arnold megaplan tests || true",
+    "find agent_kit arnold megaplan tests -type d -name __pycache__ -prune -exec rm -rf {} +",
+    "python - <<'PY' ... checkpoint write ... PY"
+  ],
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 6/9: Project directory is not a git repository.",
+    "Advisory observation skip after batch 6/9: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Replaced the `run_turn` placeholder in `agent_kit/loop.py` with the transport-agnostic turn loop. It acquires/releases per-epic locks, persists inbound messages and bot_turns, loads hot context, records each model call through Ledger with incrementing `system_seq`, marks ledger rows confirmed on success, failed on ProviderError, and leaves raw exception rows pending. Tool requests execute via the audited registry; final text without a prior `send_message` is synthesized through the same audited `send_message` path. Abort respects `cancel_event`, marks `bot_turns.status='abandoned'`, and returns `outcome='aborted'`. Verified manually across completed/tool-chaining, blocked_on_caller, ProviderError, RuntimeError pending-ledger, and abort paths, including on_event order and confirmed/pending/failed external_requests states.",
+      "files_changed": [
+        "agent_kit/loop.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... run_turn verification ... PY",
+        "python -m compileall -q agent_kit arnold megaplan tests",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Added unit tests: `tests/test_envelope.py` validates stable serialization, JSON schema, both tool_call/activity event kinds, error shape, and `serialize_for_diff` stripping. `tests/store_contract.py` provides a reusable store contract helper; `tests/test_sqlite_store.py` runs it against SQLite and verifies external_requests lifecycle, duplicate idempotency-key rejection, required columns, and indexes. `tests/test_tool_kit.py` verifies audit rollback atomicity, registry-driven event-kind dispatch, shared Event identity, and `tool_call_id` presence. Ran module suite and full current pytest suite; 8 tests passed.",
+      "files_changed": [
+        "tests/__init__.py",
+        "tests/test_envelope.py",
+        "tests/store_contract.py",
+        "tests/test_sqlite_store.py",
+        "tests/test_tool_kit.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_envelope.py tests/test_sqlite_store.py tests/test_tool_kit.py",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "Passed. `run_turn` increments `model_call_seq` before every `Model.complete_turn` and passes it to `Ledger.record_pending(system_seq=...)`. It calls `mark_confirmed` on success, `mark_failed` on ProviderError, and leaves rows pending on raw exceptions. The abort path respects `cancel_event`, marks `bot_turns.status='abandoned'`, releases the lock, and returns `outcome='aborted'`."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "Passed. Unit tests cover envelope schema with both event kinds, reusable store contract coverage, SQLite external_requests lifecycle plus UNIQUE duplicate rejection and schema/index introspection, and tool_kit rollback atomicity plus registry-driven event-kind dispatch and `tool_call_id` presence."
+    }
+  ]
+}

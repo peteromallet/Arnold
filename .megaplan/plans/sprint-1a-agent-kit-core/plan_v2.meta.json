@@ -1,0 +1,250 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T01:33:06Z",
+  "hash": "sha256:6830bee7e8f3a0aaa4b1a9706d40fac9373040ca1f46a50cf04b5b55de92880d",
+  "changes_summary": "Revised the plan to address all 14 open flags: (1) added a dedicated step locking the `megaplan.arnold` public import path with `run_turn`, `arun_turn`, and `Envelope` re-exports plus an import-path test (FLAG-002, correctness-1); (2) added an explicit `agent_kit/ledger.py` skeleton step and an `external_requests` table in migrations, with a written decision that scaffolding ships in 1a and reconciliation is deferred to 1b (FLAG-003, issue_hints-2, scope-1); (3) added a local Blob store, an attachment ingestion module, repeatable CLI `--attach`, Python `attachments=`, and attachment integration tests, with audio gracefully erroring until 1b (FLAG-001, issue_hints-1, callers-1); (4) tightened the determinism story: `state_delta` byte-equivalence is asserted unconditionally, while CLI\u2194Python equivalence is asserted on a `serialize_for_diff` projection that strips `reply`/`events.text`/timestamps (correctness-2); (5) removed the `bot_turns.current_activity` mutation from invocation-mode `set_activity` to honor mode-divergent semantics (correctness-3); (6) promoted model-string configurability from an assumption to an explicit step \u2014 adapter takes it as a constructor argument and the CLI reads `ARNOLD_MODEL_ID`, with no hardcoding in tests (all_locations-1); (7) restructured `tests/store_contract.py` as a parametrized, store-agnostic suite reusable unchanged in 1b (all_locations-2); (8) defined a real abort path via cooperative cancellation flag plus CLI `SIGINT` handler, with an integration test that exercises the `aborted` exit code (callers-2). The `defer_to_caller` tool is retained (scope-2 confirmed). Plan structure, scope, and execution order preserved; no scope creep beyond what the locked spec requires.",
+  "flags_addressed": [
+    {
+      "id": "FLAG-001",
+      "resolution": "addressed",
+      "reason": "Added LocalBlobStore, attachments.py, repeatable CLI --attach, Python attachments= parameter, and integration tests covering image and audio paths; audio gracefully errors with Sprint 1b deferral."
+    },
+    {
+      "id": "FLAG-002",
+      "resolution": "addressed",
+      "reason": "Added Step 4 locking the public Python API: megaplan/arnold/__init__.py re-exports run_turn, arun_turn, and Envelope from agent_kit.loop, with arun_turn implemented as an asyncio coroutine wrapper. Import-path test added."
+    },
+    {
+      "id": "FLAG-003",
+      "resolution": "addressed",
+      "reason": "Added Step 7 ledger skeleton (agent_kit/ledger.py) with external_requests CRUD primitives in the SQLite migration; reconciliation explicitly deferred to Sprint 1b with rationale recorded in plan and code."
+    },
+    {
+      "id": "issue_hints-1",
+      "resolution": "addressed",
+      "reason": "Same as FLAG-001: full attachment pipeline scheduled including BlobStore pre-processing and tests."
+    },
+    {
+      "id": "issue_hints-2",
+      "resolution": "addressed",
+      "reason": "Same as FLAG-003: ledger.py skeleton step added explicitly to plan."
+    },
+    {
+      "id": "correctness-1",
+      "resolution": "addressed",
+      "reason": "megaplan.arnold compatibility module is no longer optional; it is the locked surface, wired in Step 4."
+    },
+    {
+      "id": "correctness-2",
+      "resolution": "addressed",
+      "reason": "Determinism story split: state_delta byte-equivalence is unconditional; CLI/Python equivalence is asserted on a serialize_for_diff projection that strips reply, events.text, and timestamps, matching the spec's deterministic-structure rule."
+    },
+    {
+      "id": "correctness-3",
+      "resolution": "addressed",
+      "reason": "Step 10 specifies set_activity in invocation mode emits an event only and does NOT mutate bot_turns.current_activity, honoring mode-divergent semantics."
+    },
+    {
+      "id": "scope-1",
+      "resolution": "addressed",
+      "reason": "Decision recorded: external_requests table and ledger surface ship in 1a as scaffolding; per-provider reconciliation is Sprint 1b. Resolves scope tension between sprint idea and full spec."
+    },
+    {
+      "id": "scope-2",
+      "resolution": "addressed",
+      "reason": "defer_to_caller is retained in Step 10 (Sprint 1a tool surface) \u2014 required to exercise the blocked_on_caller outcome and consistent with the full spec; recorded as settled decision SD-002."
+    },
+    {
+      "id": "all_locations-1",
+      "resolution": "addressed",
+      "reason": "Step 12 makes model id a constructor parameter on AnthropicModel and the CLI reads ARNOLD_MODEL_ID; no hardcoding in adapter or tests."
+    },
+    {
+      "id": "all_locations-2",
+      "resolution": "addressed",
+      "reason": "Step 15 restructures store contract tests as a parametrized, store-agnostic suite taking a store_factory fixture, reusable unchanged with a Supabase factory in Sprint 1b."
+    },
+    {
+      "id": "callers-1",
+      "resolution": "addressed",
+      "reason": "Same as FLAG-001: CLI repeatable --attach and Python attachments= are both wired through run_turn."
+    },
+    {
+      "id": "callers-2",
+      "resolution": "addressed",
+      "reason": "Step 13 defines a cooperative cancellation flag checked between tool steps; Step 14 installs a SIGINT handler in the CLI; Step 16 includes an integration test that triggers cancellation mid-loop and asserts exit code 3 with a valid envelope."
+    }
+  ],
+  "questions": [
+    "The spec mentions `images` and `epic_events` tables that are not in Sprint 1a's listed tables but are referenced by attachment and state_delta wiring \u2014 should Sprint 1a stub the `images` row creation on the inbound `messages` row only (current plan), or also create a minimal `images` table now to avoid a migration churn in Sprint 2?",
+    "Should `arun_turn` be a true asyncio-native implementation (e.g., async DB driver, async model client) or is the `asyncio.to_thread(run_turn, ...)` wrapper acceptable for Sprint 1a given that all I/O is local SQLite plus mocked model in tests?",
+    "For the `megaplan.arnold` public path, do you want `megaplan` to be a regular package (with `__init__.py` we own) or a PEP 420 namespace package so future `megaplan.*` modules can land in separate distributions without collision?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`arnold turn --epic <id> --input \"hello\"` writes one valid envelope JSON object to stdout and exits 0 when outcome is `completed`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "CLI exit codes map exactly to envelope outcomes (completed=0, errored=1, blocked_on_caller=2, aborted=3) for all four outcomes, each exercised by an integration test that drives the actual code path (including a real cooperative-cancellation abort, not just a static mapping).",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "SQLite migrations create `epics`, `messages`, `bot_turns`, `tool_calls`, `system_logs`, `epic_locks`, and a Sprint-1a-minimal `external_requests` table with required columns and usable indexes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Every model turn is recorded in `bot_turns`, every executed tool is recorded in `tool_calls`, and the envelope `events` array matches the recorded tool calls for that turn.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Same input + same SQLite state + same FakeModel seed produces byte-identical `state_delta` across repeated invocations.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Python `run_turn(...)` and CLI `arnold turn ...` produce byte-equivalent envelopes for the same fixture under `serialize_for_diff` (which strips spec-declared non-deterministic fields: `reply`, per-event `text`, timestamps).",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`--stream-events` emits one NDJSON stderr line per progress event; the streamed lines equal the envelope's final `events` array.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Tool audit wrapping is atomic: an injected failure leaves neither the DB mutation nor its `tool_calls` audit row committed.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The locked public import path `from megaplan.arnold import run_turn, arun_turn, Envelope` resolves to the same callables exported from `agent_kit.loop`, and `arun_turn` is an async coroutine with identical semantics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Invocation-mode attachments are accepted via repeatable CLI `--attach PATH` and Python `attachments=[...]`, processed through a `LocalBlobStore` keyed by `(epic_id, sha256)`; image attachments complete; audio attachments return a graceful errored envelope citing Sprint 1b.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`agent_kit/ledger.py` exists and exposes the `external_requests` insert/confirm surface and a documented Sprint-1b reconciliation stub; the package layout matches the spec's locked Sprint 1a surface.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Invocation-mode `set_activity` emits an `activity` event and does NOT mutate `bot_turns.current_activity`, honoring the spec's mode-divergent semantics.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The model id used by the Anthropic adapter is configurable at the adapter boundary (constructor argument plus `ARNOLD_MODEL_ID` env var honored by the CLI); no test or adapter hardcodes the id.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The store contract test module (`tests/store_contract.py`) is parametrized over a `store_factory` fixture and is reusable unchanged with a Supabase factory in Sprint 1b.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The full test suite passes with ephemeral SQLite and FakeModel, without network access.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The CLI remains a thin wrapper over `agent_kit.loop.run_turn` plus signal handling and exit-code serialization, with no duplicated turn orchestration logic.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Sprint 1b seams stay clear: store/model/transport/blob behavior is behind ports and no Discord or Supabase assumptions leak into `run_turn`.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "No Supabase service key or other secret from the idea file is committed into code, tests, fixtures, logs, or prompts passed downstream.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Repository starts from documentation only; the Python project structure is created from scratch.",
+    "argparse is used instead of Click (one fewer dependency, satisfies CLI requirements).",
+    "SQLite is the only store implementation in Sprint 1a; --store supabase returns a clear errored envelope until Sprint 1b. Supabase service key is not committed anywhere.",
+    "The model id (default 'claude-opus-4-7') is configurable via constructor argument and the ARNOLD_MODEL_ID env var; tests use FakeModel and require no network.",
+    "state_delta is a stable empty artifact delta in Sprint 1a (epic_events, checklist, sprint editing land later) but its byte structure is fully deterministic per the spec.",
+    "Opaque text IDs at API boundaries; SQLite text primary keys internally \u2014 can represent UUIDs or prefixed ULIDs interchangeably.",
+    "external_requests table and ledger.py ship as scaffolding in Sprint 1a; per-provider reconciliation logic is deferred to Sprint 1b with the underlying schema and surface ready.",
+    "Audio attachment transcription is deferred to Sprint 1b; passing audio in 1a returns a graceful errored envelope. Image attachments are fully supported via LocalBlobStore.",
+    "Byte-equivalence of envelopes between Python and CLI is asserted on a deterministic projection (serialize_for_diff) that strips spec-declared non-deterministic fields; state_delta byte-equivalence is asserted unconditionally.",
+    "The aborted outcome is exercised via a cooperative cancellation flag set by SIGINT in the CLI or via a cancel_event argument in Python \u2014 not just statically mapped.",
+    "A 'megaplan' top-level package exists solely to host 'megaplan.arnold' as the locked public import path; it does not collide with anything else in this repo."
+  ],
+  "delta_from_previous_percent": 75.25,
+  "structure_warnings": []
+}

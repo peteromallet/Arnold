@@ -1,0 +1,40 @@
+{
+  "name": "sprint-2b-editorial-polish",
+  "idea": "# Sprint 2b \u2014 Editorial polish\n\nThoughtful behaviors that distinguish a real editorial assistant from a body editor. Adds feedback system, end-of-turn checks, search tools, and agent observations.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to How to Work Each Checklist Item, Feedback System, End-of-Turn Checks, Communication Style, Persona sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- Table: feedback (single table for user feedback AND agent observations)\n- Per-item depth guidance in system prompt for all 18 checklist items\n- End-of-turn checks \u2014 five categories (no message sent, no tool calls, empty response, body unchanged when expected, checklist stall)\n- Show-changes pattern in responses\n- `search_in_body` tool \u2014 returns line numbers + surrounding context + section attribution\n- `get_body_outline` tool \u2014 section names + line counts\n- Feedback tools: save_feedback, apply_feedback, deactivate_feedback, list_feedback\n- Agent observation tools: record_observation, list_observations, mark_observation_resolved\n- Hot-context loading of active style + process feedback with last_applied_at AND recent unresolved observations\n- Agent-proposed-user-confirmed flow for saving feedback\n- Agent-only flow for observations (no user confirmation)\n\n## Feedback Table\nid, kind (style|process|epic_specific|friction|ambiguity|tool_failure|confusion|pattern_noticed), content, source (user_volunteered|agent_proposed_user_confirmed|explicit_save_request|agent_observation), source_message_id, epic_id, turn_id, context_snapshot (json: {user_message, bot_action_being_critiqued}), active (default true), deactivation_reason, resolved (default false), resolution_note, resolved_at, created_at, last_referenced_at, last_applied_at\n\nTwo semantic groups:\n- User feedback (style, process, epic_specific) \u2014 active \u2192 deactivated; tracked via last_applied_at\n- Agent observations (friction, ambiguity, tool_failure, confusion, pattern_noticed) \u2014 open \u2192 resolved; tracked via resolved_at\n\n## Acceptance Criteria\n\n- \"change the part about X\" \u2192 bot calls search_in_body, then get_epic for matching section, then edit_epic (verifiable via tool_calls sequence)\n- get_body_outline returns section names + line counts matching actual body\n- \"stop apologizing\" \u2192 bot proposes saving as style feedback, user confirms, row written; subsequent turn honors it via hot context\n- \"save this: keep messages under 200 words\" \u2192 bot saves immediately (explicit save)\n- apply_feedback(id) \u2192 last_applied_at updated\n- record_observation(kind='friction', ...) \u2192 row written with turn_id and context_snapshot; surfaces in hot context next turn\n- mark_observation_resolved(id, \"user clarified\") \u2192 resolved_at set, not in hot context\n- \"Show me the epic\" \u2192 render_epic called\n- End-of-turn check fires when bot tries to finish without sending message \u2192 default acknowledgment\n\n## Tests\n- Unit: search_in_body returns correct results; get_body_outline accuracy; feedback kind detection; end-of-turn check logic; observation writes\n- Integration: feedback save \u2192 apply \u2192 reload; observation recorded \u2192 reload \u2192 resolved\n- LLM-graded eval: 20 fixture turns with style violations; 20 turns checking body for filler",
+  "current_state": "initialized",
+  "iteration": 0,
+  "created_at": "2026-04-30T01:13:12Z",
+  "config": {
+    "project_dir": "/Users/peteromalley/Documents/arnold-v2",
+    "auto_approve": true,
+    "robustness": "light",
+    "mode": "code",
+    "strict_notes": false,
+    "agent": ""
+  },
+  "sessions": {},
+  "plan_versions": [],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-30T01:13:12Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    }
+  ],
+  "meta": {
+    "significant_counts": [],
+    "weighted_scores": [],
+    "plan_deltas": [],
+    "recurring_critiques": [],
+    "total_cost_usd": 0.0,
+    "overrides": [],
+    "notes": []
+  },
+  "last_gate": {}
+}

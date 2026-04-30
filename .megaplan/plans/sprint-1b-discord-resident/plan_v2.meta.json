@@ -1,0 +1,298 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T03:10:15Z",
+  "hash": "sha256:9a8a7846a72436a3d5fedc93e1291c514ac9bacc707a57d329b4628057058dfb",
+  "changes_summary": "Reworked the plan to land interface changes (Phase 2) BEFORE adapter work, so downstream steps consume the new shape rather than assuming it. Specifically: added an `idempotency_key` parameter to `Model.complete_turn` and threaded it through Anthropic + the loop (closes FLAG-007/correctness-2); added `on_turn_start` and `on_pre_finalize` hooks plus `triggered_by_message_ids`/`recovered_input_messages` to `run_turn` so the resident runner can post a status message at turn start AND implement the spec's same-turn end-of-turn re-prompt (closes FLAG-001/FLAG-004/scope-1/scope-2/issue_hints-2/callers-1); made `send_message`/`set_activity`/`send_image` mode-divergent via injected `transport`/`blob`/`external_queue` on `ToolContext` (closes FLAG-002/all_locations-1/callers-2); restructured `audit_wrap` so external IO runs AFTER the audit transaction commits (closes correctness-3); persisted `system_seq` in `request_summary` for replay (closes callers-3). Added `psycopg[binary]` to deps (correctness-1). Added a secrets-handling step + user-action item to rotate the leaked Supabase service key (FLAG-006). Reverted the unsanctioned change to `tests/store_contract.py` and split new method coverage into a separate `tests/store_contract_v1b.py` so the original contract still runs unchanged against both stores (issue_hints-1). Added a `PushTransport` Protocol alongside the existing `Transport` rather than mutating it, avoiding broad CLI/test fallout (all_locations-2). Narrowed scope: image and voice work stays Discord-only this sprint; invocation attachments (`--attach`/`attachments=`/`LocalBlobStore`) and the `transcribe_voice` tool stay deferred with explicit notes (FLAG-008/issue_hints-3/scope-3).",
+  "flags_addressed": [
+    {
+      "id": "FLAG-001",
+      "resolution": "addressed",
+      "reason": "Replaced the follow-up-turn shortcut with the spec's same-turn end-of-turn re-prompt via the new `on_pre_finalize` hook in `run_turn` (Step 6); resident runner queries unprocessed messages and `run_turn` widens `triggered_by_message_ids` retroactively before any final send."
+    },
+    {
+      "id": "FLAG-002",
+      "resolution": "addressed",
+      "reason": "Step 7 makes `send_message` mode-divergent via a new optional `transport` field on `ToolContext`. Resident path queues a Discord post through the external-queue mechanism added in Step 8."
+    },
+    {
+      "id": "FLAG-004",
+      "resolution": "addressed",
+      "reason": "Step 6 adds `on_turn_start: Callable[[turn_dict], None]` to `run_turn`, invoked synchronously after `create_turn`. Resident runner uses it to post the initial status message and persist `bot_turns.status_message_id` (Step 14.3)."
+    },
+    {
+      "id": "FLAG-006",
+      "resolution": "addressed",
+      "reason": "Step 2 prohibits committing secrets, adds .gitignore entries, requires env-only access in adapters, and records a user action item to rotate the leaked Supabase service key. No literal keys appear in any plan-driven file."
+    },
+    {
+      "id": "FLAG-007",
+      "resolution": "addressed",
+      "reason": "Step 5 extends `Model.complete_turn` with `idempotency_key` and updates `AnthropicModel` to forward it as the `Idempotency-Key` header. The loop already has the key from `Ledger.record_pending`; just threads it through. `Reconciler` (Step 16) replays using the stored ledger key."
+    },
+    {
+      "id": "FLAG-008",
+      "resolution": "addressed",
+      "reason": "Narrowed scope: image and voice work this sprint is Discord-only. Invocation-mode attachments (`--attach`, `run_turn(attachments=)`, `LocalBlobStore`, caller-uploaded images per spec 1895-1908) remain explicitly deferred with a note in Step 22.2. The plan does not broaden Blob/image surface beyond Discord ingestion + the four image tools."
+    },
+    {
+      "id": "issue_hints-1",
+      "resolution": "addressed",
+      "reason": "Reverted the change to `tests/store_contract.py` \u2014 it stays unchanged from Sprint 1a (Step 20.1). New Sprint 1b method coverage moved to a separate `tests/store_contract_v1b.py` (Step 20.2). Both stores now demonstrably pass the original contract suite without modification."
+    },
+    {
+      "id": "issue_hints-2",
+      "resolution": "addressed",
+      "reason": "Same as FLAG-001: spec's same-turn end-of-turn check is implemented via the `on_pre_finalize` hook; the prior turn's `triggered_by_message_ids` is widened retroactively, satisfying spec lines 822-843."
+    },
+    {
+      "id": "issue_hints-3",
+      "resolution": "addressed",
+      "reason": "Same as FLAG-008: scope contained. Invocation-mode attachment debt explicitly deferred and recorded in Step 22.2 rather than expanded."
+    },
+    {
+      "id": "correctness-1",
+      "resolution": "addressed",
+      "reason": "Step 1 adds `psycopg[binary]>=3.1` to runtime dependencies."
+    },
+    {
+      "id": "correctness-2",
+      "resolution": "addressed",
+      "reason": "Same as FLAG-007: `Model.complete_turn` gains `idempotency_key`; Anthropic adapter forwards it; reconciler replays via the model's normal API rather than bypassing it."
+    },
+    {
+      "id": "correctness-3",
+      "resolution": "addressed",
+      "reason": "Step 8 restructures `audit_wrap` into three stages: tool body (no txn), DB-only audit txn (commits before any network IO), and post-commit external queue. Network IO never holds a transaction. Spec ordering at lines 2473-2480 is followed."
+    },
+    {
+      "id": "scope-1",
+      "resolution": "addressed",
+      "reason": "Step 6's `on_turn_start` hook gives the resident runner the `turn_id` it needs to post the initial status message before tool calls. Step 14.3 wires this end-to-end."
+    },
+    {
+      "id": "scope-2",
+      "resolution": "addressed",
+      "reason": "Step 6's `on_pre_finalize` hook prevents `run_turn` from finalizing while unprocessed mid-turn messages exist; the model is re-prompted with the spec block, in the same turn, before any `send_message` fires."
+    },
+    {
+      "id": "scope-3",
+      "resolution": "addressed",
+      "reason": "Plan now explicitly states (Overview + Step 22.2) that voice support this sprint is Discord ingestion only; the `transcribe_voice` tool and the non-voice-audio adversarial path are deferred."
+    },
+    {
+      "id": "all_locations-1",
+      "resolution": "addressed",
+      "reason": "Step 7 extends `ToolContext` with optional `transport`, `blob`, and `external_queue` fields. Image tools and resident `send_message` consume these; invocation-mode tools see `None` and behave unchanged."
+    },
+    {
+      "id": "all_locations-2",
+      "resolution": "addressed",
+      "reason": "Step 9 adds a NEW `PushTransport` Protocol rather than mutating the existing pull-style `Transport`. CLI continues to bypass `Transport` as it does today; no broad call-site updates required."
+    },
+    {
+      "id": "callers-1",
+      "resolution": "addressed",
+      "reason": "Step 6 adds `triggered_by_message_ids` AND `recovered_input_messages` to `run_turn`; Step 9 adds `Store.load_messages(message_ids)`. Resident dispatch and recovery rebuild input from persisted message rows rather than letting `run_turn` synthesize a fresh inbound message."
+    },
+    {
+      "id": "callers-2",
+      "resolution": "addressed",
+      "reason": "Same as FLAG-002: `send_message` is mode-divergent via injected transport. The auto-invocation path at `agent_kit/loop.py:264` continues to call `send_message`, which now routes to Discord in resident mode and to the reply buffer in invocation mode."
+    },
+    {
+      "id": "callers-3",
+      "resolution": "addressed",
+      "reason": "Step 5.3 persists `system_seq` into `external_requests.request_summary`. Step 16 replays via the row's stored `idempotency_key` directly (rather than re-deriving), which is the more robust path; the persisted `system_seq` is retained for diagnostic and audit purposes."
+    }
+  ],
+  "questions": [
+    "The Supabase service-role JWT in the idea block was supplied in plain text. Please rotate it via the Supabase dashboard before this code lands. Confirm the new key will be supplied via env var (`SUPABASE_SERVICE_KEY`) and not pasted into plan inputs again. Plan does not commit the leaked key anywhere."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "DM from a whitelisted user triggers a `run_turn` invocation and a Discord reply within 30s in a mocked end-to-end test (FakeDiscordTransport + FakeModel + SQLiteStore)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "DM from a non-whitelisted user produces no Discord reply and writes a `system_logs` row at level=info, category=application, event_type=whitelist_rejected",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Every inbound Discord message persists with a unique `discord_message_id` before any LLM call, and a duplicate `discord_message_id` insert is rejected by the DB unique constraint",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The unmodified `tests/store_contract.py` from Sprint 1a passes against both `SQLiteStore` and `SupabaseStore`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The new `tests/store_contract_v1b.py` (covering find_abandoned_turns, find_pending_external_requests, mark_orphaned, find_unprocessed_messages, load_messages, image CRUD, idempotency-key uniqueness) passes against both `SQLiteStore` and `SupabaseStore`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "5 inbound messages within 8s coalesce into a single turn whose `triggered_by_message_ids` has 5 entries",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Killing the runner mid-turn and restarting causes the prior turn to be marked `abandoned` in `bot_turns` and its trigger messages to be re-processed under a fresh `turn_id`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Mocked Groq voice-message pipeline produces a `messages` row with `was_voice_message=true`, `content=<transcription>`, and `audio_storage_url` populated",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Mocked Discord image-attachment pipeline downloads to (mock) Supabase Storage and creates an `images` row with `source='user_uploaded'` and an auto-assigned `reference_key` matching `^img_user_upload_\\d+$`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`view_image` result with media_type + base64 bytes is rendered into an Anthropic vision content block on the next model call (verified with mocked Anthropic client)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Resident `send_message` posts via the injected push transport, fills `messages.discord_message_id` with the returned Discord id, and transitions an `external_requests` row pending\u2192confirmed; assertion confirms the DB transaction is closed before the network call fires",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Status message lifecycle: `on_turn_start` posts initial status; each tool call \u2192 status edit (1s debounce); `set_activity` updates `bot_turns.current_activity` and the next edit reflects 'Currently:'; turn complete \u2192 final edit text starts with '\u2705 Done.' and contains tool_call count",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Status throttling: 20 tool calls within 2s produce at most ~4 Discord edit calls (1s debounce + final), not 20",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Mid-turn message: a message arriving while a turn is in flight is persisted immediately, the in-flight turn's status gets a '\ud83d\udce5 Received' annotation, and `on_pre_finalize` causes `run_turn` to re-prompt the model in the SAME turn with the spec's mid-turn block, widening the existing turn's `triggered_by_message_ids` (NOT a follow-up turn)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Anthropic idempotency-key replay: stub Model receives the `idempotency_key` from `Ledger.record_pending` and replays it through the same `complete_turn` API during reconciliation",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "External-request reconciliation passes for Anthropic (key replay), Discord (post-hoc message lookup \u2192 confirmed; not found \u2192 orphaned), Groq (deterministic re-issue), Supabase Storage (HEAD-based confirm)",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Tool external-IO ordering: ledger row is `pending` before commit; DB transaction commits before any queued external callable runs; ledger row is `confirmed` after the callable returns. Verified via `tests/test_tool_kit_external_queue.py`",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "All Sprint 1a tests pass UNCHANGED (`tests/test_envelope.py`, `tests/test_ledger.py`, `tests/test_run_turn.py`, `tests/test_cli.py`, `tests/test_tool_kit.py`, the existing assertions in `tests/test_sqlite_store.py`); only additive new test cases are added",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "No literal Supabase service-role JWT, Discord bot token, Anthropic key, or Groq key appears in any committed file under the repo (migrations, tests, fixtures, docs)",
+      "priority": "must",
+      "requires": [
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The existing `Transport` Protocol in `agent_kit/ports.py` is unchanged. `PushTransport` is added as a separate Protocol with no breaking effect on the CLI or invocation-mode tests",
+      "priority": "should",
+      "requires": [
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`agent_kit/loop.py` changes are limited to the four new optional kwargs (`triggered_by_message_ids`, `recovered_input_messages`, `on_turn_start`, `on_pre_finalize`), the `idempotency_key` thread, the `system_seq` field add to `request_summary`, and the vision-block detection in tool-result construction. No other behavior changes for the invocation path",
+      "priority": "should",
+      "requires": [
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Each new module is under ~400 lines (`agent_kit/store/supabase.py`, `agent_kit/resident.py`, `agent_kit/transport/discord.py`)",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "A deferral note is recorded for invocation-mode attachments (`--attach`, `attachments=`, `LocalBlobStore`) and the `transcribe_voice` tool / non-voice-audio path, so future planners can find the open debt",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Manual smoke against staging Discord + staging Supabase: whitelisted DM replies within 30s; voice DM transcribes; image attachment lands in Storage with `images` row; mid-turn DM updates the status message",
+      "priority": "info",
+      "requires": [
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Discord whitelist via env var `DISCORD_USER_WHITELIST` (gate SD-001); restart required to change.",
+    "Supabase store uses direct psycopg3 (gate SD-002); supabase-py is used only for Storage.",
+    "Supabase epic lock is row-based on `epic_locks` table, mirroring SQLite (gate SD-003), so the recovery scan can clean stuck holders across processes.",
+    "`images` table lives in BOTH SQLite and Supabase migration trees this sprint (gate SD-004), keeping cross-store contract tests possible.",
+    "The mid-turn end-of-turn check is implemented as a single hook (`on_pre_finalize`) in `run_turn` rather than spread across the loop body, to keep the diff to `agent_kit/loop.py` small and focused.",
+    "Existing `Transport` Protocol is left untouched; a new `PushTransport` Protocol is added alongside it. The CLI continues to bypass transport adapters as it does today.",
+    "External IO from tools is queued and executed AFTER the audit transaction commits, per spec ordering. Tools that return synthetic results (e.g. invocation-mode `send_message`) do not queue anything; their behavior is unchanged.",
+    "Voice ingestion this sprint is automatic for Discord-flagged voice messages only. Manual transcription tool (`transcribe_voice`) and non-voice audio paths are deferred to a later sprint.",
+    "Invocation-mode attachments (`--attach`, `run_turn(attachments=)`, `LocalBlobStore`) remain accepted Sprint 1a debt; explicitly NOT in this sprint, recorded as a deferral in Step 22.2.",
+    "Anthropic idempotency replay uses the row's stored `idempotency_key` directly. The `system_seq` ordinal extension is also persisted in `request_summary` for audit/diagnostic purposes but is not strictly required for replay correctness.",
+    "Reconciler runs at startup and every 5 minutes in resident mode. Invocation/CLI mode does not run the periodic timer.",
+    "GitHub provider reconciliation is a no-op log this sprint; v1 GitHub is read-only and not exercised in Sprint 1b acceptance criteria.",
+    "The Supabase service-role JWT supplied in the idea block must be rotated by the user. No part of the plan persists or commits the leaked key."
+  ],
+  "delta_from_previous_percent": 77.12,
+  "structure_warnings": []
+}

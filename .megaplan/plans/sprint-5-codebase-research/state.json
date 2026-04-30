@@ -1,0 +1,40 @@
+{
+  "name": "sprint-5-codebase-research",
+  "idea": "# Sprint 5 \u2014 Codebase research and code investigation\n\nBot can read and reason about public GitHub codebases. Adds GitHub REST API integration, codebase management, code investigation tools, and caching.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to Code Investigation, codebases table, code_artifacts table sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- Tables: codebases (with group_name, verified_accessible_at), code_artifacts (unified: excerpts, summaries, cache)\n- GitHub REST API integration (PAT-authenticated, 5000/hour) with rate limit monitoring\n- Org populator script: one-time setup populates codebases from peteromallet and banodoco org listings; verifies each repo is fetchable\n- Workspace grouping: initial groups configured; user adjustable via natural language\n- Codebase management tools: add_codebase, remove_codebase, list_codebases\n- Code investigation tools: get_codebase_tree, read_codebase_file, search_code, analyze_code\n- Cross-codebase analyze_code with multiple codebase_ids\n- Code artifact tools: save_code_excerpt, mark_code_in_body\n- Codebase research checklist item (#6) workflow\n- Cache management \u2014 hourly TTL on api_cache, scheduled cleanup\n\n## Key Data Model\n\n### codebases\nid, owner (lowercase), name (lowercase), default_branch, scope (global|epic_specific), group_name, associated_epic_id, added_at, added_via, last_accessed_at, verified_accessible_at, notes\nUnique: (owner, name)\n\n### code_artifacts\nid, codebase_id, epic_id, kind (excerpt|summary|api_cache), source (conversation|codebase), file_path, line_range, scope (file|directory|cross_codebase for summaries), content, content_summary, metadata (json), created_at, last_used_at, expires_at\n\n## Acceptance Criteria\n\n- Populator runs against peteromallet and banodoco orgs (mocked GitHub in tests) \u2192 codebases rows created with verified_accessible_at\n- Inaccessible repos reported in output, not silently skipped\n- Add a public GitHub repo via natural language \u2192 codebases row created, tree fetchable\n- analyze_code with multiple codebase_ids \u2192 analysis covering all referenced codebases\n- Same analyze_code within hour \u2192 served from code_artifacts cache (no GitHub API call)\n- GitHub rate limit at 80% \u2192 log entry with level warn, category external_api\n- 404 on deleted repo \u2192 bot reports failure, retains cached content\n\n## Tests\n- Unit: cache TTL logic; codebase scope filtering; file path parsing; group-name resolution\n- Integration: full investigation chain (tree \u2192 search \u2192 read \u2192 save_excerpt \u2192 mark_in_body) against mocked GitHub; cross-codebase analysis",
+  "current_state": "initialized",
+  "iteration": 0,
+  "created_at": "2026-04-30T01:13:15Z",
+  "config": {
+    "project_dir": "/Users/peteromalley/Documents/arnold-v2",
+    "auto_approve": true,
+    "robustness": "light",
+    "mode": "code",
+    "strict_notes": false,
+    "agent": ""
+  },
+  "sessions": {},
+  "plan_versions": [],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-30T01:13:15Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    }
+  ],
+  "meta": {
+    "significant_counts": [],
+    "weighted_scores": [],
+    "plan_deltas": [],
+    "recurring_critiques": [],
+    "total_cost_usd": 0.0,
+    "overrides": [],
+    "notes": []
+  },
+  "last_gate": {}
+}

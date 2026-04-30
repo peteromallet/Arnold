@@ -1,0 +1,104 @@
+{
+  "type": "object",
+  "properties": {
+    "question": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": {
+            "type": "string"
+          },
+          "evidence_type": {
+            "type": "string",
+            "enum": [
+              "code",
+              "measurement",
+              "pattern",
+              "doc"
+            ]
+          },
+          "file_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "quote": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "evidence_type",
+          "file_paths",
+          "quote"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "costs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "assumptions",
+          "costs"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "preliminary_pick": {
+      "type": "object",
+      "properties": {
+        "option_name": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "what_im_least_sure_about": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "option_name",
+        "rationale",
+        "what_im_least_sure_about"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "question",
+    "evidence",
+    "options",
+    "preliminary_pick"
+  ],
+  "additionalProperties": false
+}

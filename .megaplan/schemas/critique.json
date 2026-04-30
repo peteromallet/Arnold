@@ -1,0 +1,109 @@
+{
+  "type": "object",
+  "properties": {
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "detail": {
+                  "type": "string"
+                },
+                "flagged": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "detail",
+                "flagged"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "findings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "concern": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "correctness",
+              "security",
+              "completeness",
+              "performance",
+              "maintainability",
+              "doc-quality",
+              "other",
+              "verifiability"
+            ]
+          },
+          "severity_hint": {
+            "type": "string",
+            "enum": [
+              "likely-significant",
+              "likely-minor",
+              "uncertain"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "concern",
+          "category",
+          "severity_hint",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "verified_flag_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "disputed_flag_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "checks",
+    "flags",
+    "verified_flag_ids",
+    "disputed_flag_ids"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,215 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Verified the revised plan now persists the inbound Discord `messages` row first, in the same initial transaction as ingestion pending ledger rows, before Storage/Groq/image-row work runs. This addresses the prior issue against `planning-bot-spec.md` lines 2455-2459 and the acceptance criterion that every inbound message persists with a unique `discord_message_id`.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the revised plan adds both `Store.update_message(...)` and `create_message(..., synthesize_outbound_id=False)`, which gives resident send, voice transcription fill-in, and image ingestion fill-in a store-level path without breaking the invocation-mode synthetic-id behavior.",
+          "flagged": false
+        },
+        {
+          "detail": "Recovery coverage for ingestion-side Storage uploads remains underspecified: the plan records pending Storage rows before uploading, but the described `request_body` for those rows only includes deterministic paths, not the original Discord attachment URL or another durable byte source. If the process crashes before the upload completes, `supabase_storage` reconciliation can detect the object is missing but cannot reissue the upload deterministically from the stored row.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified the revised plan now ledgers Discord-ingestion Storage and Groq calls through `external_requests` keyed by `discord_message_id`, which addresses the iteration-2 concern that voice/image ingestion external IO was outside the recovery mechanism.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Inbound persistence timing still diverges from the spec: the plan's Step 13 voice and image branches do Storage/Groq or Storage/image-row work before creating the `messages` row, while `planning-bot-spec.md` lines 79 and 2455-2459 require writing the inbound `messages` row with the unique `discord_message_id` immediately on receipt so gateway replay and recovery can see it even if attachment processing crashes.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Verified the plan keeps `tests/store_contract.py` unchanged and tests the added store methods in `tests/store_contract_v1b.py`, preserving the acceptance criterion that the original Sprint 1a store contract suite runs against Supabase unchanged.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Verified the revised plan explicitly gates `SQLiteStore.create_message` synthetic outbound id generation behind `synthesize_outbound_id`, defaulting to `True` for Sprint 1a compatibility and using `False` for resident sends that need a NULL `discord_message_id` until Discord confirms.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the revised plan preserves the existing audit wrapper transaction semantics by keeping the tool body and `record_tool_call` in one transaction, while running only queued external callables after commit; this is consistent with the current rollback test in `tests/test_tool_kit.py`.",
+          "flagged": false
+        },
+        {
+          "detail": "Storage reconciliation cannot be correct for crash-before-upload unless the ledger row stores enough replay material. Step 16 says `supabase_storage` reconciliation does `blob.exists(ref)` and reissues if missing, but Step 13's pending Storage rows for voice/image ingestion do not store the attachment bytes, a durable local blob, or even explicitly the Discord attachment URL in `request_body`; without that, the reissue branch has no input.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified the revised audit-wrapper design keeps `entry.func(...)` inside `store.transaction()` and runs only queued network IO after commit, preserving the existing rollback invariant tested in `tests/test_tool_kit.py` while avoiding holding the DB transaction across Discord/Groq/Storage calls.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Verified the revised Anthropic reconciliation plan adds a durable `external_requests.request_body` column and stores the full model/messages/tools/max_tokens request body before the call, so replay no longer depends on the small diagnostic `request_summary` currently built in `agent_kit/loop.py` lines 103-108.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Resident outbound message persistence is not technically wired to the current store behavior: Step 7 says resident `send_message` creates an outbound `messages` row with `discord_message_id` NULL and fills it after Discord confirms, but current `SQLiteStore.create_message` auto-generates a synthetic `inv_<turn_id>_<n>` id for any outbound row with a `bot_turn_id` and no Discord id (`agent_kit/store/sqlite.py` lines 100-102). The plan does not specify changing that behavior or adding an explicit resident create/update path.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Verified the revised image path is now persist-first: the `messages` row with `has_image_attachment=True` and the pending Storage ledger row are committed before Storage upload or `images` row creation. This closes the previous duplicate/orphaned-image window caused by relying on the unique `discord_message_id` too late.",
+          "flagged": false
+        },
+        {
+          "detail": "The remaining Storage reissue issue applies to both voice and image attachments, not just one branch: voice Storage upload needs source audio bytes to recover, and image Storage upload needs source image bytes to recover. The plan should store a retrievable source reference in `request_body` or deliberately mark crash-before-download/upload as orphaned rather than promising deterministic reissue.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified the callable-api attachment debt remains contained and explicitly deferred in Step 22, so the Sprint 1b Discord-only scope does not broaden the known accepted callable-api limitation.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified the revised mid-turn hook now runs before final-text auto-send and before explicit `send_message` tool invocation, which closes the previously uncovered explicit-send path in the current loop's tool phase.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "The immediate-persist issue is broader than voice transcription: image ingestion also performs Storage upload and `images` row creation before the inbound message row exists. A crash or duplicate gateway event during that window can create duplicate external work or orphaned image rows because the DB unique constraint on `messages.discord_message_id` has not fired yet.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "The accepted callable-api attachment debt remains contained: the revised plan explicitly defers `--attach`, `run_turn(..., attachments=...)`, `LocalBlobStore`, `transcribe_voice`, and non-voice audio handling, and records a deferral note in Step 22 rather than expanding this sprint's scope.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Verified Step 9 now adds `update_message` to the Store Protocol and Steps 10-11 implement it in both stores; this covers the store-facing glue needed by resident send, voice transcription updates, and post-upload message updates.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified Step 9 now publishes `Blob.exists(ref)` and `PushTransport.fetch_recent_messages(...)`, matching the interfaces the reconciler calls for Storage and Discord post-hoc reconciliation.",
+          "flagged": false
+        },
+        {
+          "detail": "Supporting infrastructure for Storage reissue is still incomplete: the plan adds `Blob.exists`, but not a corresponding way for the reconciler to obtain the original attachment payload from the ledger row. Since Discord attachment URLs can be transient, the missing source field is not just a local adapter detail; it affects the recovery contract across `DiscordTransport`, `external_requests.request_body`, and `Reconciler`.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Verified the revised plan now adds `Blob.exists(ref)` and `PushTransport.fetch_recent_messages(...)`, matching the APIs the reconciler calls for Storage and Discord post-hoc lookup.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Message update glue is missing in all store-facing locations: the current Store Protocol exposes `create_message` and `load_message` only (`agent_kit/ports.py` lines 66-84), and Step 9 does not add `update_message`. Several planned flows require updating a message after initial creation: resident `send_message` must fill `discord_message_id` after Discord confirms, voice ingestion should persist first and later fill transcription/audio fields, and image ingestion should persist first and later set `has_image_attachment` if attachment processing succeeds.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Verified the existing pull-style `Transport` Protocol remains untouched in the revised plan and a new `PushTransport` is added alongside it, avoiding broad churn in the CLI path that currently bypasses transport adapters.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Checked the planned `create_message` callers: invocation `send_message` now explicitly passes or defaults `synthesize_outbound_id=True`, while resident `send_message` passes `False`; this resolves the caller split around synthetic outbound Discord ids.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the planned `update_message` callers: resident `send_message`, voice ingestion, and `send_image` all have a named store method to update rows after external confirmation, so the previous missing-update-method caller problem is addressed.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the planned Storage reconciliation caller: `Reconciler` can call `blob.exists(ref)`, but when it needs to reissue a missing upload it has no planned argument source for `blob.put(...)` because the pending request row does not carry the original attachment bytes or a durable fetchable source. That caller path remains under-specified.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked current callers of `create_message`: invocation-mode `send_message` relies on the synthetic outbound id behavior, while the revised resident path needs the opposite behavior (outbound row initially NULL until Discord confirms). The plan needs a caller-level switch or separate store method so preserving invocation behavior does not prevent resident behavior.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked current model adapter callers: adding optional `idempotency_key` remains backward-compatible if defaulted to `None`, and the revised plan explicitly updates both `AnthropicModel` and `FakeModel`.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked current `ToolRegistry.invoke` expectations: the revised Step 8 now keeps tool bodies inside the transaction, so existing tools that mutate the store directly can keep their caller contract and the rollback test can remain unchanged.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-015",
+      "concern": "Storage recovery: pending Supabase Storage ingestion rows do not store enough source material to reissue a missing upload after a crash.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The revised plan persists Storage pending rows before upload and Step 16 promises `blob.exists(ref)` then reissue if missing, but Step 13's voice/image request bodies only describe deterministic paths. Without original bytes, a durable local source, or at least an explicit Discord attachment URL plus expiry handling, the reconciler cannot perform the reissue branch."
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-001",
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004",
+    "FLAG-005",
+    "FLAG-006",
+    "FLAG-007",
+    "FLAG-008",
+    "FLAG-009",
+    "FLAG-010",
+    "FLAG-011",
+    "FLAG-012",
+    "FLAG-013",
+    "FLAG-014",
+    "correctness",
+    "issue_hints",
+    "scope",
+    "all_locations",
+    "callers"
+  ],
+  "disputed_flag_ids": []
+}

@@ -1,0 +1,140 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the user instruction against the plan and repository context: the plan correctly treats the repo as documentation-only and does not require running the megaplan CLI or nested plans, which is consistent with the current file layout containing only `planning-bot-spec.md`, sprint idea files, and `.megaplan` harness metadata.",
+          "flagged": false
+        },
+        {
+          "detail": "Callable API: The spec's Sprint 1a readiness gate and Callable API section explicitly include attachment passing via CLI `--attach` and Python `attachments=`, including BlobStore pre-processing for images/audio before the turn starts. The plan defines a `Blob` port but does not schedule any CLI `--attach`, Python `attachments`, local blob implementation, or attachment tests, so it would miss part of the spec's Sprint 1a callable API acceptance.",
+          "flagged": true
+        },
+        {
+          "detail": "Event ledger: The sprint scope explicitly names `agent_kit/ledger.py` as an event store skeleton, but the implementation plan only covers `tool_kit.py`, SQLite store, logging, tools, model, loop, and CLI. Without a planned `ledger.py`, an executor could satisfy tool auditing while omitting a required package surface from the scope.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Python API import path: The spec's Callable API example imports `run_turn` and `Envelope` from `megaplan.arnold`, and says `arun_turn` is also provided with identical semantics. The plan instead centers `agent_kit.loop.run_turn`, says an `arnold/__init__.py` re-export is optional, and leaves the `megaplan.arnold` compatibility module as an open question despite the spec saying Sprint 1a decisions are locked.",
+          "flagged": true
+        },
+        {
+          "detail": "Determinism: The plan asks integration tests to assert byte-equivalent CLI and Python envelopes, but also says to compare modulo non-deterministic reply text. The spec's determinism guarantee says `reply` and `events.text` are not byte-deterministic while `state_delta` and event structure are, so a literal byte-equivalence acceptance test is only correct with a deterministic fake model and stable timestamps/IDs or a deliberately normalized fixture.",
+          "flagged": true
+        },
+        {
+          "detail": "Schema fields: The plan calls out some nullable resident-mode columns such as `status_message_id` and `current_activity`, but Step 8 also plans to update `bot_turns.current_activity` for `set_activity` even though the Sprint 1a tool semantics say invocation-mode `set_activity` emits an activity event and otherwise has no side effect. This is not fatal if implemented as harmless bookkeeping, but it diverges from the mode-divergent behavior in the spec.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Repository scope check found no existing Python source, project metadata, CLI, package directories, migrations, or tests; only the spec and sprint idea files exist. The plan is therefore right to bootstrap the package from scratch rather than patch existing implementation code.",
+          "flagged": false
+        },
+        {
+          "detail": "Recovery/idempotency scope: The full spec says underlying `external_requests` ledger mechanisms apply in invocation mode and reconciliation runs on every process boot, while later Sprint 1b acceptance makes the full recovery tests explicit. The Sprint 1a idea did not list `external_requests`, and the plan omits it entirely except for a vague `ledger.py` omission, so this is a scope tension between the detailed spec and the narrower sprint idea that should be settled before execution.",
+          "flagged": true
+        },
+        {
+          "detail": "Tool surface: The idea's minimal tool surface lists only `send_message` and `set_activity`, while the full spec and Testing section also call out `defer_to_caller` enforcement for Sprint 1a. The plan includes `defer_to_caller`, which is broader than the idea but consistent with the full spec and necessary for `blocked_on_caller` outcome coverage.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "CLI infrastructure: The plan covers `pyproject.toml` console script, `arnold/cli.py`, stdout/stderr separation, outcome exit-code mapping, and tests for `--stream-events`, which are the necessary integration points for the `arnold turn` surface described in both the idea and spec.",
+          "flagged": false
+        },
+        {
+          "detail": "Model configuration: The plan hardcodes or defaults to model string `claude-opus-4-7`, matching the current spec text. Because this value is provider-specific and could change, the plan should ensure it is configurable at the model adapter boundary rather than baked into tests or CLI behavior; the plan only says 'configurable default' in assumptions, not in implementation steps.",
+          "flagged": true
+        },
+        {
+          "detail": "Store contract support: The plan creates `tests/store_contract.py`, but does not explicitly plan reusable fixtures or a contract shape that can be reused unchanged against Supabase in Sprint 1b, even though Sprint 1b acceptance depends on the original SQLite contract suite passing against the Supabase implementation unchanged.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Run-turn callers: The only specified callers in the repo are the CLI form `arnold turn --epic <epic_id> [--from-stdin | --input \"<text>\"] [--stream-events] [--store sqlite|supabase]` and the Python form `run_turn(epic_id, input, store, model, on_event=callback, attachments=...)`. The plan handles `--input`, `--from-stdin`, `--stream-events`, store/model injection, and `on_event`, but does not handle the `attachments` argument or repeatable CLI `--attach` paths.",
+          "flagged": true
+        },
+        {
+          "detail": "Epic ID handling: The plan assumes opaque text IDs at API boundaries, which is compatible with both the envelope examples using prefixed IDs and the SQLite table implementation using text primary keys. This appears safer than forcing UUIDs in Sprint 1a, provided the store contract validates non-empty IDs and preserves caller-provided IDs byte-for-byte.",
+          "flagged": false
+        },
+        {
+          "detail": "Outcome callers: The CLI caller must receive a valid envelope on stdout even for non-zero outcomes, and the plan covers completed, errored, blocked_on_caller, and aborted exit codes. The plan does not describe how caller cancellation produces `aborted` in invocation mode, so tests may only assert a static mapping without exercising an actual abort path.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Callable API: Sprint 1a plan omits invocation-mode attachment handling (`--attach`, Python `attachments=`, BlobStore/local blob processing) that the full spec marks as part of the callable API.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "planning-bot-spec.md Callable API section lists repeatable CLI `--attach`, Python `attachments: list[Path | bytes | tuple[bytes, mime_type]]`, and pre-processing through BlobStore before the turn; the plan only defines a Blob port and has no implementation or tests for attachments."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Public API: The plan leaves the documented `megaplan.arnold` import path and `arun_turn` coroutine unresolved even though the spec says the Sprint 1a callable API is locked.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "planning-bot-spec.md shows `from megaplan.arnold import run_turn, Envelope` and states `arun_turn` is provided; the plan centers `agent_kit.loop.run_turn`, optional `arnold/__init__.py`, and records the compatibility module as an open question."
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Ledger/recovery: The plan does not define the required `agent_kit/ledger.py` skeleton and does not settle whether the invocation-mode `external_requests` ledger belongs in Sprint 1a.",
+      "category": "completeness",
+      "severity_hint": "uncertain",
+      "evidence": "Sprint 1a scope explicitly lists `ledger.py`; the Idempotency and Recovery section says external request ledger mechanisms and startup reconciliation apply in invocation mode, while the sprint idea's table list omits `external_requests`."
+    },
+    {
+      "id": "FLAG-004",
+      "concern": "Test contract: Byte-equivalent envelope testing is underspecified given the spec's non-deterministic `reply` and `events.text` fields.",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "evidence": "The plan asks for byte-equivalent CLI/Python envelopes but also allows reply normalization; the spec says only `state_delta` and event structure are deterministic unless the test controls the model text, timestamps, and generated IDs."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 9: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

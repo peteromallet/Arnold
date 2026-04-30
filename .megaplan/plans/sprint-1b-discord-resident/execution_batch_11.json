@@ -1,0 +1,90 @@
+{
+  "task_updates": [
+    {
+      "id": "T17",
+      "status": "blocked",
+      "executor_notes": "Blocked awaiting U1. Mechanical prerequisite verification found `.env` absent, so the rotated SUPABASE_SERVICE_KEY could not be verified; the same missing .env also prevents verifying U2 required resident env vars, U3 DISCORD_BOT_TOKEN, and U4 staging/Supabase provisioning evidence. Per batch instruction, arnold resident CLI wiring and _unsupported_store_envelope replacement were not attempted.",
+      "files_changed": [],
+      "commands_run": [
+        "test -f .env && printf '.env-present\\n' || printf '.env-missing\\n'",
+        "python - <<'PY' ... check .env for required resident env vars without printing secrets ... PY",
+        "find . -maxdepth 3 -name 'user_actions.md' -print",
+        "ls -la supabase && find supabase -maxdepth 3 -type f -print | sort"
+      ],
+      "task_id": "T17"
+    },
+    {
+      "id": "T18",
+      "status": "done",
+      "executor_notes": "Added the missing named unit/contract test files and shared tests/store_contract_v1b.py without modifying tests/store_contract.py. SQLite now runs both the original and v1b store contracts. Added focused tests for create_message synthesize flag, update_message, coalescer, whitelist rejection, status formatter, Discord persist-first ingestion, and Discord ingestion ledger transitions; existing reconciler, image tools, run_turn hooks, and external queue tests cover the remaining required branches. tests/test_supabase_store.py is present and env-gated with pytest.importorskip('psycopg') plus SUPABASE_TEST_DB_URL; it skipped locally because live Supabase prerequisites are absent and T10 remains blocked. Verification: new/extended local modules passed; full python -m pytest --tb=no -q --no-header passed with 72 passed, 1 skipped; leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "tests/store_contract_v1b.py",
+        "tests/test_sqlite_store.py",
+        "tests/test_supabase_store.py",
+        "tests/test_create_message_synthesize_flag.py",
+        "tests/test_update_message.py",
+        "tests/test_coalescer.py",
+        "tests/test_whitelist.py",
+        "tests/test_status_formatter.py",
+        "tests/test_discord_ingestion_persist_first.py",
+        "tests/test_discord_ingestion_ledger.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_sqlite_store.py tests/test_create_message_synthesize_flag.py tests/test_update_message.py -q --tb=short --no-header",
+        "python -m pytest tests/test_coalescer.py tests/test_status_formatter.py tests/test_whitelist.py -q --tb=short --no-header",
+        "python -m pytest tests/test_discord_ingestion_persist_first.py tests/test_discord_ingestion_ledger.py -q --tb=short --no-header",
+        "python -m pytest tests/test_supabase_store.py -q --tb=short --no-header",
+        "python -m pytest tests/test_reconciler.py tests/test_image_tools.py tests/test_run_turn_hooks.py tests/test_tool_kit_external_queue.py -q --tb=short --no-header",
+        "python -m pytest tests/test_discord_transport.py tests/test_resident.py tests/test_loop_vision_blocks.py -q --tb=short --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... batch11 static smoke check ... PY"
+      ],
+      "task_id": "T18"
+    },
+    {
+      "id": "T20",
+      "status": "done",
+      "executor_notes": "Recorded the Sprint 1c deferral note in ideas/sprint_1c_attachments.md covering invocation-mode CLI --attach, Python run_turn(attachments=...), LocalBlobStore, the deferred transcribe_voice/non-voice-audio path, and the accepted crash-before-upload plus Discord URL expiry orphan tradeoff with manual user re-send recovery. Verification: static smoke check confirmed all required phrases; full python -m pytest --tb=no -q --no-header passed with 72 passed, 1 skipped.",
+      "files_changed": [
+        "ideas/sprint_1c_attachments.md"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... batch11 static smoke check ... PY",
+        "python -m pytest --tb=no -q --no-header"
+      ],
+      "task_id": "T20"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC17",
+      "task_id": "T17",
+      "executor_note": "No. T17 is blocked awaiting U1 because .env is absent and the rotated SUPABASE_SERVICE_KEY could not be verified; required resident env vars, Discord token, and staging provisioning evidence are also unverifiable. CLI resident wiring was not attempted.",
+      "verdict": "blocked",
+      "sense_check_id": "SC17"
+    },
+    {
+      "id": "SC18",
+      "task_id": "T18",
+      "executor_note": "Partially. All local named unit/contract test files exist, tests/store_contract.py was left unchanged, the v1b contract runs against SQLite, persist-first ingestion/reconciler/tool atomicity coverage is present, and the full suite passed with 72 passed and 1 skipped. The Supabase contract module exists and is env-gated, but it did not run against a real SupabaseStore locally because SUPABASE_TEST_DB_URL/live prerequisites are absent and T10 remains blocked.",
+      "verdict": "partial",
+      "sense_check_id": "SC18"
+    },
+    {
+      "id": "SC20",
+      "task_id": "T20",
+      "executor_note": "Yes. ideas/sprint_1c_attachments.md records the invocation-mode --attach/run_turn(attachments=...)/LocalBlobStore deferral, the transcribe_voice/non-voice-audio deferral, and the Discord URL expiry orphaned-ledger tradeoff with manual user re-send recovery.",
+      "verdict": "pass",
+      "sense_check_id": "SC20"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-1b-discord-resident/execution_batch_11.json",
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "1/3 batch tasks have no executor update \u2014 tracking is incomplete.",
+    "Advisory observation skip before batch 11/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 11/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

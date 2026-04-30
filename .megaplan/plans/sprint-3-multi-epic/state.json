@@ -1,0 +1,40 @@
+{
+  "name": "sprint-3-multi-epic",
+  "idea": "# Sprint 3 \u2014 Multi-epic + message search\n\nBot manages multiple epics intelligently and supports user corrections. Adds epic selection heuristic, switching, full-text search, reference resolution, and user modes.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to Epic Selection, References to Bot's Recent Output, User Modes, Showing the Bot's Understanding sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- Epic selection heuristic \u2014 24h most-recent default; bot picks most recently edited epic within 24h on ambiguous messages\n- Epic switching with announcements (outbound message contains epic title when switching)\n- `list_epics`, `search_epics`, `search_messages` tools\n- Full-text search index on messages.content\n- Ambiguity handling \u2014 bot asks when epic context is unclear\n- Reference resolution \u2014 \"the second one\" / \"that point\" parsed against last outbound bot message\n- Conversation gap acknowledgment\n- User mode reading \u2014 concrete behaviors per mode:\n  - Deep-thinking: persona dialed down, measured and substantive\n  - Brainstorming: more energy, exploratory\n  - Executing: direct, minimal elaboration\n\n## Acceptance Criteria\n\n- 5 epics active \u2192 bot picks most recently edited within 24h on ambiguous messages (LLM-graded eval: \u226527/30 correct on canned scenarios)\n- \"the second one\" / \"that point\" reference resolution against last bot message (unit tests: \u22659/10 on varied last-message structures)\n- Switching epics triggers announcement with epic title in outbound message\n- \"show me what you know about X\" \u2192 structured summary with all relevant sections\n- Full-text search across messages returns relevant matches (10 canned queries with expected hit IDs)\n\n## Tests\n- Unit: epic selection heuristic across epic-set fixtures; reference resolver against varied bot output; mode signal detection\n- Integration: multi-epic switching, search retrieval against seeded message corpus\n- LLM-graded eval: ambiguity handling \u2014 bot asks (vs guesses) on 10 deliberately ambiguous cases",
+  "current_state": "initialized",
+  "iteration": 0,
+  "created_at": "2026-04-30T01:13:13Z",
+  "config": {
+    "project_dir": "/Users/peteromalley/Documents/arnold-v2",
+    "auto_approve": true,
+    "robustness": "light",
+    "mode": "code",
+    "strict_notes": false,
+    "agent": ""
+  },
+  "sessions": {},
+  "plan_versions": [],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-30T01:13:13Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    }
+  ],
+  "meta": {
+    "significant_counts": [],
+    "weighted_scores": [],
+    "plan_deltas": [],
+    "recurring_critiques": [],
+    "total_cost_usd": 0.0,
+    "overrides": [],
+    "notes": []
+  },
+  "last_gate": {}
+}

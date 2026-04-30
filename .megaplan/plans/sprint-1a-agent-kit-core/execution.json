@@ -1,0 +1,159 @@
+{
+  "output": "Aggregated execute batches: completed 1/1.\nBatch 1: Implemented the rework: restored the regular `megaplan` package, verified the locked `megaplan.arnold` import path, reran staged validation and full pytest, and deleted throwaway repro scripts.",
+  "commands_run": [
+    "pwd && rg --files -g '!*__pycache__*' | sed -n '1,160p'",
+    "sed -n '1,200p' agent_kit/loop.py",
+    "sed -n '1,160p' arnold/__init__.py && sed -n '1,120p' tests/test_megaplan_arnold_import.py",
+    "sed -n '1,220p' pyproject.toml",
+    "sed -n '200,420p' agent_kit/loop.py",
+    "find . -maxdepth 3 -type d | sort | sed -n '1,160p'",
+    "git status --short",
+    "mkdir -p megaplan/arnold",
+    "PYTHONPATH=. python scripts/_repro_megaplan_import.py",
+    "python -m compileall -q agent_kit arnold megaplan tests",
+    "python -m pytest tests/test_megaplan_arnold_import.py",
+    "python -m pytest tests/test_envelope.py tests/test_megaplan_arnold_import.py",
+    "python -m pytest tests/test_sqlite_store.py tests/test_tool_kit.py",
+    "python -m pytest tests/test_ledger.py tests/test_run_turn.py",
+    "python -m pytest tests/test_cli.py",
+    "python -m pytest",
+    "python scripts/_repro_sprint1a.py",
+    "rmdir scripts",
+    "rg -n \"yhwfl|service key|service_key|eyJ[A-Za-z0-9_-]+\" agent_kit arnold megaplan tests pyproject.toml || true",
+    "find megaplan -type d -name __pycache__ -prune -exec rm -rf {} + && find megaplan -maxdepth 3 -type f -print",
+    "test ! -e scripts && echo 'scripts cleanup ok' || find scripts -maxdepth 2 -type f -print",
+    "python - <<'PY'\nimport asyncio\nimport agent_kit.loop\nfrom agent_kit.envelope import Envelope\nfrom megaplan.arnold import run_turn, arun_turn, Envelope as PublicEnvelope\nimport arnold\nassert run_turn is agent_kit.loop.run_turn\nassert arun_turn is agent_kit.loop.arun_turn\nassert PublicEnvelope is Envelope\nassert arnold.run_turn is agent_kit.loop.run_turn\nassert arnold.arun_turn is agent_kit.loop.arun_turn\nassert arnold.Envelope is Envelope\nassert asyncio.iscoroutinefunction(arun_turn)\nprint('public import check passed')\nPY"
+  ],
+  "deviations": [
+    "The checkpoint file `.megaplan/plans/sprint-1a-agent-kit-core/execution_checkpoint.json` was not present/writable at the requested path, so no progress checkpoint was written there. Structured output is the authoritative record.",
+    "The first throwaway import repro was run as `python scripts/_repro_megaplan_import.py` and failed because Python placed `scripts/` on `sys.path`; rerunning the same repro with `PYTHONPATH=.` passed against the working tree. The acceptance smoke script was adjusted to insert the repo root into `sys.path` for the same reason.",
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 1/1: Project directory is not a git repository.",
+    "Advisory observation skip after batch 1/1: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Created a regular top-level `megaplan` package and `megaplan.arnold` subpackage. Both re-export `run_turn`, `arun_turn`, and `Envelope` from `agent_kit.loop`; direct checks confirm object identity with `agent_kit.loop`, matching exports from `arnold`, and `asyncio.iscoroutinefunction(arun_turn)`.",
+      "files_changed": [
+        "megaplan/__init__.py",
+        "megaplan/arnold/__init__.py"
+      ],
+      "commands_run": [
+        "mkdir -p megaplan/arnold",
+        "PYTHONPATH=. python scripts/_repro_megaplan_import.py",
+        "python -m pytest tests/test_megaplan_arnold_import.py",
+        "python - <<'PY'\nimport asyncio\nimport agent_kit.loop\nfrom agent_kit.envelope import Envelope\nfrom megaplan.arnold import run_turn, arun_turn, Envelope as PublicEnvelope\nimport arnold\nassert run_turn is agent_kit.loop.run_turn\nassert arun_turn is agent_kit.loop.arun_turn\nassert PublicEnvelope is Envelope\nassert arnold.run_turn is agent_kit.loop.run_turn\nassert arnold.arun_turn is agent_kit.loop.arun_turn\nassert arnold.Envelope is Envelope\nassert asyncio.iscoroutinefunction(arun_turn)\nprint('public import check passed')\nPY"
+      ],
+      "auto_attributed_files": null
+    },
+    {
+      "task_id": "T15",
+      "status": "done",
+      "executor_notes": "The import-path integration blocker is resolved. `tests/test_megaplan_arnold_import.py` passes, and the staged integration groups including run_turn, CLI, and ledger lifecycle tests pass.",
+      "files_changed": [
+        "megaplan/__init__.py",
+        "megaplan/arnold/__init__.py"
+      ],
+      "commands_run": [
+        "python -m pytest tests/test_envelope.py tests/test_megaplan_arnold_import.py",
+        "python -m pytest tests/test_ledger.py tests/test_run_turn.py",
+        "python -m pytest tests/test_cli.py"
+      ],
+      "auto_attributed_files": null
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Full validation is green: staged pytest commands pass and `python -m pytest` collects 22 tests with 22 passing. The throwaway Sprint 1a smoke created a fresh SQLite DB, inserted an epic, ran `arnold turn --epic epic_smoke --input hello` with FakeModel injection and `ARNOLD_MODEL_ID` unset, validated envelope JSON, and confirmed one `bot_turns` row plus one Anthropic `external_requests` row. Throwaway scripts were deleted afterward.",
+      "files_changed": [
+        "megaplan/__init__.py",
+        "megaplan/arnold/__init__.py"
+      ],
+      "commands_run": [
+        "python -m compileall -q agent_kit arnold megaplan tests",
+        "python -m pytest tests/test_envelope.py tests/test_megaplan_arnold_import.py",
+        "python -m pytest tests/test_sqlite_store.py tests/test_tool_kit.py",
+        "python -m pytest tests/test_ledger.py tests/test_run_turn.py",
+        "python -m pytest tests/test_cli.py",
+        "python -m pytest",
+        "python scripts/_repro_sprint1a.py",
+        "rmdir scripts"
+      ],
+      "auto_attributed_files": null
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Confirmed `pyproject.toml` already declares `megaplan*`; added the missing regular `megaplan/__init__.py` and `megaplan/arnold/__init__.py` files."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Not changed in this pass; envelope/schema tests still pass."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Not changed in this pass; full pytest remains green."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Confirmed `from megaplan.arnold import run_turn, arun_turn, Envelope` resolves to the same objects as `agent_kit.loop`, and `arun_turn` is a coroutine function."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Not changed in this pass; SQLite migration tests still pass."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Not changed in this pass; SQLite store and tool-kit tests still pass."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Not changed in this pass; ledger tests still pass."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Ran a secret-pattern scan over `agent_kit`, `arnold`, `megaplan`, `tests`, and `pyproject.toml`; only logger redaction key names were found."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Not changed in this pass; tool-kit and run_turn tests still pass."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "Not changed in this pass; set_activity behavior remains covered by the green suite."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "Not changed in this pass; model behavior remains covered by the green suite."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "Not changed in this pass; run_turn and ledger tests still pass."
+    },
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "Not changed in this pass; CLI tests still pass."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "Not changed in this pass; unit test groups still pass."
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": "Confirmed integration import resolution now passes alongside ledger, run_turn, and CLI integration tests."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "Confirmed full offline pytest passes: 22 collected, 22 passed. The throwaway acceptance smoke passed and was deleted."
+    }
+  ],
+  "files_changed": [
+    "megaplan/__init__.py",
+    "megaplan/arnold/__init__.py"
+  ]
+}

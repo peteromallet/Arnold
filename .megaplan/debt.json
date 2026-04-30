@@ -1,0 +1,191 @@
+{
+  "entries": [
+    {
+      "id": "DEBT-001",
+      "subsystem": "callable-api",
+      "concern": "sprint 1a plan descopes attachment-passing despite the spec's callable api marking it as 1a acceptance.",
+      "flag_ids": [
+        "FLAG-001"
+      ],
+      "plan_ids": [
+        "sprint-1a-agent-kit-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T01:55:59Z",
+      "updated_at": "2026-04-30T01:55:59Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-002",
+      "subsystem": "callable-api",
+      "concern": "spec\u2019s sprint 1a readiness gate lists attachment-passing protocol; plan defers it.",
+      "flag_ids": [
+        "issue_hints-1"
+      ],
+      "plan_ids": [
+        "sprint-1a-agent-kit-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T01:55:59Z",
+      "updated_at": "2026-04-30T01:55:59Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-003",
+      "subsystem": "callable-api",
+      "concern": "cli omits `--attach` in 1a.",
+      "flag_ids": [
+        "callers-1"
+      ],
+      "plan_ids": [
+        "sprint-1a-agent-kit-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T01:55:59Z",
+      "updated_at": "2026-04-30T01:55:59Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-004",
+      "subsystem": "callable-api",
+      "concern": "python `run_turn` omits `attachments=` in 1a.",
+      "flag_ids": [
+        "callers-2"
+      ],
+      "plan_ids": [
+        "sprint-1a-agent-kit-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T01:55:59Z",
+      "updated_at": "2026-04-30T01:55:59Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-005",
+      "subsystem": "callable-api",
+      "concern": "plan removes `--attach`, `attachments=`, `localblobstore`, and attachment tests from 1a.",
+      "flag_ids": [
+        "issue_hints"
+      ],
+      "plan_ids": [
+        "sprint-1a-agent-kit-core"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T01:55:59Z",
+      "updated_at": "2026-04-30T01:55:59Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-006",
+      "subsystem": "discord-ingestion-recovery",
+      "concern": "crash-before-storage-upload + discord attachment url expiry results in orphaned ledger rows for voice audio / user-uploaded images. the inbound messages row remains persisted so no silent data loss; the user can re-send. a future sprint may add ingestion-time bytes-to-tmpfile fallback if the orphaned rate is meaningful in production.",
+      "flag_ids": [
+        "FLAG-015"
+      ],
+      "plan_ids": [
+        "sprint-1b-discord-resident"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T03:30:58Z",
+      "updated_at": "2026-04-30T03:30:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-007",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: recovery coverage for ingestion-side storage uploads remains underspecified: the plan records pending storage rows before uploading, but the described `request_body` for those rows only includes deterministic paths, not the original discord attachment url or another durable byte source. if the process crashes before the upload completes, `supabase_storage` reconciliation can detect the object is missing but cannot reissue the upload deterministically from the stored row.",
+      "flag_ids": [
+        "issue_hints"
+      ],
+      "plan_ids": [
+        "sprint-1b-discord-resident"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T03:30:58Z",
+      "updated_at": "2026-04-30T03:30:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-008",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: the remaining storage reissue issue applies to both voice and image attachments, not just one branch: voice storage upload needs source audio bytes to recover, and image storage upload needs source image bytes to recover. the plan should store a retrievable source reference in `request_body` or deliberately mark crash-before-download/upload as orphaned rather than promising deterministic reissue.",
+      "flag_ids": [
+        "scope"
+      ],
+      "plan_ids": [
+        "sprint-1b-discord-resident"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T03:30:58Z",
+      "updated_at": "2026-04-30T03:30:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-009",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: supporting infrastructure for storage reissue is still incomplete: the plan adds `blob.exists`, but not a corresponding way for the reconciler to obtain the original attachment payload from the ledger row. since discord attachment urls can be transient, the missing source field is not just a local adapter detail; it affects the recovery contract across `discordtransport`, `external_requests.request_body`, and `reconciler`.",
+      "flag_ids": [
+        "all_locations"
+      ],
+      "plan_ids": [
+        "sprint-1b-discord-resident"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T03:30:58Z",
+      "updated_at": "2026-04-30T03:30:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-010",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the planned storage reconciliation caller: `reconciler` can call `blob.exists(ref)`, but when it needs to reissue a missing upload it has no planned argument source for `blob.put(...)` because the pending request row does not carry the original attachment bytes or a durable fetchable source. that caller path remains under-specified.",
+      "flag_ids": [
+        "callers"
+      ],
+      "plan_ids": [
+        "sprint-1b-discord-resident"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T03:30:58Z",
+      "updated_at": "2026-04-30T03:30:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-011",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: storage reconciliation cannot be correct for crash-before-upload unless the ledger row stores enough replay material. step 16 says `supabase_storage` reconciliation does `blob.exists(ref)` and reissues if missing, but step 13's pending storage rows for voice/image ingestion do not store the attachment bytes, a durable local blob, or even explicitly the discord attachment url in `request_body`; without that, the reissue branch has no input.",
+      "flag_ids": [
+        "correctness"
+      ],
+      "plan_ids": [
+        "sprint-1b-discord-resident"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-04-30T03:30:58Z",
+      "updated_at": "2026-04-30T03:30:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    }
+  ]
+}

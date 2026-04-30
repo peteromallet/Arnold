@@ -1,0 +1,92 @@
+{
+  "output": "Batch 2 complete. Implemented T2, T3, and T5, and checkpointed results to `.megaplan/plans/sprint-1a-agent-kit-core/execution_batch_2.json`.",
+  "files_changed": [
+    "agent_kit/envelope.py",
+    "agent_kit/envelope.schema.json",
+    "agent_kit/ports.py",
+    "agent_kit/store/migrations/sqlite/001_core.sql",
+    ".megaplan/plans/sprint-1a-agent-kit-core/execution_batch_2.json"
+  ],
+  "commands_run": [
+    "rg -n \"Envelope|Subagent|external_requests|Blob|ProviderError|bot_turns|tool_calls|system_logs|epic_locks|messages|epics\" planning-bot-spec.md ideas/sprint-1a-agent-kit-core.md pyproject.toml",
+    "find agent_kit arnold megaplan tests -maxdepth 4 -type f | sort",
+    "sed -n '1786,1908p' planning-bot-spec.md && sed -n '2449,2508p' planning-bot-spec.md",
+    "sed -n '1298,1645p' planning-bot-spec.md",
+    "python -m compileall -q agent_kit arnold megaplan",
+    "python - <<'PY' ... envelope verification ... PY",
+    "python - <<'PY' ... sqlite migration verification ... PY",
+    "python - <<'PY' ... ports verification ... PY",
+    "python - <<'PY' ... jsonschema validation ... PY",
+    "python -m pytest",
+    "git status --short",
+    "find agent_kit arnold megaplan -type d -name __pycache__ -prune -exec rm -rf {} +",
+    "python - <<'PY' ... checkpoint write ... PY"
+  ],
+  "deviations": [
+    "`python -m pytest` exited 5 because the repository still has zero collected tests; unit/integration tests are scheduled for later batches. Pytest did load `pyproject.toml` under Python 3.11.11.",
+    "`git status --short` still fails because the project directory is not a Git repository.",
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 2/9: Project directory is not a git repository.",
+    "Advisory observation skip after batch 2/9: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Added `agent_kit/envelope.py` with `Envelope`, `StateDelta`, `Event`, and `EnvelopeError` dataclasses. Stable JSON serialization uses sorted keys and compact separators. Outcome enum covers `completed`, `blocked_on_caller`, `errored`, and `aborted`; `Event.kind` covers `tool_call`, `activity`, `turn_start`, and `turn_end`. `serialize_for_diff` strips `reply`, per-event `text`, and `started_at`/`completed_at` recursively, and is documented as CLI-vs-Python only, not for streaming comparison. Added matching JSON schema and validated a sample envelope with both tool_call and activity events against it.",
+      "files_changed": [
+        "agent_kit/envelope.py",
+        "agent_kit/envelope.schema.json"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... envelope verification ... PY",
+        "python - <<'PY' ... jsonschema validation ... PY",
+        "python -m compileall -q agent_kit arnold megaplan",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Added `agent_kit/ports.py` with `Transport`, `Store`, `Model`, and `Blob` protocols plus supporting `ProviderError`, `BlobRef`, `ToolRequest`, and `ModelTurnResult` dataclasses. Store protocol exposes message, turn, tool-call, system-log, lock, hot-context, transaction, and external_requests lifecycle primitives: `insert_pending`, `mark_confirmed`, and `mark_failed`. Model protocol requires a `model_id` parameter and documents `ProviderError` vs raw transport/SDK exception semantics. Blob is only a port with `put`/`get`, no implementation.",
+      "files_changed": [
+        "agent_kit/ports.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... ports verification ... PY",
+        "python -m compileall -q agent_kit arnold megaplan",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Added SQLite migration `agent_kit/store/migrations/sqlite/001_core.sql` creating `epics`, `messages`, `bot_turns`, `tool_calls`, `system_logs`, `epic_locks`, and `external_requests`. The `external_requests` table includes the full required column set, provider/status checks, `idempotency_key TEXT NOT NULL UNIQUE`, and required indexes for idempotency_key, provider/status/last_attempted_at, status/last_attempted_at, turn_id, and tool_call_id. Also included resident-mode nullable columns and defaults requested for `messages` and `bot_turns`. Verified by applying the migration to in-memory SQLite and introspecting required tables, columns, and indexes.",
+      "files_changed": [
+        "agent_kit/store/migrations/sqlite/001_core.sql"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... sqlite migration verification ... PY",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Passed. Envelope serialization uses sorted keys and compact separators via `stable_json_dumps`. `Event.kind` includes `tool_call`, `activity`, `turn_start`, and `turn_end`. `serialize_for_diff` recursively strips exactly `reply`, `text`, `started_at`, and `completed_at`, with documentation limiting it to CLI-vs-Python equivalence and excluding stream-vs-envelope comparison."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Passed. `Store` exposes `insert_pending`, `mark_confirmed`, and `mark_failed`; `Model.complete_turn` accepts `model_id` and documents `ProviderError` for parseable provider errors while raw transport/SDK exceptions propagate unchanged; `Blob` is a protocol-only `put`/`get` port with no implementation."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Passed. Migration creates all required `external_requests` columns including `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `first_attempted_at`, `last_attempted_at`, `completed_at`, and `error_details`. It defines `idempotency_key` as UNIQUE NOT NULL and adds the required indexes for idempotency, reconciliation scans, `turn_id`, and `tool_call_id`."
+    }
+  ]
+}

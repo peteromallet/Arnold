@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arnold-v2"
+version = "0.1.0"
+description = "Arnold Discord planning bot core."
+readme = "planning-bot-spec.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic",
+    "discord.py",
+    "groq",
+    "httpx",
+    "psycopg[binary]>=3.1",
+    "supabase",
+]
+
+[project.optional-dependencies]
+test = [
+    "jsonschema",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[project.scripts]
+arnold = "arnold.cli:main"
+
+[tool.setuptools.packages.find]
+include = [
+    "agent_kit",
+    "agent_kit.*",
+    "arnold",
+    "arnold.*",
+    "megaplan",
+    "megaplan.*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]

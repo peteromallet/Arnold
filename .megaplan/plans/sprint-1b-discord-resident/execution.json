@@ -1,0 +1,355 @@
+{
+  "output": "Aggregated execute batches: completed 1/1.\nBatch 1: Implemented the approved plan and captured execution evidence.",
+  "commands_run": [
+    "python -m pytest --tb=no -q --no-header",
+    "wc -l agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/resident.py agent_kit/transport/discord.py",
+    "rg --hidden --glob '!.git/**' --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+    "python -m py_compile agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/transport/discord.py arnold/cli.py",
+    "python /tmp/verify_sprint_1b_rework.py"
+  ],
+  "deviations": [
+    "Editable install verification for T1 remains environment-blocked because metadata generation fails with missing `bdist_wheel`; dependency declarations are present.",
+    "Live Supabase contract tests remain env-gated unless `SUPABASE_TEST_DB_URL` is set.",
+    "`user_actions.md` is absent, so before_execute user actions could not be mechanically verified from that required source.",
+    "After_execute staging smoke U5 was surfaced but not performed because it requires human access to real Discord and Supabase staging resources.",
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 1/1: Project directory is not a git repository.",
+    "Advisory observation skip after batch 1/1: Project directory is not a git repository.",
+    "Done tasks missing both files_changed and commands_run: T23",
+    "Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): T2, T3, T4, T5, T6, T7, T8, T9, T13, T14, T15, T16, T19, T20, T21",
+    "Advisory audit skip: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T22",
+      "status": "skipped",
+      "executor_notes": "Skipped because `user_actions.md` is absent, so before_execute user actions could not be mechanically verified from the required source file.",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "task_id": "T1",
+      "status": "skipped",
+      "executor_notes": "Dependency declarations are present, but editable install remains blocked by missing `bdist_wheel` during metadata generation.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pip install --no-build-isolation -e '.[test]'"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Secret guard verification remained clean; leaked-prefix grep returned zero matches.",
+      "files_changed": [],
+      "commands_run": [
+        "rg --hidden --glob '!.git/**' --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Migration work remained intact and SQLite migration pickup stayed covered by the final full suite.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Model idempotency and request_body recording stayed covered by the final full suite.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Resident run_turn hook behavior remained green, including unchanged invocation-mode coverage.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "ToolContext resident plumbing remained green; send_message and set_activity behavior stayed covered.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Audit wrapper atomicity stayed green, with external callables running after commit.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Protocol additions remained compatible with implemented adapters and compiled cleanly.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/transport/discord.py arnold/cli.py"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "SQLiteStore v1b methods and synthesize flag remained green in final verification.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "SupabaseStore is implemented with direct psycopg, env-only `SUPABASE_DB_URL`, row-based epic locks, JSONB request_body persistence, update_message, image CRUD, recovery queries, and synthesize_outbound_id support. File length is 399 lines.",
+      "files_changed": [
+        "agent_kit/store/supabase.py",
+        "agent_kit/store/__init__.py",
+        "tests/test_supabase_store.py",
+        "tests/test_supabase_adapters.py"
+      ],
+      "commands_run": [
+        "wc -l agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/resident.py agent_kit/transport/discord.py",
+        "python /tmp/verify_sprint_1b_rework.py"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "SupabaseStorageBlob implements env-only put/get/exists with deterministic audio and image paths when an idempotency key is supplied.",
+      "files_changed": [
+        "agent_kit/blob/__init__.py",
+        "agent_kit/blob/supabase_storage.py",
+        "tests/test_supabase_adapters.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/transport/discord.py arnold/cli.py"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "DiscordTransport remains under the line cap and starts nonblocking inside an active asyncio loop, so resident recovery scheduling can run.",
+      "files_changed": [
+        "agent_kit/transport/discord.py"
+      ],
+      "commands_run": [
+        "wc -l agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/resident.py agent_kit/transport/discord.py"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "ResidentRunner module is 310 lines and remained covered by final full-suite verification.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Reconciler behavior, including SD-017 storage recovery branches, remained green in final verification.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "status": "done",
+      "executor_notes": "Image tool behavior remained covered by the final full suite.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Vision block behavior remained covered by final full-suite verification.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T17",
+      "status": "done",
+      "executor_notes": "`arnold resident` is registered, builds the resident stack from env-backed adapters, and the old unsupported Supabase envelope path is gone.",
+      "files_changed": [
+        "arnold/cli.py",
+        "agent_kit/transport/discord.py",
+        "tests/test_supabase_adapters.py"
+      ],
+      "commands_run": [
+        "python /tmp/verify_sprint_1b_rework.py"
+      ]
+    },
+    {
+      "task_id": "T18",
+      "status": "done",
+      "executor_notes": "Local unit and contract coverage passed; live Supabase contract coverage remains skipped unless `SUPABASE_TEST_DB_URL` is set.",
+      "files_changed": [
+        "tests/test_supabase_store.py",
+        "tests/test_supabase_adapters.py"
+      ],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T19",
+      "status": "done",
+      "executor_notes": "Integration coverage passed as part of the final full suite.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T20",
+      "status": "done",
+      "executor_notes": "Deferral note remained present for invocation attachments, transcribe_voice, and the Discord URL expiry orphan tradeoff.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header"
+      ]
+    },
+    {
+      "task_id": "T21",
+      "status": "done",
+      "executor_notes": "Final verification passed: full suite reported 85 passed and 1 skipped; leaked-prefix grep returned no matches; SupabaseStore is 399 lines, ResidentRunner is 310, and DiscordTransport is 389.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.git/**' --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "wc -l agent_kit/store/supabase.py agent_kit/blob/supabase_storage.py agent_kit/resident.py agent_kit/transport/discord.py",
+        "python /tmp/verify_sprint_1b_rework.py"
+      ]
+    },
+    {
+      "task_id": "T23",
+      "status": "done",
+      "executor_notes": "After_execute U5 remains surfaced as human-only staging smoke coverage; no automated attempt was made to perform real Discord/Supabase staging checks.",
+      "files_changed": [],
+      "commands_run": []
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Dependencies are declared, but editable install remains blocked by missing `bdist_wheel`."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Secret guard remains clean; leaked-prefix grep returned zero matches."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Migrations remained intact and full-suite verification passed."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Idempotency and request_body behavior remained covered by the final full suite."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "run_turn hook behavior remained green in the final full suite."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "ToolContext resident plumbing remained green in the final full suite."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Audit wrapper atomicity remained green in the final full suite."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Store, Blob, and PushTransport protocol additions remain implemented and compatible with adapters."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "SQLiteStore v1b methods and synthesize flag remained green in final verification."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "SupabaseStore is implemented via direct psycopg, env-only DB URL, JSONB persistence, update_message, synthesize flag support, row-based locks, and is 399 lines."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "SupabaseStorageBlob implements put/get/exists with env-only credentials and deterministic media paths when supplied an idempotency key."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "DiscordTransport persist-first ingestion remains covered, and nonblocking start/stop supports resident CLI execution."
+    },
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "ResidentRunner and status formatter remained green in the final full suite."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "Reconciler behavior remained green in the final full suite."
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": "Image tools remained covered by the final full suite."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "Vision block behavior remained covered by the final full suite."
+    },
+    {
+      "sense_check_id": "SC17",
+      "executor_note": "`arnold resident` is registered and the unsupported Supabase envelope path has been removed."
+    },
+    {
+      "sense_check_id": "SC18",
+      "executor_note": "Local unit/contract coverage passed; live Supabase contract remains skipped without `SUPABASE_TEST_DB_URL`."
+    },
+    {
+      "sense_check_id": "SC19",
+      "executor_note": "Integration coverage passed as part of the final full suite."
+    },
+    {
+      "sense_check_id": "SC20",
+      "executor_note": "Deferral note remained present."
+    },
+    {
+      "sense_check_id": "SC21",
+      "executor_note": "Full suite passed with 85 passed and 1 skipped; secret grep clean; required modules are each <=400 lines."
+    },
+    {
+      "sense_check_id": "SC22",
+      "executor_note": "No; skipped because `user_actions.md` is absent."
+    },
+    {
+      "sense_check_id": "SC23",
+      "executor_note": "Yes; after_execute manual staging smoke actions were surfaced without performing them."
+    }
+  ],
+  "files_changed": [
+    "agent_kit/store/supabase.py",
+    "agent_kit/store/__init__.py",
+    "agent_kit/blob/__init__.py",
+    "agent_kit/blob/supabase_storage.py",
+    "agent_kit/transport/discord.py",
+    "arnold/cli.py",
+    "tests/test_supabase_store.py",
+    "tests/test_supabase_adapters.py",
+    ".megaplan/plans/sprint-1b-discord-resident/execution_checkpoint.json"
+  ]
+}

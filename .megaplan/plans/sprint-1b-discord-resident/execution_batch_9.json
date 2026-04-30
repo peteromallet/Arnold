@@ -1,0 +1,71 @@
+{
+  "task_updates": [
+    {
+      "id": "T12",
+      "status": "done",
+      "executor_notes": "Implemented DiscordTransport in agent_kit/transport/discord.py against PushTransport with lazy discord.py startup, MESSAGE_CONTENT intent, env token/whitelist support, DM-only handling, whitelist rejection logging, post/edit/download/fetch methods, and persist-first text/voice/image ingestion. Voice and image branches commit messages plus pending ingestion ledger rows in one transaction before download/blob/Groq/image-row IO; storage request_body includes deterministic_path and discord_attachment_url. Added the ingest_message_id idempotency-key branch to ledger derivation. Verification: tests/test_discord_transport.py passed, related ledger/tool/store modules passed, discord.py import is lazy, module is 376 lines, full `python -m pytest --tb=no -q --no-header` passed with 49 tests, and leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "agent_kit/ledger.py",
+        "agent_kit/transport/__init__.py",
+        "agent_kit/transport/discord.py",
+        "tests/test_discord_transport.py"
+      ],
+      "commands_run": [
+        "sed -n '1,260p' agent_kit/ledger.py",
+        "sed -n '1,340p' agent_kit/ports.py",
+        "python -m pytest tests/test_discord_transport.py -q --tb=short --no-header",
+        "python -m pytest tests/test_ledger.py tests/test_tool_kit.py tests/test_tool_kit_external_queue.py tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q --tb=short --no-header",
+        "wc -l agent_kit/transport/discord.py && python -m py_compile agent_kit/transport/discord.py agent_kit/ledger.py agent_kit/loop.py",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... DiscordTransport static smoke check ... PY"
+      ],
+      "task_id": "T12"
+    },
+    {
+      "id": "T16",
+      "status": "done",
+      "executor_notes": "Scoped loop.py tool-result construction change to detect results containing media_type and image_bytes_b64 and emit Anthropic-compatible vision content blocks with base64 image source plus sanitized metadata text; non-image tool results keep the previous dict shape. Verification: tests/test_loop_vision_blocks.py passed, run_turn/CLI/envelope/hook/image-tool modules passed, full `python -m pytest --tb=no -q --no-header` passed with 49 tests, and static smoke check confirmed vision-block detection in loop.py.",
+      "files_changed": [
+        "agent_kit/loop.py",
+        "tests/test_loop_vision_blocks.py"
+      ],
+      "commands_run": [
+        "sed -n '1,520p' agent_kit/loop.py",
+        "python -m pytest tests/test_loop_vision_blocks.py -q --tb=short --no-header",
+        "python -m pytest tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py tests/test_run_turn_hooks.py tests/test_image_tools.py -q --tb=short --no-header",
+        "wc -l agent_kit/transport/discord.py && python -m py_compile agent_kit/transport/discord.py agent_kit/ledger.py agent_kit/loop.py",
+        "python -m pytest --tb=no -q --no-header",
+        "python - <<'PY' ... vision block static smoke check ... PY"
+      ],
+      "task_id": "T16"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "executor_note": "Yes. DiscordTransport.on_message rejects non-DM messages, logs non-whitelisted DMs without replying, and voice/image branches persist the message plus pending ingestion ledger rows in one transaction before external IO; storage pending request_body includes both deterministic_path and discord_attachment_url. Tests cover text, voice, image, whitelist, and ingest idempotency.",
+      "verdict": "yes",
+      "sense_check_id": "SC12"
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "executor_note": "Yes. The single tool-result construction site in loop.py now emits vision content blocks when media_type and image_bytes_b64 are present, while preserving the prior non-image tool result shape; tests verify the emitted image source block.",
+      "verdict": "yes",
+      "sense_check_id": "SC16"
+    }
+  ],
+  "verification": {
+    "full_test_suite": "python -m pytest --tb=no -q --no-header -> 49 passed",
+    "secret_scan": "leaked Supabase JWT prefix grep excluding harness/cache paths -> zero matches",
+    "checkpoint_written": "/Users/peteromalley/Documents/arnold-v2/.megaplan/plans/sprint-1b-discord-resident/execution_batch_9.json"
+  },
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 9/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 9/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

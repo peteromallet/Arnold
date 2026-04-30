@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arnold.local/schemas/envelope.schema.json",
+  "title": "Arnold Invocation Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope_version",
+    "turn_id",
+    "epic_id",
+    "epic_state_before",
+    "epic_state_after",
+    "reply",
+    "state_delta",
+    "questions",
+    "events",
+    "tool_call_count",
+    "outcome"
+  ],
+  "properties": {
+    "envelope_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "epic_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "epic_state_before": {
+      "type": "string"
+    },
+    "epic_state_after": {
+      "type": "string"
+    },
+    "reply": {
+      "type": "string"
+    },
+    "state_delta": {
+      "$ref": "#/$defs/state_delta"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "tool_call_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "outcome": {
+      "enum": [
+        "completed",
+        "blocked_on_caller",
+        "errored",
+        "aborted"
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "state_delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body_diff",
+        "checklist_changes",
+        "sprint_changes"
+      ],
+      "properties": {
+        "body_diff": {
+          "type": "string"
+        },
+        "checklist_changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "sprint_changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "state_transition": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ts",
+        "kind"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "tool_call",
+            "activity",
+            "turn_start",
+            "turn_end"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "completed_at": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

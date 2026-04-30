@@ -1,0 +1,375 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [
+    {
+      "id": "PRECHECK-SOURCE_TOUCH",
+      "check": "source_touch",
+      "detail": "No changed files were detected in the git diff, so review cannot confirm that package source changed.",
+      "severity": "significant"
+    },
+    {
+      "id": "PRECHECK-DIFF_SIZE_SANITY",
+      "check": "diff_size_sanity",
+      "detail": "Diff size sanity check found no changed lines, versus a rough expectation of about 10 lines from the issue context (files=0, hunks=0).",
+      "severity": "significant"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004",
+    "issue_hints-2",
+    "correctness-1",
+    "correctness-2",
+    "correctness-3",
+    "scope-1",
+    "scope-2",
+    "all_locations-1",
+    "all_locations-2",
+    "FLAG-005",
+    "scope",
+    "all_locations",
+    "FLAG-006",
+    "FLAG-007",
+    "correctness",
+    "FLAG-008",
+    "FLAG-009"
+  ],
+  "disputed_flag_ids": [
+    "callers"
+  ],
+  "criteria": [
+    {
+      "name": "CLI completed envelope smoke",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "CLI completed behavior is implemented and covered through FakeModel; executor also reports a throwaway Sprint 1a smoke with FakeModel injection and ARNOLD_MODEL_ID unset. Full pytest passes."
+    },
+    {
+      "name": "CLI exit codes and stdout envelopes",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_cli.py covers completed=0, errored=1, blocked_on_caller=2, aborted=3, with JSON stdout for each path; full pytest passes."
+    },
+    {
+      "name": "Abort status and outcome coexist",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/loop.py _abort_turn updates bot_turns status='abandoned' and returns outcome='aborted'; tests cover this path."
+    },
+    {
+      "name": "SQLite schema and indexes",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/store/migrations/sqlite/001_core.sql creates required core tables and full external_requests schema/indexes; schema tests pass."
+    },
+    {
+      "name": "Tool calls, bot turns, event joins",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/tool_kit.py writes one tool_calls row and one Event per successful tool invocation; tests/test_run_turn.py verifies event/tool_call joins."
+    },
+    {
+      "name": "Ledger tool-use chaining",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/loop.py increments model_call_seq and passes system_seq to Ledger.record_pending; tests/test_ledger.py covers distinct confirmed system_seq rows."
+    },
+    {
+      "name": "Anthropic call ledger lifecycle",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/loop.py records external_requests before model calls and handles success, ProviderError, and raw exception lifecycle states; ledger tests pass."
+    },
+    {
+      "name": "set_activity event shape",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/tools/communication.py registers set_activity with event_kind='activity'; tests assert no duplicate tool_call event and matching tool_calls row."
+    },
+    {
+      "name": "state_delta deterministic",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "run_turn returns a default StateDelta; tests/test_run_turn.py asserts serialized state_delta stability."
+    },
+    {
+      "name": "Python and CLI envelope equivalence",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "tests/test_run_turn.py compares Python and CLI envelopes under serialize_for_diff."
+    },
+    {
+      "name": "stream-events NDJSON equivalence",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "arnold/cli.py streams event_to_json(event); tests/test_run_turn.py compares streamed events exactly to envelope events."
+    },
+    {
+      "name": "Tool audit atomicity",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/tool_kit.py wraps tool execution and audit write in store.transaction(); tests/test_tool_kit.py covers rollback."
+    },
+    {
+      "name": "megaplan.arnold public import path",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "`megaplan/__init__.py` and `megaplan/arnold/__init__.py` now exist. Direct import identity check passed, and tests/test_megaplan_arnold_import.py passes."
+    },
+    {
+      "name": "Ledger API and idempotency formulas",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/ledger.py exposes record_pending(..., system_seq=...), mark_confirmed, mark_failed, reconcile_on_boot, and implements the documented formulas."
+    },
+    {
+      "name": "Anthropic ProviderError and FakeModel scripting",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/model/anthropic.py converts parseable provider errors to ProviderError and propagates others; FakeModel supports multi-call and error scripts."
+    },
+    {
+      "name": "set_activity does not mutate current_activity",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "agent_kit/tools/communication.py does not update bot_turns.current_activity; tests cover the invariant."
+    },
+    {
+      "name": "Blob port only and no attachments in 1a",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "agent_kit/ports.py defines Blob/BlobRef; no --attach, attachments=, or LocalBlobStore implementation is present."
+    },
+    {
+      "name": "Configurable model id",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "AnthropicModel accepts model_id and arnold/cli.py reads ARNOLD_MODEL_ID for --model-id default."
+    },
+    {
+      "name": "Reusable store contract",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires subjective judgment about future Supabase reuse; tests/store_contract.py exists and is factory-driven, but Sprint 1b reuse cannot be fully verified here."
+    },
+    {
+      "name": "Full test suite passes offline",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "`python -m pytest -q` ran in the workspace: 22 passed in 0.74s."
+    },
+    {
+      "name": "CLI thin wrapper",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires subjective judgment; inspection suggests arnold/cli.py delegates to run_turn, but this criterion is marked deferred_human per instructions."
+    },
+    {
+      "name": "Sprint 1b seams clear",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires subjective judgment about architecture and future seams."
+    },
+    {
+      "name": "No Supabase service key committed",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Secret-pattern scan over agent_kit, arnold, megaplan, tests, and pyproject found only logger redaction key names, not the Supabase URL/key/JWT."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Approved. The missing `megaplan.arnold` package has been restored, the public import path passes a direct identity check, and the full offline pytest suite is green with 22 passing tests. The git-diff precheck remains advisory because the project directory is not a git repository.",
+  "task_verdicts": [
+    {
+      "task_id": "T1",
+      "reviewer_verdict": "Pass. pyproject.toml declares the packages and the regular `megaplan` package now exists.",
+      "evidence_files": [
+        "pyproject.toml",
+        "megaplan/__init__.py"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "reviewer_verdict": "Pass. Envelope dataclasses, stable serialization, schema, and diff projection are implemented.",
+      "evidence_files": [
+        "agent_kit/envelope.py",
+        "agent_kit/envelope.schema.json"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "reviewer_verdict": "Pass. Ports include Store lifecycle methods, Model semantics, ProviderError, and Blob port only.",
+      "evidence_files": [
+        "agent_kit/ports.py"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "reviewer_verdict": "Pass. `megaplan` and `megaplan.arnold` exist and re-export the public API from agent_kit.loop; direct identity checks pass.",
+      "evidence_files": [
+        "megaplan/__init__.py",
+        "megaplan/arnold/__init__.py"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "reviewer_verdict": "Pass. SQLite migration includes required tables, resident columns, external_requests schema, and indexes.",
+      "evidence_files": [
+        "agent_kit/store/migrations/sqlite/001_core.sql"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "reviewer_verdict": "Pass. SQLiteStore implements migrations, CRUD, locks, transaction, synthetic outbound IDs, and external request lifecycle.",
+      "evidence_files": [
+        "agent_kit/store/sqlite.py"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "reviewer_verdict": "Pass. Ledger implements documented system_seq idempotency extension and reconciliation stub.",
+      "evidence_files": [
+        "agent_kit/ledger.py"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "reviewer_verdict": "Pass. Logger writes through Store and includes secret-key redaction.",
+      "evidence_files": [
+        "agent_kit/logging.py"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "reviewer_verdict": "Pass. Tool registry and audit wrapper enforce one tool_calls row plus one event per successful invocation.",
+      "evidence_files": [
+        "agent_kit/tool_kit.py"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "reviewer_verdict": "Pass. send_message, set_activity, and defer_to_caller are registered with expected event kinds and semantics.",
+      "evidence_files": [
+        "agent_kit/tools/communication.py"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "reviewer_verdict": "Pass. AnthropicModel and FakeModel implement the required adapter and scripting/error behavior.",
+      "evidence_files": [
+        "agent_kit/model/anthropic.py",
+        "agent_kit/model/fake.py"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "reviewer_verdict": "Pass. run_turn implements lock, persistence, model-call ledger lifecycle, tool loop, synthesized reply, and abort handling.",
+      "evidence_files": [
+        "agent_kit/loop.py"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "reviewer_verdict": "Pass. CLI uses argparse, delegates to run_turn, streams events, maps exit codes, and returns unsupported_store for Supabase.",
+      "evidence_files": [
+        "arnold/cli.py"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "reviewer_verdict": "Pass. Unit tests cover envelope, SQLite store, external_requests, and tool audit behavior.",
+      "evidence_files": [
+        "tests/test_envelope.py",
+        "tests/test_sqlite_store.py",
+        "tests/test_tool_kit.py",
+        "tests/store_contract.py"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "reviewer_verdict": "Pass. Integration import test now passes along with ledger, run_turn, and CLI coverage.",
+      "evidence_files": [
+        "tests/test_megaplan_arnold_import.py",
+        "tests/test_run_turn.py",
+        "tests/test_cli.py",
+        "tests/test_ledger.py"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "reviewer_verdict": "Pass. Full pytest is green: 22 passed.",
+      "evidence_files": [
+        "tests/test_megaplan_arnold_import.py"
+      ]
+    }
+  ],
+  "sense_check_verdicts": [
+    {
+      "sense_check_id": "SC1",
+      "verdict": "Confirmed. pyproject includes `megaplan*`, and `megaplan/__init__.py` plus `megaplan/arnold/__init__.py` now exist."
+    },
+    {
+      "sense_check_id": "SC2",
+      "verdict": "Confirmed. Envelope serialization and diff projection match the stated behavior."
+    },
+    {
+      "sense_check_id": "SC3",
+      "verdict": "Confirmed. Store, Model, ProviderError, and Blob port semantics are present."
+    },
+    {
+      "sense_check_id": "SC4",
+      "verdict": "Confirmed. `from megaplan.arnold import ...` resolves to the same objects as agent_kit.loop, and arun_turn is a coroutine function."
+    },
+    {
+      "sense_check_id": "SC5",
+      "verdict": "Confirmed. Migration includes the full required external_requests schema and indexes."
+    },
+    {
+      "sense_check_id": "SC6",
+      "verdict": "Confirmed. SQLiteStore auto-applies migrations, implements transactions, and lock primitives."
+    },
+    {
+      "sense_check_id": "SC7",
+      "verdict": "Confirmed. Ledger documents and implements system_seq keying and the no-op reconcile stub."
+    },
+    {
+      "sense_check_id": "SC8",
+      "verdict": "Confirmed. Logging writes to system_logs and redacts common secret fields; secret scan found no committed Supabase key."
+    },
+    {
+      "sense_check_id": "SC9",
+      "verdict": "Confirmed. Audit wrapper writes one audit row and emits one event with tool_call_id after commit."
+    },
+    {
+      "sense_check_id": "SC10",
+      "verdict": "Confirmed. set_activity uses activity event kind and does not update current_activity."
+    },
+    {
+      "sense_check_id": "SC11",
+      "verdict": "Confirmed. AnthropicModel and FakeModel behavior matches the sense check."
+    },
+    {
+      "sense_check_id": "SC12",
+      "verdict": "Confirmed. run_turn increments system_seq, handles ProviderError vs raw exception, and aborts to abandoned/aborted."
+    },
+    {
+      "sense_check_id": "SC13",
+      "verdict": "Confirmed. CLI shape and delegation match the sense check."
+    },
+    {
+      "sense_check_id": "SC14",
+      "verdict": "Confirmed. Unit test files cover the requested areas."
+    },
+    {
+      "sense_check_id": "SC15",
+      "verdict": "Confirmed. Integration tests cover import resolution plus run_turn, CLI, and ledger paths; full suite passes."
+    },
+    {
+      "sense_check_id": "SC16",
+      "verdict": "Confirmed. Full pytest is green offline: 22 passed."
+    }
+  ]
+}

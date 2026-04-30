@@ -1,0 +1,239 @@
+{
+  "version": 4,
+  "timestamp": "2026-04-30T01:46:28Z",
+  "hash": "sha256:d23ea5a96a014e4457d2a69b7ac254c3bf5bfe38a06a3ac2aad258e9a8354034",
+  "changes_summary": "Two concrete plan-quality fixes; the attachment flags are treated as accepted tradeoff per gate-settled SD-010. (1) Completed `external_requests` schema (Step 5) to match the full spec exactly: added `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `first_attempted_at`, `completed_at`, `error_details`, plus the spec's full index set including UNIQUE(idempotency_key). The idempotency key generation in `Ledger.record_pending` now follows the spec's SHA256[:16] formula including `endpoint` so 1b reconciliation matches without churn. (2) Distinguished provider-error vs crash lifecycle (Steps 6, 7, 11, 12, 15): the Anthropic adapter raises `ProviderError(error_details=...)` for parseable provider error responses and propagates raw exceptions for transport failures; `run_turn` calls `mark_failed` on `ProviderError` (status='failed', error_details populated) and leaves rows `pending` only on true crashes; ledger tests now cover all three lifecycles (success, failed, pending). Plan structure preserved; no scope changes.",
+  "flags_addressed": [
+    {
+      "id": "scope",
+      "resolution": "addressed",
+      "reason": "Step 5 now creates external_requests with the full spec schema: endpoint, turn_id, provider_request_id, provider_response_summary, attempt_count, first_attempted_at, completed_at, error_details, plus all spec indexes including UNIQUE(idempotency_key). Step 7's idempotency key generation follows the spec SHA256[:16] formula including endpoint. No migration churn for Sprint 1b reconciliation."
+    },
+    {
+      "id": "correctness",
+      "resolution": "addressed",
+      "reason": "Step 11 specifies the Anthropic adapter raises ProviderError(error_details=...) for parseable provider errors and propagates other exceptions unchanged. Step 12 maps ProviderError to ledger mark_failed (status='failed', error_details populated, completed_at set) and only leaves rows pending on true crashes/transport exceptions. Step 15 adds explicit ledger tests for all three lifecycles: success (confirmed), provider error (failed), crash (pending)."
+    },
+    {
+      "id": "FLAG-001",
+      "resolution": "rejected",
+      "reason": "Settled by SD-010 in the gate's own settled_decisions list: 'Attachments are descoped from Sprint 1a per the user-resolved TIEBREAKER (v2\u2192v3); future critique passes should treat the spec divergence as accepted tradeoff, not a fresh flag.' The gate rationale itself flags this as already-settled. No plan change."
+    },
+    {
+      "id": "issue_hints-1",
+      "resolution": "rejected",
+      "reason": "Same as FLAG-001 \u2014 settled by SD-010 per the gate's own guidance. Already marked as 'addressed' in the gate metadata; treating as accepted tradeoff."
+    },
+    {
+      "id": "issue_hints",
+      "resolution": "rejected",
+      "reason": "Same as FLAG-001 \u2014 settled by SD-010. The gate rationale explicitly says 'these should be carried forward as accepted tradeoffs so they stop blocking.'"
+    },
+    {
+      "id": "callers-1",
+      "resolution": "rejected",
+      "reason": "Same as FLAG-001 \u2014 the CLI shape without --attach is the deliberate consequence of SD-010. The gate rationale lists this in the 'already-settled scope decision' bucket."
+    },
+    {
+      "id": "callers-2",
+      "resolution": "rejected",
+      "reason": "Same as FLAG-001 \u2014 the Python caller shape without attachments= is the deliberate consequence of SD-010. The gate rationale lists this in the 'already-settled scope decision' bucket."
+    }
+  ],
+  "questions": [
+    "Confirming the schema-completeness fix: ship the full spec `external_requests` schema in 1a (endpoint, turn_id, provider_request_id, provider_response_summary, attempt_count, first_attempted_at, completed_at, error_details, plus all spec indexes) with three lifecycle states wired up (pending/confirmed/failed) and `orphaned` left as a valid value 1b will write. Acceptable?",
+    "Confirming the failure-state distinction: provider-side observable errors map to `status='failed'` with `error_details`; only transport/SDK exceptions and true crashes leave rows `pending`. The Anthropic adapter signals the difference by raising `ProviderError` for the former and propagating raw exceptions for the latter. Acceptable, or should both be 'failed' with a separate field distinguishing crash vs provider error?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`arnold turn --epic <id> --input \"hello\"` writes one valid envelope JSON object to stdout and exits 0 when outcome is `completed`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "CLI exit codes map exactly to envelope outcomes (completed=0, errored=1, blocked_on_caller=2, aborted=3) for all four outcomes, each exercised by an integration test that drives the actual code path including a real cooperative-cancellation abort. A valid envelope is printed to stdout for every outcome.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "On abort, `bot_turns.status='abandoned'` and the envelope's `outcome='aborted'` coexist; the abort integration test asserts both invariants.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "SQLite migrations create `epics`, `messages`, `bot_turns`, `tool_calls`, `system_logs`, `epic_locks`, and `external_requests` with the **full spec schema** (`id`, `idempotency_key UNIQUE`, `provider`, `endpoint`, `tool_call_id`, `turn_id`, `request_summary`, `status`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `first_attempted_at`, `last_attempted_at`, `completed_at`, `error_details`) and the spec's full index set.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Every model turn is recorded in `bot_turns`, every executed tool is recorded in `tool_calls`, and the envelope `events` array matches the recorded tool calls for that turn.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Each main Anthropic `Model.complete_turn(...)` call writes one `external_requests` row with `tool_call_id IS NULL`, `provider='anthropic'`, `endpoint='POST /v1/messages'`, `turn_id` matching the `bot_turns` row, idempotency_key computed per the spec SHA256[:16] formula. Lifecycle: success \u2192 `confirmed` with `provider_response_summary`; observable provider error \u2192 `failed` with `error_details`; transport/crash exception \u2192 row remains `pending` with `error_details IS NULL`. All three paths covered by integration tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Same input + same SQLite state + same FakeModel seed produces byte-identical `state_delta` across repeated invocations.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Python `run_turn(...)` and CLI `arnold turn ...` produce byte-equivalent envelopes for the same fixture under `serialize_for_diff` (which strips spec-declared non-deterministic fields). Raw envelope is not byte-compared.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`--stream-events` emits one NDJSON stderr line per progress event; the parsed streamed events are byte-identical to the envelope's final `events` array (no projection \u2014 same objects, same encoder, same order).",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Tool audit wrapping is atomic: an injected failure leaves neither the DB mutation nor its `tool_calls` audit row committed.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The locked public import path `from megaplan.arnold import run_turn, arun_turn, Envelope` resolves to the same callables exported from `agent_kit.loop`, and `arun_turn` is an async coroutine.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`agent_kit/ledger.py` exposes `record_pending`, `mark_confirmed`, `mark_failed`, and a Sprint-1b reconciliation stub; the spec's idempotency-key formula (SHA256[:16] including endpoint) is implemented.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The Anthropic model adapter distinguishes provider error responses (raises `ProviderError` with `error_details`) from transport/SDK exceptions (propagates the original exception); `FakeModel` can script both modes for tests.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Invocation-mode `set_activity` emits an `activity` event and does NOT mutate `bot_turns.current_activity`, honoring the spec's mode-divergent semantics.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The `Blob` port is defined in `agent_kit/ports.py` for Sprint 1b consumption; no `LocalBlobStore`, `--attach`, or `attachments=` ships in 1a (per settled decision SD-010).",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The model id used by the Anthropic adapter is configurable at the adapter boundary (constructor argument plus `ARNOLD_MODEL_ID` env var honored by the CLI); no test or adapter hardcodes the id.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The store contract test module (`tests/store_contract.py`) is parametrized over a `store_factory` fixture and is reusable unchanged with a Supabase factory in Sprint 1b.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The full test suite passes with ephemeral SQLite and FakeModel, without network access.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The CLI remains a thin wrapper over `agent_kit.loop.run_turn` plus signal handling and exit-code serialization, with no duplicated turn orchestration logic.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Sprint 1b seams stay clear: store/model/transport/blob behavior is behind ports and no Discord or Supabase assumptions leak into `run_turn`.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "No Supabase service key or other secret from the idea file is committed into code, tests, fixtures, logs, or prompts passed downstream.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Repository starts from documentation only; the Python project structure is created from scratch.",
+    "argparse is used instead of Click.",
+    "SQLite is the only store implementation in Sprint 1a; --store supabase returns a clear errored envelope until Sprint 1b. Supabase service key is not committed anywhere.",
+    "The model id (default 'claude-opus-4-7') is configurable via constructor argument and ARNOLD_MODEL_ID env var; tests use FakeModel and require no network.",
+    "state_delta is a stable empty artifact delta in Sprint 1a but its byte structure is fully deterministic per the spec.",
+    "Opaque text IDs at API boundaries; SQLite text primary keys internally.",
+    "Attachments are deferred to Sprint 1b per SD-010; only the Blob port ships in 1a. This is a settled decision and will not be relitigated.",
+    "external_requests ships in 1a with the full spec schema and idempotency key formula (including endpoint); reconciliation logic and the recovery scan are 1b. The 'orphaned' status value is valid in the schema today but is only written by 1b reconciliation.",
+    "The Anthropic adapter distinguishes provider error responses (raises ProviderError with error_details) from transport/SDK exceptions (propagates the original exception); the loop maps these to mark_failed vs crash-pending respectively.",
+    "Byte-equivalence: state_delta unconditional; CLI\u2194Python envelope equivalence via serialize_for_diff (strips reply, event text, timestamps); streaming NDJSON byte-identical to envelope events (no projection).",
+    "Abort: bot_turns.status='abandoned' and envelope outcome='aborted' coexist; valid envelope prints to stdout with exit code 3.",
+    "'megaplan' is a regular owned package with its own __init__.py per SD-011; the megaplan harness this repo runs inside is a separate distribution and does not collide.",
+    "arun_turn is implemented as asyncio.to_thread(run_turn, ...) for Sprint 1a; async-native rewrite is out of scope."
+  ],
+  "delta_from_previous_percent": 38.73,
+  "structure_warnings": []
+}

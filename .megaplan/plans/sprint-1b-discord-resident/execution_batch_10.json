@@ -1,0 +1,66 @@
+{
+  "task_updates": [
+    {
+      "id": "T13",
+      "status": "done",
+      "executor_notes": "Implemented agent_kit/resident.py with MessageCoalescer defaults of 10s reset window, 30s hard cap, and 10-message cap; ResidentRunner dispatches persisted message rows through run_turn using resident hooks plus transport/blob injection, posts and stores initial status via direct Ledger Discord request, debounces status edits at 1s, annotates mid-turn messages, finalizes status edits, and starts a recovery loop that runs Reconciler.run_once immediately and every 300s. format_status emits dynamic <t:UNIX:R> timestamps and Done/Failed terminal states. Scoped loop.py change adds optional resident transport/blob/channel_id injection into ToolContext. Verification: tests/test_resident.py passed; related run_turn/hook/communication/ledger/store/discord modules passed; full python -m pytest --tb=no -q --no-header passed with 59 tests; agent_kit/resident.py is 310 lines.",
+      "files_changed": [
+        "agent_kit/resident.py",
+        "agent_kit/loop.py",
+        "tests/test_resident.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/ledger.py agent_kit/resident.py agent_kit/loop.py",
+        "python -m pytest tests/test_resident.py -q --tb=short --no-header",
+        "python -m pytest tests/test_run_turn.py tests/test_run_turn_hooks.py tests/test_communication_resident.py tests/test_tool_kit_external_queue.py -q --tb=short --no-header",
+        "python -m pytest tests/test_ledger.py tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py tests/test_discord_transport.py -q --tb=short --no-header",
+        "wc -l agent_kit/resident.py agent_kit/transport/discord.py && python -m py_compile agent_kit/resident.py agent_kit/ledger.py agent_kit/loop.py",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... resident/reconciler static smoke check ... PY"
+      ],
+      "task_id": "T13"
+    },
+    {
+      "id": "T14",
+      "status": "done",
+      "executor_notes": "Replaced the reconcile_on_boot no-op with a Reconciler class in agent_kit/ledger.py. run_once marks stale in-progress turns abandoned, logs recovery warnings, returns requeue message IDs, and reconciles pending externals for anthropic/openai from stored request_body with stored idempotency_key, Discord by content_preview lookup, Groq from stored audio_storage_url/model, Supabase Storage through Blob.exists then Discord attachment URL refetch or orphan+recovery warning on failure, and GitHub as an informational recovery skip. reconcile_on_boot now delegates to Reconciler(store).run_once for compatibility. Verification: tests/test_reconciler.py passed; related ledger/store/discord modules passed; full python -m pytest --tb=no -q --no-header passed with 59 tests; leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "agent_kit/ledger.py",
+        "tests/test_reconciler.py"
+      ],
+      "commands_run": [
+        "python -m py_compile agent_kit/ledger.py agent_kit/resident.py agent_kit/loop.py",
+        "python -m pytest tests/test_reconciler.py -q --tb=short --no-header",
+        "python -m pytest tests/test_ledger.py tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py tests/test_discord_transport.py -q --tb=short --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... resident/reconciler static smoke check ... PY"
+      ],
+      "task_id": "T14"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "executor_note": "Yes. ResidentRunner coalesces per epic with 10s/30s/10-message defaults, posts and stores the initial status from on_turn_start via direct Ledger Discord request, debounces edit_message at 1s, annotates mid-turn messages, finalizes status edits, and its recovery loop runs Reconciler.run_once at startup and every 300s. format_status emits <t:UNIX:R> dynamic timestamps plus Done and Failed terminal strings.",
+      "verdict": "pass",
+      "sense_check_id": "SC13"
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "executor_note": "Yes. Reconciler covers abandoned-turn recovery plus anthropic/openai replay from request_body and stored idempotency_key, Discord content-preview lookup confirmed/orphaned, Groq deterministic reissue from audio_storage_url/model, Supabase Storage Blob.exists confirmation then discord_attachment_url refetch with orphan+recovery warn on fetch failure, and GitHub recovery info skip.",
+      "verdict": "pass",
+      "sense_check_id": "SC14"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-1b-discord-resident/execution_batch_10.json",
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 10/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 10/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

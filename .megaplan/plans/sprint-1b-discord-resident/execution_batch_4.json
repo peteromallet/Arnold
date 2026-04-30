@@ -1,0 +1,80 @@
+{
+  "output": "Batch 4 completed. The model idempotency interface, ledger request_body path, SQLite persistence, and run_turn canonical request recording are implemented and verified.",
+  "files_changed": [
+    "agent_kit/ports.py",
+    "agent_kit/ledger.py",
+    "agent_kit/store/sqlite.py",
+    "agent_kit/model/anthropic.py",
+    "agent_kit/model/fake.py",
+    "agent_kit/loop.py",
+    "tests/test_ledger.py",
+    "tests/test_anthropic_model.py",
+    ".megaplan/plans/sprint-1b-discord-resident/execution_batch_4.json"
+  ],
+  "commands_run": [
+    "python -m pytest --tb=no -q --no-header",
+    "sed -n '1,260p' agent_kit/ports.py",
+    "sed -n '1,260p' agent_kit/ledger.py",
+    "sed -n '1,680p' agent_kit/loop.py",
+    "sed -n '1,240p' agent_kit/model/anthropic.py",
+    "sed -n '1,220p' agent_kit/model/fake.py",
+    "rg \"complete_turn|record_pending|insert_pending\" -n",
+    "sed -n '1,260p' tests/test_ledger.py",
+    "sed -n '1,320p' tests/test_run_turn.py",
+    "sed -n '1,240p' tests/helpers.py",
+    "python -m pytest tests/test_ledger.py -q --tb=short --no-header",
+    "python -m pytest tests/test_anthropic_model.py -q --tb=short --no-header",
+    "python -m pytest tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py -q --tb=no --no-header",
+    "python -m pytest --tb=no -q --no-header",
+    "python - <<'PY' ... direct ledger request_body/idempotency smoke check ... PY",
+    "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true"
+  ],
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 4/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 4/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Extended Model.complete_turn with optional idempotency_key, updated AnthropicModel to pass it as an Idempotency-Key extra header only when supplied, and updated FakeModel to accept and record it. Extended Ledger.record_pending, Store.insert_pending, and SQLiteStore.insert_pending with optional request_body; SQLite persists it through the request_body TEXT JSON column. run_turn now builds the canonical request_body with model, messages, tools, and ANTHROPIC_MAX_TOKENS; stores system_seq in request_summary; records request_body through Ledger -> Store; and passes the derived idempotency key into model.complete_turn. Verification: tests/test_ledger.py, tests/test_anthropic_model.py, and invocation-mode run_turn/CLI/envelope modules passed; full `python -m pytest --tb=no -q --no-header` passed with 25 tests. A direct smoke check confirmed decoded external_requests.request_body keys, system_seq=1 in request_summary, max_tokens match, and FakeModel received the same idempotency key stored in the ledger. Source-tree leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "agent_kit/ports.py",
+        "agent_kit/ledger.py",
+        "agent_kit/store/sqlite.py",
+        "agent_kit/model/anthropic.py",
+        "agent_kit/model/fake.py",
+        "agent_kit/loop.py",
+        "tests/test_ledger.py",
+        "tests/test_anthropic_model.py"
+      ],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header",
+        "sed -n '1,260p' agent_kit/ports.py",
+        "sed -n '1,260p' agent_kit/ledger.py",
+        "sed -n '1,680p' agent_kit/loop.py",
+        "sed -n '1,240p' agent_kit/model/anthropic.py",
+        "sed -n '1,220p' agent_kit/model/fake.py",
+        "rg \"complete_turn|record_pending|insert_pending\" -n",
+        "sed -n '1,260p' tests/test_ledger.py",
+        "sed -n '1,320p' tests/test_run_turn.py",
+        "sed -n '1,240p' tests/helpers.py",
+        "python -m pytest tests/test_ledger.py -q --tb=short --no-header",
+        "python -m pytest tests/test_anthropic_model.py -q --tb=short --no-header",
+        "python -m pytest tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py -q --tb=no --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "python - <<'PY' ... direct ledger request_body/idempotency smoke check ... PY",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. Model.complete_turn accepts idempotency_key; AnthropicModel forwards it via Idempotency-Key extra_headers when present; FakeModel accepts and records it; run_turn records canonical request_body plus system_seq in request_summary through Ledger.record_pending -> SQLiteStore.insert_pending; and tests plus a direct database smoke check verify persistence and idempotency-key threading."
+    }
+  ]
+}

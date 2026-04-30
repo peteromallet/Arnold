@@ -1,0 +1,54 @@
+{
+  "output": "Batch 5 completed. Resident hooks are implemented in `run_turn`, with focused tests for trigger passthrough, recovered message ordering, `on_turn_start`, and both mid-turn checkpoints.",
+  "files_changed": [
+    "agent_kit/loop.py",
+    "tests/test_run_turn_hooks.py",
+    ".megaplan/plans/sprint-1b-discord-resident/execution_batch_5.json"
+  ],
+  "commands_run": [
+    "sed -n '1,280p' agent_kit/loop.py",
+    "sed -n '1,260p' agent_kit/tools/communication.py",
+    "sed -n '1,260p' agent_kit/tool_kit.py",
+    "python -m pytest --tb=no -q --no-header",
+    "python -m pytest tests/test_run_turn_hooks.py -q --tb=short --no-header",
+    "python -m pytest tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py -q --tb=no --no-header",
+    "python -m pytest --tb=no -q --no-header",
+    "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+    "python - <<'PY' ... hook occurrence smoke check ... PY"
+  ],
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 5/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 5/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Added resident hook kwargs to run_turn: triggered_by_message_ids, recovered_input_messages, on_turn_start, and mid_turn_message_check. When trigger IDs are supplied, run_turn skips inline inbound message creation and passes those IDs to create_turn. Recovered messages are sorted by sent_at to build the initial user prompt. on_turn_start is invoked synchronously immediately after create_turn and before the first model call. mid_turn_message_check is invoked before final-text auto-send and before executing explicit send_message tool calls; returned fresh messages are appended as a mid-turn user block, trigger IDs are widened via update_turn, and the model loop is re-entered. Verification: new tests/test_run_turn_hooks.py covers recovered ordering, trigger ID passthrough, on_turn_start timing, final-text mid-turn re-prompt, and explicit-send_message mid-turn re-prompt. Existing invocation-mode tests/test_run_turn.py, tests/test_cli.py, and tests/test_envelope.py passed unchanged. Full `python -m pytest --tb=no -q --no-header` passed with 28 tests. Source-tree leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "agent_kit/loop.py",
+        "tests/test_run_turn_hooks.py"
+      ],
+      "commands_run": [
+        "sed -n '1,280p' agent_kit/loop.py",
+        "sed -n '1,260p' agent_kit/tools/communication.py",
+        "sed -n '1,260p' agent_kit/tool_kit.py",
+        "python -m pytest --tb=no -q --no-header",
+        "python -m pytest tests/test_run_turn_hooks.py -q --tb=short --no-header",
+        "python -m pytest tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py -q --tb=no --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... hook occurrence smoke check ... PY"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. With new kwargs omitted, tests/test_run_turn.py, tests/test_cli.py, and tests/test_envelope.py pass unchanged. With kwargs supplied, tests verify on_turn_start fires after create_turn and before the first model call, and mid_turn_message_check fires/re-prompts at both the final-text checkpoint and the explicit-send_message checkpoint."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "task_updates": [
+    {
+      "id": "T21",
+      "status": "blocked",
+      "executor_notes": "Verification ran where possible. Sprint 1a modules passed with 22 tests. Full suite passed with 82 passed and 1 skipped. The leaked Supabase JWT prefix grep returned zero matches. Line-count verification failed because agent_kit/store/supabase.py is missing; agent_kit/resident.py is 310 lines and agent_kit/transport/discord.py is 376 lines. A temporary verification script reproduced the missing-module failure and was deleted.",
+      "files_changed": [],
+      "commands_run": [
+        "python -m pytest tests/test_envelope.py tests/test_ledger.py tests/test_run_turn.py tests/test_cli.py tests/test_tool_kit.py tests/test_sqlite_store.py -q --tb=short --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "wc -l agent_kit/store/supabase.py agent_kit/resident.py agent_kit/transport/discord.py || true",
+        "python /tmp/verify_sprint_1b_t21.py"
+      ],
+      "task_id": "T21"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC21",
+      "task_id": "T21",
+      "executor_note": "No. pytest is green with 82 passed and 1 skipped, Sprint 1a verification modules passed with 22 tests, and the JWT-prefix grep returned zero matches. However, agent_kit/store/supabase.py is missing, so the required three-module <=400-line check cannot pass.",
+      "verdict": "fail",
+      "sense_check_id": "SC21"
+    }
+  ],
+  "checkpoint_file": ".megaplan/plans/sprint-1b-discord-resident/execution_batch_13.json",
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "1/1 batch tasks have no executor update \u2014 tracking is incomplete.",
+    "Advisory observation skip before batch 13/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 13/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

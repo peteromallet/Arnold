@@ -1,0 +1,31 @@
+{
+  "receipt_id": "008df9a9-4d8e-406b-af4f-1a3e4a9bd265",
+  "plan_id": "sprint-1a-agent-kit-core",
+  "phase": "revise",
+  "iteration": 5,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T01:53:05.660453+00:00",
+  "profile_name": null,
+  "agent": "claude",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "52daf42b-29a5-4c46-bc41-1c33990f2946",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "79ed4015db26892d084c9cbd234e508a830a134c722d908838f177bba899be99",
+  "prompt_hash_canonical": "0d92cd73cd426357eee65a5fe1d9113dcfbd2786c73d00e0b700fdc06c942e14",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [],
+  "cost_usd": 0.9451499999999999,
+  "duration_ms": 221319,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "start_timestamp_utc": "2026-04-30T01:49:24Z",
+    "notes_consumed": [],
+    "notes_consumed_count": 0
+  },
+  "scope_drift_severity": null
+}

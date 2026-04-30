@@ -1,0 +1,264 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Verified FLAG-001 at the plan level: the revision adds `agent_kit/blob/local.py`, `agent_kit/attachments.py`, repeatable CLI `--attach`, Python `attachments=`, LocalBlobStore tests, and CLI/Python attachment integration tests. This addresses the previous omission of the attachment entry points and local blob storage surface.",
+          "flagged": false
+        },
+        {
+          "detail": "Attachment semantics: the full Callable API says image attachments create an `images` row with `source='caller_uploaded'` and audio attachments are transcribed before the turn, but the revised plan stores image metadata only on `messages` and returns a graceful `errored` envelope for audio until Sprint 1b. This is an explicit reduction from the spec's Sprint 1a callable API text, even though the plan now exposes attachment parameters.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified FLAG-002 at the plan level: the revision adds a dedicated Step 4 for `megaplan/arnold/__init__.py`, re-exporting `run_turn`, `arun_turn`, and `Envelope`, plus an import-path test. That resolves the prior public API import-path gap against the documented `from megaplan.arnold import ...` example.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the user instruction constraints: the review inspected only repository files and the provided plan text, and did not invoke the megaplan CLI, activate the megaplan skill, or start any nested planning harness.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked the user instruction against the plan and repository context: the plan correctly treats the repo as documentation-only and does not require running the megaplan CLI or nested plans, which is consistent with the current file layout containing only `planning-bot-spec.md`, sprint idea files, and `.megaplan` harness metadata.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Callable API: The spec's Sprint 1a readiness gate and Callable API section explicitly include attachment passing via CLI `--attach` and Python `attachments=`, including BlobStore pre-processing for images/audio before the turn starts. The plan defines a `Blob` port but does not schedule any CLI `--attach`, Python `attachments`, local blob implementation, or attachment tests, so it would miss part of the spec's Sprint 1a callable API acceptance.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Event ledger: The sprint scope explicitly names `agent_kit/ledger.py` as an event store skeleton, but the implementation plan only covers `tool_kit.py`, SQLite store, logging, tools, model, loop, and CLI. Without a planned `ledger.py`, an executor could satisfy tool auditing while omitting a required package surface from the scope.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Verified correctness-2 and FLAG-004 at the plan level: the revision no longer requires raw byte-equivalence for the full envelope, and instead asserts unconditional byte-equivalence for `state_delta` plus a `serialize_for_diff` projection for CLI/Python equivalence. That matches the spec's split between deterministic structure and non-deterministic `reply` / `events.text` fields.",
+          "flagged": false
+        },
+        {
+          "detail": "Streaming equivalence: Step 14 says streamed NDJSON events must equal the final envelope `events` array exactly, but Step 16 says to compare streamed events to final events only after `serialize_for_diff` to absorb transient text differences. Because the streamed event objects should be the same objects appended into the envelope, allowing projection here weakens the acceptance criterion and could hide a real stream/envelope mismatch.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified correctness-3 at the plan level: Step 10 now states invocation-mode `set_activity` only emits an `activity` event and does not mutate `bot_turns.current_activity`, which matches the mode-divergent tool behavior in the spec.",
+          "flagged": false
+        },
+        {
+          "detail": "Abort path: the revised plan adds a cooperative cancellation flag and CLI SIGINT handler, which makes the `aborted` outcome testable. The plan also marks the turn `abandoned` on abort; this is defensible for a partial turn, but implementers should ensure the envelope outcome remains `aborted` and the valid envelope is still printed on stdout.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Python API import path: The spec's Callable API example imports `run_turn` and `Envelope` from `megaplan.arnold`, and says `arun_turn` is also provided with identical semantics. The plan instead centers `agent_kit.loop.run_turn`, says an `arnold/__init__.py` re-export is optional, and leaves the `megaplan.arnold` compatibility module as an open question despite the spec saying Sprint 1a decisions are locked.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Determinism: The plan asks integration tests to assert byte-equivalent CLI and Python envelopes, but also says to compare modulo non-deterministic reply text. The spec's determinism guarantee says `reply` and `events.text` are not byte-deterministic while `state_delta` and event structure are, so a literal byte-equivalence acceptance test is only correct with a deterministic fake model and stable timestamps/IDs or a deliberately normalized fixture.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Schema fields: The plan calls out some nullable resident-mode columns such as `status_message_id` and `current_activity`, but Step 8 also plans to update `bot_turns.current_activity` for `set_activity` even though the Sprint 1a tool semantics say invocation-mode `set_activity` emits an activity event and otherwise has no side effect. This is not fatal if implemented as harmless bookkeeping, but it diverges from the mode-divergent behavior in the spec.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Verified issue_hints-2 at the plan level: the revision adds an explicit `agent_kit/ledger.py` step, a minimal `external_requests` table, Store primitives, and a documented Sprint 1b reconciliation stub. This resolves the previous package-layout omission for `ledger.py`.",
+          "flagged": false
+        },
+        {
+          "detail": "Ledger/recovery: Recurring debt: the revised plan says `run_turn` instantiates but does not actively use the ledger because the Sprint 1a tools do not make external calls, but the main Anthropic model request is an external call and the spec's `external_requests` table explicitly includes system-level calls with `tool_call_id=null`. This means the scaffolding can pass layout checks while still not recording the only guaranteed external API call in Sprint 1a.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified scope-2 at the plan level: the revision retains `defer_to_caller` as a Sprint 1a communication tool and adds tests for the `blocked_on_caller` outcome, which is consistent with the full spec despite the shorter idea summary listing only `send_message` and `set_activity`.",
+          "flagged": false
+        },
+        {
+          "detail": "The repository still contains no implementation code beyond docs and harness metadata, so no broader existing code paths need to be migrated or coordinated. The plan remains a greenfield bootstrap against `planning-bot-spec.md` and `ideas/sprint-1a-agent-kit-core.md`.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Repository scope check found no existing Python source, project metadata, CLI, package directories, migrations, or tests; only the spec and sprint idea files exist. The plan is therefore right to bootstrap the package from scratch rather than patch existing implementation code.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Recovery/idempotency scope: The full spec says underlying `external_requests` ledger mechanisms apply in invocation mode and reconciliation runs on every process boot, while later Sprint 1b acceptance makes the full recovery tests explicit. The Sprint 1a idea did not list `external_requests`, and the plan omits it entirely except for a vague `ledger.py` omission, so this is a scope tension between the detailed spec and the narrower sprint idea that should be settled before execution.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Tool surface: The idea's minimal tool surface lists only `send_message` and `set_activity`, while the full spec and Testing section also call out `defer_to_caller` enforcement for Sprint 1a. The plan includes `defer_to_caller`, which is broader than the idea but consistent with the full spec and necessary for `blocked_on_caller` outcome coverage.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Verified all_locations-1 at the plan level: Step 12 makes the Anthropic model id a constructor parameter and the CLI reads `ARNOLD_MODEL_ID` / `--model-id`, so the model string is no longer baked into the adapter or tests.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified all_locations-2 at the plan level: Step 15 now structures `tests/store_contract.py` as a parametrized store-agnostic suite with a `store_factory` fixture, which is the right support for reusing the same contract against Supabase in Sprint 1b.",
+          "flagged": false
+        },
+        {
+          "detail": "Package layout: the revised plan declares `agent_kit`, `arnold`, and a top-level `megaplan` package. This matches the documented import path, but it creates a real top-level package named `megaplan` in a repo that is already being run inside a megaplan harness; the plan asks whether to use a namespace package, so the collision/ownership decision remains open and should be resolved before implementation.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "CLI infrastructure: The plan covers `pyproject.toml` console script, `arnold/cli.py`, stdout/stderr separation, outcome exit-code mapping, and tests for `--stream-events`, which are the necessary integration points for the `arnold turn` surface described in both the idea and spec.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Model configuration: The plan hardcodes or defaults to model string `claude-opus-4-7`, matching the current spec text. Because this value is provider-specific and could change, the plan should ensure it is configurable at the model adapter boundary rather than baked into tests or CLI behavior; the plan only says 'configurable default' in assumptions, not in implementation steps.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Store contract support: The plan creates `tests/store_contract.py`, but does not explicitly plan reusable fixtures or a contract shape that can be reused unchanged against Supabase in Sprint 1b, even though Sprint 1b acceptance depends on the original SQLite contract suite passing against the Supabase implementation unchanged.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Verified callers-1 at the plan level: the CLI caller now has repeatable `--attach PATH`, and the Python caller has `attachments=[...]` flowing into `run_turn`. Tests cover both CLI and Python image attachment paths plus an audio error path.",
+          "flagged": false
+        },
+        {
+          "detail": "Python attachment inputs: the spec allows `attachments: list[Path | bytes | tuple[bytes, mime_type]]`; the plan accepts these types, but raw `bytes` have no filename or MIME type. The plan says to MIME-sniff with explicit override, which is a reasonable path, but the tests should include raw bytes without override and a tuple override to ensure both ambiguous and explicit caller forms behave predictably.",
+          "flagged": true
+        },
+        {
+          "detail": "Verified callers-2 at the plan level: the revised plan adds a real abort path through a cancellation flag and CLI SIGINT handler, and the integration tests exercise exit code 3 through that path rather than only testing static mapping.",
+          "flagged": false
+        },
+        {
+          "detail": "CLI input callers: the revised CLI preserves mutually exclusive `--input` and `--from-stdin`, adds `--db`, `--store`, `--model-id`, and keeps the CLI as a thin wrapper over `agent_kit.loop.run_turn`. That covers the specified command forms plus the newly added configurability.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Run-turn callers: The only specified callers in the repo are the CLI form `arnold turn --epic <epic_id> [--from-stdin | --input \"<text>\"] [--stream-events] [--store sqlite|supabase]` and the Python form `run_turn(epic_id, input, store, model, on_event=callback, attachments=...)`. The plan handles `--input`, `--from-stdin`, `--stream-events`, store/model injection, and `on_event`, but does not handle the `attachments` argument or repeatable CLI `--attach` paths.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Epic ID handling: The plan assumes opaque text IDs at API boundaries, which is compatible with both the envelope examples using prefixed IDs and the SQLite table implementation using text primary keys. This appears safer than forcing UUIDs in Sprint 1a, provided the store contract validates non-empty IDs and preserves caller-provided IDs byte-for-byte.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Outcome callers: The CLI caller must receive a valid envelope on stdout even for non-zero outcomes, and the plan covers completed, errored, blocked_on_caller, and aborted exit codes. The plan does not describe how caller cancellation produces `aborted` in invocation mode, so tests may only assert a static mapping without exercising an actual abort path.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Attachments: recurring debt: the plan now wires attachment entry points, but intentionally implements reduced Sprint 1a semantics for images and audio compared with the full callable API.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "planning-bot-spec.md says invocation image attachments create `images` rows with `source='caller_uploaded'` and audio attachments are transcribed before the turn; the revised plan stores image metadata only on `messages` and returns a graceful errored envelope for audio until Sprint 1b."
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Ledger/recovery: recurring debt: the ledger scaffold is added, but the plan does not record the main Anthropic model call in `external_requests` even though the spec defines system-level external request rows with `tool_call_id=null`.",
+      "category": "completeness",
+      "severity_hint": "uncertain",
+      "evidence": "planning-bot-spec.md external_requests schema and idempotency-key generation include system requests such as the loop's main LLM call; revised Step 7 says the ledger is instantiated but not actively used in Sprint 1a because the minimal tool surface has no external calls."
+    },
+    {
+      "id": "FLAG-004",
+      "concern": "Event streaming: the revised tests still allow projected comparison for streamed events versus final envelope events, which weakens the exact stream/envelope equality requirement.",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "evidence": "Step 14 says streamed NDJSON lines equal final envelope events exactly, but Step 16 says to compare stream events post-`serialize_for_diff`; acceptance requires final stdout envelope events to match streamed events."
+    },
+    {
+      "id": "FLAG-005",
+      "concern": "Public API packaging: the plan has not settled whether `megaplan` is a regular or namespace package, creating a possible top-level package collision with the surrounding megaplan harness/ecosystem.",
+      "category": "maintainability",
+      "severity_hint": "likely-minor",
+      "evidence": "Step 1 declares a `megaplan` package and Step 4 creates `megaplan/arnold/__init__.py`, while plan questions still ask whether this should be a regular package or PEP 420 namespace package."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 13: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 15: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 16: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-002",
+    "issue_hints-2",
+    "correctness-1",
+    "correctness-2",
+    "correctness-3",
+    "scope-2",
+    "all_locations-1",
+    "all_locations-2",
+    "callers-1",
+    "callers-2"
+  ],
+  "disputed_flag_ids": []
+}

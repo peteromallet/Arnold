@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "diagnosis": {
+      "type": "string"
+    },
+    "fix_description": {
+      "type": "string"
+    },
+    "files_to_change": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "should_pause": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "diagnosis",
+    "fix_description",
+    "files_to_change",
+    "confidence",
+    "outcome",
+    "should_pause"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,82 @@
+{
+  "output": "Batch 6 completed. T6 and T8 are implemented and verified; full suite passes.",
+  "files_changed": [
+    "agent_kit/ports.py",
+    "agent_kit/tool_kit.py",
+    "agent_kit/store/sqlite.py",
+    "agent_kit/tools/communication.py",
+    "tests/test_communication_resident.py",
+    "tests/test_ports_v1b.py",
+    ".megaplan/plans/sprint-1b-discord-resident/execution_batch_6.json"
+  ],
+  "commands_run": [
+    "python -m pytest --tb=no -q --no-header",
+    "sed -n '1,260p' agent_kit/ports.py",
+    "sed -n '1,240p' agent_kit/tool_kit.py",
+    "sed -n '1,260p' agent_kit/tools/communication.py",
+    "sed -n '1,180p' tests/test_tool_kit.py",
+    "python -m pytest tests/test_communication_resident.py -q --tb=short --no-header",
+    "python -m pytest tests/test_ports_v1b.py -q --tb=short --no-header",
+    "python -m pytest tests/test_tool_kit.py tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py -q --tb=no --no-header",
+    "python -m pytest --tb=no -q --no-header",
+    "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+    "python - <<'PY' ... protocol/context signature smoke check ... PY"
+  ],
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 6/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 6/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Extended ToolContext with optional transport, blob, and external_queue fields and added ExternalSpec with provider, endpoint, request_summary, and optional request_body. Updated send_message so invocation mode uses store.create_message(..., synthesize_outbound_id=True) and preserves synthetic Discord IDs, while resident mode uses synthesize_outbound_id=False, leaves discord_message_id NULL, and appends a Discord post callable to external_queue. The callable posts through transport.post_message, updates the message row via store.update_message, and returns provider id plus response summary. Updated set_activity to persist current_activity on the turn. Minimal SQLite create_message synthesize flag and update_message support were added so current tests and the resident callable can execute before the broader T9 SQLite expansion. Verification: tests/test_communication_resident.py passed, existing tests/test_tool_kit.py plus run_turn/CLI/envelope modules passed, and full `python -m pytest --tb=no -q --no-header` passed with 33 tests.",
+      "files_changed": [
+        "agent_kit/tool_kit.py",
+        "agent_kit/tools/communication.py",
+        "agent_kit/store/sqlite.py",
+        "tests/test_communication_resident.py"
+      ],
+      "commands_run": [
+        "python -m pytest --tb=no -q --no-header",
+        "sed -n '1,240p' agent_kit/tool_kit.py",
+        "sed -n '1,260p' agent_kit/tools/communication.py",
+        "sed -n '1,180p' tests/test_tool_kit.py",
+        "python -m pytest tests/test_communication_resident.py -q --tb=short --no-header",
+        "python -m pytest tests/test_tool_kit.py tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py -q --tb=no --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "python - <<'PY' ... protocol/context signature smoke check ... PY"
+      ],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Extended Store Protocol with find_abandoned_turns, find_pending_external_requests, mark_orphaned, find_unprocessed_messages, load_messages, update_message, image CRUD methods, and the create_message synthesize_outbound_id flag. Added Blob.exists. Added new PushTransport Protocol with start, stop, post_message, edit_message, download_attachment, and fetch_recent_messages, while leaving the existing Transport Protocol without push methods. Verification: tests/test_ports_v1b.py passed, signature smoke check confirmed the new protocol members and that Transport lacks post_message, and full `python -m pytest --tb=no -q --no-header` passed with 33 tests. Source-tree leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "agent_kit/ports.py",
+        "tests/test_ports_v1b.py"
+      ],
+      "commands_run": [
+        "sed -n '1,260p' agent_kit/ports.py",
+        "python -m pytest tests/test_ports_v1b.py -q --tb=short --no-header",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... protocol/context signature smoke check ... PY"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Yes. ToolContext has optional transport/blob/external_queue defaults; send_message preserves invocation synthetic IDs with synthesize_outbound_id=True and queues resident Discord post/update callable with synthesize_outbound_id=False; set_activity persists current_activity. Tests cover invocation, resident queue/callback update, and activity persistence."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Yes. Store Protocol contains the new recovery/message/image methods and create_message synthesize_outbound_id flag; Blob has exists; PushTransport is a new separate Protocol with the requested push/download/fetch methods; and the existing Transport Protocol remains without post_message."
+    }
+  ]
+}

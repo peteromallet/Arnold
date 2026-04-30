@@ -1,0 +1,161 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Store contract: the idea and spec require the original Store port contract suite to run green against Supabase unchanged, but the plan Step 4 explicitly changes `tests/store_contract.py` to add ledger, image, and recovery coverage. That may be useful coverage, but it no longer proves that the Sprint 1a contract suite was reusable unchanged as required by `planning-bot-spec.md` lines 90 and 2549.",
+          "flagged": true
+        },
+        {
+          "detail": "Mid-turn handling: the plan asks whether follow-up-turn handling is acceptable and then assumes it, but the spec says product decisions are locked and specifically requires mid-turn messages to surface in an end-of-turn check before the bot finalizes, then be retroactively added to the same turn's `triggered_by_message_ids` (`planning-bot-spec.md` lines 822-843). This is a direct behavior divergence from the plan requirements, not merely an implementation detail.",
+          "flagged": true
+        },
+        {
+          "detail": "Recurring debt: callable-api: the codebase still has no `--attach`, `run_turn(..., attachments=...)`, local Blob implementation, or caller-uploaded image source, while Sprint 1b plans image tools and Blob storage. The prior Sprint 1a attachment deferral is known accepted debt, but this plan broadens image/Blob work without containing the invocation-mode attachment gap described in `planning-bot-spec.md` lines 1895-1908.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Supabase dependency wiring: Step 6 chooses a direct `psycopg` connection for the store, but Step 1 only adds `discord.py`, `supabase`, `groq`, `httpx`, and `pytest-asyncio`; the current `pyproject.toml` only has `anthropic` at lines 11-13. Without adding `psycopg` or `psycopg[binary]`, the planned `SupabaseStore` cannot import its database driver at runtime.",
+          "flagged": true
+        },
+        {
+          "detail": "External request reconciliation: the plan says Anthropic/OpenAI recovery will replay with the same `Idempotency-Key`, but the existing `AnthropicModel.complete_turn` takes only `model_id`, `messages`, `tools`, and `hot_context` and calls `client.messages.create(...)` without any idempotency header path. The plan does not include an Anthropic adapter API change or client wrapper capable of replaying by ledger key, so the stated reconciliation path is not implementable from the current model boundary.",
+          "flagged": true
+        },
+        {
+          "detail": "Tool-call external side effects: `agent_kit/tool_kit.py` lines 110-121 runs every tool function inside `store.transaction()` and only records `tool_calls` after the function returns. The plan's resident `send_image` and Discord `send_message` semantics need `external_requests` insertion before external calls and confirmation after, so doing Discord posts inside existing audited tool bodies would either hold DB transactions across network calls or violate the ledger ordering described in `planning-bot-spec.md` lines 2473-2480 unless the tool runtime is explicitly reworked.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Resident status lifecycle is broader than wrapping `run_turn`: the current `run_turn` creates the `bot_turns` row internally at `agent_kit/loop.py` lines 62-81 and emits no `turn_start` event before tool calls. Step 14 says the runner posts a status at turn start, captures the Discord id, and calls `store.update_turn(turn_id, status_message_id=...)`, but the runner has no turn id until after `run_turn` has already started and there is no planned hook for that moment.",
+          "flagged": true
+        },
+        {
+          "detail": "Mid-turn processing is not only a coalescer concern: the existing loop sends the final response as soon as `result.final_text` appears or `send_message` is invoked (`agent_kit/loop.py` lines 261-278), with no end-of-turn query before finalization. The plan's follow-up-turn shortcut leaves the current response able to go out before contradictory mid-turn messages are considered, which the spec explicitly tries to prevent.",
+          "flagged": true
+        },
+        {
+          "detail": "Voice support scope is incomplete relative to the idea: the idea lists a `transcribe_voice` tool and the spec has a `transcribe_voice(audio_url)` tool entry, but the plan only implements automatic Discord voice ingestion through the transport and does not add or test a registered `transcribe_voice` tool. If product scope truly excludes manual/non-voice audio transcription this sprint, the plan should call that out because the spec adversarial test for non-voice audio expects a preserved file and a user-facing prompt.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "ToolContext plumbing is missing: `agent_kit/tool_kit.py` lines 29-36 only provides `store`, `turn_id`, events, reply buffer, and metadata. The planned image tools need Blob access, `send_image` needs resident transport access, and `send_message` needs to be mode-divergent, but the plan does not extend `ToolContext` or provide another dependency injection path for Blob/Discord clients.",
+          "flagged": true
+        },
+        {
+          "detail": "Transport port changes need broad call-site and test updates: `agent_kit/ports.py` lines 50-60 currently defines only pull-style `receive`, `send`, and `stream_event`, while `arnold/cli.py` bypasses Transport entirely and calls `run_turn` directly. The plan adds push methods to the Protocol, but does not define a CLI/pull transport adapter or explain how existing invocation code remains conformant after the Protocol changes.",
+          "flagged": true
+        },
+        {
+          "detail": "Status activity persistence requires changing the existing `set_activity` tool, not just the resident runner: `agent_kit/tools/communication.py` currently truncates and returns a description but does not update `bot_turns.current_activity`. Step 14 mentions extending it, which is the right location to touch; tests should cover both the DB column update and the existing invocation event shape because `tests/test_run_turn.py` already asserts activity event behavior.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Checked all `run_turn` callers with `rg`: existing callers in `arnold/cli.py` and tests pass only `epic_id`, `input`, `store`, `model`, optional `model_id`, `on_event`, and `cancel_event`. The plan's new `triggered_by_message_ids` and `pre_persisted` parameters can be backward-compatible if optional, but resident recovery needs a way to load persisted message contents and skip `create_message`; otherwise `run_turn` will still create a synthetic inbound message at `agent_kit/loop.py` lines 62-67 and lose the original Discord ids.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked `send_message` callers: it is invoked both when the model explicitly requests it and automatically when final text is returned (`agent_kit/loop.py` lines 261-268). The current tool only appends to `reply_buffer` and creates a DB row with a synthetic invocation id; the plan does not specify how these existing call paths become Discord posts in resident mode, so the acceptance criterion for a whitelisted DM response within 30 seconds is not satisfied by the planned transport alone.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked `insert_pending` callers: only `Ledger.record_pending` currently inserts external requests, and it derives system-call keys with a `system_seq` ordinal. The plan correctly notes that Sprint 1b reconciliation must preserve this extension, but any replayer must also persist or reconstruct the original `system_seq`; the existing `external_requests.request_summary` does not store that ordinal unless the plan adds it explicitly.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Mid-turn handling: plan replaces the spec's same-turn end-of-turn prompt with a follow-up turn, allowing responses and writes to complete before new user input is considered.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`planning-bot-spec.md` lines 822-843 require end-of-turn surfacing and retroactive trigger inclusion; the plan Step 13 explicitly uses a follow-up turn and says retroactive inclusion is out of scope."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Resident Discord replies: transport `post_message` is planned, but existing `send_message` call paths are not wired to use it, so resident turns may only write synthetic invocation messages.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/tools/communication.py` creates outbound rows and reply-buffer text only; `agent_kit/loop.py` auto-invokes `send_message` for final text. The plan does not add transport/blob dependencies to `ToolContext` or otherwise make `send_message` mode-divergent."
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Supabase store dependencies: direct psycopg is selected for store operations but is missing from the dependency plan.",
+      "category": "correctness",
+      "severity_hint": "likely-minor",
+      "evidence": "Plan Step 6 chooses direct `psycopg`; Plan Step 1 omits it; current `pyproject.toml` dependencies only include `anthropic`."
+    },
+    {
+      "id": "FLAG-004",
+      "concern": "Status message lifecycle: the runner cannot post and store the initial status message id at turn start without a new run-loop hook or external turn creation API.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`run_turn` creates the `bot_turns` row internally and emits no `turn_start` event before tool calls; Step 14 assumes the resident runner already has `turn_id` to update."
+    },
+    {
+      "id": "FLAG-005",
+      "concern": "Contract-test proof: modifying `tests/store_contract.py` conflicts with the requirement that the original Sprint 1a Store contract suite run unchanged against Supabase.",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "evidence": "The idea says the same contract tests from 1a run green against both stores; the plan Step 4 appends new coverage to that same contract."
+    },
+    {
+      "id": "FLAG-006",
+      "concern": "Secrets management: the plan input includes a Supabase service-role key in plain text, which should not be committed into migrations, docs, tests, or plan artifacts and should be rotated.",
+      "category": "security",
+      "severity_hint": "likely-significant",
+      "evidence": "The idea block supplies `Supabase Service key: eyJ...`; implementation steps should use environment variables only and avoid preserving this secret in repository files."
+    },
+    {
+      "id": "FLAG-007",
+      "concern": "External reconciliation: Anthropic idempotency-key replay is specified but the current Model boundary and adapter have no way to send an idempotency header or replay from a ledger row.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/model/anthropic.py` calls `client.messages.create(...)` without custom headers and `Model.complete_turn` has no idempotency-key parameter; the plan does not include an adapter-level API change."
+    },
+    {
+      "id": "FLAG-008",
+      "concern": "Callable API: Recurring debt: image/Blob work is added for Sprint 1b but invocation-mode attachment passing remains unplanned.",
+      "category": "completeness",
+      "severity_hint": "uncertain",
+      "evidence": "`planning-bot-spec.md` lines 1895-1908 define `--attach`, `attachments=`, caller-uploaded images, and Blob preprocessing; the plan focuses on Discord ingestion and image tools but does not add invocation attachment entry points."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 17: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

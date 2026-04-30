@@ -1,0 +1,67 @@
+{
+  "output": "Batch 4 complete. Implemented T7 and T9, and checkpointed results to `.megaplan/plans/sprint-1a-agent-kit-core/execution_batch_4.json`.",
+  "files_changed": [
+    "agent_kit/ledger.py",
+    "agent_kit/tool_kit.py",
+    ".megaplan/plans/sprint-1a-agent-kit-core/execution_batch_4.json"
+  ],
+  "commands_run": [
+    "python - <<'PY' ... ledger verification with fake tool_call FK ... PY",
+    "python - <<'PY' ... tool kit verification ... PY",
+    "python -m compileall -q agent_kit arnold megaplan",
+    "rg -n \"print\\(\" agent_kit arnold megaplan || true",
+    "python - <<'PY' ... ledger verification with real tool_call FK ... PY",
+    "python -m pytest",
+    "rg -n \"yhwfl|service key|eyJ[A-Za-z0-9_-]+\" agent_kit arnold megaplan || true",
+    "find agent_kit arnold megaplan -type d -name __pycache__ -prune -exec rm -rf {} +",
+    "python - <<'PY' ... checkpoint write ... PY"
+  ],
+  "deviations": [
+    "`python -m pytest` exited 5 because the repository still has zero collected tests; unit/integration tests are scheduled for later batches. Pytest did load `pyproject.toml` under Python 3.11.11.",
+    "An initial ledger verification used a fake `tool_call_id` and correctly failed the SQLite FK constraint. I reran the verification with a real `tool_calls` row; no code change was needed for that failure.",
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "Advisory observation skip before batch 4/9: Project directory is not a git repository.",
+    "Advisory observation skip after batch 4/9: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ],
+  "task_updates": [
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Added `agent_kit/ledger.py` with a `Ledger` wrapper around Store external_requests primitives. `record_pending` accepts `system_seq` and returns `(request_id, idempotency_key)`. Tool-call keys use the spec formula with canonical JSON `request_summary` as args; system keys use the documented extended `system_seq` formula. `reconcile_on_boot(store)` is a documented no-op stub that writes one info row through the centralized logger. Verified exact tool and system key formulas, distinct `system_seq` keys, pending->confirmed and pending->failed flows through SQLiteStore, and one info `system_logs` row from the reconcile stub.",
+      "files_changed": [
+        "agent_kit/ledger.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... ledger verification with real tool_call FK ... PY",
+        "python -m compileall -q agent_kit arnold megaplan",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Added `agent_kit/tool_kit.py` with `ToolRegistry`, `ToolEntry`, `ToolContext`, `ToolInvocation`, global registry/decorator helpers, and `audit_wrap`. Registry entries map tool name to callable, JSON-schema metadata, `event_kind`, and `operation_kind`. Audited invocation wraps the tool body plus `record_tool_call` in one store transaction, then appends exactly one Event and passes that same Event object to `on_event`. Every emitted event includes `tool_call_id`; activity events use registry-driven `kind='activity'`. Verified exactly one `tool_calls` row and one shared Event per successful call, activity-kind dispatch, and rollback on tool failure leaving no mutation, no audit row, and no event.",
+      "files_changed": [
+        "agent_kit/tool_kit.py"
+      ],
+      "commands_run": [
+        "python - <<'PY' ... tool kit verification ... PY",
+        "python -m compileall -q agent_kit arnold megaplan",
+        "python -m pytest"
+      ],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Passed. `Ledger.record_pending` accepts `system_seq`; system idempotency keys use `sha256(turn_id + ':system:' + provider + ':' + endpoint + ':' + str(system_seq))[:16]`. The module docstring documents the intentional extension and Sprint 1b reconciliation requirement. `reconcile_on_boot` is a documented no-op stub that emits one info row in `system_logs`."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Passed. The audit wrapper writes one `tool_calls` row inside the same transaction as the tool callable, then appends exactly one Event after commit. The event kind comes from the registry, the same Event instance is stored in `context.events` and delivered to `on_event`, and every event carries `tool_call_id`. Failure rolls back DB mutation/audit and appends no event."
+    }
+  ]
+}

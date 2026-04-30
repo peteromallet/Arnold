@@ -1,0 +1,88 @@
+{
+  "task_updates": [
+    {
+      "id": "T7",
+      "status": "done",
+      "executor_notes": "Restructured audit_wrap so each invocation resets context.external_queue, runs the tool body inside store.transaction(), records the tool_calls row and any queued external-request ledger rows in the same transaction, then runs queued external callables only after commit. Success marks ledger rows confirmed; callable exceptions mark rows failed and re-raise. Verification: tests/test_tool_kit_external_queue.py passed; existing tests/test_tool_kit.py passed unchanged; full `python -m pytest --tb=no -q --no-header` passed with 39 tests.",
+      "files_changed": [
+        "agent_kit/tool_kit.py",
+        "tests/test_tool_kit_external_queue.py"
+      ],
+      "commands_run": [
+        "sed -n '1,280p' agent_kit/tool_kit.py",
+        "sed -n '1,260p' agent_kit/ledger.py",
+        "sed -n '1,260p' tests/test_tool_kit.py",
+        "python -m pytest tests/test_tool_kit_external_queue.py -q --tb=short --no-header",
+        "python -m pytest tests/test_tool_kit.py tests/test_sqlite_store.py -q --tb=short --no-header",
+        "python -m pytest --tb=no -q --no-header"
+      ],
+      "task_id": "T7"
+    },
+    {
+      "id": "T9",
+      "status": "done",
+      "executor_notes": "Mirrored the Sprint 1b Store Protocol additions in SQLiteStore: recovery queries, orphan marking, unprocessed/load/update message helpers, and image CRUD with auto reference-key generation. Verified create_message keeps synthesize_outbound_id=True by default and leaves resident outbound discord_message_id NULL when False; insert_pending continues to persist request_body. Verification: tests/test_sqlite_store_v1b.py passed; existing tests/test_sqlite_store.py passed; signature smoke check found no missing SQLite methods; full `python -m pytest --tb=no -q --no-header` passed with 39 tests.",
+      "files_changed": [
+        "agent_kit/store/sqlite.py",
+        "tests/test_sqlite_store_v1b.py"
+      ],
+      "commands_run": [
+        "sed -n '1,620p' agent_kit/store/sqlite.py",
+        "sed -n '1,280p' agent_kit/ports.py",
+        "sed -n '1,260p' tests/test_sqlite_store.py",
+        "sed -n '1,260p' agent_kit/store/migrations/sqlite/001_core.sql && sed -n '1,220p' agent_kit/store/migrations/sqlite/002_images.sql",
+        "python -m pytest tests/test_sqlite_store_v1b.py -q --tb=short --no-header",
+        "python -m pytest tests/test_tool_kit.py tests/test_sqlite_store.py -q --tb=short --no-header",
+        "python - <<'PY' ... SQLiteStore method/signature smoke check ... PY",
+        "python -m pytest --tb=no -q --no-header"
+      ],
+      "task_id": "T9"
+    },
+    {
+      "id": "T11",
+      "status": "blocked",
+      "executor_notes": "Blocked awaiting U1. Mechanical prerequisite check found `.env` absent, so a rotated SUPABASE_SERVICE_KEY could not be verified. Per batch instruction, SupabaseStorageBlob was not implemented in this batch.",
+      "files_changed": [],
+      "commands_run": [
+        "python - <<'PY' ... check .env for SUPABASE_SERVICE_KEY without printing secrets ... PY"
+      ],
+      "stop_signal": "awaiting U1",
+      "task_id": "T11"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "executor_note": "Yes. audit_wrap keeps the tool body inside store.transaction(), records tool_calls and queued external_requests in that same transaction, and runs external callables only after commit; tests/test_tool_kit.py and tests/test_tool_kit_external_queue.py passed.",
+      "verdict": "yes",
+      "sense_check_id": "SC7"
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "executor_note": "Yes. SQLiteStore implements the new recovery/message/image methods, create_message exposes synthesize_outbound_id with default True, and False leaves discord_message_id NULL; tests/test_sqlite_store_v1b.py and existing SQLite tests passed.",
+      "verdict": "yes",
+      "sense_check_id": "SC9"
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "executor_note": "No. T11 is blocked awaiting U1 because `.env` is absent and the rotated SUPABASE_SERVICE_KEY could not be verified; SupabaseStorageBlob was intentionally not implemented.",
+      "verdict": "blocked",
+      "sense_check_id": "SC11"
+    }
+  ],
+  "verification": {
+    "full_test_suite": "python -m pytest --tb=no -q --no-header -> 39 passed",
+    "secret_scan": "leaked Supabase JWT prefix grep excluding harness/cache paths -> zero matches",
+    "checkpoint_written": "/Users/peteromalley/Documents/arnold-v2/.megaplan/plans/sprint-1b-discord-resident/execution_batch_7.json"
+  },
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "1/3 batch tasks have no executor update \u2014 tracking is incomplete.",
+    "Advisory observation skip before batch 7/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 7/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

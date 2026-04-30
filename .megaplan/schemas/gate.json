@@ -1,0 +1,132 @@
+{
+  "type": "object",
+  "properties": {
+    "recommendation": {
+      "type": "string",
+      "enum": [
+        "PROCEED",
+        "ITERATE",
+        "ESCALATE",
+        "TIEBREAKER"
+      ]
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "signals_assessment": {
+      "type": "string"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "settled_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "decision",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "flag_resolutions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "flag_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "dispute",
+              "accept_tradeoff"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flag_id",
+          "action",
+          "evidence",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "accepted_tradeoffs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "flag_id": {
+            "type": "string"
+          },
+          "concern": {
+            "type": "string"
+          },
+          "subsystem": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flag_id",
+          "concern",
+          "subsystem",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "tiebreaker_question": {
+      "type": "string"
+    },
+    "tiebreaker_flag_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tiebreaker_fuzzy_group_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "recommendation",
+    "rationale",
+    "signals_assessment",
+    "warnings",
+    "settled_decisions",
+    "flag_resolutions",
+    "accepted_tradeoffs",
+    "tiebreaker_question",
+    "tiebreaker_flag_ids",
+    "tiebreaker_fuzzy_group_id"
+  ],
+  "additionalProperties": false
+}

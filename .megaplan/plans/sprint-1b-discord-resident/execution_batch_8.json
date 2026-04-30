@@ -1,0 +1,67 @@
+{
+  "task_updates": [
+    {
+      "id": "T10",
+      "status": "blocked",
+      "executor_notes": "Blocked awaiting U1. Mechanical prerequisite check found `.env` absent, so the rotated SUPABASE_SERVICE_KEY required before Supabase adapter work could not be verified. Per batch instruction, SupabaseStore was not implemented in this batch.",
+      "files_changed": [],
+      "commands_run": [
+        "python - <<'PY' ... check .env for SUPABASE_SERVICE_KEY without printing secrets ... PY"
+      ],
+      "stop_signal": "awaiting U1",
+      "task_id": "T10"
+    },
+    {
+      "id": "T15",
+      "status": "done",
+      "executor_notes": "Added registered image tools in agent_kit/tools/images.py: list_images/read metadata, view_image/read with blob-backed base64 visual payload and media_type, send_image/write with invocation event/message behavior plus resident external_queue Discord post/update callback, and update_image_metadata/write with the required reference_key regex validation. Auto-imported image tools in agent_kit/loop.py. Verification: tests/test_image_tools.py passed, run_turn/CLI/envelope/hook modules passed, full `python -m pytest --tb=no -q --no-header` passed with 43 tests, registry smoke check confirmed all four tools and operation kinds, and leaked-prefix grep returned zero matches.",
+      "files_changed": [
+        "agent_kit/tools/images.py",
+        "agent_kit/loop.py",
+        "tests/test_image_tools.py"
+      ],
+      "commands_run": [
+        "sed -n '1,360p' agent_kit/loop.py",
+        "sed -n '1,280p' agent_kit/tools/communication.py",
+        "find agent_kit -maxdepth 3 -type f | sort && rg \"register_tool|ToolContext|Event\\(\" agent_kit tests -n",
+        "python -m pytest tests/test_image_tools.py -q --tb=short --no-header",
+        "python -m pytest tests/test_tool_kit.py tests/test_tool_kit_external_queue.py tests/test_sqlite_store.py tests/test_sqlite_store_v1b.py -q --tb=short --no-header",
+        "python -m pytest tests/test_run_turn.py tests/test_cli.py tests/test_envelope.py tests/test_run_turn_hooks.py -q --tb=short --no-header",
+        "python - <<'PY' ... image tool registry smoke check ... PY",
+        "wc -l agent_kit/tools/images.py && python -m py_compile agent_kit/tools/images.py agent_kit/loop.py",
+        "python -m pytest --tb=no -q --no-header",
+        "rg --hidden --glob '!.megaplan/**' --glob '!__pycache__/**' --glob '!.pytest_cache/**' -n '<leaked Supabase JWT prefix regex>' . || true",
+        "python - <<'PY' ... image tool occurrence smoke check ... PY"
+      ],
+      "task_id": "T15"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "executor_note": "No. T10 is blocked awaiting U1 because `.env` is absent and the rotated SUPABASE_SERVICE_KEY could not be verified; SupabaseStore was intentionally not implemented.",
+      "verdict": "blocked",
+      "sense_check_id": "SC10"
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "executor_note": "Yes. The four image tools are registered with correct read/write operation kinds; view_image returns media_type plus image_bytes_b64 in visual mode; send_image creates invocation messages/events and queues a resident Discord callback that updates discord_message_id; update_image_metadata validates the required reference_key regex; loop.py auto-imports agent_kit.tools.images.",
+      "verdict": "yes",
+      "sense_check_id": "SC15"
+    }
+  ],
+  "verification": {
+    "full_test_suite": "python -m pytest --tb=no -q --no-header -> 43 passed",
+    "secret_scan": "leaked Supabase JWT prefix grep excluding harness/cache paths -> zero matches",
+    "checkpoint_written": "/Users/peteromalley/Documents/arnold-v2/.megaplan/plans/sprint-1b-discord-resident/execution_batch_8.json"
+  },
+  "deviations": [
+    "Advisory quality: skipped quality checks because post-batch git snapshot failed: Project directory is not a git repository.",
+    "1/2 batch tasks have no executor update \u2014 tracking is incomplete.",
+    "Advisory observation skip before batch 8/14: Project directory is not a git repository.",
+    "Advisory observation skip after batch 8/14: Project directory is not a git repository.",
+    "Advisory audit skip: Project directory is not a git repository."
+  ]
+}

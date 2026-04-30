@@ -1,0 +1,767 @@
+{
+  "name": "sprint-1a-agent-kit-core",
+  "idea": "# Sprint 1a \u2014 agent_kit core + invocation mode\n\nBuild the foundational Python package for Arnold, a Discord planning bot. This sprint proves the substrate against the cheapest possible adapter (CLI over SQLite) before Discord/Supabase land in Sprint 1b.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to it for complete data model schemas, tool signatures, and architectural details.**\n\n## Supabase (for later sprints)\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlod2ZsdmFkbWVmaGtzaHdiZm5mIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzUwOTQ2NywiZXhwIjoyMDkzMDg1NDY3fQ.xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY\n\n## Scope\n\n- `agent_kit/` package skeleton:\n  - `ports.py` \u2014 Transport, Store, Model, Blob protocol definitions (abstract interfaces)\n  - `loop.py` \u2014 transport-agnostic `run_turn` function\n  - `tool_kit.py` \u2014 tool registry + audit-wrap decorator\n  - `ledger.py` \u2014 event store skeleton\n- `Envelope` dataclass + JSON schema (outcome: completed/blocked_on_caller/errored/aborted, events array, state_delta, reply)\n- CLI transport adapter (pull mode): `arnold turn --epic <id> --input \"text\"` command; NDJSON event streaming with `--stream-events`; exit codes per envelope outcome (0=completed, 2=blocked, 1=errored, 3=aborted)\n- SQLite store adapter: schema for epics, messages, bot_turns, tool_calls, system_logs tables (resident-mode-only columns nullable); migrations under `agent_kit/store/migrations/sqlite/`\n- Anthropic model adapter: Claude Opus 4.7 wired to the loop\n- Centralized logger module writing to system_logs via the Store port\n- Agentic loop skeleton: receive \u2192 reason \u2192 respond, returns an envelope\n- Minimal tool surface: `send_message` (writes to reply buffer in invocation mode), `set_activity` (emits event)\n- Test harness: pytest setup, ephemeral SQLite per test, mocked Anthropic client\n\n## Key Data Model Tables (this sprint)\n\n### epics\nid, title, goal, body (markdown), state (shaping|sprinting|planned|paused|archived), created_at, last_edited_at, last_active_at, planned_at\n\n### messages\nid, epic_id, direction (inbound|outbound), content, sent_at, discord_message_id (unique), has_code_attachment, has_image_attachment, in_burst_with, was_voice_message, audio_storage_url, transcription_metadata\n\n### bot_turns\nid, epic_id, triggered_by_message_ids (uuid array), prompt_snapshot, prompt_version, reasoning, final_output_message_id, status_message_id, status (in_progress|completed|failed|abandoned), state_at_turn, started_at, completed_at, model_version\n\n### tool_calls\nid, turn_id, tool_name, operation_kind (read|write), arguments (json), result (json), called_at, duration_ms\n\n### system_logs\nid, level (debug|info|warn|error), category, event_type, message, details (json), turn_id, epic_id, occurred_at\n\n## Acceptance Criteria\n\n- `arnold turn --epic <id> --input \"hello\"` returns a valid envelope on stdout; exit code 0 for completed, 2 for blocked_on_caller, 1 for errored, 3 for aborted\n- Every Anthropic call recorded in bot_turns; every tool call recorded in tool_calls; envelope events array matches tool_calls rows\n- Same input + same store state + same model seed \u2192 identical state_delta (deterministic-structure test)\n- Python `run_turn(...)` produces a byte-equivalent envelope to the CLI for the same input\n- `--stream-events` emits NDJSON to stderr with one event per tool call; final envelope on stdout matches\n- Test suite runs green via pytest against ephemeral SQLite\n\n## Tests\n\n- Unit: envelope schema validation; Store port contract tests against SQLite impl; tool_kit audit-wrap atomicity\n- Integration: full receive\u2192reason\u2192respond loop with mocked Anthropic; verify envelope contents and DB state\n- Integration: CLI \u2194 Python equivalence \u2014 invoke same input both ways, assert envelopes match (modulo non-deterministic reply text)\n\n## Tech Stack\n- Python 3.11+\n- pytest for testing\n- anthropic SDK for Claude Opus 4.7\n- SQLite for local store\n- Click or argparse for CLI\n- dataclasses for data structures",
+  "current_state": "done",
+  "iteration": 5,
+  "created_at": "2026-04-30T01:13:04Z",
+  "config": {
+    "project_dir": "/Users/peteromalley/Documents/arnold-v2",
+    "auto_approve": true,
+    "robustness": "standard",
+    "mode": "code",
+    "strict_notes": false,
+    "agent": ""
+  },
+  "sessions": {
+    "codex_planner": {
+      "id": "019ddbf9-78a6-7d82-a611-29c33fabfa72",
+      "mode": "persistent",
+      "created_at": "2026-04-30T01:22:46Z",
+      "last_used_at": "2026-04-30T01:22:46Z",
+      "refreshed": true
+    },
+    "codex_critic": {
+      "id": "019ddbfb-3ba0-7a12-95e2-cf722357739b",
+      "mode": "persistent",
+      "created_at": "2026-04-30T01:24:54Z",
+      "last_used_at": "2026-04-30T01:54:29Z",
+      "refreshed": false
+    },
+    "claude_gatekeeper": {
+      "id": "63de8963-17c0-42ca-8eed-4e3d1de93e00",
+      "mode": "persistent",
+      "created_at": "2026-04-30T01:29:43Z",
+      "last_used_at": "2026-04-30T01:55:59Z",
+      "refreshed": false
+    },
+    "claude_planner": {
+      "id": "52daf42b-29a5-4c46-bc41-1c33990f2946",
+      "mode": "persistent",
+      "created_at": "2026-04-30T01:33:06Z",
+      "last_used_at": "2026-04-30T01:53:05Z",
+      "refreshed": false
+    },
+    "claude_finalizer": {
+      "id": "03a42a28-e1cd-4caa-a658-ca3cf760d3e5",
+      "mode": "persistent",
+      "created_at": "2026-04-30T02:03:24Z",
+      "last_used_at": "2026-04-30T02:03:24Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019ddc20-712c-78a0-8850-97de99dc20b7",
+      "mode": "persistent",
+      "created_at": "2026-04-30T02:05:04Z",
+      "last_used_at": "2026-04-30T02:48:19Z",
+      "refreshed": true
+    },
+    "codex_reviewer": {
+      "id": "019ddc40-5dcf-7553-ba5f-ab7463e685f8",
+      "mode": "persistent",
+      "created_at": "2026-04-30T02:40:18Z",
+      "last_used_at": "2026-04-30T02:51:36Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:93c32304a0dc77ca468860d2f5debc416ef596b81f274061eb0aafbfdc50897b",
+      "timestamp": "2026-04-30T01:22:46Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:6830bee7e8f3a0aaa4b1a9706d40fac9373040ca1f46a50cf04b5b55de92880d",
+      "timestamp": "2026-04-30T01:33:06Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:5218c6a86ed75e4f4c96bf719200524b640ba01ac3ed278dae42ced9722ebb0a",
+      "timestamp": "2026-04-30T01:39:54Z"
+    },
+    {
+      "version": 4,
+      "file": "plan_v4.md",
+      "hash": "sha256:d23ea5a96a014e4457d2a69b7ac254c3bf5bfe38a06a3ac2aad258e9a8354034",
+      "timestamp": "2026-04-30T01:46:28Z"
+    },
+    {
+      "version": 5,
+      "file": "plan_v5.md",
+      "hash": "sha256:f46adc1cded1dcda37cbc350cfbe606436afcb2b2fa7ee235d08c451ecee1be3",
+      "timestamp": "2026-04-30T01:53:05Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-04-30T01:13:04Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T01:22:46Z",
+      "duration_ms": 114859,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddbf9-78a6-7d82-a611-29c33fabfa72",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:93c32304a0dc77ca468860d2f5debc416ef596b81f274061eb0aafbfdc50897b"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T01:24:54Z",
+      "duration_ms": 126336,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddbfb-3ba0-7a12-95e2-cf722357739b",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:b4dea8151c6e99506d64f5be3277ede6a724ea4a38cccb10145d6f53711aee32",
+      "flags_count": 17
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:25:48Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "gate_v1_raw.txt",
+      "message": "Claude step failed: Failed to authenticate. API Error: 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Account is no longer a member of the organization associated with this token.\"},\"request_id\":\"req_011CaZ5rEAzCWcHXji7xLAEk\"}"
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:28:31Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "gate_v1_raw.txt",
+      "message": "Claude step failed: Failed to authenticate. API Error: 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Account is no longer a member of the organization associated with this token.\"},\"request_id\":\"req_011CaZ64BMQG4TLL15WuFD6P\"}"
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:28:45Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "gate_v1_raw.txt",
+      "message": "Claude step failed: Failed to authenticate. API Error: 403 {\"type\":\"error\",\"error\":{\"type\":\"permission_error\",\"message\":\"Account is no longer a member of the organization associated with this token.\"},\"request_id\":\"req_011CaZ65PbPTmUZNX6K7Cwrk\"}"
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:29:43Z",
+      "duration_ms": 57379,
+      "cost_usd": 0.5227630000000001,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "63de8963-17c0-42ca-8eed-4e3d1de93e00",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:c15453c9fee6c63ab57326cfbb2373d64c11240cf2ac9eba521465a25f32e84d",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T01:33:06Z",
+      "duration_ms": 201181,
+      "cost_usd": 0.8123057499999999,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "52daf42b-29a5-4c46-bc41-1c33990f2946",
+      "agent": "claude",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:6830bee7e8f3a0aaa4b1a9706d40fac9373040ca1f46a50cf04b5b55de92880d",
+      "flags_addressed": [
+        {
+          "id": "FLAG-001",
+          "resolution": "addressed",
+          "reason": "Added LocalBlobStore, attachments.py, repeatable CLI --attach, Python attachments= parameter, and integration tests covering image and audio paths; audio gracefully errors with Sprint 1b deferral."
+        },
+        {
+          "id": "FLAG-002",
+          "resolution": "addressed",
+          "reason": "Added Step 4 locking the public Python API: megaplan/arnold/__init__.py re-exports run_turn, arun_turn, and Envelope from agent_kit.loop, with arun_turn implemented as an asyncio coroutine wrapper. Import-path test added."
+        },
+        {
+          "id": "FLAG-003",
+          "resolution": "addressed",
+          "reason": "Added Step 7 ledger skeleton (agent_kit/ledger.py) with external_requests CRUD primitives in the SQLite migration; reconciliation explicitly deferred to Sprint 1b with rationale recorded in plan and code."
+        },
+        {
+          "id": "issue_hints-1",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-001: full attachment pipeline scheduled including BlobStore pre-processing and tests."
+        },
+        {
+          "id": "issue_hints-2",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-003: ledger.py skeleton step added explicitly to plan."
+        },
+        {
+          "id": "correctness-1",
+          "resolution": "addressed",
+          "reason": "megaplan.arnold compatibility module is no longer optional; it is the locked surface, wired in Step 4."
+        },
+        {
+          "id": "correctness-2",
+          "resolution": "addressed",
+          "reason": "Determinism story split: state_delta byte-equivalence is unconditional; CLI/Python equivalence is asserted on a serialize_for_diff projection that strips reply, events.text, and timestamps, matching the spec's deterministic-structure rule."
+        },
+        {
+          "id": "correctness-3",
+          "resolution": "addressed",
+          "reason": "Step 10 specifies set_activity in invocation mode emits an event only and does NOT mutate bot_turns.current_activity, honoring mode-divergent semantics."
+        },
+        {
+          "id": "scope-1",
+          "resolution": "addressed",
+          "reason": "Decision recorded: external_requests table and ledger surface ship in 1a as scaffolding; per-provider reconciliation is Sprint 1b. Resolves scope tension between sprint idea and full spec."
+        },
+        {
+          "id": "scope-2",
+          "resolution": "addressed",
+          "reason": "defer_to_caller is retained in Step 10 (Sprint 1a tool surface) \u2014 required to exercise the blocked_on_caller outcome and consistent with the full spec; recorded as settled decision SD-002."
+        },
+        {
+          "id": "all_locations-1",
+          "resolution": "addressed",
+          "reason": "Step 12 makes model id a constructor parameter on AnthropicModel and the CLI reads ARNOLD_MODEL_ID; no hardcoding in adapter or tests."
+        },
+        {
+          "id": "all_locations-2",
+          "resolution": "addressed",
+          "reason": "Step 15 restructures store contract tests as a parametrized, store-agnostic suite taking a store_factory fixture, reusable unchanged with a Supabase factory in Sprint 1b."
+        },
+        {
+          "id": "callers-1",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-001: CLI repeatable --attach and Python attachments= are both wired through run_turn."
+        },
+        {
+          "id": "callers-2",
+          "resolution": "addressed",
+          "reason": "Step 13 defines a cooperative cancellation flag checked between tool steps; Step 14 installs a SIGINT handler in the CLI; Step 16 includes an integration test that triggers cancellation mid-loop and asserts exit code 3 with a valid envelope."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T01:34:39Z",
+      "duration_ms": 91384,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddbfb-3ba0-7a12-95e2-cf722357739b",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:fe04884420f1e32630681a73bba55a78bbfc5af9c7bce66c57dde410218e2618",
+      "flags_count": 13
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:36:18Z",
+      "duration_ms": 98600,
+      "cost_usd": 0.5161715,
+      "result": "tiebreaker_rejected_missing_fields",
+      "session_mode": "persistent",
+      "session_id": "63de8963-17c0-42ca-8eed-4e3d1de93e00",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:e015de7873aba02ad2652108cd3b354f2ae0f7e24567e7539bb696a62c12903e",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T01:39:54Z",
+      "duration_ms": 214224,
+      "cost_usd": 0.77719175,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "52daf42b-29a5-4c46-bc41-1c33990f2946",
+      "agent": "claude",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:5218c6a86ed75e4f4c96bf719200524b640ba01ac3ed278dae42ced9722ebb0a",
+      "flags_addressed": [
+        {
+          "id": "FLAG-001",
+          "resolution": "addressed",
+          "reason": "Descoped: attachments deferred to Sprint 1b alongside Discord. The Blob port stays in ports.py (idea lists it) but no implementation, CLI flag, Python argument, or tests ship in 1a. Resolves the spec-vs-idea tension by following the narrower idea per the gate's scope-creep flag."
+        },
+        {
+          "id": "FLAG-003",
+          "resolution": "addressed",
+          "reason": "Step 7 and Step 12 wire run_turn to call Ledger.record_pending(provider='anthropic', tool_call_id=null) before each main Anthropic call and mark_confirmed after. Step 15 adds a ledger integration test asserting the row is created and transitions correctly. Reconciliation logic stays explicitly Sprint 1b."
+        },
+        {
+          "id": "issue_hints-1",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-001: descoped. Recurring debt resolved by narrowing back to the user's sprint idea, which does not list attachments."
+        },
+        {
+          "id": "issue_hints",
+          "resolution": "addressed",
+          "reason": "Same as FLAG-001: image-row creation and audio transcription are explicitly Sprint 1b. The Blob port survives so 1b can drop in an implementation without touching the protocol."
+        },
+        {
+          "id": "scope-1",
+          "resolution": "addressed",
+          "reason": "Decision recorded: external_requests table ships in 1a with the main-LLM-call row written and confirmed inside run_turn; reconciliation logic and the recovery scan are 1b. The scope tension between idea and spec is settled in code, not deferred."
+        },
+        {
+          "id": "scope",
+          "resolution": "addressed",
+          "reason": "Same as scope-1 and FLAG-003: the main Anthropic call is now recorded in external_requests with tool_call_id=null, satisfying the spec's invariant that system-level external requests are tracked. Tested in tests/test_ledger.py."
+        },
+        {
+          "id": "correctness-1",
+          "resolution": "addressed",
+          "reason": "Step 13 and Step 15 specify streamed NDJSON events are byte-identical to the envelope's events array (same encoder, same objects, same order). The serialize_for_diff projection is restricted to CLI\u2194Python envelope-equivalence assertions only and is explicitly NOT used for stream comparisons."
+        },
+        {
+          "id": "correctness-2",
+          "resolution": "addressed",
+          "reason": "Step 12 and the Notes section clarify that on abort, bot_turns.status='abandoned' (records partial turn) and the envelope outcome='aborted' (records caller cancellation) coexist by design. Step 13 confirms a valid envelope is printed on stdout for every outcome including aborted; Step 15 asserts both invariants in the abort integration test."
+        },
+        {
+          "id": "all_locations",
+          "resolution": "addressed",
+          "reason": "Decided in Step 1: the megaplan package in this repo is a regular owned package with its own __init__.py, not a PEP 420 namespace package. The megaplan harness this repo runs inside is a separate distribution that does not collide at import time inside the project venv. Documented as a settled decision."
+        },
+        {
+          "id": "callers",
+          "resolution": "addressed",
+          "reason": "Mooted by descoping attachments. Raw-bytes / tuple-override input handling is no longer in scope; when attachments land in Sprint 1b the corresponding tests ship with them."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T01:41:33Z",
+      "duration_ms": 97975,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddbfb-3ba0-7a12-95e2-cf722357739b",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:ac62858121d1f60a8702b88370a45d332b4ec400a157fb41afbb062bfcdd2b31",
+      "flags_count": 11
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:42:58Z",
+      "duration_ms": 83687,
+      "cost_usd": 0.51878175,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "63de8963-17c0-42ca-8eed-4e3d1de93e00",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:c99cfb2209f4f7cfa210ae1672dd7ade609576c17facd2534b838ed9b7f62a62",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T01:46:28Z",
+      "duration_ms": 208351,
+      "cost_usd": 0.9345785,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "52daf42b-29a5-4c46-bc41-1c33990f2946",
+      "agent": "claude",
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:d23ea5a96a014e4457d2a69b7ac254c3bf5bfe38a06a3ac2aad258e9a8354034",
+      "flags_addressed": [
+        {
+          "id": "scope",
+          "resolution": "addressed",
+          "reason": "Step 5 now creates external_requests with the full spec schema: endpoint, turn_id, provider_request_id, provider_response_summary, attempt_count, first_attempted_at, completed_at, error_details, plus all spec indexes including UNIQUE(idempotency_key). Step 7's idempotency key generation follows the spec SHA256[:16] formula including endpoint. No migration churn for Sprint 1b reconciliation."
+        },
+        {
+          "id": "correctness",
+          "resolution": "addressed",
+          "reason": "Step 11 specifies the Anthropic adapter raises ProviderError(error_details=...) for parseable provider errors and propagates other exceptions unchanged. Step 12 maps ProviderError to ledger mark_failed (status='failed', error_details populated, completed_at set) and only leaves rows pending on true crashes/transport exceptions. Step 15 adds explicit ledger tests for all three lifecycles: success (confirmed), provider error (failed), crash (pending)."
+        },
+        {
+          "id": "FLAG-001",
+          "resolution": "rejected",
+          "reason": "Settled by SD-010 in the gate's own settled_decisions list: 'Attachments are descoped from Sprint 1a per the user-resolved TIEBREAKER (v2\u2192v3); future critique passes should treat the spec divergence as accepted tradeoff, not a fresh flag.' The gate rationale itself flags this as already-settled. No plan change."
+        },
+        {
+          "id": "issue_hints-1",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 settled by SD-010 per the gate's own guidance. Already marked as 'addressed' in the gate metadata; treating as accepted tradeoff."
+        },
+        {
+          "id": "issue_hints",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 settled by SD-010. The gate rationale explicitly says 'these should be carried forward as accepted tradeoffs so they stop blocking.'"
+        },
+        {
+          "id": "callers-1",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 the CLI shape without --attach is the deliberate consequence of SD-010. The gate rationale lists this in the 'already-settled scope decision' bucket."
+        },
+        {
+          "id": "callers-2",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 the Python caller shape without attachments= is the deliberate consequence of SD-010. The gate rationale lists this in the 'already-settled scope decision' bucket."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T01:47:59Z",
+      "duration_ms": 89339,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddbfb-3ba0-7a12-95e2-cf722357739b",
+      "agent": "codex",
+      "output_file": "critique_v4.json",
+      "artifact_hash": "sha256:4346037a8d8161dd62885f1dba89e465c5790b3b1808b3f98a4d9cf854d6dba1",
+      "flags_count": 7
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:49:22Z",
+      "duration_ms": 82566,
+      "cost_usd": 0.56833475,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "63de8963-17c0-42ca-8eed-4e3d1de93e00",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:f2ca151f973e2fa3f96cd0c98878ae4b233ab037b10bbd8e2d321113471f70a0",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T01:53:05Z",
+      "duration_ms": 221319,
+      "cost_usd": 0.9451499999999999,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "52daf42b-29a5-4c46-bc41-1c33990f2946",
+      "agent": "claude",
+      "output_file": "plan_v5.md",
+      "artifact_hash": "sha256:f46adc1cded1dcda37cbc350cfbe606436afcb2b2fa7ee235d08c451ecee1be3",
+      "flags_addressed": [
+        {
+          "id": "correctness-1",
+          "resolution": "addressed",
+          "reason": "Step 7's system idempotency-key formula extended with a per-turn system_seq ordinal: sha256(turn_id + ':system:' + provider + ':' + endpoint + ':' + str(system_seq))[:16]. Step 12 owns the counter and increments it per Model.complete_turn call. Step 11 requires FakeModel to support multi-call scripting. Step 15.5 adds a tool-use chaining integration test asserting two distinct rows with system_seq=1 and system_seq=2 both transition pending\u2192confirmed without UNIQUE constraint violation. The spec extension is documented in plan notes and the ledger module."
+        },
+        {
+          "id": "FLAG-008",
+          "resolution": "addressed",
+          "reason": "Same as correctness-1 \u2014 the system_seq discriminator in the idempotency-key formula prevents collisions when one turn makes multiple Anthropic calls."
+        },
+        {
+          "id": "correctness-2",
+          "resolution": "addressed",
+          "reason": "Step 9's tool registry now declares event_kind per entry. Step 10 registers set_activity with event_kind='activity', send_message and defer_to_caller with 'tool_call'. The audit wrapper writes a tool_calls row (audit invariant preserved) and emits exactly one envelope event whose kind matches the registry entry \u2014 no double emission. Step 2.4 restates the acceptance interpretation: every tool_calls row has exactly one envelope event with matching tool_call_id, regardless of kind. Step 15.6 adds a set_activity event-shape integration test."
+        },
+        {
+          "id": "FLAG-001",
+          "resolution": "rejected",
+          "reason": "Settled by SD-010 in the gate's own settled_decisions; the gate marked it 'disputed' rather than open. No plan change."
+        },
+        {
+          "id": "issue_hints-1",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 settled by SD-010, marked 'disputed' by the gate."
+        },
+        {
+          "id": "issue_hints",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 settled by SD-010, marked 'disputed' by the gate."
+        },
+        {
+          "id": "callers-1",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 the CLI shape without --attach is the deliberate consequence of SD-010, marked 'disputed' by the gate."
+        },
+        {
+          "id": "callers-2",
+          "resolution": "rejected",
+          "reason": "Same as FLAG-001 \u2014 the Python caller shape without attachments= is the deliberate consequence of SD-010, marked 'disputed' by the gate."
+        }
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T01:54:29Z",
+      "duration_ms": 82279,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddbfb-3ba0-7a12-95e2-cf722357739b",
+      "agent": "codex",
+      "output_file": "critique_v5.json",
+      "artifact_hash": "sha256:e14c18d0e12827dc579978c0660720f8412a3f9f441e5612313368a397b4f9c5",
+      "flags_count": 3
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-04-30T01:55:59Z",
+      "duration_ms": 89351,
+      "cost_usd": 0.6474485000000001,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "63de8963-17c0-42ca-8eed-4e3d1de93e00",
+      "agent": "claude",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:0d07eb6fe8b6b445db8d0ee79c1a2242ac721222eb4ecb463764cf2d33cbd6c7",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T02:03:24Z",
+      "duration_ms": 443141,
+      "cost_usd": 1.5416322499999997,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "03a42a28-e1cd-4caa-a658-ca3cf760d3e5",
+      "agent": "claude",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:5f08280a28f35eded87d623c2be9757bef1e135c209251763fd74c582f517358"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T02:34:11Z",
+      "duration_ms": 1844973,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc20-712c-78a0-8850-97de99dc20b7",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:16dda2b8c5d27c1983b5a2c11af934d89708dcf777cdaa813b84845a3213b9e9",
+      "finalize_hash": "sha256:e856b08e1394236f483e10042c9a111b58ee796ef88336a6ef12b44079ef3e9d",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T02:40:18Z",
+      "duration_ms": 120167,
+      "cost_usd": 0.0,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "019ddc40-5dcf-7553-ba5f-ab7463e685f8",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:8b238fe175d77665e825f9190d75f4d42c8ba845e8eae22302c4d5cb451a9fe4",
+      "finalize_hash": "sha256:fcfa00e02de79fbb641b51d2fd2a092a083924391099003364b989ca71bda209"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T02:42:18Z",
+      "duration_ms": 118789,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc20-712c-78a0-8850-97de99dc20b7",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:598e448220e85e461eece1a09f52367bca269e7f84de4be687aff55e48a7a5f6",
+      "finalize_hash": "sha256:84a262543b2ff65a61861bd8a3d772cd00d1988d9ec17e093fd227c75d781a88",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T02:45:22Z",
+      "duration_ms": 79353,
+      "cost_usd": 0.0,
+      "result": "needs_rework",
+      "session_mode": "persistent",
+      "session_id": "019ddc40-5dcf-7553-ba5f-ab7463e685f8",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:d602aaf015801afad4552dbdda67bf571012be865f52e48867b8ebdebbec2f50",
+      "finalize_hash": "sha256:d2e98ad249e4b6dc5748e791acb5be1768cfdec7ea7e682b6efb2b00b1f32f2e"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T02:48:19Z",
+      "duration_ms": 175475,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc20-712c-78a0-8850-97de99dc20b7",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:7a62378116f9a45ce53ed8658bc3e9340c4cc0c5e47d26278ee1ab9b621f06eb",
+      "finalize_hash": "sha256:640416b7bbd773da45042e906d6c31107125a344e145231bb2230262be742d39",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-04-30T02:51:36Z",
+      "duration_ms": 81498,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019ddc40-5dcf-7553-ba5f-ab7463e685f8",
+      "agent": "codex",
+      "output_file": "review.json",
+      "artifact_hash": "sha256:ae2fdb256ace05411c2bec5cba808ce76bf099837e71bd316a3e8ef3ff4207dc",
+      "finalize_hash": "sha256:354f4452965c962ebf248611832a0c4f24d4644e1383c60e17389340183ff2e3"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      14,
+      10,
+      7,
+      8,
+      5
+    ],
+    "weighted_scores": [
+      22.5,
+      16.5,
+      11.0,
+      14.5,
+      8.5
+    ],
+    "plan_deltas": [
+      75.25,
+      53.05,
+      38.73,
+      43.54
+    ],
+    "recurring_critiques": [
+      [],
+      [],
+      [
+        "criterion 15: requires human verification (subjective_judgment)."
+      ],
+      [
+        "criterion 18: requires human verification (subjective_judgment)."
+      ],
+      [
+        "criterion 18: requires human verification (subjective_judgment)."
+      ]
+    ],
+    "total_cost_usd": 7.784359,
+    "overrides": [],
+    "notes": [],
+    "user_approved_gate": true
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "Score has fallen to 8.5 (22.5 \u2192 16.5 \u2192 11.0 \u2192 14.5 \u2192 8.5), the lowest of the run, with a 43.5% plan delta on this iteration. The two real v4 correctness regressions (idempotency-key collision under tool-use chaining, `set_activity` event-shape ambiguity) are now cleanly fixed: Step 7 extends the system idempotency-key formula with a per-turn `system_seq` ordinal owned by the loop and Step 12 increments it per `Model.complete_turn(...)` call; Step 9's tool registry carries an explicit `event_kind` per entry, Step 10 registers `set_activity` with `event_kind='activity'` and forbids a duplicate `tool_call`-kind emission, and the acceptance criterion is restated cleanly (every `tool_calls` row has exactly one envelope event with matching `tool_call_id`, regardless of `kind`). New integration tests cover both the multi-call ledger path (`system_seq=1` and `system_seq=2` rows both confirmed without UNIQUE collision) and the `set_activity` event-shape invariant. The critique check is clear across `issue_hints`, `correctness`, `scope`, `all_locations`, and `callers`. All 5 remaining open flags are the persistent attachment-descope debt already settled by the v2\u2192v3 user-resolved TIEBREAKER (SD-010); the gate itself marks them `disputed` rather than open. They are accepted tradeoffs, not blockers. Iteration 5 has triggered the high-iteration warning \u2014 converging to ship is the right move; further passes would just re-relitigate the settled scope decision. Preflight is clean.",
+    "reprompted": false,
+    "signals_assessment": "Iteration 5, weighted score 22.5 \u2192 16.5 \u2192 11.0 \u2192 14.5 \u2192 8.5 (lowest of the run; v4 regression fully reversed). Plan delta 43.5%. 20 cumulative flags resolved, 0 reopens, 5 open \u2014 all 5 are the same attachment-descope concern carried across iterations and explicitly disputed/settled per SD-010. Critique check now clear across all five categories. Preflight clean. Gate warns \"iteration 5: high iteration count\" \u2014 the loop has converged on real plan quality and the only remaining noise is the post-tiebreaker spec-divergence flag.",
+    "warnings": [
+      "Iteration 5: high iteration count.",
+      "Implementation note: the system idempotency-key formula extends the spec's bare `sha256(turn_id + ':system:' + provider + ':' + endpoint)[:16]` with a per-turn `system_seq` ordinal. Document this divergence at the top of `agent_kit/ledger.py` and confirm `planning-bot-spec.md` is updated to match (or that the divergence is approved) before Sprint 1b's reconciliation logic uses the same formula.",
+      "When implementing the `set_activity` audit-wrapper path, ensure the `event_kind='activity'` event still carries `tool_call_id` so test joins between envelope events and `tool_calls` rows work uniformly across kinds.",
+      "Iteration count is 5 with the high-iteration-count warning fired. Avoid further critique-driven cycles unless a genuinely new correctness issue surfaces during execution; the remaining attachment-descope flags are settled and should not block subsequent gates.",
+      "Do not commit the Supabase service key from the idea file anywhere downstream."
+    ],
+    "settled_decisions": [
+      {
+        "id": "SD-001",
+        "decision": "SQLite is the only store implementation in Sprint 1a; `--store supabase` returns a clear errored envelope (`error.code='unsupported_store'`).",
+        "rationale": "Sprint scope; avoids leaking the committed service key."
+      },
+      {
+        "id": "SD-002",
+        "decision": "Sprint 1a tool surface is `send_message`, `set_activity`, `defer_to_caller`.",
+        "rationale": "Required to exercise `blocked_on_caller`; consistent with the full spec."
+      },
+      {
+        "id": "SD-003",
+        "decision": "Use argparse rather than Click for the CLI.",
+        "rationale": "Fewer deps."
+      },
+      {
+        "id": "SD-004",
+        "decision": "Public Python import path is `from megaplan.arnold import run_turn, arun_turn, Envelope`, with `agent_kit.loop.run_turn` as the implementation single-source-of-truth and `arun_turn` as `asyncio.to_thread(run_turn, ...)`.",
+        "rationale": "Spec marks Sprint 1a Callable API as locked."
+      },
+      {
+        "id": "SD-005",
+        "decision": "`set_activity` in invocation mode does not mutate `bot_turns.current_activity`.",
+        "rationale": "Mode-divergent semantics per spec."
+      },
+      {
+        "id": "SD-006",
+        "decision": "`state_delta` byte-equivalence asserted unconditionally; CLI\u2194Python envelope equivalence asserted on `serialize_for_diff`; streamed NDJSON asserted byte-identical to envelope `events` array with no projection (for both `tool_call` and `activity` event kinds).",
+        "rationale": "Honors spec split between deterministic structure and non-deterministic free text."
+      },
+      {
+        "id": "SD-007",
+        "decision": "Model id configurable via `AnthropicModel(model_id=...)` constructor argument and `ARNOLD_MODEL_ID` env var read in `arnold/cli.py` only.",
+        "rationale": "No hardcoding."
+      },
+      {
+        "id": "SD-008",
+        "decision": "`tests/store_contract.py` is parametrized over a `store_factory` fixture, reusable unchanged with a Supabase factory in 1b.",
+        "rationale": "Sprint 1b acceptance depends on it."
+      },
+      {
+        "id": "SD-009",
+        "decision": "Aborted outcome: `bot_turns.status='abandoned'` and envelope `outcome='aborted'` coexist; valid envelope still printed on stdout with exit code 3; cancellation triggered by CLI `SIGINT` or Python `cancel_event` argument.",
+        "rationale": "Records both 'turn cut short' and 'caller cancelled'."
+      },
+      {
+        "id": "SD-010",
+        "decision": "**Attachments are descoped from Sprint 1a per the user-resolved TIEBREAKER (v2\u2192v3): no `--attach`, no Python `attachments=`, no `LocalBlobStore`, no attachment ingestion or tests; only the `Blob` port is defined for 1b consumption.** Settled \u2014 future gates should not re-flag.",
+        "rationale": "User accepted narrow sprint idea over broad spec."
+      },
+      {
+        "id": "SD-011",
+        "decision": "`megaplan` is a regular owned package with its own `__init__.py` (not a PEP 420 namespace package).",
+        "rationale": "Resolved in v3."
+      },
+      {
+        "id": "SD-012",
+        "decision": "`run_turn` writes one `external_requests` row per main Anthropic call (`tool_call_id=null`, provider='anthropic', `pending\u2192confirmed | failed`); reconciliation logic is Sprint 1b. The `orphaned` status value is valid in the schema but only written by 1b reconciliation.",
+        "rationale": "Captures the only guaranteed external API call in 1a."
+      },
+      {
+        "id": "SD-013",
+        "decision": "`external_requests` ships in 1a with the full spec schema (including `endpoint`, `turn_id`, `provider_request_id`, `provider_response_summary`, `attempt_count`, `first_attempted_at`, `last_attempted_at`, `completed_at`, `error_details`) and the spec's full index set including `UNIQUE(idempotency_key)`.",
+        "rationale": "Avoids 1b migration churn."
+      },
+      {
+        "id": "SD-014",
+        "decision": "Anthropic adapter raises `ProviderError(error_details=...)` for parseable provider error responses (mapped to `mark_failed`) and propagates raw exceptions for transport/SDK failures (leaves the row `pending` for 1b reconciliation).",
+        "rationale": "1b reconciliation can distinguish observable provider errors from crash-before-confirmation."
+      },
+      {
+        "id": "SD-015",
+        "decision": "System idempotency-key formula is extended with a per-turn `system_seq` ordinal: `sha256(turn_id + ':system:' + provider + ':' + endpoint + ':' + str(system_seq))[:16]`. The loop owns the counter and increments per `Model.complete_turn(...)` call. Tool-call-driven keys follow the spec verbatim.",
+        "rationale": "The bare spec formula collides on `UNIQUE(idempotency_key)` whenever a turn does tool-use chaining. Documented divergence; Sprint 1b reconciliation must use the same formula."
+      },
+      {
+        "id": "SD-016",
+        "decision": "Tool registry assigns each tool an `event_kind` ('tool_call' or 'activity'). The audit wrapper writes a `tool_calls` row for every tool invocation and emits exactly one envelope event whose `kind` matches the registry entry. `set_activity` uses `'activity'`; `send_message` and `defer_to_caller` use `'tool_call'`. No double-emission.",
+        "rationale": "Resolves audit-invariant vs spec mode-divergent-semantics tension cleanly. Every `tool_calls` row has exactly one envelope event with matching `tool_call_id` regardless of `kind`."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting. Recurring critiques (criterion 18: requires human verification (subjective_judgment).); the loop likely can't fix these, so judge if they are real blockers."
+  }
+}

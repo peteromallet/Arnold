@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "timestamp": "2026-04-30T01:22:46Z",
+  "hash": "sha256:93c32304a0dc77ca468860d2f5debc416ef596b81f274061eb0aafbfdc50897b",
+  "questions": [
+    "The spec's Python example imports `from megaplan.arnold import run_turn, Envelope`, but Sprint 1a scope names an `agent_kit/` package and `arnold` CLI. Should the implementation expose a compatibility module under `megaplan.arnold`, or is `agent_kit.loop.run_turn` plus `arnold` CLI sufficient for this repo?",
+    "IDs are shown as prefixed strings in the envelope examples (`turn_01H...`, `epic_01H...`) but the DB tables mention UUID arrays. Should Sprint 1a use UUIDs everywhere, ULIDs with prefixes, or accept opaque text IDs at the port boundary?",
+    "The Sprint 1a table summary omits some columns referenced later in the full spec, such as `messages.bot_turn_id`, `bot_turns.current_activity`, and progress flags. Should Sprint 1a implement the full table superset now, or only the minimal columns listed in the sprint idea?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`arnold turn --epic <id> --input \"hello\"` writes one valid envelope JSON object to stdout and exits 0 when outcome is `completed`.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "CLI exit codes map exactly to envelope outcomes: completed=0, errored=1, blocked_on_caller=2, aborted=3, while still printing a valid envelope on stdout.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "SQLite migrations create `epics`, `messages`, `bot_turns`, `tool_calls`, `system_logs`, and `epic_locks` with the Sprint 1a required columns and usable indexes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Every model turn is recorded in `bot_turns`, every executed tool is recorded in `tool_calls`, and the final envelope `events` array matches the recorded tool calls for that turn.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Same input plus same SQLite state plus same fake model seed produces identical `state_delta` across repeated invocations.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Python `run_turn(...)` and CLI `arnold turn ...` produce byte-equivalent envelope serialization for the same deterministic fixture.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`--stream-events` emits one NDJSON stderr line per progress event, and those lines equal the final envelope `events` array.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_shell",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Tool audit wrapping is atomic for DB mutations: injected failure leaves neither the mutation nor its `tool_calls` audit row committed.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The full test suite passes with ephemeral SQLite and mocked Anthropic/model clients, without network access.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The CLI remains a thin wrapper over `agent_kit.loop.run_turn`, with no duplicated turn orchestration logic.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps Sprint 1b seams clear: store/model/transport behavior is behind ports and no Discord or Supabase assumptions leak into `run_turn`.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "No Supabase service key or other secret from the idea file is committed into code, tests, fixtures, or logs.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The repo is intentionally starting from documentation only; implementation should create the Python project structure from scratch.",
+    "Use `argparse` instead of Click unless the user explicitly prefers Click, because it satisfies the CLI requirements with one fewer dependency.",
+    "Implement only SQLite in Sprint 1a; `--store supabase` should return a clear unsupported/errored envelope until Sprint 1b.",
+    "Use the spec-provided model string `claude-opus-4-7` as a configurable default, but all tests should use a fake model and require no network.",
+    "Treat `state_delta` as a stable empty artifact delta in Sprint 1a because `epic_events`, checklist, and sprint editing land in later sprints.",
+    "Use opaque text IDs at API boundaries and SQLite text primary keys internally unless clarified; this can represent either UUIDs or prefixed ULIDs.",
+    "Do not read or use `.megaplan/` artifacts for this implementation plan."
+  ],
+  "structure_warnings": []
+}
