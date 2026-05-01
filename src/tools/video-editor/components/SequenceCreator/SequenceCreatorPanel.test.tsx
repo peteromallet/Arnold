@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   buildInsertSequenceDraftEdit: vi.fn(),
   buildReplaceSequenceDraftEdit: vi.fn(),
+  composerRemoveAttachment: vi.fn(),
 }));
 
 vi.mock('@/integrations/supabase/functions/invokeSupabaseEdgeFunction', () => ({
@@ -34,6 +35,10 @@ vi.mock('@/tools/video-editor/hooks/useSelectedMediaClips', () => ({
 
 vi.mock('@/shared/state/currentAttachmentSet', () => ({
   useCurrentAttachmentSet: mocks.useCurrentAttachmentSet,
+}));
+
+vi.mock('@/shared/state/selectionStore', () => ({
+  composerRemoveAttachment: mocks.composerRemoveAttachment,
 }));
 
 vi.mock('@/tools/video-editor/hooks/timelineStore', () => ({
@@ -221,6 +226,7 @@ const selectedClip = (patch: Partial<SelectedMediaClip>): SelectedMediaClip => (
 
 const renderPanel = (overrides: {
   selectedClipId?: string | null;
+  selectedClipIds?: string[];
   selectedTrackId?: string | null;
   selectedClips?: SelectedMediaClip[];
   attachedClips?: SelectedMediaClip[];
@@ -243,6 +249,7 @@ const renderPanel = (overrides: {
     data: overrides.data ?? timelineData,
     resolvedConfig,
     selectedClipId: overrides.selectedClipId ?? 'clip-1',
+    selectedClipIds: new Set(overrides.selectedClipIds ?? [overrides.selectedClipId ?? 'clip-1']),
     selectedTrackId: overrides.selectedTrackId ?? 'visual-1',
   });
   mocks.useTimelineEditorOps.mockReturnValue({
@@ -259,6 +266,14 @@ const generateValidResourceDraft = async () => {
   });
   fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
   await screen.findByDisplayValue('Generated title');
+};
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 };
 
 describe('SequenceCreatorPanel', () => {
@@ -405,6 +420,57 @@ describe('SequenceCreatorPanel', () => {
     expect(screen.getByTestId('sequence-remotion-preview')).toHaveTextContent('https://cdn.example.test/asset-a.png');
   });
 
+  it('shows selected assets as removable attachment previews', () => {
+    renderPanel();
+
+    expect(screen.getByLabelText('Attached image 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Attached image 2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Deselect attached image 1'));
+
+    expect(mocks.composerRemoveAttachment).toHaveBeenCalledWith({
+      clipId: 'clip-1',
+      url: 'https://cdn.example.test/asset-a.png',
+      mediaType: 'image',
+      generationId: undefined,
+    });
+  });
+
+  it('removes full-shot allowed asset groups through the backing attachment source', () => {
+    renderPanel({
+      selectedClips: [
+        selectedClip({
+          clipId: 'shot-clip-1',
+          assetKey: 'asset-a',
+          shotId: 'shot-1',
+          shotName: 'Opening shot',
+          shotSelectionClipCount: 2,
+        }),
+        selectedClip({
+          clipId: 'shot-clip-2',
+          assetKey: 'asset-b',
+          url: 'https://cdn.example.test/asset-b.png',
+          shotId: 'shot-1',
+          shotName: 'Opening shot',
+          shotSelectionClipCount: 2,
+        }),
+      ],
+      attachedClips: [],
+    });
+
+    fireEvent.click(screen.getByLabelText('Deselect Opening shot'));
+
+    expect(mocks.composerRemoveAttachment).toHaveBeenCalledTimes(2);
+    expect(mocks.composerRemoveAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      clipId: 'shot-clip-1',
+      url: 'https://cdn.example.test/asset-a.png',
+    }));
+    expect(mocks.composerRemoveAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      clipId: 'shot-clip-2',
+      url: 'https://cdn.example.test/asset-b.png',
+    }));
+  });
+
   it('clears stale drafts when starting a new generation and accepts image-jump drafts without titles', async () => {
     renderPanel({
       selectedClips: [
@@ -440,6 +506,45 @@ describe('SequenceCreatorPanel', () => {
     expect(screen.getAllByText('Motion-only image sequence that snaps, pops, and jumps between selected assets.').length).toBeGreaterThan(0);
     const requestBody = mocks.invokeSupabaseEdgeFunction.mock.calls.at(-1)?.[1].body;
     expect(requestBody.allowed_clip_types).toContain('image-jump');
+  });
+
+  it('clears the stale selected draft UI while a fresh generate request is pending', async () => {
+    renderPanel();
+    await generateValidResourceDraft();
+    expect(screen.getByDisplayValue('Generated title')).toBeInTheDocument();
+
+    const deferred = createDeferred<{
+      drafts: Array<{ clipType: string; hold: number; params: Record<string, unknown> }>;
+      invalid_drafts: never[];
+    }>();
+    mocks.invokeSupabaseEdgeFunction.mockReturnValueOnce(deferred.promise);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
+      target: { value: 'Make a new animation' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue('Generated title')).not.toBeInTheDocument();
+    });
+
+    deferred.resolve({
+      drafts: [
+        {
+          clipType: 'resource-card',
+          hold: 4,
+          params: {
+            title: 'Fresh title',
+            detail: 'Fresh detail',
+            previewAssetKeys: ['asset-a'],
+          },
+        },
+      ],
+      invalid_drafts: [],
+    });
+
+    await screen.findByDisplayValue('Fresh title');
   });
 
   it('names generated animations from their prompt and can edit the selected one by instruction', async () => {
@@ -482,11 +587,48 @@ describe('SequenceCreatorPanel', () => {
           clipType: 'resource-card',
           params: expect.objectContaining({ title: 'Generated title' }),
         }),
+        valid_source_draft: expect.objectContaining({
+          clipType: 'resource-card',
+          params: expect.objectContaining({ title: 'Generated title' }),
+        }),
       }),
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
     expect(screen.getByPlaceholderText('Make these selected images jump between each other...')).toBeInTheDocument();
+  });
+
+  it('preserves the prior valid draft group when edit regeneration returns no valid replacement', async () => {
+    renderPanel();
+    await generateValidResourceDraft();
+
+    mocks.invokeSupabaseEdgeFunction.mockResolvedValueOnce({
+      drafts: [],
+      invalid_drafts: [{ index: 0, errors: [{ code: 'invalid_param_option' }] }],
+    });
+    fireEvent.change(screen.getByPlaceholderText('Make the motion faster, use all three selected images, remove the title...'), {
+      target: { value: 'Try an invalid edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /apply edit to animation/i }));
+
+    expect(await screen.findByText('The model returned drafts, but none matched the trusted sequence schema for the current selected or attached assets.')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Generated title')).toBeInTheDocument();
+    expect(screen.getByText('Selected Animation')).toBeInTheDocument();
+  });
+
+  it('distinguishes empty generation responses from schema rejection', async () => {
+    renderPanel();
+
+    mocks.invokeSupabaseEdgeFunction.mockResolvedValueOnce({
+      drafts: [],
+      invalid_drafts: [],
+    });
+    fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
+      target: { value: 'Return nothing useful' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
+
+    expect(await screen.findByText('No sequence drafts were returned.')).toBeInTheDocument();
   });
 
   it('revalidates edited drafts and disables insert and replace when timing becomes invalid', async () => {
@@ -553,7 +695,7 @@ describe('SequenceCreatorPanel', () => {
     expect(mocks.buildReplaceSequenceDraftEdit).toHaveBeenCalledWith(
       timelineData,
       expect.objectContaining({ clipType: 'resource-card' }),
-      { selectedClipId: 'clip-1' },
+      { selectedClipId: 'clip-1', selectedClipIds: new Set(['clip-1']) },
     );
     expect(mocks.applyEdit).toHaveBeenCalledTimes(1);
     const [mutation, options] = mocks.applyEdit.mock.calls[0];
@@ -561,6 +703,57 @@ describe('SequenceCreatorPanel', () => {
     expect(mutation.metaDeletes).toEqual(['clip-1']);
     expect(options.selectedTrackId).toBe('visual-1');
     expect(Object.values(mutation.metaUpdates).some((meta) => meta.clipType === 'resource-card')).toBe(true);
+  });
+
+  it('passes the full selected clip set when probing and replacing a multi-selection', async () => {
+    const multiSelectedTimelineData = {
+      ...timelineData,
+      rows: timelineData.rows.map((row) => (
+        row.id === 'visual-1'
+          ? {
+              ...row,
+              actions: [
+                ...row.actions,
+                { id: 'clip-2', start: 4, end: 7, effectId: 'effect-clip-2' },
+              ],
+            }
+          : row
+      )),
+      meta: {
+        ...timelineData.meta,
+        'clip-2': {
+          track: 'visual-1',
+          clipType: 'image',
+          asset: 'asset-b',
+          hold: 3,
+        },
+      },
+      clipOrder: {
+        ...timelineData.clipOrder,
+        'visual-1': ['clip-1', 'clip-2'],
+      },
+    } as TimelineData;
+
+    renderPanel({
+      data: multiSelectedTimelineData,
+      selectedClipId: 'clip-1',
+      selectedClipIds: ['clip-1', 'clip-2'],
+    });
+    await generateValidResourceDraft();
+
+    expect(mocks.buildReplaceSequenceDraftEdit).toHaveBeenCalledWith(
+      multiSelectedTimelineData,
+      expect.objectContaining({ clipType: 'resource-card' }),
+      { selectedClipId: 'clip-1', selectedClipIds: new Set(['clip-1', 'clip-2']) },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /replace selected/i }));
+
+    expect(mocks.buildReplaceSequenceDraftEdit).toHaveBeenLastCalledWith(
+      multiSelectedTimelineData,
+      expect.objectContaining({ clipType: 'resource-card' }),
+      { selectedClipId: 'clip-1', selectedClipIds: new Set(['clip-1', 'clip-2']) },
+    );
   });
 
   it('disables replace with a clear state for audio-track selections', async () => {

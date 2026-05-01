@@ -26,6 +26,7 @@ import {
   type SequenceDraftEditError,
 } from '@/tools/video-editor/lib/sequence-drafts';
 import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet';
+import { composerRemoveAttachment } from '@/shared/state/selectionStore';
 import { AgentChatAttachmentStrip } from '@/tools/video-editor/components/AgentChat/AgentChatMessage';
 import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize';
 import {
@@ -240,7 +241,7 @@ export function SequenceCreatorPanel({
 }: SequenceCreatorPanelProps) {
   const selectedMedia = useSelectedMediaClips();
   const attachmentSet = useCurrentAttachmentSet();
-  const { data, resolvedConfig, selectedClipId, selectedTrackId } = useTimelineEditorData();
+  const { data, resolvedConfig, selectedClipId, selectedClipIds, selectedTrackId } = useTimelineEditorData();
   const { applyEdit } = useTimelineEditorOps();
   const currentTime = useTimelinePlaybackSelector((playback) => playback.currentTime);
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -271,7 +272,7 @@ export function SequenceCreatorPanel({
   const selectedGroup = useMemo(() => (
     selectedGroupId
       ? draftGroups.find((group) => group.id === selectedGroupId) ?? null
-      : draftGroups[0] ?? null
+      : null
   ), [draftGroups, selectedGroupId]);
   const drafts = selectedGroup?.drafts ?? [];
   const selectedDraft = drafts[selectedDraftIndex] ?? null;
@@ -288,8 +289,8 @@ export function SequenceCreatorPanel({
 
   const replaceProbe = useMemo(() => {
     if (!data || !validatedDraft) return null;
-    return buildReplaceSequenceDraftEdit(data, validatedDraft, { selectedClipId });
-  }, [data, selectedClipId, validatedDraft]);
+    return buildReplaceSequenceDraftEdit(data, validatedDraft, { selectedClipId, selectedClipIds });
+  }, [data, selectedClipId, selectedClipIds, validatedDraft]);
 
   const replaceDisabledReason = useMemo(() => {
     if (!validatedDraft) {
@@ -327,7 +328,9 @@ export function SequenceCreatorPanel({
     setIsGenerating(true);
     setGenerationNote(null);
     setActionError(null);
-    setSelectedDraftIndex(0);
+    if ((options.mode ?? 'generate') === 'generate') {
+      setSelectedGroupId(null);
+    }
 
     try {
       const response = await invokeSupabaseEdgeFunction<GenerateSequenceResponse>(
@@ -388,10 +391,6 @@ export function SequenceCreatorPanel({
       const invalidCount = invalidCountFromClient + (response.invalid_drafts?.length ?? 0);
 
       if (validDrafts.length === 0) {
-        if (options.replaceGroupId) {
-          setDraftGroups((current) => current.filter((group) => group.id !== options.replaceGroupId));
-          setSelectedGroupId((current) => (current === options.replaceGroupId ? null : current));
-        }
         setGenerationNote(invalidCount > 0
           ? 'The model returned drafts, but none matched the trusted sequence schema for the current selected or attached assets.'
           : 'No sequence drafts were returned.');
@@ -488,7 +487,7 @@ export function SequenceCreatorPanel({
 
   const handleReplace = useCallback(() => {
     if (!data || !validatedDraft) return;
-    const result = buildReplaceSequenceDraftEdit(data, validatedDraft, { selectedClipId });
+    const result = buildReplaceSequenceDraftEdit(data, validatedDraft, { selectedClipId, selectedClipIds });
     if (!result.ok) {
       setActionError(formatEditError(result.error));
       return;
@@ -498,7 +497,32 @@ export function SequenceCreatorPanel({
       selectedTrackId: result.selectedTrackId,
     });
     onOpenChange?.(false);
-  }, [applyEdit, data, onOpenChange, selectedClipId, validatedDraft]);
+  }, [applyEdit, data, onOpenChange, selectedClipId, selectedClipIds, validatedDraft]);
+
+  const handleRemoveAllowedAsset = useCallback((asset: {
+    clipId: string;
+    url: string;
+    mediaType: 'image' | 'video';
+    generationId?: string;
+  }) => {
+    composerRemoveAttachment({
+      clipId: asset.clipId,
+      url: asset.url,
+      mediaType: asset.mediaType,
+      generationId: asset.generationId,
+    });
+  }, []);
+
+  const handleRemoveAllowedShot = useCallback((shotId: string) => {
+    allowedAssets
+      .filter((asset) => asset.shotId === shotId)
+      .forEach((asset) => composerRemoveAttachment({
+        clipId: asset.clipId,
+        url: asset.url,
+        mediaType: asset.mediaType,
+        generationId: asset.generationId,
+      }));
+  }, [allowedAssets]);
 
   const insertDisabledReason = !validatedDraft
     ? (selectedValidation && !selectedValidation.ok
@@ -619,6 +643,8 @@ export function SequenceCreatorPanel({
                       }))}
                       isUser={false}
                       className="mt-0"
+                      onRemoveAttachment={handleRemoveAllowedAsset}
+                      onRemoveShot={handleRemoveAllowedShot}
                       maxPreviewCount={null}
                     />
                   ) : (

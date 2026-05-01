@@ -72,6 +72,17 @@ describe('validateSequenceDraft', () => {
     });
   });
 
+  it('rejects unsupported image-jump modes', () => {
+    expectErrorCode({
+      clipType: 'image-jump',
+      hold: 4,
+      params: {
+        imageAssetKeys: ['selected-asset'],
+        mode: 'spin',
+      },
+    }, 'invalid_param_option');
+  });
+
   it('validates batches without hiding per-draft failures', () => {
     const results = validateSequenceDrafts([
       { clipType: 'cta-card', hold: 3, params: { title: 'Create' } },

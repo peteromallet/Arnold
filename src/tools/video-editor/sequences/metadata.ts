@@ -9,6 +9,7 @@ export type SequenceParamMetadata = {
   description: string;
   required?: boolean;
   defaultValue?: string | readonly string[];
+  options?: readonly string[];
   maxItems?: number;
   componentParam?: string;
 };
@@ -67,6 +68,7 @@ export const TRUSTED_SEQUENCE_METADATA = [
         kind: 'string',
         description: 'Motion style. Use jump for hard cuts, snap for quick scale hits, gallery for side-by-side browsing, pulse for rhythmic zooms, and shuffle for overlapping card movement.',
         defaultValue: 'jump',
+        options: ['jump', 'snap', 'gallery', 'pulse', 'shuffle'],
       },
     ],
   },

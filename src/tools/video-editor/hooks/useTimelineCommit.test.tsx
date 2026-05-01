@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  __getSelectionStateForTests,
+  __resetSelectionStoreForTests,
+} from '@/shared/state/selectionStore';
 import { useTimelineCommit } from './useTimelineCommit';
 import { TimelineEventBus } from './useTimelineEventBus';
 import { configToRows, type TimelineData } from '../lib/timeline-data';
@@ -81,7 +85,53 @@ function makeVideoModeGroupData(): TimelineData {
   };
 }
 
+function makeSelectionForwardingData(): TimelineData {
+  const config: TimelineConfig = {
+    output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+    tracks: [
+      { id: 'V1', kind: 'visual', label: 'V1' },
+      { id: 'V2', kind: 'visual', label: 'V2' },
+    ],
+    clips: [
+      {
+        id: 'clip-old',
+        at: 0,
+        track: 'V1',
+        clipType: 'media',
+        hold: 3,
+      },
+    ],
+  };
+  const rowData = configToRows(config);
+  const resolvedConfig = {
+    output: { ...config.output },
+    tracks: (config.tracks ?? []).map((t) => ({ ...t })),
+    clips: config.clips.map((clip) => ({ ...clip, assetEntry: undefined })),
+    registry: {},
+  };
+
+  return {
+    config,
+    configVersion: 1,
+    registry: { assets: {} },
+    resolvedConfig,
+    rows: rowData.rows,
+    meta: rowData.meta,
+    effects: rowData.effects,
+    assetMap: {},
+    output: { ...config.output },
+    tracks: (config.tracks ?? []).map((t) => ({ ...t })),
+    clipOrder: rowData.clipOrder,
+    signature: getConfigSignature(resolvedConfig),
+    stableSignature: getStableConfigSignature(config, { assets: {} }),
+  };
+}
+
 describe('useTimelineCommit — delete-shot / auto-restore regression', () => {
+  beforeEach(() => {
+    __resetSelectionStoreForTests();
+  });
+
   it('deleting a video-mode group\'s video clip does NOT auto-insert image snapshots', () => {
     const eventBus = new TimelineEventBus();
     const lastSavedSignatureRef = { current: '' };
@@ -222,5 +272,76 @@ describe('useTimelineCommit — delete-shot / auto-restore regression', () => {
       theme_overrides: { visual: { canvas: { fps: 24 } } },
       generation_defaults: { model: 'sequence-v1' },
     });
+  });
+
+  it('rows mutations can replace a deleted selected clip with an explicit new clip and track selection', () => {
+    const eventBus = new TimelineEventBus();
+    const lastSavedSignatureRef = { current: '' };
+
+    const { result } = renderHook(() => useTimelineCommit({
+      eventBus,
+      lastSavedSignatureRef,
+    }));
+
+    act(() => {
+      result.current.commitData(makeSelectionForwardingData(), {
+        save: false,
+        selectedClipId: 'clip-old',
+        selectedTrackId: 'V1',
+      });
+    });
+
+    const initial = result.current.dataRef.current!;
+    const rowsWithReplacement = initial.rows.map((row) => {
+      if (row.id === 'V1') {
+        return { ...row, actions: [] };
+      }
+      if (row.id === 'V2') {
+        return {
+          ...row,
+          actions: [{
+            id: 'clip-new',
+            start: 0,
+            end: 3,
+            effectId: 'effect-clip-new',
+          }],
+        };
+      }
+      return row;
+    });
+
+    act(() => {
+      result.current.applyEdit({
+        type: 'rows',
+        rows: rowsWithReplacement,
+        metaDeletes: ['clip-old'],
+        metaUpdates: {
+          'clip-new': {
+            track: 'V2',
+            clipType: 'section-hook',
+            hold: 3,
+            params: { title: 'Replacement' },
+          },
+        },
+        clipOrderOverride: {
+          V1: [],
+          V2: ['clip-new'],
+        },
+      }, {
+        save: false,
+        selectedClipId: 'clip-new',
+        selectedTrackId: 'V2',
+      });
+    });
+
+    const after = result.current.dataRef.current!;
+    expect(after.meta['clip-old']).toBeUndefined();
+    expect(after.meta['clip-new']).toMatchObject({ track: 'V2' });
+    expect(result.current.selectedClipId).toBe('clip-new');
+    expect(result.current.selectedTrackId).toBe('V2');
+    expect(result.current.selectedClipIdRef.current).toBe('clip-new');
+    expect(result.current.selectedTrackIdRef.current).toBe('V2');
+    expect(__getSelectionStateForTests().timeline.selectedClipId).toBe('clip-new');
+    expect(__getSelectionStateForTests().timeline.selectedTrackId).toBe('V2');
   });
 });

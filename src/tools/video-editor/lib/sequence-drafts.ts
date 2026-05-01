@@ -36,6 +36,7 @@ export type BuildInsertSequenceDraftOptions = {
 
 export type BuildReplaceSequenceDraftOptions = {
   selectedClipId: string | null | undefined;
+  selectedClipIds?: Iterable<string> | null;
 };
 
 const cloneParams = (
@@ -62,22 +63,6 @@ const addActionToRow = (
     : row
 ));
 
-const replaceActionInRows = (
-  rows: TimelineRow[],
-  trackId: string,
-  action: TimelineAction,
-  removedClipId: string,
-): TimelineRow[] => rows.map((row) => {
-  if (row.id !== trackId) return row;
-  return {
-    ...row,
-    actions: [
-      ...row.actions.filter((candidate) => candidate.id !== removedClipId),
-      action,
-    ],
-  };
-});
-
 const findAction = (
   rows: TimelineRow[],
   clipId: string,
@@ -89,6 +74,20 @@ const findAction = (
     }
   }
   return null;
+};
+
+const uniqueSelectedClipIds = (
+  primaryClipId: string | null | undefined,
+  clipIds: Iterable<string> | null | undefined,
+): string[] => {
+  const selected = new Set<string>();
+  if (clipIds) {
+    for (const clipId of clipIds) {
+      if (clipId) selected.add(clipId);
+    }
+  }
+  if (primaryClipId) selected.add(primaryClipId);
+  return [...selected];
 };
 
 const resolveInsertedRows = (
@@ -185,63 +184,82 @@ export const buildReplaceSequenceDraftEdit = (
   draft: ValidatedSequenceDraft,
   options: BuildReplaceSequenceDraftOptions,
 ): SequenceDraftEditResult => {
-  const selectedClipId = options.selectedClipId;
-  if (!selectedClipId) {
+  const selectedClipIds = uniqueSelectedClipIds(options.selectedClipId, options.selectedClipIds);
+  if (selectedClipIds.length === 0) {
     return { ok: false, error: 'replace_target_missing' };
   }
-  const target = findAction(current.rows, selectedClipId);
-  const targetMeta = current.meta[selectedClipId];
-  if (!target || !targetMeta) {
+
+  const targets = selectedClipIds.map((clipId) => {
+    const found = findAction(current.rows, clipId);
+    const meta = current.meta[clipId];
+    return found && meta ? { clipId, ...found, meta } : null;
+  });
+  if (targets.some((target) => target === null)) {
     return { ok: false, error: 'replace_target_missing' };
   }
-  const targetTrack = current.tracks.find((track) => track.id === target.row.id);
-  if (targetTrack?.kind !== 'visual') {
+  const concreteTargets = targets.filter((target): target is NonNullable<typeof target> => target !== null);
+  const hasNonVisualTarget = concreteTargets.some((target) => (
+    current.tracks.find((track) => track.id === target.row.id)?.kind !== 'visual'
+  ));
+  if (hasNonVisualTarget) {
     return { ok: false, error: 'replace_target_not_visual' };
   }
 
+  const primaryTarget = concreteTargets.find((target) => target.clipId === options.selectedClipId)
+    ?? concreteTargets[0];
+  const earliestStart = Math.min(...concreteTargets.map((target) => target.action.start));
+  const removedClipIds = new Set(concreteTargets.map((target) => target.clipId));
   const clipId = getNextClipId(current.meta);
   const action: TimelineAction = {
     id: clipId,
-    start: target.action.start,
-    end: target.action.start + draft.hold,
+    start: earliestStart,
+    end: earliestStart + draft.hold,
     effectId: `effect-${clipId}`,
   };
-  const clipMeta = createSequenceClipMeta(target.row.id, draft);
+  const clipMeta = createSequenceClipMeta(primaryTarget.row.id, draft);
   const nextMetaBase = {
     ...current.meta,
     [clipId]: clipMeta,
   };
-  delete nextMetaBase[selectedClipId];
-  const rowsWithReplacement = replaceActionInRows(
-    current.rows,
-    target.row.id,
-    action,
-    selectedClipId,
-  );
+  removedClipIds.forEach((removedClipId) => {
+    delete nextMetaBase[removedClipId];
+  });
+  const rowsWithReplacement = current.rows.map((row) => ({
+    ...row,
+    actions: [
+      ...row.actions.filter((candidate) => !removedClipIds.has(candidate.id)),
+      ...(row.id === primaryTarget.row.id ? [action] : []),
+    ],
+  }));
   const { rows, metaPatches, action: resolvedAction } = resolveInsertedRows(
     rowsWithReplacement,
-    target.row.id,
+    primaryTarget.row.id,
     clipId,
     nextMetaBase,
   );
   const resolvedHold = resolvedAction
     ? Math.max(0.05, resolvedAction.end - resolvedAction.start)
     : draft.hold;
-  const clipOrderOverride = updateClipOrder(
-    current.clipOrder,
-    target.row.id,
-    (ids) => [...ids.filter((id) => id !== selectedClipId && id !== clipId), clipId],
-  );
+  const clipOrderOverride = current.tracks.reduce((order, track) => (
+    updateClipOrder(
+      order,
+      track.id,
+      (ids) => [
+        ...ids.filter((id) => !removedClipIds.has(id) && id !== clipId),
+        ...(track.id === primaryTarget.row.id ? [clipId] : []),
+      ],
+    )
+  ), current.clipOrder);
 
   return {
     ok: true,
     clipId,
     selectedClipId: clipId,
-    selectedTrackId: target.row.id,
+    selectedTrackId: primaryTarget.row.id,
     mutation: {
       type: 'rows',
       rows,
-      metaDeletes: [selectedClipId],
+      metaDeletes: [...removedClipIds],
       metaUpdates: {
         ...metaPatches,
         [clipId]: {

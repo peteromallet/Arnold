@@ -287,6 +287,8 @@ export function useTimelineCommit({
         nextData,
         {
           save: options?.save,
+          selectedClipId: options?.selectedClipId,
+          selectedTrackId: options?.selectedTrackId,
           transactionId: options?.transactionId,
           semantic: options?.semantic,
         },

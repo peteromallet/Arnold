@@ -86,4 +86,38 @@ describe('sequence asset materialization', () => {
 
     expect(materializeResolvedSequenceConfig(config)).toBe(config);
   });
+
+  it('materializes image-jump imageAssetKeys into component image URLs', () => {
+    const config: ResolvedTimelineConfig = {
+      ...buildConfig(),
+      clips: [
+        {
+          id: 'clip-image-jump',
+          clipType: 'image-jump',
+          track: 'V1',
+          at: 0,
+          hold: 4,
+          params: {
+            imageAssetKeys: ['asset-a', 'asset-b'],
+            mode: 'shuffle',
+          },
+        },
+      ],
+    };
+
+    const materialized = materializeResolvedSequenceConfig(config);
+
+    expect(materialized.clips[0].params).toMatchObject({
+      imageAssetKeys: ['asset-a', 'asset-b'],
+      images: [
+        'https://cdn.example.com/asset-a.png',
+        'https://cdn.example.com/asset-b.png',
+      ],
+      mode: 'shuffle',
+    });
+    expect(config.clips[0].params).toEqual({
+      imageAssetKeys: ['asset-a', 'asset-b'],
+      mode: 'shuffle',
+    });
+  });
 });

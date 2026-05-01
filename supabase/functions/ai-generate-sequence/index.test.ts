@@ -190,6 +190,8 @@ describe('ai-generate-sequence edge entrypoint', () => {
     expect(body.stream).toBe(true);
     expect(body.system).toContain('trusted structured timeline sequence drafts');
     expect(body.system).toContain('Prefer image-jump');
+    expect(body.system).toContain('params.imageAssetKeys');
+    expect(body.system).toContain('jump, snap, gallery, pulse, shuffle');
     expect(body.messages[0].content).toContain('allowed_asset_keys');
   });
 
@@ -241,6 +243,34 @@ describe('ai-generate-sequence edge entrypoint', () => {
       ],
       invalid_drafts: [],
     });
+  });
+
+  it('rejects unsupported image-jump modes in edge validation', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      createAnthropicSseResponse(JSON.stringify({
+        drafts: [
+          {
+            clipType: 'image-jump',
+            hold: 4,
+            params: {
+              imageAssetKeys: ['asset-a'],
+              mode: 'spin',
+            },
+          },
+        ],
+      }))
+    ));
+
+    const handler = await loadHandler();
+    const response = await handler(new Request('https://edge.test/ai-generate-sequence', { method: 'POST' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.drafts).toEqual([]);
+    expect(body.invalid_drafts[0].errors).toContainEqual(expect.objectContaining({
+      path: '$.params.mode',
+      code: 'invalid_param_option',
+    }));
   });
 
   it('extracts valid drafts from prose-wrapped fenced JSON', async () => {

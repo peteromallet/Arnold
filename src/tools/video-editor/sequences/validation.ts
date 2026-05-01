@@ -96,6 +96,7 @@ const isJsonSerializable = (value: unknown): boolean => {
 const validateStringValue = (
   value: unknown,
   path: string,
+  param: SequenceParamMetadata,
   errors: SequenceDraftValidationError[],
 ): string | undefined => {
   if (typeof value !== 'string') {
@@ -108,6 +109,10 @@ const validateStringValue = (
   }
   if (CODE_STRING_PATTERN.test(value)) {
     addError(errors, path, 'generated_code', 'Generated code is not accepted in sequence drafts.');
+    return undefined;
+  }
+  if (param.options && !param.options.includes(value)) {
+    addError(errors, path, 'invalid_param_option', `Expected one of: ${param.options.join(', ')}.`);
     return undefined;
   }
   return value;
@@ -237,7 +242,7 @@ export const validateSequenceDraft = (
         continue;
       }
       if (param.kind === 'string') {
-        const normalized = validateStringValue(value, path, errors);
+        const normalized = validateStringValue(value, path, param, errors);
         if (normalized !== undefined) {
           normalizedParams[key] = normalized;
         }

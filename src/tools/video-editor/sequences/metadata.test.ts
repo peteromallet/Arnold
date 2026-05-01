@@ -61,6 +61,10 @@ describe('trusted sequence metadata', () => {
       maxItems: 8,
       componentParam: 'images',
     });
+    expect(imageJump!.params.find((param) => param.key === 'mode')).toMatchObject({
+      kind: 'string',
+      options: ['jump', 'snap', 'gallery', 'pulse', 'shuffle'],
+    });
   });
 });
 

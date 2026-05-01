@@ -193,6 +193,59 @@ describe('sequence draft row mutations', () => {
     expect(persisted.theme).toBe('2rp');
   });
 
+  it('replaces all selected visual clips with one sequence at the earliest selected start', async () => {
+    const data = await buildData({
+      clips: [
+        {
+          id: 'clip-0',
+          track: 'V1',
+          at: 4,
+          clipType: 'media',
+          hold: 2,
+        },
+        {
+          id: 'clip-1',
+          track: 'V1',
+          at: 7,
+          clipType: 'media',
+          hold: 2,
+        },
+        {
+          id: 'clip-2',
+          track: 'V2',
+          at: 2,
+          clipType: 'media',
+          hold: 1,
+        },
+      ],
+    });
+    const result = buildReplaceSequenceDraftEdit(data, draft, {
+      selectedClipId: 'clip-1',
+      selectedClipIds: ['clip-0', 'clip-1', 'clip-2'],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.selectedClipId).toBe(result.clipId);
+    expect(result.selectedTrackId).toBe('V1');
+    expect(result.mutation.metaDeletes).toEqual(['clip-0', 'clip-1', 'clip-2']);
+    expect(result.mutation.clipOrderOverride.V1).toEqual([result.clipId]);
+    expect(result.mutation.clipOrderOverride.V2).toEqual([]);
+    expect(result.mutation.metaUpdates?.[result.clipId]).toMatchObject({
+      track: 'V1',
+      clipType: 'section-hook',
+    });
+    const persisted = applyRowsMutation(data, result.mutation);
+    expect(persisted.clips).toHaveLength(1);
+    expect(persisted.clips[0]).toMatchObject({
+      id: result.clipId,
+      track: 'V1',
+      at: 2,
+      clipType: 'section-hook',
+      hold: 3,
+    });
+  });
+
   it('rejects audio-track replacement targets instead of creating an invisible sequence', async () => {
     const data = await buildData({
       tracks: [

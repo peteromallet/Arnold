@@ -11,6 +11,7 @@ type SequenceParam = {
   key: string;
   kind: "string" | "asset-list";
   required?: boolean;
+  options?: readonly string[];
   maxItems?: number;
   componentParam?: string;
 };
@@ -40,7 +41,7 @@ export const TRUSTED_SEQUENCE_METADATA: SequenceMetadata[] = [
     hold: { minSeconds: 1, maxSeconds: 20 },
     params: [
       { key: "imageAssetKeys", kind: "asset-list", required: true, maxItems: 8, componentParam: "images" },
-      { key: "mode", kind: "string" },
+      { key: "mode", kind: "string", options: ["jump", "snap", "gallery", "pulse", "shuffle"] },
     ],
   },
   {
@@ -185,6 +186,8 @@ export const validateSequenceDraft = (
           addError(errors, path, "raw_url", "Raw URLs are not accepted.");
         } else if (CODE_STRING_PATTERN.test(value)) {
           addError(errors, path, "generated_code", "Generated code is not accepted.");
+        } else if (param.options && !param.options.includes(value)) {
+          addError(errors, path, "invalid_param_option", `Expected one of: ${param.options.join(", ")}.`);
         } else {
           normalizedParams[key] = value;
         }
