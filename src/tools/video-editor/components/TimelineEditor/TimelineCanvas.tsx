@@ -45,6 +45,10 @@ import {
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
 import { useRenderBudget } from '@/shared/dev/useRenderBudget';
+import {
+  TIMELINE_CENTER_CLIP_EVENT,
+  type TimelineCenterClipEventDetail,
+} from '@/tools/video-editor/lib/timeline-viewport-events';
 import type { TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag';
@@ -183,6 +187,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   const timeRef = useRef(0);
   const playRateRef = useRef(1);
   const scrollMetricsRef = useRef<ScrollMetrics>({ scrollLeft: 0, scrollTop: 0 });
+  const pendingCenterClipIdRef = useRef<string | null>(null);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [shotGroupMenu, setShotGroupMenu] = useState<ShotGroupMenuState>(null);
@@ -296,6 +301,75 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
       }];
     });
   }, [actionHeight, activeTaskClipIds, finalVideoMap, pixelsPerSecond, resizePreviewSnapshot, rowHeight, rows, shotGroups, staleShotGroupIds, timeToPixel]);
+
+  const centerClipInViewport = useCallback((clipId: string): boolean => {
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return false;
+    }
+
+    let targetAction: TimelineAction | null = null;
+    let targetRowIndex = -1;
+    rows.some((candidateRow, rowIndex) => {
+      const found = candidateRow.actions.find((candidate) => candidate.id === clipId);
+      if (!found) return false;
+      targetAction = found;
+      targetRowIndex = rowIndex;
+      return true;
+    });
+    if (!targetAction || targetRowIndex < 0) {
+      return false;
+    }
+
+    const viewportWidth = container.clientWidth || container.getBoundingClientRect().width;
+    const viewportHeight = container.clientHeight || container.getBoundingClientRect().height;
+    const clipCenterX = startLeft + ((targetAction.start + targetAction.end) / 2) * pixelsPerSecond;
+    const clipCenterY = targetRowIndex * rowHeight + rowHeight / 2;
+    const maxScrollLeft = Math.max(0, totalWidth - viewportWidth);
+    const maxScrollTop = Math.max(0, scrollContentHeight - viewportHeight);
+    const nextScrollLeft = clamp(clipCenterX - viewportWidth / 2, 0, maxScrollLeft);
+    const nextScrollTop = clamp(clipCenterY - viewportHeight / 2, 0, maxScrollTop);
+
+    container.scrollTo({
+      left: nextScrollLeft,
+      top: nextScrollTop,
+      behavior: 'smooth',
+    });
+    return true;
+  }, [pixelsPerSecond, rowHeight, rows, scrollContentHeight, startLeft, totalWidth]);
+
+  const scheduleCenterClipInViewport = useCallback((clipId: string) => {
+    pendingCenterClipIdRef.current = clipId;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (pendingCenterClipIdRef.current !== clipId) {
+          return;
+        }
+        if (centerClipInViewport(clipId)) {
+          pendingCenterClipIdRef.current = null;
+        }
+      });
+    });
+  }, [centerClipInViewport]);
+
+  useEffect(() => {
+    const handleCenterClip = (event: Event) => {
+      const detail = (event as CustomEvent<TimelineCenterClipEventDetail>).detail;
+      if (!detail?.clipId) {
+        return;
+      }
+      scheduleCenterClipInViewport(detail.clipId);
+    };
+    window.addEventListener(TIMELINE_CENTER_CLIP_EVENT, handleCenterClip);
+    return () => window.removeEventListener(TIMELINE_CENTER_CLIP_EVENT, handleCenterClip);
+  }, [scheduleCenterClipInViewport]);
+
+  useEffect(() => {
+    const pendingClipId = pendingCenterClipIdRef.current;
+    if (pendingClipId) {
+      scheduleCenterClipInViewport(pendingClipId);
+    }
+  }, [rows, scheduleCenterClipInViewport]);
   const hideShotGroups = dragSessionRef?.current !== null;
   const showTouchShotGroupActions = deviceClass !== 'desktop';
   const openShotGroupMenu = useCallback((

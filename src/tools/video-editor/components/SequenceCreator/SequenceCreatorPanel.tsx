@@ -25,6 +25,7 @@ import {
   buildReplaceSequenceDraftEdit,
   type SequenceDraftEditError,
 } from '@/tools/video-editor/lib/sequence-drafts';
+import { requestCenterTimelineClip } from '@/tools/video-editor/lib/timeline-viewport-events';
 import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet';
 import { composerRemoveAttachment } from '@/shared/state/selectionStore';
 import { AgentChatAttachmentStrip } from '@/tools/video-editor/components/AgentChat/AgentChatMessage';
@@ -408,7 +409,7 @@ export function SequenceCreatorPanel({
         if (options.replaceGroupId) {
           return current.map((group) => (group.id === options.replaceGroupId ? nextGroup : group));
         }
-        return [nextGroup, ...current];
+        return [nextGroup];
       });
       setSelectedGroupId(nextGroupId);
       setSelectedDraftIndex(0);
@@ -482,6 +483,7 @@ export function SequenceCreatorPanel({
       selectedClipId: result.selectedClipId,
       selectedTrackId: result.selectedTrackId,
     });
+    requestCenterTimelineClip(result.selectedClipId);
     onOpenChange?.(false);
   }, [applyEdit, currentTime, data, onOpenChange, selectedTrackId, validatedDraft]);
 
@@ -496,6 +498,7 @@ export function SequenceCreatorPanel({
       selectedClipId: result.selectedClipId,
       selectedTrackId: result.selectedTrackId,
     });
+    requestCenterTimelineClip(result.selectedClipId);
     onOpenChange?.(false);
   }, [applyEdit, data, onOpenChange, selectedClipId, selectedClipIds, validatedDraft]);
 
@@ -657,38 +660,6 @@ export function SequenceCreatorPanel({
                 {generationNote && (
                   <div className="rounded-lg border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
                     {generationNote}
-                  </div>
-                )}
-
-                {draftGroups.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium text-foreground">Animations</div>
-                    <div className="space-y-2">
-                      {draftGroups.map((group) => (
-                        <button
-                          key={group.id}
-                          type="button"
-                          className={[
-                            'w-full rounded-lg border p-3 text-left transition-colors',
-                            group.id === selectedGroup?.id
-                              ? 'border-primary bg-primary/10'
-                              : 'border-border bg-card/60 hover:bg-muted/60',
-                          ].join(' ')}
-                          onClick={() => {
-                            setSelectedGroupId(group.id);
-                            setSelectedDraftIndex(0);
-                            setMode('edit');
-                            setEditPrompt('');
-                            setActionError(null);
-                          }}
-                        >
-                          <div className="truncate text-sm font-medium text-foreground">{group.name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {group.drafts.length} draft{group.drafts.length === 1 ? '' : 's'}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
                   </div>
                 )}
 

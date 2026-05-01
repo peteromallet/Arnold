@@ -6,6 +6,7 @@ import {
   buildGenerationClipPayloads,
   SequenceCreatorPanel,
 } from '@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel';
+import { TIMELINE_CENTER_CLIP_EVENT } from '@/tools/video-editor/lib/timeline-viewport-events';
 import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
@@ -551,7 +552,7 @@ describe('SequenceCreatorPanel', () => {
     renderPanel();
     await generateValidResourceDraft();
 
-    expect(screen.getByRole('button', { name: /make a resource card/i })).toBeInTheDocument();
+    expect(screen.getAllByText('Make a resource card').length).toBeGreaterThan(0);
     expect(screen.getByText('Selected Animation')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /regenerate from scratch/i })).not.toBeInTheDocument();
 
@@ -650,6 +651,7 @@ describe('SequenceCreatorPanel', () => {
   it('edits draft params and timing before inserting through the sequence helper mutation path', async () => {
     renderPanel();
     await generateValidResourceDraft();
+    const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
     fireEvent.change(screen.getByDisplayValue('Generated title'), {
       target: { value: 'Edited title' },
@@ -672,7 +674,11 @@ describe('SequenceCreatorPanel', () => {
     expect(mocks.applyEdit).toHaveBeenCalledTimes(1);
     const [mutation, options] = mocks.applyEdit.mock.calls[0];
     expect(mutation.type).toBe('rows');
+    expect(options.selectedClipId).toEqual(expect.any(String));
     expect(options.selectedTrackId).toBe('visual-1');
+    expect(dispatchEventSpy).toHaveBeenCalledWith(expect.objectContaining({
+      type: TIMELINE_CENTER_CLIP_EVENT,
+    }));
     const createdMeta = Object.values(mutation.metaUpdates).find((meta) => meta.clipType === 'resource-card');
     expect(createdMeta).toMatchObject({
       track: 'visual-1',
@@ -689,6 +695,7 @@ describe('SequenceCreatorPanel', () => {
   it('replaces selected visual clips through the sequence helper mutation path', async () => {
     renderPanel();
     await generateValidResourceDraft();
+    const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
     fireEvent.click(screen.getByRole('button', { name: /replace selected/i }));
 
@@ -701,7 +708,11 @@ describe('SequenceCreatorPanel', () => {
     const [mutation, options] = mocks.applyEdit.mock.calls[0];
     expect(mutation.type).toBe('rows');
     expect(mutation.metaDeletes).toEqual(['clip-1']);
+    expect(options.selectedClipId).toEqual(expect.any(String));
     expect(options.selectedTrackId).toBe('visual-1');
+    expect(dispatchEventSpy).toHaveBeenCalledWith(expect.objectContaining({
+      type: TIMELINE_CENTER_CLIP_EVENT,
+    }));
     expect(Object.values(mutation.metaUpdates).some((meta) => meta.clipType === 'resource-card')).toBe(true);
   });
 

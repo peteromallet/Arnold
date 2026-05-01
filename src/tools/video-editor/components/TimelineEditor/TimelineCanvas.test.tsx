@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import React, { useMemo, useState } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TimelineCanvas } from '@/tools/video-editor/components/TimelineEditor/TimelineCanvas';
 import { createInteractionState, onInteractionEnd } from '@/tools/video-editor/lib/interaction-state';
+import { requestCenterTimelineClip } from '@/tools/video-editor/lib/timeline-viewport-events';
 import type { TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 
@@ -385,6 +386,38 @@ describe('TimelineCanvas floating tools', () => {
 });
 
 describe('TimelineCanvas resize pending ops', () => {
+  it('centers a requested clip in the scroll viewport', async () => {
+    const secondTrack: TrackDefinition = { id: 'V2', kind: 'visual', label: 'V2' };
+    const lateRow: TimelineRow = {
+      id: 'V2',
+      actions: [{ id: 'clip-late', start: 6, end: 8, effectId: 'effect-clip-late' }],
+    };
+    const { container } = renderCanvas({
+      tracks: [track, secondTrack],
+      rows: [row, lateRow],
+      actionId: 'clip-late',
+      scale: 1,
+      scaleWidth: 100,
+    });
+    const editArea = container.querySelector('.timeline-canvas-edit-area') as HTMLElement;
+    Object.defineProperty(editArea, 'clientWidth', { value: 200, configurable: true });
+    Object.defineProperty(editArea, 'clientHeight', { value: 48, configurable: true });
+    const scrollTo = vi.fn((options: ScrollToOptions) => {
+      editArea.scrollLeft = Number(options.left ?? 0);
+      editArea.scrollTop = Number(options.top ?? 0);
+    });
+    editArea.scrollTo = scrollTo;
+
+    requestCenterTimelineClip('clip-late');
+
+    await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({
+      left: 600,
+      top: 48,
+      behavior: 'smooth',
+    }));
+  });
+
   it('sizes the playhead to the full scrollable timeline content height', () => {
     const secondTrack: TrackDefinition = { id: 'V2', kind: 'visual', label: 'V2' };
     const secondRow: TimelineRow = {
