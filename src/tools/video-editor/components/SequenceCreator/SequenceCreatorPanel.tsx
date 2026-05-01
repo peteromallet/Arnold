@@ -533,46 +533,50 @@ export function SequenceCreatorPanel({
                 )}
               </div>
 
-              <div className="max-h-[360px] min-h-0 overflow-y-auto border-t border-border p-4">
+              <div className="flex max-h-[360px] min-h-0 flex-col border-t border-border">
                 {selectedDraft && selectedMetadata ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-[1fr_140px] items-end gap-3">
-                      <div>
-                        <div className="text-sm font-medium text-foreground">{selectedMetadata.label}</div>
-                        <div className="text-xs text-muted-foreground">{selectedMetadata.description}</div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <div className="text-xs font-medium text-muted-foreground">Duration</div>
-                        <NumberInput
-                          value={selectedDraft.hold}
-                          min={selectedMetadata.hold.minSeconds}
-                          max={selectedMetadata.hold.maxSeconds}
-                          step={selectedMetadata.hold.stepSeconds}
-                          onChange={(value) => updateSelectedDraft({ hold: value ?? selectedMetadata.hold.defaultSeconds })}
+                  <>
+                    <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-[1fr_140px] items-end gap-3">
+                          <div>
+                            <div className="text-sm font-medium text-foreground">{selectedMetadata.label}</div>
+                            <div className="text-xs text-muted-foreground">{selectedMetadata.description}</div>
+                          </div>
+                          <div className="space-y-1.5">
+                            <div className="text-xs font-medium text-muted-foreground">Duration</div>
+                            <NumberInput
+                              value={selectedDraft.hold}
+                              min={selectedMetadata.hold.minSeconds}
+                              max={selectedMetadata.hold.maxSeconds}
+                              step={selectedMetadata.hold.stepSeconds}
+                              onChange={(value) => updateSelectedDraft({ hold: value ?? selectedMetadata.hold.defaultSeconds })}
+                            />
+                          </div>
+                        </div>
+
+                        <SequenceParamEditor
+                          metadata={selectedMetadata}
+                          params={selectedDraft.params}
+                          registry={allowedRegistry}
+                          onChange={(params) => updateSelectedDraft({ params })}
                         />
+
+                        {selectedValidation && !selectedValidation.ok && (
+                          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                            {summarizeValidationErrors(selectedValidation.errors)}
+                          </div>
+                        )}
+
+                        {(actionError || replaceDisabledReason || insertDisabledReason) && (
+                          <div className="rounded-lg border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
+                            {actionError ?? replaceDisabledReason ?? insertDisabledReason}
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    <SequenceParamEditor
-                      metadata={selectedMetadata}
-                      params={selectedDraft.params}
-                      registry={allowedRegistry}
-                      onChange={(params) => updateSelectedDraft({ params })}
-                    />
-
-                    {selectedValidation && !selectedValidation.ok && (
-                      <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                        {summarizeValidationErrors(selectedValidation.errors)}
-                      </div>
-                    )}
-
-                    {(actionError || replaceDisabledReason || insertDisabledReason) && (
-                      <div className="rounded-lg border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
-                        {actionError ?? replaceDisabledReason ?? insertDisabledReason}
-                      </div>
-                    )}
-
-                    <div className="flex justify-end gap-2">
+                    <div className="flex shrink-0 justify-end gap-2 border-t border-border bg-background/95 p-4">
                       <Button
                         type="button"
                         variant="secondary"
@@ -591,10 +595,12 @@ export function SequenceCreatorPanel({
                         Insert at playhead
                       </Button>
                     </div>
-                  </div>
+                  </>
                 ) : (
-                  <div className="rounded-lg border border-border bg-card/60 p-4 text-sm text-muted-foreground">
-                    Generated sequence drafts will appear here for timing and parameter edits.
+                  <div className="p-4">
+                    <div className="rounded-lg border border-border bg-card/60 p-4 text-sm text-muted-foreground">
+                      Generated sequence drafts will appear here for timing and parameter edits.
+                    </div>
                   </div>
                 )}
               </div>
