@@ -408,8 +408,8 @@ export function SequenceCreatorPanel({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] max-w-6xl overflow-hidden p-0">
-        <div className="flex max-h-[92vh] min-h-[720px] flex-col">
+      <DialogContent className="h-[min(92vh,820px)] max-h-[92vh] max-w-6xl overflow-hidden p-0">
+        <div className="flex h-full min-h-0 flex-col">
           <DialogHeader className="border-b border-border px-5 py-4">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -516,7 +516,7 @@ export function SequenceCreatorPanel({
               </div>
             </div>
 
-            <div className="grid min-h-0 grid-rows-[minmax(280px,1fr)_auto]">
+            <div className="grid min-h-0 grid-rows-[minmax(180px,1fr)_minmax(0,360px)]">
               <div className="min-h-0 overflow-hidden bg-black">
                 {previewConfig ? (
                   <RemotionPreview
