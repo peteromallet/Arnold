@@ -80,6 +80,8 @@ def _build_provider_env_blocklist() -> frozenset:
         "PERPLEXITY_API_KEY",      # Perplexity
         "COHERE_API_KEY",          # Cohere
         "FIREWORKS_API_KEY",       # Fireworks AI
+        "FIREWORKS_AI_API_KEY",    # Fireworks AI alias
+        "FIREWORKS_AI_BASE_URL",   # Fireworks AI base URL alias
         "XAI_API_KEY",             # xAI (Grok)
         "HELICONE_API_KEY",        # LLM Observability proxy
         "PARALLEL_API_KEY",

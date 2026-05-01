@@ -90,6 +90,21 @@ class TestDetectProviderForModel:
         # Provider is deepseek (direct) or openrouter (fallback) depending on creds
         assert result[0] in ("deepseek", "openrouter")
 
+    def test_deepseek_v4_pro_model_detected(self):
+        """deepseek-v4-pro should resolve to the native DeepSeek provider."""
+        result = detect_provider_for_model("deepseek-v4-pro", "openai-codex")
+        assert result is not None
+        assert result[0] in ("deepseek", "openrouter")
+
+    def test_fireworks_model_detected(self):
+        """Fireworks account model IDs should resolve to Fireworks."""
+        result = detect_provider_for_model(
+            "accounts/fireworks/models/deepseek-v3p2",
+            "openai-codex",
+        )
+        assert result is not None
+        assert result[0] == "fireworks"
+
     def test_current_provider_model_returns_none(self):
         """Models belonging to the current provider should not trigger a switch."""
         assert detect_provider_for_model("gpt-5.3-codex", "openai-codex") is None

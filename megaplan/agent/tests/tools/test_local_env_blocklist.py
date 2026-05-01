@@ -102,6 +102,8 @@ class TestProviderEnvBlocklist:
             "PERPLEXITY_API_KEY": "perplexity-key",
             "COHERE_API_KEY": "cohere-key",
             "FIREWORKS_API_KEY": "fireworks-key",
+            "FIREWORKS_AI_API_KEY": "fireworks-ai-key",
+            "FIREWORKS_AI_BASE_URL": "https://api.fireworks.ai/inference/v1",
             "XAI_API_KEY": "xai-key",
             "HELICONE_API_KEY": "helicone-key",
         }
@@ -228,6 +230,8 @@ class TestBlocklistCoverage:
             "PERPLEXITY_API_KEY",
             "COHERE_API_KEY",
             "FIREWORKS_API_KEY",
+            "FIREWORKS_AI_API_KEY",
+            "FIREWORKS_AI_BASE_URL",
             "XAI_API_KEY",
             "HELICONE_API_KEY",
         }

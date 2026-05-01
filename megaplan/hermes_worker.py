@@ -394,7 +394,12 @@ def run_hermes_step(
     # structured JSON in the content field, so force reasoning off for any
     # model family known to use reasoning by default on OpenRouter.
     _model_lower = (resolved_model or "").lower()
-    _reasoning_families = ("qwen/qwen3", "deepseek/deepseek-r1")
+    _reasoning_families = (
+        "qwen/qwen3",
+        "deepseek/deepseek-r1",
+        "deepseek-v4-",
+        "deepseek/deepseek-v4-",
+    )
     _reasoning_off = (
         {"enabled": False}
         if any(_model_lower.startswith(prefix) for prefix in _reasoning_families)
@@ -514,6 +519,10 @@ def run_hermes_step(
                     cooldown = 3600 if "Limit Exhausted" in exc_str else 120
                     report_429("zhipu", agent_kwargs.get("api_key", ""), cooldown_secs=cooldown)
                     print(f"[hermes-worker] Z.AI key cooled down for {cooldown}s", file=sys.stderr)
+                elif model and model.startswith("deepseek:"):
+                    report_429("deepseek", agent_kwargs.get("api_key", ""), cooldown_secs=120)
+                elif model and model.startswith("fireworks:"):
+                    report_429("fireworks", agent_kwargs.get("api_key", ""), cooldown_secs=120)
             if model and model.startswith("minimax:"):
                 or_key = acquire_key("openrouter")
                 if or_key:

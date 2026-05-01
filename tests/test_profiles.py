@@ -66,12 +66,24 @@ def test_profiles_package_layout_and_builtins_only(tmp_path: Path) -> None:
         for entry in files("megaplan.profiles").iterdir()
         if entry.is_file()
     }
-    assert {"standard.toml", "all-open.toml"}.issubset(package_entries)
+    assert {
+        "standard.toml",
+        "all-open.toml",
+        "all-deepseek-pro.toml",
+        "all-deepseek-flash.toml",
+        "all-fireworks-deepseek.toml",
+    }.issubset(package_entries)
 
     profiles = imported_load_profiles(home=tmp_path / "home", project_dir=tmp_path / "project")
 
     assert imported_apply_profile_expansion is apply_profile_expansion
-    assert {"standard", "all-open"}.issubset(profiles)
+    assert {
+        "standard",
+        "all-open",
+        "all-deepseek-pro",
+        "all-deepseek-flash",
+        "all-fireworks-deepseek",
+    }.issubset(profiles)
 
 
 def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(tmp_path: Path) -> None:
@@ -80,7 +92,13 @@ def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(t
     project_dir.mkdir()
 
     builtins_only = load_profiles(home=home, project_dir=project_dir)
-    assert {"standard", "all-open"}.issubset(builtins_only)
+    assert {
+        "standard",
+        "all-open",
+        "all-deepseek-pro",
+        "all-deepseek-flash",
+        "all-fireworks-deepseek",
+    }.issubset(builtins_only)
 
     user_path = home / ".config" / "megaplan" / "profiles.toml"
     _write_profiles(
@@ -206,6 +224,58 @@ def test_apply_profile_expansion_falls_back_to_state_profile(
     assert agent == "hermes"
     assert model == "glm-5.1"
     assert args.profile == "all-open"
+
+
+def test_all_deepseek_pro_profile_uses_native_deepseek_v4_pro(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+
+    args = _worker_args(profile="all-deepseek-pro")
+    apply_profile_expansion(args, None)
+
+    with patch("megaplan.workers._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
+
+    assert agent == "hermes"
+    assert model == "deepseek:deepseek-v4-pro"
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "expected_model"),
+    [
+        ("all-deepseek-flash", "deepseek:deepseek-v4-flash"),
+        (
+            "all-fireworks-deepseek",
+            "fireworks:accounts/fireworks/models/deepseek-v3p2",
+        ),
+    ],
+)
+def test_provider_profiles_use_expected_native_model(
+    profile_name: str,
+    expected_model: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    with patch("megaplan.workers._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
+
+    assert agent == "hermes"
+    assert model == expected_model
 
 
 def test_apply_profile_expansion_unknown_profile_lists_known_profiles(

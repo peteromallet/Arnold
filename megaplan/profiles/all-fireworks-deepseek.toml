@@ -1,0 +1,14 @@
+# Fireworks-hosted DeepSeek model for every megaplan phase.
+[profiles.all-fireworks-deepseek]
+plan     = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+prep     = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+critique = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+revise   = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+gate     = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+finalize = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+execute  = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+loop_plan    = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+loop_execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+review   = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+tiebreaker_researcher = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"
+tiebreaker_challenger = "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2"

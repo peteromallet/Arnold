@@ -4168,6 +4168,7 @@ class AIAgent:
             "models.github.ai" in self._base_url_lower
             or "api.githubcopilot.com" in self._base_url_lower
         )
+        _is_deepseek_direct = "api.deepseek.com" in self._base_url_lower
 
         # Provider preferences (only, ignore, order, sort) are OpenRouter-
         # specific.  Only send to OpenRouter-compatible endpoints.
@@ -4178,7 +4179,16 @@ class AIAgent:
         _is_nous = "nousresearch" in self._base_url_lower
 
         if self._supports_reasoning_extra_body():
-            if _is_github_models:
+            if _is_deepseek_direct:
+                if self.reasoning_config is not None:
+                    rc = dict(self.reasoning_config)
+                    if rc.get("enabled") is False:
+                        extra_body["thinking"] = {"type": "disabled"}
+                    else:
+                        extra_body["thinking"] = {"type": "enabled"}
+                        if rc.get("effort"):
+                            api_kwargs["reasoning_effort"] = rc["effort"]
+            elif _is_github_models:
                 github_reasoning = self._github_models_reasoning_extra_body()
                 if github_reasoning is not None:
                     extra_body["reasoning"] = github_reasoning
@@ -4216,6 +4226,8 @@ class AIAgent:
         if "nousresearch" in self._base_url_lower:
             return True
         if "ai-gateway.vercel.sh" in self._base_url_lower:
+            return True
+        if "api.deepseek.com" in self._base_url_lower:
             return True
         if "models.github.ai" in self._base_url_lower or "api.githubcopilot.com" in self._base_url_lower:
             try:
@@ -5269,8 +5281,16 @@ class AIAgent:
 
             summary_extra_body = {}
             _is_nous = "nousresearch" in self._base_url_lower
+            _is_deepseek_direct = "api.deepseek.com" in self._base_url_lower
             if self._supports_reasoning_extra_body():
-                if self.reasoning_config is not None:
+                if _is_deepseek_direct:
+                    if self.reasoning_config is not None:
+                        rc = dict(self.reasoning_config)
+                        if rc.get("enabled") is False:
+                            summary_extra_body["thinking"] = {"type": "disabled"}
+                        else:
+                            summary_extra_body["thinking"] = {"type": "enabled"}
+                elif self.reasoning_config is not None:
                     summary_extra_body["reasoning"] = self.reasoning_config
                 else:
                     summary_extra_body["reasoning"] = {

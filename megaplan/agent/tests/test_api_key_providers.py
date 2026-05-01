@@ -44,6 +44,8 @@ class TestProviderRegistry:
         ("minimax-cn", "MiniMax (China)", "api_key"),
         ("ai-gateway", "AI Gateway", "api_key"),
         ("kilocode", "Kilo Code", "api_key"),
+        ("deepseek", "DeepSeek", "api_key"),
+        ("fireworks", "Fireworks AI", "api_key"),
     ])
     def test_provider_registered(self, provider_id, name, auth_type):
         assert provider_id in PROVIDER_REGISTRY
@@ -87,6 +89,16 @@ class TestProviderRegistry:
         assert pconfig.api_key_env_vars == ("KILOCODE_API_KEY",)
         assert pconfig.base_url_env_var == "KILOCODE_BASE_URL"
 
+    def test_deepseek_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["deepseek"]
+        assert pconfig.api_key_env_vars == ("DEEPSEEK_API_KEY",)
+        assert pconfig.base_url_env_var == "DEEPSEEK_BASE_URL"
+
+    def test_fireworks_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["fireworks"]
+        assert pconfig.api_key_env_vars == ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY")
+        assert pconfig.base_url_env_var == "FIREWORKS_BASE_URL"
+
     def test_base_urls(self):
         assert PROVIDER_REGISTRY["copilot"].inference_base_url == "https://api.githubcopilot.com"
         assert PROVIDER_REGISTRY["copilot-acp"].inference_base_url == "acp://copilot"
@@ -96,6 +108,8 @@ class TestProviderRegistry:
         assert PROVIDER_REGISTRY["minimax-cn"].inference_base_url == "https://api.minimaxi.com/anthropic"
         assert PROVIDER_REGISTRY["ai-gateway"].inference_base_url == "https://ai-gateway.vercel.sh/v1"
         assert PROVIDER_REGISTRY["kilocode"].inference_base_url == "https://api.kilo.ai/api/gateway"
+        assert PROVIDER_REGISTRY["deepseek"].inference_base_url == "https://api.deepseek.com"
+        assert PROVIDER_REGISTRY["fireworks"].inference_base_url == "https://api.fireworks.ai/inference/v1"
 
     def test_oauth_providers_unchanged(self):
         """Ensure we didn't break the existing OAuth providers."""
@@ -116,6 +130,8 @@ PROVIDER_ENV_VARS = (
     "KIMI_API_KEY", "KIMI_BASE_URL", "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
     "AI_GATEWAY_API_KEY", "AI_GATEWAY_BASE_URL",
     "KILOCODE_API_KEY", "KILOCODE_BASE_URL",
+    "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL",
+    "FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY", "FIREWORKS_BASE_URL", "FIREWORKS_AI_BASE_URL",
     "DASHSCOPE_API_KEY", "OPENCODE_ZEN_API_KEY", "OPENCODE_GO_API_KEY",
     "NOUS_API_KEY", "GITHUB_TOKEN", "GH_TOKEN",
     "OPENAI_BASE_URL", "HERMES_COPILOT_ACP_COMMAND", "COPILOT_CLI_PATH",

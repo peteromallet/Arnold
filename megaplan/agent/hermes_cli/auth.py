@@ -176,9 +176,17 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         id="deepseek",
         name="DeepSeek",
         auth_type="api_key",
-        inference_base_url="https://api.deepseek.com/v1",
+        inference_base_url="https://api.deepseek.com",
         api_key_env_vars=("DEEPSEEK_API_KEY",),
         base_url_env_var="DEEPSEEK_BASE_URL",
+    ),
+    "fireworks": ProviderConfig(
+        id="fireworks",
+        name="Fireworks AI",
+        auth_type="api_key",
+        inference_base_url="https://api.fireworks.ai/inference/v1",
+        api_key_env_vars=("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
+        base_url_env_var="FIREWORKS_BASE_URL",
     ),
     "ai-gateway": ProviderConfig(
         id="ai-gateway",
@@ -687,6 +695,7 @@ def resolve_provider(
         "opencode": "opencode-zen", "zen": "opencode-zen",
         "go": "opencode-go", "opencode-go-sub": "opencode-go",
         "kilo": "kilocode", "kilo-code": "kilocode", "kilo-gateway": "kilocode",
+        "fireworks-ai": "fireworks", "fireworks_ai": "fireworks",
     }
     normalized = _PROVIDER_ALIASES.get(normalized, normalized)
 

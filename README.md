@@ -79,6 +79,9 @@ Built-in profiles:
 
 - **standard** — Claude for planning/revision, Codex for execution and critique (mirrors the default routing)
 - **all-open** — `moonshotai/kimi-k2.6` for planning/revision, `glm-5.1` for execution and critique (via Hermes)
+- **all-deepseek-pro** — native DeepSeek `deepseek-v4-pro` for every phase (via Hermes)
+- **all-deepseek-flash** — native DeepSeek `deepseek-v4-flash` for every phase (via Hermes)
+- **all-fireworks-deepseek** — Fireworks-hosted DeepSeek for every phase (via Hermes)
 
 Define your own in `.megaplan/profiles.toml` (per-project) or `~/.config/megaplan/profiles.toml` (user-wide):
 
@@ -91,12 +94,14 @@ review   = "codex"
 
 Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
 
-Model strings take the form `<agent>[:<model>]`. Agents are `claude`, `codex`, or `hermes`. After `hermes:`, a slug with a slash (`moonshotai/kimi-k2.6`) routes via OpenRouter; a bare name (`glm-5.1`) uses the matching direct provider. Direct-provider keys live in `~/.hermes/.env`:
+Model strings take the form `<agent>[:<model>]`. Agents are `claude`, `codex`, or `hermes`. After `hermes:`, a slug with a slash (`moonshotai/kimi-k2.6`) routes via OpenRouter; a prefixed direct model (`deepseek:deepseek-v4-pro`, `fireworks:accounts/fireworks/models/deepseek-v3p2`) uses that provider directly; a bare name (`glm-5.1`) uses the matching direct provider. Direct-provider keys live in `~/.hermes/.env`:
 
 ```bash
 OPENROUTER_API_KEY=...
 ZHIPU_API_KEY=...          # for glm-* direct
 MINIMAX_API_KEY=...        # for MiniMax-* direct
+DEEPSEEK_API_KEY=...       # for deepseek:* direct
+FIREWORKS_API_KEY=...      # for fireworks:* direct
 ```
 
 ## Robustness levels
