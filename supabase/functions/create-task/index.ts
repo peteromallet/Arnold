@@ -12,7 +12,7 @@ import { JWT_AUTH_REQUIRED } from "../_shared/requestGuards.ts";
 import { getTaskFamilyResolver } from "./resolvers/registry.ts";
 import { createWorkerPassthroughResolver } from "./resolvers/workerPassthrough.ts";
 import { TaskValidationError } from "./resolvers/shared/validation.ts";
-import type { ResolveRequest, TaskInsertObject } from "./resolvers/types.ts";
+import type { ResolveRequest } from "./resolvers/types.ts";
 
 function createErrorResponse(
   message: string,
@@ -421,9 +421,6 @@ serve(async (req) => {
   }
 
   try {
-    let insertObjects: TaskInsertObject[];
-    let responseMeta: Record<string, unknown> | undefined;
-
     let resolver = getTaskFamilyResolver(resolverRequest.family);
     if (!resolver) {
       // No explicit resolver — check if this task type exists in the DB.
@@ -458,8 +455,8 @@ serve(async (req) => {
       return createErrorResponse("Resolver did not return any tasks", 500, "invalid_resolver_result");
     }
 
-    insertObjects = resolverResult.tasks;
-    responseMeta = resolverResult.meta;
+    const insertObjects = resolverResult.tasks;
+    const responseMeta = resolverResult.meta;
 
     const createdTaskIds: string[] = [];
     let deduplicatedCount = 0;

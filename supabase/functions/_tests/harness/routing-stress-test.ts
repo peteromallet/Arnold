@@ -17,7 +17,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SelectedClipPayload } from "../../ai-timeline-agent/types.ts";
 import { TestHarness } from "./index.ts";
-import type { AgentCallResponse } from "./client.ts";
 import type {
   HarnessSnapshot,
   SnapshotDiff,
@@ -89,12 +88,6 @@ function getLastAgentResponse(snapshot: HarnessSnapshot): string {
     }
   }
   return "(no agent response found)";
-}
-
-function getSessionTurnsText(snapshot: HarnessSnapshot): string {
-  return JSON.stringify(
-    Object.values(snapshot.timeline_agent_sessions).map((s) => s.turns),
-  ).toLowerCase();
 }
 
 function buildSelectedClip(snapshot: HarnessSnapshot, clipIndex: number): SelectedClipPayload {
@@ -730,7 +723,7 @@ const tests: RoutingTestDef[] = [
     name: "11. Vague: 'Make it look better'",
     category: "ambiguous",
     message: "Make it look better",
-    evaluate: ({ diff, agentResponse }) => {
+    evaluate: ({ agentResponse }) => {
       const checks: CheckResult[] = [];
 
       // The agent should either:
@@ -774,7 +767,7 @@ const tests: RoutingTestDef[] = [
     name: "12. Unsupported: 'Add some music'",
     category: "ambiguous",
     message: "Add some music",
-    evaluate: ({ diff, agentResponse }) => {
+    evaluate: ({ agentResponse }) => {
       const checks: CheckResult[] = [];
       const turnsLower = agentResponse.toLowerCase();
 
@@ -822,7 +815,7 @@ const tests: RoutingTestDef[] = [
     name: "13. Unsupported: 'Enhance the resolution'",
     category: "ambiguous",
     message: "Can you enhance the resolution?",
-    evaluate: ({ diff, agentResponse }) => {
+    evaluate: ({ agentResponse }) => {
       const checks: CheckResult[] = [];
       const turnsLower = agentResponse.toLowerCase();
 

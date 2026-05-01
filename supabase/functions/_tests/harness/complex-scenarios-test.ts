@@ -216,9 +216,6 @@ async function scenario3_describeThenEdit(): Promise<ScenarioResult> {
       // Turn 1: ask what's on the timeline
       await harness.sendMessage("What's on the timeline?");
 
-      // Take a mid-point snapshot
-      const mid = await harness.snapshot();
-
       // Turn 2: delete everything except the first clip
       await harness.sendMessage("Now delete everything except the first clip");
 

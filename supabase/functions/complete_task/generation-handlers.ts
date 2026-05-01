@@ -331,8 +331,6 @@ export async function handleVariantOnChild(ctx: HandlerContext): Promise<unknown
     taskParams: taskData.params,
     childGeneration: childGen,
   });
-  const isSingleSegmentChild = singleSegmentViewedAt !== null;
-
   // For the child variant, only auto-view if makePrimary is true
   const childViewedAt = makePrimary ? singleSegmentViewedAt : null;
 

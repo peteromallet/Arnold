@@ -12,7 +12,6 @@ import {
   createTestSession,
   createTestTimeline,
   getOrCreateTestUser,
-  type TestSessionFixture,
   type TestTimelineFixture,
 } from "./fixtures.ts";
 import {

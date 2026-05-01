@@ -12,8 +12,8 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TestHarness } from "./index.ts";
-import { callAgentOnce, type AgentCallResponse } from "./client.ts";
-import type { HarnessSnapshot, SnapshotDiff } from "./snapshot.ts";
+import type { AgentCallResponse } from "./client.ts";
+import type { HarnessSnapshot } from "./snapshot.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -202,7 +202,7 @@ async function testRapidFireConcurrent(): Promise<EdgeCaseResult> {
   const harness = new TestHarness();
 
   try {
-    const setup = await harness.setup();
+    await harness.setup();
     const before = await harness.snapshot();
 
     const messages = [

@@ -2,7 +2,6 @@ import type { ResolverResult, TaskFamilyResolver, TaskInsertObject } from "./typ
 import { setTaskLineageFields } from "./shared/lineage.ts";
 import type { PlacementIntent } from "../../ai-timeline-agent/types.ts";
 import {
-  TaskValidationError,
   validateNumericRange,
   validateNonEmptyString,
   validateRequiredFields,

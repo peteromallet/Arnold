@@ -267,7 +267,7 @@ export const seedTestCases: TestCase[] = [
     },
     selectedClips: (snapshot) => [buildSelectedClip(snapshot, 0)],
     skipTaskCompletion: true,
-    evaluate: ({ before, after, diff }) =>
+    evaluate: ({ after, diff }) =>
       evaluateWith([
         expectDuplicateGeneration(diff),
         expectSessionTerminal(after),

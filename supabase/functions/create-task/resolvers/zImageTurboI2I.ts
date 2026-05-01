@@ -1,6 +1,5 @@
 import type { ResolverResult, TaskFamilyResolver, TaskInsertObject } from "./types.ts";
 import {
-  mapPathLorasToStrengthRecord,
   validateLoraConfigs,
 } from "./shared/loras.ts";
 import { resolveSeed32Bit, validateSeed32Bit } from "./shared/seed.ts";
@@ -10,7 +9,6 @@ import {
 } from "./shared/lineage.ts";
 import type { PlacementIntent } from "../../ai-timeline-agent/types.ts";
 import {
-  TaskValidationError,
   validateNonEmptyString,
   validateNumericRange,
   validateRequiredFields,

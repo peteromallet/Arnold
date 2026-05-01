@@ -10,7 +10,6 @@ import {
 } from "./cases.ts";
 import { TestHarness } from "./index.ts";
 import type { AssertionResult } from "./evaluate.ts";
-import type { HarnessSnapshot } from "./snapshot.ts";
 import { extractNewTaskIds } from "./waiter.ts";
 
 export interface RunTestSuiteOptions {

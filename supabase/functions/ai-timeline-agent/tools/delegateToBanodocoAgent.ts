@@ -25,7 +25,6 @@
 // (see `pollBanodocoTaskStatus`).
 
 import type {
-  SupabaseAdmin,
   TimelineState,
   ToolResult,
 } from "../types.ts";
