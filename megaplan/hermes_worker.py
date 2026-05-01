@@ -16,7 +16,8 @@ from megaplan.workers import (
     session_key_for,
     validate_payload,
 )
-from megaplan._core import read_json, schemas_root
+from megaplan._core import creative_form_id, read_json, schemas_root
+from megaplan.forms.provocations import select_active_checks
 from megaplan.prompts import create_hermes_prompt
 
 
@@ -279,7 +280,11 @@ def run_hermes_step(
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
     from megaplan.schemas import get_execution_schema_key
-    schema_name = get_execution_schema_key(plan_mode) if step == "execute" else STEP_SCHEMA_FILENAMES[step]
+    schema_name = (
+        get_execution_schema_key(plan_mode, form=creative_form_id(state))
+        if step == "execute"
+        else STEP_SCHEMA_FILENAMES[step]
+    )
     schema = read_json(schemas_root(root) / schema_name)
     output_path: Path | None = None
 
@@ -432,17 +437,13 @@ def run_hermes_step(
             return None
         if step == "critique":
             from megaplan._core import configured_robustness
-            from megaplan.audits.robustness import checks_for_robustness, joke_checks_for_robustness
             from megaplan.prompts import _write_critique_template
 
-            mode = state["config"].get("mode", "code")
             robustness = configured_robustness(state)
             return _write_critique_template(
                 plan_dir,
                 state,
-                joke_checks_for_robustness(robustness)
-                if mode == "joke"
-                else checks_for_robustness(robustness),
+                select_active_checks(state, robustness, plan_dir=plan_dir),
             )
         if step == "review":
             from megaplan.prompts.review import _write_review_template

@@ -55,6 +55,13 @@ from .phase_runtime import (
     resolve_phase_runtime,
 )
 
+# -- modes.py: mode/form helpers --------------------------------------------
+from .modes import (
+    creative_form_id,
+    is_creative_mode,
+    is_prose_mode,
+)
+
 # -- state.py: plan state, history, sessions ---------------------------------
 from .state import (
     active_plan_dirs,
@@ -159,6 +166,10 @@ __all__ = [
     "phase_stale_seconds",
     "phase_timeout_seconds",
     "resolve_phase_runtime",
+    # modes
+    "creative_form_id",
+    "is_creative_mode",
+    "is_prose_mode",
     # state
     "active_plan_dirs",
     "active_step_is_stale",

@@ -71,6 +71,7 @@ def test_joke_mode_accepts_relative_output(
     )
     state = _load_state(root, response["plan"])
     assert state["config"]["mode"] == "joke"
+    assert state["config"]["form"] == "joke"
     assert state["config"]["output_path"] == "scenes/cafe.md"
 
 

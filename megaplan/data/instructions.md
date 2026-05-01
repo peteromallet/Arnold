@@ -140,6 +140,35 @@ Each edit writes a new same-iteration plan artifact, preserves the latest plan m
 View current defaults with `megaplan config show`. Override with `megaplan config set <key> <value>`. Reset with `megaplan config reset`.
 When routing or behavior depends on config, check `megaplan config show` and respect user overrides instead of assuming defaults.
 Settable execution keys: `execution.auto_approve`, `execution.robustness`.
+## Profiles
+A profile is a named preset that maps each workflow phase to an agent/model spec. Pass `--profile <name>` to any command that accepts `--phase-model` (`init`, `loop-init`, `tiebreaker`, etc.) to apply the preset.
+Built-ins: `standard` (claude/codex mix — the default routing) and `all-open` (hermes-routed Kimi K2.6 + GLM 5.1 mix).
+Resolution order, later overrides earlier within the same name: built-in (`megaplan/profiles/*.toml`) → user (`~/.config/megaplan/profiles.toml`, or `$XDG_CONFIG_HOME/megaplan/profiles.toml`) → project (`<project_dir>/.megaplan/profiles.toml`).
+Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
+File format: TOML with a `[profiles.<name>]` table. Keys are phase names (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `loop_plan`, `loop_execute`, `review`, `tiebreaker_researcher`, `tiebreaker_challenger`); values are agent specs like `"claude"`, `"codex"`, `"hermes:moonshotai/kimi-k2.6"`, `"hermes:glm-5.1"`. Example:
+```toml
+[profiles.my-mix]
+plan     = "claude"
+critique = "codex"
+execute  = "hermes:moonshotai/kimi-k2.6"
+review   = "codex"
+```
+`--phase-model` overrides on the CLI stack on top of any profile.
+## Bakeoff
+`megaplan bakeoff run` runs the same idea through multiple profiles concurrently, each in its own git worktree, each driven autonomously by `megaplan auto`. Use it when the user wants to compare profiles head-to-head on the same task (e.g., "run this with kimi and standard side-by-side").
+Supports `--mode code` (default) and `--mode doc` / `--mode metaplan` (alias). For doc-mode bake-offs, `--output <relative/path>` is required and is threaded into each profile's `megaplan init`; merge brings the chosen profile's doc artifact back to main instead of applying a code patch. Joke mode is not yet supported.
+Requires a clean main worktree by default — pass `--allow-dirty` when there are unrelated uncommitted changes you want to keep on main. Those changes stay on main and are NOT copied into the worktrees, since worktrees branch off the current commit's SHA.
+The idea must be a file (`--idea-file <path>`), not an inline string. Write the idea to a file first.
+Bakeoff is inherently autonomous (it spawns `megaplan auto`), so the execution-mode question doesn't apply to bakeoff runs. `--robustness` is forwarded to each profile's `init`. When a project-layer `.megaplan/profiles.toml` exists, it's automatically copied into each worktree so project-only profiles resolve.
+Lifecycle:
+- `megaplan bakeoff run --idea-file <path> --profiles <p1> <p2> [--mode code|doc|metaplan] [--output <relative/path>] [--exp-id <id>] [--detach] [--robustness <level>] [--allow-dirty]` — kicks off N concurrent profile runs. Without `--detach` it streams a live status table every 5s and blocks until all profiles finish; with `--detach` it returns immediately and the user polls via `status`. `--output` is required with `--mode doc|metaplan` and rejected with `--mode code`.
+- `megaplan bakeoff status [--exp <id>]` — current state of each profile (running / completed / crashed).
+- `megaplan bakeoff tail [--exp <id>]` — tail the per-profile auto logs.
+- `megaplan bakeoff compare --exp <id> [--judge <model>]` — collect metrics across profiles; with `--judge`, an LLM judge ranks the outputs.
+- `megaplan bakeoff pick --exp <id> --profile <name> --rationale "..."` — record the human-selected winner.
+- `megaplan bakeoff merge --exp <id>` — merge the chosen profile's worktree back to main.
+- `megaplan bakeoff resume --exp <id>` — resume unfinished profile runs.
+- `megaplan bakeoff abandon --exp <id>` — discard worktrees but keep audit data.
 ## Cloud Mode
 `megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Suggest it for long-running plans that would outlast a local session or when the user wants an isolated persistent sandbox. Sprint 1 ships the `railway` provider only; `ssh` and `local` are planned.
 Subcommands: `init`, `build`, `deploy`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
@@ -169,4 +198,14 @@ megaplan override abort --plan <name> --reason "..."
 megaplan config show
 megaplan config set <key> <value>
 megaplan config reset
+megaplan config profiles list
+megaplan config profiles show <name>
+megaplan bakeoff run --idea-file <path> --profiles <p1> <p2> [--mode code|doc|metaplan] [--output <relative/path>] [--exp-id <id>] [--detach] [--robustness <level>] [--allow-dirty]
+megaplan bakeoff status [--exp <id>]
+megaplan bakeoff tail [--exp <id>]
+megaplan bakeoff compare --exp <id> [--judge <model>]
+megaplan bakeoff pick --exp <id> --profile <name> --rationale "..."
+megaplan bakeoff merge --exp <id>
+megaplan bakeoff resume --exp <id>
+megaplan bakeoff abandon --exp <id>
 ```

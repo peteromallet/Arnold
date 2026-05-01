@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan.doc_assembly import extract_settled_decisions
+from megaplan.forms import available_form_ids
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse
 from megaplan._core import (
@@ -15,6 +16,7 @@ from megaplan._core import (
     get_effective,
     make_history_entry,
     now_utc,
+    is_prose_mode,
     plans_root,
     save_state,
     slugify,
@@ -48,20 +50,30 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     explicit_mode = getattr(args, "mode", None)
     raw_output_path = getattr(args, "output", None)
     raw_primary_criterion = getattr(args, "primary_criterion", None)
+    raw_form = getattr(args, "form", None)
     mode = explicit_mode or "code"
     if mode == "metaplan":
         mode = "doc"
-    if raw_primary_criterion and mode != "joke":
-        raise CliError("invalid_args", "--primary-criterion is only valid with --mode joke")
+    if raw_primary_criterion and mode not in {"joke", "creative"}:
+        raise CliError("invalid_args", "--primary-criterion is only valid with --mode joke or --mode creative")
+    if raw_form and mode != "creative":
+        raise CliError("invalid_args", "--form is only valid with --mode creative")
+    if mode == "creative":
+        if not raw_form:
+            raise CliError("invalid_args", "--form is required when --mode creative is selected")
+        if raw_form not in available_form_ids():
+            raise CliError("invalid_args", f"Unknown creative form: {raw_form}")
+    elif mode == "joke":
+        raw_form = "joke"
 
     if mode == "code" and raw_output_path:
         raise CliError(
             "invalid_args",
-            "--output is only valid with --mode doc or --mode joke. For code-mode runs, remove "
-            "--output; for prose artifact runs, also pass --mode doc or --mode joke.",
+            "--output is only valid with --mode doc, --mode joke, or --mode creative. For code-mode runs, remove "
+            "--output; for prose artifact runs, also pass --mode doc, --mode joke, or --mode creative.",
         )
     normalized_output_path: str | None = None
-    if mode in {"doc", "joke"} and not raw_output_path:
+    if is_prose_mode({"config": {"mode": mode}}) and not raw_output_path:
         raise CliError("invalid_args", f"--output is required when --mode {mode} is selected")
     if raw_output_path:
         normalized_output_path = _validate_relative_path(project_dir, raw_output_path, "--output")
@@ -141,11 +153,16 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["profile"] = args.profile
     if normalized_output_path is not None:
         state["config"]["output_path"] = normalized_output_path
+    if raw_form:
+        state["config"]["form"] = str(raw_form)
     if normalized_primary_criterion is not None:
         state["config"]["primary_criterion"] = normalized_primary_criterion
     if from_doc_rel is not None:
         state["config"]["from_doc"] = from_doc_rel
         state["meta"]["imported_decisions"] = imported_decisions
+    phase_models = list(getattr(args, "phase_model", None) or [])
+    if phase_models:
+        state["config"]["phase_model"] = phase_models
     if strict_notes and mode == "doc" and not strict_notes_explicit:
         # Driver-source: marks the auto-enable for transparency without
         # blocking force-proceed (driver notes don't count toward strict

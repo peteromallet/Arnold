@@ -21,6 +21,7 @@ from megaplan.workers import (
     extract_session_id,
     parse_claude_envelope,
     parse_json_file,
+    _recover_codex_payload,
     resolve_agent_mode,
     session_key_for,
     update_session_state,
@@ -127,9 +128,10 @@ def test_parse_claude_envelope_classifies_not_logged_in_as_auth_error() -> None:
                         "verdict": "",
                     }
                 ],
+                "user_actions": [],
                 "meta_commentary": "ok",
                 "validation": {
-                    "plan_steps_covered": [{"plan_step_summary": "Do work", "finalize_task_ids": ["T1"]}],
+                    "plan_steps_covered": [{"plan_step_summary": "Do work", "finalize_item_ids": ["T1"]}],
                     "orphan_tasks": [],
                     "completeness_notes": "All covered.",
                     "coverage_complete": True,
@@ -255,6 +257,47 @@ def test_parse_json_file_reads_object(tmp_path: Path) -> None:
     path = tmp_path / "out.json"
     path.write_text(json.dumps({"ok": True}), encoding="utf-8")
     assert parse_json_file(path) == {"ok": True}
+
+
+def test_recover_codex_payload_handles_stderr_bleed_in_output_file(tmp_path: Path) -> None:
+    """Codex sometimes appends stderr/log noise to the -o output file after the JSON.
+
+    parse_json_file() uses strict json.loads() and rejects trailing junk. The recovery
+    path must also feed the file contents through _extract_json_candidates_from_raw
+    so the leading valid JSON object can still be salvaged.
+    """
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "critique_output.json"
+    valid_payload = {
+        "checks": [
+            {
+                "id": "check-1",
+                "question": "Is the plan grounded in the repository?",
+                "findings": [
+                    {"detail": "Plan references the actual files.", "flagged": False}
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    polluted = (
+        json.dumps(valid_payload)
+        + "\n2026-04-27T00:16:08.726626Z ERROR codex_core::session: "
+        + "failed to record rollout items: thread x not found\n"
+        + "tokens used\n674,216\n"
+    )
+    output_path.write_text(polluted, encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+    assert recovered == valid_payload
 
 
 def test_resolve_agent_mode_uses_configured_fallback() -> None:

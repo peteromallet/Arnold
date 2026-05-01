@@ -16,6 +16,7 @@ from megaplan._core import (
     render_final_md,
     save_state_merge_meta,
     sha256_file,
+    is_prose_mode,
     store_raw_worker_output,
 )
 from megaplan.evaluation import validate_execution_evidence
@@ -46,7 +47,8 @@ def _reset_timeout_invalid_tasks(
     mode: str = "code",
 ) -> list[str]:
     reset_reasons: dict[str, list[str]] = {}
-    if mode in {"doc", "joke"}:
+    mode_state = {"config": {"mode": mode}}
+    if is_prose_mode(mode_state):
         missing_task_ids = _check_done_task_evidence(
             finalize_data.get("tasks", []),
             issues=issues,
@@ -67,14 +69,14 @@ def _reset_timeout_invalid_tasks(
             advisory_message="Advisory: done tasks rely on commands_run without files_changed during timeout recovery: ",
         )
     for task_id in missing_task_ids:
-        if mode in {"doc", "joke"}:
+        if is_prose_mode(mode_state):
             reset_reasons.setdefault(task_id, []).append("missing sections_written")
         else:
             reset_reasons.setdefault(task_id, []).append(
                 "missing both files_changed and commands_run"
             )
 
-    if mode not in {"doc", "joke"} and not execution_audit.get("skipped"):
+    if not is_prose_mode(mode_state) and not execution_audit.get("skipped"):
         files_in_diff = {
             _normalize_execute_claimed_path(path)
             for path in execution_audit.get("files_in_diff", [])
@@ -135,9 +137,9 @@ def _merge_timeout_checkpoint(
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     }
-    if mode in {"doc", "joke"}:
+    if is_prose_mode({"config": {"mode": mode}}):
         required_fields = ("task_id", "status", "executor_notes", "sections_written")
-        merge_fields = ("status", "executor_notes", "sections_written")
+        merge_fields = ("status", "executor_notes", "sections_written", "stance", "stop_signal")
         array_fields = ("sections_written",)
     else:
         required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
@@ -220,7 +222,7 @@ def _recover_execute_timeout(
                 f"Advisory: timeout checkpoint {checkpoint_path.name} did not contain an object."
             )
 
-    initial_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode)
+    initial_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
 
     if initial_audit["skipped"]:
         deviations.append(
@@ -235,7 +237,7 @@ def _recover_execute_timeout(
         issues=deviations,
         mode=plan_mode,
     )
-    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode)
+    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     atomic_write_json(plan_dir / "finalize.json", finalize_data)
     atomic_write_text(
@@ -296,7 +298,7 @@ def _recover_execute_timeout(
     completed_tasks = [
         task for task in tasks if task.get("status") in {"done", "skipped"}
     ]
-    if plan_mode in {"doc", "joke"}:
+    if is_prose_mode(state):
         files_changed = sorted(
             {
                 section

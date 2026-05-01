@@ -269,6 +269,16 @@ def _execute_batch_prompt(
     completed = set(completed_task_ids or set())
     finalize_data = read_json(plan_dir / "finalize.json")
     all_tasks = finalize_data.get("tasks", [])
+    user_actions_by_blocking_task: dict[str, list[dict[str, Any]]] = {}
+    for action in finalize_data.get("user_actions", []):
+        if not isinstance(action, dict):
+            continue
+        blocks_task_ids = action.get("blocks_task_ids", [])
+        if not isinstance(blocks_task_ids, list):
+            continue
+        for task_id in blocks_task_ids:
+            if isinstance(task_id, str):
+                user_actions_by_blocking_task.setdefault(task_id, []).append(action)
     tasks_by_id = {
         task["id"]: task
         for task in all_tasks
@@ -316,6 +326,22 @@ def _execute_batch_prompt(
                 deviations = [item for item in raw_deviations if isinstance(item, str)]
                 if deviations:
                     prior_batch_deviations = json_dump(deviations).strip()
+    prerequisite_lines: list[str] = []
+    for task_id in batch_task_ids:
+        for action in user_actions_by_blocking_task.get(task_id, []):
+            action_id = action.get("id", "unknown")
+            description = action.get("description", "")
+            prerequisite_lines.append(
+                f"PREREQUISITE for {task_id}: This task depends on user action {action_id}: "
+                f"{description}. If {action_id} is not complete (verify if possible — grep .env, "
+                f"curl, etc.), mark this task blocked with reason `awaiting {action_id}` rather "
+                "than attempting it."
+            )
+    prerequisite_block = (
+        "\n".join(prerequisite_lines)
+        if prerequisite_lines
+        else "No user_action prerequisites for this batch."
+    )
     approval_note = (
         "Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations."
         if state["config"].get("auto_approve")
@@ -358,6 +384,9 @@ def _execute_batch_prompt(
 
         Prior batch deviations (address if applicable):
         {prior_batch_deviations}
+
+        User action prerequisites:
+        {prerequisite_block}
 
         Batch-scoped sense checks:
         {json_dump(batch_sense_checks).strip()}

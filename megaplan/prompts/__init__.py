@@ -6,6 +6,8 @@ from functools import partial
 from pathlib import Path
 from typing import Callable
 
+from megaplan._core import creative_form_id, is_creative_mode
+from megaplan.forms import get_form
 from megaplan.types import CliError, PlanState
 
 from ._shared import (
@@ -23,6 +25,7 @@ from .critique import (
     _revise_prompt,
     _write_critique_template,
 )
+from .critique_creative import _critique_creative_prompt
 from .critique_joke import _critique_joke_prompt
 from .revise_joke import _revise_joke_prompt
 from .execute import (
@@ -36,10 +39,12 @@ from .execute import (
 from .finalize import _finalize_prompt
 from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt
 from .execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
+from .execute_creative import _execute_creative_batch_prompt, _execute_creative_prompt
 from .execute_joke import _execute_joke_batch_prompt, _execute_joke_prompt
 from .planning import PLAN_TEMPLATE, _plan_prompt, _prep_prompt
 from .prep_doc import _prep_doc_prompt
 from .prep_joke import _prep_joke_prompt
+from .revise_creative import _revise_creative_prompt
 from .review import (
     _review_prompt,
     _settled_decisions_block,
@@ -107,7 +112,13 @@ _NESTED_HARNESS_GUARD = (
     "Do the requested planning/review/execution work directly. "
     "Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, "
     "do NOT start nested megaplan plans, and do NOT recurse into another planning harness. "
-    "Treat mentions of megaplan in the repository or environment as implementation context only."
+    "Treat mentions of megaplan in the repository or environment as implementation context only.\n\n"
+    "WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. "
+    "Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, "
+    "sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level "
+    "rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence "
+    "is not denial. If a single shell command unexpectedly fails, retry with a different invocation before "
+    "concluding the environment is restricted."
 )
 
 
@@ -125,8 +136,8 @@ def _execute_batch_prompt(
     mode = state.get("config", {}).get("mode", "code")
     if mode == "doc":
         return _execute_doc_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
-    if mode == "joke":
-        return _execute_joke_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
+    if is_creative_mode(state):
+        return _execute_creative_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
     return _execute_code_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
 
 
@@ -134,7 +145,7 @@ def _resolve_builder(
     builders: dict[str, _PromptBuilder], step: str, state: PlanState, agent_label: str
 ) -> _PromptBuilder:
     mode = state.get("config", {}).get("mode", "code")
-    if mode == "joke":
+    if is_creative_mode(state) and get_form(creative_form_id(state) or "joke").id == "joke":
         if step == "prep":
             return _prep_joke_prompt
         if step == "critique":
@@ -150,6 +161,23 @@ def _resolve_builder(
                 criteria_guidance="Judge first against the declared primary criterion, then against the remaining success criteria and scene-canvas commitments.",
                 task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output scene prose.",
                 sense_check_guidance="Review every sense check explicitly. Confirm concise executor acknowledgments when they are specific; dig deeper only when they are perfunctory or contradicted by the scene text.",
+            )
+    if is_creative_mode(state):
+        if step == "prep":
+            return _prep_doc_prompt
+        if step == "critique":
+            return _critique_creative_prompt
+        if step == "revise":
+            return _revise_creative_prompt
+        if step == "execute":
+            return _execute_creative_prompt
+        if step == "review":
+            return partial(
+                _review_doc_prompt,
+                review_intro="Review the creative artifact critically against the brief, the declared primary criterion, and the approved canvas.",
+                criteria_guidance="Judge against the declared primary criterion and the form-specific canvas commitments.",
+                task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output artifact.",
+                sense_check_guidance="Review every sense check explicitly. Confirm concise executor acknowledgments when they are specific; dig deeper only when they are perfunctory or contradicted by the artifact.",
             )
     if mode == "doc":
         if step == "prep":
@@ -210,11 +238,14 @@ __all__ = [
     "_HERMES_PROMPT_BUILDERS",
     "_collect_critique_summaries",
     "_critique_prompt",
+    "_critique_creative_prompt",
     "_critique_joke_prompt",
     "_debt_watch_lines",
     "_escalated_debt_for_prompt",
     "_execute_approval_note",
     "_execute_batch_prompt",
+    "_execute_creative_batch_prompt",
+    "_execute_creative_prompt",
     "_execute_doc_batch_prompt",
     "_execute_doc_prompt",
     "_execute_joke_batch_prompt",
@@ -241,6 +272,7 @@ __all__ = [
     "_resolve_prompt_root",
     "_review_prompt",
     "_revise_prompt",
+    "_revise_creative_prompt",
     "_revise_joke_prompt",
     "_settled_decisions_block",
     "_settled_decisions_instruction",

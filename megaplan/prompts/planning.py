@@ -6,12 +6,15 @@ import textwrap
 from pathlib import Path
 
 from megaplan._core import (
+    creative_form_id,
     intent_and_notes_block,
+    is_creative_mode,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
     read_json,
 )
+from megaplan.forms import get_form
 from megaplan.types import PlanState
 
 from ._shared import _render_prep_block
@@ -95,18 +98,23 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
         output_path_block = textwrap.dedent(
             f"""
             Doc-mode output contract (LOAD-BEARING):
-            The final document artifact for this run MUST be written to exactly this path:
+            The final document artifact will be written by the EXECUTE phase to exactly this path:
               {output_path}
+            Your job in THIS plan phase is to produce the structured plan markdown as your text response — do NOT call the Write tool, the Edit tool, or any filesystem-writing tool right now. Do NOT attempt to author, save, or "queue" the deliverable file: a later execute phase reads your plan and writes the deliverable. Only the execute phase has write permission to the output path; any Write call in the plan phase will be rejected.
             Every plan step that authors, edits, or verifies document sections MUST reference this exact path. Do NOT invent an alternate filename based on the document title or a kebab-case normalization. The executor will only write to the path above; any step instructing it to write elsewhere will produce a file that review cannot verify.
             """
         ).strip()
-    elif mode == "joke" and output_path:
+    elif is_creative_mode(state) and output_path:
+        form = get_form(creative_form_id(state) or "joke")
+        beat_list = ", ".join(form.beat_ids)
         output_path_block = textwrap.dedent(
             f"""
-            Joke-mode output contract (LOAD-BEARING):
-            Produce a scene canvas (`premise`, `tone_anchor`, `characters`, `objective`, `obstacle`, `turn`, `button`), not a task list.
-            The final artifact written to `{output_path}` MUST be scene prose (screenplay-style OR short story per the brief).
-            The primary criterion for this scene is **{primary_criterion}** — every design choice must serve it.
+            Creative-work output contract (LOAD-BEARING):
+            Form: {form.display_name} (`{form.id}`)
+            Beat canvas IDs: {beat_list}
+            Produce a creative scene canvas keyed by those beat IDs, not a code task list.
+            The final artifact written to `{output_path}` MUST be standalone creative prose for this form, including screenplay-style OR short story when the form is joke.
+            The primary criterion is **{primary_criterion}** — every design choice must serve it.
             """
         ).strip()
     else:

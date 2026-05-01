@@ -22,6 +22,7 @@ from megaplan.types import (
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
+from .modes import is_creative_mode
 
 
 @dataclass(frozen=True)
@@ -173,11 +174,29 @@ def _workflow_robustness_from_state(state: PlanState) -> str:
     return _normalize_workflow_robustness(config.get("robustness", "standard"))
 
 
-def _workflow_for_robustness(robustness: str) -> dict[str, list[Transition]]:
+def _resolve_overrides(robustness: str, *, creative: bool) -> dict[str, list[Transition]]:
+    if not creative:
+        return _ROBUSTNESS_OVERRIDES.get(robustness, {})
+    if robustness in {"superrobust", "robust", "standard"}:
+        return {}
+    if robustness == "light":
+        return {
+            STATE_PLANNED: [
+                Transition("finalize", STATE_GATED),
+            ],
+            STATE_CRITIQUED: [
+                Transition("revise", STATE_GATED),
+            ],
+            STATE_EXECUTED: [],
+        }
+    return _ROBUSTNESS_OVERRIDES.get(robustness, {})
+
+
+def _workflow_for_robustness(robustness: str, *, creative: bool = False) -> dict[str, list[Transition]]:
     normalized = _normalize_workflow_robustness(robustness)
     merged = dict(WORKFLOW)
     for level in _ROBUSTNESS_WORKFLOW_LEVELS.get(normalized, _ROBUSTNESS_WORKFLOW_LEVELS["standard"]):
-        merged.update(_ROBUSTNESS_OVERRIDES.get(level, {}))
+        merged.update(_resolve_overrides(level, creative=creative and normalized != "tiny"))
     return merged
 
 
@@ -218,7 +237,10 @@ def workflow_transition(state: PlanState, step: str) -> Transition | None:
     current = state.get("current_state")
     if not isinstance(current, str):
         return None
-    workflow = _workflow_for_robustness(_workflow_robustness_from_state(state))
+    workflow = _workflow_for_robustness(
+        _workflow_robustness_from_state(state),
+        creative=is_creative_mode(state),
+    )
     for transition in workflow.get(current, []):
         if transition.next_step == step and _transition_matches(state, transition.condition):
             return transition
@@ -229,7 +251,10 @@ def workflow_next(state: PlanState) -> list[str]:
     current = state.get("current_state")
     if not isinstance(current, str):
         return []
-    workflow = _workflow_for_robustness(_workflow_robustness_from_state(state))
+    workflow = _workflow_for_robustness(
+        _workflow_robustness_from_state(state),
+        creative=is_creative_mode(state),
+    )
     next_steps = [
         transition.next_step
         for transition in workflow.get(current, [])

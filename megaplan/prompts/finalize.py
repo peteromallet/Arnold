@@ -7,6 +7,7 @@ from pathlib import Path
 
 from megaplan._core import (
     intent_and_notes_block,
+    is_prose_mode,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -29,7 +30,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     critique_history = _collect_critique_summaries(plan_dir, state["iteration"])
     debt_block = _finalize_debt_block(plan_dir, root)
     plan_mode = state.get("config", {}).get("mode", "code")
-    if plan_mode in {"doc", "joke"}:
+    if is_prose_mode(state):
         task_field_guidance = textwrap.dedent(
             """
             - Each task represents a document section or group of sections to author.
@@ -43,6 +44,21 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         task_field_guidance = textwrap.dedent(
             """
             - The FINAL task MUST always be to run tests and verify the changes work. If specific test IDs or commands are mentioned in the original task, include them. Otherwise, the executor should find and run the tests most relevant to the files changed. If any test fails, read the error, fix the code, and re-run until they pass. Do NOT create new test files — run the project's existing test suite. Additionally, the executor should write a short throwaway script that reproduces the specific bug described in the task, run it to confirm the fix works, then delete the script.
+            """
+        ).strip()
+    if plan_mode == "code":
+        user_actions_guidance = textwrap.dedent(
+            """
+            - `user_actions` must be an array of human-only setup or operational actions. Use IDs `U1`, `U2`, ... and include `description` plus `phase` (`before_execute` or `after_execute`). Use optional `blocks_task_ids` when an action blocks specific tasks, optional `rationale` when useful, and `requires_human_only_reason` ONLY when the user_action is the sole coverage for a plan step.
+            - Include ONLY actions that require a human outside the executor's repo-editing work: env vars or secrets, infra access such as cloud accounts or VPN, DB migrations the human must trigger, manual UI/UX smoke tests, deploys, and out-of-band approvals.
+            - Anything that touches code in the repo MUST be a task, not a user_action. Reading docs, editing files, running tests, and writing migration SQL are tasks. Negative example: writing the migration SQL is a task, not a user_action.
+            - Positive examples: `U1: Set ANTHROPIC_API_KEY in .env (before_execute)`; `U2: Manually smoke test the production deploy in the browser (after_execute)`.
+            """
+        ).strip()
+    else:
+        user_actions_guidance = textwrap.dedent(
+            """
+            - `user_actions` must be `[]` in doc, joke, and creative modes. These modes must not emit human-only user_actions.
             """
         ).strip()
     return textwrap.dedent(
@@ -90,18 +106,19 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           - `task_id`: the related task ID
           - `question`: reviewer verification question
           - `verdict`: always `""` at finalize time
+        {user_actions_guidance}
         - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
         - `validation` must be an object that self-checks plan coverage:
-          - `plan_steps_covered`: enumerate EVERY step from the approved plan. For each step, provide a short `plan_step_summary` (the step's intent in one phrase) and `finalize_task_ids` (array of task IDs that implement it — a single plan step may map to multiple tasks).
+          - `plan_steps_covered`: enumerate EVERY step from the approved plan. For each step, provide a short `plan_step_summary` (the step's intent in one phrase) and `finalize_item_ids` (array of task IDs `T*` or user_action IDs `U*` that implement or cover it — a single plan step may map to multiple tasks and/or user_actions).
           - `orphan_tasks`: task IDs that do not correspond to any plan step. Normally empty. If non-empty, explain in `completeness_notes`.
           - `completeness_notes`: free-text explanation of any gaps, deviations, or deliberate omissions.
-          - `coverage_complete`: set to `true` only if every plan step has at least one finalize task AND you have verified the mapping by reviewing each entry. Set to `false` if any plan step is missing coverage.
+          - `coverage_complete`: set to `true` only if every plan step has at least one finalize task or user_action AND you have verified the mapping by reviewing each entry. Set to `false` if any plan step is missing coverage.
           - Example:
           ```json
           "validation": {{
             "plan_steps_covered": [
-              {{"plan_step_summary": "Add retry logic to API client", "finalize_task_ids": ["T1", "T2"]}},
-              {{"plan_step_summary": "Update configuration schema", "finalize_task_ids": ["T3"]}}
+              {{"plan_step_summary": "Add retry logic to API client", "finalize_item_ids": ["T1", "T2"]}},
+              {{"plan_step_summary": "Set required production secret", "finalize_item_ids": ["U1"]}}
             ],
             "orphan_tasks": [],
             "completeness_notes": "All plan steps mapped to tasks.",

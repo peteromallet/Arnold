@@ -41,13 +41,19 @@ def merge_bakeoff(root: Path, exp_id: str) -> int:
     profiles = list(state.get("profiles", []))
     winner = _find_profile(profiles, chosen)
     archive_root = bakeoff_root(root, state["experiment_id"])
-    patch = collect_git_diff_patch(Path(winner["worktree"]))
-    if patch == NO_CHANGES_SENTINEL:
-        raise CliError("bakeoff_merge_no_changes", "Chosen profile has no git changes to merge.")
-    patch_path = archive_root / "winner.patch"
-    atomic_write_text(patch_path, patch + ("\n" if patch and not patch.endswith("\n") else ""))
-    _git_apply(root, patch_path, check=True)
-    _git_apply(root, patch_path, check=False)
+    mode = state.get("mode") or "code"
+    if mode == "doc":
+        # Doc-mode bake-offs ship a single document artifact, not a code diff.
+        # Copy the winner's doc into main and skip git apply entirely.
+        _merge_doc_winner(root, state, winner, archive_root)
+    else:
+        patch = collect_git_diff_patch(Path(winner["worktree"]))
+        if patch == NO_CHANGES_SENTINEL:
+            raise CliError("bakeoff_merge_no_changes", "Chosen profile has no git changes to merge.")
+        patch_path = archive_root / "winner.patch"
+        atomic_write_text(patch_path, patch + ("\n" if patch and not patch.endswith("\n") else ""))
+        _git_apply(root, patch_path, check=True)
+        _git_apply(root, patch_path, check=False)
 
     for profile in profiles:
         _archive_profile(root, state, profile)
@@ -59,6 +65,34 @@ def merge_bakeoff(root: Path, exp_id: str) -> int:
     state["merged_at"] = now_utc()
     save_bakeoff_state(root, state)
     return 0
+
+
+def _merge_doc_winner(
+    root: Path,
+    state: BakeoffState,
+    winner: BakeoffProfileRecord,
+    archive_root: Path,
+) -> None:
+    output_path = state.get("output_path")
+    if not output_path:
+        raise CliError(
+            "bakeoff_merge_missing_output",
+            "doc-mode bake-off state has no output_path; cannot locate winner artifact.",
+        )
+    src = Path(winner["worktree"]) / output_path
+    if not src.exists() or not src.is_file():
+        raise CliError(
+            "bakeoff_merge_no_changes",
+            f"Chosen profile produced no doc artifact at {output_path}.",
+        )
+    dest = root / output_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    content = src.read_text(encoding="utf-8")
+    atomic_write_text(dest, content)
+    # Mirror the artifact into the bake-off archive so the merged doc is
+    # auditable alongside the per-profile plans.
+    archived = archive_root / "winner.doc"
+    atomic_write_text(archived, content)
 
 
 def _find_profile(records: list[BakeoffProfileRecord], profile: str) -> BakeoffProfileRecord:

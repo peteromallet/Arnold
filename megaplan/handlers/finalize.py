@@ -5,11 +5,13 @@ import os
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import MOCK_ENV_VAR, PlanState, STATE_FINALIZED, STATE_GATED, StepResponse
+from megaplan.types import MOCK_ENV_VAR, PlanState, STATE_FINALIZED, STATE_GATED, STATE_PLANNED, StepResponse
 from megaplan.workers import WorkerResult
 from megaplan._core import (
     atomic_write_json,
     atomic_write_text,
+    configured_robustness,
+    is_creative_mode,
     load_plan_locked,
     render_final_md,
     require_state,
@@ -21,7 +23,7 @@ from .shared import _finish_step, _raise_step_validation_error, _run_worker, shu
 def _reconcile_validation_after_mutation(payload: dict[str, Any]) -> None:
     """Ensure validation block is consistent with the (possibly mutated) task list.
 
-    After _ensure_verification_task() may have appended a task, update the
+    After handler helpers may have injected tasks, update the
     validation block so orphan_tasks includes any handler-injected tasks.
     """
     validation = payload.get("validation")
@@ -31,13 +33,59 @@ def _reconcile_validation_after_mutation(payload: dict[str, Any]) -> None:
     covered_ids: set[str] = set()
     for entry in validation.get("plan_steps_covered", []):
         if isinstance(entry, dict):
-            for tid in entry.get("finalize_task_ids", []):
+            for tid in entry.get("finalize_item_ids", []):
                 covered_ids.add(tid)
     orphan_ids = set(validation.get("orphan_tasks", []))
     for tid in task_ids:
         if tid not in covered_ids and tid not in orphan_ids:
             orphan_ids.add(tid)
     validation["orphan_tasks"] = sorted(orphan_ids)
+
+def _next_task_id(tasks: list[dict[str, Any]]) -> str:
+    next_num = max(
+        (
+            int(task["id"].lstrip("T"))
+            for task in tasks
+            if isinstance(task, dict)
+            and isinstance(task.get("id"), str)
+            and task["id"].startswith("T")
+            and task["id"][1:].isdigit()
+        ),
+        default=0,
+    ) + 1
+    return f"T{next_num}"
+
+def _next_sense_check_id(sense_checks: list[dict[str, Any]]) -> str:
+    next_num = max(
+        (
+            int(sense_check["id"].lstrip("SC"))
+            for sense_check in sense_checks
+            if isinstance(sense_check, dict)
+            and isinstance(sense_check.get("id"), str)
+            and sense_check["id"].startswith("SC")
+            and sense_check["id"][2:].isdigit()
+        ),
+        default=0,
+    ) + 1
+    return f"SC{next_num}"
+
+def _append_plan_step_coverage(payload: dict[str, Any], summary: str, item_id: str) -> None:
+    validation = payload.get("validation")
+    if not isinstance(validation, dict):
+        return
+    plan_steps_covered = validation.get("plan_steps_covered")
+    if not isinstance(plan_steps_covered, list):
+        return
+    for entry in plan_steps_covered:
+        if not isinstance(entry, dict):
+            continue
+        item_ids = entry.get("finalize_item_ids", [])
+        if isinstance(item_ids, list) and item_id in item_ids:
+            return
+    plan_steps_covered.append({
+        "plan_step_summary": summary,
+        "finalize_item_ids": [item_id],
+    })
 
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
     payload = worker.payload
@@ -56,6 +104,23 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
         _reject("Finalize output must include a `sense_checks` list.")
     if not isinstance(payload.get("watch_items"), list):
         _reject("Finalize output must include a `watch_items` list.")
+    user_actions = payload.get("user_actions")
+    if not isinstance(user_actions, list):
+        _reject("Finalize output must include a `user_actions` list.")
+    user_actions_by_id: dict[str, dict[str, Any]] = {}
+    for index, action in enumerate(user_actions, start=1):
+        aid = action.get("id", index) if isinstance(action, dict) else index
+        if not isinstance(action, dict):
+            _reject(f"Finalize user_action {index} must be an object.")
+        if not isinstance(action.get("id"), str) or not action["id"].strip():
+            _reject(f"Finalize user_action {index} is missing a non-empty `id`.")
+        if not isinstance(action.get("description"), str) or not action["description"].strip():
+            _reject(f"Finalize user_action {aid} is missing a non-empty `description`.")
+        if action.get("phase") not in {"before_execute", "after_execute"}:
+            _reject(
+                f"Finalize user_action {aid} must use phase `before_execute` or `after_execute`."
+            )
+        user_actions_by_id[action["id"]] = action
     for index, task in enumerate(tasks, start=1):
         tid = task.get("id", index) if isinstance(task, dict) else index
         if not isinstance(task, dict):
@@ -66,6 +131,30 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
             _reject(f"Finalize task {tid} is missing a non-empty `description`.")
         if task.get("status") != "pending":
             _reject(f"Finalize task {tid} must start with status `pending`.")
+    validation = payload.get("validation")
+    if isinstance(validation, dict):
+        for index, entry in enumerate(validation.get("plan_steps_covered", []), start=1):
+            if not isinstance(entry, dict):
+                continue
+            finalize_item_ids = entry.get("finalize_item_ids", [])
+            if (
+                isinstance(finalize_item_ids, list)
+                and len(finalize_item_ids) == 1
+                and isinstance(finalize_item_ids[0], str)
+                and finalize_item_ids[0].startswith("U")
+            ):
+                action = user_actions_by_id.get(finalize_item_ids[0])
+                if action is None:
+                    _reject(
+                        f"Finalize plan_steps_covered entry {index} references unknown user_action "
+                        f"`{finalize_item_ids[0]}`."
+                    )
+                reason = action.get("requires_human_only_reason")
+                if not isinstance(reason, str) or not reason.strip():
+                    _reject(
+                        f"Finalize user_action {finalize_item_ids[0]} is sole coverage for a plan "
+                        "step and must include `requires_human_only_reason`."
+                    )
 
 def _ensure_verification_task(payload: dict, state: dict) -> None:
     """Ensure the task list ends with a test verification task.
@@ -129,6 +218,7 @@ def _ensure_verification_task(payload: dict, state: dict) -> None:
             "executor_note": "",
             "verdict": "",
         })
+        _append_plan_step_coverage(payload, "Run verification tests", task_id)
 
     failures = payload.get("baseline_test_failures")
     if isinstance(failures, list) and failures:
@@ -136,6 +226,123 @@ def _ensure_verification_task(payload: dict, state: dict) -> None:
             f" Note: {len(failures)} tests were already failing before your changes "
             "(see baseline_test_failures in finalize.json) — do not scope-creep into fixing these."
         )
+
+def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str, Any]) -> None:
+    if state["config"].get("mode", "code") != "code":
+        return
+    before_actions = [
+        action
+        for action in payload.get("user_actions", [])
+        if isinstance(action, dict) and action.get("phase") == "before_execute"
+    ]
+    if not before_actions:
+        return
+    tasks = payload.get("tasks", [])
+    if not tasks:
+        return
+
+    task_id = _next_task_id(tasks)
+    gate_task = {
+        "id": task_id,
+        "description": (
+            "Read user_actions.md. For each before_execute action, programmatically verify "
+            "completion using bash tools — grep .env for required keys, query the migrations "
+            "table, curl the dev server, etc. Reading the file does NOT count as verification; "
+            "you must run a command. For actions that genuinely cannot be verified mechanically "
+            "(manual UI checks), explicitly ask the user. If anything is incomplete or "
+            "unverifiable, mark this task blocked with reason and STOP."
+        ),
+        "depends_on": [],
+        "status": "pending",
+        "executor_notes": "",
+        "files_changed": [],
+        "commands_run": [],
+        "evidence_files": [],
+        "reviewer_verdict": "",
+    }
+    tasks.insert(0, gate_task)
+    for task in tasks[1:]:
+        depends_on = task.get("depends_on", [])
+        if not isinstance(depends_on, list):
+            depends_on = []
+        if task_id not in depends_on:
+            task["depends_on"] = [task_id, *depends_on]
+
+    sense_checks = payload.setdefault("sense_checks", [])
+    sense_checks.append({
+        "id": _next_sense_check_id(sense_checks),
+        "task_id": task_id,
+        "question": "Were all before_execute user_actions programmatically verified before execution proceeded?",
+        "executor_note": "",
+        "verdict": "",
+    })
+    _append_plan_step_coverage(payload, "Verify before_execute user_actions", task_id)
+
+def _ensure_user_actions_post_gate_task(payload: dict[str, Any], state: dict[str, Any]) -> None:
+    if state["config"].get("mode", "code") != "code":
+        return
+    after_actions = [
+        action
+        for action in payload.get("user_actions", [])
+        if isinstance(action, dict) and action.get("phase") == "after_execute"
+    ]
+    if not after_actions:
+        return
+    tasks = payload.get("tasks", [])
+    if not tasks:
+        return
+
+    task_order = [
+        task["id"]
+        for task in tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    ]
+    task_ids = set(task_order)
+    depended_on: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        depends_on = task.get("depends_on", [])
+        if not isinstance(depends_on, list):
+            continue
+        for dep in depends_on:
+            if isinstance(dep, str) and dep in task_ids:
+                depended_on.add(dep)
+    terminal_ids = [task_id for task_id in task_order if task_id not in depended_on]
+    if not terminal_ids and task_order:
+        terminal_ids = [task_order[-1]]
+
+    action_lines = [
+        f"- {action.get('id', 'unknown')}: {action.get('description', '')}"
+        for action in after_actions
+    ]
+    task_id = _next_task_id(tasks)
+    tasks.append({
+        "id": task_id,
+        "description": (
+            "Surface after_execute user_actions to the user:\n"
+            + "\n".join(action_lines)
+            + "\nDo not perform them yourself — these require human action. Mark this task done "
+            "once they have been clearly communicated."
+        ),
+        "depends_on": terminal_ids,
+        "status": "pending",
+        "executor_notes": "",
+        "files_changed": [],
+        "commands_run": [],
+        "evidence_files": [],
+        "reviewer_verdict": "",
+    })
+
+    sense_checks = payload.setdefault("sense_checks", [])
+    sense_checks.append({
+        "id": _next_sense_check_id(sense_checks),
+        "task_id": task_id,
+        "question": "Were all after_execute user_actions clearly surfaced to the user without the executor performing them?",
+        "executor_note": "",
+        "verdict": "",
+    })
+    _append_plan_step_coverage(payload, "Surface after_execute user_actions", task_id)
 
 def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     if os.getenv(MOCK_ENV_VAR) == "1":
@@ -211,6 +418,8 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         baseline = _capture_test_baseline(Path(state["config"]["project_dir"]), state.get("config", {}))
         payload.update(baseline)
         _ensure_verification_task(payload, state)
+        _ensure_user_actions_pre_gate_task(payload, state)
+        _ensure_user_actions_post_gate_task(payload, state)
     _reconcile_validation_after_mutation(payload)
     atomic_write_json(plan_dir / "finalize.json", payload)
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
@@ -219,7 +428,10 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
 
 def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="finalize") as (plan_dir, state):
-        require_state(state, "finalize", {STATE_GATED})
+        allowed_states = {STATE_GATED}
+        if is_creative_mode(state) and configured_robustness(state) == "light":
+            allowed_states.add(STATE_PLANNED)
+        require_state(state, "finalize", allowed_states)
         worker, agent, mode, refreshed = _run_worker("finalize", state, plan_dir, args, root=root)
         _validate_finalize_payload(plan_dir, state, worker)
         artifact_hash = _write_finalize_artifacts(plan_dir, worker.payload, state)

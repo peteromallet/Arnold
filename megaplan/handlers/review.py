@@ -38,8 +38,11 @@ from megaplan._core import (
     clear_active_step,
     configured_robustness,
     get_effective,
+    is_prose_mode,
+    is_creative_mode,
     load_plan_locked,
     make_history_entry,
+    now_utc,
     read_json,
     record_step_failure,
     render_final_md,
@@ -146,7 +149,47 @@ def _merge_review_verdicts(
     )
     return verdict_count, total_tasks, check_count, total_checks, missing_evidence
 
+
+def _maker_requested_stop(plan_dir: Path) -> dict[str, str] | None:
+    finalize_path = plan_dir / "finalize.json"
+    if not finalize_path.exists():
+        return None
+    try:
+        finalize_data = read_json(finalize_path)
+    except (OSError, ValueError):
+        return None
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        stop_signal = task.get("stop_signal")
+        if isinstance(stop_signal, dict) and stop_signal.get("requested") is True:
+            return {"defense": str(stop_signal.get("defense", "")).strip()}
+    return None
+
+
+def _record_maker_stop(state: PlanState, plan_dir: Path, *, defense: str) -> None:
+    note = f"Maker stop honored: {defense or 'No defense supplied.'}"
+    state.setdefault("meta", {}).setdefault("notes", []).append(
+        {"timestamp": now_utc(), "note": note}
+    )
+    notes_path = plan_dir / "directors_notes.json"
+    if not notes_path.exists():
+        return
+    try:
+        notes = read_json(notes_path)
+    except (OSError, ValueError):
+        return
+    passes = notes.get("passes", [])
+    if isinstance(passes, list) and passes:
+        last_pass = passes[-1]
+        if isinstance(last_pass, dict):
+            last_pass["stop_requested"] = True
+            last_pass["stop_defense"] = defense
+            atomic_write_json(notes_path, notes)
+
+
 def _resolve_review_outcome(
+    plan_dir: Path,
     review_verdict: str,
     verdict_count: int,
     total_tasks: int,
@@ -172,6 +215,11 @@ def _resolve_review_outcome(
 
     rework_requested = review_verdict == "needs_rework"
     if rework_requested:
+        if is_creative_mode(state):
+            stop_data = _maker_requested_stop(plan_dir)
+            if stop_data is not None:
+                _record_maker_stop(state, plan_dir, defense=stop_data.get("defense", ""))
+                return "success", STATE_DONE, None
         cap_key = (
             "max_robust_review_rework_cycles"
             if robustness in {"robust", "superrobust"}
@@ -270,7 +318,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
         robustness = configured_robustness(state)
         plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []
-        if robustness in {"standard", "robust", "superrobust"} and plan_mode not in {"doc", "joke"}:
+        if robustness in {"standard", "robust", "superrobust"} and not is_prose_mode(state):
             pre_check_flags = _pkg.run_pre_checks(plan_dir, state, Path(state["config"]["project_dir"]))
         if robustness in {"standard", "light", "robust"}:
             resolved = None
@@ -330,6 +378,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 finalize_hash = sha256_file(plan_dir / "finalize.json")
 
                 result, next_state, next_step = _resolve_review_outcome(
+                    plan_dir,
                     review_verdict, verdict_count, total_tasks,
                     check_count, total_checks, missing_evidence,
                     robustness,
@@ -481,6 +530,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
         finalize_hash = sha256_file(plan_dir / "finalize.json")
 
         result, next_state, next_step = _resolve_review_outcome(
+            plan_dir,
             review_verdict, verdict_count, total_tasks,
             check_count, total_checks, missing_evidence,
             robustness,

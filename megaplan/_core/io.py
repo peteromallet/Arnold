@@ -274,13 +274,42 @@ def detect_available_agents() -> list[str]:
 # Runtime layout / path helpers
 # ---------------------------------------------------------------------------
 
+def _enforce_openai_strict_mode(node: Any) -> Any:
+    # OpenAI structured outputs reject any object schema where `required` doesn't
+    # cover every key in `properties`. Some megaplan schemas use an explicit-required
+    # carve-out that violates this rule. Make non-required properties nullable and
+    # promote them to required so the submission is strict-mode-safe.
+    if isinstance(node, dict):
+        node = {key: _enforce_openai_strict_mode(value) for key, value in node.items()}
+        if node.get("type") == "object" and isinstance(node.get("properties"), dict):
+            properties: dict[str, Any] = node["properties"]
+            required = set(node.get("required", []))
+            missing = [key for key in properties if key not in required]
+            if missing:
+                for key in missing:
+                    prop = properties[key]
+                    if isinstance(prop, dict):
+                        existing = prop.get("type")
+                        if isinstance(existing, str) and existing != "null":
+                            prop = {**prop, "type": [existing, "null"]}
+                        elif isinstance(existing, list) and "null" not in existing:
+                            prop = {**prop, "type": list(existing) + ["null"]}
+                        properties[key] = prop
+                node["properties"] = properties
+                node["required"] = list(properties.keys())
+        return node
+    if isinstance(node, list):
+        return [_enforce_openai_strict_mode(item) for item in node]
+    return node
+
+
 def ensure_runtime_layout(root: Path) -> None:
     megaplan_rt = root / ".megaplan"
     (megaplan_rt / "plans").mkdir(parents=True, exist_ok=True)
     schemas_dir = megaplan_rt / "schemas"
     schemas_dir.mkdir(parents=True, exist_ok=True)
     for filename, schema in SCHEMAS.items():
-        atomic_write_json(schemas_dir / filename, strict_schema(schema))
+        atomic_write_json(schemas_dir / filename, _enforce_openai_strict_mode(strict_schema(schema)))
 
 
 def megaplan_root(root: Path) -> Path:

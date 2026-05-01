@@ -40,12 +40,26 @@ async def run_bakeoff(
     allow_dirty: bool = False,
     detach: bool = False,
     robustness: str | None = None,
+    output: str | None = None,
 ) -> BakeoffState:
-    if mode != "code":
+    # Accept the user-facing `metaplan` alias here too so programmatic callers
+    # (tests, scripts) match CLI semantics without needing to pre-normalize.
+    if mode == "metaplan":
+        mode = "doc"
+    if mode not in {"code", "doc"}:
         raise CliError(
-            "bakeoff_unsupported_mode",
-            "bake-off v1 supports --mode code only; doc/joke/metaplan require "
-            "--output pass-through, deferred to a follow-up.",
+            "invalid_args",
+            f"bake-off --mode must be one of code, doc, metaplan; got {mode!r}.",
+        )
+    if mode == "code" and output:
+        raise CliError(
+            "invalid_args",
+            "--output is only valid with --mode doc or --mode metaplan.",
+        )
+    if mode == "doc" and not output:
+        raise CliError(
+            "invalid_args",
+            "--output is required when --mode doc is selected",
         )
     root = root.resolve()
     idea = Path(idea_path).resolve()
@@ -63,6 +77,7 @@ async def run_bakeoff(
         "idea_hash": idea_hash,
         "idea_path": str(idea),
         "mode": mode,
+        "output_path": output,
         "profiles": [],
         "phase": "running",
         "chosen_profile": None,
@@ -82,6 +97,8 @@ async def run_bakeoff(
                 base_sha,
                 idea,
                 robustness=robustness,
+                mode=mode,
+                output=output,
             )
             created_worktrees.append(Path(record["worktree"]))
             state["profiles"].append(record)
@@ -131,6 +148,8 @@ async def _init_profile(
     idea: Path,
     *,
     robustness: str | None = None,
+    mode: str = "code",
+    output: str | None = None,
 ) -> BakeoffProfileRecord:
     worktree = worktree_root(root, experiment_id) / profile
     profile_archive = bakeoff_root(root, experiment_id) / profile
@@ -158,8 +177,17 @@ async def _init_profile(
         "--profile",
         profile,
         "--mode",
-        "code",
+        mode,
     ]
+    if mode == "doc":
+        if not output:
+            # Defensive: should be caught upstream, but never spawn `init` in
+            # doc mode without --output (init would reject it anyway).
+            raise CliError(
+                "invalid_args",
+                "doc-mode bake-off requires --output to thread into each profile's init.",
+            )
+        cmd.extend(["--output", output])
     if robustness is not None:
         cmd.extend(["--robustness", robustness])
     init_log = profile_archive / "init.log"
@@ -278,6 +306,7 @@ def run_bakeoff_run_handler(root: Path, args: Any) -> int:
 async def _run_with_optional_status(root: Path, args: Any, exp_id: str) -> BakeoffState:
     detach = bool(getattr(args, "detach", False))
     robustness = getattr(args, "robustness", None)
+    output = getattr(args, "output", None)
     task = asyncio.create_task(
         run_bakeoff(
             root,
@@ -288,6 +317,7 @@ async def _run_with_optional_status(root: Path, args: Any, exp_id: str) -> Bakeo
             allow_dirty=bool(getattr(args, "allow_dirty", False)),
             detach=detach,
             robustness=robustness,
+            output=output,
         )
     )
     if detach:

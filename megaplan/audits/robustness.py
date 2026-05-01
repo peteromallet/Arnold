@@ -211,10 +211,21 @@ def checks_for_robustness(robustness: str) -> tuple[CritiqueCheckSpec, ...]:
     return _CORE_CRITIQUE_CHECKS
 
 
-def joke_checks_for_robustness(robustness: str) -> tuple[CritiqueCheckSpec, ...]:
+def creative_checks_for_robustness(form: Any, robustness: str) -> tuple[CritiqueCheckSpec, ...]:
     if robustness == "tiny":
         return ()
-    return JOKE_CRITIQUE_CHECKS
+    from megaplan.forms import Form
+    from megaplan.forms.provocations import select_active_checks
+
+    form_id = form.id if isinstance(form, Form) else str(form)
+    state = {"config": {"mode": "creative", "form": form_id}, "iteration": 1}
+    return tuple(select_active_checks(state, robustness))
+
+
+def joke_checks_for_robustness(robustness: str) -> tuple[CritiqueCheckSpec, ...]:
+    from megaplan.forms import get_form
+
+    return creative_checks_for_robustness(get_form("joke"), robustness)
 
 
 def build_empty_template(checks: tuple[CritiqueCheckSpec, ...] | None = None) -> list[dict[str, Any]]:

@@ -195,6 +195,8 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
         "auto_attributed_files",
         "evidence_files",
         "reviewer_verdict",
+        "stance",
+        "stop_signal",
     }
     assert set(task_schema["required"]) == {
         "id",
@@ -208,6 +210,12 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
         "reviewer_verdict",
     }
     assert task_schema["properties"]["status"]["enum"] == ["pending", "done", "skipped", "blocked"]
+    assert set(task_schema["properties"]["stance"]["properties"]) == {
+        "challenge_engaged",
+        "angle_taken",
+        "what_changed",
+    }
+    assert set(task_schema["properties"]["stop_signal"]["properties"]) == {"requested", "defense"}
     assert "executor_note" in finalize["properties"]["sense_checks"]["items"]["properties"]
     # Validation sub-schema
     validation_schema = finalize["properties"]["validation"]
@@ -217,8 +225,8 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
     assert "coverage_complete" in validation_schema["properties"]
     step_item = validation_schema["properties"]["plan_steps_covered"]["items"]
     assert "plan_step_summary" in step_item["properties"]
-    assert "finalize_task_ids" in step_item["properties"]
-    assert step_item["properties"]["finalize_task_ids"]["type"] == "array"
+    assert "finalize_item_ids" in step_item["properties"]
+    assert step_item["properties"]["finalize_item_ids"]["type"] == "array"
 
 
 def test_execution_schema_requires_task_updates() -> None:
@@ -239,6 +247,8 @@ def test_execution_doc_schema_strips_auto_attributed_files() -> None:
     execution_doc = SCHEMAS["execution_doc.json"]
     item_schema = execution_doc["properties"]["task_updates"]["items"]
     assert "auto_attributed_files" not in item_schema["properties"]
+    assert "stance" in item_schema["properties"]
+    assert "stop_signal" in item_schema["properties"]
 
 
 def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
@@ -489,6 +499,8 @@ def test_strict_schema_new_tracking_objects_are_strict() -> None:
     execution_schema = strict_schema(SCHEMAS["execution.json"])
     task_update_schema = execution_schema["properties"]["task_updates"]["items"]
     assert task_schema["additionalProperties"] is False
+    assert "stance" in task_schema["properties"]
+    assert "stop_signal" in task_schema["properties"]
     assert set(task_schema["required"]) == {
         "id",
         "description",
