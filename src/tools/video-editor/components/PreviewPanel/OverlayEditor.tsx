@@ -688,8 +688,9 @@ function OverlayEditorComponent({
                 autoFocus
               />
             ) : (
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 className={`group relative h-full w-full rounded text-left transition motion-reduce:transition-none ${isSelected ? 'border border-sky-400 bg-sky-400/10 shadow-[0_0_0_1px_rgba(56,189,248,0.4)]' : 'border border-transparent hover:border-white/40'}`}
                 style={{ touchAction: previewTouchAction }}
                 aria-label={isSelected ? `Selected overlay ${overlay.label}` : `Select overlay ${overlay.label}`}
@@ -703,6 +704,14 @@ function OverlayEditorComponent({
                   }
                 }}
                 onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectClip(overlay.actionId);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') {
+                    return;
+                  }
+                  event.preventDefault();
                   event.stopPropagation();
                   onSelectClip(overlay.actionId);
                 }}
@@ -813,7 +822,7 @@ function OverlayEditorComponent({
                     </button>
                   </div>
                 )}
-              </button>
+              </div>
             )}
           </div>
         );
