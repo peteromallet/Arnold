@@ -1,5 +1,10 @@
 import type { TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit';
-import { getCompatibleTrackId, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
+import {
+  findNearestFreeTrack,
+  getCompatibleTrackId,
+  trySnapToEdge,
+  updateClipOrder,
+} from '@/tools/video-editor/lib/coordinate-utils';
 import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps';
 import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
 import type { ValidatedSequenceDraft } from '@/tools/video-editor/sequences/validation';
@@ -104,7 +109,7 @@ export const buildInsertSequenceDraftEdit = (
   draft: ValidatedSequenceDraft,
   options: BuildInsertSequenceDraftOptions = {},
 ): SequenceDraftEditResult => {
-  const trackId = getCompatibleTrackId(
+  let trackId = getCompatibleTrackId(
     current.tracks,
     options.preferredTrackId ?? undefined,
     'visual',
@@ -115,7 +120,19 @@ export const buildInsertSequenceDraftEdit = (
   }
 
   const clipId = getNextClipId(current.meta);
-  const start = Math.max(0, options.at ?? 0);
+  const requestedStart = Math.max(0, options.at ?? 0);
+  const snapResult = trySnapToEdge(current.rows, trackId, requestedStart, draft.hold);
+  const start = snapResult.time;
+  if (!snapResult.snapped) {
+    trackId = findNearestFreeTrack(
+      current.tracks,
+      current.rows,
+      trackId,
+      'visual',
+      start,
+      draft.hold,
+    ) ?? trackId;
+  }
   const action: TimelineAction = {
     id: clipId,
     start,

@@ -129,6 +129,37 @@ describe('sequence draft row mutations', () => {
     expect(result.mutation.clipOrderOverride.V1).toEqual(['clip-0', result.clipId]);
   });
 
+  it('uses the nearest free visual track before trimming the inserted sequence', async () => {
+    const data = await buildData({
+      clips: [
+        {
+          id: 'clip-0',
+          track: 'V1',
+          at: 0,
+          clipType: 'section-hook',
+          hold: 5,
+          params: { title: 'Existing' },
+        },
+      ],
+    });
+    const result = buildInsertSequenceDraftEdit(data, draft, {
+      at: 1,
+      selectedTrackId: 'V1',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const action = result.mutation.rows
+      .find((row) => row.id === 'V2')
+      ?.actions.find((candidate) => candidate.id === result.clipId);
+    expect(result.selectedTrackId).toBe('V2');
+    expect(action).toMatchObject({ start: 1, end: 4 });
+    expect(result.mutation.metaUpdates?.[result.clipId]).toMatchObject({
+      track: 'V2',
+      hold: 3,
+    });
+  });
+
   it('replaces a selected visual clip at the same track/start using the generated hold', async () => {
     const data = await buildData({
       clips: [
