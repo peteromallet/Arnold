@@ -17,7 +17,7 @@ import {
   type SequenceDraftValidationError,
 } from "./sequence-validation.ts";
 
-const ANTHROPIC_MODEL = "claude-opus-4-6-20260205";
+const ANTHROPIC_MODEL = "claude-opus-4-6";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_TIMEOUT_MS = 150_000;
 

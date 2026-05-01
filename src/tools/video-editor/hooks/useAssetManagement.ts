@@ -15,7 +15,6 @@ import { findNearestFreeTrack, getCompatibleTrackId, trySnapToEdge, updateClipOr
 import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils';
 import {
   getNextClipId,
-  inferTrackType,
   type ClipMeta,
   type TimelineData,
 } from '@/tools/video-editor/lib/timeline-data';
@@ -38,6 +37,23 @@ function estimateAssetDuration(
   if (assetKind === 'audio') return assetEntry?.duration ?? 10;
   if (assetEntry?.type?.startsWith('image')) return 5;
   return assetEntry?.duration ?? 5;
+}
+
+function getPlayableAssetKind(assetEntry: AssetRegistryEntry | undefined): 'image' | 'video' | 'audio' | null {
+  const mimeType = assetEntry?.type?.toLowerCase() ?? '';
+  const file = (assetEntry?.file ?? assetEntry?.src ?? '').toLowerCase();
+
+  if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(file)) {
+    return 'image';
+  }
+  if (mimeType.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file)) {
+    return 'video';
+  }
+  if (mimeType.startsWith('audio/') || /\.(mp3|wav|aac|m4a|ogg|flac)$/i.test(file)) {
+    return 'audio';
+  }
+
+  return null;
 }
 
 type UploadedGenerationData = GenerationDropData & {
@@ -187,15 +203,24 @@ export function buildAssetDropEdit({
   time: number;
 }): BuildAssetDropEditResult | null {
   const assetEntry = current.registry.assets[assetKey];
-  const assetKind = inferTrackType(assetEntry?.file ?? assetKey);
+  const playableKind = getPlayableAssetKind(assetEntry);
+  if (!assetEntry || !playableKind) {
+    return null;
+  }
   const track = current.tracks.find((candidate) => candidate.id === trackId);
   if (!track) {
     return null;
   }
+  if (track.kind === 'visual' && playableKind === 'audio') {
+    return null;
+  }
+  if (track.kind === 'audio' && playableKind === 'image') {
+    return null;
+  }
 
   const clipId = getNextClipId(current.meta);
-  const isImage = assetEntry?.type?.startsWith('image');
-  const isVideo = assetEntry?.type?.startsWith('video') || (!isImage && assetKind === 'visual' && assetEntry?.duration);
+  const isImage = playableKind === 'image';
+  const isVideo = playableKind === 'video';
   const isManual = track.fit === 'manual';
   const clipType: ClipType = isImage ? 'hold' : 'media';
   const baseDuration = isVideo
@@ -318,19 +343,23 @@ export function useAssetManagement({
       return null;
     }
     const thumbnailUrl = getThumbnailUrl(generationData) ?? imageUrl;
+    const lowerImageUrl = imageUrl.toLowerCase();
 
     const mimeType = (() => {
       const metadataContentType = typeof generationData.metadata?.content_type === 'string'
-        ? generationData.metadata.content_type
+        ? generationData.metadata.content_type.toLowerCase()
         : null;
       if (metadataContentType?.includes('/')) {
         return metadataContentType;
       }
-      if (metadataContentType === 'video' || generationData.variantType === 'video' || /\.(mp4|mov|webm|m4v)$/i.test(imageUrl)) {
+      if (metadataContentType === 'video' || generationData.variantType === 'video' || /\.(mp4|mov|webm|m4v)$/i.test(lowerImageUrl)) {
         return 'video/mp4';
       }
-      if (metadataContentType === 'audio' || /\.(mp3|wav|aac|m4a)$/i.test(imageUrl)) {
+      if (metadataContentType === 'audio' || /\.(mp3|wav|aac|m4a|ogg|flac)$/i.test(lowerImageUrl)) {
         return 'audio/mpeg';
+      }
+      if (/\.(txt|json|md|csv|vtt|srt|pdf)$/i.test(lowerImageUrl)) {
+        return metadataContentType?.includes('/') ? metadataContentType : 'application/octet-stream';
       }
       return 'image/png';
     })();
@@ -461,8 +490,14 @@ export function useAssetManagement({
   const handleAssetDrop = useCallback((assetKey: string, trackId: string | undefined, time: number, forceNewTrack = false, insertAtTop = false) => {
     const latestDataRef = getDataRef();
     const current = latestDataRef.current;
-    const assetKind = inferTrackType(current?.registry.assets[assetKey]?.file ?? assetKey);
-    const duration = estimateAssetDuration(current?.registry.assets[assetKey], assetKind);
+    const assetEntry = current?.registry.assets[assetKey];
+    const playableKind = getPlayableAssetKind(assetEntry);
+    if (!assetEntry || !playableKind) {
+      toast.error('Only image, video, and audio assets can be added to the timeline');
+      return;
+    }
+    const assetKind = playableKind === 'audio' ? 'audio' : 'visual';
+    const duration = estimateAssetDuration(assetEntry, assetKind);
     const resolvedTarget = resolveAssetDropTarget({
       dataRef: latestDataRef,
       assetKind,

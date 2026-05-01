@@ -225,7 +225,7 @@ describe('ai-generate-effect edge entrypoint', () => {
           ],
         },
       ],
-      model: 'claude-opus-4-6-20260205',
+      model: 'claude-opus-4-6',
     });
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'https://api.anthropic.com/v1/messages',

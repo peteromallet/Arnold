@@ -26,6 +26,8 @@ const AudioTrackComponent: FC<{
     <>
       {clips.map((clip) => {
         const mediaSrc = getSanitizedMediaSrc(clip.assetEntry?.src);
+        const assetType = clip.assetEntry?.type ?? '';
+        const isPlayableAudio = assetType.startsWith('audio/') || assetType.startsWith('video/');
         const effectiveVolume = track.muted ? 0 : getSanitizedVolume(track.volume) * getSanitizedVolume(clip.volume);
         const playbackRate = getSanitizedPlaybackRate(clip.speed);
         const trimProps = getSanitizedMediaTrimProps(clip, fps);
@@ -39,7 +41,7 @@ const AudioTrackComponent: FC<{
             durationInFrames={getClipDurationInFrames(clip, fps)}
             premountFor={fps}
           >
-            {mediaSrc ? (
+            {mediaSrc && isPlayableAudio ? (
               <MediaErrorBoundary
                 clipId={clip.id}
                 resetKey={`${clip.id}:${mediaSrc}:${trimProps.trimBefore}:${trimProps.trimAfter ?? 'none'}:${playbackRate}:${effectiveVolume}:audio`}

@@ -56,6 +56,42 @@ const MissingAssetBody: FC<{ clipId: string; clipType: string }> = ({ clipId, cl
   </AbsoluteFill>
 );
 
+const UnsupportedAssetBody: FC<{ clipId: string; clipType: string; assetType?: string }> = ({ clipId, clipType, assetType }) => (
+  <AbsoluteFill
+    data-testid="unsupported-asset-placeholder"
+    data-clip-id={clipId}
+    data-clip-type={clipType}
+    data-asset-type={assetType}
+    style={{
+      backgroundColor: '#332600',
+      borderTop: '2px solid #FBBF24',
+      borderBottom: '2px solid #FBBF24',
+      color: '#FEF3C7',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '12px 24px',
+      textAlign: 'center',
+      fontFamily:
+        'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+      fontSize: 14,
+      lineHeight: 1.4,
+      letterSpacing: '0.04em',
+    }}
+  >
+    <div
+      style={{
+        maxWidth: '80%',
+        padding: '8px 16px',
+        borderRadius: 4,
+        background: 'rgba(0, 0, 0, 0.45)',
+      }}
+    >
+      {`clipType '${clipType}' references unsupported asset type '${assetType ?? 'unknown'}' — clip will not appear in render`}
+    </div>
+  </AbsoluteFill>
+);
+
 type VisualClipProps = {
   clip: ResolvedTimelineClip;
   track: TrackDefinition;
@@ -145,6 +181,16 @@ const VisualAsset: FC<VisualClipProps> = ({ clip, track, fps }) => {
   const playbackRate = getSanitizedPlaybackRate(clip.speed);
   const trimProps = getSanitizedMediaTrimProps(clip, fps);
   const isImage = clip.assetEntry.type?.startsWith('image');
+  const isVideo = clip.assetEntry.type?.startsWith('video');
+  if (!isImage && !isVideo) {
+    return (
+      <UnsupportedAssetBody
+        clipId={clip.id}
+        clipType={clip.clipType ?? 'media'}
+        assetType={clip.assetEntry.type}
+      />
+    );
+  }
   const hasPositionOverride = (
     clip.x !== undefined
     || clip.y !== undefined

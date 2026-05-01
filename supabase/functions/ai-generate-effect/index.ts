@@ -16,7 +16,7 @@ import {
 
 // ── Models ───────────────────────────────────────────────────────────
 // All generation (create + edit + retry) uses Claude Opus 4.6 via Anthropic
-const ANTHROPIC_MODEL = "claude-opus-4-6-20260205";
+const ANTHROPIC_MODEL = "claude-opus-4-6";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_TIMEOUT_MS = 150_000; // max out to edge function wall-clock limit
 

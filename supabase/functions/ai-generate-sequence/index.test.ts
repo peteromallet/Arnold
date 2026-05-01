@@ -173,7 +173,7 @@ describe('ai-generate-sequence edge entrypoint', () => {
         },
       ],
       invalid_drafts: [],
-      model: 'claude-opus-4-6-20260205',
+      model: 'claude-opus-4-6',
     });
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -186,7 +186,7 @@ describe('ai-generate-sequence edge entrypoint', () => {
       }),
     );
     const body = JSON.parse((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string);
-    expect(body.model).toBe('claude-opus-4-6-20260205');
+    expect(body.model).toBe('claude-opus-4-6');
     expect(body.stream).toBe(true);
     expect(body.system).toContain('trusted structured timeline sequence drafts');
     expect(body.messages[0].content).toContain('allowed_asset_keys');
