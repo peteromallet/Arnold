@@ -922,6 +922,7 @@ function TimelineEditorComponent({ onOpenSequenceCreator }: TimelineEditorProps)
         onDeleteClips={handleDeleteClips}
         onDeleteClip={handleDeleteClip}
         onToggleMuteClips={handleToggleMuteClips}
+        onOpenSequenceCreator={onOpenSequenceCreator}
         isTaskActive={isTaskActive}
         isVariantStale={isStale && !isDismissed}
         isGenerationAsset={isGenAsset}

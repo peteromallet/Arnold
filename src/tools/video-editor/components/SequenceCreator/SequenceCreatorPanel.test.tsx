@@ -257,7 +257,7 @@ const generateValidResourceDraft = async () => {
   fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
     target: { value: 'Make a resource card' },
   });
-  fireEvent.click(screen.getByRole('button', { name: /generate sequence/i }));
+  fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
   await screen.findByDisplayValue('Generated title');
 };
 
@@ -429,16 +429,64 @@ describe('SequenceCreatorPanel', () => {
       ],
       invalid_drafts: [],
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
     fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
       target: { value: 'Make it jump between these three images' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /generate sequence/i }));
+    fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
 
     await waitFor(() => expect(screen.getAllByText('Image Jump').length).toBeGreaterThan(0));
     expect(screen.queryByDisplayValue('Generated title')).not.toBeInTheDocument();
     expect(screen.getAllByText('Motion-only image sequence that snaps, pops, and jumps between selected assets.').length).toBeGreaterThan(0);
     const requestBody = mocks.invokeSupabaseEdgeFunction.mock.calls.at(-1)?.[1].body;
     expect(requestBody.allowed_clip_types).toContain('image-jump');
+  });
+
+  it('names generated animations from their prompt and can edit the selected one by instruction', async () => {
+    renderPanel();
+    await generateValidResourceDraft();
+
+    expect(screen.getByRole('button', { name: /make a resource card/i })).toBeInTheDocument();
+    expect(screen.getByText('Selected Animation')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /regenerate from scratch/i })).not.toBeInTheDocument();
+
+    mocks.invokeSupabaseEdgeFunction.mockResolvedValueOnce({
+      drafts: [
+        {
+          clipType: 'resource-card',
+          hold: 6,
+          params: {
+            title: 'Regenerated title',
+            detail: 'Fresh detail',
+            previewAssetKeys: ['asset-a'],
+          },
+        },
+      ],
+      invalid_drafts: [],
+    });
+    fireEvent.change(screen.getByPlaceholderText('Make the motion faster, use all three selected images, remove the title...'), {
+      target: { value: 'Make the animation slower and remove the headline' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /apply edit to animation/i }));
+
+    await screen.findByDisplayValue('Regenerated title');
+    expect(screen.queryByDisplayValue('Generated title')).not.toBeInTheDocument();
+    expect(mocks.invokeSupabaseEdgeFunction).toHaveBeenCalledTimes(2);
+    expect(mocks.invokeSupabaseEdgeFunction.mock.calls[1][1].body).toMatchObject({
+      prompt: 'Make the animation slower and remove the headline',
+      mode: 'edit',
+      edit_context: expect.objectContaining({
+        original_prompt: 'Make a resource card',
+        selected_draft_index: 0,
+        source_draft: expect.objectContaining({
+          clipType: 'resource-card',
+          params: expect.objectContaining({ title: 'Generated title' }),
+        }),
+      }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    expect(screen.getByPlaceholderText('Make these selected images jump between each other...')).toBeInTheDocument();
   });
 
   it('revalidates edited drafts and disables insert and replace when timing becomes invalid', async () => {

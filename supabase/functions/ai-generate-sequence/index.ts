@@ -204,6 +204,8 @@ serve(async (req) => {
   try {
     const { systemMsg, userMsg } = buildGenerateSequenceMessages({
       prompt,
+      mode: body.mode === "edit" ? "edit" : "generate",
+      editContext: body.edit_context,
       timeline: body.timeline,
       selectedClips: body.selected_clips,
       attachedClips: body.attached_clips,

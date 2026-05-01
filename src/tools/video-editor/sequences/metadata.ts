@@ -65,7 +65,7 @@ export const TRUSTED_SEQUENCE_METADATA = [
         key: 'mode',
         label: 'Motion',
         kind: 'string',
-        description: 'Optional motion style, such as jump, snap, gallery, pulse, or shuffle.',
+        description: 'Motion style. Use jump for hard cuts, snap for quick scale hits, gallery for side-by-side browsing, pulse for rhythmic zooms, and shuffle for overlapping card movement.',
         defaultValue: 'jump',
       },
     ],

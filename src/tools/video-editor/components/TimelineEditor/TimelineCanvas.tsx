@@ -514,10 +514,13 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
                   event.dataTransfer.setData('text-tool', 'true');
                   event.dataTransfer.effectAllowed = 'copy';
                 }}
-                className="pointer-events-auto flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-sky-500/15 text-sky-400 ring-1 ring-sky-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-sky-500/25 hover:shadow-[0_6px_18px_rgba(56,189,248,0.28)] hover:ring-sky-400/60 active:translate-y-0 active:scale-100 active:cursor-grabbing"
+                className="group/tool pointer-events-auto relative flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-sky-500/15 text-sky-400 ring-1 ring-sky-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-sky-500/25 hover:shadow-[0_6px_18px_rgba(56,189,248,0.28)] hover:ring-sky-400/60 active:translate-y-0 active:scale-100 active:cursor-grabbing"
                 title="Drag onto timeline to add text"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                <span aria-hidden="true" className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-popover-foreground opacity-0 shadow-md transition-opacity group-hover/tool:opacity-100">
+                  New text
+                </span>
               </div>
               <div
                 draggable
@@ -525,22 +528,28 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
                   event.dataTransfer.setData('effect-layer', 'true');
                   event.dataTransfer.effectAllowed = 'copy';
                 }}
-                className="pointer-events-auto flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-violet-500/15 text-violet-400 ring-1 ring-violet-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-violet-500/25 hover:shadow-[0_6px_18px_rgba(167,139,250,0.28)] hover:ring-violet-400/60 active:translate-y-0 active:scale-100 active:cursor-grabbing"
+                className="group/tool pointer-events-auto relative flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-violet-500/15 text-violet-400 ring-1 ring-violet-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-violet-500/25 hover:shadow-[0_6px_18px_rgba(167,139,250,0.28)] hover:ring-violet-400/60 active:translate-y-0 active:scale-100 active:cursor-grabbing"
                 title="Drag onto timeline to add an effect layer"
               >
                 <Layers className="h-3 w-3" />
+                <span aria-hidden="true" className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-popover-foreground opacity-0 shadow-md transition-opacity group-hover/tool:opacity-100">
+                  New effect
+                </span>
               </div>
             </>
           )}
           {onOpenSequenceCreator && (
             <button
               type="button"
-              className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-emerald-500/25 hover:shadow-[0_6px_18px_rgba(52,211,153,0.28)] hover:ring-emerald-400/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70 active:translate-y-0 active:scale-100"
-              title="Open Sequence creator"
-              aria-label="Open Sequence creator"
+              className="group/tool pointer-events-auto relative flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-emerald-500/25 hover:shadow-[0_6px_18px_rgba(52,211,153,0.28)] hover:ring-emerald-400/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70 active:translate-y-0 active:scale-100"
+              title="Create animation sequence"
+              aria-label="Create animation sequence"
               onClick={onOpenSequenceCreator}
             >
               <Sparkles className="h-3 w-3" />
+              <span aria-hidden="true" className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-popover-foreground opacity-0 shadow-md transition-opacity group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100">
+                Create animation sequence
+              </span>
             </button>
           )}
         </div>

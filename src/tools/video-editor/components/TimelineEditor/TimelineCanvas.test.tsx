@@ -360,11 +360,14 @@ describe('TimelineCanvas floating tools', () => {
 
     const textTool = screen.getByTitle('Drag onto timeline to add text');
     const effectLayerTool = screen.getByTitle('Drag onto timeline to add an effect layer');
-    const sequenceTool = screen.getByRole('button', { name: 'Open Sequence creator' });
+    const sequenceTool = screen.getByRole('button', { name: 'Create animation sequence' });
 
     expect(textTool).toBeInTheDocument();
     expect(effectLayerTool).toBeInTheDocument();
     expect(sequenceTool).toBeInTheDocument();
+    expect(screen.getByText('New text')).toBeInTheDocument();
+    expect(screen.getByText('New effect')).toBeInTheDocument();
+    expect(screen.getByText('Create animation sequence')).toBeInTheDocument();
 
     const textDataTransfer = { setData: vi.fn(), effectAllowed: '' };
     fireEvent.dragStart(textTool, { dataTransfer: textDataTransfer });

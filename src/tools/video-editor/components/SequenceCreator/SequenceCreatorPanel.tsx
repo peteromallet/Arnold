@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Loader2, Sparkles, X } from 'lucide-react';
+import { Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/shared/components/ui/button';
 import {
   Dialog,
@@ -26,6 +26,7 @@ import {
   type SequenceDraftEditError,
 } from '@/tools/video-editor/lib/sequence-drafts';
 import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet';
+import { AgentChatAttachmentStrip } from '@/tools/video-editor/components/AgentChat/AgentChatMessage';
 import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize';
 import {
   AVAILABLE_SEQUENCE_CLIP_TYPES,
@@ -53,12 +54,27 @@ export type AllowedSequenceAsset = {
   mediaType: SelectedMediaClip['mediaType'];
   source: 'selected' | 'attached';
   label: string;
+  clipId: string;
+  generationId?: string;
+  shotId?: string;
+  shotName?: string;
+  shotSelectionClipCount?: number;
+  isPlaceholder?: boolean;
 };
 
 type EditableSequenceDraft = {
   clipType: string;
   hold: number;
   params: Record<string, unknown>;
+};
+
+type SequenceCreatorMode = 'generate' | 'edit';
+
+type SequenceDraftGroup = {
+  id: string;
+  name: string;
+  prompt: string;
+  drafts: EditableSequenceDraft[];
 };
 
 type GenerateSequenceResponse = {
@@ -79,12 +95,27 @@ type SequenceGenerationClipPayload = {
 };
 
 const TEMP_SEQUENCE_PREVIEW_CLIP_ID = '__sequence_preview__';
+const MAX_DRAFT_GROUP_NAME_LENGTH = 52;
 
 const createEditableDraft = (draft: ValidatedSequenceDraft): EditableSequenceDraft => ({
   clipType: draft.clipType,
   hold: draft.hold,
   params: { ...draft.params },
 });
+
+const createDraftGroupId = (): string => (
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `sequence-${Date.now()}-${Math.random().toString(16).slice(2)}`
+);
+
+const nameDraftGroupFromPrompt = (prompt: string, index: number): string => {
+  const normalized = prompt.trim().replace(/\s+/g, ' ');
+  const base = normalized || `Animation ${index + 1}`;
+  return base.length > MAX_DRAFT_GROUP_NAME_LENGTH
+    ? `${base.slice(0, MAX_DRAFT_GROUP_NAME_LENGTH - 1).trim()}…`
+    : base;
+};
 
 const formatEditError = (error: SequenceDraftEditError): string => {
   switch (error) {
@@ -117,6 +148,12 @@ export const buildAllowedSequenceAssets = (
       mediaType: clip.mediaType,
       source,
       label: clip.shotName ?? clip.assetKey,
+      clipId: clip.clipId,
+      generationId: clip.generationId,
+      shotId: clip.shotId,
+      shotName: clip.shotName,
+      shotSelectionClipCount: clip.shotSelectionClipCount,
+      isPlaceholder: clip.isPlaceholder,
     });
   };
 
@@ -209,8 +246,11 @@ export function SequenceCreatorPanel({
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  const [mode, setMode] = useState<SequenceCreatorMode>('generate');
   const [prompt, setPrompt] = useState('');
-  const [drafts, setDrafts] = useState<EditableSequenceDraft[]>([]);
+  const [editPrompt, setEditPrompt] = useState('');
+  const [draftGroups, setDraftGroups] = useState<SequenceDraftGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedDraftIndex, setSelectedDraftIndex] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationNote, setGenerationNote] = useState<string | null>(null);
@@ -228,6 +268,12 @@ export function SequenceCreatorPanel({
     resolvedConfig ? buildAllowedAssetRegistry(allowedAssets, resolvedConfig.registry) : {}
   ), [allowedAssets, resolvedConfig]);
 
+  const selectedGroup = useMemo(() => (
+    selectedGroupId
+      ? draftGroups.find((group) => group.id === selectedGroupId) ?? null
+      : draftGroups[0] ?? null
+  ), [draftGroups, selectedGroupId]);
+  const drafts = selectedGroup?.drafts ?? [];
   const selectedDraft = drafts[selectedDraftIndex] ?? null;
   const selectedValidation = useMemo(() => (
     selectedDraft ? validateEditableSequenceDraft(selectedDraft, allowedAssetKeys) : null
@@ -255,9 +301,19 @@ export function SequenceCreatorPanel({
     return replaceProbe.ok ? null : formatEditError(replaceProbe.error);
   }, [replaceProbe, selectedValidation, validatedDraft]);
 
-  const handleGenerate = useCallback(async () => {
-    if (!prompt.trim()) {
-      toast({ title: 'Prompt required', description: 'Describe the sequence you want to create.', variant: 'destructive' });
+  const runSequenceGeneration = useCallback(async (rawPrompt: string, options: {
+    mode?: SequenceCreatorMode;
+    replaceGroupId?: string | null;
+    editContext?: unknown;
+    nameOverride?: string;
+  } = {}) => {
+    const generationPrompt = rawPrompt.trim();
+    if (!generationPrompt) {
+      toast({
+        title: 'Prompt required',
+        description: options.mode === 'edit' ? 'Describe how to change this animation.' : 'Describe the sequence you want to create.',
+        variant: 'destructive',
+      });
       return;
     }
     if (!resolvedConfig) {
@@ -271,7 +327,6 @@ export function SequenceCreatorPanel({
     setIsGenerating(true);
     setGenerationNote(null);
     setActionError(null);
-    setDrafts([]);
     setSelectedDraftIndex(0);
 
     try {
@@ -279,7 +334,9 @@ export function SequenceCreatorPanel({
         'ai-generate-sequence',
         {
           body: {
-            prompt: prompt.trim(),
+            prompt: generationPrompt,
+            mode: options.mode ?? 'generate',
+            edit_context: options.editContext ?? null,
             timeline: {
               output: resolvedConfig.output,
               tracks: resolvedConfig.tracks,
@@ -331,15 +388,32 @@ export function SequenceCreatorPanel({
       const invalidCount = invalidCountFromClient + (response.invalid_drafts?.length ?? 0);
 
       if (validDrafts.length === 0) {
-        setDrafts([]);
+        if (options.replaceGroupId) {
+          setDraftGroups((current) => current.filter((group) => group.id !== options.replaceGroupId));
+          setSelectedGroupId((current) => (current === options.replaceGroupId ? null : current));
+        }
         setGenerationNote(invalidCount > 0
           ? 'The model returned drafts, but none matched the trusted sequence schema for the current selected or attached assets.'
           : 'No sequence drafts were returned.');
         return;
       }
 
-      setDrafts(validDrafts);
+      const nextGroupId = options.replaceGroupId ?? createDraftGroupId();
+      setDraftGroups((current) => {
+        const nextGroup: SequenceDraftGroup = {
+          id: nextGroupId,
+          name: options.nameOverride ?? nameDraftGroupFromPrompt(generationPrompt, current.length),
+          prompt: generationPrompt,
+          drafts: validDrafts,
+        };
+        if (options.replaceGroupId) {
+          return current.map((group) => (group.id === options.replaceGroupId ? nextGroup : group));
+        }
+        return [nextGroup, ...current];
+      });
+      setSelectedGroupId(nextGroupId);
       setSelectedDraftIndex(0);
+      setMode('edit');
       setGenerationNote(invalidCount > 0
         ? `${invalidCount} invalid draft${invalidCount === 1 ? '' : 's'} ${invalidCount === 1 ? 'was' : 'were'} rejected.`
         : null);
@@ -355,19 +429,45 @@ export function SequenceCreatorPanel({
     allowedAssetKeys,
     allowedAssets,
     attachmentSet.clips,
-    prompt,
     resolvedConfig,
     selectedMedia.clips,
   ]);
 
+  const handleGenerate = useCallback(() => {
+    void runSequenceGeneration(prompt);
+  }, [prompt, runSequenceGeneration]);
+
+  const handleEditSelected = useCallback(() => {
+    if (!selectedGroup || !selectedDraft) return;
+    void runSequenceGeneration(editPrompt, {
+      mode: 'edit',
+      replaceGroupId: selectedGroup.id,
+      nameOverride: selectedGroup.name,
+      editContext: {
+        original_prompt: selectedGroup.prompt,
+        selected_draft_index: selectedDraftIndex,
+        source_draft: selectedDraft,
+        valid_source_draft: validatedDraft,
+      },
+    });
+  }, [editPrompt, runSequenceGeneration, selectedDraft, selectedDraftIndex, selectedGroup, validatedDraft]);
+
   const updateSelectedDraft = useCallback((patch: Partial<EditableSequenceDraft>) => {
-    setDrafts((current) => current.map((draft, index) => (
-      index === selectedDraftIndex
-        ? { ...draft, ...patch }
-        : draft
+    if (!selectedGroup) return;
+    setDraftGroups((current) => current.map((group) => (
+      group.id === selectedGroup.id
+        ? {
+            ...group,
+            drafts: group.drafts.map((draft, index) => (
+              index === selectedDraftIndex
+                ? { ...draft, ...patch }
+                : draft
+            )),
+          }
+        : group
     )));
     setActionError(null);
-  }, [selectedDraftIndex]);
+  }, [selectedDraftIndex, selectedGroup]);
 
   const handleInsert = useCallback(() => {
     if (!data || !validatedDraft) return;
@@ -411,46 +511,93 @@ export function SequenceCreatorPanel({
       <DialogContent className="h-[min(92vh,820px)] max-h-[92vh] max-w-6xl overflow-hidden p-0">
         <div className="flex h-full min-h-0 flex-col">
           <DialogHeader className="border-b border-border px-5 py-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <DialogTitle>Sequence Creator</DialogTitle>
-                <DialogDescription>
-                  Generate trusted timeline sequence drafts from a prompt and the currently selected or attached assets.
-                </DialogDescription>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Close sequence creator"
-                onClick={() => onOpenChange?.(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
+            <div className="pr-8">
+              <DialogTitle>Sequence Creator</DialogTitle>
+              <DialogDescription>
+                Generate trusted timeline sequence drafts from a prompt and the currently selected or attached assets.
+              </DialogDescription>
             </div>
           </DialogHeader>
 
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(320px,420px)_1fr] overflow-hidden">
             <div className="min-h-0 overflow-y-auto border-r border-border p-4">
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <div className="text-sm font-medium text-foreground">Prompt</div>
-                  <Textarea
-                    value={prompt}
-                    rows={5}
-                    placeholder="Make these selected images jump between each other..."
-                    onChange={(event) => setPrompt(event.target.value)}
-                  />
-                  <Button
+                <div className="grid grid-cols-2 rounded-lg border border-border bg-muted/30 p-1">
+                  <button
                     type="button"
-                    className="w-full gap-2"
-                    onClick={handleGenerate}
-                    disabled={isGenerating || !prompt.trim()}
+                    className={[
+                      'rounded-md px-3 py-1.5 text-sm transition-colors',
+                      mode === 'generate'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    ].join(' ')}
+                    onClick={() => setMode('generate')}
                   >
-                    {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    Generate Sequence
-                  </Button>
+                    Generate
+                  </button>
+                  <button
+                    type="button"
+                    className={[
+                      'rounded-md px-3 py-1.5 text-sm transition-colors',
+                      mode === 'edit'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    ].join(' ')}
+                    onClick={() => setMode('edit')}
+                    disabled={draftGroups.length === 0}
+                  >
+                    Edit
+                  </button>
                 </div>
+
+                {mode === 'generate' ? (
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-foreground">Prompt</div>
+                    <Textarea
+                      value={prompt}
+                      rows={5}
+                      placeholder="Make these selected images jump between each other..."
+                      onChange={(event) => setPrompt(event.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      className="w-full gap-2"
+                      onClick={handleGenerate}
+                      disabled={isGenerating || !prompt.trim()}
+                    >
+                      {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      Generate new animation
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3 rounded-lg border border-border bg-card/60 p-3">
+                    <div className="text-sm font-medium text-foreground">Selected Animation</div>
+                    {selectedGroup ? (
+                      <>
+                        <div className="text-sm text-foreground">{selectedGroup.name}</div>
+                        <div className="line-clamp-2 text-xs text-muted-foreground">{selectedGroup.prompt}</div>
+                        <Textarea
+                          value={editPrompt}
+                          rows={4}
+                          placeholder="Make the motion faster, use all three selected images, remove the title..."
+                          onChange={(event) => setEditPrompt(event.target.value)}
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="w-full gap-2"
+                          onClick={handleEditSelected}
+                          disabled={isGenerating || !editPrompt.trim() || !selectedDraft}
+                        >
+                          {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                          Apply edit to animation
+                        </Button>
+                      </>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">Generate an animation before editing.</div>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-2 rounded-lg border border-border bg-card/60 p-3">
                   <div className="flex items-center justify-between gap-3">
@@ -458,17 +605,22 @@ export function SequenceCreatorPanel({
                     <div className="text-xs text-muted-foreground">{allowedAssets.length}</div>
                   </div>
                   {allowedAssets.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {allowedAssets.map((asset) => (
-                        <span
-                          key={asset.key}
-                          className="max-w-full truncate rounded-md border border-border/70 bg-background px-2 py-1 text-[11px] text-muted-foreground"
-                          title={asset.url}
-                        >
-                          {asset.source}: {asset.key}
-                        </span>
-                      ))}
-                    </div>
+                    <AgentChatAttachmentStrip
+                      attachments={allowedAssets.map((asset) => ({
+                        clipId: asset.clipId,
+                        url: asset.url,
+                        mediaType: asset.mediaType,
+                        isPlaceholder: asset.isPlaceholder,
+                        generationId: asset.generationId,
+                        assetKey: asset.key,
+                        shotId: asset.shotId,
+                        shotName: asset.shotName,
+                        shotSelectionClipCount: asset.shotSelectionClipCount,
+                      }))}
+                      isUser={false}
+                      className="mt-0"
+                      maxPreviewCount={null}
+                    />
                   ) : (
                     <div className="text-xs text-muted-foreground">
                       Select timeline media or attach asset chips before asking for asset-backed drafts.
@@ -482,9 +634,41 @@ export function SequenceCreatorPanel({
                   </div>
                 )}
 
-                {drafts.length > 0 && (
+                {draftGroups.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-sm font-medium text-foreground">Drafts</div>
+                    <div className="text-sm font-medium text-foreground">Animations</div>
+                    <div className="space-y-2">
+                      {draftGroups.map((group) => (
+                        <button
+                          key={group.id}
+                          type="button"
+                          className={[
+                            'w-full rounded-lg border p-3 text-left transition-colors',
+                            group.id === selectedGroup?.id
+                              ? 'border-primary bg-primary/10'
+                              : 'border-border bg-card/60 hover:bg-muted/60',
+                          ].join(' ')}
+                          onClick={() => {
+                            setSelectedGroupId(group.id);
+                            setSelectedDraftIndex(0);
+                            setMode('edit');
+                            setEditPrompt('');
+                            setActionError(null);
+                          }}
+                        >
+                          <div className="truncate text-sm font-medium text-foreground">{group.name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {group.drafts.length} draft{group.drafts.length === 1 ? '' : 's'}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {drafts.length > 1 && (
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-foreground">Draft Variants</div>
                     <div className="space-y-2">
                       {drafts.map((draft, index) => {
                         const metadata = getAvailableSequenceMetadata(draft.clipType);

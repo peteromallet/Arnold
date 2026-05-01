@@ -20,6 +20,14 @@ const imageFitForMode = (mode: string | undefined): 'cover' | 'contain' => (
   mode === 'gallery' ? 'contain' : 'cover'
 );
 
+const normalizeMotionMode = (mode: string | undefined): 'jump' | 'snap' | 'gallery' | 'pulse' | 'shuffle' => {
+  const normalized = mode?.trim().toLowerCase();
+  if (normalized === 'snap' || normalized === 'gallery' || normalized === 'pulse' || normalized === 'shuffle') {
+    return normalized;
+  }
+  return 'jump';
+};
+
 export const ImageJumpSequence: FC<ImageJumpSequenceProps> = ({ params, fps }) => {
   const theme = useTheme();
   const frame = useCurrentFrame();
@@ -27,7 +35,7 @@ export const ImageJumpSequence: FC<ImageJumpSequenceProps> = ({ params, fps }) =
   const images = Array.isArray(params?.images)
     ? params.images.filter((url) => typeof url === 'string' && url.trim().length > 0)
     : [];
-  const mode = params?.mode;
+  const mode = normalizeMotionMode(params?.mode);
 
   if (images.length === 0) {
     return (
@@ -63,6 +71,73 @@ export const ImageJumpSequence: FC<ImageJumpSequenceProps> = ({ params, fps }) =
     extrapolateRight: 'clamp',
   });
   const nextIndex = (activeIndex + 1) % images.length;
+  const previousIndex = (activeIndex - 1 + images.length) % images.length;
+
+  if (mode === 'gallery') {
+    const progress = localFrame / Math.max(1, framesPerImage - 1);
+    const slide = interpolate(progress, [0, 1], [16, -16], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+    });
+
+    return (
+      <AbsoluteFill style={{ background: theme.color.bg, overflow: 'hidden' }}>
+        <AbsoluteFill
+          style={{
+            alignItems: 'center',
+            display: 'flex',
+            gap: '2.5%',
+            justifyContent: 'center',
+            padding: '5%',
+            transform: `translateX(${slide}px)`,
+          }}
+        >
+          {[previousIndex, activeIndex, nextIndex].map((imageIndex, index) => (
+            <div
+              key={`${imageIndex}-${index}`}
+              style={{
+                border: index === 1 ? `2px solid ${theme.color.accent}` : `1px solid ${theme.color.fg}33`,
+                boxShadow: index === 1 ? `0 26px 90px ${theme.color.accent}2a` : 'none',
+                height: index === 1 ? '78%' : '62%',
+                opacity: index === 1 ? 1 : 0.52,
+                overflow: 'hidden',
+                width: index === 1 ? '46%' : '24%',
+              }}
+            >
+              <Img
+                src={images[imageIndex]}
+                crossOrigin="anonymous"
+                style={{
+                  background: theme.color.bg,
+                  height: '100%',
+                  objectFit: 'contain',
+                  width: '100%',
+                }}
+              />
+            </div>
+          ))}
+        </AbsoluteFill>
+      </AbsoluteFill>
+    );
+  }
+
+  const pulseScale = interpolate(localFrame, [0, framesPerImage / 2, framesPerImage - 1], [1, 1.08, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const snapScale = interpolate(localFrame, [0, 2, 5, framesPerImage - 1], [0.78, 1.12, 1, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const shuffleOffset = ((activeIndex % 3) - 1) * 54;
+  const shuffleRotate = ((activeIndex % 5) - 2) * 2.4;
+  const transform = mode === 'pulse'
+    ? `scale(${pulseScale})`
+    : mode === 'snap'
+      ? `scale(${snapScale})`
+      : mode === 'shuffle'
+        ? `translate3d(${shuffleOffset + xJolt * 0.45}px, ${(activeIndex % 2 === 0 ? -1 : 1) * 18}px, 0) scale(${pop}) rotate(${shuffleRotate}deg)`
+        : `translate3d(${xJolt}px, 0, 0) scale(${pop}) rotate(${rotate}deg)`;
 
   return (
     <AbsoluteFill
@@ -103,7 +178,7 @@ export const ImageJumpSequence: FC<ImageJumpSequenceProps> = ({ params, fps }) =
             height: '82%',
             overflow: 'hidden',
             position: 'relative',
-            transform: `translate3d(${xJolt}px, 0, 0) scale(${pop}) rotate(${rotate}deg)`,
+            transform,
             width: '82%',
           }}
         >

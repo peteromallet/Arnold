@@ -90,6 +90,23 @@ describe('ClipAction', () => {
     expect(props.onCreateShotFromSelection).toHaveBeenCalledTimes(1);
   });
 
+  it('shows create animation sequence for single and multi-clip context menus', () => {
+    mockUseWaveformData();
+    const onOpenSequenceCreator = vi.fn();
+    const props = buildProps({ onOpenSequenceCreator });
+    const { container, rerender } = render(<ClipAction {...props} />);
+
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+    fireEvent.click(screen.getByText('Create animation sequence'));
+
+    expect(onOpenSequenceCreator).toHaveBeenCalledTimes(1);
+
+    rerender(<ClipAction {...props} selectedClipIds={['clip-1']} />);
+    fireEvent.contextMenu(container.querySelector('[data-clip-id="clip-1"]') as HTMLElement);
+
+    expect(screen.getByText('Create animation sequence')).toBeInTheDocument();
+  });
+
   it('hides create-shot actions when the selection is not eligible', () => {
     mockUseWaveformData();
     const props = buildProps({

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, Clapperboard, Copy, Ellipsis, Film, FolderPlus, ImageIcon, Layers, Loader2, Music2, RefreshCw, Scissors, Trash2, Type, X } from 'lucide-react';
+import { ArrowRight, Clapperboard, Copy, Ellipsis, Film, FolderPlus, ImageIcon, Layers, Loader2, Music2, RefreshCw, Scissors, Sparkles, Trash2, Type, X } from 'lucide-react';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker';
 import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
@@ -41,6 +41,7 @@ interface ClipActionProps {
   onDeleteClip?: (clipId: string) => void;
   onDeleteClips?: (clipIds: string[]) => void;
   onToggleMuteClips?: (clipIds: string[]) => void;
+  onOpenSequenceCreator?: () => void;
   isVideoClip?: boolean;
   isTaskActive?: boolean;
   showOverflowMenu?: boolean;
@@ -77,7 +78,7 @@ const menuItemClassName = 'relative flex w-full cursor-default select-none items
 const destructiveMenuItemClassName = `${menuItemClassName} hover:bg-destructive hover:text-destructive-foreground`;
 const disabledMenuItemClassName = 'disabled:cursor-wait disabled:opacity-60';
 
-type ClipContextMenuProps = Pick<ClipActionProps, 'isGenerationAsset' | 'isDuplicatingGeneration' | 'onDuplicateGeneration' | 'onUpdateVariant' | 'isVariantStale' | 'onDismissStale' | 'onSplitHere' | 'onSplitClipsAtPlayhead' | 'onTrimToMediaEnd' | 'onConvertOverhangToHold' | 'overhangDurationSeconds' | 'onToggleMuteClips' | 'onCreateShotFromSelection' | 'onGenerateVideoFromSelection' | 'onNavigateToShot' | 'onOpenGenerateVideo' | 'isCreatingShot' | 'onDeleteClip' | 'onDeleteClips' | 'isInPinnedShotGroup'> & { actionId: string; contextMenu: ContextMenuState; menuRef: React.RefObject<HTMLDivElement>; closeMenu: () => void; hasBatchSelection: boolean; selectedClipIds: string[]; showShotActions: boolean; hasActionsBeforeShotSection: boolean; existingShots?: Shot[]; };
+type ClipContextMenuProps = Pick<ClipActionProps, 'isGenerationAsset' | 'isDuplicatingGeneration' | 'onDuplicateGeneration' | 'onUpdateVariant' | 'isVariantStale' | 'onDismissStale' | 'onSplitHere' | 'onSplitClipsAtPlayhead' | 'onTrimToMediaEnd' | 'onConvertOverhangToHold' | 'overhangDurationSeconds' | 'onToggleMuteClips' | 'onOpenSequenceCreator' | 'onCreateShotFromSelection' | 'onGenerateVideoFromSelection' | 'onNavigateToShot' | 'onOpenGenerateVideo' | 'isCreatingShot' | 'onDeleteClip' | 'onDeleteClips' | 'isInPinnedShotGroup'> & { actionId: string; contextMenu: ContextMenuState; menuRef: React.RefObject<HTMLDivElement>; closeMenu: () => void; hasBatchSelection: boolean; selectedClipIds: string[]; showShotActions: boolean; hasActionsBeforeShotSection: boolean; existingShots?: Shot[]; };
 type ClipContextMenuItemProps = { icon: React.ComponentType<{ className?: string }>; onClick: () => void; children: React.ReactNode; disabled?: boolean; destructive?: boolean; suffix?: React.ReactNode; };
 
 function ClipContextMenuItem({ icon: Icon, onClick, children, disabled = false, destructive = false, suffix }: ClipContextMenuItemProps) {
@@ -235,6 +236,11 @@ function ClipContextMenu(props: ClipContextMenuProps) {
               Split {props.selectedClipIds.length} clips at playhead
             </ClipContextMenuItem>
           )}
+          {props.onOpenSequenceCreator && (
+            <ClipContextMenuItem icon={Sparkles} onClick={() => { props.onOpenSequenceCreator?.(); props.closeMenu(); }}>
+              Create animation sequence
+            </ClipContextMenuItem>
+          )}
           {props.showShotActions && (props.hasActionsBeforeShotSection || hasGenerationActions) && <div className="my-1 h-px bg-border" />}
           {props.showShotActions && visibleExistingShots.map((shot) => (
             <div key={shot.id} className="flex w-full items-center gap-1 rounded-sm px-2 py-1.5 text-sm">
@@ -319,6 +325,7 @@ function ClipActionComponent({
   onDeleteClip,
   onDeleteClips,
   onToggleMuteClips,
+  onOpenSequenceCreator,
   isVideoClip,
   isTaskActive,
   showOverflowMenu = false,
@@ -431,6 +438,7 @@ function ClipActionComponent({
     || (!hasBatchSelection && onSplitHere)
     || (hasBatchSelection && onToggleMuteClips)
     || (hasBatchSelection && onSplitClipsAtPlayhead)
+    || onOpenSequenceCreator
   );
   const effectBadges = [clipMeta.entrance?.type ? `In:${clipMeta.entrance.type}` : null, clipMeta.continuous?.type ? `Loop:${clipMeta.continuous.type}` : null, clipMeta.exit?.type ? `Out:${clipMeta.exit.type}` : null].filter(Boolean);
 
@@ -618,6 +626,7 @@ function ClipActionComponent({
           onConvertOverhangToHold={onConvertOverhangToHold}
           overhangDurationSeconds={overhangDurationSeconds}
           onToggleMuteClips={onToggleMuteClips}
+          onOpenSequenceCreator={onOpenSequenceCreator}
           onSplitClipsAtPlayhead={onSplitClipsAtPlayhead}
           showShotActions={showShotActions}
           hasActionsBeforeShotSection={hasActionsBeforeShotSection}
@@ -686,6 +695,7 @@ function areClipActionPropsEqual(prev: ClipActionProps, next: ClipActionProps): 
     && prev.onDeleteClip === next.onDeleteClip
     && prev.onDeleteClips === next.onDeleteClips
     && prev.onToggleMuteClips === next.onToggleMuteClips
+    && prev.onOpenSequenceCreator === next.onOpenSequenceCreator
     && prev.onDuplicateGeneration === next.onDuplicateGeneration
     && prev.onCreateShotFromSelection === next.onCreateShotFromSelection
     && prev.onGenerateVideoFromSelection === next.onGenerateVideoFromSelection
