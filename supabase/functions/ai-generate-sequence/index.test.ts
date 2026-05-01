@@ -231,10 +231,48 @@ ${JSON.stringify({
     });
   });
 
-  it('returns a stable 422 when Anthropic output contains no JSON', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () =>
-      createAnthropicSseResponse('The prompt asks for an animated sequence, but I need more context.')
-    ));
+  it('repairs Anthropic output that contains no JSON before returning drafts', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(createAnthropicSseResponse('The prompt asks for an animated sequence, but I need more context.'))
+      .mockResolvedValueOnce(createAnthropicSseResponse(JSON.stringify({
+        drafts: [
+          {
+            clipType: 'resource-card',
+            hold: 3,
+            params: {
+              title: 'Repaired draft',
+              previewAssetKeys: ['asset-a'],
+            },
+          },
+        ],
+      }))));
+
+    const handler = await loadHandler();
+    const response = await handler(new Request('https://edge.test/ai-generate-sequence', { method: 'POST' }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      drafts: [
+        {
+          clipType: 'resource-card',
+          hold: 3,
+          params: {
+            title: 'Repaired draft',
+            previewAssetKeys: ['asset-a'],
+          },
+        },
+      ],
+      invalid_drafts: [],
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    const repairBody = JSON.parse((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body as string);
+    expect(repairBody.system).toContain('repair malformed Reigh sequence draft responses');
+  });
+
+  it('returns a stable 422 when repair output still contains no JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(createAnthropicSseResponse('The prompt asks for an animated sequence, but I need more context.'))
+      .mockResolvedValueOnce(createAnthropicSseResponse('I still cannot provide the JSON.')));
 
     const handler = await loadHandler();
     const response = await handler(new Request('https://edge.test/ai-generate-sequence', { method: 'POST' }));
@@ -243,6 +281,7 @@ ${JSON.stringify({
     await expect(response.json()).resolves.toEqual({
       error: 'Model response did not contain valid sequence JSON.',
     });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('drops invalid model drafts and returns structured validation errors without raw draft values', async () => {

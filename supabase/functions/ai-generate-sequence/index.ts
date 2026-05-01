@@ -26,6 +26,30 @@ interface LLMResponse {
   model: string;
 }
 
+const buildRepairMessages = (
+  originalContent: string,
+  allowedClipTypes: readonly string[],
+  allowedAssetKeys: readonly string[],
+): Array<{ role: string; content: string }> => [
+  {
+    role: "system",
+    content: [
+      "You repair malformed Reigh sequence draft responses.",
+      "Return JSON only, with shape {\"drafts\":[{\"clipType\":string,\"hold\":number,\"params\":object}]}.",
+      "Do not include analysis, explanations, Markdown, or text before or after the JSON.",
+      "Use only the allowed clipType values and allowed asset keys.",
+    ].join("\n"),
+  },
+  {
+    role: "user",
+    content: JSON.stringify({
+      malformed_response: originalContent.slice(0, 8000),
+      allowed_clip_types: allowedClipTypes,
+      allowed_asset_keys: allowedAssetKeys,
+    }),
+  },
+];
+
 const asStringArray = (value: unknown): string[] => {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -201,9 +225,21 @@ serve(async (req) => {
       rawDrafts = extractSequenceDrafts(llmResponse.content);
     } catch (parseErr: unknown) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      logger.info(`[AI-GENERATE-SEQUENCE] extraction failed: ${parseMsg}`);
+      logger.info(`[AI-GENERATE-SEQUENCE] extraction failed: ${parseMsg}; retrying JSON repair`);
       await logger.flush();
-      return jsonResponse({ error: parseMsg }, 422);
+      const repairResponse = await callAnthropic(
+        buildRepairMessages(llmResponse.content, allowedClipTypes, allowedAssetKeys),
+        logger,
+      );
+      try {
+        rawDrafts = extractSequenceDrafts(repairResponse.content);
+        llmResponse.content = repairResponse.content;
+      } catch (repairErr: unknown) {
+        const repairMsg = repairErr instanceof Error ? repairErr.message : String(repairErr);
+        logger.info(`[AI-GENERATE-SEQUENCE] repair extraction failed: ${repairMsg}`);
+        await logger.flush();
+        return jsonResponse({ error: repairMsg }, 422);
+      }
     }
 
     const drafts = [];
