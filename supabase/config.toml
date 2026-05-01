@@ -125,5 +125,8 @@ verify_jwt = false
 [functions.get-task-output]
 verify_jwt = false
 
+[functions.reigh-data-fetch]
+verify_jwt = false
+
 [functions.update-task-status]
 verify_jwt = false

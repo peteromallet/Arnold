@@ -1,0 +1,126 @@
+{
+  "status": "stalled",
+  "plan": "action-pane-20260425-1847",
+  "final_state": "planned",
+  "iterations": 6,
+  "reason": "stalled at 'planned' for 5 iterations \u2014 manual intervention required",
+  "last_phase": "critique",
+  "events": [
+    {
+      "msg": "iter 1 state=planned next=critique valid_next=['critique', 'plan', 'step']",
+      "iteration": 1,
+      "state": "planned",
+      "next_step": "critique",
+      "valid_next": [
+        "critique",
+        "plan",
+        "step"
+      ]
+    },
+    {
+      "msg": "running: megaplan critique --plan action-pane-20260425-1847",
+      "phase": "critique",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'critique' exited 1: [megaplan] Starting critique... Expected duration: 1m-15m."
+    },
+    {
+      "msg": "iter 2 state=planned next=critique valid_next=['critique', 'plan', 'step']",
+      "iteration": 2,
+      "state": "planned",
+      "next_step": "critique",
+      "valid_next": [
+        "critique",
+        "plan",
+        "step"
+      ]
+    },
+    {
+      "msg": "running: megaplan critique --plan action-pane-20260425-1847",
+      "phase": "critique",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'critique' exited 1: [megaplan] Starting critique... Expected duration: 1m-15m."
+    },
+    {
+      "msg": "iter 3 state=planned next=critique valid_next=['critique', 'plan', 'step']",
+      "iteration": 3,
+      "state": "planned",
+      "next_step": "critique",
+      "valid_next": [
+        "critique",
+        "plan",
+        "step"
+      ]
+    },
+    {
+      "msg": "running: megaplan critique --plan action-pane-20260425-1847",
+      "phase": "critique",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'critique' exited 1: [megaplan] Starting critique... Expected duration: 1m-15m."
+    },
+    {
+      "msg": "iter 4 state=planned next=critique valid_next=['critique', 'plan', 'step']",
+      "iteration": 4,
+      "state": "planned",
+      "next_step": "critique",
+      "valid_next": [
+        "critique",
+        "plan",
+        "step"
+      ]
+    },
+    {
+      "msg": "running: megaplan critique --plan action-pane-20260425-1847",
+      "phase": "critique",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'critique' exited 1: [megaplan] Starting critique... Expected duration: 1m-15m."
+    },
+    {
+      "msg": "iter 5 state=planned next=critique valid_next=['critique', 'plan', 'step']",
+      "iteration": 5,
+      "state": "planned",
+      "next_step": "critique",
+      "valid_next": [
+        "critique",
+        "plan",
+        "step"
+      ]
+    },
+    {
+      "msg": "running: megaplan critique --plan action-pane-20260425-1847",
+      "phase": "critique",
+      "timeout": 3600
+    },
+    {
+      "msg": "phase 'critique' exited 1: [megaplan] Starting critique... Expected duration: 1m-15m."
+    },
+    {
+      "msg": "iter 6 state=planned next=critique valid_next=['critique', 'plan', 'step']",
+      "iteration": 6,
+      "state": "planned",
+      "next_step": "critique",
+      "valid_next": [
+        "critique",
+        "plan",
+        "step"
+      ]
+    },
+    {
+      "msg": "stalled at state=planned for 5 iterations"
+    }
+  ],
+  "total_cost_usd": 10.23536,
+  "cost_cap_usd": null,
+  "context_retries_used": 0,
+  "max_context_retries": 2,
+  "blocked_retries_used": 0,
+  "max_blocked_retries": 1,
+  "blocking_reasons": []
+}

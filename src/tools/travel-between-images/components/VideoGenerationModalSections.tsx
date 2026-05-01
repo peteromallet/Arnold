@@ -18,6 +18,7 @@ import {
 } from '@/tools/travel-between-images/providers';
 import { useModalImageHandlers } from './hooks/useModalImageHandlers';
 import { useSegmentOutputsForShot } from '@/shared/hooks/segments/useSegmentOutputsForShot';
+import { useProjectVideoCountsCache } from '@/shared/hooks/projects/useProjectVideoCountsCache';
 import type { GenerationRow } from '@/domains/generation/types';
 import type { ActiveLora, LoraModel } from '@/domains/lora/types/lora';
 import type { TravelGuidanceMode } from '@/shared/lib/tasks/travelGuidance';
@@ -466,11 +467,15 @@ export function VideoGenerationModalAccordionContent({
 }: VideoGenerationModalAccordionContentProps) {
   const segmentOutputs = useSegmentOutputsForShot(shotId, projectId);
   const hasFinalVideo = segmentOutputs.parentGenerations.some((p) => Boolean(p.location));
+  const { getFinalVideoCount } = useProjectVideoCountsCache(projectId || null);
+  const cachedFinalVideoCount = getFinalVideoCount(shotId);
+  const willHaveFinalVideo = cachedFinalVideoCount !== null && cachedFinalVideoCount > 0;
+  const shouldRenderFinalVideoSection = hasFinalVideo || willHaveFinalVideo;
   const imageHandlers = useModalImageHandlers(shotId, projectId, shotGenerations, formProps.settings.batchVideoFrames || 61);
 
   return (
     <div className="space-y-4">
-      {hasFinalVideo && (
+      {shouldRenderFinalVideoSection && (
         <ModalAccordionSection
           title="Final Video"
           defaultOpen={defaultFinalVideoOpen}
@@ -480,6 +485,8 @@ export function VideoGenerationModalAccordionContent({
             shotId={shotId}
             projectId={projectId}
             projectAspectRatio={effectiveAspectRatio}
+            getFinalVideoCount={getFinalVideoCount}
+            isParentLoading={segmentOutputs.isLoading}
             onDelete={imageHandlers.onDeleteFinalVideo}
           />
         </ModalAccordionSection>

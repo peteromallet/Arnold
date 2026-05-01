@@ -345,7 +345,7 @@ export const VideoShotDisplay: React.FC<VideoShotDisplayProps> = ({
           onClose={() => setVideoModalOpen(false)}
           shot={shot}
           defaultTopOpen={false}
-          defaultFinalVideoOpen={false}
+          defaultFinalVideoOpen={Boolean(finalVideo)}
           defaultBottomOpen={true}
         />
       )}

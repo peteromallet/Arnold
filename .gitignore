@@ -91,3 +91,4 @@ supabase/.branches/
 
 # megaplan per-run state files — writing them during execute triggers megaplan audit false-positives
 .megaplan/plans/
+this.env

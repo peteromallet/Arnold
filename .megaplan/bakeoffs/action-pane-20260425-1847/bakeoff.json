@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "experiment_id": "action-pane-20260425-1847",
+  "base_sha": "be3c5e210297c1fea39be364c71b9c3cf82b5220",
+  "idea_hash": "a5861a6261379f13b3316053b667fcf1f978ca68b9b184bedfaa542cef861b70",
+  "idea_path": "/private/tmp/megaplan-action-pane-idea.md",
+  "mode": "code",
+  "profiles": [
+    {
+      "name": "standard",
+      "worktree": "/Users/peteromalley/Documents/reigh-workspace/.megaplan-worktrees/action-pane-20260425-1847/standard",
+      "plan_id": "action-pane-20260425-1847",
+      "pid": 47660,
+      "launched_at": "2026-04-25T19:54:25Z",
+      "terminated_at": null,
+      "outcome": null,
+      "log_path": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/bakeoffs/action-pane-20260425-1847/standard/auto.log",
+      "outcome_path": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/bakeoffs/action-pane-20260425-1847/standard/outcome.json"
+    },
+    {
+      "name": "kimi",
+      "worktree": "/Users/peteromalley/Documents/reigh-workspace/.megaplan-worktrees/action-pane-20260425-1847/kimi",
+      "plan_id": "action-pane-20260425-1847",
+      "pid": 47661,
+      "launched_at": "2026-04-25T19:54:25Z",
+      "terminated_at": null,
+      "outcome": null,
+      "log_path": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/bakeoffs/action-pane-20260425-1847/kimi/auto.log",
+      "outcome_path": "/Users/peteromalley/Documents/reigh-workspace/reigh-app/.megaplan/bakeoffs/action-pane-20260425-1847/kimi/outcome.json"
+    }
+  ],
+  "phase": "running",
+  "chosen_profile": null,
+  "merged_at": null,
+  "judge_model": null
+}

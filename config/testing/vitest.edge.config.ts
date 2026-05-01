@@ -29,6 +29,7 @@ const EDGE_UNIT_INCLUDE = [
   'supabase/functions/get-predecessor-output/**/*.test.ts',
   'supabase/functions/huggingface-upload/**/*.test.ts',
   'supabase/functions/process-auto-topup/**/*.test.ts',
+  'supabase/functions/reigh-data-fetch/**/*.test.ts',
   'supabase/functions/revoke-pat/**/*.test.ts',
   'supabase/functions/setup-auto-topup/**/*.test.ts',
   'supabase/functions/grant-credits/**/*.test.ts',
