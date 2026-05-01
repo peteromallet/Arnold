@@ -20,6 +20,93 @@ const stripMarkdownFences = (text: string): string => {
     .trim();
 };
 
+const parseJson = (text: string): unknown | null => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const extractFencedJson = (text: string): string | null => {
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return match?.[1]?.trim() ?? null;
+};
+
+const extractBalancedJson = (text: string): string | null => {
+  for (let start = 0; start < text.length; start += 1) {
+    const firstChar = text[start];
+    if (firstChar !== "{" && firstChar !== "[") {
+      continue;
+    }
+
+    const expectedClosers: string[] = [];
+    let inString = false;
+    let escaping = false;
+
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (inString) {
+        if (escaping) {
+          escaping = false;
+        } else if (char === "\\") {
+          escaping = true;
+        } else if (char === "\"") {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = true;
+        continue;
+      }
+
+      if (char === "{") {
+        expectedClosers.push("}");
+        continue;
+      }
+
+      if (char === "[") {
+        expectedClosers.push("]");
+        continue;
+      }
+
+      const expectedCloser = expectedClosers[expectedClosers.length - 1];
+      if ((char === "}" || char === "]") && char !== expectedCloser) {
+        break;
+      }
+
+      if (char === expectedCloser) {
+        expectedClosers.pop();
+        if (expectedClosers.length === 0) {
+          return text.slice(start, index + 1);
+        }
+      }
+    }
+  }
+
+  return null;
+};
+
+const parseModelJson = (content: string): unknown => {
+  const candidates = [
+    stripMarkdownFences(content),
+    extractFencedJson(content),
+    extractBalancedJson(content),
+  ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
+
+  for (const candidate of candidates) {
+    const parsed = parseJson(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  throw new Error("Model response did not contain valid sequence JSON.");
+};
+
 export const buildGenerateSequenceMessages = (
   input: BuildGenerateSequenceMessagesInput,
 ): { systemMsg: string; userMsg: string } => {
@@ -35,6 +122,7 @@ export const buildGenerateSequenceMessages = (
 
 Rules:
 - Return JSON only, with shape {"drafts":[{"clipType":string,"hold":number,"params":object}]}.
+- Do not include analysis, explanations, Markdown, or text before or after the JSON.
 - Use only the supplied clipType values and params.
 - Do not generate code, JSX, HTML, imports, scripts, raw URLs, data URLs, blob URLs, entrance, exit, transition, or animation refs.
 - Asset-valued params must use only allowed registry asset keys. Do not invent or emit component-facing URL params such as previews.
@@ -56,8 +144,7 @@ Rules:
 };
 
 export const extractSequenceDrafts = (content: string): unknown[] => {
-  const cleaned = stripMarkdownFences(content);
-  const parsed = JSON.parse(cleaned);
+  const parsed = parseModelJson(content);
   if (Array.isArray(parsed)) {
     return parsed;
   }

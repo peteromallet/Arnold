@@ -192,6 +192,59 @@ describe('ai-generate-sequence edge entrypoint', () => {
     expect(body.messages[0].content).toContain('allowed_asset_keys');
   });
 
+  it('extracts valid drafts from prose-wrapped fenced JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      createAnthropicSseResponse(`The prompt asks for a professional animation sequence.
+
+\`\`\`json
+${JSON.stringify({
+  drafts: [
+    {
+      clipType: 'resource-card',
+      hold: 3,
+      params: {
+        title: 'Use the attached reference',
+        previewAssetKeys: ['asset-a'],
+      },
+    },
+  ],
+})}
+\`\`\``)
+    ));
+
+    const handler = await loadHandler();
+    const response = await handler(new Request('https://edge.test/ai-generate-sequence', { method: 'POST' }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      drafts: [
+        {
+          clipType: 'resource-card',
+          hold: 3,
+          params: {
+            title: 'Use the attached reference',
+            previewAssetKeys: ['asset-a'],
+          },
+        },
+      ],
+      invalid_drafts: [],
+    });
+  });
+
+  it('returns a stable 422 when Anthropic output contains no JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      createAnthropicSseResponse('The prompt asks for an animated sequence, but I need more context.')
+    ));
+
+    const handler = await loadHandler();
+    const response = await handler(new Request('https://edge.test/ai-generate-sequence', { method: 'POST' }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Model response did not contain valid sequence JSON.',
+    });
+  });
+
   it('drops invalid model drafts and returns structured validation errors without raw draft values', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       createAnthropicSseResponse(JSON.stringify({
