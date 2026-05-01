@@ -16,6 +16,7 @@ describe('trusted sequence metadata', () => {
     expect([...TRUSTED_SEQUENCE_CLIP_TYPES].sort()).toEqual([
       'art-card',
       'cta-card',
+      'image-jump',
       'resource-card',
       'section-hook',
     ]);
@@ -49,6 +50,18 @@ describe('trusted sequence metadata', () => {
       componentParam: 'previews',
     });
   });
+
+  it('exposes image-jump as a text-free asset-backed motion sequence', () => {
+    const imageJump = getTrustedSequenceMetadata('image-jump');
+    expect(imageJump).toBeDefined();
+    expect(imageJump!.params.map((param) => param.key)).not.toContain('title');
+    expect(imageJump!.params.find((param) => param.key === 'imageAssetKeys')).toMatchObject({
+      kind: 'asset-list',
+      required: true,
+      maxItems: 8,
+      componentParam: 'images',
+    });
+  });
 });
 
 describe('available sequence metadata', () => {
@@ -56,11 +69,13 @@ describe('available sequence metadata', () => {
     expect([...AVAILABLE_SEQUENCE_CLIP_TYPES].sort()).toEqual([
       'art-card',
       'cta-card',
+      'image-jump',
       'resource-card',
       'section-hook',
     ]);
-    expect(AVAILABLE_SEQUENCE_METADATA).toHaveLength(4);
+    expect(AVAILABLE_SEQUENCE_METADATA).toHaveLength(5);
     expect(isAvailableSequenceClipType('section-hook')).toBe(true);
+    expect(isAvailableSequenceClipType('image-jump')).toBe(true);
     expect(isAvailableSequenceClipType('theme-package-not-yet-trusted')).toBe(false);
   });
 

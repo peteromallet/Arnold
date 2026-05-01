@@ -1,14 +1,27 @@
 import {
   THEME_PACKAGE_REGISTRY,
-  type ThemePackageClipType,
 } from '@banodoco/timeline-composition/registry.generated';
 import {
   TRUSTED_SEQUENCE_METADATA,
   type TrustedSequenceMetadata,
 } from '@/tools/video-editor/sequences/metadata';
+import { ImageJumpSequence } from '@/tools/video-editor/sequences/components/ImageJumpSequence';
+
+export const LOCAL_SEQUENCE_REGISTRY = {
+  'image-jump': {
+    component: ImageJumpSequence,
+    themeId: '2rp',
+    source: 'local:reigh',
+  },
+} as const;
+
+export const SEQUENCE_COMPONENT_REGISTRY = {
+  ...THEME_PACKAGE_REGISTRY,
+  ...LOCAL_SEQUENCE_REGISTRY,
+};
 
 export type AvailableSequenceMetadata = TrustedSequenceMetadata & {
-  clipType: ThemePackageClipType;
+  clipType: keyof typeof SEQUENCE_COMPONENT_REGISTRY;
 };
 
 export const filterTrustedSequenceMetadataForRegistry = (
@@ -20,14 +33,14 @@ export const filterTrustedSequenceMetadataForRegistry = (
 };
 
 export const AVAILABLE_SEQUENCE_METADATA = filterTrustedSequenceMetadataForRegistry(
-  THEME_PACKAGE_REGISTRY,
+  SEQUENCE_COMPONENT_REGISTRY,
 );
 
 export const AVAILABLE_SEQUENCE_CLIP_TYPES = AVAILABLE_SEQUENCE_METADATA.map(
   (metadata) => metadata.clipType,
-) as readonly ThemePackageClipType[];
+) as readonly string[];
 
-export const isAvailableSequenceClipType = (value: unknown): value is ThemePackageClipType => {
+export const isAvailableSequenceClipType = (value: unknown): value is AvailableSequenceMetadata['clipType'] => {
   return typeof value === 'string' && (AVAILABLE_SEQUENCE_CLIP_TYPES as readonly string[]).includes(value);
 };
 

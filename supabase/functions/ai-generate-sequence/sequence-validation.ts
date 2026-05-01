@@ -2,7 +2,7 @@
 export type SequenceDraftParams = Record<string, string | readonly string[]>;
 
 export type ValidatedSequenceDraft = {
-  clipType: "section-hook" | "art-card" | "resource-card" | "cta-card";
+  clipType: "image-jump" | "section-hook" | "art-card" | "resource-card" | "cta-card";
   hold: number;
   params: SequenceDraftParams;
 };
@@ -35,6 +35,14 @@ export type SequenceDraftValidationResult =
   | { ok: false; errors: SequenceDraftValidationError[] };
 
 export const TRUSTED_SEQUENCE_METADATA: SequenceMetadata[] = [
+  {
+    clipType: "image-jump",
+    hold: { minSeconds: 1, maxSeconds: 20 },
+    params: [
+      { key: "imageAssetKeys", kind: "asset-list", required: true, maxItems: 8, componentParam: "images" },
+      { key: "mode", kind: "string" },
+    ],
+  },
   {
     clipType: "section-hook",
     hold: { minSeconds: 1, maxSeconds: 12 },

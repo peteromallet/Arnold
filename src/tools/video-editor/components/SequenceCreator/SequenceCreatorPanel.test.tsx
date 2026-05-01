@@ -254,7 +254,7 @@ const renderPanel = (overrides: {
 };
 
 const generateValidResourceDraft = async () => {
-  fireEvent.change(screen.getByPlaceholderText('Create a concise section hook for these assets...'), {
+  fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
     target: { value: 'Make a resource card' },
   });
   fireEvent.click(screen.getByRole('button', { name: /generate sequence/i }));
@@ -382,7 +382,7 @@ describe('SequenceCreatorPanel', () => {
     const previewProps = mocks.remotionPreview.mock.calls.at(-1)?.[0];
     expect(previewProps).toMatchObject({
       compact: true,
-      initialTime: 2,
+      initialTime: 0,
     });
     expect(previewProps.onTimeUpdate).toEqual(expect.any(Function));
     expect(previewProps.playerContainerRef).toBeDefined();
@@ -391,9 +391,10 @@ describe('SequenceCreatorPanel', () => {
     expect(previewClip).toMatchObject({
       clipType: 'resource-card',
       track: 'visual-1',
-      at: 2,
+      at: 0,
       hold: 4,
     });
+    expect(previewConfig.clips).toHaveLength(1);
     expect(previewClip?.params).toMatchObject({
       previewAssetKeys: ['asset-a', 'asset-b'],
       previews: [
@@ -402,6 +403,42 @@ describe('SequenceCreatorPanel', () => {
       ],
     });
     expect(screen.getByTestId('sequence-remotion-preview')).toHaveTextContent('https://cdn.example.test/asset-a.png');
+  });
+
+  it('clears stale drafts when starting a new generation and accepts image-jump drafts without titles', async () => {
+    renderPanel({
+      selectedClips: [
+        selectedClip({ assetKey: 'asset-a' }),
+        selectedClip({ clipId: 'clip-2', assetKey: 'asset-b' }),
+      ],
+      attachedClips: [selectedClip({ clipId: 'clip-3', assetKey: 'asset-c', isTimelineBacked: false })],
+    });
+    await generateValidResourceDraft();
+    expect(screen.getByDisplayValue('Generated title')).toBeInTheDocument();
+
+    mocks.invokeSupabaseEdgeFunction.mockResolvedValueOnce({
+      drafts: [
+        {
+          clipType: 'image-jump',
+          hold: 4,
+          params: {
+            imageAssetKeys: ['asset-a', 'asset-b', 'asset-c'],
+            mode: 'jump',
+          },
+        },
+      ],
+      invalid_drafts: [],
+    });
+    fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
+      target: { value: 'Make it jump between these three images' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate sequence/i }));
+
+    await waitFor(() => expect(screen.getAllByText('Image Jump').length).toBeGreaterThan(0));
+    expect(screen.queryByDisplayValue('Generated title')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Motion-only image sequence that snaps, pops, and jumps between selected assets.').length).toBeGreaterThan(0);
+    const requestBody = mocks.invokeSupabaseEdgeFunction.mock.calls.at(-1)?.[1].body;
+    expect(requestBody.allowed_clip_types).toContain('image-jump');
   });
 
   it('revalidates edited drafts and disables insert and replace when timing becomes invalid', async () => {

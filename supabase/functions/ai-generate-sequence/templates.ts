@@ -124,6 +124,8 @@ Rules:
 - Return JSON only, with shape {"drafts":[{"clipType":string,"hold":number,"params":object}]}.
 - Do not include analysis, explanations, Markdown, or text before or after the JSON.
 - Use only the supplied clipType values and params.
+- Prefer image-jump for prompts about selected images jumping, moving, cycling, swapping, flashing, or animating without explicit text.
+- Do not force title, caption, label, metric, or CTA fields unless the chosen clipType requires them and the user's request actually asks for text.
 - Do not generate code, JSX, HTML, imports, scripts, raw URLs, data URLs, blob URLs, entrance, exit, transition, or animation refs.
 - Asset-valued params must use only allowed registry asset keys. Do not invent or emit component-facing URL params such as previews.
 - Effects are wrappers; sequences are first-class timeline clips.`;

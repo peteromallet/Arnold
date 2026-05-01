@@ -189,7 +189,58 @@ describe('ai-generate-sequence edge entrypoint', () => {
     expect(body.model).toBe('claude-opus-4-6');
     expect(body.stream).toBe(true);
     expect(body.system).toContain('trusted structured timeline sequence drafts');
+    expect(body.system).toContain('Prefer image-jump');
     expect(body.messages[0].content).toContain('allowed_asset_keys');
+  });
+
+  it('accepts text-free image-jump drafts for selected assets', async () => {
+    mocks.bootstrapEdgeHandler.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        supabaseAdmin: {},
+        logger: createLogger(),
+        auth: { userId: 'user-1' },
+        body: {
+          prompt: 'Make it jump between these three images',
+          selected_clips: [{ assetKey: 'asset-a' }, { assetKey: 'asset-b' }, { assetKey: 'asset-c' }],
+          attached_clips: [],
+          allowed_clip_types: ['image-jump'],
+          allowed_assets: ['asset-a', 'asset-b', 'asset-c'],
+        },
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      createAnthropicSseResponse(JSON.stringify({
+        drafts: [
+          {
+            clipType: 'image-jump',
+            hold: 4,
+            params: {
+              imageAssetKeys: ['asset-a', 'asset-b', 'asset-c'],
+              mode: 'jump',
+            },
+          },
+        ],
+      }))
+    ));
+
+    const handler = await loadHandler();
+    const response = await handler(new Request('https://edge.test/ai-generate-sequence', { method: 'POST' }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      drafts: [
+        {
+          clipType: 'image-jump',
+          hold: 4,
+          params: {
+            imageAssetKeys: ['asset-a', 'asset-b', 'asset-c'],
+            mode: 'jump',
+          },
+        },
+      ],
+      invalid_drafts: [],
+    });
   });
 
   it('extracts valid drafts from prose-wrapped fenced JSON', async () => {

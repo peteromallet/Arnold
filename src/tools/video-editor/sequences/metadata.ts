@@ -39,6 +39,38 @@ const DEFAULT_HOLD: SequenceHoldMetadata = {
 
 export const TRUSTED_SEQUENCE_METADATA = [
   {
+    clipType: 'image-jump',
+    themeId: TRUSTED_SEQUENCE_THEME_ID,
+    label: 'Image Jump',
+    description: 'Motion-only image sequence that snaps, pops, and jumps between selected assets.',
+    whenToUse: 'Use when the prompt asks to move, jump, cycle, swap, flash, or animate selected images without needing titles or text.',
+    hold: {
+      defaultSeconds: 4,
+      minSeconds: 1,
+      maxSeconds: 20,
+      stepSeconds: 0.5,
+    },
+    params: [
+      {
+        key: 'imageAssetKeys',
+        label: 'Images',
+        kind: 'asset-list',
+        description: 'Selected or attached image asset keys to animate between.',
+        required: true,
+        defaultValue: [],
+        maxItems: 8,
+        componentParam: 'images',
+      },
+      {
+        key: 'mode',
+        label: 'Motion',
+        kind: 'string',
+        description: 'Optional motion style, such as jump, snap, gallery, pulse, or shuffle.',
+        defaultValue: 'jump',
+      },
+    ],
+  },
+  {
     clipType: 'section-hook',
     themeId: TRUSTED_SEQUENCE_THEME_ID,
     label: '2RP Section Hook',

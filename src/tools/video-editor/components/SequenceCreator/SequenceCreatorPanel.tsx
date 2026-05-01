@@ -169,35 +169,27 @@ const validateEditableSequenceDraft = (
 export const buildSequencePreviewConfig = (
   resolvedConfig: ResolvedTimelineConfig,
   draft: ValidatedSequenceDraft,
-  options: {
-    at: number;
-    selectedTrackId?: string | null;
-  },
 ): ResolvedTimelineConfig | null => {
-  const trackId = (
-    options.selectedTrackId &&
-    resolvedConfig.tracks.find((track) => track.id === options.selectedTrackId)?.kind === 'visual'
-  )
-    ? options.selectedTrackId
-    : resolvedConfig.tracks.find((track) => track.kind === 'visual')?.id;
-
-  if (!trackId) return null;
+  const sourceTrack = resolvedConfig.tracks.find((track) => track.kind === 'visual');
+  const trackId = sourceTrack?.id ?? 'sequence-preview-visual';
 
   const clip: ResolvedTimelineClip = {
     id: TEMP_SEQUENCE_PREVIEW_CLIP_ID,
     clipType: draft.clipType,
     track: trackId,
-    at: Math.max(0, options.at),
+    at: 0,
     hold: draft.hold,
     params: { ...draft.params },
   };
 
   return materializeResolvedSequenceConfig({
     ...resolvedConfig,
-    clips: [
-      ...resolvedConfig.clips.filter((candidate) => candidate.id !== TEMP_SEQUENCE_PREVIEW_CLIP_ID),
-      clip,
+    tracks: [
+      sourceTrack
+        ? { ...sourceTrack, id: trackId }
+        : { id: trackId, kind: 'visual', label: 'Sequence preview' },
     ],
+    clips: [clip],
   });
 };
 
@@ -245,11 +237,8 @@ export function SequenceCreatorPanel({
 
   const previewConfig = useMemo(() => {
     if (!resolvedConfig || !validatedDraft) return null;
-    return buildSequencePreviewConfig(resolvedConfig, validatedDraft, {
-      at: currentTime,
-      selectedTrackId,
-    });
-  }, [currentTime, resolvedConfig, selectedTrackId, validatedDraft]);
+    return buildSequencePreviewConfig(resolvedConfig, validatedDraft);
+  }, [resolvedConfig, validatedDraft]);
 
   const replaceProbe = useMemo(() => {
     if (!data || !validatedDraft) return null;
@@ -282,6 +271,8 @@ export function SequenceCreatorPanel({
     setIsGenerating(true);
     setGenerationNote(null);
     setActionError(null);
+    setDrafts([]);
+    setSelectedDraftIndex(0);
 
     try {
       const response = await invokeSupabaseEdgeFunction<GenerateSequenceResponse>(
@@ -447,7 +438,7 @@ export function SequenceCreatorPanel({
                   <Textarea
                     value={prompt}
                     rows={5}
-                    placeholder="Create a concise section hook for these assets..."
+                    placeholder="Make these selected images jump between each other..."
                     onChange={(event) => setPrompt(event.target.value)}
                   />
                   <Button
@@ -533,7 +524,7 @@ export function SequenceCreatorPanel({
                     onTimeUpdate={() => undefined}
                     playerContainerRef={previewContainerRef}
                     compact
-                    initialTime={currentTime}
+                    initialTime={0}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">

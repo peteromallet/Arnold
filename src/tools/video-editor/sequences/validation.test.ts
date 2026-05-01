@@ -50,6 +50,28 @@ describe('validateSequenceDraft', () => {
     expect(result.draft.params.previewAssetKeys).toEqual(['selected-asset', 'attached-asset']);
   });
 
+  it('accepts text-free image-jump drafts with selected image asset keys', () => {
+    const result = validateSequenceDraft({
+      clipType: 'image-jump',
+      hold: 4,
+      params: {
+        imageAssetKeys: ['selected-asset', 'attached-asset'],
+        mode: 'jump',
+      },
+    }, { allowedAssetKeys });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.draft).toEqual({
+      clipType: 'image-jump',
+      hold: 4,
+      params: {
+        imageAssetKeys: ['selected-asset', 'attached-asset'],
+        mode: 'jump',
+      },
+    });
+  });
+
   it('validates batches without hiding per-draft failures', () => {
     const results = validateSequenceDrafts([
       { clipType: 'cta-card', hold: 3, params: { title: 'Create' } },

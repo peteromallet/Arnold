@@ -17,10 +17,7 @@ import {
   type RuntimeTheme,
   type Theme,
 } from '@banodoco/timeline-composition/theme-api';
-import {
-  THEME_PACKAGE_REGISTRY,
-  type ThemePackageClipType,
-} from '@banodoco/timeline-composition/registry.generated';
+import { SEQUENCE_COMPONENT_REGISTRY } from '@/tools/video-editor/sequences/registry';
 
 // Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
 //
@@ -41,9 +38,11 @@ const isBuiltinClipType = (value: string | undefined): boolean => {
   return (BUILTIN_CLIP_TYPES as readonly string[]).includes(value);
 };
 
-const isThemePackageClipType = (value: string | undefined): value is ThemePackageClipType => {
+const isSequenceComponentClipType = (
+  value: string | undefined,
+): value is keyof typeof SEQUENCE_COMPONENT_REGISTRY => {
   if (typeof value !== 'string') return false;
-  return Object.prototype.hasOwnProperty.call(THEME_PACKAGE_REGISTRY, value);
+  return Object.prototype.hasOwnProperty.call(SEQUENCE_COMPONENT_REGISTRY, value);
 };
 
 const sortClipsByAt = (clips: ResolvedTimelineClip[]): ResolvedTimelineClip[] => {
@@ -71,7 +70,7 @@ const ThemePackageComponent: FC<{
 };
 
 const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps, theme }) => {
-  const entry = THEME_PACKAGE_REGISTRY[clip.clipType as ThemePackageClipType];
+  const entry = SEQUENCE_COMPONENT_REGISTRY[clip.clipType as keyof typeof SEQUENCE_COMPONENT_REGISTRY];
   // Defensive: if the registry lookup somehow returned no entry, fall back
   // to the loud placeholder. This is the second layer of the SD-025
   // "loud placeholder" safety net for clipTypes that *are* in the
@@ -130,7 +129,7 @@ const renderVisualTrack = (
         // EFFECT_REGISTRY dispatch (Sprint 5 / SD-026): if the clipType
         // is provided by an installed theme package, render via the
         // codegenned registry entry. Mirrors HypeComposition.tsx:58-64.
-        if (isThemePackageClipType(clip.clipType)) {
+        if (isSequenceComponentClipType(clip.clipType)) {
           return <ThemeEffectSequence key={clip.id} clip={clip} fps={fps} theme={theme} />;
         }
 
