@@ -6,6 +6,26 @@ from copy import deepcopy
 from typing import Any
 
 
+STANCE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "challenge_engaged": {"type": "string"},
+        "angle_taken": {"type": "string"},
+        "what_changed": {"type": "string"},
+    },
+    "required": ["challenge_engaged", "angle_taken", "what_changed"],
+}
+
+STOP_SIGNAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "requested": {"type": "boolean"},
+        "defense": {"type": "string"},
+    },
+    "required": ["requested", "defense"],
+}
+
+
 SCHEMAS: dict[str, dict[str, Any]] = {
     "plan.json": {
         "type": "object",
@@ -92,18 +112,14 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "flags_addressed": {
                 "type": "array",
                 "items": {
-                    "oneOf": [
-                        {"type": "string"},
-                        {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string"},
-                                "resolution": {"type": "string", "enum": ["addressed", "rejected"]},
-                                "reason": {"type": "string"},
-                            },
-                            "required": ["id", "resolution", "reason"],
-                        },
-                    ]
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "resolution": {"type": "string", "enum": ["addressed", "rejected"]},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["id", "resolution", "reason"],
+                    "additionalProperties": False,
                 },
             },
             "assumptions": {"type": "array", "items": {"type": "string"}},
@@ -272,6 +288,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "auto_attributed_files": {"type": "boolean"},
                         "evidence_files": {"type": "array", "items": {"type": "string"}},
                         "reviewer_verdict": {"type": "string"},
+                        "stance": deepcopy(STANCE_SCHEMA),
+                        "stop_signal": deepcopy(STOP_SIGNAL_SCHEMA),
                     },
                     "required": [
                         "id",
@@ -302,6 +320,22 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "required": ["id", "task_id", "question", "executor_note", "verdict"],
                 },
             },
+            "user_actions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "description": {"type": "string"},
+                        "phase": {"type": "string", "enum": ["before_execute", "after_execute"]},
+                        "blocks_task_ids": {"type": "array", "items": {"type": "string"}},
+                        "rationale": {"type": "string"},
+                        "requires_human_only_reason": {"type": "string"},
+                    },
+                    "required": ["id", "description", "phase"],
+                    "x-preserve-explicit-required": True,
+                },
+            },
             "meta_commentary": {"type": "string"},
             "validation": {
                 "type": "object",
@@ -312,12 +346,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                             "type": "object",
                             "properties": {
                                 "plan_step_summary": {"type": "string"},
-                                "finalize_task_ids": {
+                                "finalize_item_ids": {
                                     "type": "array",
                                     "items": {"type": "string"},
                                 },
                             },
-                            "required": ["plan_step_summary", "finalize_task_ids"],
+                            "required": ["plan_step_summary", "finalize_item_ids"],
                         },
                     },
                     "orphan_tasks": {
@@ -341,7 +375,67 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "baseline_test_command": {"type": ["string", "null"]},
             "baseline_test_note": {"type": "string"},
         },
-        "required": ["tasks", "watch_items", "sense_checks", "meta_commentary", "validation"],
+        "required": ["tasks", "watch_items", "sense_checks", "user_actions", "meta_commentary", "validation"],
+    },
+    "directors_notes.json": {
+        "type": "object",
+        "properties": {
+            "form": {"type": "string"},
+            "primary_criterion": {"type": ["string", "null"]},
+            "passes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "iteration": {"type": "integer"},
+                        "provocateur_voice": {"type": ["string", "null"]},
+                        "provocations_fired": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "vector": {"type": "string", "enum": ["cut", "force", "spark"]},
+                                    "subtype": {"type": "string"},
+                                },
+                                "required": ["id", "vector", "subtype"],
+                            },
+                        },
+                        "stances": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "task_id": {"type": "string"},
+                                    "challenge_engaged": {"type": "string"},
+                                    "angle_taken": {"type": "string"},
+                                    "what_changed": {"type": "string"},
+                                    "stance_violations": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "required": [
+                                    "task_id",
+                                    "challenge_engaged",
+                                    "angle_taken",
+                                    "what_changed",
+                                    "stance_violations",
+                                ],
+                            },
+                        },
+                        "stop_requested": {"type": "boolean"},
+                        "stop_defense": {"type": "string"},
+                    },
+                    "required": [
+                        "iteration",
+                        "provocateur_voice",
+                        "provocations_fired",
+                        "stances",
+                        "stop_requested",
+                        "stop_defense",
+                    ],
+                },
+            },
+        },
+        "required": ["form", "primary_criterion", "passes"],
     },
     "execution.json": {
         "type": "object",
@@ -632,6 +726,8 @@ def _build_execution_doc_schema() -> dict[str, Any]:
     schema["properties"]["sections_written"] = schema["properties"].pop("files_changed")
     task_update_schema = schema["properties"]["task_updates"]["items"]
     task_update_schema["properties"]["sections_written"] = task_update_schema["properties"].pop("files_changed")
+    task_update_schema["properties"]["stance"] = deepcopy(STANCE_SCHEMA)
+    task_update_schema["properties"]["stop_signal"] = deepcopy(STOP_SIGNAL_SCHEMA)
     task_update_schema["properties"].pop("commands_run", None)
     task_update_schema["properties"].pop("auto_attributed_files", None)
     task_update_schema["required"] = ["task_id", "status", "executor_notes", "sections_written"]
@@ -649,8 +745,14 @@ def _build_execution_doc_schema() -> dict[str, Any]:
 SCHEMAS["execution_doc.json"] = _build_execution_doc_schema()
 
 
-def get_execution_schema_key(mode: str) -> str:
-    return "execution_doc.json" if mode in {"doc", "joke"} else "execution.json"
+def get_execution_schema_key(mode: str, form: str | None = None) -> str:
+    if mode == "creative" and form:
+        from megaplan.forms import get_form
+
+        return get_form(form).execution_schema_key
+    from megaplan._core import is_prose_mode
+
+    return "execution_doc.json" if is_prose_mode({"config": {"mode": mode}}) else "execution.json"
 
 
 def _preserve_explicit_required(path: tuple[str, ...]) -> bool:

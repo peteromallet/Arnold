@@ -6,11 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.audits.robustness import (
-    checks_for_robustness,
-    joke_checks_for_robustness,
-    validate_critique_checks,
-)
+from megaplan.audits.robustness import validate_critique_checks
+from megaplan.forms.provocations import select_active_checks
+from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
 from megaplan.evaluation import build_gate_artifact, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
 from megaplan.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
@@ -27,6 +25,7 @@ from megaplan.workers import WorkerResult, validate_payload
 from megaplan._core import (
     atomic_write_json,
     configured_robustness,
+    is_creative_mode,
     latest_plan_meta_path,
     latest_plan_path,
     load_plan_locked,
@@ -115,12 +114,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 },
                 history_fields={"flags_count": len(verifiability_flags)},
             )
-        mode = state["config"].get("mode", "code")
-        active_checks = (
-            joke_checks_for_robustness(robustness)
-            if mode == "joke"
-            else checks_for_robustness(robustness)
-        )
+        active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
         expected_ids = [check["id"] for check in active_checks]
         agent_type, mode, refreshed, model = _pkg.resolve_agent_mode("critique", args)
         if len(active_checks) > 1 and agent_type == "hermes":
@@ -161,6 +155,28 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             worker.payload.setdefault("flags", []).extend(v_flags)
 
         atomic_write_json(plan_dir / critique_filename, worker.payload)
+        if is_creative_mode(state):
+            fired = [
+                check.get("provocation", {})
+                for check in active_checks
+                if isinstance(check, dict) and isinstance(check.get("provocation"), dict)
+            ]
+            voice = next(
+                (
+                    check.get("provocateur_voice")
+                    for check in active_checks
+                    if isinstance(check, dict) and check.get("provocateur_voice")
+                ),
+                None,
+            )
+            update_directors_notes_at_aggregate(
+                plan_dir,
+                state,
+                {"task_updates": []},
+                iteration=iteration,
+                voice=voice,
+                fired_provocations=fired,
+            )
         registry = update_flags_after_critique(plan_dir, worker.payload, iteration=iteration)
         significant = len([flag for flag in registry["flags"] if flag.get("severity") == "significant" and flag["status"] in FLAG_BLOCKING_STATUSES])
         _append_to_meta(state, "significant_counts", significant)

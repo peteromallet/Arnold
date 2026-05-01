@@ -75,6 +75,62 @@ def test_collect_profile_metrics_full_schema_for_missing_worktree(tmp_path: Path
     assert metrics["outcome_status"] == "failed"
 
 
+def test_collect_profile_metrics_doc_mode_reports_doc_artifact(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    _init_repo(worktree)
+    plan_dir = worktree / ".megaplan" / "plans" / "exp-1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "done",
+                "history": [{"step": "execute", "cost_usd": 0.5}],
+                "meta": {"total_cost_usd": 0.5},
+            }
+        ),
+        encoding="utf-8",
+    )
+    docs_dir = worktree / "docs"
+    docs_dir.mkdir()
+    doc_path = docs_dir / "foo.md"
+    doc_text = "# Title\n\nbody line one\nbody line two\n"
+    doc_path.write_text(doc_text, encoding="utf-8")
+
+    state = _state(worktree)
+    state["mode"] = "doc"
+    state["output_path"] = "docs/foo.md"
+
+    metrics = collect_profile_metrics(state, _record(worktree, {"status": "done"}))
+
+    assert metrics["doc_path"] == "docs/foo.md"
+    assert metrics["doc_present"] is True
+    assert metrics["doc_size_bytes"] == len(doc_text.encode("utf-8"))
+    assert metrics["doc_line_count"] == len(doc_text.splitlines())
+    # tests_added is a code-mode concept; doc-mode reports None.
+    assert metrics["tests_added"] is None
+
+
+def test_collect_profile_metrics_doc_mode_missing_artifact(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    _init_repo(worktree)
+    plan_dir = worktree / ".megaplan" / "plans" / "exp-1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"current_state": "failed", "history": [], "meta": {}}),
+        encoding="utf-8",
+    )
+    state = _state(worktree)
+    state["mode"] = "doc"
+    state["output_path"] = "docs/foo.md"
+
+    metrics = collect_profile_metrics(state, _record(worktree, {"status": "failed"}))
+
+    assert metrics["doc_path"] == "docs/foo.md"
+    assert metrics["doc_present"] is False
+    assert metrics["doc_size_bytes"] is None
+    assert metrics["doc_line_count"] is None
+
+
 def test_collect_profile_metrics_counts_untracked_tests_and_relative_receipts(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     _init_repo(worktree)

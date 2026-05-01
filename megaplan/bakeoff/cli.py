@@ -9,10 +9,12 @@ from typing import Any, Callable
 from megaplan.types import CliError, ROBUSTNESS_LEVELS
 
 
-BAKEOFF_UNSUPPORTED_MODE_MESSAGE = (
-    "bake-off v1 supports --mode code only; doc/joke/metaplan require "
-    "--output pass-through, deferred to a follow-up."
-)
+BAKEOFF_SUPPORTED_MODES = ("code", "doc", "metaplan")
+
+
+def _normalize_bakeoff_mode(mode: str) -> str:
+    """`metaplan` is an alias for `doc`; everything else is verbatim."""
+    return "doc" if mode == "metaplan" else mode
 
 
 def _register_bakeoff_subcommands(bakeoff_parser: argparse.ArgumentParser) -> None:
@@ -32,7 +34,20 @@ def _register_bakeoff_subcommands(bakeoff_parser: argparse.ArgumentParser) -> No
     run_parser.add_argument(
         "--mode",
         default="code",
-        help="Bake-off mode (v1 supports code only)",
+        choices=list(BAKEOFF_SUPPORTED_MODES),
+        help=(
+            "Bake-off mode: 'code' (default; per-profile code diff) or "
+            "'doc' / 'metaplan' (per-profile document artifact at --output). "
+            "'metaplan' is an alias for 'doc'."
+        ),
+    )
+    run_parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Relative path to the doc artifact each profile's run will write. "
+            "Required with --mode doc or --mode metaplan; rejected with --mode code."
+        ),
     )
     run_parser.add_argument("--exp-id", default=None, help="Optional experiment id")
     run_parser.add_argument(
@@ -94,8 +109,23 @@ def run_bakeoff_cli(root: Path, args: argparse.Namespace) -> int:
     action = getattr(args, "bakeoff_action")
 
     if action == "run":
-        if getattr(args, "mode", "code") != "code":
-            raise CliError("bakeoff_unsupported_mode", BAKEOFF_UNSUPPORTED_MODE_MESSAGE)
+        raw_mode = getattr(args, "mode", "code")
+        mode = _normalize_bakeoff_mode(raw_mode)
+        output = getattr(args, "output", None)
+        if mode == "code" and output:
+            raise CliError(
+                "invalid_args",
+                "--output is only valid with --mode doc or --mode metaplan. For code-mode bake-offs, "
+                "remove --output; for doc-mode bake-offs, also pass --mode doc or --mode metaplan.",
+            )
+        if mode == "doc" and not output:
+            raise CliError(
+                "invalid_args",
+                f"--output is required when --mode {raw_mode} is selected",
+            )
+        # Re-write the args namespace so downstream sees normalized mode.
+        args.mode = mode
+        args.output = output
         from megaplan.bakeoff.orchestrator import run_bakeoff_run_handler
 
         return run_bakeoff_run_handler(root, args)

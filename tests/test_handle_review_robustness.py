@@ -248,7 +248,7 @@ def test_handle_review_light_branch_skips_prechecks_and_keeps_payload_byte_ident
     assert (fixture.plan_dir / "review.json").read_bytes() == golden_path.read_bytes()
 
 
-def test_resolve_review_outcome_uses_standard_and_robust_caps_separately() -> None:
+def test_resolve_review_outcome_uses_standard_and_robust_caps_separately(tmp_path: Path) -> None:
     state = {
         "history": [
             {"step": "review", "result": "needs_rework"},
@@ -260,6 +260,7 @@ def test_resolve_review_outcome_uses_standard_and_robust_caps_separately() -> No
     robust_issues: list[str] = []
 
     standard_result = megaplan.handlers._resolve_review_outcome(
+        tmp_path,
         "needs_rework",
         2,
         2,
@@ -271,6 +272,7 @@ def test_resolve_review_outcome_uses_standard_and_robust_caps_separately() -> No
         standard_issues,
     )
     robust_result = megaplan.handlers._resolve_review_outcome(
+        tmp_path,
         "needs_rework",
         2,
         2,

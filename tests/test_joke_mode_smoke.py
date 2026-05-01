@@ -137,17 +137,11 @@ def test_resolve_builder_routes_joke_mode_builders(tmp_path: Path) -> None:
 def test_joke_checks_for_robustness_smoke() -> None:
     standard_checks = joke_checks_for_robustness("standard")
 
-    assert len(standard_checks) == 9
+    assert len(standard_checks) == 3
     assert [check["id"] for check in standard_checks] == [
+        "joke-cut-darling",
+        "joke-force-button-first",
         "absurdist",
-        "twist_ending",
-        "hyper_specific_detail",
-        "genre_swap",
-        "subtext_inversion",
-        "prop_as_character",
-        "bathos",
-        "scale_shift",
-        "narrator_reveal",
     ]
     assert joke_checks_for_robustness("tiny") == ()
 
@@ -161,9 +155,9 @@ def test_joke_critique_prompts_include_primary_criterion_and_lens_persona(tmp_pa
     single_prompt = single_check_critique_joke_prompt(state, plan_dir, tmp_path, check, template_path)
 
     assert "weirdest coherent" in sequential_prompt
-    assert "Persona: absurdist" in sequential_prompt
+    assert "joke-cut-darling" in sequential_prompt
     assert "weirdest coherent" in single_prompt
-    assert "Your persona is `absurdist`." in single_prompt
+    assert "FLAG-joke-cut-darling" in single_prompt
 
 
 def test_revise_joke_prompt_contains_rejection_licensing_clauses(tmp_path: Path) -> None:

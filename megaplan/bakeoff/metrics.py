@@ -31,10 +31,12 @@ def collect_profile_metrics(
     plan_dir = worktree / ".megaplan" / "plans" / plan_id
     plan_state = _read_json(plan_dir / "state.json")
     outcome = profile_record.get("outcome") or {}
+    mode = bakeoff_state.get("mode") or "code"
+    output_path = bakeoff_state.get("output_path")
     patch = collect_git_diff_patch(worktree) if worktree.exists() else None
     review = _read_json(plan_dir / "review.json")
 
-    return {
+    metrics: dict[str, Any] = {
         "duration_s": _duration_s(profile_record.get("launched_at"), profile_record.get("terminated_at")),
         "cost_usd": _cost_usd(plan_state),
         "rework_cycles": _rework_cycles(plan_state, outcome),
@@ -46,6 +48,53 @@ def collect_profile_metrics(
         "final_state": _final_state(plan_state, outcome),
         "outcome_status": outcome.get("status") if isinstance(outcome.get("status"), str) else None,
         "receipts_ref": _receipts_ref(plan_state, plan_dir),
+    }
+    if mode == "doc":
+        # In doc-mode bake-offs, the "deliverable" is the doc artifact at
+        # output_path inside each worktree, not the code diff. Surface
+        # doc-specific metrics so judges and the markdown table can compare
+        # apples to apples; tests_added is a code-mode concept and stays None.
+        doc_metrics = _collect_doc_metrics(worktree, output_path)
+        metrics.update(doc_metrics)
+    return metrics
+
+
+def _collect_doc_metrics(worktree: Path, output_path: str | None) -> dict[str, Any]:
+    if not output_path:
+        return {
+            "doc_path": None,
+            "doc_present": False,
+            "doc_size_bytes": None,
+            "doc_line_count": None,
+            "tests_added": None,
+        }
+    doc_abs = worktree / output_path
+    if not doc_abs.exists() or not doc_abs.is_file():
+        return {
+            "doc_path": output_path,
+            "doc_present": False,
+            "doc_size_bytes": None,
+            "doc_line_count": None,
+            "tests_added": None,
+        }
+    try:
+        text = doc_abs.read_text(encoding="utf-8")
+    except OSError:
+        return {
+            "doc_path": output_path,
+            "doc_present": True,
+            "doc_size_bytes": None,
+            "doc_line_count": None,
+            "tests_added": None,
+        }
+    return {
+        "doc_path": output_path,
+        "doc_present": True,
+        "doc_size_bytes": len(text.encode("utf-8")),
+        "doc_line_count": len(text.splitlines()),
+        # tests_added is a code-mode concept; in doc mode keep it absent so
+        # the comparison table doesn't claim "0 tests" as a meaningful signal.
+        "tests_added": None,
     }
 
 

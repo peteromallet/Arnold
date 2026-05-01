@@ -29,6 +29,7 @@ from megaplan._core import (
     latest_plan_path,
     load_debt_registry,
     load_flag_registry,
+    is_prose_mode,
     normalize_text,
     read_json,
     scope_creep_flags,
@@ -120,8 +121,14 @@ def _is_perfunctory_ack(note: str) -> bool:
     return is_rubber_stamp(note, strict=False)
 
 
-def validate_execution_evidence(finalize_data: dict[str, Any], project_dir: Path, *, mode: str = "code") -> dict[str, Any]:
-    if mode in {"doc", "joke"}:
+def validate_execution_evidence(
+    finalize_data: dict[str, Any],
+    project_dir: Path,
+    *,
+    mode: str = "code",
+    state: PlanState | None = None,
+) -> dict[str, Any]:
+    if is_prose_mode(state or {"config": {"mode": mode}}):
         return _validate_execution_evidence_doc(finalize_data, project_dir)
     return _validate_execution_evidence_code(finalize_data, project_dir)
 

@@ -116,6 +116,95 @@ def test_merge_applies_winner_patch_archives_all_plans_and_rewrites_project_dirs
     assert not loser.exists()
 
 
+def test_doc_mode_merge_copies_winner_doc_to_main_and_archive(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    exp_id = "exp-doc"
+    base_sha = capture_base_sha(root)
+    winner = tmp_path / ".megaplan-worktrees" / exp_id / "winner"
+    loser = tmp_path / ".megaplan-worktrees" / exp_id / "loser"
+    create_worktree(root, winner, base_sha)
+    create_worktree(root, loser, base_sha)
+    _write_plan(winner, exp_id)
+    _write_plan(loser, exp_id)
+
+    # Each profile produces a doc artifact at the configured output path.
+    output_path = "docs/design.md"
+    winner_doc_dir = winner / "docs"
+    winner_doc_dir.mkdir()
+    winner_doc = winner_doc_dir / "design.md"
+    winner_doc.write_text("# Winner doc\n\nbody\n", encoding="utf-8")
+    loser_doc_dir = loser / "docs"
+    loser_doc_dir.mkdir()
+    (loser_doc_dir / "design.md").write_text("# Loser doc\n\nother\n", encoding="utf-8")
+
+    state = {
+        "schema_version": 1,
+        "experiment_id": exp_id,
+        "base_sha": base_sha,
+        "idea_hash": "idea",
+        "idea_path": str(root / "idea.md"),
+        "mode": "doc",
+        "output_path": output_path,
+        "profiles": [
+            _profile(root, winner, exp_id, "winner"),
+            _profile(root, loser, exp_id, "loser"),
+        ],
+        "phase": "picked",
+        "chosen_profile": "winner",
+        "merged_at": None,
+        "judge_model": None,
+    }
+    save_bakeoff_state(root, state)
+
+    assert handle_merge(root, Namespace(exp=exp_id)) == 0
+
+    # Main tree should now have the winner's doc content.
+    merged_doc = (root / output_path).read_text(encoding="utf-8")
+    assert merged_doc == "# Winner doc\n\nbody\n"
+    # Archive should mirror the winner doc.
+    archived = (root / ".megaplan" / "bakeoffs" / exp_id / "winner.doc").read_text(encoding="utf-8")
+    assert archived == merged_doc
+    # Doc-mode merge does NOT produce a winner.patch file.
+    assert not (root / ".megaplan" / "bakeoffs" / exp_id / "winner.patch").exists()
+    # Worktrees still get cleaned up.
+    assert not winner.exists()
+    assert not loser.exists()
+
+
+def test_doc_mode_merge_errors_when_winner_doc_missing(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    exp_id = "exp-doc-missing"
+    base_sha = capture_base_sha(root)
+    winner = tmp_path / ".megaplan-worktrees" / exp_id / "winner"
+    create_worktree(root, winner, base_sha)
+    _write_plan(winner, exp_id)
+    # Note: no docs/design.md written into the winner worktree.
+    output_path = "docs/design.md"
+    state = {
+        "schema_version": 1,
+        "experiment_id": exp_id,
+        "base_sha": base_sha,
+        "idea_hash": "idea",
+        "idea_path": str(root / "idea.md"),
+        "mode": "doc",
+        "output_path": output_path,
+        "profiles": [_profile(root, winner, exp_id, "winner")],
+        "phase": "picked",
+        "chosen_profile": "winner",
+        "merged_at": None,
+        "judge_model": None,
+    }
+    save_bakeoff_state(root, state)
+
+    with pytest.raises(CliError) as excinfo:
+        handle_merge(root, Namespace(exp=exp_id))
+    assert excinfo.value.code == "bakeoff_merge_no_changes"
+    # Worktree must NOT have been removed on failure (we error before cleanup).
+    assert winner.exists()
+
+
 def test_merge_rejects_dirty_main_tree_before_apply(tmp_path: Path) -> None:
     root, winner, _loser, exp_id = _two_profile_bakeoff(tmp_path)
     (winner / "README.md").write_text("winner edit\n", encoding="utf-8")

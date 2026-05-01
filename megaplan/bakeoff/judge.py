@@ -80,30 +80,50 @@ def build_judge_prompt(
     bakeoff_state: BakeoffState,
     metrics_by_profile: dict[str, dict[str, Any]],
 ) -> str:
+    mode = bakeoff_state.get("mode") or "code"
+    output_path = bakeoff_state.get("output_path")
     bundles = []
     for record in bakeoff_state.get("profiles", []):
         profile = record["name"]
         worktree = Path(record["worktree"])
-        bundles.append(
-            {
-                "profile": profile,
-                "outcome": record.get("outcome"),
-                "metrics": metrics_by_profile.get(profile, {}),
-                "artifacts": _artifact_bundle(worktree, record["plan_id"]),
-                "patch": _patch_summary(worktree),
-            }
+        bundle: dict[str, Any] = {
+            "profile": profile,
+            "outcome": record.get("outcome"),
+            "metrics": metrics_by_profile.get(profile, {}),
+            "artifacts": _artifact_bundle(worktree, record["plan_id"]),
+        }
+        if mode == "doc":
+            # In doc-mode bake-offs, the deliverable is the doc file itself.
+            # Send its content (truncated) to the judge instead of a code patch.
+            bundle["doc"] = _doc_summary(worktree, output_path)
+        else:
+            bundle["patch"] = _patch_summary(worktree)
+        bundles.append(bundle)
+    if mode == "doc":
+        instruction = (
+            "These bake-off profiles each produced a document at the given relative "
+            "path inside their worktree. Compare the document content (and supporting "
+            "plan artifacts) and rank the profiles by document quality, completeness, "
+            "and how well they satisfy the idea. Flag scope drift and missed "
+            "requirements. Return only JSON with keys: rank, rationale_per_profile, "
+            "scope_drift_flags, concerns."
         )
-    payload = {
-        "instruction": (
+    else:
+        instruction = (
             "Given these bake-off profile bundles, rank the profiles and flag "
             "scope drift, quality concerns, or missed requirements. Return only "
             "JSON with keys: rank, rationale_per_profile, scope_drift_flags, concerns."
-        ),
+        )
+    payload: dict[str, Any] = {
+        "instruction": instruction,
         "experiment_id": bakeoff_state["experiment_id"],
         "base_sha": bakeoff_state["base_sha"],
         "idea_hash": bakeoff_state["idea_hash"],
+        "mode": mode,
         "profiles": bundles,
     }
+    if output_path:
+        payload["output_path"] = output_path
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
@@ -204,6 +224,24 @@ def _patch_summary(worktree: Path) -> str | None:
     if len(patch) > 20000:
         return patch[:20000] + "\n...[truncated]"
     return patch
+
+
+def _doc_summary(worktree: Path, output_path: str | None) -> dict[str, Any]:
+    """Bundle the doc artifact for the judge in doc-mode bake-offs."""
+    if not output_path:
+        return {"output_path": None, "present": False, "content": None}
+    if not worktree.exists():
+        return {"output_path": output_path, "present": False, "content": None}
+    doc_abs = worktree / output_path
+    if not doc_abs.exists() or not doc_abs.is_file():
+        return {"output_path": output_path, "present": False, "content": None}
+    try:
+        text = doc_abs.read_text(encoding="utf-8")
+    except OSError:
+        return {"output_path": output_path, "present": True, "content": None}
+    if len(text) > 40000:
+        text = text[:40000] + "\n...[truncated]"
+    return {"output_path": output_path, "present": True, "content": text}
 
 
 def _read_text(path: Path) -> str | None:

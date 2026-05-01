@@ -18,6 +18,8 @@ from megaplan._core import (
     compute_task_batches,
     configured_robustness,
     get_effective,
+    is_creative_mode,
+    is_prose_mode,
     list_batch_artifacts,
     load_config,
     make_history_entry,
@@ -44,6 +46,9 @@ from megaplan.execute.timeout import (
     _resolve_execute_approval_mode,
 )
 from megaplan.execute.merge import _validate_and_merge_batch
+from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
+from megaplan.forms.provocations import select_active_checks
+from megaplan.forms.stance import validate_stance
 from megaplan.prompts import _execute_batch_prompt
 from megaplan.audits.quality_gates import capture_before_line_counts
 from megaplan.receipts import build_receipt
@@ -152,6 +157,8 @@ def _build_aggregate_execution_payload(
     completed_batches: int,
     total_batches: int,
     mode: str = "code",
+    plan_dir: Path | None = None,
+    state: PlanState | None = None,
 ) -> dict[str, Any]:
     outputs = [
         f"Batch {index + 1}: {payload.get('output', '')}".strip()
@@ -160,13 +167,13 @@ def _build_aggregate_execution_payload(
     deviations: list[str] = []
     task_updates: list[dict[str, Any]] = []
     sense_check_acknowledgments: list[dict[str, Any]] = []
-    if mode in {"doc", "joke"}:
+    if is_prose_mode({"config": {"mode": mode}}):
         sections_written: list[str] = []
     else:
         files_changed: list[str] = []
     commands_run: list[str] = []
     for payload in batch_payloads:
-        if mode in {"doc", "joke"}:
+        if is_prose_mode({"config": {"mode": mode}}):
             sections_written.extend(
                 [s for s in payload.get("sections_written", []) if isinstance(s, str)]
             )
@@ -206,10 +213,34 @@ def _build_aggregate_execution_payload(
         "task_updates": task_updates,
         "sense_check_acknowledgments": sense_check_acknowledgments,
     }
-    if mode in {"doc", "joke"}:
+    if is_prose_mode({"config": {"mode": mode}}):
         result["sections_written"] = _stable_unique_strings(sections_written)
     else:
         result["files_changed"] = _stable_unique_strings(files_changed)
+    if state is not None and plan_dir is not None and is_creative_mode(state):
+        checks = select_active_checks(state, configured_robustness(state), plan_dir=plan_dir)
+        fired = [
+            check.get("provocation", {})
+            for check in checks
+            if isinstance(check, dict) and isinstance(check.get("provocation"), dict)
+        ]
+        voice = next(
+            (
+                check.get("provocateur_voice")
+                for check in checks
+                if isinstance(check, dict) and check.get("provocateur_voice")
+            ),
+            None,
+        )
+        update_directors_notes_at_aggregate(
+            plan_dir,
+            state,
+            result,
+            iteration=int(state.get("iteration") or 1),
+            voice=voice,
+            fired_provocations=fired,
+            preserve_existing_provocations=True,
+        )
     return result
 
 
@@ -287,6 +318,7 @@ def _merge_batch_results(
     batch_sense_check_ids: list[str],
     issues: list[str],
     mode: str = "code",
+    state: PlanState | None = None,
 ) -> tuple[int, int, int, int]:
     batch_task_id_set = set(batch_task_ids)
     batch_sense_check_id_set = set(batch_sense_check_ids)
@@ -305,17 +337,35 @@ def _merge_batch_results(
         for task in finalize_data.get("tasks", [])
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     }
-    if mode in {"doc", "joke"}:
+    mode_state = state or {"config": {"mode": mode}}
+    creative_mode = is_creative_mode(mode_state)
+    if creative_mode and isinstance(payload.get("task_updates"), list):
+        for task_update in payload["task_updates"]:
+            if not isinstance(task_update, dict) or not isinstance(task_update.get("stance"), dict):
+                continue
+            violations = validate_stance(task_update["stance"])
+            if violations:
+                task_update["stance_violations"] = violations
+    if is_prose_mode(mode_state):
         required_fields = ("task_id", "status", "executor_notes", "sections_written")
-        merge_fields = ("status", "executor_notes", "sections_written")
-        array_fields = ("sections_written",)
+        object_fields: tuple[str, ...] = ()
+        optional_fields: tuple[str, ...] = ()
+        if is_creative_mode(mode_state):
+            required_fields = required_fields + ("stance", "stop_signal")
+            object_fields = ("stance", "stop_signal")
+            optional_fields = ("stance_violations",)
+        merge_fields = ("status", "executor_notes", "sections_written", "stance", "stop_signal", "stance_violations")
+        array_fields = ("sections_written", "stance_violations")
     else:
         required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
         merge_fields = ("status", "executor_notes", "files_changed", "commands_run")
         array_fields = ("files_changed", "commands_run")
+        object_fields = ()
+        optional_fields = ()
     merged_count, _ = _validate_and_merge_batch(
         payload.get("task_updates"),
         required_fields=required_fields,
+        optional_fields=optional_fields,
         targets_by_id=all_tasks_by_id,
         id_field="task_id",
         merge_fields=merge_fields,
@@ -327,6 +377,7 @@ def _merge_batch_results(
         enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
         nonempty_fields={"executor_notes"},
         array_fields=array_fields,
+        object_fields=object_fields,
     )
     # Check batch-specific coverage: how many of THIS batch's tasks got updates?
     total_batch_tasks = len(batch_task_id_set)
@@ -398,7 +449,7 @@ def _run_and_merge_batch(
 ) -> BatchResult:
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
-    if plan_mode in {"doc", "joke"}:
+    if is_prose_mode(state):
         before_snapshot: dict[str, str] = {}
         before_error: str | None = None
         before_line_counts: dict[str, int] = {}
@@ -417,7 +468,7 @@ def _run_and_merge_batch(
     payload = dict(worker.payload)
     deviations = list(payload.get("deviations", []))
     batch_task_id_set = set(batch_task_ids)
-    if plan_mode not in {"doc", "joke"}:
+    if not is_prose_mode(state):
         deviations.extend(
             _collect_quality_deviations(
                 project_dir=project_dir,
@@ -435,10 +486,11 @@ def _run_and_merge_batch(
             batch_sense_check_ids=batch_sense_check_ids,
             issues=deviations,
             mode=plan_mode,
+            state=state,
         )
     )
     attribution_result = AttributionResult(records=[], recursive_snapshot=None)
-    if plan_mode not in {"doc", "joke"}:
+    if not is_prose_mode(state):
         attribution_result = _auto_attribute_unclaimed_paths(
             project_dir=project_dir,
             finalize_data=finalize_data,
@@ -465,7 +517,7 @@ def _run_and_merge_batch(
                 capture_git_status_snapshot_fn=observation_snapshot_fn,
             )
         )
-    if plan_mode in {"doc", "joke"}:
+    if is_prose_mode(state):
         missing_task_evidence = _check_done_task_evidence(
             finalize_data.get("tasks", []),
             issues=deviations,
@@ -485,7 +537,7 @@ def _run_and_merge_batch(
             missing_message="Done tasks missing both files_changed and commands_run: ",
             advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
         )
-    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode)
+    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
     if attribution_result.records:
         execution_audit["auto_attribution"] = list(attribution_result.records)
     if execution_audit["skipped"]:
@@ -664,11 +716,19 @@ def handle_execute_one_batch(
 
     all_tasks = finalize_data.get("tasks", [])
     is_final_batch = batch_number == batches_total
+    tracked_tasks = [
+        task for task in all_tasks if isinstance(task.get("id"), str)
+    ]
     all_tracked = all(
         task.get("status") in {"done", "skipped"}
-        for task in all_tasks
-        if isinstance(task.get("id"), str)
+        for task in tracked_tasks
     )
+    any_done = any(task.get("status") == "done" for task in tracked_tasks)
+    if all_tracked and tracked_tasks and not any_done:
+        blocking_reasons.append(
+            "All tasks were skipped with none completed — execution produced no work."
+        )
+        all_tracked = False
 
     aggregate_payload: dict[str, Any] | None = None
     batch_payloads: list[dict[str, Any]] = []
@@ -681,6 +741,8 @@ def handle_execute_one_batch(
             completed_batches=len(batch_payloads),
             total_batches=batches_total,
             mode=plan_mode,
+            plan_dir=plan_dir,
+            state=state,
         )
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
@@ -1035,6 +1097,8 @@ def handle_execute_auto_loop(
         completed_batches=len(batch_payloads),
         total_batches=total_batches,
         mode=plan_mode,
+        plan_dir=plan_dir,
+        state=state,
     )
     if timeout_error is not None:
         aggregate_payload["deviations"] = list(aggregate_payload.get("deviations", []))
@@ -1045,7 +1109,12 @@ def handle_execute_auto_loop(
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
 
     finalize_data = read_json(plan_dir / "finalize.json")
-    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=state["config"].get("mode", "code"))
+    execution_audit = validate_execution_evidence(
+        finalize_data,
+        project_dir,
+        mode=state["config"].get("mode", "code"),
+        state=state,
+    )
     deviations = list(aggregate_payload.get("deviations", []))
     if timeout_recovery is not None:
         deviations.extend(
@@ -1082,7 +1151,7 @@ def handle_execute_auto_loop(
             active_sense_check_ids=active_sense_check_ids,
         )
     )
-    if plan_mode in {"doc", "joke"}:
+    if is_prose_mode(state):
         missing_task_evidence = _check_done_task_evidence(
             finalize_data.get("tasks", []),
             issues=deviations,

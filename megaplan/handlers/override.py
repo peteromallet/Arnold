@@ -309,12 +309,62 @@ def _override_set_robustness(root: Path, plan_dir: Path, state: PlanState, args:
     _attach_next_step_runtime(response)
     return response
 
+def _override_set_profile(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+    from megaplan.profiles import load_profiles, resolve_profile, profile_to_phase_models
+
+    new_profile = getattr(args, "profile", None)
+    if not new_profile:
+        raise CliError("invalid_args", "override set-profile requires --profile NAME")
+    if state["current_state"] in {STATE_DONE, STATE_ABORTED}:
+        raise CliError(
+            "invalid_transition",
+            f"set-profile cannot be applied to a plan in terminal state '{state['current_state']}'",
+        )
+    project_dir = Path(state["config"].get("project_dir", str(root)))
+    profiles = load_profiles(project_dir=project_dir)
+    resolved = resolve_profile(new_profile, profiles)
+    phase_models = profile_to_phase_models(resolved)
+
+    previous_profile = state["config"].get("profile")
+    state["config"]["profile"] = new_profile
+    state["config"]["phase_model"] = phase_models
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "set-profile",
+            "timestamp": now_utc(),
+            "from": previous_profile,
+            "to": new_profile,
+            "reason": args.reason,
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+    next_steps = infer_next_steps(state)
+    summary = (
+        f"Profile unchanged at '{new_profile}'."
+        if previous_profile == new_profile
+        else f"Profile changed from '{previous_profile}' to '{new_profile}'. Takes effect on the next phase."
+    )
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "summary": summary,
+        "next_step": next_steps[0] if next_steps else None,
+        "state": state["current_state"],
+        "previous_profile": previous_profile,
+        "profile": new_profile,
+    }
+    _attach_next_step_runtime(response)
+    return response
+
 _OVERRIDE_ACTIONS: dict[str, Callable[[Path, Path, PlanState, argparse.Namespace], StepResponse]] = {
     "add-note": _override_add_note,
     "abort": _override_abort,
     "force-proceed": _override_force_proceed,
     "replan": _override_replan,
     "set-robustness": _override_set_robustness,
+    "set-profile": _override_set_profile,
 }
 
 def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:

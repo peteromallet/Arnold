@@ -25,13 +25,17 @@ class BakeoffProfileRecord(TypedDict):
     outcome_path: str
 
 
-class BakeoffState(TypedDict):
+class BakeoffState(TypedDict, total=False):
     schema_version: Literal[1]
     experiment_id: str
     base_sha: str
     idea_hash: str
     idea_path: str
     mode: str
+    # Relative (to each worktree) path to the doc artifact in --mode doc bake-offs.
+    # Absent / None for code-mode bake-offs. Kept optional so historical state
+    # files written before this field existed still load.
+    output_path: str | None
     profiles: list[BakeoffProfileRecord]
     phase: BakeoffPhase
     chosen_profile: str | None

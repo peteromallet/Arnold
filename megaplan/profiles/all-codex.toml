@@ -1,0 +1,13 @@
+[profiles.all-codex]
+plan = "codex"
+prep = "codex"
+critique = "codex"
+revise = "codex"
+gate = "codex"
+finalize = "codex"
+execute = "codex"
+loop_plan = "codex"
+loop_execute = "codex"
+review = "codex"
+tiebreaker_researcher = "codex"
+tiebreaker_challenger = "codex"

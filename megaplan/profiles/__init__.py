@@ -159,6 +159,16 @@ def apply_profile_expansion(
         phase_models.extend(profile_to_phase_models(resolved))
         args.profile = profile_name
 
+    # Merge persisted --phase-model overrides from plan state. CLI flags on the
+    # current step invocation take precedence; persisted values fill in gaps for
+    # steps not specified on the CLI.
+    if state is not None:
+        persisted = list((state.get("config") or {}).get("phase_model") or [])
+        cli_steps = {pm.split("=", 1)[0] for pm in phase_models if "=" in pm}
+        for pm in persisted:
+            if "=" in pm and pm.split("=", 1)[0] not in cli_steps:
+                phase_models.append(pm)
+
     args.phase_model = phase_models
     args._profile_applied = True
     return args

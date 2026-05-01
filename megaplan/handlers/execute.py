@@ -22,6 +22,7 @@ from megaplan._core import (
     atomic_write_json,
     clear_active_step,
     configured_robustness,
+    is_prose_mode,
     latest_plan_meta_path,
     load_plan_locked,
     read_json,
@@ -44,6 +45,15 @@ def _is_rework_reexecution(state: PlanState) -> bool:
             return False
     return False
 
+def _is_blocked_retry(state: PlanState) -> bool:
+    """Check if the last execute attempt was blocked (quality gate failure)."""
+    for entry in reversed(state.get("history", [])):
+        if entry.get("step") == "execute":
+            return entry.get("result") == "blocked"
+        if entry.get("step") in ("review", "finalize"):
+            return False
+    return False
+
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         require_state(state, "execute", {STATE_FINALIZED})
@@ -54,7 +64,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # to sibling subrepos failed silently).
         warn_if_work_dir_differs_from_project_dir(state)
         plan_mode = state["config"].get("mode", "code")
-        if plan_mode not in {"doc", "joke"} and not args.confirm_destructive:
+        if not is_prose_mode(state) and not args.confirm_destructive:
             raise CliError("missing_confirmation", "Execute requires --confirm-destructive")
         auto_approve = bool(state["config"].get("auto_approve", False))
         if getattr(args, "user_approved", False):
@@ -66,8 +76,9 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 "Execute requires explicit user approval (--user-approved) when auto-approve is not set. The orchestrator must confirm with the user at the gate checkpoint before proceeding.",
             )
         agent, mode, refreshed, model = worker_module.resolve_agent_mode("execute", args)
-        # Force fresh session after review kickback to avoid prior-context bias
-        if not refreshed and _is_rework_reexecution(state):
+        # Force fresh session after review kickback or blocked retry to avoid
+        # prior-context bias (poisoned environment beliefs, stale task state).
+        if not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state)):
             refreshed = True
         run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
         _emit_phase_notice("execute")
@@ -103,7 +114,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             save_state_merge_meta(plan_dir, state)
             raise
         clear_active_step(state, run_id=run_id)
-        if plan_mode in {"doc", "joke"} and response.get("state") == STATE_EXECUTED:
+        if is_prose_mode(state) and response.get("state") == STATE_EXECUTED:
             from megaplan.doc_assembly import assemble_doc
             output_path = Path(state["config"]["project_dir"]) / state["config"]["output_path"]
             finalize_data = read_json(plan_dir / "finalize.json")

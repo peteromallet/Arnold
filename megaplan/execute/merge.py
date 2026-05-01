@@ -54,15 +54,18 @@ def _validate_merge_inputs(
     entries: Any,
     *,
     required_fields: tuple[str, ...],
+    optional_fields: tuple[str, ...] = (),
     enum_fields: dict[str, set[str]] | None = None,
     nonempty_fields: set[str] | None = None,
     array_fields: tuple[str, ...] = (),
+    object_fields: tuple[str, ...] = (),
     deviations: list[str] | None = None,
     label: str,
 ) -> list[dict[str, Any]]:
     enum_fields = enum_fields or {}
     nonempty_fields = nonempty_fields or set()
     array_field_set = set(array_fields)
+    object_field_set = set(object_fields)
     valid_entries: list[dict[str, Any]] = []
     if not isinstance(entries, list):
         return valid_entries
@@ -79,13 +82,20 @@ def _validate_merge_inputs(
             continue
         normalized: dict[str, Any] = {}
         malformed = False
-        for field in required_fields:
+        present_optional_fields = tuple(field for field in optional_fields if field in entry)
+        for field in (*required_fields, *present_optional_fields):
             value = entry[field]
             if field in array_field_set:
                 if not isinstance(value, list):
                     malformed = True
                     break
                 normalized[field] = list(value)
+                continue
+            if field in object_field_set:
+                if not isinstance(value, dict):
+                    malformed = True
+                    break
+                normalized[field] = dict(value)
                 continue
             if not isinstance(value, str):
                 malformed = True
@@ -128,7 +138,8 @@ def _merge_validated_entries(
         if entry_id in seen:
             issues.append(f"Duplicate {label} for '{entry_id}' — last entry wins.")
         for field in merge_fields:
-            target[field] = entry[field]
+            if field in entry:
+                target[field] = entry[field]
         seen.add(entry_id)
     return len(seen)
 
@@ -137,6 +148,7 @@ def _validate_and_merge_batch(
     entries: Any,
     *,
     required_fields: tuple[str, ...],
+    optional_fields: tuple[str, ...] = (),
     targets_by_id: dict[str, dict[str, Any]],
     id_field: str,
     merge_fields: tuple[str, ...],
@@ -147,13 +159,16 @@ def _validate_and_merge_batch(
     enum_fields: dict[str, set[str]] | None = None,
     nonempty_fields: set[str] | None = None,
     array_fields: tuple[str, ...] = (),
+    object_fields: tuple[str, ...] = (),
 ) -> tuple[int, int]:
     valid_entries = _validate_merge_inputs(
         entries,
         required_fields=required_fields,
+        optional_fields=optional_fields,
         enum_fields=enum_fields,
         nonempty_fields=nonempty_fields,
         array_fields=array_fields,
+        object_fields=object_fields,
         deviations=issues,
         label=validation_label,
     )

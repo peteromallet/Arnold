@@ -18,11 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan.audits.robustness import (
-    build_empty_template,
-    checks_for_robustness,
-    joke_checks_for_robustness,
-)
+from megaplan.audits.robustness import build_empty_template
+from megaplan.forms.provocations import select_active_checks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key
 from megaplan.types import (
     CliError,
@@ -35,6 +32,7 @@ from megaplan.types import (
 from megaplan._core import (
     apply_session_update,
     configured_robustness,
+    creative_form_id,
     detect_available_agents,
     phase_timeout_seconds,
     get_effective,
@@ -336,13 +334,15 @@ def _codex_timeout_for_step(step: str) -> int:
 
 
 def _codex_exec_mode_flags(step: str) -> list[str]:
-    if step in _CODEX_TEMPLATE_WRITE_STEPS:
-        return ["--full-auto"]
-    if step in _EXECUTE_STEPS:
-        if _trusted_container():
-            return []
-        return ["--full-auto"]
-    return []
+    if step in _EXECUTE_STEPS and _trusted_container():
+        return []
+    # All non-execute phases (plan, prep, critique, revise, gate, finalize,
+    # review) need to write template artifacts (plan markdown, metadata JSON,
+    # critique/review JSON, finalize.json). Without --full-auto codex defaults
+    # to on-request approval, which fails silently when stdin is the prompt
+    # (no tty). Default everything to --full-auto and let the workspace-write
+    # sandbox plus writable_roots configuration constrain actual writes.
+    return ["--full-auto"]
 
 
 _ROLLOUT_MISSING_PATTERNS = (
@@ -364,6 +364,7 @@ _POISONED_SESSION_PATTERNS: tuple[tuple[str, ...], ...] = (
     # Multi-substring match (all substrings must be present).
     ("permission denied", "cannot start sandbox"),
     ("repository command execution", "unavailable", "sandbox"),
+    ("permissions profile", "does not define any recognized filesystem entries"),
 )
 
 
@@ -405,6 +406,97 @@ def _is_poisoned_environmental_failure(raw: str) -> bool:
         if all(sub in lowered for sub in group):
             return True
     return False
+
+
+# System directories that should never be auto-promoted to a writable
+# sandbox root. Used by :func:`_auto_writable_roots`. The check below
+# matches the resolved path against these roots exactly *and* against
+# direct children (e.g. /usr) — we never want to widen the sandbox to
+# anything that broad even if the user happens to have project_dir at
+# /usr/local/foo.
+_AUTO_ROOT_FORBIDDEN: tuple[Path, ...] = (
+    Path("/"),
+    Path("/usr"),
+    Path("/etc"),
+    Path("/var"),
+    Path("/private"),
+    Path("/System"),
+    Path("/Library"),
+    Path("/bin"),
+    Path("/sbin"),
+    Path("/opt"),
+    Path("/tmp"),
+    Path.home(),
+)
+
+
+def _is_safe_auto_root(candidate: Path) -> bool:
+    """Return True iff *candidate* is safe to auto-promote to a writable root.
+
+    Excludes (a) system directories, (b) the user's home directory itself
+    (granting write to ~ would defeat the sandbox), and (c) any path
+    shallower than two levels below root (e.g. ``/Users``, ``/home``).
+    """
+    try:
+        resolved = candidate.resolve()
+    except Exception:
+        return False
+    # Reject filesystem root and very shallow paths.
+    if len(resolved.parts) < 3:
+        return False
+    for forbidden in _AUTO_ROOT_FORBIDDEN:
+        try:
+            forbidden_resolved = forbidden.resolve()
+        except Exception:
+            continue
+        if resolved == forbidden_resolved:
+            return False
+    return True
+
+
+def _auto_writable_roots(work_dir: Path) -> list[str]:
+    """Auto-detect additional writable roots that surround *work_dir*.
+
+    Strategy: walk up from *work_dir* looking for a workspace marker — the
+    nearest ancestor containing a ``.git`` directory or a sibling
+    ``.megaplan/`` directory. If that ancestor is a strict parent of
+    *work_dir* and passes :func:`_is_safe_auto_root`, return it as an
+    additional writable root.
+
+    This handles the common monorepo / multi-package workspace case where
+    ``project_dir`` is a subdirectory (e.g. ``tools/``) but legitimate plan
+    output writes to sibling directories (``effects/``, ``themes/``,
+    ``animations/``). Without this, codex's ``workspace-write`` sandbox
+    blocks those writes with ``sandbox denied creating '../foo' outside the
+    writable root``.
+
+    Disable with ``MEGAPLAN_NARROW_SANDBOX=1`` (e.g. for CI runs of
+    untrusted plans where the narrow default is the safer choice).
+    """
+    if os.environ.get("MEGAPLAN_NARROW_SANDBOX", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return []
+    try:
+        start = Path(work_dir).resolve()
+    except Exception:
+        return []
+    current = start.parent
+    seen_root: Path | None = None
+    while True:
+        if seen_root is None:
+            if (current / ".git").exists() or (current / ".megaplan").is_dir():
+                seen_root = current
+                break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    if seen_root is None or seen_root == start:
+        return []
+    if not _is_safe_auto_root(seen_root):
+        return []
+    return [str(seen_root)]
 
 
 def _trusted_container() -> bool:
@@ -625,10 +717,15 @@ def _recover_codex_payload(
     raw: str,
 ) -> dict[str, Any] | None:
     payload = None
+    file_recovered_candidates: list[dict[str, Any]] = []
     try:
         payload = parse_json_file(output_path)
     except CliError:
-        pass
+        try:
+            file_raw = output_path.read_text(encoding="utf-8", errors="replace")
+            file_recovered_candidates.extend(_extract_json_candidates_from_raw(file_raw))
+        except OSError:
+            pass
     if payload is None:
         fallback_names = {
             "critique": "critique_output.json",
@@ -639,11 +736,16 @@ def _recover_codex_payload(
             try:
                 payload = parse_json_file(fallback_path)
             except CliError:
-                pass
+                try:
+                    fallback_raw = fallback_path.read_text(encoding="utf-8", errors="replace")
+                    file_recovered_candidates.extend(_extract_json_candidates_from_raw(fallback_raw))
+                except OSError:
+                    pass
     raw_candidates = _extract_json_candidates_from_raw(raw)
     candidate_payloads: list[dict[str, Any]] = []
     if payload is not None:
         candidate_payloads.append(payload)
+    candidate_payloads.extend(file_recovered_candidates)
     candidate_payloads.extend(raw_candidates)
     valid_payloads: list[dict[str, Any]] = []
     for candidate in candidate_payloads:
@@ -811,14 +913,8 @@ def _default_mock_loop_execute_payload(
 
 def _default_mock_critique_payload(state: PlanState, plan_dir: Path) -> dict[str, Any]:
     iteration = state["iteration"] or 1
-    del plan_dir
-    mode = state["config"].get("mode", "code")
     robustness = configured_robustness(state)
-    active_checks = (
-        joke_checks_for_robustness(robustness)
-        if mode == "joke"
-        else checks_for_robustness(robustness)
-    )
+    active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
     checks = build_empty_template(active_checks)
     if iteration == 1:
         return {
@@ -982,11 +1078,12 @@ def _default_mock_finalize_payload(state: PlanState, plan_dir: Path) -> dict[str
                 "verdict": "",
             },
         ],
+        "user_actions": [],
         "meta_commentary": "This is a mock finalize output.",
         "validation": {
             "plan_steps_covered": [
-                {"plan_step_summary": f"Implement: {state['idea']}", "finalize_task_ids": ["T1"]},
-                {"plan_step_summary": "Verify success criteria", "finalize_task_ids": ["T2"]},
+                {"plan_step_summary": f"Implement: {state['idea']}", "finalize_item_ids": ["T1"]},
+                {"plan_step_summary": "Verify success criteria", "finalize_item_ids": ["T2"]},
             ],
             "orphan_tasks": [],
             "completeness_notes": "All plan steps mapped to tasks.",
@@ -1286,7 +1383,11 @@ def run_claude_step(
     project_dir = Path(state["config"]["project_dir"])
     work_dir = resolve_work_dir(state)
     plan_mode = state["config"].get("mode", "code")
-    schema_name = get_execution_schema_key(plan_mode) if step == "execute" else STEP_SCHEMA_FILENAMES[step]
+    schema_name = (
+        get_execution_schema_key(plan_mode, form=creative_form_id(state))
+        if step == "execute"
+        else STEP_SCHEMA_FILENAMES[step]
+    )
     schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
     session_key = session_key_for(step, "claude")
     session = state["sessions"].get(session_key, {})
@@ -1392,7 +1493,11 @@ def run_codex_step(
     project_dir = Path(state["config"]["project_dir"])
     work_dir = resolve_work_dir(state)
     plan_mode = state["config"].get("mode", "code")
-    codex_schema_name = get_execution_schema_key(plan_mode) if step == "execute" else STEP_SCHEMA_FILENAMES[step]
+    codex_schema_name = (
+        get_execution_schema_key(plan_mode, form=creative_form_id(state))
+        if step == "execute"
+        else STEP_SCHEMA_FILENAMES[step]
+    )
     schema_file = schemas_root(root) / codex_schema_name
     session_key = session_key_for(step, "codex")
     session = state["sessions"].get(session_key, {})
@@ -1414,6 +1519,8 @@ def run_codex_step(
         # does not accept --add-dir; resumed sessions keep the workspace that
         # was granted when the session was created.
         command = ["codex", "exec", "resume"]
+        if _trusted_container() and step in _EXECUTE_STEPS:
+            command.append("--dangerously-bypass-approvals-and-sandbox")
         command.extend(_codex_exec_mode_flags(step))
         if json_trace:
             command.append("--json")
@@ -1439,9 +1546,44 @@ def run_codex_step(
             # unsandboxed. The outer container boundary still contains writes.
             command.append("--dangerously-bypass-approvals-and-sandbox")
         else:
+            # Allow projects to declare extra writable roots via state.config.
+            # Useful when the project_dir is a subdirectory of a multi-package
+            # workspace and tasks legitimately create files in sibling dirs
+            # (e.g. tools/ as project_dir but plan creates animations/ at the
+            # workspace root). Roots are passed verbatim to codex; relative
+            # paths are resolved against work_dir.
+            extra_roots: list[str] = []
+            # Auto-widen the sandbox to the enclosing workspace root when
+            # work_dir is a subdirectory of a larger checkout. Without this,
+            # plans whose project_dir is e.g. ``tools/`` get blocked from
+            # writing siblings like ``effects/`` even though they're part of
+            # the same repo. Set MEGAPLAN_NARROW_SANDBOX=1 to opt out.
+            extra_roots.extend(_auto_writable_roots(Path(work_dir)))
+            try:
+                state_path = plan_dir / "state.json"
+                if state_path.is_file():
+                    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+                    raw_extra = state_data.get("config", {}).get("extra_writable_roots", []) or []
+                    if isinstance(raw_extra, list):
+                        for root in raw_extra:
+                            if not isinstance(root, str):
+                                continue
+                            resolved = (Path(work_dir) / root).resolve() if not Path(root).is_absolute() else Path(root).resolve()
+                            extra_roots.append(str(resolved))
+            except Exception:
+                pass
+            # Deduplicate while preserving order; ensures work_dir is first
+            # (codex treats the first entry as the primary workspace).
+            seen: set[str] = set()
+            roots: list[str] = []
+            for r in [str(work_dir), *extra_roots]:
+                if r not in seen:
+                    seen.add(r)
+                    roots.append(r)
+            roots_literal = ", ".join(f"\"{r}\"" for r in roots)
             command.extend([
                 "-c",
-                f"sandbox_workspace_write.writable_roots=[\"{work_dir}\"]",
+                f"sandbox_workspace_write.writable_roots=[{roots_literal}]",
             ])
         command.extend([
             "-o",

@@ -34,6 +34,7 @@ from megaplan._core import (
     ensure_runtime_layout,
     get_effective,
     infer_next_steps,
+    is_prose_mode,
     json_dump,
     load_config,
     load_debt_registry,
@@ -48,6 +49,7 @@ from megaplan._core import (
     humanize_seconds,
 )
 from megaplan.execute.core import build_monitor_hint
+from megaplan.forms import available_form_ids
 from megaplan.handlers import (
     handle_audit_verifiability,
     handle_critique,
@@ -304,7 +306,7 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     summary = f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
-    if plan_mode in {"doc", "joke"}:
+    if is_prose_mode(state):
         summary += f" Mode: {plan_mode}. Output: {plan_output_path}."
     if active_step:
         summary = (
@@ -891,25 +893,28 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
-    init_parser.add_argument("--mode", choices=["code", "doc", "metaplan", "joke"], default=None,
+    init_parser.add_argument("--mode", choices=["code", "doc", "metaplan", "joke", "creative"], default=None,
                              help="Deliverable type: 'code' (source changes), 'doc' / 'metaplan' "
                                   "(design/spec artifact — 'metaplan' is an alias for 'doc'), or "
-                                  "'joke' (film scene script; requires --output). "
+                                  "'joke' (film scene script; requires --output), or "
+                                  "'creative' (creative work; requires --form and --output). "
                                   "Defaults to 'code' unless the idea strongly suggests a design document, "
                                   "in which case --mode must be passed explicitly.")
+    init_parser.add_argument("--form", choices=available_form_ids(), default=None,
+                             help="Creative form to use with --mode creative.")
     init_parser.add_argument("--output", default=None,
-                             help="Relative path where the doc or joke artifact will be written. "
-                                  "Required with --mode doc or --mode joke; rejected with --mode code.")
+                             help="Relative path where the prose artifact will be written. "
+                                  "Required with --mode doc, --mode joke, or --mode creative; rejected with --mode code.")
     init_parser.add_argument(
         "--primary-criterion",
         default=None,
-        help="Declare the joke-mode primary criterion (for example: 'weirdest coherent'). "
-             "Valid only with --mode joke.",
+        help="Declare the creative-work primary criterion (for example: 'weirdest coherent'). "
+             "Valid only with --mode joke or --mode creative.",
     )
     init_parser.add_argument("--from-doc", default=None,
                              help="Relative path to a prior doc-mode artifact whose ## Settled "
                                   "Decisions section should be imported. Valid with --mode "
-                                  "code, --mode doc, or --mode joke.")
+                                  "code, --mode doc, --mode joke, or --mode creative.")
     init_parser.add_argument(
         "--idea-file",
         default=None,
@@ -1018,11 +1023,12 @@ def build_parser() -> argparse.ArgumentParser:
     step_move_parser.add_argument("--after", required=True)
 
     override_parser = subparsers.add_parser("override")
-    override_parser.add_argument("override_action", choices=["abort", "force-proceed", "add-note", "replan", "set-robustness"])
+    override_parser.add_argument("override_action", choices=["abort", "force-proceed", "add-note", "replan", "set-robustness", "set-profile"])
     override_parser.add_argument("--plan")
     override_parser.add_argument("--reason", default="")
     override_parser.add_argument("--note")
     override_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
+    override_parser.add_argument("--profile", default=None)
     # strict-notes plumbing. Only meaningful for specific override_action values, but
     # the override parser is flat (single positional + flags), so the flags live here.
     override_parser.add_argument(
@@ -1188,6 +1194,35 @@ def cli_entry() -> None:
     sys.exit(main())
 
 
+def _resolve_project_root(args: argparse.Namespace) -> Path:
+    """Pick the authoritative project root for handlers that take ``root``.
+
+    Precedence:
+
+    1. ``--project-dir`` (when set on *args*) wins. The CLI flag is a deliberate
+       caller override; honoring CWD-based discovery here lets a stray
+       ``.megaplan/`` in an ancestor directory hijack the run. That's how
+       parallel `megaplan init` invocations from sibling worktrees under
+       ``~/Documents/.megaplan-worktrees/<exp>/<profile>/`` collide on a
+       ``duplicate_plan`` error — the walk-up hits ``~/Documents/.megaplan/``
+       and they all try to write into the same plans dir. See
+       ``megaplan/bakeoff/orchestrator.py:_init_profile`` for the spawning side.
+    2. Otherwise fall back to ``_find_megaplan_root(Path.cwd())`` — the legacy
+       behavior that lets ``megaplan plan`` / ``status`` / etc. find the
+       enclosing project without an explicit flag.
+    """
+    project_dir = getattr(args, "project_dir", None)
+    if project_dir:
+        resolved = Path(project_dir).expanduser().resolve()
+        if not resolved.exists() or not resolved.is_dir():
+            raise CliError(
+                "invalid_project_dir",
+                f"--project-dir does not exist or is not a directory: {project_dir}",
+            )
+        return resolved
+    return _find_megaplan_root(Path.cwd())
+
+
 def _find_megaplan_root(start: Path) -> Path:
     """Walk up from *start* to find the git-root directory containing ``.megaplan/``.
 
@@ -1289,7 +1324,10 @@ def main(argv: list[str] | None = None) -> int:
     work_dir_override = getattr(args, "work_dir", None)
     set_work_dir_override(Path(work_dir_override) if work_dir_override else None)
 
-    root = _find_megaplan_root(Path.cwd())
+    try:
+        root = _resolve_project_root(args)
+    except CliError as error:
+        return error_response(error)
     ensure_runtime_layout(root)
 
     if args.command == "auto":
@@ -1327,6 +1365,8 @@ def main(argv: list[str] | None = None) -> int:
             raise CliError("invalid_args", "override add-note requires a note")
         if args.command == "override" and args.override_action == "set-robustness" and not args.robustness:
             raise CliError("invalid_args", f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_LEVELS)}")
+        if args.command == "override" and args.override_action == "set-profile" and not args.profile:
+            raise CliError("invalid_args", "override set-profile requires --profile NAME")
         return render_response(handler(root, args))
     except CliError as error:
         return error_response(error, root=root)

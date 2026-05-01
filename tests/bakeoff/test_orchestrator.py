@@ -68,6 +68,231 @@ def test_init_profile_appends_robustness(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert record["name"] == "standard"
 
 
+def test_init_profile_threads_doc_mode_and_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured_args: list[list[Any]] = []
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> FakeProcess:
+        captured_args.append(list(args))
+        return FakeProcess(0)
+
+    monkeypatch.setattr(
+        "megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "create_worktree",
+        lambda _repo, target, _sha: target.mkdir(parents=True, exist_ok=True),
+    )
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    idea = root / "idea.md"
+    idea.write_text("design something", encoding="utf-8")
+
+    state: BakeoffState = {
+        "schema_version": 1,
+        "experiment_id": "exp",
+        "base_sha": "abc",
+        "idea_hash": "hash",
+        "idea_path": str(idea),
+        "mode": "doc",
+        "output_path": "docs/foo.md",
+        "profiles": [],
+        "phase": "running",
+        "chosen_profile": None,
+        "merged_at": None,
+        "judge_model": None,
+    }
+
+    record = asyncio.run(
+        orchestrator._init_profile(
+            root, state, "standard", "exp", "abc", idea,
+            mode="doc", output="docs/foo.md",
+        )
+    )
+
+    assert len(captured_args) == 1
+    cmd = captured_args[0]
+    assert "--mode" in cmd
+    mode_idx = cmd.index("--mode")
+    assert cmd[mode_idx + 1] == "doc"
+    assert "--output" in cmd
+    out_idx = cmd.index("--output")
+    assert cmd[out_idx + 1] == "docs/foo.md"
+    assert record["name"] == "standard"
+
+
+def test_init_profile_doc_mode_requires_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        orchestrator,
+        "create_worktree",
+        lambda _repo, target, _sha: target.mkdir(parents=True, exist_ok=True),
+    )
+    root = tmp_path / "repo"
+    root.mkdir()
+    idea = root / "idea.md"
+    idea.write_text("x", encoding="utf-8")
+    state: BakeoffState = {
+        "schema_version": 1,
+        "experiment_id": "exp",
+        "base_sha": "abc",
+        "idea_hash": "hash",
+        "idea_path": str(idea),
+        "mode": "doc",
+        "output_path": None,
+        "profiles": [],
+        "phase": "running",
+        "chosen_profile": None,
+        "merged_at": None,
+        "judge_model": None,
+    }
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError) as excinfo:
+        asyncio.run(
+            orchestrator._init_profile(
+                root, state, "standard", "exp", "abc", idea,
+                mode="doc", output=None,
+            )
+        )
+    assert excinfo.value.code == "invalid_args"
+
+
+def test_run_bakeoff_persists_doc_mode_and_output_in_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Doc-mode bake-off run should persist mode + output_path so downstream
+    handlers (status/compare/merge/resume) can read them back."""
+    import json
+    import subprocess
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True, capture_output=True)
+    (root / ".gitignore").write_text(".megaplan/\n", encoding="utf-8")
+    (root / "README.md").write_text("base\n", encoding="utf-8")
+    (root / "idea.md").write_text("design x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, capture_output=True)
+
+    init_calls: list[list[str]] = []
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> FakeProcess:
+        cmd = list(args)
+        if "init" in cmd:
+            init_calls.append(cmd)
+            worktree = kwargs.get("cwd")
+            if worktree and "--name" in cmd:
+                plan_id = cmd[cmd.index("--name") + 1]
+                plan_dir = Path(worktree) / ".megaplan" / "plans" / plan_id
+                plan_dir.mkdir(parents=True, exist_ok=True)
+                plan_dir.joinpath("state.json").write_text(
+                    json.dumps({"current_state": "initialized", "history": [], "meta": {}}),
+                    encoding="utf-8",
+                )
+        return FakeProcess(0)
+
+    monkeypatch.setattr(
+        "megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path):
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+        outcome_path.parent.mkdir(parents=True, exist_ok=True)
+        outcome_path.write_text(
+            json.dumps({"status": "done", "plan": plan_id, "final_state": "done", "iterations": 1, "reason": "", "events": []}),
+            encoding="utf-8",
+        )
+        return FakeProcess(0), None
+
+    monkeypatch.setattr(orchestrator, "_spawn_auto", fake_spawn)
+
+    state = asyncio.run(
+        orchestrator.run_bakeoff(
+            root,
+            root / "idea.md",
+            ["standard"],
+            "doc",
+            "exp-doc",
+            output="docs/foo.md",
+        )
+    )
+
+    assert state["mode"] == "doc"
+    assert state["output_path"] == "docs/foo.md"
+    # init was invoked with --mode doc and --output docs/foo.md
+    assert len(init_calls) == 1
+    cmd = init_calls[0]
+    assert "--mode" in cmd
+    assert cmd[cmd.index("--mode") + 1] == "doc"
+    assert "--output" in cmd
+    assert cmd[cmd.index("--output") + 1] == "docs/foo.md"
+
+    # State on disk also reflects the new fields.
+    persisted = json.loads(
+        (root / ".megaplan" / "bakeoffs" / "exp-doc" / "bakeoff.json").read_text(encoding="utf-8")
+    )
+    assert persisted["mode"] == "doc"
+    assert persisted["output_path"] == "docs/foo.md"
+
+
+def test_run_bakeoff_metaplan_alias_normalizes_to_doc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--mode metaplan` passed programmatically should normalize to 'doc'."""
+    import subprocess
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True, capture_output=True)
+    (root / ".gitignore").write_text(".megaplan/\n", encoding="utf-8")
+    (root / "README.md").write_text("base\n", encoding="utf-8")
+    (root / "idea.md").write_text("design x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, capture_output=True)
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> FakeProcess:
+        return FakeProcess(0)
+
+    monkeypatch.setattr(
+        "megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path):
+        import json as _json
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("ok\n", encoding="utf-8")
+        outcome_path.parent.mkdir(parents=True, exist_ok=True)
+        outcome_path.write_text(
+            _json.dumps({"status": "done", "plan": plan_id, "final_state": "done", "iterations": 1, "reason": "", "events": []}),
+            encoding="utf-8",
+        )
+        return FakeProcess(0), None
+
+    monkeypatch.setattr(orchestrator, "_spawn_auto", fake_spawn)
+
+    state = asyncio.run(
+        orchestrator.run_bakeoff(
+            root,
+            root / "idea.md",
+            ["standard"],
+            "metaplan",
+            "exp-meta",
+            output="docs/foo.md",
+        )
+    )
+    assert state["mode"] == "doc"
+    assert state["output_path"] == "docs/foo.md"
+
+
 def test_init_profile_omits_robustness_when_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured_args: list[list[Any]] = []
 
