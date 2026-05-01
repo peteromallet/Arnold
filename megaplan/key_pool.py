@@ -17,13 +17,22 @@ _PROVIDER_KEY_VARS = {
     "minimax": "MINIMAX_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "google": "GEMINI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "fireworks": "FIREWORKS_API_KEY",
 }
 _ENV_ALIASES = {
     "ZHIPU_API_KEY": ("ZHIPU_API_KEY", "GLM_API_KEY"),
     "ZHIPU_BASE_URL": ("ZHIPU_BASE_URL", "GLM_BASE_URL"),
     "GEMINI_API_KEY": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "FIREWORKS_API_KEY": ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
+    "FIREWORKS_BASE_URL": ("FIREWORKS_BASE_URL", "FIREWORKS_AI_BASE_URL"),
 }
-_PROVIDER_BASE_URL_VARS = {"zhipu": "ZHIPU_BASE_URL", "minimax": "MINIMAX_BASE_URL"}
+_PROVIDER_BASE_URL_VARS = {
+    "zhipu": "ZHIPU_BASE_URL",
+    "minimax": "MINIMAX_BASE_URL",
+    "deepseek": "DEEPSEEK_BASE_URL",
+    "fireworks": "FIREWORKS_BASE_URL",
+}
 
 # Direct API model name → OpenRouter model ID
 _MINIMAX_OR_MODEL_MAP = {
@@ -45,6 +54,8 @@ _DEFAULT_BASE_URLS = {
     "minimax": "https://api.minimax.io/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "deepseek": "https://api.deepseek.com",
+    "fireworks": "https://api.fireworks.ai/inference/v1",
 }
 @dataclass
 class KeyEntry:
@@ -207,6 +218,14 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
         resolved_model = resolved_model[len("google:"):]
         agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["google"]
         agent_kwargs["api_key"] = acquire_key("google")
+    elif resolved_model.startswith("deepseek:"):
+        resolved_model = resolved_model[len("deepseek:"):]
+        agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["deepseek"]) or _DEFAULT_BASE_URLS["deepseek"]
+        agent_kwargs["api_key"] = acquire_key("deepseek")
+    elif resolved_model.startswith("fireworks:"):
+        resolved_model = resolved_model[len("fireworks:"):]
+        agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["fireworks"]) or _DEFAULT_BASE_URLS["fireworks"]
+        agent_kwargs["api_key"] = acquire_key("fireworks")
     elif resolved_model.startswith("minimax:"):
         resolved_model = resolved_model[len("minimax:"):]
         minimax_key = acquire_key("minimax")
