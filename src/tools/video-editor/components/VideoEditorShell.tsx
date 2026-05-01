@@ -17,6 +17,7 @@ import { CompactPreview } from '@/tools/video-editor/components/CompactPreview';
 import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel';
 import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
 import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel';
+import { SequenceCreatorPanel } from '@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel';
 import { ThemeChip } from '@/tools/video-editor/components/ThemeChip';
 import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor';
 import {
@@ -113,6 +114,7 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
   /** In condensed mode: 'preview' (default) or 'properties' for the right panel. */
   const [condensedRightPanel, setCondensedRightPanel] = useState<'preview' | 'properties'>('preview');
   const [isMobilePropertiesOpen, setIsMobilePropertiesOpen] = useState(false);
+  const [isSequenceCreatorOpen, setIsSequenceCreatorOpen] = useState(false);
   const timelineFps = Math.max(1, editorData.resolvedConfig?.output?.fps ?? 30);
   const conflict = useTimelineRealtime({
     timelineId,
@@ -686,7 +688,7 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
             </div>
 
             <div className="relative min-h-0 overflow-hidden">
-              <TimelineEditor />
+              <TimelineEditor onOpenSequenceCreator={() => setIsSequenceCreatorOpen(true)} />
             </div>
 
           </main>
@@ -744,7 +746,7 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
             </div>
 
             <div className="relative col-span-1 min-h-0 overflow-hidden">
-              <TimelineEditor />
+              <TimelineEditor onOpenSequenceCreator={() => setIsSequenceCreatorOpen(true)} />
 
             </div>
 
@@ -770,7 +772,7 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
             </div>
 
             <div className="relative col-span-2 min-h-0 overflow-hidden">
-              <TimelineEditor />
+              <TimelineEditor onOpenSequenceCreator={() => setIsSequenceCreatorOpen(true)} />
 
             </div>
 
@@ -778,6 +780,12 @@ function FullEditorLayout({ timelineId, forceCondensed = false }: { timelineId: 
         )}
       </div>
       {previewPortal}
+      {isSequenceCreatorOpen && (
+        <SequenceCreatorPanel
+          open={isSequenceCreatorOpen}
+          onOpenChange={setIsSequenceCreatorOpen}
+        />
+      )}
 
       <AlertDialog open={conflict.isOpen} onOpenChange={conflict.setOpen}>
         <AlertDialogContent>

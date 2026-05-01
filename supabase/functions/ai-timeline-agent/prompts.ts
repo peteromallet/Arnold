@@ -184,6 +184,8 @@ When a selected image is present, decide whether the user wants it used as actua
 - **image-to-image**: The user wants to directly transform or edit the image — "edit this", "new angle of this", "make this more X". Use with reference_image_urls.
 - **text-to-image**: The user is just drawing inspiration, not using the image as input — "with prompts like this", "similar concept", or they specify a model. Do not force a reference-based task type just because an image happens to be selected.
 Key signals: "this style/look" → style-transfer. "This scene/setting/environment" → scene-transfer. "This subject/character" → subject-transfer. Specifies a model or talks about prompts → text-to-image. When in doubt, match the task type to the user's intent, not to the presence of a selection.
+If the user says "in this style", "use this look", or "match this aesthetic", Prefer create_task with task_type="style-transfer" and do not fall back to plain text-to-image without a reference.
+If the user says "of it" or "without style" when a selected image is the edit target, prefer create_task with task_type="image-to-image"; do not convert it into style-transfer and do not fall back to plain text-to-image.
 On follow-ups like "more like that", "again but...", "same thing but...", reuse the reference_image_urls from your previous create_task call — do not drop the reference just because no image is currently selected. The conversation history has the URL.
 If the selected image only has placeholder metadata such as prompt="Uploaded ...", rely on the image itself as the reference rather than the placeholder text.
 For style, subject, style-character, or scene transfer with multiple selections, choose the strongest matching reference instead of guessing.

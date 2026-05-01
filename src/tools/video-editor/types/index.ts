@@ -193,6 +193,11 @@ export type PinnedShotImageClipSnapshot = {
     continuous?: ClipContinuous;
     transition?: ClipTransition;
     effects?: TimelineEffect[] | Record<string, number>;
+    params?: Record<string, unknown>;
+    pool_id?: string;
+    clip_order?: number;
+    source_uuid?: string;
+    generation?: Record<string, unknown>;
   };
 };
 
@@ -260,6 +265,9 @@ export type ResolvedTimelineConfig = {
   tracks: TrackDefinition[];
   clips: ResolvedTimelineClip[];
   registry: Record<string, ResolvedAssetRegistryEntry>;
+  theme?: string;
+  theme_overrides?: ThemeOverrides;
+  generation_defaults?: GenerationDefaults;
 };
 
 export type TimelineCompositionProps = {

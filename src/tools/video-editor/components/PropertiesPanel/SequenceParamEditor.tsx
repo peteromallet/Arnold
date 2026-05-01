@@ -1,0 +1,119 @@
+import { Input } from '@/shared/components/ui/input';
+import { Textarea } from '@/shared/components/ui/textarea';
+import type { AvailableSequenceMetadata } from '@/tools/video-editor/sequences/registry';
+import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
+
+type SequenceParamEditorProps = {
+  metadata: AvailableSequenceMetadata;
+  params: Record<string, unknown> | undefined;
+  registry: ResolvedTimelineConfig['registry'];
+  onChange: (params: Record<string, unknown>) => void;
+};
+
+const PARAMS_WITH_TEXTAREA = new Set(['subtitle', 'caption', 'detail', 'action', 'note']);
+
+const asAssetKeys = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+};
+
+const setParam = (
+  current: Record<string, unknown> | undefined,
+  key: string,
+  value: unknown,
+): Record<string, unknown> => ({
+  ...(current ?? {}),
+  [key]: value,
+});
+
+const parseAssetKeysInput = (
+  value: string,
+  registry: ResolvedTimelineConfig['registry'],
+): string[] => (
+  value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0 && Object.prototype.hasOwnProperty.call(registry, item))
+);
+
+export function SequenceParamEditor({
+  metadata,
+  params,
+  registry,
+  onChange,
+}: SequenceParamEditorProps) {
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-card/60 p-3">
+      <div>
+        <div className="text-sm font-medium text-foreground">{metadata.label}</div>
+        <div className="text-xs text-muted-foreground">{metadata.description}</div>
+      </div>
+
+      {metadata.params.map((param) => {
+        const value = params?.[param.key] ?? param.defaultValue ?? (param.kind === 'asset-list' ? [] : '');
+
+        if (param.kind === 'asset-list') {
+          const keys = asAssetKeys(value);
+          return (
+            <div key={param.key} className="space-y-2 rounded-lg border border-border/70 bg-background/60 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-foreground">{param.label}</div>
+                  <div className="text-xs text-muted-foreground">{param.description}</div>
+                </div>
+                {typeof param.maxItems === 'number' && (
+                  <div className="shrink-0 text-xs text-muted-foreground">{keys.length}/{param.maxItems}</div>
+                )}
+              </div>
+              <Input
+                value={keys.join(', ')}
+                placeholder="asset-key-a, asset-key-b"
+                onChange={(event) => {
+                  const nextKeys = parseAssetKeysInput(event.target.value, registry);
+                  onChange(setParam(params, param.key, typeof param.maxItems === 'number' ? nextKeys.slice(0, param.maxItems) : nextKeys));
+                }}
+              />
+              {keys.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {keys.map((key) => (
+                    <span
+                      key={key}
+                      className="max-w-full truncate rounded-md border border-border/70 bg-muted px-2 py-1 text-[11px] text-muted-foreground"
+                      title={registry[key]?.src ?? registry[key]?.file ?? key}
+                    >
+                      {key}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const stringValue = typeof value === 'string' ? value : '';
+        return (
+          <div key={param.key} className="space-y-2 rounded-lg border border-border/70 bg-background/60 p-3">
+            <div>
+              <div className="text-sm font-medium text-foreground">
+                {param.label}{param.required ? ' *' : ''}
+              </div>
+              <div className="text-xs text-muted-foreground">{param.description}</div>
+            </div>
+            {PARAMS_WITH_TEXTAREA.has(param.key) ? (
+              <Textarea
+                value={stringValue}
+                rows={3}
+                onChange={(event) => onChange(setParam(params, param.key, event.target.value))}
+              />
+            ) : (
+              <Input
+                value={stringValue}
+                onChange={(event) => onChange(setParam(params, param.key, event.target.value))}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}

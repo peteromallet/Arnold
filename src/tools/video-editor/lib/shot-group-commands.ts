@@ -263,6 +263,11 @@ function snapshotClipMeta(meta: ClipMeta): PinnedShotImageClipSnapshot['meta'] {
     continuous: meta.continuous,
     transition: meta.transition,
     effects: meta.effects,
+    params: meta.params,
+    pool_id: meta.pool_id,
+    clip_order: meta.clip_order,
+    source_uuid: meta.source_uuid,
+    generation: meta.generation,
   };
 }
 

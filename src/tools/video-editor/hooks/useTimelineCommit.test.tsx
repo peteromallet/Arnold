@@ -26,6 +26,9 @@ function makeVideoModeGroupData(): TimelineData {
   const config: TimelineConfig = {
     output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
     tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    theme: '2rp',
+    theme_overrides: { visual: { canvas: { fps: 24 } } },
+    generation_defaults: { model: 'sequence-v1' },
     clips: [
       {
         id: 'clip-video',
@@ -56,6 +59,9 @@ function makeVideoModeGroupData(): TimelineData {
     tracks: (config.tracks ?? []).map((t) => ({ ...t })),
     clips: config.clips.map((clip) => ({ ...clip, assetEntry: undefined })),
     registry: {},
+    theme: config.theme,
+    theme_overrides: config.theme_overrides,
+    generation_defaults: config.generation_defaults,
   };
 
   return {
@@ -134,6 +140,16 @@ describe('useTimelineCommit — delete-shot / auto-restore regression', () => {
     expect(groupAfter?.videoAssetKey).toBe('video-asset');
     // Snapshot metadata is preserved so a later explicit switchToImages() can still use it.
     expect(groupAfter?.imageClipSnapshot).toHaveLength(2);
+    expect(after.config).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
+    expect(after.resolvedConfig).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
   });
 
   it('delete-shot with pinnedShotGroupsOverride removes the group in the same commit', () => {
@@ -165,5 +181,46 @@ describe('useTimelineCommit — delete-shot / auto-restore regression', () => {
     const after = result.current.dataRef.current!;
     expect(after.config.pinnedShotGroups ?? []).toEqual([]);
     expect(after.config.clips).toEqual([]);
+  });
+
+  it('config mutations preserve theme extras through serializeForDisk and registry-backed rebuild', () => {
+    const eventBus = new TimelineEventBus();
+    const lastSavedSignatureRef = { current: '' };
+
+    const { result } = renderHook(() => useTimelineCommit({
+      eventBus,
+      lastSavedSignatureRef,
+    }));
+
+    act(() => {
+      result.current.commitData(makeVideoModeGroupData(), { save: false });
+    });
+
+    const initial = result.current.dataRef.current!;
+
+    act(() => {
+      result.current.applyEdit({
+        type: 'config',
+        resolvedConfig: {
+          ...initial.resolvedConfig,
+          tracks: initial.resolvedConfig.tracks.map((track) => (
+            track.id === 'V1' ? { ...track, label: 'Renamed Visual' } : track
+          )),
+        },
+      }, { save: false });
+    });
+
+    const after = result.current.dataRef.current!;
+    expect(after.config.tracks?.[0]?.label).toBe('Renamed Visual');
+    expect(after.config).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
+    expect(after.resolvedConfig).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
   });
 });

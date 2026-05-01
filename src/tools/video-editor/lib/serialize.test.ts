@@ -203,6 +203,25 @@ describe('video-editor serialization', () => {
     expect(() => validateSerializedConfig(serialized)).not.toThrow();
   });
 
+  it('serializes theme extras directly from resolved configs', () => {
+    const resolved = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 2 }],
+      registry: {},
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    } as unknown as ResolvedTimelineConfig;
+
+    const serialized = serializeForDisk(resolved);
+
+    expect(serialized.theme).toBe('2rp');
+    expect(serialized.theme_overrides).toEqual({ visual: { canvas: { fps: 24 } } });
+    expect(serialized.generation_defaults).toEqual({ model: 'sequence-v1' });
+    expect(() => validateSerializedConfig(serialized)).not.toThrow();
+  });
+
   it('round-trips legacy pinnedShotGroups through repairConfig before serialization', () => {
     const repaired = repairConfig({
       output: {

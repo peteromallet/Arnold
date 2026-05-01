@@ -53,6 +53,7 @@ function stubDenoEnv(): void {
 function createLogger() {
   return {
     info: vi.fn(),
+    warn: vi.fn(),
     error: vi.fn(),
     flush: vi.fn().mockResolvedValue(undefined),
   };
@@ -163,6 +164,7 @@ describe('ai-voice-prompt edge entrypoint', () => {
       success: true,
       transcription: 'make this scene more dramatic',
       prompt: 'enhanced prompt',
+      intent: 'rewrite',
       usage: { total_tokens: 22 },
     });
     expect(mocks.groqTranscriptionsCreate).not.toHaveBeenCalled();
@@ -194,8 +196,8 @@ describe('ai-voice-prompt edge entrypoint', () => {
       success: true,
       transcription: 'use exactly this sentence',
       prompt: 'use exactly this sentence',
+      intent: 'rewrite',
       usage: null,
-      warning: 'AI enhancement failed, returning raw transcription',
     });
   });
 });

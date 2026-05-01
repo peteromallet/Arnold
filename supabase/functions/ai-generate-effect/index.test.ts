@@ -58,6 +58,7 @@ function stubDenoEnv(): void {
   vi.stubGlobal('Deno', {
     env: {
       get: (key: string) => {
+        if (key === 'ANTHROPIC_API_KEY') return 'anthropic-test-key';
         if (key === 'GROQ_API_KEY') return 'groq-test-key';
         if (key === 'FIREWORKS_API_KEY') return 'fireworks-test-key';
         return undefined;
@@ -92,6 +93,25 @@ function createFireworksSseResponse(content: string): Response {
   );
 }
 
+function createAnthropicSseResponse(content: string): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'content_block_delta',
+          delta: { type: 'text_delta', text: content },
+        })}\n\n`));
+        controller.close();
+      },
+    }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    },
+  );
+}
+
 async function loadHandler() {
   await import('./index.ts');
   return __getServeHandler();
@@ -108,7 +128,7 @@ describe('ai-generate-effect edge entrypoint', () => {
     __resetServeHandler();
     stubDenoEnv();
     vi.stubGlobal('fetch', vi.fn(async () =>
-      createFireworksSseResponse(
+      createAnthropicSseResponse(
         '```ts\n// DESCRIPTION: Slides the clip in from the left with a soft easing finish.\n// PARAMS: [{"name":"direction","label":"Direction","description":"Controls which side the clip enters from.","type":"select","default":"left","options":[{"label":"Left","value":"left"},{"label":"Right","value":"right"}]}]\nfunction Example(props){ return React.createElement(AbsoluteFill, null, props.children); }\nexports.default = Example;\n```',
       )
     ));
@@ -205,14 +225,15 @@ describe('ai-generate-effect edge entrypoint', () => {
           ],
         },
       ],
-      model: 'accounts/fireworks/models/kimi-k2p5',
+      model: 'claude-opus-4-6-20260205',
     });
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://api.fireworks.ai/inference/v1/chat/completions',
+      'https://api.anthropic.com/v1/messages',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          Authorization: 'Bearer fireworks-test-key',
+          'x-api-key': 'anthropic-test-key',
+          'anthropic-version': '2023-06-01',
         }),
       }),
     );

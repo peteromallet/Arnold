@@ -34,6 +34,9 @@ function makeConfig(step: number) {
       ...base.output,
       file: `output-${step}.mp4`,
     },
+    theme: '2rp',
+    theme_overrides: { visual: { canvas: { fps: 24 } } },
+    generation_defaults: { model: 'sequence-v1' },
     tracks: (base.tracks ?? []).map((track) => ({ ...track })),
     clips: step === 0
       ? []
@@ -58,6 +61,9 @@ function makeTimelineData(step: number): TimelineData {
       assetEntry: undefined,
     })),
     registry: {},
+    theme: config.theme,
+    theme_overrides: config.theme_overrides,
+    generation_defaults: config.generation_defaults,
   };
 
   return {
@@ -169,6 +175,16 @@ describe('useTimelineHistory', () => {
     });
 
     expect(dataRef.current.config.output.file).toBe('output-1.mp4');
+    expect(dataRef.current.config).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
+    expect(dataRef.current.resolvedConfig).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
     expect(result.current.canUndo).toBe(true);
   });
 

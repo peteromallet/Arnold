@@ -29,6 +29,7 @@ import {
   THEME_PACKAGE_REGISTRY,
   type ThemePackageClipType,
 } from '@banodoco/timeline-composition/registry.generated';
+import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize';
 
 /** Minimal clip shape we need from the resolved timeline. */
 export interface RouterClipShape {
@@ -188,7 +189,7 @@ export function buildRenderTimelinePayload(
   return {
     payload: {
       timeline_id: input.timelineId,
-      timeline: input.resolvedConfig,
+      timeline: materializeSequenceConfig(input.resolvedConfig as Parameters<typeof materializeSequenceConfig>[0]),
       assets: input.assetRegistry ?? { assets: {} },
       theme_id: defaultThemeId(input.resolvedConfig),
       output_filename: input.outputFilename ?? defaultOutputFilename(input.timelineId),

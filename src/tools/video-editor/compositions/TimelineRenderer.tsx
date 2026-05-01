@@ -9,6 +9,14 @@ import { EffectLayerSequence } from '@/tools/video-editor/compositions/EffectLay
 import { TextClipSequence } from '@/tools/video-editor/compositions/TextClip';
 import { VisualClipSequence } from '@/tools/video-editor/compositions/VisualClip';
 import { UnknownClipPlaceholderSequence } from '@/tools/video-editor/compositions/UnknownClipPlaceholder';
+import { resolveTimelineRenderTheme } from '@/tools/video-editor/compositions/installed-themes';
+import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize';
+import {
+  ThemeProvider,
+  useTheme,
+  type RuntimeTheme,
+  type Theme,
+} from '@banodoco/timeline-composition/theme-api';
 import {
   THEME_PACKAGE_REGISTRY,
   type ThemePackageClipType,
@@ -45,9 +53,24 @@ const sortClipsByAt = (clips: ResolvedTimelineClip[]): ResolvedTimelineClip[] =>
 type ThemeEffectSequenceProps = {
   clip: ResolvedTimelineClip;
   fps: number;
+  theme: Theme;
 };
 
-const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps }) => {
+const ThemePackageComponent: FC<{
+  component: FC<{
+    clip: ResolvedTimelineClip;
+    params: unknown;
+    theme: RuntimeTheme;
+    fps: number;
+  }>;
+  clip: ResolvedTimelineClip;
+  fps: number;
+}> = ({ component: Component, clip, fps }) => {
+  const theme = useTheme();
+  return <Component clip={clip} params={clip.params} theme={theme} fps={fps} />;
+};
+
+const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps, theme }) => {
   const entry = THEME_PACKAGE_REGISTRY[clip.clipType as ThemePackageClipType];
   // Defensive: if the registry lookup somehow returned no entry, fall back
   // to the loud placeholder. This is the second layer of the SD-025
@@ -59,7 +82,7 @@ const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps }) => {
   const Component = entry.component as FC<{
     clip: ResolvedTimelineClip;
     params: unknown;
-    theme: unknown;
+    theme: RuntimeTheme;
     fps: number;
   }>;
   const durationInFrames = Math.max(1, Math.round(((clip.hold ?? 0) + ((clip.to ?? 0) - (clip.from ?? 0))) * fps)) || Math.max(1, Math.round((clip.hold ?? 1) * fps));
@@ -69,7 +92,9 @@ const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps }) => {
       from={Math.round(clip.at * fps)}
       durationInFrames={durationInFrames}
     >
-      <Component clip={clip} params={clip.params} theme={undefined} fps={fps} />
+      <ThemeProvider value={theme}>
+        <ThemePackageComponent component={Component} clip={clip} fps={fps} />
+      </ThemeProvider>
     </Sequence>
   );
 };
@@ -78,6 +103,7 @@ const renderVisualTrack = (
   track: TrackDefinition,
   clips: ResolvedTimelineClip[],
   fps: number,
+  theme: Theme,
 ) => {
   const sortedClips = sortClipsByAt(clips);
   if (sortedClips.length === 0) {
@@ -105,7 +131,7 @@ const renderVisualTrack = (
         // is provided by an installed theme package, render via the
         // codegenned registry entry. Mirrors HypeComposition.tsx:58-64.
         if (isThemePackageClipType(clip.clipType)) {
-          return <ThemeEffectSequence key={clip.id} clip={clip} fps={fps} />;
+          return <ThemeEffectSequence key={clip.id} clip={clip} fps={fps} theme={theme} />;
         }
 
         // SD-025 (Sprint 3): loud placeholder for unknown clipTypes that
@@ -184,16 +210,18 @@ const renderVisualTrack = (
 };
 
 export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ config }) => {
-  const fps = config.output.fps;
-  const visualTracks = useMemo(() => [...getVisualTracks(config)].reverse(), [config]);
-  const audioTracks = useMemo(() => getAudioTracks(config), [config]);
-  const totalDurationInFrames = useMemo(() => getTimelineDurationInFrames(config, fps), [config, fps]);
+  const renderConfig = useMemo(() => materializeResolvedSequenceConfig(config), [config]);
+  const fps = renderConfig.output.fps;
+  const theme = useMemo(() => resolveTimelineRenderTheme(renderConfig), [renderConfig]);
+  const visualTracks = useMemo(() => [...getVisualTracks(renderConfig)].reverse(), [renderConfig]);
+  const audioTracks = useMemo(() => getAudioTracks(renderConfig), [renderConfig]);
+  const totalDurationInFrames = useMemo(() => getTimelineDurationInFrames(renderConfig, fps), [renderConfig, fps]);
   const audioClips = useMemo(() => {
     const audioTrackIds = new Set(audioTracks.map((track) => track.id));
-    return config.clips.filter((clip) => audioTrackIds.has(clip.track));
-  }, [audioTracks, config.clips]);
+    return renderConfig.clips.filter((clip) => audioTrackIds.has(clip.track));
+  }, [audioTracks, renderConfig.clips]);
   const clipsByTrack = useMemo(() => {
-    return config.clips.reduce<{
+    return renderConfig.clips.reduce<{
       regular: Record<string, ResolvedTimelineClip[]>;
       effectLayers: Record<string, ResolvedTimelineClip[]>;
       all: Record<string, ResolvedTimelineClip[]>;
@@ -209,13 +237,13 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
       }
       return groups;
     }, { regular: {}, effectLayers: {}, all: {} });
-  }, [config]);
+  }, [renderConfig]);
 
   const visualContent = useMemo(() => {
     let accumulated: ReactNode = null;
 
     for (const track of visualTracks) {
-      const trackContent = renderVisualTrack(track, clipsByTrack.regular[track.id] ?? [], fps);
+      const trackContent = renderVisualTrack(track, clipsByTrack.regular[track.id] ?? [], fps, theme);
       let lowerTrackContent: ReactNode = accumulated;
       const effectLayers = sortClipsByAt(clipsByTrack.effectLayers[track.id] ?? []);
 
@@ -235,7 +263,7 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     }
 
     return accumulated;
-  }, [clipsByTrack.effectLayers, clipsByTrack.regular, fps, visualTracks]);
+  }, [clipsByTrack.effectLayers, clipsByTrack.regular, fps, theme, visualTracks]);
 
   return (
     <AudioAnalysisProvider clips={audioClips} fps={fps} totalDurationInFrames={totalDurationInFrames}>

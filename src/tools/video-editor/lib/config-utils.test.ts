@@ -71,4 +71,23 @@ describe('config-utils media sanitizers', () => {
     expect(resolved.registry).toEqual({});
     expect(resolved.clips[0].assetEntry).toBeUndefined();
   });
+
+  it('carries optional timeline theme extras into resolved config', async () => {
+    const resolved = await resolveTimelineConfig(
+      {
+        output: { file: 'out.mp4', resolution: '1920x1080', fps: 30 },
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual' }],
+        clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 2 }],
+        theme: '2rp',
+        theme_overrides: { visual: { canvas: { fps: 24 } } },
+        generation_defaults: { model: 'sequence-v1' },
+      },
+      { assets: {} },
+      async (file: string) => `https://example.com/${file}`,
+    );
+
+    expect(resolved.theme).toBe('2rp');
+    expect(resolved.theme_overrides).toEqual({ visual: { canvas: { fps: 24 } } });
+    expect(resolved.generation_defaults).toEqual({ model: 'sequence-v1' });
+  });
 });

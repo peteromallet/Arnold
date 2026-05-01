@@ -157,6 +157,7 @@ export function useTimelineCommit({
       clipOrder,
       current.tracks,
       current.config.pinnedShotGroups,
+      current.config,
     );
 
     return preserveUploadingClips(
@@ -351,6 +352,9 @@ export function useTimelineCommit({
         })),
         // Reuse resolved entries for unchanged assets and patch the current asset in-place.
         registry: nextResolvedRegistry,
+        ...(migratedConfig.theme !== undefined ? { theme: migratedConfig.theme } : {}),
+        ...(migratedConfig.theme_overrides !== undefined ? { theme_overrides: migratedConfig.theme_overrides } : {}),
+        ...(migratedConfig.generation_defaults !== undefined ? { generation_defaults: migratedConfig.generation_defaults } : {}),
       },
       assetMap: Object.fromEntries(
         Object.entries(nextRegistry.assets ?? {}).map(([nextAssetId, nextEntry]) => [nextAssetId, nextEntry.file]),
@@ -395,6 +399,9 @@ export function useTimelineCommit({
           assetEntry: clip.asset ? remainingResolvedRegistry[clip.asset] : undefined,
         })),
         registry: remainingResolvedRegistry,
+        ...(migratedConfig.theme !== undefined ? { theme: migratedConfig.theme } : {}),
+        ...(migratedConfig.theme_overrides !== undefined ? { theme_overrides: migratedConfig.theme_overrides } : {}),
+        ...(migratedConfig.generation_defaults !== undefined ? { generation_defaults: migratedConfig.generation_defaults } : {}),
       },
       assetMap: Object.fromEntries(
         Object.entries(remainingAssets).map(([nextAssetId, nextEntry]) => [nextAssetId, nextEntry.file]),

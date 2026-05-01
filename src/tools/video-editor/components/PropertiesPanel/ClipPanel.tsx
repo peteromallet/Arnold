@@ -11,6 +11,7 @@ import { Slider } from '@/shared/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs';
 import { Textarea } from '@/shared/components/ui/textarea';
 import { ParameterControls, getDefaultValues } from '@/tools/video-editor/components/ParameterControls';
+import { SequenceParamEditor } from '@/tools/video-editor/components/PropertiesPanel/SequenceParamEditor';
 import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects';
 import { EffectCreatorPanel } from '@/tools/video-editor/components/EffectCreatorPanel';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
@@ -18,7 +19,8 @@ import { useEffectResources, type EffectCategory, type EffectResource } from '@/
 import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
 import type { TimelineDeviceClass, TimelineInteractionMode } from '@/tools/video-editor/lib/mobile-interaction-model';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
+import { getAvailableSequenceMetadata, isAvailableSequenceClipType } from '@/tools/video-editor/sequences/registry';
+import type { ResolvedTimelineClip, ResolvedTimelineConfig, TrackDefinition } from '@/tools/video-editor/types';
 
 interface ClipPanelProps {
   clip: ResolvedTimelineClip | null;
@@ -40,6 +42,7 @@ interface ClipPanelProps {
   onSetPrecisionEnabled: (enabled: boolean) => void;
   compositionWidth: number;
   compositionHeight: number;
+  registry: ResolvedTimelineConfig['registry'];
   activeTab: ClipTab;
   setActiveTab: (tab: ClipTab) => void;
   isVariantStale?: boolean;
@@ -64,6 +67,10 @@ export function getVisibleClipTabs(
   track: TrackDefinition | null,
 ): ClipTab[] {
   if (clip?.clipType === 'effect-layer') {
+    return ['effects', 'timing'];
+  }
+
+  if (clip?.clipType && isAvailableSequenceClipType(clip.clipType)) {
     return ['effects', 'timing'];
   }
 
@@ -165,6 +172,7 @@ export function ClipPanel({
   onSetPrecisionEnabled,
   compositionWidth,
   compositionHeight,
+  registry,
   activeTab,
   setActiveTab,
   isVariantStale,
@@ -181,6 +189,10 @@ export function ClipPanel({
   const [editingEffect, setEditingEffect] = useState<EffectResource | null>(null);
   const visibleTabs = useMemo(() => getVisibleClipTabs(clip, track), [clip, track]);
   const isEffectLayer = clip?.clipType === 'effect-layer';
+  const sequenceMetadata = clip?.clipType && isAvailableSequenceClipType(clip.clipType)
+    ? getAvailableSequenceMetadata(clip.clipType)
+    : undefined;
+  const isSequenceClip = Boolean(sequenceMetadata);
   const entranceEffect = findEffectResourceByType(clip?.entrance?.type, effectResources.effects);
   const exitEffect = findEffectResourceByType(clip?.exit?.type, effectResources.effects);
   const continuousEffect = findEffectResourceByType(clip?.continuous?.type, effectResources.effects);
@@ -202,6 +214,8 @@ export function ClipPanel({
           <div className="truncate text-sm font-medium text-foreground">
             {isEffectLayer
               ? (getEffectDisplayLabel(clip.continuous?.type, effectResources.effects) ?? 'Effect Layer')
+              : isSequenceClip
+                ? sequenceMetadata?.label
               : (clip.text?.content || clip.asset || clip.id)}
           </div>
           <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -295,7 +309,7 @@ export function ClipPanel({
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ClipTab)}>
         <TabsList className={cn('grid w-full bg-muted/60', TAB_COLUMNS_CLASS[visibleTabs.length as keyof typeof TAB_COLUMNS_CLASS] ?? 'grid-cols-4')}>
-          {visibleTabs.includes('effects') && <TabsTrigger value="effects">Effects</TabsTrigger>}
+          {visibleTabs.includes('effects') && <TabsTrigger value="effects">{isSequenceClip ? 'Sequence' : 'Effects'}</TabsTrigger>}
           {visibleTabs.includes('timing') && <TabsTrigger value="timing">Timing</TabsTrigger>}
           {visibleTabs.includes('position') && <TabsTrigger value="position">Position</TabsTrigger>}
           {visibleTabs.includes('audio') && <TabsTrigger value="audio">Audio</TabsTrigger>}
@@ -304,6 +318,15 @@ export function ClipPanel({
 
         {visibleTabs.includes('effects') && (
           <TabsContent value="effects" className="space-y-3">
+            {isSequenceClip && sequenceMetadata ? (
+              <SequenceParamEditor
+                metadata={sequenceMetadata}
+                params={clip.params}
+                registry={registry}
+                onChange={(nextParams) => onChange({ params: nextParams })}
+              />
+            ) : (
+              <>
             <div className="grid gap-3 md:grid-cols-2">
               {!isEffectLayer && (
                 <div className="space-y-2">
@@ -551,6 +574,8 @@ export function ClipPanel({
                 }
               }}
             />
+              </>
+            )}
           </TabsContent>
         )}
 
@@ -561,10 +586,16 @@ export function ClipPanel({
                 <FieldLabel>Start (seconds)</FieldLabel>
                 <NumberInput value={clip.at} step={0.1} onChange={(value) => { if (value !== null) onChange({ at: value }); }} />
               </div>
-              {isEffectLayer ? (
+              {isEffectLayer || isSequenceClip ? (
                 <div className="space-y-2">
                   <FieldLabel>Duration (seconds)</FieldLabel>
-                  <NumberInput value={clip.hold ?? 5} min={0.1} step={0.1} onChange={(value) => { if (value !== null) onChange({ hold: value }); }} />
+                  <NumberInput
+                    value={clip.hold ?? sequenceMetadata?.hold.defaultSeconds ?? 5}
+                    min={sequenceMetadata?.hold.minSeconds ?? 0.1}
+                    max={sequenceMetadata?.hold.maxSeconds}
+                    step={sequenceMetadata?.hold.stepSeconds ?? 0.1}
+                    onChange={(value) => { if (value !== null) onChange({ hold: value }); }}
+                  />
                 </div>
               ) : (
                 <>

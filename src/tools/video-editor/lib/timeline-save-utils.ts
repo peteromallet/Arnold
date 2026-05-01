@@ -40,6 +40,9 @@ export function buildDataFromCurrentRegistry(
       assetEntry: clip.asset ? current.resolvedConfig.registry[clip.asset] : undefined,
     })),
     registry: current.resolvedConfig.registry,
+    ...(migratedConfig.theme !== undefined ? { theme: migratedConfig.theme } : {}),
+    ...(migratedConfig.theme_overrides !== undefined ? { theme_overrides: migratedConfig.theme_overrides } : {}),
+    ...(migratedConfig.generation_defaults !== undefined ? { generation_defaults: migratedConfig.generation_defaults } : {}),
   };
 
   return assembleTimelineData({
@@ -83,6 +86,9 @@ export function buildDataFromSnapshot(
       assetEntry: clip.asset ? mergedResolvedRegistry[clip.asset] : undefined,
     })),
     registry: mergedResolvedRegistry,
+    ...(migratedConfig.theme !== undefined ? { theme: migratedConfig.theme } : {}),
+    ...(migratedConfig.theme_overrides !== undefined ? { theme_overrides: migratedConfig.theme_overrides } : {}),
+    ...(migratedConfig.generation_defaults !== undefined ? { generation_defaults: migratedConfig.generation_defaults } : {}),
   };
 
   return assembleTimelineData({

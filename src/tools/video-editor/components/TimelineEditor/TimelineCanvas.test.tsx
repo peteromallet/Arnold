@@ -249,6 +249,8 @@ function renderCanvas(params?: {
   scaleWidth?: number;
   tracks?: TrackDefinition[];
   rows?: TimelineRow[];
+  onAddTextAt?: React.ComponentProps<typeof TimelineCanvas>['onAddTextAt'];
+  onOpenSequenceCreator?: React.ComponentProps<typeof TimelineCanvas>['onOpenSequenceCreator'];
 }) {
   const dataRef = params?.dataRef ?? { current: null };
   const trackDefinitions = params?.tracks ?? [params?.track ?? track];
@@ -302,6 +304,8 @@ function renderCanvas(params?: {
       onShotGroupSwitchToFinalVideo={params?.onShotGroupSwitchToFinalVideo}
       onShotGroupSwitchToImages={params?.onShotGroupSwitchToImages}
       interactionStateRef={params?.interactionStateRef}
+      onAddTextAt={params?.onAddTextAt}
+      onOpenSequenceCreator={params?.onOpenSequenceCreator}
       dragSessionRef={{ current: null }}
     />,
   );
@@ -344,6 +348,37 @@ afterEach(() => {
   useTimelineMutableAdaptersMock.mockReset();
   setGestureOwner.mockReset();
   setInputModalityFromPointerType.mockClear();
+});
+
+describe('TimelineCanvas floating tools', () => {
+  it('shows Sequence beside Text and Effect Layer without changing drag payloads', () => {
+    const onOpenSequenceCreator = vi.fn();
+    renderCanvas({
+      onAddTextAt: vi.fn(),
+      onOpenSequenceCreator,
+    });
+
+    const textTool = screen.getByTitle('Drag onto timeline to add text');
+    const effectLayerTool = screen.getByTitle('Drag onto timeline to add an effect layer');
+    const sequenceTool = screen.getByRole('button', { name: 'Open Sequence creator' });
+
+    expect(textTool).toBeInTheDocument();
+    expect(effectLayerTool).toBeInTheDocument();
+    expect(sequenceTool).toBeInTheDocument();
+
+    const textDataTransfer = { setData: vi.fn(), effectAllowed: '' };
+    fireEvent.dragStart(textTool, { dataTransfer: textDataTransfer });
+    expect(textDataTransfer.setData).toHaveBeenCalledWith('text-tool', 'true');
+    expect(textDataTransfer.effectAllowed).toBe('copy');
+
+    const effectDataTransfer = { setData: vi.fn(), effectAllowed: '' };
+    fireEvent.dragStart(effectLayerTool, { dataTransfer: effectDataTransfer });
+    expect(effectDataTransfer.setData).toHaveBeenCalledWith('effect-layer', 'true');
+    expect(effectDataTransfer.effectAllowed).toBe('copy');
+
+    fireEvent.click(sequenceTool);
+    expect(onOpenSequenceCreator).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('TimelineCanvas resize pending ops', () => {

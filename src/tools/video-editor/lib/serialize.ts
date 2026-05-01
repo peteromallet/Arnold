@@ -148,6 +148,7 @@ export const serializeForDisk = (
   // them stay unchanged.
   extras?: Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults'>,
 ): TimelineConfig => {
+  const resolvedExtras = extras ?? resolved;
   const serialized: TimelineConfig = {
     output: { ...resolved.output },
     tracks: resolved.tracks.map(serializeTrackForDisk),
@@ -158,14 +159,14 @@ export const serializeForDisk = (
     serialized.pinnedShotGroups = pinnedShotGroups;
   }
 
-  if (extras?.theme !== undefined) {
-    serialized.theme = extras.theme;
+  if (resolvedExtras.theme !== undefined) {
+    serialized.theme = resolvedExtras.theme;
   }
-  if (extras?.theme_overrides !== undefined) {
-    serialized.theme_overrides = extras.theme_overrides;
+  if (resolvedExtras.theme_overrides !== undefined) {
+    serialized.theme_overrides = resolvedExtras.theme_overrides;
   }
-  if (extras?.generation_defaults !== undefined) {
-    serialized.generation_defaults = extras.generation_defaults;
+  if (resolvedExtras.generation_defaults !== undefined) {
+    serialized.generation_defaults = resolvedExtras.generation_defaults;
   }
 
   validateSerializedConfig(serialized);

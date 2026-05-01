@@ -48,6 +48,11 @@ export interface ClipMeta {
   continuous?: TimelineClip['continuous'];
   transition?: TimelineClip['transition'];
   effects?: TimelineClip['effects'];
+  params?: TimelineClip['params'];
+  pool_id?: TimelineClip['pool_id'];
+  clip_order?: TimelineClip['clip_order'];
+  source_uuid?: TimelineClip['source_uuid'];
+  generation?: TimelineClip['generation'];
 }
 
 export interface TranscriptSegment {
@@ -133,6 +138,11 @@ const getDefaultClipMeta = (clip: TimelineClip): ClipMeta => {
     continuous: clip.continuous,
     transition: clip.transition,
     effects: clip.effects,
+    params: clip.params,
+    pool_id: clip.pool_id,
+    clip_order: clip.clip_order,
+    source_uuid: clip.source_uuid,
+    generation: clip.generation,
   };
 };
 
@@ -210,6 +220,7 @@ export const rowsToConfig = (
   clipOrder: ClipOrderMap,
   tracks: TrackDefinition[],
   pinnedShotGroups?: TimelineConfig['pinnedShotGroups'],
+  extras?: Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults'>,
 ): TimelineConfig => {
   const actionMap = new Map<string, TimelineAction>();
   const trackActionIds: Record<string, string[]> = Object.fromEntries(tracks.map((track) => [track.id, []]));
@@ -269,6 +280,11 @@ export const rowsToConfig = (
         continuous: clipMeta.continuous,
         transition: clipMeta.transition,
         effects: clipMeta.effects,
+        params: clipMeta.params,
+        pool_id: clipMeta.pool_id,
+        clip_order: clipMeta.clip_order,
+        source_uuid: clipMeta.source_uuid,
+        generation: clipMeta.generation,
       };
 
       if (typeof clipMeta.hold === 'number') {
@@ -315,6 +331,15 @@ export const rowsToConfig = (
   };
   if (pinnedShotGroups && pinnedShotGroups.length > 0) {
     config.pinnedShotGroups = clonePinnedShotGroups(pinnedShotGroups);
+  }
+  if (extras?.theme !== undefined) {
+    config.theme = extras.theme;
+  }
+  if (extras?.theme_overrides !== undefined) {
+    config.theme_overrides = extras.theme_overrides;
+  }
+  if (extras?.generation_defaults !== undefined) {
+    config.generation_defaults = extras.generation_defaults;
   }
   validateSerializedConfig(config);
   return config;

@@ -128,6 +128,7 @@ describe("loop helpers", () => {
       supabaseAdmin,
       undefined,
       "timeline-1",
+      undefined,
     );
 
     await expect(executeToolCall({

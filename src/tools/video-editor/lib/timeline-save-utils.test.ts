@@ -60,6 +60,9 @@ const buildResolvedConfig = (
     assetEntry: clip.asset ? resolvedRegistry[clip.asset] : undefined,
   })),
   registry: resolvedRegistry,
+  ...(config.theme !== undefined ? { theme: config.theme } : {}),
+  ...(config.theme_overrides !== undefined ? { theme_overrides: config.theme_overrides } : {}),
+  ...(config.generation_defaults !== undefined ? { generation_defaults: config.generation_defaults } : {}),
 });
 
 describe('timeline save utils regression coverage', () => {
@@ -215,6 +218,50 @@ describe('timeline save utils regression coverage', () => {
     expect(data.resolvedConfig.registry).toBe(current.resolvedConfig.registry);
     expect(data.assetMap).toEqual(makeAssetMap(current.registry));
     expect(data.resolvedConfig.clips[0]?.assetEntry).toBe(current.resolvedConfig.registry['asset-2']);
+  });
+
+  it('buildDataFromCurrentRegistry carries theme extras through registry-backed reconstruction', () => {
+    const currentConfig: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'current.mp4' },
+      tracks: [makeTrack('V1')],
+      clips: [{ id: 'clip-current', at: 0, track: 'V1', clipType: 'hold', asset: 'asset-1', hold: 2 }],
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    };
+    const currentRegistry: AssetRegistry = {
+      assets: {
+        'asset-1': { file: 'current.png' },
+        'asset-2': { file: 'next.png' },
+      },
+    };
+    const currentResolvedRegistry = buildResolvedRegistry(currentRegistry);
+    const current = assembleTimelineData({
+      config: currentConfig,
+      configVersion: 3,
+      registry: currentRegistry,
+      resolvedConfig: buildResolvedConfig(currentConfig, currentResolvedRegistry),
+      output: { ...currentConfig.output },
+      assetMap: makeAssetMap(currentRegistry),
+    });
+    const nextConfig: TimelineConfig = {
+      ...currentConfig,
+      output: { resolution: '1920x1080', fps: 30, file: 'next.mp4' },
+      clips: [{ id: 'clip-next', at: 1, track: 'V1', clipType: 'hold', asset: 'asset-2', hold: 4 }],
+    };
+
+    const data = buildDataFromCurrentRegistry(nextConfig, current);
+
+    expect(data.config).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
+    expect(data.resolvedConfig).toMatchObject({
+      theme: '2rp',
+      theme_overrides: { visual: { canvas: { fps: 24 } } },
+      generation_defaults: { model: 'sequence-v1' },
+    });
   });
 
   it('buildDataFromCurrentRegistry migrates configs with duplicate tracks before assembly', () => {

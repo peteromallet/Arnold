@@ -2,7 +2,7 @@ import type { InvalidateQueryFilters, QueryClient, QueryKey } from '@tanstack/re
 import { Shot, GenerationRow } from '@/domains/generation/types';
 import { queryKeys } from '@/shared/lib/queryKeys';
 
-function getShotsProjectPrefix(projectId: string): readonly QueryKey {
+function getShotsProjectPrefix(projectId: string): QueryKey {
   return [...queryKeys.shots.all, projectId] as const;
 }
 

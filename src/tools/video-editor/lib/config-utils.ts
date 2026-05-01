@@ -229,5 +229,8 @@ export const resolveTimelineConfig = async (
     tracks: config.tracks ?? [],
     clips,
     registry: resolvedRegistry,
+    ...(config.theme !== undefined ? { theme: config.theme } : {}),
+    ...(config.theme_overrides !== undefined ? { theme_overrides: config.theme_overrides } : {}),
+    ...(config.generation_defaults !== undefined ? { generation_defaults: config.generation_defaults } : {}),
   };
 };

@@ -114,6 +114,49 @@ describe('Sprint 8 buildRenderTimelinePayload', () => {
     expect(buildRenderTimelinePayload({ ...baseInput, timelineId: '' }).error).toBeTruthy();
     expect(buildRenderTimelinePayload({ ...baseInput, projectId: '' }).error).toBeTruthy();
   });
+
+  it('materializes sequence asset keys for the render payload without mutating persisted params', () => {
+    const resolvedConfig = {
+      theme: '2rp',
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-resource',
+          clipType: 'resource-card',
+          track: 'V1',
+          at: 0,
+          hold: 3,
+          params: {
+            title: 'Resource',
+            previewAssetKeys: ['asset-a'],
+          },
+        },
+      ],
+      registry: {
+        'asset-a': {
+          file: 'asset-a.png',
+          src: 'https://cdn.example.com/asset-a.png',
+          type: 'image',
+        },
+      },
+    };
+
+    const { payload } = buildRenderTimelinePayload({
+      ...baseInput,
+      resolvedConfig,
+    });
+
+    const clip = (payload!.timeline as typeof resolvedConfig).clips[0];
+    expect(clip.params).toMatchObject({
+      previewAssetKeys: ['asset-a'],
+      previews: ['https://cdn.example.com/asset-a.png'],
+    });
+    expect(resolvedConfig.clips[0].params).toEqual({
+      title: 'Resource',
+      previewAssetKeys: ['asset-a'],
+    });
+  });
 });
 
 describe('Sprint 8 enqueueBanodocoRenderTimeline', () => {

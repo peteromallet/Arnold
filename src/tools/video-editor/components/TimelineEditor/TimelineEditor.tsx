@@ -187,7 +187,11 @@ export function resolveWaveformAudioSrc(
   return undefined;
 }
 
-function TimelineEditorComponent() {
+interface TimelineEditorProps {
+  onOpenSequenceCreator?: () => void;
+}
+
+function TimelineEditorComponent({ onOpenSequenceCreator }: TimelineEditorProps) {
   useRenderDiagnostic('TimelineEditor');
   const [newTrackDropLabel, setNewTrackDropLabel] = useState<string | null>(null);
   const [videoModalShot, setVideoModalShot] = useState<Shot | null>(null);
@@ -1061,6 +1065,7 @@ function TimelineEditorComponent() {
           onEditAreaPointerDown={onMarqueePointerDown}
           onAddTrack={handleAddTrack}
           onAddTextAt={handleAddTextAt}
+          onOpenSequenceCreator={onOpenSequenceCreator}
           unusedTrackCount={unusedTrackCount}
           onClearUnusedTracks={handleClearUnusedTracks}
           newTrackDropLabel={newTrackDropLabel}

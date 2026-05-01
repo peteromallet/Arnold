@@ -185,6 +185,14 @@ const clonePinnedShotGroups = (
   imageClipSnapshot: clonePinnedShotImageSnapshots(group.imageClipSnapshot),
 }));
 
+const cloneTimelineExtras = (
+  config: TimelineConfig,
+): Pick<TimelineConfig, 'theme' | 'theme_overrides' | 'generation_defaults'> => ({
+  ...(config.theme !== undefined ? { theme: config.theme } : {}),
+  ...(config.theme_overrides !== undefined ? { theme_overrides: config.theme_overrides } : {}),
+  ...(config.generation_defaults !== undefined ? { generation_defaults: config.generation_defaults } : {}),
+});
+
 /**
  * Cheap structural migration — runs on every edit.
  * Ensures tracks exist, clips have clipType. No dedup, no repair.
@@ -200,6 +208,7 @@ export const migrateToFlatTracks = (config: TimelineConfig): TimelineConfig => {
           ?? (clip.text ? 'text' : typeof clip.hold === 'number' ? 'hold' : 'media'),
       })),
       pinnedShotGroups: clonePinnedShotGroups(config.pinnedShotGroups),
+      ...cloneTimelineExtras(config),
     };
   }
 
@@ -208,6 +217,7 @@ export const migrateToFlatTracks = (config: TimelineConfig): TimelineConfig => {
     tracks: getDefaultTracks(config),
     clips: ensureBackgroundClip(config),
     pinnedShotGroups: clonePinnedShotGroups(config.pinnedShotGroups),
+    ...cloneTimelineExtras(config),
   };
 };
 

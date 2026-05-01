@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EDGE_UNIT_INCLUDE = [
   'supabase/functions/_shared/**/*.test.ts',
   'supabase/functions/ai-generate-effect/**/*.test.ts',
+  'supabase/functions/ai-generate-sequence/**/*.test.ts',
   'supabase/functions/ai-prompt/**/*.test.ts',
   'supabase/functions/ai-timeline-agent/**/*.test.ts',
   'supabase/functions/ai-voice-prompt/**/*.test.ts',

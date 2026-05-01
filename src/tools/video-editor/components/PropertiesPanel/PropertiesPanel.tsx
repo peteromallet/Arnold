@@ -286,6 +286,7 @@ function PropertiesPanelComponent() {
             }}
             compositionWidth={compositionSize.width}
             compositionHeight={compositionSize.height}
+            registry={resolvedConfig?.registry ?? {}}
             activeTab={preferences.activeClipTab}
             setActiveTab={setActiveClipTab}
             isVariantStale={selectedClip?.asset ? staleAssetKeys.has(selectedClip.asset) && !dismissedAssetKeys.has(selectedClip.asset) : false}
