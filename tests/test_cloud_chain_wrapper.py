@@ -115,7 +115,7 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
             "echo 'megaplan-chain session already running'; "
             "else "
             "tmux new-session -d -s megaplan-chain -c /workspace/app "
-            "'megaplan chain start --spec /workspace/app/chain.yaml >> .megaplan/cloud-chain.log 2>&1'; "
+            "'MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml >> .megaplan/cloud-chain.log 2>&1'; "
             "echo 'started megaplan-chain session'; "
             "fi"
         ]
