@@ -13,6 +13,10 @@ def test_runpod_dependencies_stay_out_of_core_metadata() -> None:
     assert "python-dotenv>=1.0" not in core_dependencies
     assert "python-dotenv>=1.0" in runpod_dependencies
     assert not any("file://" in dependency or "/Users/" in dependency for dependency in runpod_dependencies)
+    assert any(
+        dependency == "runpod-lifecycle @ git+https://github.com/banodoco/runpod-lifecycle.git@v0.1.1"
+        for dependency in runpod_dependencies
+    )
 
 
 def test_unused_schema_dependencies_stay_out_of_core_metadata() -> None:

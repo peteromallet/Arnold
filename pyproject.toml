@@ -22,10 +22,11 @@ dev = [
 ]
 runpod-local = [
   "python-dotenv>=1.0",
+  "runpod-lifecycle @ git+https://github.com/banodoco/runpod-lifecycle.git@v0.1.1",
 ]
 runpod-launch = [
   "python-dotenv>=1.0",
-  "runpod-lifecycle",
+  "runpod-lifecycle @ git+https://github.com/banodoco/runpod-lifecycle.git@v0.1.1",
 ]
 
 [project.scripts]
@@ -47,5 +48,5 @@ markers = [
   "runpod_full: opt-in production-resolution matrix tests; multi-pod, ~$5-10 per run (requires --runpod-full and RUNPOD_API_KEY).",
 ]
 
-[tool.uv.sources]
-runpod-lifecycle = { path = "../runpod-lifecycle", editable = true }
+[tool.hatch.metadata]
+allow-direct-references = true

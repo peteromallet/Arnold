@@ -26,8 +26,8 @@ def _runpod_lifecycle_main(argv: list[str]) -> int:
         src = root / "src"
         if not src.exists():
             print(
-                "runpod-lifecycle is not installed. Install VibeComfy with `pip install -e '.[runpod-local]'`, "
-                "then install the sibling runpod-lifecycle checkout or set VIBECOMFY_RUNPOD_LIFECYCLE_ROOT.",
+                "runpod-lifecycle is not installed. Install VibeComfy with `pip install -e '.[runpod-local]'` "
+                "or set VIBECOMFY_RUNPOD_LIFECYCLE_ROOT for a local checkout.",
                 file=sys.stderr,
             )
             return 1

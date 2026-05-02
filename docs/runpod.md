@@ -6,22 +6,23 @@ Run the live validation from the VibeComfy repo:
 python scripts/runpod_validate.py
 ```
 
-The script uses the sibling `runpod-lifecycle` checkout at:
+Install the RunPod support extra from the VibeComfy repo:
 
 ```bash
 pip install -e '.[runpod-local]'
-pip install -e ../runpod-lifecycle
 ```
 
-Set `VIBECOMFY_RUNPOD_LIFECYCLE_ROOT` if that checkout is somewhere other
-than `../runpod-lifecycle`.
+That extra installs the tagged `runpod-lifecycle` release from GitHub
+automatically. Set
+`VIBECOMFY_RUNPOD_LIFECYCLE_ROOT` only when you want to use a local checkout
+instead.
 
 Environment:
 
 - `VIBECOMFY_RUNPOD_STORAGE`, default `Peter`
 - `VIBECOMFY_RUNPOD_GPU`, default `NVIDIA GeForce RTX 4090`
 - `VIBECOMFY_RUNPOD_MAX_RUNTIME_SECONDS`, default `7200` for the cheap smoke and `21600` for the proper media matrix
-- `VIBECOMFY_RUNPOD_LIFECYCLE_ROOT`, default `../runpod-lifecycle`
+- `VIBECOMFY_RUNPOD_LIFECYCLE_ROOT`, optional local `runpod-lifecycle` checkout override
 - RunPod credentials loaded from the `runpod-lifecycle` `.env`
 
 What the script does:

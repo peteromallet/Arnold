@@ -2200,7 +2200,7 @@ wheels = [
 [[package]]
 name = "runpod-lifecycle"
 version = "0.1.1"
-source = { editable = "../runpod-lifecycle" }
+source = { git = "https://github.com/banodoco/runpod-lifecycle.git?rev=v0.1.1#6684296ccd8a41e49f8c9918e49bf26212213bdc" }
 dependencies = [
     { name = "httpx" },
     { name = "paramiko" },
@@ -2208,19 +2208,6 @@ dependencies = [
     { name = "requests" },
     { name = "runpod" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.25.0" },
-    { name = "paramiko", specifier = ">=3.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "requests", specifier = ">=2.31.0" },
-    { name = "runpod", specifier = ">=1.6.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "s3transfer"
@@ -2494,6 +2481,7 @@ runpod-launch = [
 ]
 runpod-local = [
     { name = "python-dotenv" },
+    { name = "runpod-lifecycle" },
 ]
 
 [package.metadata]
@@ -2505,7 +2493,8 @@ requires-dist = [
     { name = "python-dotenv", marker = "extra == 'runpod-launch'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'runpod-local'", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6" },
-    { name = "runpod-lifecycle", marker = "extra == 'runpod-launch'", editable = "../runpod-lifecycle" },
+    { name = "runpod-lifecycle", marker = "extra == 'runpod-launch'", git = "https://github.com/banodoco/runpod-lifecycle.git?rev=v0.1.1" },
+    { name = "runpod-lifecycle", marker = "extra == 'runpod-local'", git = "https://github.com/banodoco/runpod-lifecycle.git?rev=v0.1.1" },
     { name = "websockets", specifier = ">=12" },
 ]
 provides-extras = ["dev", "runpod-local", "runpod-launch"]
