@@ -128,15 +128,22 @@ class RailwayProvider(Provider):
 
     def upload_file(self, src: Path, dest: str) -> None:
         payload = base64.b64encode(src.read_bytes()).decode("ascii")
+        dest_path = shlex.quote(dest)
+        dest_dir = shlex.quote(str(Path(dest).parent))
+        command = (
+            f"mkdir -p {dest_dir} && "
+            f"base64 -d > {dest_path} <<'MEGAPLAN_UPLOAD'\n"
+            f"{payload}\n"
+            "MEGAPLAN_UPLOAD"
+        )
         self._run(
             self._railway_cmd(
                 "ssh",
                 "--service",
                 self._railway.service,
                 "--",
-                f"base64 -d > {shlex.quote(dest)}",
-            ),
-            input=payload,
+                command,
+            )
         )
 
     def read_remote_file(self, path: str) -> str:
