@@ -299,8 +299,24 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         provider.upload_file(local_source, milestone.idea)
 
     provider.upload_file(local_spec_path, remote_spec_path)
+    chain_command = (
+        f"megaplan chain start --spec {shlex.quote(remote_spec_path)} "
+        ">> .megaplan/cloud-chain.log 2>&1"
+    )
     result = provider.ssh_exec(
-        f"cd {shlex.quote(spec.repo.workspace)} && megaplan chain start --spec {shlex.quote(remote_spec_path)}"
+        " && ".join(
+            [
+                f"mkdir -p {shlex.quote(str(PurePosixPath(spec.repo.workspace) / '.megaplan'))}",
+                (
+                    "if tmux has-session -t megaplan-chain 2>/dev/null; then "
+                    "echo 'megaplan-chain session already running'; "
+                    "else "
+                    f"tmux new-session -d -s megaplan-chain -c {shlex.quote(spec.repo.workspace)} {shlex.quote(chain_command)}; "
+                    "echo 'started megaplan-chain session'; "
+                    "fi"
+                ),
+            ]
+        )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
 
