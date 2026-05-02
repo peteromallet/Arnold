@@ -135,9 +135,9 @@ def test_project_and_environment_scope_operational_commands(monkeypatch: pytest.
 
     scoped = ["--project", "proj-123", "--environment", "env-123"]
     assert [argv for argv, _kwargs in calls] == [
-        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--session", "ses", "--", "pwd"],
-        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--session", "ses", "--", "base64 -d > /workspace/test.py"],
-        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--session", "ses", "--", "cat /workspace/test.py"],
+        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "pwd"],
+        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "base64 -d > /workspace/test.py"],
+        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "cat /workspace/test.py"],
         ["/usr/bin/railway", "logs", *scoped, "--service", "svc", "--lines", "200"],
         ["/usr/bin/railway", "down", *scoped, "--service", "svc"],
     ]
@@ -175,11 +175,11 @@ def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytes
     assert provider.status_payload(plan="P", workspace="/workspace/foo") == {"next_step": "review"}
 
     assert [argv for argv, _kwargs in calls] == [
-        ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses", "--", "pwd"],
+        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "pwd"],
         ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses"],
         ["/usr/bin/railway", "logs", "--service", "svc", "--lines", "200"],
-        ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses", "--", "cd /workspace/foo && megaplan status"],
-        ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses", "--", "cd /workspace/foo && megaplan status --plan P"],
+        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cd /workspace/foo && megaplan status"],
+        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cd /workspace/foo && megaplan status --plan P"],
     ]
     assert follow_calls == [["/usr/bin/railway", "logs", "--service", "svc"]]
     assert calls[1][1]["capture_output"] is False
@@ -211,8 +211,6 @@ def test_upload_file_streams_base64_over_railway_ssh(
                 "ssh",
                 "--service",
                 "svc",
-                "--session",
-                "ses",
                 "--",
                 "base64 -d > /workspace/idea.txt",
             ],
@@ -247,8 +245,6 @@ def test_read_remote_file_uses_cat_over_railway_ssh(monkeypatch: pytest.MonkeyPa
                 "ssh",
                 "--service",
                 "svc",
-                "--session",
-                "ses",
                 "--",
                 "cat /workspace/chain_state.json",
             ],
