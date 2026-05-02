@@ -121,8 +121,6 @@ class RailwayProvider(Provider):
                 "ssh",
                 "--service",
                 self._railway.service,
-                "--session",
-                self._railway.session,
                 "--",
                 command,
             )
@@ -135,8 +133,6 @@ class RailwayProvider(Provider):
                 "ssh",
                 "--service",
                 self._railway.service,
-                "--session",
-                self._railway.session,
                 "--",
                 f"base64 -d > {shlex.quote(dest)}",
             ),
@@ -149,8 +145,6 @@ class RailwayProvider(Provider):
                 "ssh",
                 "--service",
                 self._railway.service,
-                "--session",
-                self._railway.session,
                 "--",
                 f"cat {shlex.quote(path)}",
             )
