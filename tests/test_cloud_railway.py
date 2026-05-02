@@ -136,7 +136,17 @@ def test_project_and_environment_scope_operational_commands(monkeypatch: pytest.
     scoped = ["--project", "proj-123", "--environment", "env-123"]
     assert [argv for argv, _kwargs in calls] == [
         ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "pwd"],
-        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "base64 -d > /workspace/test.py"],
+        [
+            "/usr/bin/railway",
+            "ssh",
+            *scoped,
+            "--service",
+            "svc",
+            "--",
+            "mkdir -p /workspace && base64 -d > /workspace/test.py <<'MEGAPLAN_UPLOAD'\n"
+            f"{base64.b64encode(Path(__file__).read_bytes()).decode('ascii')}\n"
+            "MEGAPLAN_UPLOAD",
+        ],
         ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "cat /workspace/test.py"],
         ["/usr/bin/railway", "logs", *scoped, "--service", "svc", "--lines", "200"],
         ["/usr/bin/railway", "down", *scoped, "--service", "svc"],
@@ -212,14 +222,15 @@ def test_upload_file_streams_base64_over_railway_ssh(
                 "--service",
                 "svc",
                 "--",
-                "base64 -d > /workspace/idea.txt",
+                "mkdir -p /workspace && base64 -d > /workspace/idea.txt <<'MEGAPLAN_UPLOAD'\n"
+                f"{base64.b64encode(source.read_bytes()).decode('ascii')}\n"
+                "MEGAPLAN_UPLOAD",
             ],
             {
                 "cwd": None,
                 "capture_output": True,
                 "text": True,
                 "check": False,
-                "input": base64.b64encode(source.read_bytes()).decode("ascii"),
             },
         )
     ]
