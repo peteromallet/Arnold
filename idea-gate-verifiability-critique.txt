@@ -1,0 +1,300 @@
+v0.17.0 critique — gate verifiability: directionally right, structurally overbuilt,
+and still leaking on the one seam it most needs to seal
+
+## Verdict
+
+The proposal is directionally right and operationally wrong. It correctly
+identifies that M0 failed not because Codex was incompetent but because the
+spec contained gate criteria that no container agent could ever satisfy, and
+it correctly refuses the shallow "just add a tag" reading. But the fused
+(a)+(b)+(e) solution is a three-subsystem compromise that partially solves
+each of the three frames without fully solving any, adds a new terminal-ish
+label (`approved_with_deferrals`) whose lifecycle is explicitly out of scope,
+and introduces a `deferred_human` path that in the solo-operator model this
+harness actually runs under will silently accumulate unchecked "done-ish"
+plans. The real root cause is narrower than the proposal claims — it is a
+missing *executor-capability contract*, not a missing author tag, missing
+audit, and missing reviewer enum all at once. Option (f), which the proposal
+explicitly defers, is the one that attacks the root; shipping (a)+(b)+(e)
+first mortgages schema surface area against a v0.18 that will then have to
+re-migrate. Ship a scoped revision — keep (b) as the centerpiece, collapse
+(a) into advisory-only, drop (e)'s new enum values, delete `deferred_human`
+entirely — or skip to (f).
+
+## Strongest critiques, ranked
+
+**1. `deferred_human` is a silent accumulator with no lifecycle owner.**
+The proposal is explicit that v0.17.0 does not teach loop mode about
+deferrals: "v0.17.0 treats a plan with any `deferred_human` criteria as
+'done for autonomous purposes'; loops continue to the next plan." That is
+the entire failure mode of the M0 debacle in a different costume. Today,
+the system fails loudly: review returns `needs_rework` and the plan parks.
+Under v0.17.0, the system will "approve" plans whose human-tagged `must`
+criteria were never actually verified, log them as `approved_with_deferrals`,
+and continue the loop. The `megaplan verify-human` CLI is marked *optional*
+for v0.17.0. In a solo-operator context — and the system-of-record here
+is one human — the realistic outcome is that `human_verifications.json`
+never gets written for any plan, and the queue of unverified `must` gates
+grows without bound, with zero operational signal. This is strictly worse
+than the current behavior, which at least blocks.
+
+  The minimum correction: `deferred_human` MUST block `STATE_DONE` and
+  MUST land the plan in a distinct state (`awaiting_human_verification`,
+  from option (c) that the proposal rejected). The proposal rejects (c)
+  on grounds that `waived` already models this, but `waived` at review
+  time does not block `STATE_DONE` in `handlers.py` — see line 1410,
+  where the robustness-skipped review path transitions to `STATE_DONE`
+  unconditionally. The proposal needs (c) to be safe; it ships without it.
+
+**2. The gaming defenses against `verified_by: human` do not actually
+work.** The proposal claims three defenses: (1) the audit flags it,
+(2) `megaplan status` surfaces the ratio, (3) review's
+`waived_unverifiable` counter applies anyway. Walk each:
+
+  - (1) is a worker call whose prompt is "for each criterion, is it
+    reachable by a worker with capabilities run_shell, read_files, git,
+    but no browser, no human hands". Any criterion phrased as "verify
+    the baseline doc is accurate" or "confirm behavior is correct" will
+    be tagged `human` by the audit agent too — the audit uses the same
+    natural-language reasoning the reviewer uses, so it has the same
+    error modes. There is no ground-truth capability check.
+  - (2) relies on a human noticing a ratio in CLI output. In autonomous
+    loop mode there is no human in that loop. The surface is invisible
+    exactly when it matters.
+  - (3) is the only real defense, but it only fires if review
+    independently decides the criterion *was* machine-checkable — which
+    requires the reviewer to do exactly the verification the executor
+    skipped, on a criterion the executor was told to skip. The reviewer
+    prompt today already shrugs on verification calls (see M0: it failed
+    rather than waived). There is no reason to believe it will correctly
+    second-guess a `human` tag.
+
+  Net: the gaming path is "author pastes CLAUDE.md bullets, audit
+  rubber-stamps them as `human`, review honors the tag, plan ships
+  `approved_with_deferrals`." The proposal makes the M0 problem worse
+  by giving authors a blessed loophole where before they were at least
+  forced to write machine-verifiable specs or eat failures.
+
+**3. Conflation of "author intent" and "executor capability" — this is
+the real root.** The proposal frames the problem as three overlapping
+issues: plan-gate/review-gate conflation, missing authorship feedback,
+underspecified `waived`. I claim these are three symptoms of one root
+cause: *megaplan has no model of what the configured executor can
+actually do*. The author, the audit, the reviewer, the gate — all four
+subsystems reason about "can this be verified" with natural-language
+prompts, none has a structural capability check. Option (f) — worker
+capability profiles with a static criterion linter — is the only path
+proposed that attacks the root. The proposal defers (f) as "bigger
+design problem" and ships three scaffolding-layer patches instead. But
+(a), (b), and (e) are each a weak proxy for the capability check that
+(f) would make ground-truth. Shipping the proxies first means when (f)
+lands in v0.18 it has to either deprecate `verified_by` (schema churn
+for every existing plan) or coexist with it (two sources of truth about
+the same fact, with conflict-resolution logic nobody wants to write).
+
+**4. The audit (b) is the right idea in the wrong place with no teeth.**
+The proposal runs `audit_criteria` after finalize, before execute, and
+surfaces results as *advisory* critique flags. Two problems. First,
+advisory flags at this stage have no resolution gate — finalize has
+already closed, critique/gate has already run. The flags go into
+`verifiability.json` and... what? The text says "the author (or gate)
+can override by explicitly setting `verified_by`" but gate has already
+happened by then. Second, running it post-finalize is too late: the
+whole point of an authorship feedback loop (frame 2 in the motivation)
+is to catch bad specs *before* the container burns a run. The audit
+should run pre-critique, its results should be first-class critique
+flags (not a new advisory category), and a `must` criterion flagged as
+unreachable should be a blocking flag that gate has to resolve. As
+specified, (b) writes a JSON file that nothing reads.
+
+**5. The `waived_unverifiable` soft-block counter has a boundary bug.**
+The proposal says a `must` criterion marked `waived_unverifiable` is a
+soft block at `>= 1` by default — effectively a hard block for `must`.
+Fine. But the existing review logic (prompts/review.py:500-504) already
+says a `must` that fails means `needs_rework`. If `waived_unverifiable`
+on `must` triggers `needs_rework` at N=1, it is behaviorally identical
+to today's `fail`. The new enum buys nothing for `must`. For `should`
+and `info` the new enum is a rename of today's `waived`. The proposal
+expands the review schema with two new enum values that collapse to
+existing behavior in every case except the one it shouldn't: a `must`
+criterion that the *author* tagged `human` skips the counter entirely
+per the review rules. So the one case where the soft-block counter
+could catch gaming (author lies, reviewer detects it) is also the one
+case where the proposal's review rule says the counter does not fire.
+This is the seam where the proposal's three parts fail to compose.
+
+**6. Mid-plan worker-swap answer is superficially right and operationally
+broken.** The proposal says "capability is conservatively the
+intersection across the executing + reviewing workers. The audit runs
+with the executor's profile; review with its own." But there is no
+worker profile in v0.17.0 — (f) is deferred. So "runs with the
+executor's profile" means the audit agent is told in English who the
+executor is and guesses. In the claude-plans / codex-executes /
+hermes-reviews topology, the audit has no way to know codex can run
+shell but cannot observe a browser — unless a human wrote that in the
+audit prompt. The proposal sidesteps this by making the audit advisory.
+Advisory audits produce advisory answers. The mid-plan worker-swap case
+is unsolved in v0.17.0; the text in the edge-cases section reads like
+a v0.18 promise.
+
+**7. Migration claim is subtly wrong.** "Existing plans without
+`verified_by`: default `container`. Same behavior as today." This is
+back-compat for *storage* but not for *review semantics* — because the
+review prompt gains new rules (`waived_unverifiable` soft-block
+counter, new enum values review must learn). An existing plan with a
+criterion that the new review rules decide is `waived_unverifiable`
+will now route to `needs_rework` via the soft-block counter where
+under v0.16 the same situation would have resulted in `waived` with no
+rework. Existing in-flight plans will change verdict under v0.17.0. The
+migration section should either gate the new review rules behind an
+opt-in flag for legacy plans or acknowledge the behavior change.
+
+## Walking M0 through v0.17.0
+
+Run the M0 spec (`~/Documents/reigh-megaplan-dev/ideas/M0-render-telemetry.txt`)
+through the proposed system step by step:
+
+1. **Init.** Spec has six bullets under "Gate criteria (for the human
+   reviewer)". The author does not tag them (the title literally says
+   "for the human reviewer" but the schema field is absent). All default
+   to `container`.
+2. **Plan → critique → gate → finalize.** No change from today; gate
+   resolves flags normally.
+3. **Verifiability audit (b).** New worker call. The audit reads six
+   criteria: tsc clean, npm test baseline, production build grep,
+   baseline doc with 5×3 interactions, overlay toggle works, warnings
+   fire on synthetic burst. The audit agent, reasoning in natural
+   language, will plausibly tag: tsc → container, npm test → container,
+   build grep → container, baseline doc → **container** (it looks
+   machine-checkable: "doc exists with ≥ 5×3 entries"), overlay toggle
+   → human, synthetic-burst warnings → mixed or human. So the audit
+   catches *some* of the cases — the overlay toggle, maybe the synthetic
+   burst — but **misses the baseline doc case**, which is exactly the
+   M0 failure (the doc's contents require browser observation to
+   author, a fact not obvious from the criterion text). The baseline
+   doc criterion stays `container`.
+4. **Execute.** Same as today — codex ships the code, writes the
+   baseline doc with the numbers it can observe (i.e., from HMR dev
+   server, the exact thing the spec said not to use).
+5. **Review.** Reviewer reads the baseline doc. Under v0.17.0, the
+   `container` tag means the reviewer must pass/fail/waived_unverifiable
+   it. The reviewer does not know the doc's numbers came from HMR (the
+   executor did not say), so it either passes (silently wrong) or marks
+   `waived_unverifiable` on the "5×3 interactions from non-HMR prod
+   server" criterion (plausible, because reviewer cannot re-run the
+   dev server). `waived_unverifiable` on a `must` soft-blocks →
+   `needs_rework`. Same outcome as today.
+6. **Net.** v0.17.0 as specified does **not** fix M0's primary
+   failure. It fixes the overlay-toggle criterion (correctly deferred)
+   and possibly the synthetic-burst one, but the motivating case —
+   "baseline doc must capture 5×3 interactions from non-HMR prod
+   server", the criterion that was *semantically self-contradictory* —
+   is not caught by the audit (too subtle for a natural-language audit
+   prompt) and is not handled differently by the reviewer (still
+   `needs_rework`). The proposal's own success-criteria fixture (a plan
+   with "browser renders without warnings") is a strawman easier than
+   the real M0 case.
+
+The honest conclusion: v0.17.0 would fix the *easy* M0 criteria and
+miss the *hard* one. The hard one requires the author to have known
+the spec was malformed and tagged it `human` — which, per the
+authorship-feedback frame (frame 2), is exactly what the author
+*cannot* be expected to do.
+
+## Alternative proposal: scoped v0.17.0 plus v0.18.0 capability contract
+
+Two-release sequence. v0.17.0 ships the *one* lever that most attacks
+the motivating case, cheaply. v0.18.0 ships the capability contract
+that makes the lever robust.
+
+### v0.17.0: pre-critique verifiability audit, no schema change
+
+- Drop (a) entirely. No `verified_by` tag on success_criteria. Zero
+  schema change to `plan.json`/`finalize.json`.
+- Drop (e) entirely. Review keeps today's `pass | fail | waived`
+  enum. No `waived_unverifiable`, no `deferred_human`.
+- Keep (b), but move it *before* critique and make it *binding*:
+
+  ```
+  megaplan/verifiability.py
+    audit_criteria(state, criteria) -> list[CriterionAudit]
+      # called from handlers._run_critique pre-prompt
+      # each CriterionAudit: {criterion_idx, verdict, rationale}
+      # verdict ∈ {machine_verifiable, unverifiable_needs_rewrite,
+      #            unverifiable_human_only}
+  ```
+
+  Results become first-class critique flags (category:
+  `verifiability`, severity: blocking if `unverifiable_needs_rewrite`,
+  noted if `unverifiable_human_only`). The existing gate → revise
+  loop resolves them: the author either rewrites the criterion to be
+  machine-verifiable or explicitly accepts the tradeoff with rationale
+  (the strict-gate v0.14 rubber-stamp check applies, so "it's fine"
+  won't clear it).
+
+- No new terminal states, no new CLI commands, no `human_verifications.json`,
+  no `approved_with_deferrals` label. A plan either has machine-verifiable
+  criteria (passes review) or it doesn't (fails review, as today).
+
+This is ~150 LOC: one new file (`verifiability.py`), one hook in
+`handlers._run_critique`, one new flag category in `prompts/critique.py`,
+and tests. It attacks frame 2 (authorship feedback) directly, which is
+the frame with the largest M0-class payoff. It does not attack frames 1
+and 3 — but frames 1 and 3 are mostly downstream consequences of frame
+2 going unaddressed.
+
+### v0.18.0: worker capability profile (formerly option f)
+
+- Each worker declares a capability blob in `megaplan/workers.py`:
+  ```python
+  @dataclass
+  class WorkerCapabilities:
+      can_run_shell: bool
+      can_read_build_output: bool
+      can_observe_browser: bool
+      can_observe_runtime_logs: bool
+      can_run_tests: bool
+      ...
+  ```
+- The verifiability audit from v0.17.0 is upgraded: instead of a
+  free-form natural-language "is this reachable", it emits a set of
+  required capabilities per criterion and the harness does a pure-Python
+  set-subset check against the executor's declared profile. Ground
+  truth, no prompt-drift.
+- Review uses the same profile: a criterion whose required caps are
+  not a subset of the *reviewer's* caps is automatically `waived`
+  with a concrete "reviewer lacks cap X" evidence string. No new enum.
+- Mid-plan worker swap becomes principled: the harness computes the
+  intersection at finalize time and surfaces it in `plan.json`'s
+  meta.
+
+This is the real fix. Deferring it to v0.18 is fine — the v0.17.0
+audit is small enough that re-plumbing it when v0.18 lands is ~1 day
+of work, and meanwhile the advisory-only prompt-based audit catches
+the easy M0-class cases at authorship time, which is the highest-ROI
+slice.
+
+## Recommended next action
+
+**Revise the proposal before shipping.** Specifically:
+
+1. Drop the `verified_by` schema field. Drop the `deferred_human` and
+   `waived_unverifiable` enum values. Drop the
+   `approved_with_deferrals` label and `megaplan verify-human` CLI.
+2. Move the verifiability audit from post-finalize advisory to
+   pre-critique binding. Make its blocking flags part of the existing
+   gate resolution surface.
+3. Scope the v0.17.0 CHANGELOG entry to "authorship feedback via a
+   verifiability critique pass — catches unverifiable criteria before
+   execute burns a container run".
+4. Open a v0.18.0 placeholder idea file now for worker capability
+   profiles. Commit to the two-release plan in writing so the scoped
+   v0.17.0 does not get re-expanded under pressure.
+
+The proposal as written is shippable but will (a) fail to fix the
+hard M0 case, (b) introduce a silent-accumulator failure mode via
+`deferred_human`, and (c) burn schema surface area that v0.18's
+capability profiles will want to reclaim. Revise; do not ship as-is.
+
+## Working directory
+/Users/peteromalley/Documents/megaplan
