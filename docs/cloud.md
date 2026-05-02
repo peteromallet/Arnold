@@ -179,7 +179,7 @@ megaplan init --project-dir <workspace> --idea-file <workspace>/idea.txt --auto-
 2. Resolves each milestone idea file from `--idea-dir` or, by default, the local spec's parent directory.
 3. Uploads each idea file to the remote path named in the chain spec.
 4. Uploads the chain spec to `<repo.workspace>/chain.yaml`.
-5. Runs remote `megaplan chain start --spec <repo.workspace>/chain.yaml`.
+5. Starts remote `megaplan chain start --spec <repo.workspace>/chain.yaml` in tmux session `megaplan-chain`, logging to `<repo.workspace>/.megaplan/cloud-chain.log`.
 
 After upload + dispatch, cloud writes a provider-independent marker:
 

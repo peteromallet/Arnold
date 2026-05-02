@@ -110,7 +110,14 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
             (spec_path, "/workspace/app/chain.yaml"),
         ]
         assert commands == [
-            "cd /workspace/app && megaplan chain start --spec /workspace/app/chain.yaml"
+            "mkdir -p /workspace/app/.megaplan && "
+            "if tmux has-session -t megaplan-chain 2>/dev/null; then "
+            "echo 'megaplan-chain session already running'; "
+            "else "
+            "tmux new-session -d -s megaplan-chain -c /workspace/app "
+            "'megaplan chain start --spec /workspace/app/chain.yaml >> .megaplan/cloud-chain.log 2>&1'; "
+            "echo 'started megaplan-chain session'; "
+            "fi"
         ]
         marker_payload = json.loads((_marker_dir(cloud_yaml_path) / "last_chain.json").read_text(encoding="utf-8"))
         assert marker_payload["remote_spec"] == "/workspace/app/chain.yaml"
