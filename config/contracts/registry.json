@@ -27,23 +27,6 @@
       "expectedExports": [
         "cn"
       ]
-    },
-    {
-      "id": "generation-and-shots-type-barrel",
-      "class": "domain_contract",
-      "path": "src/types/generationAndShots.ts",
-      "requiredTags": [
-        "@publicContract"
-      ],
-      "expectedExports": [
-        "GenerationParams",
-        "GenerationMetadata",
-        "PairLoraConfig",
-        "PairMotionSettings",
-        "GenerationRow",
-        "Shot",
-        "ShotOption"
-      ]
     }
   ]
 }

@@ -1,3 +1,7 @@
+# check=skip=SecretsUsedInArgOrEnv
+# VITE_SUPABASE_ANON_KEY is public Vite client config. Docker's stock secret
+# check flags the ARG name, so scripts/quality/check-dockerfile-sensitive-env.mjs
+# enforces the narrower rule this app needs: no sensitive Docker ENV layers.
 # Pinned to satisfy package-lock.json's ^20.19.0 || >=22.12.0 engine constraint.
 # Bumping the FROM tag is the ONLY Node-version authority for production —
 # .nvmrc and engines.node must track this value.
@@ -19,12 +23,11 @@ ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
 ARG VITE_API_TARGET_URL
 ARG VITE_APP_ENV
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
-    VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY \
-    VITE_API_TARGET_URL=$VITE_API_TARGET_URL \
-    VITE_APP_ENV=$VITE_APP_ENV
-
-RUN npm run build
+RUN VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
+    VITE_SUPABASE_ANON_KEY="$VITE_SUPABASE_ANON_KEY" \
+    VITE_API_TARGET_URL="$VITE_API_TARGET_URL" \
+    VITE_APP_ENV="$VITE_APP_ENV" \
+    npm run build
 
 FROM node:20.19.0-alpine AS runtime
 WORKDIR /app

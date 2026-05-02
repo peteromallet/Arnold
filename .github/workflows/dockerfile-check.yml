@@ -1,0 +1,21 @@
+name: Dockerfile Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "sprint-*"
+      - "codex/**"
+
+jobs:
+  dockerfile-check:
+    name: Dockerfile checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+      - run: make dockerfile-check
