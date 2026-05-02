@@ -410,6 +410,35 @@ def test_refresh_main_default_invokes_git(tmp_path: Path) -> None:
     assert cmds[2][:2] == ["git", "pull"]
 
 
+def test_refresh_main_aborts_on_git_failure(tmp_path: Path) -> None:
+    """A failed checkout/pull must stop the chain before stale work executes."""
+    from megaplan.chain import _refresh_main
+
+    calls = [
+        subprocess.CompletedProcess(
+            args=["git", "fetch", "origin", "main"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "main"],
+            returncode=1,
+            stdout="",
+            stderr="local changes would be overwritten",
+        ),
+    ]
+    msgs: list[str] = []
+
+    with patch("megaplan.chain.subprocess.run", side_effect=calls):
+        with pytest.raises(CliError) as excinfo:
+            _refresh_main(tmp_path, writer=msgs.append)
+
+    assert excinfo.value.code == "git_refresh_failed"
+    assert "git checkout main exited 1" in excinfo.value.message
+    assert any("local changes would be overwritten" in msg for msg in msgs)
+
+
 def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
     class _Proc:
         returncode = 0

@@ -286,7 +286,7 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
 
 
 def _refresh_main(root: Path, *, writer, no_git_refresh: bool = False) -> None:
-    """Best-effort `git fetch + checkout main + pull`. Never raises; logs only.
+    """Run `git fetch + checkout main + pull`, aborting on refresh failures.
 
     When ``no_git_refresh`` is True, this is a no-op (still logs that it was
     skipped). This guard exists so developer checkouts running ``megaplan
@@ -306,8 +306,35 @@ def _refresh_main(root: Path, *, writer, no_git_refresh: bool = False) -> None:
                 cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
             )
             writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                if detail:
+                    writer(f"[chain] {' '.join(cmd)} output:\n{detail}\n")
+                raise CliError(
+                    "git_refresh_failed",
+                    (
+                        "Chain git refresh failed before milestone initialization: "
+                        f"{' '.join(cmd)} exited {proc.returncode}. "
+                        "Resolve the checkout or rerun with --no-git-refresh for a developer workspace."
+                    ),
+                    extra={
+                        "command": cmd,
+                        "returncode": proc.returncode,
+                        "stdout": proc.stdout,
+                        "stderr": proc.stderr,
+                    },
+                )
         except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
             writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+            raise CliError(
+                "git_refresh_failed",
+                (
+                    "Chain git refresh failed before milestone initialization: "
+                    f"{' '.join(cmd)} failed with {exc}. "
+                    "Resolve the checkout or rerun with --no-git-refresh for a developer workspace."
+                ),
+                extra={"command": cmd, "error": str(exc)},
+            ) from exc
 
 
 def _init_plan(
