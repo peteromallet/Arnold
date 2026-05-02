@@ -300,7 +300,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
 
     provider.upload_file(local_spec_path, remote_spec_path)
     chain_command = (
-        f"megaplan chain start --spec {shlex.quote(remote_spec_path)} "
+        f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec {shlex.quote(remote_spec_path)} "
         ">> .megaplan/cloud-chain.log 2>&1"
     )
     result = provider.ssh_exec(
