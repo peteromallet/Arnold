@@ -980,6 +980,56 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
     assert result.payload == critique_payload
 
 
+def test_run_codex_step_trusted_container_bypasses_sandbox_for_critique(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    critique_payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Is the plan correct?",
+                "guidance": "",
+                "findings": [
+                    {
+                        "detail": "Checked the plan and found no issue in the trusted-container command path.",
+                        "flagged": False,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        assert "--dangerously-bypass-approvals-and-sandbox" in command
+        assert "--full-auto" not in command
+        assert not any(str(arg).startswith("sandbox_workspace_write.writable_roots") for arg in command)
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(critique_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=1,
+        )
+
+    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    assert result.payload == critique_payload
+
+
 def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers import CommandResult, run_codex_step, set_work_dir_override

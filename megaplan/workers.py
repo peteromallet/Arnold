@@ -334,7 +334,7 @@ def _codex_timeout_for_step(step: str) -> int:
 
 
 def _codex_exec_mode_flags(step: str) -> list[str]:
-    if step in _EXECUTE_STEPS and _trusted_container():
+    if _trusted_container():
         return []
     # All non-execute phases (plan, prep, critique, revise, gate, finalize,
     # review) need to write template artifacts (plan markdown, metadata JSON,
@@ -1519,7 +1519,7 @@ def run_codex_step(
         # does not accept --add-dir; resumed sessions keep the workspace that
         # was granted when the session was created.
         command = ["codex", "exec", "resume"]
-        if _trusted_container() and step in _EXECUTE_STEPS:
+        if _trusted_container():
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.extend(_codex_exec_mode_flags(step))
         if json_trace:
@@ -1539,7 +1539,7 @@ def run_codex_step(
             "--add-dir",
             str(plan_dir),
         ]
-        if _trusted_container() and step in _EXECUTE_STEPS:
+        if _trusted_container():
             # In a trusted container the surrounding runtime is the sandbox.
             # Skip the workspace-write sandbox (which requires user namespaces
             # that most container runtimes don't grant) and let Codex run
