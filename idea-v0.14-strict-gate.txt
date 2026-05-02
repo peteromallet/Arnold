@@ -1,0 +1,97 @@
+v0.14.0 — strict flag-resolution at the gate
+
+## Goal
+Remove the silent implicit-acceptance of unresolved blocking flags when the gate recommends PROCEED. Make the gate either resolve every blocking flag explicitly, or pick ITERATE / ESCALATE. Reject rubber-stamp rationale on accept_tradeoff actions, not just on dispute actions.
+
+## Motivation
+The current gate logic (v0.13) has two related problems:
+1. The gate prompt tells the agent "you may resolve at most 3 flags explicitly per gate call. Any remaining blocking flags are implicitly accepted as tradeoffs if you recommend PROCEED." (prompts/gate.py, around lines 105-114)
+2. The handler enforces this by silently auto-marking unresolved blocking flags as accept_tradeoff (handlers.py, around lines 621-635 inside _apply_gate_outcome).
+3. The rubber-stamp check (handlers.py around lines 600-607) only validates dispute.evidence — it accepts any accept_tradeoff.rationale including boilerplate.
+
+Net effect: a gate PROCEED can ship with 5 unresolved blocking flags, silently auto-accepted, with zero resistance from the system. The human reviewing the PR sees them in accepted_tradeoffs but the agent was never forced to reason about each one.
+
+## Exact changes
+
+### Change 1: prompts/gate.py
+Replace the block that currently reads roughly:
+  "You may resolve at most 3 flags explicitly per gate call. Any remaining
+  blocking flags are implicitly accepted as tradeoffs if you recommend PROCEED.
+  If a flag is structurally unresolvable (e.g., references infrastructure
+  outside the repo), you should still PROCEED — do not loop indefinitely
+  on flags that cannot be addressed."
+
+with strict language:
+  "If you recommend PROCEED, you MUST provide a flag_resolutions entry for
+  every blocking flag. There is no implicit acceptance. If you cannot
+  resolve every blocking flag, choose ITERATE (send back for revision)
+  or ESCALATE (human intervention needed). Structurally unresolvable flags
+  (infrastructure outside the repo, product decision required) are ESCALATE,
+  not PROCEED with a non-answer.
+
+  For each blocking flag:
+  - dispute: critique is factually wrong. Evidence must cite specific
+    file/line/doc — generic statements like 'handled correctly' are invalid.
+  - accept_tradeoff: concern is real but accepted as a known limitation.
+    Rationale must be specific to this flag — 'acceptable within scope'
+    is not valid rationale."
+
+Keep the existing example JSON, but update it to show explicit resolutions for every listed blocking flag (not just a subset).
+
+### Change 2: megaplan/handlers.py _apply_gate_outcome
+Replace the silent implicit-acceptance block (the "Implicitly accept remaining blocking flags as tradeoffs" branch around lines 621-635) with:
+
+  - If PROCEED and blocking_unresolved is non-empty:
+    - If this is the first attempt for this iteration: reprompt the gate worker once, with the missing flag IDs listed in the new prompt. The existing worker machinery should support this (see _run_worker and the refreshed flag).
+    - If reprompt also returns blocking_unresolved: force-downgrade recommendation to ITERATE. Mutate gate_summary in place so the artifact reflects the downgrade. Append to gate_summary["rationale"]: " [Auto-downgraded from PROCEED: N blocking flag(s) not resolved after reprompt]"
+    - Return next_step = "revise".
+  - Do NOT call update_flags_after_gate with implicit resolutions for unresolved flags. Remove the implicit_resolutions list entirely.
+
+Persist a marker in state or the gate artifact so we can tell whether reprompt already happened this iteration. Either a field on gate_summary (e.g., `reprompted: true`) or a key in state meta. Pick whichever is less invasive.
+
+### Change 3: megaplan/handlers.py rubber-stamp check extension
+In the loop around lines 597-608 that processes resolutions:
+
+  - Keep the existing dispute check (skip if evidence is missing or is_rubber_stamp returns True).
+  - Add a matching check for accept_tradeoff: skip if rationale is missing or is_rubber_stamp(rationale, strict=True) returns True. A skipped accept_tradeoff means the flag is treated as unresolved and falls through to the Change 2 logic.
+
+### Change 4: tests
+Update existing gate tests:
+- Test that a PROCEED with 3 resolutions out of 5 blocking flags triggers a reprompt, not silent acceptance.
+- Test that a PROCEED still missing flags after reprompt is auto-downgraded to ITERATE, with the appended rationale.
+- Test that an accept_tradeoff with rubber-stamp rationale ("acceptable", "fine as is") is rejected.
+- Test that an accept_tradeoff with concrete rationale passes.
+- Test that PROCEED with every blocking flag resolved (no reprompt needed) still works end-to-end.
+
+Remove any existing test that asserts the implicit-acceptance behavior (that was testing a bug).
+
+### Change 5: version bump
+- pyproject.toml: version "0.13.0" -> "0.14.0".
+- CHANGELOG.md: new v0.14.0 entry summarizing the above.
+
+## Out of scope (explicitly NOT doing in v0.14.0)
+- Do not add a separate per-flag resolve phase.
+- Do not add scaffolding-level recurrence counters or divergence detectors — the gate agent already sees iteration history via gate_signals and can reason about recurrence on its own.
+- Do not add severity-gated auto-ITERATE rules beyond what the existing logic covers.
+- Do not change the flag severity taxonomy (blocking = significant + likely-significant; noted = everything else).
+- Do not change the override commands (force-proceed, abort, replan, add-note).
+- Do not touch the gate signals computation, preflight checks, or worker infrastructure.
+
+## Branch + commit hygiene
+- Create branch `gate-strict-flag-resolution` off main.
+- One commit for the code change, one for the test update is fine, or a single atomic commit — reviewer preference.
+- Commit message must reference v0.14.0 and summarize the behavior change.
+- Open a PR on GitHub against main when done. Do not auto-merge.
+
+## Success criteria (verifiable)
+- All existing megaplan tests pass.
+- New tests above pass.
+- Running the existing test fixture that simulates a gate PROCEED with unresolved flags produces an ITERATE downgrade (not silent acceptance).
+- pyproject.toml version is "0.14.0".
+- CHANGELOG.md has the new entry.
+
+## Working directory
+/Users/peteromalley/Documents/megaplan
+
+## Uncommitted state warning
+CHANGELOG.md has a pre-existing uncommitted modification and there are two untracked JSON files in the repo root. Do not commit or stash these. Work only on the specific files listed above, and only the specific regions described.

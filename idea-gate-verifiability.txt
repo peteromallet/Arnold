@@ -1,0 +1,304 @@
+v0.17.0 — gate verifiability: tagging success criteria with who can verify them
+
+## Motivation — and a warning against the obvious reading
+
+The proximate trigger for this proposal is milestone M0 of the reigh-app
+state-management refactor (`~/Documents/reigh-megaplan-dev/ideas/M0-render-telemetry.txt`).
+Codex, running autonomously in a Railway container, shipped the actual code
+deliverables — hook, overlay, 11 instrumented components, branch
+`megaplan/m0-render-telemetry` — and then review blocked `done` with four
+failures: a spec required "≥5 components × ≥3 interactions" of *observed*
+render counts (needs a browser); a spec required a "non-HMR production-built
+dev server" baseline (Vite strips `import.meta.env.DEV`, making the spec
+semantically self-contradictory); `npm test` had 4 order-dependent failures
+(real, but not caused by the milestone); and the baseline doc's directory
+was `.gitignore`'d so codex force-added it (flagged as scope creep).
+
+The obvious reading is "add a `verified_by: human` tag so the reviewer
+skips those criteria in autonomous mode." That reading is too shallow and
+this proposal will resist it. Three deeper frames matter more:
+
+1. **The harness conflates plan gates with review gates.** The list of
+   bullets under `## Gate criteria (for the human reviewer)` in the M0
+   spec was written for a human reading a PR, and then reused verbatim
+   as the review criteria. Megaplan has no concept that a spec may carry
+   two audiences. The container runs with the human-facing list and is
+   then punished for being unable to satisfy it.
+2. **Spec authorship has no feedback loop.** Nothing in megaplan looks
+   at a spec before execution and asks "are these criteria reachable by
+   the agent configured to execute this plan?" The author pastes
+   best-practice gates from CLAUDE.md; megaplan dutifully hands them to
+   review; review dutifully fails. The error is diagnosed at the most
+   expensive possible moment — after a full execute pass in a remote
+   container.
+3. **The review agent already has a `waived` escape hatch and doesn't
+   use it aggressively.** `megaplan/prompts/review.py:503` instructs
+   review to mark criteria `waived` "if a criterion cannot be verified
+   in this context (e.g., requires manual testing or runtime
+   observation)". In the M0 run this path was not taken — the reviewer
+   treated "cannot verify interaction counts" as a `must` failure rather
+   than a waiver. So the mechanism exists but the contract is ambiguous:
+   unverifiable versus failed is a judgement call, with no structural
+   signal from the spec telling the reviewer which one applies.
+
+Any proposal that only addresses frame 1 will succeed on M0 and then
+fail on the next poorly-authored spec. A proposal that addresses all
+three is a real fix.
+
+## Option space
+
+### (a) Per-criterion `verified_by: container|human|mixed` tag
+Reviewer skips (waives) any criterion tagged `human` when running in an
+autonomous context. Small change: schema plus two lines of reviewer
+logic. Catches: obvious human-only gates. Misses: the authorship problem
+(author has to remember to tag; no enforcement), the dual-audience
+problem (still one criteria list), the expensive-machine-gate problem
+(e2e suites are neither human nor container-easy). Low implementation
+cost; zero worker-contract change; fully backward compatible (missing
+tag = `container` default).
+
+### (b) Plan-phase verifiability audit
+Before critique starts, the harness runs a lightweight check — most
+cheaply a single worker call — that inspects each proposed success
+criterion and emits a flag if the criterion is unreachable by the
+configured worker. Catches: bad authorship early, when it is cheap to
+fix. Misses: criteria that look machine-verifiable but aren't (dev-only
+telemetry, flaky e2e). Medium cost; requires a new prompt and a new
+flag category; plays well with the existing critique→gate loop because
+the flags become part of normal resolution. Does not require a schema
+change if we keep it advisory.
+
+### (c) Deferred-verification terminal state
+Add a plan state `awaiting_human_verification` distinct from `done`.
+Human-tagged criteria short-circuit the review `needs_rework` verdict
+and instead park the plan in this state; a human CLI command
+(`megaplan verify-human --plan X --criterion C --pass`) flips it to
+`done`. Catches: the end-to-end lifecycle including "who actually
+confirmed". Misses: still requires the tagging from (a) upstream; adds
+a new state machine branch that has to be taught to status, batch
+runners, and loop-init. Medium-to-large cost; meaningful worker
+contract change (review must emit a new verdict `awaiting_human` in
+addition to `approved` / `needs_rework`).
+
+### (d) Two-array schema split (machine_criteria, human_criteria)
+The plan author writes two explicit arrays. Review evaluates only
+`machine_criteria`. `human_criteria` go into the PR description or a
+checklist file and never touch review. Catches: the conflation directly
+at the schema level; makes the author's two audiences structurally
+separate. Misses: authors who lazily shove everything into one bucket;
+the expensive-machine-gate case. Small cost; but a large change in
+authoring ergonomics — existing specs break unless we fall back to
+treating `success_criteria` as `machine_criteria`.
+
+### (e) Reviewer self-assessment of verifiability
+Let the reviewer return, per criterion, one of
+`pass | fail | waived_unverifiable | waived_info`. Today's `waived`
+covers both `info` priority and unverifiable; split that. The reviewer
+decides, not the author. Catches: the M0 case without touching spec
+authoring; the reviewer is usually in the best position to know what
+it cannot verify. Misses: authors still paste nonsense criteria; the
+loop wastes a whole execute pass before the reviewer shrugs; also
+creates a new gaming vector where `waived_unverifiable` means "I didn't
+try hard enough." Low cost in isolation.
+
+### (f) Worker capability profile + static criterion linter
+New-for-this-proposal. Each worker declares a *capability profile* — a
+small structured blob listing what it can execute (`run_shell`,
+`run_node_tests`, `read_build_output`, `observe_browser`,
+`observe_runtime_logs`, ...). At plan-finalize time, each success
+criterion is parsed by a linter prompt that maps it to the capabilities
+it needs. A criterion whose required capabilities are a subset of the
+configured worker's profile is `machine_verifiable: true`. Everything
+else is `machine_verifiable: false` and is automatically treated as a
+human-deferred criterion. The author does not tag anything; the
+harness computes it.
+
+## Recommendation: a fused (a)+(b)+(e), with (f) as the v0.18 follow-up
+
+Pick option (a) as the storage model, option (b) as the upstream defense,
+and option (e) as the downstream safety net. Deliver all three in v0.17.0.
+Defer (f) because capability profiles are a much bigger design problem —
+they couple to worker contracts, the trusted-container env, and the
+hermes worker, and we do not need them to fix the immediate pain. (c) is
+tempting but adds a state machine branch for a problem that `waived`
+already models well; reject. (d) forces existing specs to break; reject.
+
+Why fuse three rather than pick one: each option on its own has a
+failure mode the other two cover.
+
+- (a) alone: author forgets to tag -> reviewer still fails. (e) catches.
+- (b) alone: audit passes because criteria *look* machine-verifiable
+  (e.g., "baseline counts captured" reads as machine-checkable but
+  requires a browser). (a) plus (e) catch at review time.
+- (e) alone: reviewer correctly waives, but the author never learns
+  the spec was malformed; the next milestone repeats the mistake. (b)
+  surfaces the problem at authorship.
+
+The three-layer structure mirrors megaplan's existing philosophy (plan
+gate filters → execute audit → review verdict), just applied to the
+verifiability axis.
+
+## Implementation sketch
+
+### Schema changes (`megaplan/schemas.py`)
+`plan.json` and `finalize.json` success_criteria items gain:
+```
+"verified_by": {"type": "string", "enum": ["container", "human", "mixed"], "default": "container"}
+"verification_hint": {"type": "string"}  // optional, free-text: "requires running browser", etc.
+```
+Review-output criteria gain a new `pass` enum value:
+```
+"pass": {"type": "string", "enum": ["pass", "fail", "waived", "waived_unverifiable", "deferred_human"]}
+```
+Existing `waived` is preserved for `info` priority. Missing `verified_by`
+defaults to `container` — every existing plan keeps working unchanged.
+
+### Plan-phase audit (option b)
+New file: `megaplan/verifiability.py`. Exposes `audit_criteria(state, criteria)`
+which runs a single-shot worker call (same pattern as `run_gate_checks`)
+asking: "for each criterion, is it reachable by a worker with capabilities
+`run_shell`, `read_files`, `git`, but no browser, no human hands, no manual
+observation? Return `container`, `human`, or `mixed` and one-line
+rationale." Results are written to `plan_dir/verifiability.json` and
+surfaced as advisory critique flags with category `verifiability`. The
+author (or gate) can override by explicitly setting `verified_by` on the
+criterion — the audit never overwrites an explicit tag, only fills in
+missing ones.
+
+Runs after `finalize`, before `execute` starts. Keeps the
+critique→gate→revise loop as the resolution surface — no new state.
+
+### Review-phase handling (option e)
+`megaplan/prompts/review.py` gains two rules:
+- If criterion's `verified_by == "human"`: reviewer MUST mark
+  `pass: "deferred_human"` and MUST NOT count it toward the
+  `needs_rework` tally. `review_verdict = approved` is valid even if
+  every human criterion is deferred.
+- If reviewer finds a `container`-tagged criterion it genuinely cannot
+  verify (e.g., the tooling isn't present in this environment), it
+  marks `pass: "waived_unverifiable"` with an evidence sentence naming
+  *what* it couldn't run, and surfaces a flag `REVIEW-UNVERIFIABLE-NNN`.
+  A `must` criterion going `waived_unverifiable` is a soft block — it
+  downgrades verdict to `needs_rework` only if `>= N` of them occur
+  (configurable; default 1 for `must`, infinity for `should`). This
+  prevents the M0 cascade.
+
+Merging logic (`_merge_review_verdicts` at `handlers.py:1421`) must learn
+the new enum values and stop treating them as `fail`.
+
+### CLI
+- `megaplan audit-verifiability --plan X` — run the audit on demand.
+- `megaplan status` shows counts: "3 container / 2 human / 0 mixed".
+- `megaplan verify-human --plan X --criterion "Baseline doc captured"
+  --pass --evidence "Confirmed 5 components × 3 interactions in doc
+  at commit abc123"` — records the human confirmation in
+  `plan_dir/human_verifications.json`. Review re-runs treat these as
+  resolved. (Optional for v0.17.0; falls back to "human flips state
+  with a comment" if we want to defer.)
+
+### Migration
+- Existing plans without `verified_by`: default `container`. Same
+  behavior as today.
+- Existing plans in `awaiting_review` / `needs_rework` for the M0-class
+  reason: add a one-shot retrofit script that parses the review verdict
+  and re-tags criteria whose failure evidence includes phrases like
+  "cannot verify", "no browser", "requires manual". Offered as a CLI
+  tool, not automatic.
+- Tests: add fixtures under `tests/fixtures/verifiability/` that mirror
+  M0 — container-only execution, spec with mixed gates, expected
+  `approved` verdict with deferrals.
+
+### Out of scope (v0.17.0)
+- Worker capability profiles (option f). Deferred to v0.18.0 when we
+  re-examine worker contracts wholesale.
+- Schema-level split into two arrays (option d). Tag is sufficient.
+- Auto-flipping `awaiting_human_verification` based on PR comments or
+  GitHub checks. Manual CLI confirmation only.
+- Teaching loop mode about deferrals. v0.17.0 treats a plan with any
+  `deferred_human` criteria as "done for autonomous purposes"; loops
+  continue to the next plan.
+
+## Success criteria (verifiable)
+
+- `megaplan init` accepts plans whose `success_criteria[].verified_by`
+  is `container`, `human`, or `mixed`. Missing field defaults to
+  `container` — asserted by schema round-trip test.
+- `megaplan audit-verifiability --plan X` produces
+  `verifiability.json` with one entry per criterion and exits 0.
+- A fixture plan with a `verified_by: human` criterion runs through
+  review and yields `review_verdict: approved`, `pass: deferred_human`
+  for that criterion, and no `rework_items` entries sourced from it.
+- A fixture plan with an undetectable-by-container criterion (e.g.,
+  "browser renders without warnings") and `verified_by` unset triggers
+  a verifiability flag at audit time, category `verifiability`.
+- Reviewer emitting `pass: waived_unverifiable` on a `must` criterion
+  still routes to `needs_rework` (soft block preserved); emitting it
+  on a `should` criterion does not.
+- `megaplan verify-human --plan X --criterion C --pass --evidence E`
+  writes `human_verifications.json` and, on a re-review, the entry is
+  honored: verdict stays `approved`, pass flips from `deferred_human`
+  to `pass`.
+- Existing test suite passes unchanged — all legacy plans default to
+  `container` and behave exactly as before.
+- `pyproject.toml` version is `0.17.0`; CHANGELOG has the v0.17.0 entry.
+
+## Edge cases — and answers
+
+- **Mixed human + machine gates in one plan.** Supported first-class;
+  review emits both `pass` and `deferred_human` verdicts; `approved` is
+  possible when all machine `must` criteria pass and all human `must`
+  criteria are deferred. The plan status becomes `approved_with_deferrals`
+  in `status` output — a label, not a new state.
+- **Worker identity changes mid-plan** (claude plans, codex executes,
+  hermes reviews). Capability is conservatively the intersection across
+  the executing + reviewing workers. The audit runs with the *executor's*
+  profile; review with its own. If review has fewer capabilities than
+  execute, `waived_unverifiable` can still fire at review time — this is
+  correct: review couldn't verify, regardless of whether execute could.
+- **Machine-verifiable but expensive** (full e2e, 30-minute build).
+  These are `verified_by: container` but get a `verification_hint` of
+  `"expensive"`. Not handled in v0.17.0 — a future `verified_by: container_slow`
+  tag would let the harness choose to defer them in CI-gated contexts.
+  Explicitly out of scope now; the hint is present so we do not have to
+  re-migrate schemas later.
+- **Gaming: author marks everything `human` to skip checks.** Three
+  defenses. (1) The verifiability audit runs regardless of the author's
+  tag; if the audit says a criterion *is* container-reachable, that
+  appears as a flag at gate time even when the author claimed `human`.
+  (2) `megaplan status` surfaces the container/human ratio; a plan with
+  7 human and 0 container criteria is visually anomalous to the human
+  operator. (3) Review's `waived_unverifiable` counter still applies —
+  marking something `human` does not exempt it from the soft block if
+  review independently finds the claim is machine-checkable. We do not
+  try to make gaming impossible; we make it visible.
+
+## Authorship ergonomics
+
+Today a spec author writes one list of bullets. Under v0.17.0 they write
+the same list, and most criteria default to `container` implicitly. The
+only new burden is tagging the criteria they already know a machine
+cannot verify. To lower even that burden:
+
+- The `megaplan init` prompt gains a one-line nudge: "Any success
+  criterion that requires human observation (browser, device, QA
+  confirmation) should set `verified_by: human`."
+- A scaffolding command `megaplan new-spec --template milestone` writes
+  a template markdown file with two example criteria pre-filled, one
+  per `verified_by` value, so the author sees the shape.
+- The verifiability audit's output is itself the teaching signal: if
+  the author forgets, the flag surfaces with rationale and the author
+  learns the pattern on the next spec.
+
+The system is strictly *easier* to get right: the failure mode goes
+from "ship to a container, burn a run, fail review opaquely" to
+"critique emits a flag at plan time, author adjusts tag or rewrites
+criterion." The only way v0.17.0 is harder than today is if the author
+wants to preserve the current behavior of pasting CLAUDE.md bullets
+into the criteria block — which is exactly the behavior we are trying
+to make uncomfortable.
+
+## Branch
+`gate-verifiability` off main.
+
+## Working directory
+/Users/peteromalley/Documents/megaplan
