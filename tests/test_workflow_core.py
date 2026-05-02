@@ -8,7 +8,7 @@ import pytest
 
 from vibecomfy.ingest.index import index_workflows
 from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_shape, normalize_to_api
-from vibecomfy.registry.library import load_workflow_reference, workflow_from_template
+from vibecomfy.registry.library import load_workflow_reference, workflow_from_id
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -103,12 +103,12 @@ def test_official_index_uses_package_manifest_metadata(tmp_path: Path) -> None:
     ]
 
 
-def test_workflow_from_template_reads_external_index_when_official_exists(tmp_path: Path, monkeypatch) -> None:
+def test_workflow_from_id_reads_external_index_when_official_exists(tmp_path: Path, monkeypatch) -> None:
     official = tmp_path / "official.json"
     external = tmp_path / "external_only.json"
     official.write_text(json.dumps({"1": {"class_type": "CLIPTextEncode", "inputs": {"text": "official"}}}), encoding="utf-8")
     external.write_text(json.dumps({"1": {"class_type": "CLIPTextEncode", "inputs": {"text": "external"}}}), encoding="utf-8")
-    (tmp_path / "template_index.json").write_text(
+    (tmp_path / "workflow_index.json").write_text(
         json.dumps([{"id": "official-only", "path": str(official), "source": "official"}]),
         encoding="utf-8",
     )
@@ -118,7 +118,7 @@ def test_workflow_from_template_reads_external_index_when_official_exists(tmp_pa
     )
     monkeypatch.chdir(tmp_path)
 
-    workflow = workflow_from_template("external-only")
+    workflow = workflow_from_id("external-only")
 
     assert workflow.id == "external-only"
     assert workflow.nodes["1"].inputs["text"] == "external"
@@ -141,7 +141,7 @@ def test_load_workflow_reference_handles_json_path_index_id_and_scratchpad(tmp_p
         ),
         encoding="utf-8",
     )
-    (tmp_path / "template_index.json").write_text(
+    (tmp_path / "workflow_index.json").write_text(
         json.dumps([{"id": "indexed", "path": str(indexed_json), "source": "official"}]),
         encoding="utf-8",
     )

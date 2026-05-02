@@ -25,7 +25,7 @@ def sync_sources(
     custom_examples = index_custom_node_examples(custom_nodes)
     runtime_nodes = index_runtime_nodes()
     external_rows = external_vendor + custom_examples
-    write_index("template_index.json", official_rows)
+    write_index("workflow_index.json", official_rows)
     write_index("external_workflow_index.json", external_rows)
     write_json("node_index.json", runtime_nodes)
     return SourceSyncResult(

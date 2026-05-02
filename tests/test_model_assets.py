@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibecomfy.ingest.loader import load_template
+from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.model_assets import entries_from_scratchpad_path, extract_from_raw_workflow
 
 
@@ -147,7 +147,7 @@ def test_entries_from_scratchpad_path_reads_materialized_requirements(tmp_path: 
 
 
 def test_real_wan_t2v_extracts_three_assets() -> None:
-    entries = extract_from_raw_workflow(load_template("workflow_corpus/official/video/wan_t2v.json"))
+    entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/official/video/wan_t2v.json"))
 
     assert [(entry["name"], entry["subdir"]) for entry in entries] == [
         ("wan2.1_t2v_1.3B_fp16.safetensors", "diffusion_models"),
@@ -158,7 +158,7 @@ def test_real_wan_t2v_extracts_three_assets() -> None:
 
 
 def test_real_flux2_subgraph_extracts_pre_policy_assets() -> None:
-    entries = extract_from_raw_workflow(load_template("workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"))
+    entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"))
 
     assert [(entry["name"], entry["subdir"]) for entry in entries] == [
         ("flux-2-klein-base-9b-fp8.safetensors", "diffusion_models"),

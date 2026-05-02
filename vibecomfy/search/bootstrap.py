@@ -6,7 +6,7 @@ from vibecomfy.ingest.sources import sync_sources
 
 REQUIRED_INDEXES = (
     "node_index.json",
-    "template_index.json",
+    "workflow_index.json",
     "external_workflow_index.json",
 )
 

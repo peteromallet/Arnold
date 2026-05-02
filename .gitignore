@@ -28,3 +28,4 @@ custom_nodes/
 # Agent task briefs and prompts — historical scratchpads, not project docs
 docs/megaplan_briefs/
 docs/subagent_prompts/
+this.env

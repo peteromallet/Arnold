@@ -6,7 +6,7 @@ from typing import Any
 from vibecomfy.commands.index_files import read_index_json
 
 
-WORKFLOW_INDEX_NAMES = ("template_index.json", "external_workflow_index.json")
+WORKFLOW_INDEX_NAMES = ("workflow_index.json", "external_workflow_index.json")
 
 
 def load_workflow_index_rows() -> list[dict[str, Any]]:

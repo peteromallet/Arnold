@@ -26,7 +26,7 @@ def load_scratchpad(path: str | Path) -> VibeWorkflow:
 
 
 def render_scratchpad(source: str, *, source_is_path: bool = False, schema_provider: SchemaProvider | None = None) -> str:
-    loader = "workflow_from_file" if source_is_path else "workflow_from_template"
+    loader = "workflow_from_file" if source_is_path else "workflow_from_id"
     provider_arg = ', schema_provider=get_schema_provider("auto")' if schema_provider is not None else ""
     source_literal = repr(str(source))
     return f'''from vibecomfy import {loader}, run

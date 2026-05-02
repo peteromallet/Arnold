@@ -201,7 +201,7 @@ def test_resolve_workflow_path_rejects_empty_or_directory(tmp_path: Path) -> Non
 def test_resolve_workflow_path_accepts_index_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workflow = tmp_path / "workflow.json"
     workflow.write_text("{}", encoding="utf-8")
-    (tmp_path / "template_index.json").write_text(
+    (tmp_path / "workflow_index.json").write_text(
         json.dumps([{"id": "sample", "path": str(workflow)}]),
         encoding="utf-8",
     )
@@ -222,13 +222,13 @@ def test_workflows_list_reports_malformed_index_with_recovery_hint(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    (tmp_path / "template_index.json").write_text("{not-json", encoding="utf-8")
+    (tmp_path / "workflow_index.json").write_text("{not-json", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     assert _cmd_workflows_list(argparse.Namespace(ready=False, limit=10)) == 1
 
     captured = capsys.readouterr()
-    assert "template_index.json could not be read" in captured.err
+    assert "workflow_index.json could not be read" in captured.err
     assert "vibecomfy sources sync" in captured.err
 
 

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from vibecomfy.ingest.loader import load_template
+from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.ingest.normalize import normalize_to_api
 from vibecomfy.registry.models_loader import canonical_filename, load_registry, normalize_alias
 
@@ -23,7 +23,7 @@ FLUX_VAE = canonical_filename("flux2_vae_from_klein_9b", registry=_REGISTRY)
 
 
 def prepare_workflow(workflow_id: str, source: Path, output: Path) -> Path:
-    api = normalize_to_api(load_template(source))
+    api = normalize_to_api(load_workflow_json(source))
     if not patch_workflow_api(workflow_id, api):
         return source
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -13,7 +13,7 @@ from typing import Any
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.commands._output import emit
 from vibecomfy.commands._workflow_path import resolve_workflow_path
-from vibecomfy.ingest.loader import load_template
+from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.model_assets import extract_from_raw_workflow
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 from vibecomfy.schema import get_schema_provider
@@ -317,7 +317,7 @@ def _model_asset_entries(workflow: VibeWorkflow, workflow_ref: str) -> list[dict
     path = _json_path_for_reference(workflow_ref)
     if path is None:
         return []
-    return extract_from_raw_workflow(load_template(path))
+    return extract_from_raw_workflow(load_workflow_json(path))
 
 
 def _json_path_for_reference(workflow_ref: str) -> str | None:

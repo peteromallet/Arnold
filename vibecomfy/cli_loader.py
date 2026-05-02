@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from vibecomfy.commands._workflow_path import resolve_workflow_path
-from vibecomfy.ingest.loader import load_template
+from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.ingest.normalize import convert_to_vibe_format, normalize_to_api
 from vibecomfy.registry.ready import ready_template_ids, workflow_from_ready
 from vibecomfy.schema import get_schema_provider
@@ -29,7 +29,7 @@ def load_workflow_any(path_or_id: str) -> VibeWorkflow:
         return load_scratchpad(path)
     if suffix == ".json":
         schema_provider = get_schema_provider("auto")
-        raw = load_template(path)
+        raw = load_workflow_json(path)
         api = normalize_to_api(raw, schema_provider=schema_provider)
         return convert_to_vibe_format(api, source_path=path, schema_provider=schema_provider)
     raise FileNotFoundError(path)
