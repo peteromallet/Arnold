@@ -254,10 +254,15 @@ def test_execution_doc_schema_strips_auto_attributed_files() -> None:
 def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
     review = SCHEMAS["review.json"]
     assert "review_verdict" in review["properties"]
+    assert "checks" in review["properties"]
     assert "task_verdicts" in review["properties"]
     assert "sense_check_verdicts" in review["properties"]
     assert "rework_items" in review["properties"]
     assert "review_verdict" in review["required"]
+    assert "checks" not in review["required"]
+    assert "pre_check_flags" not in review["required"]
+    assert "verified_flag_ids" not in review["required"]
+    assert "disputed_flag_ids" not in review["required"]
     assert "task_verdicts" in review["required"]
     assert "sense_check_verdicts" in review["required"]
     assert "rework_items" in review["required"]
@@ -274,6 +279,16 @@ def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
     assert set(rework_item["required"]) == {"task_id", "issue", "expected", "actual", "evidence_file", "flag_id", "source"}
     assert rework_item["properties"]["flag_id"]["type"] == ["string", "null"]
     assert rework_item["properties"]["source"]["type"] == ["string", "null"]
+
+
+def test_review_schema_accepts_new_review_shape_without_checks() -> None:
+    payload = _minimal_review_payload()
+    payload.pop("checks")
+    payload.pop("pre_check_flags")
+    payload.pop("verified_flag_ids")
+    payload.pop("disputed_flag_ids")
+
+    assert list(Draft7Validator(SCHEMAS["review.json"]).iter_errors(payload)) == []
 
 
 def test_review_schema_accepts_parallel_mode_extensions_in_both_copies() -> None:
@@ -476,10 +491,6 @@ def test_schema_registry_covers_the_six_strict_mode_required_fixes() -> None:
     }
     assert set(review["required"]) == {
         "review_verdict",
-        "checks",
-        "pre_check_flags",
-        "verified_flag_ids",
-        "disputed_flag_ids",
         "criteria",
         "issues",
         "rework_items",
@@ -487,6 +498,9 @@ def test_schema_registry_covers_the_six_strict_mode_required_fixes() -> None:
         "task_verdicts",
         "sense_check_verdicts",
     }
+    assert {"checks", "pre_check_flags", "verified_flag_ids", "disputed_flag_ids"}.issubset(
+        review["properties"]
+    )
     assert set(review_check["required"]) == {"id", "question", "guidance", "findings", "prior_findings"}
     assert set(review_finding["required"]) == {"detail", "flagged", "status", "evidence_file"}
     assert set(pre_check_flag["required"]) == {"id", "check", "detail", "severity", "evidence_file"}
