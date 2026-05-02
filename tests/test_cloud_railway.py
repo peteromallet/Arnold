@@ -20,7 +20,12 @@ from megaplan.cloud.spec import (
 from megaplan.types import CliError
 
 
-def _spec(*, project: str | None = None, secrets: list[str] | None = None) -> CloudSpec:
+def _spec(
+    *,
+    project: str | None = None,
+    environment: str | None = None,
+    secrets: list[str] | None = None,
+) -> CloudSpec:
     return CloudSpec(
         provider="railway",
         repo=RepoSpec(
@@ -34,7 +39,7 @@ def _spec(*, project: str | None = None, secrets: list[str] | None = None) -> Cl
         megaplan=MegaplanSpec(ref="main"),
         resources=ResourcesSpec(volume="agent-volume", port=8080),
         secrets=secrets or [],
-        railway=RailwaySpec(service="svc", session="ses", project=project),
+        railway=RailwaySpec(service="svc", session="ses", project=project, environment=environment),
     )
 
 
@@ -98,9 +103,45 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
 
     assert calls == [
         ["/usr/bin/railway", "link", "--project", "my-proj"],
-        ["/usr/bin/railway", "variables", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
-        ["/usr/bin/railway", "up", "--service", "svc", "--detach", "--ci"],
+        ["/usr/bin/railway", "variables", "--project", "my-proj", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
+        ["/usr/bin/railway", "up", "--project", "my-proj", "--service", "svc", "--detach", "--ci"],
     ]
+
+
+def test_project_and_environment_scope_operational_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    follow_calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        if argv[:2] == ["/usr/bin/railway", "ssh"] and "--" in argv:
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"ok": True}), stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "megaplan.cloud.providers.railway._logs_follow",
+        lambda argv, *, cwd=None, secret_names=(), env=None: follow_calls.append(argv) or 0,
+    )
+
+    provider = RailwayProvider(_spec(project="proj-123", environment="env-123"))
+    provider.ssh_exec("pwd")
+    provider.upload_file(Path(__file__), "/workspace/test.py")
+    provider.read_remote_file("/workspace/test.py")
+    provider.logs(follow=True)
+    provider.logs(follow=False)
+    provider.down()
+
+    scoped = ["--project", "proj-123", "--environment", "env-123"]
+    assert [argv for argv, _kwargs in calls] == [
+        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--session", "ses", "--", "pwd"],
+        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--session", "ses", "--", "base64 -d > /workspace/test.py"],
+        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--session", "ses", "--", "cat /workspace/test.py"],
+        ["/usr/bin/railway", "logs", *scoped, "--service", "svc", "--lines", "200"],
+        ["/usr/bin/railway", "down", *scoped, "--service", "svc"],
+    ]
+    assert follow_calls == [["/usr/bin/railway", "logs", *scoped, "--service", "svc"]]
 
 
 def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytest.MonkeyPatch) -> None:

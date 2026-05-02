@@ -125,7 +125,8 @@ Used only when `mode: chain`.
 |---|---|---:|---|
 | `railway.service` | no | `agent` | Railway service name used by `deploy`, `logs`, and `down`. |
 | `railway.session` | no | `agent` | Railway SSH session name used for interactive attaches. |
-| `railway.project` | no | unset | Optional project passed to `railway link --project ...` before deploy. |
+| `railway.project` | no | unset | Optional project passed to Railway commands. |
+| `railway.environment` | no | unset | Optional environment passed to Railway commands. |
 
 ### `local`
 

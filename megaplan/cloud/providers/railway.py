@@ -65,7 +65,15 @@ class RailwayProvider(Provider):
         return result
 
     def _railway_cmd(self, *args: str) -> list[str]:
-        return [self._binary or "railway", *args]
+        command = [self._binary or "railway", *args]
+        scoped: list[str] = []
+        if self._railway.project:
+            scoped.extend(["--project", self._railway.project])
+        if self._railway.environment:
+            scoped.extend(["--environment", self._railway.environment])
+        if scoped and args and args[0] == "link":
+            return command
+        return [*command[:2], *scoped, *command[2:]]
 
     def build(self, deploy_dir: Path) -> int:
         self._run(["docker", "build", "-t", self.image_tag, str(deploy_dir)])

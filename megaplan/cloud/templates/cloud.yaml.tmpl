@@ -74,10 +74,13 @@ resources:
 #   service  Railway service name used by deploy/logs/down.
 #   session  Railway ssh session name used for interactive attaches.
 #   project  Optional Railway project ID/name for `railway link --project ...`.
+#   environment
+#            Optional Railway environment ID/name passed to operational commands.
 railway:
   service: agent
   session: agent
   # project: your-railway-project-id
+  # environment: production
 
 # local:
 #   compose_project  Docker Compose project name used by the local provider.
