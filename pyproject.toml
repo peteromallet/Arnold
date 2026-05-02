@@ -52,7 +52,11 @@ megaplan = "megaplan.cli:cli_entry"
 
 [tool.hatch.build.targets.wheel]
 packages = ["megaplan"]
-exclude = ["megaplan/cloud/_reference/**", "megaplan/agent/pyproject.toml"]
+exclude = [
+    "megaplan/cloud/_reference/**",
+    "megaplan/agent/pyproject.toml",
+    "megaplan/agent/auto_improve/iterations/**",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
