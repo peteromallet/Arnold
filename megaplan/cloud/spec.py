@@ -63,6 +63,7 @@ class RailwaySpec:
     service: str = "agent"
     session: str = "agent"
     project: str | None = None
+    environment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -264,6 +265,7 @@ def load_spec(path: Path) -> CloudSpec:
         service=_string(railway_raw.get("service"), "railway.service", default="agent"),
         session=_string(railway_raw.get("session"), "railway.session", default="agent"),
         project=_optional_string(railway_raw.get("project"), "railway.project"),
+        environment=_optional_string(railway_raw.get("environment"), "railway.environment"),
     )
 
     local_raw = _mapping(raw.get("local"), "local")
