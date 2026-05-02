@@ -593,6 +593,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["diagnosis", "fix_description", "files_to_change", "confidence", "outcome", "should_pause"],
     },
     "review.json": {
+        "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
             "review_verdict": {"type": "string", "enum": ["approved", "needs_rework"]},
@@ -706,10 +707,6 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": [
             "review_verdict",
-            "checks",
-            "pre_check_flags",
-            "verified_flag_ids",
-            "disputed_flag_ids",
             "criteria",
             "issues",
             "rework_items",

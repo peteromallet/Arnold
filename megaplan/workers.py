@@ -685,7 +685,7 @@ def _extract_json_from_raw(raw: str) -> dict[str, Any] | None:
     return None
 
 
-def _normalize_codex_payload(step: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _normalize_worker_payload(step: str, payload: dict[str, Any]) -> dict[str, Any]:
     if step == "revise" and "changes_summary" not in payload:
         normalized = dict(payload)
         flags_addressed = normalized.get("flags_addressed", [])
@@ -694,7 +694,24 @@ def _normalize_codex_payload(step: str, payload: dict[str, Any]) -> dict[str, An
         else:
             normalized["changes_summary"] = "No critique flags were raised; refined the plan for execution."
         return normalized
+    if step == "review":
+        normalized = dict(payload)
+        for key in ("checks", "pre_check_flags", "verified_flag_ids", "disputed_flag_ids"):
+            if normalized.get(key) is None:
+                normalized[key] = []
+            else:
+                normalized.setdefault(key, [])
+        return normalized
     return payload
+
+
+def _looks_like_step_payload(step: str, payload: dict[str, Any]) -> bool:
+    required = set(_STEP_REQUIRED_KEYS.get(step, []))
+    if required.intersection(payload):
+        return True
+    if step == "execute" and {"task_updates", "sense_check_acknowledgments"}.intersection(payload):
+        return True
+    return False
 
 
 def parse_json_file(path: Path) -> dict[str, Any]:
@@ -748,14 +765,25 @@ def _recover_codex_payload(
     candidate_payloads.extend(file_recovered_candidates)
     candidate_payloads.extend(raw_candidates)
     valid_payloads: list[dict[str, Any]] = []
+    validation_errors: list[str] = []
     for candidate in candidate_payloads:
-        normalized = _normalize_codex_payload(step, candidate)
+        normalized = _normalize_worker_payload(step, candidate)
         try:
             validate_payload(step, normalized)
-        except CliError:
+        except CliError as error:
+            if _looks_like_step_payload(step, normalized):
+                validation_errors.append(error.message)
             continue
         valid_payloads.append(normalized)
     if not valid_payloads:
+        if validation_errors:
+            unique_errors = list(dict.fromkeys(validation_errors))
+            raise CliError(
+                "parse_error",
+                f"Recovered JSON object for {step} failed validation: "
+                + " | ".join(unique_errors),
+                extra={"raw_output": raw},
+            )
         return None
     if step == "critique" and len(valid_payloads) > 1:
         def _findings_count(item: dict[str, Any]) -> int:
@@ -1462,6 +1490,7 @@ def run_claude_step(
             prompt_kwargs=prompt_kwargs,
         )
     envelope, payload = parse_claude_envelope(raw)
+    payload = _normalize_worker_payload(step, payload)
     try:
         validate_payload(step, payload)
     except CliError as error:

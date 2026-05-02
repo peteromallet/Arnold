@@ -561,6 +561,7 @@ def _review_prompt(
           ]
         }}
         ```
+        - The parallel-review bookkeeping fields `checks`, `pre_check_flags`, `verified_flag_ids`, and `disputed_flag_ids` are optional for this criteria/task/sense-check review shape. Include them only when they are present in the output template or explicitly requested above.
         - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
           - `task_id`: which finalize task this issue relates to
           - `issue`: what is wrong

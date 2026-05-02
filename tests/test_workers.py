@@ -202,6 +202,21 @@ def test_validate_payload_rejects_missing_gate_key() -> None:
         )
 
 
+def test_validate_payload_accepts_review_without_parallel_check_bookkeeping() -> None:
+    validate_payload(
+        "review",
+        {
+            "review_verdict": "approved",
+            "criteria": [],
+            "issues": [],
+            "rework_items": [],
+            "summary": "ok",
+            "task_verdicts": [],
+            "sense_check_verdicts": [],
+        },
+    )
+
+
 def test_validate_payload_accepts_execute_batch_shape() -> None:
     validate_payload(
         "execute",
@@ -298,6 +313,74 @@ def test_recover_codex_payload_handles_stderr_bleed_in_output_file(tmp_path: Pat
         raw="",
     )
     assert recovered == valid_payload
+
+
+def test_recover_codex_payload_accepts_review_without_checks_and_trailing_telemetry(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "review_output.json"
+    valid_payload = {
+        "review_verdict": "approved",
+        "criteria": [
+            {
+                "name": "Regression coverage exists",
+                "priority": "must",
+                "pass": "pass",
+                "evidence": "Focused worker tests cover review JSON recovery.",
+            }
+        ],
+        "issues": [],
+        "rework_items": [],
+        "summary": "Approved. All must criteria pass.",
+        "task_verdicts": [
+            {
+                "task_id": "T1",
+                "reviewer_verdict": "Pass. The implementation matches the task.",
+                "evidence_files": ["megaplan/workers.py"],
+            }
+        ],
+        "sense_check_verdicts": [
+            {"sense_check_id": "SC1", "verdict": "Confirmed. Review recovery accepts the newer shape."}
+        ],
+    }
+    output_path.write_text(
+        json.dumps(valid_payload)
+        + "\n2026-05-03T12:00:00Z INFO codex telemetry: tokens used 1234\n",
+        encoding="utf-8",
+    )
+
+    recovered = _recover_codex_payload(
+        "review",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered == {
+        **valid_payload,
+        "checks": [],
+        "pre_check_flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+
+def test_recover_codex_payload_reports_missing_required_keys_for_json_object(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "plan_output.json"
+    output_path.write_text(json.dumps({"plan": "# Plan\nDo it."}), encoding="utf-8")
+
+    with pytest.raises(CliError) as exc_info:
+        _recover_codex_payload(
+            "plan",
+            plan_dir=plan_dir,
+            output_path=output_path,
+            raw="",
+        )
+
+    assert "plan output missing required keys" in exc_info.value.message
+    assert "not valid JSON" not in exc_info.value.message
 
 
 def test_resolve_agent_mode_uses_configured_fallback() -> None:
@@ -930,6 +1013,36 @@ def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:
     assert result.payload == plan_payload
     assert result.duration_ms == 300
     assert result.cost_usd == 0.0
+
+
+def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps({"plan": "# Plan\nDo it."}), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=300,
+        )
+
+    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        with pytest.raises(CliError) as exc_info:
+            run_codex_step(
+                "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
+            )
+
+    assert "plan output missing required keys" in exc_info.value.message
+    assert "not valid JSON" not in exc_info.value.message
 
 
 def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Path) -> None:
