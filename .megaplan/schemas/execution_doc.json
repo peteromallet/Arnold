@@ -40,13 +40,57 @@
             "items": {
               "type": "string"
             }
+          },
+          "stance": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "challenge_engaged": {
+                "type": "string"
+              },
+              "angle_taken": {
+                "type": "string"
+              },
+              "what_changed": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "challenge_engaged",
+              "angle_taken",
+              "what_changed"
+            ],
+            "additionalProperties": false
+          },
+          "stop_signal": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "requested": {
+                "type": "boolean"
+              },
+              "defense": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "requested",
+              "defense"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
           "task_id",
           "status",
           "executor_notes",
-          "sections_written"
+          "sections_written",
+          "stance",
+          "stop_signal"
         ],
         "additionalProperties": false
       }

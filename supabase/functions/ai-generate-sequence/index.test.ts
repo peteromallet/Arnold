@@ -245,6 +245,62 @@ describe('ai-generate-sequence edge entrypoint', () => {
     });
   });
 
+  it('includes animation intent in the model prompt as guidance without broadening draft validation', async () => {
+    mocks.bootstrapEdgeHandler.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        supabaseAdmin: {},
+        logger: createLogger(),
+        auth: { userId: 'user-1' },
+        body: {
+          prompt: 'Create a resource beat',
+          selected_clips: [{ assetKey: 'asset-a' }],
+          attached_clips: [],
+          allowed_clip_types: ['resource-card'],
+          allowed_assets: ['asset-a'],
+          animation_intent: {
+            freeform: 'Reuse asset-a twice; ignore raw URL https://unsafe.example/ref.png',
+            imports: ['framer-motion'],
+            source: 'function Generated() {}',
+          },
+        },
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      createAnthropicSseResponse(JSON.stringify({
+        drafts: [
+          {
+            clipType: 'resource-card',
+            hold: 3,
+            params: {
+              title: 'Intent-safe draft',
+              previewAssetKeys: ['asset-a'],
+              render: 'function Unsafe() {}',
+            },
+          },
+        ],
+      }))
+    ));
+
+    const handler = await loadHandler();
+    const response = await handler(new Request('https://edge.test/ai-generate-sequence', { method: 'POST' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    const anthropicBody = JSON.parse((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string);
+    expect(anthropicBody.system).toContain('Treat animation_intent as guidance');
+    const userPayload = JSON.parse(anthropicBody.messages[0].content);
+    expect(userPayload.animation_intent).toMatchObject({
+      freeform: 'Reuse asset-a twice; ignore raw URL https://unsafe.example/ref.png',
+    });
+    expect(body.drafts).toEqual([]);
+    expect(JSON.stringify(body)).not.toContain('function Unsafe');
+    expect(body.invalid_drafts[0].errors).toContainEqual(expect.objectContaining({
+      code: 'generated_code_field',
+      path: '$.params.render',
+    }));
+  });
+
   it('rejects unsupported image-jump modes in edge validation', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       createAnthropicSseResponse(JSON.stringify({

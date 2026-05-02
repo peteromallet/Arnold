@@ -1,0 +1,114 @@
+{
+  "type": "object",
+  "properties": {
+    "form": {
+      "type": "string"
+    },
+    "primary_criterion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "passes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "iteration": {
+            "type": "integer"
+          },
+          "provocateur_voice": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provocations_fired": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "vector": {
+                  "type": "string",
+                  "enum": [
+                    "cut",
+                    "force",
+                    "spark"
+                  ]
+                },
+                "subtype": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "vector",
+                "subtype"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "stances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string"
+                },
+                "challenge_engaged": {
+                  "type": "string"
+                },
+                "angle_taken": {
+                  "type": "string"
+                },
+                "what_changed": {
+                  "type": "string"
+                },
+                "stance_violations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "task_id",
+                "challenge_engaged",
+                "angle_taken",
+                "what_changed",
+                "stance_violations"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "stop_requested": {
+            "type": "boolean"
+          },
+          "stop_defense": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "iteration",
+          "provocateur_voice",
+          "provocations_fired",
+          "stances",
+          "stop_requested",
+          "stop_defense"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "form",
+    "primary_criterion",
+    "passes"
+  ],
+  "additionalProperties": false
+}

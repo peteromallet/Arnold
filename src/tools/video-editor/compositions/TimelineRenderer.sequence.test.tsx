@@ -3,22 +3,24 @@ import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TimelineRenderer } from '@/tools/video-editor/compositions/TimelineRenderer';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
+import type { PropsWithChildren } from 'react';
 
 const sequenceProps = vi.hoisted((): Array<Record<string, unknown>> => []);
+const visualClipMock = vi.hoisted(() => vi.fn());
+const textClipMock = vi.hoisted(() => vi.fn());
 
 vi.mock('remotion', async () => {
-  const React = await import('react');
   return {
     AbsoluteFill: ({
       children,
       ...props
-    }: React.PropsWithChildren<Record<string, unknown>>) => (
+    }: PropsWithChildren<Record<string, unknown>>) => (
       <div data-testid="absolute-fill" {...props}>{children}</div>
     ),
     Sequence: ({
       children,
       ...props
-    }: React.PropsWithChildren<Record<string, unknown>>) => {
+    }: PropsWithChildren<Record<string, unknown>>) => {
       sequenceProps.push(props);
       return <div data-testid="sequence">{children}</div>;
     },
@@ -26,13 +28,26 @@ vi.mock('remotion', async () => {
 });
 
 vi.mock('@/tools/video-editor/compositions/AudioAnalysisProvider', async () => {
-  const React = await import('react');
   return {
-    AudioAnalysisProvider: ({ children }: React.PropsWithChildren) => (
+    AudioAnalysisProvider: ({ children }: PropsWithChildren) => (
       <div data-testid="audio-analysis-provider">{children}</div>
     ),
   };
 });
+
+vi.mock('@/tools/video-editor/compositions/VisualClip', () => ({
+  VisualClipSequence: (props: Record<string, unknown>) => {
+    visualClipMock(props);
+    return <div data-testid="visual-clip-sequence" />;
+  },
+}));
+
+vi.mock('@/tools/video-editor/compositions/TextClip', () => ({
+  TextClipSequence: (props: Record<string, unknown>) => {
+    textClipMock(props);
+    return <div data-testid="text-clip-sequence" />;
+  },
+}));
 
 vi.mock('@banodoco/timeline-composition/registry.generated', async () => {
   const React = await import('react');
@@ -113,6 +128,8 @@ const buildConfig = (
 describe('TimelineRenderer registered sequences', () => {
   beforeEach(() => {
     sequenceProps.length = 0;
+    visualClipMock.mockClear();
+    textClipMock.mockClear();
   });
 
   it('renders registered sequence clips through the generated registry and passes params/timing', () => {
@@ -185,5 +202,100 @@ describe('TimelineRenderer registered sequences', () => {
     const sequence = screen.getByTestId('registered-sequence');
     expect(sequence).toHaveAttribute('data-previews', JSON.stringify(['https://cdn.example.com/asset-a.png']));
     expect(sequence).toHaveAttribute('data-preview-asset-keys', JSON.stringify(['asset-a']));
+  });
+
+  it('renders remotion_module clips as safe placeholders before registered, native, or unknown clipType dispatch', () => {
+    render(<TimelineRenderer config={{
+      ...buildConfig({ theme: '2rp' }),
+      clips: [
+        {
+          id: 'clip-module-theme',
+          clipType: 'section-hook',
+          track: 'V1',
+          at: 0,
+          hold: 1,
+          generation: {
+            sequence_lane: 'remotion_module',
+            artifact_id: 'artifact-theme',
+            source: 'do-not-render-this',
+          },
+        },
+        {
+          id: 'clip-module-native',
+          clipType: 'media',
+          track: 'V1',
+          at: 1,
+          hold: 1,
+          generation: {
+            sequence_lane: 'remotion_module',
+            artifact_id: 'artifact-native',
+          },
+        },
+        {
+          id: 'clip-module-unknown',
+          clipType: 'generated-unknown',
+          track: 'V1',
+          at: 2,
+          hold: 1,
+          generation: {
+            sequence_lane: 'remotion_module',
+            artifact_id: 'artifact-unknown',
+          },
+        },
+      ],
+    }} />);
+
+    const placeholders = screen.getAllByTestId('generated-module-placeholder');
+    expect(placeholders).toHaveLength(3);
+    expect(placeholders.map((node) => node.getAttribute('data-artifact-id'))).toEqual([
+      'artifact-theme',
+      'artifact-native',
+      'artifact-unknown',
+    ]);
+    expect(screen.queryByTestId('registered-sequence')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('unknown-clip-placeholder')).not.toBeInTheDocument();
+    expect(visualClipMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps trusted_v1, schema_sequence, and legacy clips on their normal preview paths', () => {
+    render(<TimelineRenderer config={{
+      ...buildConfig({ theme: '2rp' }),
+      clips: [
+        {
+          id: 'clip-trusted',
+          clipType: 'section-hook',
+          track: 'V1',
+          at: 0,
+          hold: 1,
+          params: {
+            title: 'Trusted',
+          },
+          generation: {
+            sequence_lane: 'trusted_v1',
+          },
+        },
+        {
+          id: 'clip-schema',
+          clipType: 'media',
+          track: 'V1',
+          at: 1,
+          hold: 1,
+          generation: {
+            sequence_lane: 'schema_sequence',
+            artifact_id: 'schema-1',
+          },
+        },
+        {
+          id: 'clip-legacy',
+          track: 'V1',
+          at: 2,
+          hold: 1,
+        },
+      ],
+    }} />);
+
+    expect(screen.queryByTestId('generated-module-placeholder')).not.toBeInTheDocument();
+    expect(screen.getByTestId('registered-sequence')).toHaveAttribute('data-clip-id', 'clip-trusted');
+    expect(visualClipMock).toHaveBeenCalledTimes(2);
   });
 });

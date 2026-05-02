@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useClientRender } from '@/tools/video-editor/hooks/useClientRender';
 import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline';
+import { decideRenderRoute } from '@/tools/video-editor/lib/renderRouter';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 
 export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
 
 type RenderProgress = { current: number; total: number; percent: number; phase: string } | null;
-type RenderResult = { url: string | null; filename: string | null };
 
 export function useRenderState(
   resolvedConfig: ResolvedTimelineConfig | null,
@@ -27,7 +27,7 @@ export function useRenderState(
     };
   }, [renderResultUrl]);
 
-  const startRender = useClientRender({
+  const startClientRender = useClientRender({
     resolvedConfig,
     metadata: renderMetadata,
     setRenderStatus,
@@ -47,6 +47,27 @@ export function useRenderState(
       setRenderResultFilename(nextValue.filename);
     },
   });
+
+  const startRender = useCallback(async () => {
+    const decision = decideRenderRoute(resolvedConfig);
+    if (decision.route === 'blocked') {
+      setRenderStatus('error');
+      setRenderProgress(null);
+      setRenderDirty(false);
+      setRenderLog(`Render blocked: ${decision.reason}. Generated Remotion module clips require valid worker artifact metadata.`);
+      return;
+    }
+
+    if (decision.route === 'banodoco') {
+      setRenderStatus('error');
+      setRenderProgress(null);
+      setRenderDirty(false);
+      setRenderLog(`Worker render unavailable for route "${decision.reason}". This timeline was not sent to the browser renderer.`);
+      return;
+    }
+
+    await startClientRender();
+  }, [resolvedConfig, startClientRender]);
 
   return {
     renderStatus,

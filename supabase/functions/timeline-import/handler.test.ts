@@ -96,6 +96,36 @@ describe("handleTimelineImport", () => {
     }
   });
 
+  it("accepts no-theme timelines with open generation_defaults", async () => {
+    const { supabaseAdmin, mocks } = createSupabaseAdminMock({
+      existing: { id: TIMELINE_ID, project_id: PROJECT_ID, config_version: 5 },
+      rpcResult: { data: [{ config_version: 6 }], error: null },
+    });
+    const timeline = {
+      clips: [],
+      generation_defaults: {
+        model: "sequence-v1",
+        image: { quality: "high", provider: "reigh" },
+        provider_settings: { seed: 1234, flags: ["keep", "open"] },
+      },
+    };
+    const result = await handleTimelineImport({
+      body: makeBody({ timeline, expected_version: 5 }),
+      userId: USER_ID,
+      supabaseAdmin,
+      logger: baseLogger,
+      verifyOwnership: vi.fn().mockResolvedValue({ success: true }),
+    });
+
+    expect(result.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "update_timeline_versioned",
+      expect.objectContaining({
+        p_config: timeline,
+      }),
+    );
+  });
+
   it("returns 403 when ownership verification fails", async () => {
     const { supabaseAdmin } = createSupabaseAdminMock({});
     const verify = vi.fn().mockResolvedValue({ success: false, error: "Forbidden", statusCode: 403 });

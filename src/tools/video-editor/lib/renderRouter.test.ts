@@ -64,6 +64,92 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
     expect(decision.hasThemedClip).toBe(false);
   });
 
+  it('routes valid remotion_module clips by lane metadata before clipType fallback', () => {
+    const decision = decideRenderRoute({
+      clips: [{
+        clipType: 'generated-clip-type-not-installed',
+        generation: {
+          sequence_lane: 'remotion_module',
+          artifact_id: 'artifact-1',
+        },
+      }],
+    });
+
+    expect(decision.route).toBe('banodoco');
+    expect(decision.reason).toBe('generated_remotion_module');
+  });
+
+  it('routes registered theme clipTypes as generated modules when the module lane is present', () => {
+    const decision = decideRenderRoute({
+      clips: [{
+        clipType: 'art-card',
+        generation: {
+          sequence_lane: 'remotion_module',
+          artifact_id: 'artifact-1',
+        },
+      }],
+    });
+
+    expect(decision.route).toBe('banodoco');
+    expect(decision.reason).toBe('generated_remotion_module');
+  });
+
+  it('routes mixed valid remotion_module timelines to the worker route with a generated reason', () => {
+    const decision = decideRenderRoute({
+      clips: [
+        { clipType: 'media' },
+        {
+          clipType: 'art-card',
+          generation: {
+            sequence_lane: 'remotion_module',
+            artifact_id: 'artifact-1',
+          },
+        },
+      ],
+    });
+
+    expect(decision.route).toBe('banodoco');
+    expect(decision.reason).toBe('mixed_generated_module_and_other');
+    expect(decision.hasMediaClip).toBe(true);
+  });
+
+  it('blocks remotion_module clips with missing, empty, or non-string artifact ids', () => {
+    expect(decideRenderRoute({
+      clips: [{ clipType: 'media', generation: { sequence_lane: 'remotion_module' } }],
+    })).toMatchObject({
+      route: 'blocked',
+      reason: 'remotion_module_missing_artifact',
+    });
+
+    expect(decideRenderRoute({
+      clips: [{ clipType: 'art-card', generation: { sequence_lane: 'remotion_module', artifact_id: '' } }],
+    })).toMatchObject({
+      route: 'blocked',
+      reason: 'remotion_module_invalid_artifact',
+    });
+
+    expect(decideRenderRoute({
+      clips: [{ clipType: 'unknown', generation: { sequence_lane: 'remotion_module', artifact_id: 42 } }],
+    })).toMatchObject({
+      route: 'blocked',
+      reason: 'remotion_module_invalid_artifact',
+    });
+  });
+
+  it('does not treat non-module generation lanes as generated Remotion modules', () => {
+    for (const sequence_lane of ['trusted_v1', 'schema_sequence', 'unknown_lane', null, undefined]) {
+      expect(decideRenderRoute({
+        clips: [{
+          clipType: 'media',
+          generation: { sequence_lane, artifact_id: 'artifact-1' },
+        }],
+      })).toMatchObject({
+        route: 'client',
+        reason: 'pure_native_clips',
+      });
+    }
+  });
+
   it('returns no_clips for an empty timeline', () => {
     expect(decideRenderRoute({ clips: [] }).reason).toBe('no_clips');
     expect(decideRenderRoute(null).reason).toBe('no_clips');

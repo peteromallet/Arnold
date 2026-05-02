@@ -29,10 +29,15 @@ import {
   THEME_PACKAGE_REGISTRY,
   type ThemePackageClipType,
 } from '@banodoco/timeline-composition/registry.generated';
+import {
+  getGeneratedRemotionModuleStatus,
+  type GeneratedRemotionModuleBlockReason,
+  type GeneratedLaneClipShape,
+} from '@/tools/video-editor/lib/generated-lanes';
 import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize';
 
 /** Minimal clip shape we need from the resolved timeline. */
-export interface RouterClipShape {
+export interface RouterClipShape extends GeneratedLaneClipShape {
   clipType?: string;
 }
 
@@ -41,7 +46,7 @@ export interface RouterTimelineShape {
   clips?: ReadonlyArray<RouterClipShape> | null;
 }
 
-export type RenderRoute = 'client' | 'banodoco';
+export type RenderRoute = 'client' | 'banodoco' | 'blocked';
 
 export interface RenderRouteDecision {
   route: RenderRoute;
@@ -53,7 +58,10 @@ export interface RenderRouteDecision {
     | 'no_clips'
     | 'pure_native_clips'
     | 'themed_only'
-    | 'mixed_themed_and_media';
+    | 'mixed_themed_and_media'
+    | 'generated_remotion_module'
+    | 'mixed_generated_module_and_other'
+    | GeneratedRemotionModuleBlockReason;
 }
 
 const isThemePackageClipType = (value: unknown): value is ThemePackageClipType => {
@@ -92,7 +100,24 @@ export function decideRenderRoute(
 
   let hasThemedClip = false;
   let hasMediaClip = false;
+  let hasGeneratedModuleClip = false;
+  let hasOtherClip = false;
   for (const clip of clips) {
+    const moduleStatus = getGeneratedRemotionModuleStatus(clip);
+    if (moduleStatus.kind === 'blocked_module') {
+      return {
+        route: 'blocked',
+        hasThemedClip: false,
+        hasMediaClip: false,
+        reason: moduleStatus.reason,
+      };
+    }
+    if (moduleStatus.kind === 'valid_module') {
+      hasGeneratedModuleClip = true;
+      continue;
+    }
+
+    hasOtherClip = true;
     if (isThemePackageClipType(clip?.clipType)) {
       hasThemedClip = true;
     } else if (isNativeBuiltinClipType(clip?.clipType)) {
@@ -105,6 +130,15 @@ export function decideRenderRoute(
       // registered themes.
       hasMediaClip = true;
     }
+  }
+
+  if (hasGeneratedModuleClip) {
+    return {
+      route: 'banodoco',
+      hasThemedClip,
+      hasMediaClip,
+      reason: hasOtherClip ? 'mixed_generated_module_and_other' : 'generated_remotion_module',
+    };
   }
 
   if (hasThemedClip && hasMediaClip) {

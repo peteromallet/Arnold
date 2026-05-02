@@ -10,35 +10,28 @@
     "flags_addressed": {
       "type": "array",
       "items": {
-        "oneOf": [
-          {
+        "type": "object",
+        "properties": {
+          "id": {
             "type": "string"
           },
-          {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "resolution": {
-                "type": "string",
-                "enum": [
-                  "addressed",
-                  "rejected"
-                ]
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "resolution",
-              "reason"
-            ],
-            "additionalProperties": false
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "addressed",
+              "rejected"
+            ]
+          },
+          "reason": {
+            "type": "string"
           }
-        ]
+        },
+        "required": [
+          "id",
+          "resolution",
+          "reason"
+        ],
+        "additionalProperties": false
       }
     },
     "assumptions": {

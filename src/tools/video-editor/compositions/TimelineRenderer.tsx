@@ -10,6 +10,10 @@ import { TextClipSequence } from '@/tools/video-editor/compositions/TextClip';
 import { VisualClipSequence } from '@/tools/video-editor/compositions/VisualClip';
 import { UnknownClipPlaceholderSequence } from '@/tools/video-editor/compositions/UnknownClipPlaceholder';
 import { resolveTimelineRenderTheme } from '@/tools/video-editor/compositions/installed-themes';
+import {
+  getGeneratedRemotionModuleStatus,
+  isGeneratedRemotionModuleClip,
+} from '@/tools/video-editor/lib/generated-lanes';
 import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize';
 import {
   ThemeProvider,
@@ -98,6 +102,56 @@ const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps, theme })
   );
 };
 
+const GeneratedModulePlaceholderSequence: FC<{
+  clip: ResolvedTimelineClip;
+  fps: number;
+}> = ({ clip, fps }) => {
+  const moduleStatus = getGeneratedRemotionModuleStatus(clip);
+  const durationInFrames = Math.max(1, Math.round(((clip.hold ?? 0) + ((clip.to ?? 0) - (clip.from ?? 0))) * fps)) || Math.max(1, Math.round((clip.hold ?? 1) * fps));
+  const artifactId = moduleStatus.kind === 'valid_module' ? moduleStatus.artifactId : null;
+  const reason = moduleStatus.kind === 'blocked_module' ? moduleStatus.reason : 'worker_only';
+  return (
+    <Sequence
+      key={clip.id}
+      from={Math.max(0, Math.round(clip.at * fps))}
+      durationInFrames={durationInFrames}
+    >
+      <AbsoluteFill
+        data-testid="generated-module-placeholder"
+        data-clip-id={clip.id}
+        data-artifact-id={artifactId ?? undefined}
+        data-placeholder-reason={reason}
+        style={{
+          backgroundColor: '#111827',
+          borderTop: '2px solid #38bdf8',
+          borderBottom: '2px solid #38bdf8',
+          color: '#e0f2fe',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '12px 24px',
+          textAlign: 'center',
+          fontFamily: 'ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Consolas, monospace',
+          fontSize: 14,
+          lineHeight: 1.4,
+          letterSpacing: '0.04em',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '80%',
+            padding: '8px 16px',
+            borderRadius: 4,
+            background: 'rgba(0, 0, 0, 0.45)',
+          }}
+        >
+          Generated Remotion module previews only in worker render infrastructure.
+        </div>
+      </AbsoluteFill>
+    </Sequence>
+  );
+};
+
 const renderVisualTrack = (
   track: TrackDefinition,
   clips: ResolvedTimelineClip[],
@@ -118,6 +172,10 @@ const renderVisualTrack = (
       }}
     >
       {sortedClips.map((clip, index) => {
+        if (isGeneratedRemotionModuleClip(clip)) {
+          return <GeneratedModulePlaceholderSequence key={clip.id} clip={clip} fps={fps} />;
+        }
+
         if (clip.clipType === 'effect-layer') {
           return null;
         }
@@ -227,7 +285,7 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     }>((groups, clip) => {
       groups.all[clip.track] ??= [];
       groups.all[clip.track].push(clip);
-      if (clip.clipType === 'effect-layer') {
+      if (clip.clipType === 'effect-layer' && !isGeneratedRemotionModuleClip(clip)) {
         groups.effectLayers[clip.track] ??= [];
         groups.effectLayers[clip.track].push(clip);
       } else {

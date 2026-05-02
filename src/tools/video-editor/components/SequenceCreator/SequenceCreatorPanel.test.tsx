@@ -1,11 +1,17 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps, RefObject } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SequenceCreatorPanel } from '@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel';
 import {
+  runSequenceGenerationRequest,
+} from '@/tools/video-editor/components/SequenceCreator/sequenceGenerationService';
+import {
+  attachSequenceGenerationMetadata,
   buildAllowedSequenceAssets,
+  buildAnimationIntentPayload,
   buildGenerationClipPayloads,
-  SequenceCreatorPanel,
-} from '@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel';
+  buildSequenceGenerationMetadata,
+} from '@/tools/video-editor/sequences/generation';
 import { TIMELINE_CENTER_CLIP_EVENT } from '@/tools/video-editor/lib/timeline-viewport-events';
 import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
@@ -261,9 +267,9 @@ const renderPanel = (overrides: {
   return render(<SequenceCreatorPanel open onOpenChange={vi.fn()} />);
 };
 
-const generateValidResourceDraft = async () => {
+const generateValidResourceDraft = async (prompt = 'Make a resource card') => {
   fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
-    target: { value: 'Make a resource card' },
+    target: { value: prompt },
   });
   fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
   await screen.findByDisplayValue('Generated title');
@@ -390,6 +396,187 @@ describe('SequenceCreatorPanel', () => {
     expect(screen.queryByText('Invalid asset draft')).not.toBeInTheDocument();
   });
 
+  it('builds prompt intent and URL-redacted provenance metadata without replacing existing meta updates', () => {
+    expect(buildAnimationIntentPayload('  Make it bounce  ')).toEqual({ freeform: 'Make it bounce' });
+    expect(buildAnimationIntentPayload('   ')).toBeUndefined();
+
+    const metadata = buildSequenceGenerationMetadata({
+      id: 'group-1',
+      name: 'Generated group',
+      prompt: 'Original prompt with source https://source.example.test/image.png',
+      intent: {
+        freeform: 'Use https://unsafe.example.test/ref.png plus data:image/png;base64,abc and blob:https://blob.example.test/id',
+      },
+      drafts: [],
+    }, 2);
+
+    expect(metadata).toMatchObject({
+      sequence_lane: 'trusted_v1',
+      sequence_creator: {
+        name: 'Generated group',
+        prompt: 'Original prompt with source https://source.example.test/image.png',
+        draft_index: 2,
+        intent: {
+          freeform: 'Use [redacted-url] plus [redacted-url] and [redacted-url]',
+        },
+      },
+    });
+
+    const mutation = {
+      type: 'rows' as const,
+      rows: timelineData.rows,
+      metaUpdates: {
+        'clip-new': {
+          clipType: 'resource-card',
+          hold: 3,
+          custom: 'preserved',
+        },
+      },
+    };
+
+    expect(attachSequenceGenerationMetadata(mutation, 'clip-new', metadata)).toMatchObject({
+      metaUpdates: {
+        'clip-new': {
+          clipType: 'resource-card',
+          hold: 3,
+          custom: 'preserved',
+          generation: metadata,
+        },
+      },
+    });
+    expect(attachSequenceGenerationMetadata(mutation, 'clip-new', undefined)).toBe(mutation);
+  });
+
+  it('normalizes direct sequence generation orchestration responses and preserves request shape', async () => {
+    const controller = new AbortController();
+    const selectedClips = [
+      selectedClip({
+        assetKey: 'asset-a',
+        url: 'https://stale.example.test/asset-a.png',
+      }),
+    ];
+    const attachedClips = [
+      selectedClip({
+        clipId: 'attached-1',
+        assetKey: 'asset-b',
+        url: 'https://stale.example.test/asset-b.png',
+        isTimelineBacked: false,
+      }),
+    ];
+    const allowedAssets = buildAllowedSequenceAssets(selectedClips, attachedClips, registry);
+    mocks.invokeSupabaseEdgeFunction.mockResolvedValueOnce({
+      drafts: [
+        {
+          clipType: 'resource-card',
+          hold: 4,
+          params: {
+            title: 'Direct title',
+            detail: 'Direct detail',
+            previewAssetKeys: ['asset-a'],
+          },
+        },
+        {
+          clipType: 'resource-card',
+          hold: 4,
+          params: {
+            title: 'Rejected title',
+            detail: 'Rejected detail',
+            previewAssetKeys: ['asset-c'],
+          },
+        },
+      ],
+      invalid_drafts: [{ index: 99, errors: [{ code: 'server_rejected' }] }],
+    });
+
+    const result = await runSequenceGenerationRequest({
+      prompt: '  Direct prompt https://original.example.test/ref.png  ',
+      mode: 'edit',
+      editContext: { original_prompt: 'Original prompt' },
+      resolvedConfig,
+      selectedClips,
+      attachedClips,
+      allowedAssets,
+      allowedAssetKeys: allowedAssets.map((asset) => asset.key),
+      signal: controller.signal,
+    });
+
+    expect(result).toMatchObject({
+      status: 'ok',
+      generationPrompt: 'Direct prompt https://original.example.test/ref.png',
+      animationIntentPayload: {
+        freeform: 'Direct prompt https://original.example.test/ref.png',
+      },
+      invalidCount: 2,
+      generationNote: '2 invalid drafts were rejected.',
+    });
+    if (result.status !== 'ok') throw new Error('Expected ok generation result');
+    expect(result.validDrafts).toEqual([
+      expect.objectContaining({
+        clipType: 'resource-card',
+        params: expect.objectContaining({ title: 'Direct title' }),
+      }),
+    ]);
+    expect(mocks.invokeSupabaseEdgeFunction).toHaveBeenCalledWith('ai-generate-sequence', {
+      timeoutMs: 150_000,
+      signal: controller.signal,
+      body: expect.objectContaining({
+        prompt: 'Direct prompt https://original.example.test/ref.png',
+        mode: 'edit',
+        edit_context: { original_prompt: 'Original prompt' },
+        animation_intent: {
+          freeform: 'Direct prompt https://original.example.test/ref.png',
+        },
+        timeline: {
+          output: resolvedConfig.output,
+          tracks: resolvedConfig.tracks,
+          clips: [
+            expect.objectContaining({
+              id: 'clip-1',
+              clipType: 'image',
+              asset: 'asset-a',
+              track: 'visual-1',
+            }),
+            expect.objectContaining({
+              id: 'audio-clip',
+              clipType: 'audio',
+              asset: 'asset-c',
+              track: 'audio-1',
+            }),
+          ],
+        },
+        selected_clips: [
+          expect.objectContaining({
+            assetKey: 'asset-a',
+            url: 'https://cdn.example.test/asset-a.png',
+          }),
+        ],
+        attached_clips: [
+          expect.objectContaining({
+            assetKey: 'asset-b',
+            url: 'https://cdn.example.test/asset-b.png',
+          }),
+        ],
+        allowed_clip_types: expect.arrayContaining(['image-jump', 'resource-card']),
+        allowed_assets: [
+          expect.objectContaining({
+            key: 'asset-a',
+            assetKey: 'asset-a',
+            url: 'https://cdn.example.test/asset-a.png',
+            source: 'selected',
+          }),
+          expect.objectContaining({
+            key: 'asset-b',
+            assetKey: 'asset-b',
+            url: 'https://cdn.example.test/asset-b.png',
+            source: 'attached',
+          }),
+        ],
+        theme: resolvedConfig.theme,
+        theme_overrides: resolvedConfig.theme_overrides,
+      }),
+    });
+  });
+
   it('client-validates generated drafts and previews the selected draft through Remotion with materialized assets', async () => {
     renderPanel();
     await generateValidResourceDraft();
@@ -509,6 +696,49 @@ describe('SequenceCreatorPanel', () => {
     expect(requestBody.allowed_clip_types).toContain('image-jump');
   });
 
+  it('sends prompt-derived animation intent for generate requests', async () => {
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
+      target: { value: 'Make a resource card' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
+    await screen.findByDisplayValue('Generated title');
+    expect(mocks.invokeSupabaseEdgeFunction.mock.calls[0][1].body).toMatchObject({
+      animation_intent: {
+        freeform: 'Make a resource card',
+      },
+    });
+
+    mocks.invokeSupabaseEdgeFunction.mockResolvedValueOnce({
+      drafts: [
+        {
+          clipType: 'resource-card',
+          hold: 4,
+          params: {
+            title: 'Intent title',
+            detail: 'Intent detail',
+            previewAssetKeys: ['asset-a'],
+          },
+        },
+      ],
+      invalid_drafts: [],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    fireEvent.change(screen.getByPlaceholderText('Make these selected images jump between each other...'), {
+      target: { value: 'Make another resource card' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate new animation/i }));
+
+    await screen.findByDisplayValue('Intent title');
+    expect(mocks.invokeSupabaseEdgeFunction.mock.calls.at(-1)?.[1].body).toMatchObject({
+      allowed_clip_types: expect.arrayContaining(['image-jump', 'resource-card']),
+      animation_intent: {
+        freeform: 'Make another resource card',
+      },
+    });
+  });
+
   it('clears the stale selected draft UI while a fresh generate request is pending', async () => {
     renderPanel();
     await generateValidResourceDraft();
@@ -581,6 +811,9 @@ describe('SequenceCreatorPanel', () => {
     expect(mocks.invokeSupabaseEdgeFunction.mock.calls[1][1].body).toMatchObject({
       prompt: 'Make the animation slower and remove the headline',
       mode: 'edit',
+      animation_intent: {
+        freeform: 'Make the animation slower and remove the headline',
+      },
       edit_context: expect.objectContaining({
         original_prompt: 'Make a resource card',
         selected_draft_index: 0,
@@ -650,7 +883,7 @@ describe('SequenceCreatorPanel', () => {
 
   it('edits draft params and timing before inserting through the sequence helper mutation path', async () => {
     renderPanel();
-    await generateValidResourceDraft();
+    await generateValidResourceDraft('Make a resource card. Use asset-a twice, avoid raw URL https://unsafe.example/ref.png');
     const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
     fireEvent.change(screen.getByDisplayValue('Generated title'), {
@@ -689,12 +922,23 @@ describe('SequenceCreatorPanel', () => {
         detail: 'Generated detail',
         previewAssetKeys: ['asset-a', 'asset-b'],
       },
+      generation: {
+        sequence_lane: 'trusted_v1',
+        sequence_creator: {
+          name: expect.any(String),
+          prompt: 'Make a resource card. Use asset-a twice, avoid raw URL https://unsafe.example/ref.png',
+          draft_index: 0,
+          intent: {
+            freeform: 'Make a resource card. Use asset-a twice, avoid raw URL [redacted-url]',
+          },
+        },
+      },
     });
   });
 
   it('replaces selected visual clips through the sequence helper mutation path', async () => {
     renderPanel();
-    await generateValidResourceDraft();
+    await generateValidResourceDraft('Make a resource card with a punchier second beat');
     const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
 
     fireEvent.click(screen.getByRole('button', { name: /replace selected/i }));
@@ -713,7 +957,19 @@ describe('SequenceCreatorPanel', () => {
     expect(dispatchEventSpy).toHaveBeenCalledWith(expect.objectContaining({
       type: TIMELINE_CENTER_CLIP_EVENT,
     }));
-    expect(Object.values(mutation.metaUpdates).some((meta) => meta.clipType === 'resource-card')).toBe(true);
+    const createdMeta = Object.values(mutation.metaUpdates).find((meta) => meta.clipType === 'resource-card');
+    expect(createdMeta).toMatchObject({
+      generation: {
+        sequence_lane: 'trusted_v1',
+        sequence_creator: {
+          prompt: 'Make a resource card with a punchier second beat',
+          draft_index: 0,
+          intent: {
+            freeform: 'Make a resource card with a punchier second beat',
+          },
+        },
+      },
+    });
   });
 
   it('passes the full selected clip set when probing and replacing a multi-selection', async () => {

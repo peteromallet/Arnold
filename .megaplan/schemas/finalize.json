@@ -56,6 +56,48 @@
           },
           "reviewer_verdict": {
             "type": "string"
+          },
+          "stance": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "challenge_engaged": {
+                "type": "string"
+              },
+              "angle_taken": {
+                "type": "string"
+              },
+              "what_changed": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "challenge_engaged",
+              "angle_taken",
+              "what_changed"
+            ],
+            "additionalProperties": false
+          },
+          "stop_signal": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "requested": {
+                "type": "boolean"
+              },
+              "defense": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "requested",
+              "defense"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
@@ -68,7 +110,9 @@
           "commands_run",
           "auto_attributed_files",
           "evidence_files",
-          "reviewer_verdict"
+          "reviewer_verdict",
+          "stance",
+          "stop_signal"
         ],
         "additionalProperties": false
       }
@@ -110,6 +154,57 @@
         "additionalProperties": false
       }
     },
+    "user_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "before_execute",
+              "after_execute"
+            ]
+          },
+          "blocks_task_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "rationale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requires_human_only_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "phase",
+          "blocks_task_ids",
+          "rationale",
+          "requires_human_only_reason"
+        ],
+        "additionalProperties": false
+      }
+    },
     "meta_commentary": {
       "type": "string"
     },
@@ -124,7 +219,7 @@
               "plan_step_summary": {
                 "type": "string"
               },
-              "finalize_task_ids": {
+              "finalize_item_ids": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -133,7 +228,7 @@
             },
             "required": [
               "plan_step_summary",
-              "finalize_task_ids"
+              "finalize_item_ids"
             ],
             "additionalProperties": false
           }
@@ -182,6 +277,7 @@
     "tasks",
     "watch_items",
     "sense_checks",
+    "user_actions",
     "meta_commentary",
     "validation",
     "baseline_test_failures",

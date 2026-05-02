@@ -17,6 +17,24 @@ const asAssetKeys = (value: unknown): string[] => {
   return value.filter((item): item is string => typeof item === 'string');
 };
 
+type AssetKeyCount = {
+  key: string;
+  count: number;
+};
+
+const countAssetKeys = (keys: readonly string[]): AssetKeyCount[] => {
+  const counts = new Map<string, number>();
+  const orderedKeys: string[] = [];
+  for (const key of keys) {
+    if (!counts.has(key)) {
+      orderedKeys.push(key);
+      counts.set(key, 0);
+    }
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return orderedKeys.map((key) => ({ key, count: counts.get(key) ?? 0 }));
+};
+
 const setParam = (
   current: Record<string, unknown> | undefined,
   key: string,
@@ -54,6 +72,8 @@ export function SequenceParamEditor({
 
         if (param.kind === 'asset-list') {
           const keys = asAssetKeys(value);
+          const assetKeyCounts = countAssetKeys(keys);
+          const uniqueKeys = assetKeyCounts.map((entry) => entry.key);
           return (
             <div key={param.key} className="space-y-2 rounded-lg border border-border/70 bg-background/60 p-3">
               <div className="flex items-start justify-between gap-3">
@@ -62,11 +82,16 @@ export function SequenceParamEditor({
                   <div className="text-xs text-muted-foreground">{param.description}</div>
                 </div>
                 {typeof param.maxItems === 'number' && (
-                  <div className="shrink-0 text-xs text-muted-foreground">{keys.length}/{param.maxItems}</div>
+                  <div className="shrink-0 text-right text-xs text-muted-foreground">
+                    <div>{keys.length}/{param.maxItems} uses</div>
+                    {uniqueKeys.length !== keys.length && (
+                      <div>{uniqueKeys.length} asset{uniqueKeys.length === 1 ? '' : 's'}</div>
+                    )}
+                  </div>
                 )}
               </div>
               <Input
-                value={keys.join(', ')}
+                value={uniqueKeys.join(', ')}
                 placeholder="asset-key-a, asset-key-b"
                 onChange={(event) => {
                   const nextKeys = parseAssetKeysInput(event.target.value, registry);
@@ -75,13 +100,13 @@ export function SequenceParamEditor({
               />
               {keys.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {keys.map((key) => (
+                  {assetKeyCounts.map(({ key, count }) => (
                     <span
                       key={key}
                       className="max-w-full truncate rounded-md border border-border/70 bg-muted px-2 py-1 text-[11px] text-muted-foreground"
                       title={registry[key]?.src ?? registry[key]?.file ?? key}
                     >
-                      {key}
+                      {key}{count > 1 ? ` x${count}` : ''}
                     </span>
                   ))}
                 </div>

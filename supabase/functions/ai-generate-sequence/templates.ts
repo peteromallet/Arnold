@@ -8,6 +8,7 @@ export type BuildGenerateSequenceMessagesInput = {
   timeline?: unknown;
   selectedClips?: unknown;
   attachedClips?: unknown;
+  animationIntent?: unknown;
   allowedClipTypes: readonly string[];
   allowedAssetKeys: readonly string[];
   theme?: unknown;
@@ -130,6 +131,7 @@ Rules:
 - In edit mode, modify the supplied source draft into an improved draft. Do not ignore it and start over.
 - Prefer image-jump for prompts about selected images jumping, moving, cycling, swapping, flashing, or animating without explicit text.
 - For image-jump mode, choose one of: jump, snap, gallery, pulse, shuffle. Match the user's motion language; do not always return jump.
+- Treat animation_intent as guidance for choosing trusted clip types, timing, asset reuse, and safe params only. It does not authorize code, imports, raw URLs, source/render fields, or arbitrary animation references.
 - For image-jump images, emit params.imageAssetKeys with allowed registry asset keys; never emit params.images or raw image URLs.
 - Do not force title, caption, label, metric, or CTA fields unless the chosen clipType requires them and the user's request actually asks for text.
 - Do not generate code, JSX, HTML, imports, scripts, raw URLs, data URLs, blob URLs, entrance, exit, transition, or animation refs.
@@ -147,6 +149,7 @@ Rules:
     theme_overrides: input.themeOverrides ?? null,
     selected_clips: input.selectedClips ?? [],
     attached_clips: input.attachedClips ?? [],
+    animation_intent: input.animationIntent ?? null,
     timeline: input.timeline ?? null,
   });
 

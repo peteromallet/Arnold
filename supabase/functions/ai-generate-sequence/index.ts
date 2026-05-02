@@ -209,6 +209,7 @@ serve(async (req) => {
       timeline: body.timeline,
       selectedClips: body.selected_clips,
       attachedClips: body.attached_clips,
+      animationIntent: body.animation_intent,
       allowedClipTypes,
       allowedAssetKeys,
       theme: body.theme,

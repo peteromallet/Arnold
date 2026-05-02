@@ -180,6 +180,38 @@ describe('ClipPanel sequence inspector', () => {
     });
   });
 
+  it('collapses repeated generated asset keys into counted chips until manual comma-input edits', () => {
+    const { onChange } = renderClipPanel({
+      clip: {
+        ...sequenceClip,
+        clipType: 'image-jump',
+        params: {
+          imageAssetKeys: ['asset-a', 'asset-a', 'asset-b'],
+          mode: 'jump',
+        },
+      },
+    });
+
+    expect(screen.getByDisplayValue('asset-a, asset-b')).toBeInTheDocument();
+    expect(screen.getByText('3/8 uses')).toBeInTheDocument();
+    expect(screen.getByText('2 assets')).toBeInTheDocument();
+    expect(screen.getByText('asset-a x2')).toBeInTheDocument();
+    expect(screen.getByText('asset-b')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(/asset-a, asset-a/)).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByDisplayValue('asset-a, asset-b'), {
+      target: { value: 'asset-b, asset-a' },
+    });
+
+    expect(onChange).toHaveBeenCalledWith({
+      params: {
+        imageAssetKeys: ['asset-b', 'asset-a'],
+        mode: 'jump',
+      },
+    });
+  });
+
   it('edits sequence timing as hold duration instead of media source timing', () => {
     const { container, onChange } = renderClipPanel({ activeTab: 'timing' });
 

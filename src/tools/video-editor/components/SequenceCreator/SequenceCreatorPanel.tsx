@@ -11,10 +11,9 @@ import {
 import { NumberInput } from '@/shared/components/ui/number-input';
 import { Textarea } from '@/shared/components/ui/textarea';
 import { toast } from '@/shared/components/ui/toast';
-import { invokeSupabaseEdgeFunction } from '@/integrations/supabase/functions/invokeSupabaseEdgeFunction';
 import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
 import { SequenceParamEditor } from '@/tools/video-editor/components/PropertiesPanel/SequenceParamEditor';
-import { useSelectedMediaClips, type SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips';
+import { useSelectedMediaClips } from '@/tools/video-editor/hooks/useSelectedMediaClips';
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
@@ -29,6 +28,17 @@ import { requestCenterTimelineClip } from '@/tools/video-editor/lib/timeline-vie
 import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet';
 import { composerRemoveAttachment } from '@/shared/state/selectionStore';
 import { AgentChatAttachmentStrip } from '@/tools/video-editor/components/AgentChat/AgentChatMessage';
+import {
+  attachSequenceGenerationMetadata,
+  buildAllowedAssetRegistry,
+  buildAllowedSequenceAssets,
+  buildSequenceGenerationMetadata,
+  createDraftGroupId,
+  nameDraftGroupFromPrompt,
+  type EditableSequenceDraft,
+  type SequenceCreatorMode,
+  type SequenceDraftGroup,
+} from '@/tools/video-editor/sequences/generation';
 import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize';
 import {
   AVAILABLE_SEQUENCE_CLIP_TYPES,
@@ -40,84 +50,17 @@ import {
   type ValidatedSequenceDraft,
 } from '@/tools/video-editor/sequences/validation';
 import type {
-  ResolvedAssetRegistryEntry,
   ResolvedTimelineClip,
   ResolvedTimelineConfig,
 } from '@/tools/video-editor/types';
+import { runSequenceGenerationRequest } from './sequenceGenerationService';
 
 type SequenceCreatorPanelProps = {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 };
 
-export type AllowedSequenceAsset = {
-  key: string;
-  url: string;
-  mediaType: SelectedMediaClip['mediaType'];
-  source: 'selected' | 'attached';
-  label: string;
-  clipId: string;
-  generationId?: string;
-  shotId?: string;
-  shotName?: string;
-  shotSelectionClipCount?: number;
-  isPlaceholder?: boolean;
-};
-
-type EditableSequenceDraft = {
-  clipType: string;
-  hold: number;
-  params: Record<string, unknown>;
-};
-
-type SequenceCreatorMode = 'generate' | 'edit';
-
-type SequenceDraftGroup = {
-  id: string;
-  name: string;
-  prompt: string;
-  drafts: EditableSequenceDraft[];
-};
-
-type GenerateSequenceResponse = {
-  drafts?: unknown[];
-  invalid_drafts?: Array<{ index: number; errors: unknown[] }>;
-  model?: string;
-  error?: string;
-  details?: string;
-};
-
-type SequenceGenerationClipPayload = {
-  clipId: string;
-  assetKey: string;
-  url: string;
-  mediaType: SelectedMediaClip['mediaType'];
-  shotId?: string;
-  shotName?: string;
-};
-
 const TEMP_SEQUENCE_PREVIEW_CLIP_ID = '__sequence_preview__';
-const MAX_DRAFT_GROUP_NAME_LENGTH = 52;
-
-const createEditableDraft = (draft: ValidatedSequenceDraft): EditableSequenceDraft => ({
-  clipType: draft.clipType,
-  hold: draft.hold,
-  params: { ...draft.params },
-});
-
-const createDraftGroupId = (): string => (
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `sequence-${Date.now()}-${Math.random().toString(16).slice(2)}`
-);
-
-const nameDraftGroupFromPrompt = (prompt: string, index: number): string => {
-  const normalized = prompt.trim().replace(/\s+/g, ' ');
-  const base = normalized || `Animation ${index + 1}`;
-  return base.length > MAX_DRAFT_GROUP_NAME_LENGTH
-    ? `${base.slice(0, MAX_DRAFT_GROUP_NAME_LENGTH - 1).trim()}…`
-    : base;
-};
 
 const formatEditError = (error: SequenceDraftEditError): string => {
   switch (error) {
@@ -130,70 +73,6 @@ const formatEditError = (error: SequenceDraftEditError): string => {
     default:
       return 'This sequence cannot be inserted here.';
   }
-};
-
-export const buildAllowedSequenceAssets = (
-  selectedClips: readonly SelectedMediaClip[],
-  attachedClips: readonly SelectedMediaClip[],
-  registry: ResolvedTimelineConfig['registry'],
-): AllowedSequenceAsset[] => {
-  const byKey = new Map<string, AllowedSequenceAsset>();
-
-  const addClip = (clip: SelectedMediaClip, source: AllowedSequenceAsset['source']) => {
-    if (!clip.assetKey || clip.isPlaceholder) return;
-    const entry = registry[clip.assetKey];
-    if (!entry?.src) return;
-    if (byKey.has(clip.assetKey)) return;
-    byKey.set(clip.assetKey, {
-      key: clip.assetKey,
-      url: entry.src,
-      mediaType: clip.mediaType,
-      source,
-      label: clip.shotName ?? clip.assetKey,
-      clipId: clip.clipId,
-      generationId: clip.generationId,
-      shotId: clip.shotId,
-      shotName: clip.shotName,
-      shotSelectionClipCount: clip.shotSelectionClipCount,
-      isPlaceholder: clip.isPlaceholder,
-    });
-  };
-
-  selectedClips.forEach((clip) => addClip(clip, 'selected'));
-  attachedClips.forEach((clip) => addClip(clip, 'attached'));
-
-  return [...byKey.values()];
-};
-
-const buildAllowedAssetRegistry = (
-  assets: readonly AllowedSequenceAsset[],
-  registry: ResolvedTimelineConfig['registry'],
-): ResolvedTimelineConfig['registry'] => {
-  return assets.reduce<Record<string, ResolvedAssetRegistryEntry>>((next, asset) => {
-    const entry = registry[asset.key];
-    if (entry) next[asset.key] = entry;
-    return next;
-  }, {});
-};
-
-export const buildGenerationClipPayloads = (
-  clips: readonly SelectedMediaClip[],
-  allowedAssets: readonly AllowedSequenceAsset[],
-): SequenceGenerationClipPayload[] => {
-  const allowedByKey = new Map(allowedAssets.map((asset) => [asset.key, asset]));
-  return clips.flatMap((clip) => {
-    if (!clip.assetKey || clip.isPlaceholder) return [];
-    const asset = allowedByKey.get(clip.assetKey);
-    if (!asset) return [];
-    return [{
-      clipId: clip.clipId,
-      assetKey: asset.key,
-      url: asset.url,
-      mediaType: clip.mediaType,
-      shotId: clip.shotId,
-      shotName: clip.shotName,
-    }];
-  });
 };
 
 const validateEditableSequenceDraft = (
@@ -334,67 +213,20 @@ export function SequenceCreatorPanel({
     }
 
     try {
-      const response = await invokeSupabaseEdgeFunction<GenerateSequenceResponse>(
-        'ai-generate-sequence',
-        {
-          body: {
-            prompt: generationPrompt,
-            mode: options.mode ?? 'generate',
-            edit_context: options.editContext ?? null,
-            timeline: {
-              output: resolvedConfig.output,
-              tracks: resolvedConfig.tracks,
-              clips: resolvedConfig.clips.map((clip) => ({
-                id: clip.id,
-                clipType: clip.clipType,
-                asset: clip.asset,
-                track: clip.track,
-                at: clip.at,
-                hold: clip.hold,
-                params: clip.params,
-              })),
-            },
-            selected_clips: buildGenerationClipPayloads(selectedMedia.clips, allowedAssets),
-            attached_clips: buildGenerationClipPayloads(attachmentSet.clips, allowedAssets),
-            allowed_clip_types: AVAILABLE_SEQUENCE_CLIP_TYPES,
-            allowed_assets: allowedAssets.map((asset) => ({
-              key: asset.key,
-              assetKey: asset.key,
-              url: asset.url,
-              mediaType: asset.mediaType,
-              source: asset.source,
-            })),
-            theme: resolvedConfig.theme,
-            theme_overrides: resolvedConfig.theme_overrides,
-          },
-          timeoutMs: 150_000,
-          signal: controller.signal,
-        },
-      );
-      if (controller.signal.aborted) return;
-      if (response.error) {
-        throw new Error(response.details || response.error);
-      }
-
-      const validDrafts: EditableSequenceDraft[] = [];
-      const invalidCountFromClient = (response.drafts ?? []).reduce((count, rawDraft) => {
-        const validation = validateSequenceDraft(rawDraft, {
-          metadata: AVAILABLE_SEQUENCE_METADATA,
-          allowedClipTypes: AVAILABLE_SEQUENCE_CLIP_TYPES,
-          allowedAssetKeys,
-        });
-        if (validation.ok) {
-          validDrafts.push(createEditableDraft(validation.draft));
-          return count;
-        }
-        return count + 1;
-      }, 0);
-      const invalidCount = invalidCountFromClient + (response.invalid_drafts?.length ?? 0);
-
-      if (validDrafts.length === 0) {
-        setGenerationNote(invalidCount > 0
-          ? 'The model returned drafts, but none matched the trusted sequence schema for the current selected or attached assets.'
-          : 'No sequence drafts were returned.');
+      const result = await runSequenceGenerationRequest({
+        prompt: generationPrompt,
+        mode: options.mode,
+        editContext: options.editContext,
+        resolvedConfig,
+        selectedClips: selectedMedia.clips,
+        attachedClips: attachmentSet.clips,
+        allowedAssets,
+        allowedAssetKeys,
+        signal: controller.signal,
+      });
+      if (result.status === 'aborted') return;
+      if (result.status === 'no_valid_drafts') {
+        setGenerationNote(result.generationNote);
         return;
       }
 
@@ -403,8 +235,9 @@ export function SequenceCreatorPanel({
         const nextGroup: SequenceDraftGroup = {
           id: nextGroupId,
           name: options.nameOverride ?? nameDraftGroupFromPrompt(generationPrompt, current.length),
-          prompt: generationPrompt,
-          drafts: validDrafts,
+          prompt: result.generationPrompt,
+          intent: result.animationIntentPayload,
+          drafts: result.validDrafts,
         };
         if (options.replaceGroupId) {
           return current.map((group) => (group.id === options.replaceGroupId ? nextGroup : group));
@@ -414,9 +247,7 @@ export function SequenceCreatorPanel({
       setSelectedGroupId(nextGroupId);
       setSelectedDraftIndex(0);
       setMode('edit');
-      setGenerationNote(invalidCount > 0
-        ? `${invalidCount} invalid draft${invalidCount === 1 ? '' : 's'} ${invalidCount === 1 ? 'was' : 'were'} rejected.`
-        : null);
+      setGenerationNote(result.generationNote);
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       const message = err instanceof Error ? err.message : 'Sequence generation failed.';
@@ -479,13 +310,17 @@ export function SequenceCreatorPanel({
       setActionError(formatEditError(result.error));
       return;
     }
-    applyEdit(result.mutation, {
+    applyEdit(attachSequenceGenerationMetadata(
+      result.mutation,
+      result.clipId,
+      buildSequenceGenerationMetadata(selectedGroup, selectedDraftIndex),
+    ), {
       selectedClipId: result.selectedClipId,
       selectedTrackId: result.selectedTrackId,
     });
     requestCenterTimelineClip(result.selectedClipId);
     onOpenChange?.(false);
-  }, [applyEdit, currentTime, data, onOpenChange, selectedTrackId, validatedDraft]);
+  }, [applyEdit, currentTime, data, onOpenChange, selectedDraftIndex, selectedGroup, selectedTrackId, validatedDraft]);
 
   const handleReplace = useCallback(() => {
     if (!data || !validatedDraft) return;
@@ -494,13 +329,17 @@ export function SequenceCreatorPanel({
       setActionError(formatEditError(result.error));
       return;
     }
-    applyEdit(result.mutation, {
+    applyEdit(attachSequenceGenerationMetadata(
+      result.mutation,
+      result.clipId,
+      buildSequenceGenerationMetadata(selectedGroup, selectedDraftIndex),
+    ), {
       selectedClipId: result.selectedClipId,
       selectedTrackId: result.selectedTrackId,
     });
     requestCenterTimelineClip(result.selectedClipId);
     onOpenChange?.(false);
-  }, [applyEdit, data, onOpenChange, selectedClipId, selectedClipIds, validatedDraft]);
+  }, [applyEdit, data, onOpenChange, selectedClipId, selectedClipIds, selectedDraftIndex, selectedGroup, validatedDraft]);
 
   const handleRemoveAllowedAsset = useCallback((asset: {
     clipId: string;
@@ -585,6 +424,10 @@ export function SequenceCreatorPanel({
                       rows={5}
                       placeholder="Make these selected images jump between each other..."
                       onChange={(event) => setPrompt(event.target.value)}
+                      voiceInput
+                      onVoiceResult={(result) => setPrompt(result.transcription)}
+                      voiceContext="The user is describing an animated sequence to generate inside a video editor. They may refer to selected or attached images, videos, text, motion, timing, or style. Transcribe their animation request accurately."
+                      voiceTask="transcribe_only"
                     />
                     <Button
                       type="button"
@@ -608,6 +451,10 @@ export function SequenceCreatorPanel({
                           rows={4}
                           placeholder="Make the motion faster, use all three selected images, remove the title..."
                           onChange={(event) => setEditPrompt(event.target.value)}
+                          voiceInput
+                          onVoiceResult={(result) => setEditPrompt(result.transcription)}
+                          voiceContext="The user is describing edits to an existing generated animated sequence in a video editor. They may ask to change motion, timing, selected assets, titles, labels, or layout. Transcribe their edit instruction accurately."
+                          voiceTask="transcribe_only"
                         />
                         <Button
                           type="button"
