@@ -134,10 +134,14 @@ def _agent_routing_block(spec: CloudSpec) -> str:
 
 
 def _claude_auth_block() -> str:
+    # Newer claude CLI versions hang on `setup-token` waiting for OAuth/tty
+    # input even when stdin is piped. Wrap in a timeout so a hang doesn't
+    # stall the entrypoint indefinitely; claude will still pick up
+    # ANTHROPIC_API_KEY from env at call time.
     return """if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
   echo "Authenticating claude with ANTHROPIC_API_KEY"
-  if ! printf '%s\n' "$ANTHROPIC_API_KEY" | claude setup-token >/dev/null 2>&1; then
-    echo "WARN: Claude token auth failed; continuing without Claude auth"
+  if ! timeout 15 bash -c 'printf "%s\\n" "$ANTHROPIC_API_KEY" | claude setup-token' >/dev/null 2>&1; then
+    echo "WARN: Claude token auth failed or timed out; continuing — claude CLI will use ANTHROPIC_API_KEY env var directly"
   fi
 fi"""
 
