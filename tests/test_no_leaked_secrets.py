@@ -47,7 +47,7 @@ def test_leaked_supabase_service_role_jwt_prefix_is_absent() -> None:
     for path in _repo_files(root):
         try:
             content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+        except (FileNotFoundError, UnicodeDecodeError):
             continue
 
         if LEAKED_SUPABASE_JWT_PREFIX in content:

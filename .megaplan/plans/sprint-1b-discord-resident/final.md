@@ -13,7 +13,7 @@
   Evidence files:
     - pyproject.toml
 
-- [x] **T2:** Create/update .gitignore to exclude `.env`, `.env.local`, `supabase/.branches/*`. Add a cheap secrets guard (e.g. a pytest fixture, conftest hook, or a tiny `tests/test_no_leaked_secrets.py`) that greps the repo tree for the JWT prefix `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI` and fails if matched. Do NOT commit the literal JWT supplied in the idea block anywhere.
+- [x] **T2:** Create/update .gitignore to exclude `.env`, `.env.local`, `supabase/.branches/*`. Add a cheap secrets guard (e.g. a pytest fixture, conftest hook, or a tiny `tests/test_no_leaked_secrets.py`) that greps the repo tree for the JWT prefix `[REDACTED_SUPABASE_JWT_PREFIX]` and fails if matched. Do NOT commit the literal JWT supplied in the idea block anywhere.
   Depends on: T22
   Executor notes: Redacted the leaked Supabase token/prefix from tracked plan artifacts and confirmed the guard passes. The reproduction script found no tracked offenders, pytest secret guard passed, and rg over the repo returned no matches.
   Files changed:
@@ -208,7 +208,7 @@
   Evidence files:
     - ideas/sprint_1c_attachments.md
 
-- [x] **T21:** Run the full test suite: `pytest`. Verify Sprint 1a tests pass UNCHANGED (`tests/test_envelope.py`, `tests/test_ledger.py`, `tests/test_run_turn.py`, `tests/test_cli.py`, `tests/test_tool_kit.py`, existing assertions in `tests/test_sqlite_store.py`). Verify the Sprint 1b unit, contract, and integration tests pass. Run a grep guard for the leaked JWT prefix `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI` over the entire tracked tree to confirm no literal secrets are committed. Confirm new modules `agent_kit/store/supabase.py`, `agent_kit/resident.py`, `agent_kit/transport/discord.py` are each ≤400 lines (`wc -l`). If any test fails: read the error, fix the code, re-run until green. DO NOT modify test assertions to make tests pass.
+- [x] **T21:** Run the full test suite: `pytest`. Verify Sprint 1a tests pass UNCHANGED (`tests/test_envelope.py`, `tests/test_ledger.py`, `tests/test_run_turn.py`, `tests/test_cli.py`, `tests/test_tool_kit.py`, existing assertions in `tests/test_sqlite_store.py`). Verify the Sprint 1b unit, contract, and integration tests pass. Run a grep guard for the leaked JWT prefix `[REDACTED_SUPABASE_JWT_PREFIX]` over the entire tracked tree to confirm no literal secrets are committed. Confirm new modules `agent_kit/store/supabase.py`, `agent_kit/resident.py`, `agent_kit/transport/discord.py` are each ≤400 lines (`wc -l`). If any test fails: read the error, fix the code, re-run until green. DO NOT modify test assertions to make tests pass.
   Depends on: T22, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20
   Executor notes: Final verification passed: full suite reports 85 passed and 1 skipped, leaked-prefix grep returns no matches, editable install succeeds with build isolation, and capped modules are 399/310/391 lines.
   Files changed:

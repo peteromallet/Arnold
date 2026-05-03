@@ -8,11 +8,13 @@ import json
 import os
 import signal
 import sys
+from pathlib import Path
 from threading import Event as ThreadingEvent
 from typing import Sequence
 from uuid import uuid4
 
 from agent_kit.envelope import Envelope, EnvelopeError, StateDelta, event_to_json
+from agent_kit.blob import LocalBlobStore, SupabaseStorageBlob
 from agent_kit.loop import run_turn
 from agent_kit.model import AnthropicModel, FakeModel
 from agent_kit.store.sqlite import SQLiteStore
@@ -27,6 +29,7 @@ EXIT_CODES = {
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _load_dotenv()
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command == "turn":
@@ -54,6 +57,13 @@ def _build_parser() -> argparse.ArgumentParser:
     input_group.add_argument("--input")
     input_group.add_argument("--from-stdin", action="store_true")
     turn.add_argument("--stream-events", action="store_true")
+    turn.add_argument(
+        "--attach",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Attach an image file to this invocation. May be repeated; requires --epic.",
+    )
     turn.add_argument("--store", choices=["sqlite", "supabase"], default="sqlite")
     turn.add_argument("--db", default="arnold.sqlite3")
     turn.add_argument(
@@ -84,7 +94,9 @@ def _turn(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle_sigint)
     try:
         input_text = sys.stdin.read() if args.from_stdin else args.input
+        attachments = _normalize_cli_attachment_paths(args.attach)
         store = _build_store(args)
+        blob = _build_blob(args, attachments_present=bool(attachments))
         model = _build_model(args.model_id)
 
         def on_event(event):
@@ -99,6 +111,8 @@ def _turn(args: argparse.Namespace) -> int:
                 store=store,
                 model=model,
                 model_id=args.model_id,
+                blob=blob,
+                attachments=attachments,
                 on_event=on_event,
                 cancel_event=cancel_event,
             )
@@ -138,10 +152,15 @@ def _resident(args: argparse.Namespace) -> int:
 
 
 async def _run_resident(args: argparse.Namespace) -> None:
-    from agent_kit.blob.supabase_storage import SupabaseStorageBlob
     from agent_kit.ledger import Ledger, Reconciler
     from agent_kit.resident import ResidentRunner
     from agent_kit.transport.discord import DiscordTransport
+
+    missing = _missing_resident_env()
+    if missing:
+        raise RuntimeError(
+            "missing required resident env vars: " + ", ".join(missing)
+        )
 
     try:
         from groq import Groq
@@ -207,10 +226,59 @@ def _build_store(args: argparse.Namespace):
     return _build_supabase_store()
 
 
+def _build_blob(args: argparse.Namespace, *, attachments_present: bool = False):
+    if args.store == "sqlite":
+        return LocalBlobStore.for_sqlite_db(args.db)
+    if attachments_present:
+        return SupabaseStorageBlob.from_env()
+    return None
+
+
+def _normalize_cli_attachment_paths(paths: Sequence[str]) -> list[Path]:
+    return [Path(path).expanduser().resolve() for path in paths]
+
+
 def _build_supabase_store():
     from agent_kit.store.supabase import SupabaseStore
 
     return SupabaseStore.from_env()
+
+
+def _load_dotenv(path: Path | None = None) -> None:
+    env_path = path or Path.cwd() / ".env"
+    if not env_path.is_file():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def _missing_resident_env() -> list[str]:
+    from resident_chat_runtime.env import EnvSetting, read_env_settings
+
+    specs = [
+        EnvSetting("SUPABASE_DB_URL", required=True),
+        EnvSetting("SUPABASE_URL", required=True),
+        EnvSetting("DISCORD_BOT_TOKEN", required=True, secret=True),
+        EnvSetting("DISCORD_USER_WHITELIST", required=True),
+        EnvSetting("ANTHROPIC_API_KEY", required=True, secret=True),
+        EnvSetting("OPENAI_API_KEY", required=True, secret=True),
+        EnvSetting("GROQ_API_KEY", required=True, secret=True),
+    ]
+    _values, statuses = read_env_settings(specs)
+    missing = [status.name for status in statuses if status.error == "missing"]
+    if not (
+        os.environ.get("SUPABASE_SERVICE_KEY")
+        or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    ):
+        missing.append("SUPABASE_SERVICE_KEY or SUPABASE_SERVICE_ROLE_KEY")
+    return missing
 
 
 if __name__ == "__main__":

@@ -1,0 +1,451 @@
+{
+  "name": "implement-a-focused-arnold-20260501-0201",
+  "idea": "Implement a focused Arnold spec-parity tranche from planning-bot-spec.md. Scope: establish a working Python 3.12+/test-extra baseline; add invocation attachment passing for CLI/Python as specified; make send_image actually post files in Discord resident mode and add appropriate invocation envelope/event behavior or explicit compatible event semantics; implement missing set_typing tool behavior; align whitelist/status/message semantics called out in the comparison; add regression tests for touched acceptance criteria. Do not do the broader FastAPI/asyncpg architecture migration in this tranche; instead document or encode the current decision if needed. Preserve unrelated dirty worktree changes.",
+  "current_state": "executed",
+  "iteration": 3,
+  "created_at": "2026-05-01T00:01:31Z",
+  "config": {
+    "project_dir": "/Users/peteromalley/Documents/arnold-v2",
+    "auto_approve": true,
+    "robustness": "standard",
+    "mode": "code",
+    "strict_notes": false,
+    "agent": ""
+  },
+  "sessions": {
+    "codex_planner": {
+      "id": "019de0d7-442f-7aa1-864a-bfa02691fd24",
+      "mode": "persistent",
+      "created_at": "2026-05-01T00:03:40Z",
+      "last_used_at": "2026-05-01T00:13:36Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019de0d9-5ff4-7831-a2b0-9d2cf2682a65",
+      "mode": "persistent",
+      "created_at": "2026-05-01T00:06:55Z",
+      "last_used_at": "2026-05-01T00:15:36Z",
+      "refreshed": false
+    },
+    "codex_gatekeeper": {
+      "id": "019de0dc-3959-7222-9652-e6ef82061ba8",
+      "mode": "persistent",
+      "created_at": "2026-05-01T00:07:19Z",
+      "last_used_at": "2026-05-01T00:15:59Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019de0e4-7a1b-7fe0-9916-dacc232bfb13",
+      "mode": "persistent",
+      "created_at": "2026-05-01T00:17:09Z",
+      "last_used_at": "2026-05-01T00:17:09Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019de0e5-9457-7dd0-a093-103b86c34f69",
+      "mode": "persistent",
+      "created_at": "2026-05-01T00:20:36Z",
+      "last_used_at": "2026-05-01T00:45:08Z",
+      "refreshed": true
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:af8ce40f5c883eba43f58dbdd64b715e7858615abe7041115767df74b85cdfa4",
+      "timestamp": "2026-05-01T00:03:40Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:d8780b2ef7af19fdd081026db77726b655c0b8a703bfd7acaedd393bd6ed1328",
+      "timestamp": "2026-05-01T00:09:00Z"
+    },
+    {
+      "version": 3,
+      "file": "plan_v3.md",
+      "hash": "sha256:02076ff7f393c55f2a66e1162bd4df666c6ce2fb9ced051299b0d79ede0f403f",
+      "timestamp": "2026-05-01T00:13:36Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-05-01T00:01:31Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-05-01T00:03:40Z",
+      "duration_ms": 124010,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0d7-442f-7aa1-864a-bfa02691fd24",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:af8ce40f5c883eba43f58dbdd64b715e7858615abe7041115767df74b85cdfa4"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-05-01T00:06:55Z",
+      "duration_ms": 181289,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0d9-5ff4-7831-a2b0-9d2cf2682a65",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:f0c8b8290c49e13cc0d816403e5d622f3fc49087c7ae5fcf8b0a6c3a554580f8",
+      "flags_count": 14
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-05-01T00:07:19Z",
+      "duration_ms": 17840,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0dc-3959-7222-9652-e6ef82061ba8",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:3b724a4e952944b6d9fc30cc12ad69b497ca08fabe92864901e8b1509e258135",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-05-01T00:09:00Z",
+      "duration_ms": 94780,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0d7-442f-7aa1-864a-bfa02691fd24",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:d8780b2ef7af19fdd081026db77726b655c0b8a703bfd7acaedd393bd6ed1328",
+      "flags_addressed": [
+        "FLAG-001",
+        "FLAG-002",
+        "FLAG-003",
+        "FLAG-004",
+        "issue_hints",
+        "correctness-1",
+        "correctness-2",
+        "scope",
+        "all_locations-1",
+        "all_locations-2",
+        "all_locations-3",
+        "callers"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-05-01T00:11:26Z",
+      "duration_ms": 141521,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0d9-5ff4-7831-a2b0-9d2cf2682a65",
+      "agent": "codex",
+      "output_file": "critique_v2.json",
+      "artifact_hash": "sha256:7c1ea7df9aa8345528495f10c6ee562e9ad634e708420f48e423b93b4d8cc6a4",
+      "flags_count": 8
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-05-01T00:11:53Z",
+      "duration_ms": 21726,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0dc-3959-7222-9652-e6ef82061ba8",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:5c16042cbc1817a8b2b697fed0ee83706584484075a46254091415d6655fc6af",
+      "recommendation": "ITERATE"
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-05-01T00:13:36Z",
+      "duration_ms": 98180,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0d7-442f-7aa1-864a-bfa02691fd24",
+      "agent": "codex",
+      "output_file": "plan_v3.md",
+      "artifact_hash": "sha256:02076ff7f393c55f2a66e1162bd4df666c6ce2fb9ced051299b0d79ede0f403f",
+      "flags_addressed": [
+        "correctness-1",
+        "correctness-2",
+        "FLAG-005",
+        "FLAG-006",
+        "FLAG-007",
+        "all_locations"
+      ]
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-05-01T00:15:36Z",
+      "duration_ms": 115992,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0d9-5ff4-7831-a2b0-9d2cf2682a65",
+      "agent": "codex",
+      "output_file": "critique_v3.json",
+      "artifact_hash": "sha256:30aaf9d81e4d67012e1246c906ecf6b3fa1cc9dcca34653883d95c3bc8bc0d5d",
+      "flags_count": 2
+    },
+    {
+      "step": "gate",
+      "timestamp": "2026-05-01T00:15:59Z",
+      "duration_ms": 16945,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0dc-3959-7222-9652-e6ef82061ba8",
+      "agent": "codex",
+      "output_file": "gate.json",
+      "artifact_hash": "sha256:8384e38fc3e1f28cef00132da0153025acca012bcc5b07cfe8c158da0091aea2",
+      "recommendation": "PROCEED"
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-05-01T00:17:09Z",
+      "duration_ms": 59958,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0e4-7a1b-7fe0-9916-dacc232bfb13",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:1be22466f5ed34adfe001139df29e439a264b8dc44752d205e3b90011dedc7c6"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:23:13Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "execute_v3_raw.txt",
+      "message": "Codex step failed with exit code 1 (no recognized error pattern in output). Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:23:24Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "execute_v3_raw.txt",
+      "message": "Codex step failed with exit code 1 (no recognized error pattern in output). Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:23:43Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "execute_v3_raw.txt",
+      "message": "Prompt exceeded Codex context length. Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:23:52Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "execute_v3_raw.txt",
+      "message": "Prompt exceeded Codex context length. Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:28:22Z",
+      "duration_ms": 259363,
+      "cost_usd": 0.0,
+      "result": "partial",
+      "session_mode": "persistent",
+      "session_id": "019de0e5-9457-7dd0-a093-103b86c34f69",
+      "agent": "codex",
+      "output_file": "execution_batch_3.json",
+      "artifact_hash": "sha256:abcf7bf17e5c46d595d263afe96ba70b023c77cdc4038424eefa382debd6c1fc",
+      "finalize_hash": "sha256:3ee9582845be15b3b3138839f600856af802216edc0d4e7b0c067a779b37d95b",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:33:24Z",
+      "duration_ms": 294020,
+      "cost_usd": 0.0,
+      "result": "partial",
+      "session_mode": "persistent",
+      "session_id": "019de0e5-9457-7dd0-a093-103b86c34f69",
+      "agent": "codex",
+      "output_file": "execution_batch_4.json",
+      "artifact_hash": "sha256:b6969154142059e97a187aeb5a4f9c45dea9553b8c5dd0a67dcd73b78074df21",
+      "finalize_hash": "sha256:5de2dd3a66664db68135acdc1460745fdededdd4f32ce4992843539fdca1d1f4",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:38:16Z",
+      "duration_ms": 286661,
+      "cost_usd": 0.0,
+      "result": "partial",
+      "session_mode": "persistent",
+      "session_id": "019de0e5-9457-7dd0-a093-103b86c34f69",
+      "agent": "codex",
+      "output_file": "execution_batch_5.json",
+      "artifact_hash": "sha256:383697cc417f94233046cafb6b887920850516f25413a1471c1fb8e37d79ae70",
+      "finalize_hash": "sha256:d799e6bcb07e4f920c65cf4a6ea41e05d88be4aff701fd78dba0a6f6c69ee02f",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:42:24Z",
+      "duration_ms": 238202,
+      "cost_usd": 0.0,
+      "result": "partial",
+      "session_mode": "persistent",
+      "session_id": "019de0e5-9457-7dd0-a093-103b86c34f69",
+      "agent": "codex",
+      "output_file": "execution_batch_6.json",
+      "artifact_hash": "sha256:7004d51f1cd1aa1dff86148bba0fce373ca23fdcee96b0a72a9fa07c8c16683b",
+      "finalize_hash": "sha256:a18b9a15b005cf5c0c34caac72741b4ace2d6ea0e93b4a9d94d43276754e9e96",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-01T00:45:08Z",
+      "duration_ms": 156096,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de0e5-9457-7dd0-a093-103b86c34f69",
+      "agent": "codex",
+      "output_file": "execution_batch_7.json",
+      "artifact_hash": "sha256:4b99c561db894718550fe6c2c96362d6f33b2d6eb8e7fc6d5cbcd9e94a6cacfe",
+      "finalize_hash": "sha256:ff6d229c9b59d03a745eed0f63c82646034db1cb971e3df11b3b11493c1e47e9",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-05-01T00:46:05Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v3_raw.txt",
+      "message": "Codex step failed with exit code 1 (no recognized error pattern in output). Re-run the same step on Codex once before changing agent."
+    },
+    {
+      "step": "review",
+      "timestamp": "2026-05-01T00:47:04Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "review_v3_raw.txt",
+      "message": "Codex step failed with exit code 1 (no recognized error pattern in output). Re-run the same step on Codex once before changing agent."
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      12,
+      6,
+      0
+    ],
+    "weighted_scores": [
+      13.5,
+      8.25,
+      0
+    ],
+    "plan_deltas": [
+      85.56,
+      16.42
+    ],
+    "recurring_critiques": [
+      [],
+      [],
+      []
+    ],
+    "total_cost_usd": 0.0,
+    "overrides": [
+      {
+        "action": "add-note",
+        "timestamp": "2026-05-01T00:03:51Z",
+        "note": "Settled scope answers from orchestrator/user intent: (1) Invocation attachment parity in this tranche only needs image attachments; do not implement full audio/Groq CLI attachment flow unless it falls out trivially from existing code. (2) Keep the existing optional dependency extra named 'test' canonical; add a compatibility alias only if useful, but do not break current install path. (3) For invocation-mode send_image, prefer a first-class attached_image event kind if schema/event plumbing can be updated cleanly while preserving tool_call audit rows; otherwise use explicit tool_call details and document the compatibility choice in tests.",
+        "source": "user"
+      }
+    ],
+    "notes": [
+      {
+        "timestamp": "2026-05-01T00:03:51Z",
+        "note": "Settled scope answers from orchestrator/user intent: (1) Invocation attachment parity in this tranche only needs image attachments; do not implement full audio/Groq CLI attachment flow unless it falls out trivially from existing code. (2) Keep the existing optional dependency extra named 'test' canonical; add a compatibility alias only if useful, but do not break current install path. (3) For invocation-mode send_image, prefer a first-class attached_image event kind if schema/event plumbing can be updated cleanly while preserving tool_call audit rows; otherwise use explicit tool_call details and document the compatibility choice in tests.",
+        "source": "user"
+      }
+    ]
+  },
+  "last_gate": {
+    "recommendation": "PROCEED",
+    "rationale": "The plan is execution-ready. The remaining critique pass is clear, the weighted score is 0, and all previously blocking concerns now have concrete implementation instructions and tests. The plan keeps scope focused on current SQLite/local invocation and Discord resident behavior while closing the callable attachment debt that this tranche is meant to address.",
+    "reprompted": false,
+    "signals_assessment": "Score trajectory improved from 13.5 to 8.25 to 0 across three iterations. There are no unresolved significant flags, no recurring critiques, and no scope-creep flags. Preflight is healthy: the project exists, is writable, success criteria are present, and required agents are available.",
+    "warnings": [
+      "During execution, inspect the existing migration pattern before deciding whether `caller_uploaded` needs a new additive migration or baseline-only migration edits.",
+      "Keep Discord upload bytes out of persisted ledger JSON; tests should assert this explicitly.",
+      "If local Python is below 3.12, report that as an environment limitation rather than weakening the metadata change."
+    ],
+    "settled_decisions": [
+      {
+        "id": "scope-image-attachments",
+        "decision": "Invocation attachment parity for this tranche is image-only.",
+        "rationale": "User/orchestrator notes explicitly exclude full audio/Groq CLI attachment flow unless it falls out trivially."
+      },
+      {
+        "id": "test-extra",
+        "decision": "Keep the existing optional dependency extra `test` canonical; any `test-extra` alias must be additive and non-breaking.",
+        "rationale": "The current install path must not break."
+      },
+      {
+        "id": "raw-bytes-mime",
+        "decision": "Raw `bytes` attachments are accepted only when magic bytes identify PNG, JPEG, or WEBP; unknown bytes are rejected.",
+        "rationale": "This satisfies raw bytes support without guessing incorrect media types."
+      },
+      {
+        "id": "epic-required-for-attachments",
+        "decision": "Invocation attachments require an explicit `epic_id`; attachment calls without an epic return `attachments_require_epic` and create no orphan state.",
+        "rationale": "Images and blob paths are epic-scoped in the current architecture."
+      },
+      {
+        "id": "discord-file-ledger",
+        "decision": "Resident `send_image` stores raw upload bytes only in memory; persisted external request rows contain JSON-safe metadata only.",
+        "rationale": "The ledger serializes request bodies as JSON and should remain audit-safe."
+      },
+      {
+        "id": "attached-image-events",
+        "decision": "Implement first-class invocation `attached_image` events while preserving audited `tool_call` rows/events.",
+        "rationale": "This matches the preferred user intent and the revised plan includes schema, type, and stream plumbing."
+      },
+      {
+        "id": "architecture-deferral",
+        "decision": "Do not implement the broader FastAPI/asyncpg migration in this tranche.",
+        "rationale": "The requested scope is focused spec parity on the current implementation."
+      }
+    ],
+    "passed": true,
+    "preflight_results": {
+      "project_dir_exists": true,
+      "project_dir_writable": true,
+      "success_criteria_present": true,
+      "claude_available": true,
+      "codex_available": true
+    },
+    "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize."
+  }
+}

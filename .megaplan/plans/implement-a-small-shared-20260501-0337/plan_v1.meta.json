@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "timestamp": "2026-05-01T01:39:26Z",
+  "hash": "sha256:ec3b0ac65c7089694f4391be6b8732e1df4fc170b74987c8388476b9399a0948",
+  "questions": [
+    "Should the shared package live permanently as `/Users/peteromalley/Documents/resident_chat_runtime`, or should it be vendored under one repo and referenced by the other? This affects dependency URLs and future versioning.",
+    "Should the shared package be private local-only for now, or should the implementation prepare it for eventual publishing with stable public APIs and package metadata?",
+    "For Arnold quiet DM status, should final completion status edits also be suppressed in Discord DM mode, or only the visible in-progress `Planning turn in progress.` message? The current code suppresses in-progress posting when `_quiet_status_mode()` is true, but still preserves invocation-mode status behavior."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "A local shared `resident-chat-runtime` package exists and is importable from both Arnold and Veas through local path dependency wiring.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The shared package contains only infrastructure primitives: env/settings helpers, Discord REST/Gateway helpers, burst coalescing, lightweight health checks, and startup diagnostics; it does not contain Arnold or Veas domain prompts, tools, schemas, database models, or business logic.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Arnold Discord inbound text, image, and voice paths create or reuse a real epic before inserting inbound message rows.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Arnold resident turn execution does not call sync Discord transport methods from the Discord event loop and continues to isolate `run_turn` with worker-thread execution when needed.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Arnold Discord DM resident mode avoids visible `Planning turn in progress.` status messages and uses typing for in-progress feedback.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Veas behavior for Discord outbound send, typing, reactions, gateway ingestion, catch-up ingestion, message edit/delete handling, and partner whitelist mapping remains unchanged after adopting shared helpers.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Burst coalescing behavior remains equivalent in both repos: rapid messages are grouped, hard-cap timing flushes, and existing public wrapper APIs still work.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Focused tests pass in the shared package, Arnold, and Veas using the validation commands named in the plan.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Existing dirty user changes are preserved; implementation diffs are limited to the expected package, dependency, runtime, and focused test files.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Startup diagnostics and health checks avoid logging secrets or exposing raw tokens in outputs.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The shared package API remains small and documented enough that Arnold and Veas adapters are thin, with no broad rewrites or unrelated formatting churn.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Cheap shared-package and focused repo tests are run before broader smoke checks to localize failures quickly.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Both repos are Python projects using setuptools/pyproject, so a sibling local package with a `file://` dependency is the simplest local sharing mechanism.",
+    "The shared package should be local and source-controlled separately under `/Users/peteromalley/Documents/resident_chat_runtime` unless the user specifies a different permanent home.",
+    "Arnold\u2019s `agent_kit.resident.MessageCoalescer` and Veas\u2019s `app.services.debouncer.BurstCoalescer` should remain as compatibility wrappers even if their internals delegate to the shared package.",
+    "Arnold\u2019s domain-specific persistence, ledger, attachments, Groq transcription, and epic routing stay in Arnold.",
+    "Veas\u2019s Pydantic settings, FastAPI startup order, database writes, whitelist policy, and Meta-shaped payload mapping stay in Veas.",
+    "No `.megaplan/` files should be read or edited for this task, despite the repository containing many plan artifacts.",
+    "Dirty worktree entries are assumed to be user-owned or prior generated changes and must not be reverted."
+  ],
+  "structure_warnings": []
+}

@@ -1,0 +1,180 @@
+{
+  "version": 3,
+  "timestamp": "2026-05-01T00:13:36Z",
+  "hash": "sha256:02076ff7f393c55f2a66e1162bd4df666c6ce2fb9ced051299b0d79ede0f403f",
+  "changes_summary": "Resolved the remaining critique by specifying magic-byte MIME detection for raw bytes, keeping Discord upload bytes out of JSON-persisted ledger fields, and replacing the non-existent `arnold_sdk` target with actual public package surfaces.",
+  "flags_addressed": [
+    "correctness-1",
+    "correctness-2",
+    "FLAG-005",
+    "FLAG-006",
+    "FLAG-007",
+    "all_locations"
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "Project metadata declares Python 3.12+ support and preserves the canonical `test` optional dependency extra.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "`caller_uploaded` is accepted consistently by image storage constraints, tool schemas, and tests while existing `user_uploaded` Discord behavior still works.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "SQLite CLI invocation has a concrete local blob adapter path, and `arnold turn --attach <image>` works end to end with an explicit epic id.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Python `run_turn(..., attachments=...)` supports image attachments from `Path`, magic-byte-detected raw `bytes`, and `(bytes, mime_type)`, creates `caller_uploaded` image rows before model execution, and exposes them through `list_images`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Raw `bytes` attachments with unknown image magic bytes and detectable `(bytes, mime_type)` mismatches are rejected with explicit unsupported media type errors.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Invocation attachments with `epic_id=None` fail with an explicit `attachments_require_epic` envelope error and do not create orphan image/blob state.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Resident-mode `send_image` constructs a `BlobRef`, fetches image bytes through `Blob.get`, posts actual file payloads through the Discord transport, updates the outbound message row with the confirmed Discord id, and settles the Discord external request ledger row.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Resident-mode `send_image` persists only JSON-safe Discord request metadata in `external_requests.request_body`; raw upload bytes remain in memory only.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Invocation-mode `send_image` preserves audited `tool_call` rows/events and also emits first-class `attached_image` events that validate against `agent_kit/envelope.schema.json`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`--stream-events` and Python `on_event` callbacks emit the same `attached_image` events captured in the final envelope.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`set_typing` is registered as a tool; resident mode calls transport typing behavior and invocation mode succeeds as a no-op/audited tool call.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Whitelist rejection, status-message non-persistence, outbound message persistence, and status lifecycle behavior remain aligned with the spec and covered by regression tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The broader FastAPI/asyncpg architecture migration is not implemented in this tranche.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "All touched focused tests pass before running the full suite.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The full test suite passes after the tranche is complete, or any failure is clearly unrelated to touched behavior and documented.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Attachment normalization and `LocalBlobStore` remain small and direct, with no broad storage or transport rewrite beyond the requested parity tranche.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "New tests are focused on acceptance criteria rather than broad snapshots that would make unrelated future changes noisy.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The current SQLite/local invocation and Discord resident architecture remains the implementation target; FastAPI and asyncpg stay deferred.",
+    "Invocation attachment parity for this tranche is image-only.",
+    "Raw `bytes` attachments are accepted only when magic bytes identify PNG, JPEG, or WEBP; unknown bytes are rejected rather than guessed.",
+    "For `(bytes, mime_type)`, supported declared MIME types are required and detectable byte/MIME mismatches are rejected.",
+    "Discord upload bytes stay in memory only; persisted external request fields contain JSON-safe metadata.",
+    "Attachments require an existing `epic_id` because image rows and blob paths are epic-scoped; invocation without `--epic` remains supported only when no attachments are provided.",
+    "`caller_uploaded` should be added as a first-class image source while preserving existing `user_uploaded` Discord behavior.",
+    "A small filesystem `LocalBlobStore` is acceptable because it is the minimal missing port implementation needed for end-to-end SQLite CLI attachments.",
+    "First-class `attached_image` events are preferred and will be implemented only with matching dataclass, JSON schema, tool/event streaming, and tests.",
+    "The existing optional dependency extra `test` remains canonical; any `test-extra` alias must be additive and non-breaking.",
+    "Existing dirty worktree changes, if any, are unrelated and must not be reverted."
+  ],
+  "delta_from_previous_percent": 16.42,
+  "structure_warnings": []
+}

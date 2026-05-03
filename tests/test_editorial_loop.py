@@ -450,6 +450,45 @@ def test_body_outline_and_search_read_tools_are_registered_and_stable() -> None:
     }
 
 
+def test_editorial_read_aliases_return_expected_payloads(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "read-aliases.db")
+    epic = _create_minimal_epic(store)
+    checklist_items = store.seed_checklist(epic["id"], ["Clarify scope", "Confirm risks"])
+    store.update_checklist_item(checklist_items[1]["id"], status="done")
+    for index in range(12):
+        store.create_message(
+            epic_id=epic["id"],
+            direction="inbound",
+            content=f"Message {index}",
+            discord_message_id=f"discord_{index}",
+        )
+    turn = store.create_turn(epic_id=epic["id"], triggered_by_message_ids=[])
+    context = ToolContext(store=store, turn_id=turn["id"], events=[])
+
+    for tool_name in {"get_checklist", "get_sprints", "recent_messages"}:
+        assert registry.get(tool_name).operation_kind == "read"
+
+    open_checklist = registry.invoke(
+        "get_checklist",
+        context,
+        {"epic_id": epic["id"], "status": "open"},
+    ).result
+    assert open_checklist["epic_id"] == epic["id"]
+    assert open_checklist["status"] == "open"
+    assert [item["content"] for item in open_checklist["checklist"]] == ["Clarify scope"]
+
+    recent = registry.invoke(
+        "recent_messages",
+        context,
+        {"epic_id": epic["id"], "n": 11},
+    ).result
+    assert recent["epic_id"] == epic["id"]
+    assert recent["requested_n"] == 11
+    assert recent["max_available"] == 10
+    assert recent["returned_n"] == 10
+    assert len(recent["recent_messages"]) == 10
+
+
 def test_editorial_cli_no_epic_bootstrap(tmp_path) -> None:
     script = [
         {
@@ -507,6 +546,93 @@ def test_errored_no_epic_envelope_is_schema_valid(tmp_path) -> None:
     validate(envelope.to_dict(), schema)
 
 
+def test_edit_epic_links_confirmed_checklist_items_to_second_opinion(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "second-opinion-links.db")
+    epic = _create_minimal_epic(store)
+    turn = store.create_turn(epic_id=epic["id"], triggered_by_message_ids=[])
+    context = ToolContext(store=store, turn_id=turn["id"], events=[])
+    opinion = store.create_second_opinion(
+        epic_id=epic["id"],
+        requested_by="user",
+        focus_areas=["handoff"],
+        raw_response='{"score": 6}',
+        score=6,
+        summary="Three holes remain.",
+        verdict="needs work",
+        model_used="gpt-5.5",
+        resulting_checklist_item_ids=["existing_item"],
+    )
+
+    result = registry.invoke(
+        "edit_epic",
+        context,
+        {
+            "epic_id": epic["id"],
+            "changes": {
+                "checklist": {
+                    "add": [
+                        {
+                            "content": "Define rollout guardrails",
+                            "source": "second_opinion",
+                            "source_second_opinion_id": opinion["id"],
+                        },
+                        {
+                            "content": "Add owner handoff",
+                            "source": "second_opinion",
+                            "source_second_opinion_id": opinion["id"],
+                        },
+                        {
+                            "content": "Unlinked follow-up",
+                            "source": "bot_inferred",
+                        },
+                    ]
+                }
+            },
+            "change_summary": "Confirm second opinion checklist items",
+        },
+    ).result
+
+    created_ids = result["created_checklist_item_ids"]
+    assert len(created_ids) == 3
+    assert [item["id"] for item in result["created_checklist_items"]] == created_ids
+    linked = store.list_second_opinions(epic["id"])[0]
+    assert linked["id"] == opinion["id"]
+    assert linked["resulting_checklist_item_ids"] == [
+        "existing_item",
+        created_ids[0],
+        created_ids[1],
+    ]
+
+
+def test_edit_epic_rolls_back_checklist_add_for_unknown_second_opinion(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "second-opinion-link-rollback.db")
+    epic = _create_minimal_epic(store)
+    turn = store.create_turn(epic_id=epic["id"], triggered_by_message_ids=[])
+    context = ToolContext(store=store, turn_id=turn["id"], events=[])
+
+    result = registry.invoke(
+        "edit_epic",
+        context,
+        {
+            "epic_id": epic["id"],
+            "changes": {
+                "checklist": {
+                    "add": [
+                        {
+                            "content": "Should roll back",
+                            "source_second_opinion_id": "opinion_missing",
+                        }
+                    ]
+                }
+            },
+            "change_summary": "Attempt invalid second opinion link",
+        },
+    ).result
+
+    assert result["error"] == "source_second_opinion_not_found"
+    assert store.list_checklist_items(epic["id"]) == []
+
+
 def _run_scripted_turn(
     store: SQLiteStore,
     *,
@@ -536,6 +662,18 @@ def _pause() -> None:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _create_minimal_epic(store: SQLiteStore) -> dict[str, Any]:
+    return store.create_epic(
+        title="Second opinion link test",
+        goal="Track confirmed findings.",
+        body=(
+            "# Second opinion link test\n\n"
+            "## Goal\n\n"
+            "Track confirmed findings.\n"
+        ),
+    )
 
 
 def _section_names(markdown: str) -> list[str]:

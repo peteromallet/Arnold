@@ -37,6 +37,18 @@ def test_envelope_serializes_with_stable_json_and_valid_schema() -> None:
                 text="drafting",
                 tool_call_id="tool_2",
             ),
+            Event(
+                ts="2026-04-30T00:00:02Z",
+                kind="attached_image",
+                name="send_image",
+                details={
+                    "image_id": "img_1",
+                    "caption": "caption",
+                    "storage_url": "images/epic_1/generated.png",
+                    "reference_key": "img_agent_1",
+                    "media_type": "image/png",
+                },
+            ),
         ],
         tool_call_count=2,
         outcome="completed",

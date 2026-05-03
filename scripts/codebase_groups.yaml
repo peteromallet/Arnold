@@ -1,0 +1,6 @@
+groups:
+  reigh:
+    - banodoco/reigh-workspace
+    - banodoco/reigh-app
+    - banodoco/reigh-worker
+    - banodoco/reigh-worker-orchestrator

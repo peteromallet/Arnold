@@ -15,6 +15,13 @@ def test_store_protocol_has_sprint_1b_methods() -> None:
         "load_image",
         "list_images",
         "update_image",
+        "list_active_images",
+        "load_active_image_by_reference",
+        "active_image_reference_exists",
+        "deactivate_active_image_reference",
+        "create_second_opinion",
+        "list_second_opinions",
+        "set_second_opinion_checklist_items",
     ]:
         assert hasattr(Store, name)
 
@@ -26,6 +33,7 @@ def test_blob_and_push_transport_protocols_are_extended_separately() -> None:
         "stop",
         "post_message",
         "edit_message",
+        "set_typing",
         "download_attachment",
         "fetch_recent_messages",
     ]:

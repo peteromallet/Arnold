@@ -1,0 +1,42 @@
+{
+  "checks": [],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "External effects: the plan does not adapt the existing external_requests ledger for generate_image/request_second_opinion, so the likely implementation will call OpenAI/Storage inside the tool body before an audited pending request exists.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "agent_kit/tool_kit.py:126-160 documents/enforces that provider IO runs post-commit only via context.external_queue, with pending rows recorded after the tool function returns. But the plan's generate_image step says to call OpenAI, upload bytes, and create the images row in the tool, and the second-opinion step similarly calls GPT-5.5 then stores the row. planning-bot-spec.md:2471-2480 explicitly requires external_requests coverage for LLM/image generation/Storage effects so crash recovery can reconcile pending external work."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Second-opinion checklist linking: the plan says confirmed checklist items can be linked back to the second_opinions row, but it does not add a source id to edit_epic or return created checklist item ids from the existing checklist workflow.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "planning-bot-spec.md:1266-1274 requires proposing checklist items and only adding them after individual user confirmation, while second_opinions.resulting_checklist_item_ids is part of the data model. In the current code, edit_epic applies checklist changes at agent_kit/tools/editorial.py:214-220, _apply_checklist_changes discards add_checklist_items' returned rows at agent_kit/tools/editorial.py:487-498, and edit_epic's result has no created checklist ids or second_opinion_id linkage. The plan only says to leave resulting_checklist_item_ids empty until confirmation, then tests that IDs can be linked back, without specifying the required tool/API changes."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 7: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 13: requires human verification (inspect_runtime_ui, observe_runtime_logs).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

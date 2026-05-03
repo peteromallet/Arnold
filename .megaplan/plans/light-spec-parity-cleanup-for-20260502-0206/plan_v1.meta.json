@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "timestamp": "2026-05-02T01:07:52Z",
+  "hash": "sha256:2f9466105090107ba6969a2661b1d9a1d09b0d53f920ed6a40bda03d5c3160fb",
+  "questions": [
+    "Should `megaplan.arnold` remain documented anywhere as a backwards-compatible shim, or should the public spec mention only `arnold`? I will assume only `arnold` belongs in the spec while the shim remains in code/tests.",
+    "For `recent_messages`, should the alias return exactly `{\"messages\": [...]}` or mirror hot-context shape as `{\"recent_messages\": [...]}`? I will assume `{\"recent_messages\": [...]}` to match existing store context naming unless local tests reveal a stronger convention."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`planning-bot-spec.md` uses `from arnold import run_turn, Envelope` for the Callable API Python example and no longer presents `megaplan.arnold` as the public import path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "All invocation event-stream documentation consistently says live CLI progress events go to stderr and the final envelope goes to stdout.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Spec image-tool wording states that `generate_image` creates/stores image data without surfacing it, and `send_image` is the tool that surfaces images to Discord or invocation envelopes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Spec idempotency documentation includes the implemented system-request formula with `system_seq` and preserves the tool-call idempotency formula.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invocation attachment documentation matches current implementation: image attachments are supported for CLI/Python, invocation audio is explicitly deferred, and HTTP remains future work.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "If implemented, `get_checklist`, `get_sprints`, and `recent_messages` are registered read tools backed by existing Store behavior with no Store/ports refactor.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`transcribe_voice` is not falsely documented as a current bot-callable invocation/resident tool if no trivial existing tool implementation exists; it is marked automatic resident behavior or deferred as appropriate.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused tests covering the touched behavior pass.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Unrelated dirty worktree changes are preserved; the final diff is limited to the spec, lightweight alias code if needed, and focused tests.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The implementation remains small and avoids new transport, Store, FastAPI, asyncpg, or HTTP surface area.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "This is a plan-only step; no files should be edited during planning.",
+    "The current `arnold/__init__.py` public exports are the intended callable API, and `megaplan/arnold` is a compatibility shim, not the spec surface.",
+    "Adding exact aliases for `get_checklist`, `get_sprints`, and `recent_messages` is acceptable because they are read-only and backed by existing Store/hot-context behavior.",
+    "`transcribe_voice` should not be added as a lightweight alias because current voice support is automatic Discord ingestion plus Groq wiring, not a simple existing tool function.",
+    "Validation should avoid `.megaplan/` and unrelated docs/ops material unless a targeted test needs context."
+  ],
+  "structure_warnings": []
+}

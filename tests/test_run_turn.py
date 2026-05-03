@@ -1,13 +1,58 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from threading import Event
 
+from jsonschema import validate
+
+from agent_kit.end_of_turn import LOW_SECOND_OPINION_REFRAMING_SUGGESTION
 from agent_kit.envelope import serialize_for_diff, stable_json_dumps
 from agent_kit.loop import run_turn
 from agent_kit.model import FakeModel
 from agent_kit.prompts import build_system_prompt
+from agent_kit.ports import BlobRef, OpenAISecondOpinionResult
+from agent_kit.tool_kit import registry
 from tests.helpers import create_store, insert_epic
+
+
+class FakeSecondOpinionOps:
+    def __init__(self, raw_response: str) -> None:
+        self.raw_response = raw_response
+
+    def request_second_opinion(self, *, payload, idempotency_key: str):
+        return OpenAISecondOpinionResult(
+            raw_response=self.raw_response,
+            provider_request_id="openai_req_1",
+            response_summary={"idempotency_key": idempotency_key},
+        )
+
+
+class FakeBlob:
+    def __init__(self) -> None:
+        self.puts = []
+
+    def put(self, epic_id: str, content: bytes, mime_type: str, *, idempotency_key=None) -> BlobRef:
+        self.puts.append(
+            {
+                "epic_id": epic_id,
+                "content": content,
+                "mime_type": mime_type,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return BlobRef(
+            epic_id=epic_id,
+            key=f"images/{epic_id}/{idempotency_key}.png",
+            mime_type=mime_type,
+            size_bytes=len(content),
+        )
+
+    def get(self, ref: BlobRef) -> bytes:
+        return b""
+
+    def exists(self, ref: BlobRef) -> bool:
+        return False
 
 
 def test_run_turn_tool_flow_events_join_tool_calls(tmp_path) -> None:
@@ -45,6 +90,164 @@ def test_run_turn_tool_flow_events_join_tool_calls(tmp_path) -> None:
         event.tool_call_id for event in envelope.events
     }
     assert conn.execute("SELECT COUNT(*) FROM bot_turns").fetchone()[0] == 1
+
+
+def test_run_turn_ingests_image_attachments_before_model_execution(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    insert_epic(conn)
+    blob = FakeBlob()
+    png = b"\x89PNG\r\n\x1a\npayload"
+    model = FakeModel(script=[{"final_text": "saw it", "provider_request_id": "req_1"}])
+
+    envelope = run_turn(
+        epic_id="epic_1",
+        input="please inspect this",
+        store=store,
+        model=model,
+        model_id="fake",
+        blob=blob,
+        attachments=[(png, "image/png")],
+    )
+
+    assert envelope.outcome == "completed"
+    inbound = conn.execute(
+        "SELECT id, has_image_attachment FROM messages WHERE direction = 'inbound'"
+    ).fetchone()
+    assert inbound["has_image_attachment"] == 1
+    images = conn.execute("SELECT * FROM images").fetchall()
+    assert len(images) == 1
+    assert images[0]["source"] == "caller_uploaded"
+    assert images[0]["storage_url"] == blob.puts[0]["idempotency_key"].join(
+        ["images/epic_1/", ".png"]
+    )
+    assert model.calls[0]["hot_context"]["active_images"][0]["id"] == images[0]["id"]
+    assert model.calls[0]["hot_context"]["active_images"][0]["source"] == "caller_uploaded"
+
+
+def test_run_turn_send_image_streams_schema_valid_attached_image_event(tmp_path) -> None:
+    store, _conn = create_store(tmp_path / "arnold.db")
+    insert_epic(_conn)
+    image = store.create_image(
+        epic_id="epic_1",
+        source="agent_generated",
+        storage_url="images/epic_1/generated.webp",
+        caption="generated caption",
+        reference_key="img_generated",
+    )
+    seen = []
+
+    envelope = run_turn(
+        epic_id="epic_1",
+        input="send the image",
+        store=store,
+        model=FakeModel(
+            script=[
+                {
+                    "tool_requests": [
+                        {
+                            "name": "send_image",
+                            "arguments": {"image_id": image["id"], "caption": "posted"},
+                        }
+                    ],
+                    "provider_request_id": "req_1",
+                },
+                {"final_text": "done", "provider_request_id": "req_2"},
+            ]
+        ),
+        model_id="fake",
+        on_event=seen.append,
+    )
+
+    assert envelope.outcome == "completed"
+    assert seen == envelope.events
+    assert [event.kind for event in envelope.events] == [
+        "tool_call",
+        "attached_image",
+        "tool_call",
+    ]
+    attached = next(event for event in envelope.events if event.kind == "attached_image")
+    assert attached.details == {
+        "image_id": image["id"],
+        "caption": "posted",
+        "storage_url": "images/epic_1/generated.webp",
+        "reference_key": "img_generated",
+        "media_type": "image/webp",
+    }
+    validate(
+        envelope.to_dict(),
+        json.loads(Path("agent_kit/envelope.schema.json").read_text()),
+    )
+
+
+def test_run_turn_rejects_epicless_attachments_without_orphan_state(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    blob = FakeBlob()
+
+    envelope = run_turn(
+        epic_id=None,
+        input="please inspect this",
+        store=store,
+        model=FakeModel(script=[{"final_text": "unused", "provider_request_id": "req_1"}]),
+        model_id="fake",
+        blob=blob,
+        attachments=[(b"\x89PNG\r\n\x1a\npayload", "image/png")],
+    )
+
+    assert envelope.outcome == "errored"
+    assert envelope.error is not None
+    assert envelope.error.code == "attachments_require_epic"
+    assert blob.puts == []
+    assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM bot_turns").fetchone()[0] == 0
+
+
+def test_run_turn_passes_fake_openai_ops_to_tool_context(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    insert_epic(conn)
+    seen = []
+
+    class FakeOpenAIOps:
+        def ping(self) -> str:
+            seen.append("called")
+            return "fake-openai"
+
+    def assert_openai_ops(context):
+        assert isinstance(context.openai_ops, FakeOpenAIOps)
+        return {"provider": context.openai_ops.ping()}
+
+    registry.register("_assert_openai_ops", assert_openai_ops, {"type": "object"})
+    try:
+        envelope = run_turn(
+            epic_id="epic_1",
+            input="use the test tool",
+            store=store,
+            model=FakeModel(
+                script=[
+                    {
+                        "tool_requests": [
+                            {"name": "_assert_openai_ops", "arguments": {}}
+                        ],
+                        "provider_request_id": "req_1",
+                    },
+                    {"final_text": "done", "provider_request_id": "req_2"},
+                ]
+            ),
+            model_id="fake",
+            openai_ops=FakeOpenAIOps(),  # type: ignore[arg-type]
+        )
+    finally:
+        registry._entries.pop("_assert_openai_ops", None)
+
+    assert envelope.outcome == "completed"
+    assert seen == ["called"]
+    result = json.loads(
+        conn.execute(
+            "SELECT result FROM tool_calls WHERE tool_name = ?",
+            ("_assert_openai_ops",),
+        ).fetchone()["result"]
+    )
+    assert result == {"provider": "fake-openai"}
 
 
 def test_no_epic_turn_loads_global_feedback_into_hot_context(tmp_path) -> None:
@@ -158,6 +361,115 @@ def test_end_of_turn_default_ack_after_substantive_tool_work(tmp_path) -> None:
             """
         ).fetchall()
     ] == ["end_of_turn_no_message_sent", "end_of_turn_empty_response"]
+
+
+def test_run_turn_appends_reframing_after_low_second_opinion_score(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    insert_epic(conn)
+    raw_response = json.dumps(
+        {
+            "score": 4,
+            "verdict": "not ready",
+            "summary": "Too many unresolved assumptions.",
+            "strengths": ["Clear goal"],
+            "holes": [],
+        }
+    )
+
+    envelope = run_turn(
+        epic_id="epic_1",
+        input="get a second opinion",
+        store=store,
+        model=FakeModel(
+            script=[
+                {
+                    "tool_requests": [
+                        {
+                            "name": "request_second_opinion",
+                            "arguments": {"epic_id": "epic_1"},
+                        }
+                    ],
+                    "provider_request_id": "req_1",
+                },
+                {
+                    "final_text": "Score 4/10. Verdict: not ready.",
+                    "provider_request_id": "req_2",
+                },
+            ]
+        ),
+        model_id="fake",
+        openai_ops=FakeSecondOpinionOps(raw_response),  # type: ignore[arg-type]
+    )
+
+    assert envelope.outcome == "completed"
+    assert envelope.reply == (
+        "Score 4/10. Verdict: not ready.\n\n"
+        + LOW_SECOND_OPINION_REFRAMING_SUGGESTION
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM system_logs WHERE event_type = ?",
+            ("end_of_turn_second_opinion_reframe_missing",),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_send_message_path_appends_reframing_after_low_second_opinion_score(tmp_path) -> None:
+    store, conn = create_store(tmp_path / "arnold.db")
+    insert_epic(conn)
+    raw_response = json.dumps(
+        {
+            "score": 3,
+            "verdict": "not ready",
+            "summary": "The premise is unclear.",
+            "strengths": [],
+            "holes": [],
+        }
+    )
+
+    envelope = run_turn(
+        epic_id="epic_1",
+        input="get a second opinion",
+        store=store,
+        model=FakeModel(
+            script=[
+                {
+                    "tool_requests": [
+                        {
+                            "name": "request_second_opinion",
+                            "arguments": {"epic_id": "epic_1"},
+                        }
+                    ],
+                    "provider_request_id": "req_1",
+                },
+                {
+                    "tool_requests": [
+                        {
+                            "name": "send_message",
+                            "arguments": {"content": "Score 3/10. Verdict: not ready."},
+                        }
+                    ],
+                    "provider_request_id": "req_2",
+                },
+                {"final_text": "", "provider_request_id": "req_3"},
+            ]
+        ),
+        model_id="fake",
+        openai_ops=FakeSecondOpinionOps(raw_response),  # type: ignore[arg-type]
+    )
+
+    assert envelope.outcome == "completed"
+    assert envelope.reply == (
+        "Score 3/10. Verdict: not ready.\n\n"
+        + LOW_SECOND_OPINION_REFRAMING_SUGGESTION
+    )
+    assert [
+        row["tool_name"]
+        for row in conn.execute(
+            "SELECT tool_name FROM tool_calls ORDER BY rowid"
+        ).fetchall()
+    ] == ["request_second_opinion", "send_message"]
 
 
 def test_end_of_turn_logs_body_unchanged_when_expected(tmp_path) -> None:

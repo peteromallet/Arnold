@@ -31,6 +31,8 @@ def test_image_attachment_pipeline_persists_first_then_creates_image_row() -> No
     message = conn.execute("SELECT * FROM messages").fetchone()
     assert message["has_image_attachment"] == 1
     assert message["content"] == "image caption"
+    epic = conn.execute("SELECT * FROM epics WHERE id = ?", (message["epic_id"],)).fetchone()
+    assert epic["title"] == "Discord DM 42"
     image = conn.execute("SELECT * FROM images").fetchone()
     assert image["source"] == "user_uploaded"
     assert image["reference_key"] == "img_user_upload_1"
@@ -38,7 +40,7 @@ def test_image_attachment_pipeline_persists_first_then_creates_image_row() -> No
     assert image["discord_attachment_id"] == "image_1"
     assert blob.puts == [
         {
-            "epic_id": "epic_1",
+            "epic_id": message["epic_id"],
             "content": b"attachment bytes",
             "mime_type": "image/png",
         }

@@ -1,0 +1,353 @@
+{
+  "robustness": "standard",
+  "signals": {
+    "iteration": 1,
+    "idea": "Implement a focused Arnold spec-parity tranche from planning-bot-spec.md. Scope: establish a working Python 3.12+/test-extra baseline; add invocation attachment passing for CLI/Python as specified; make send_image actually post files in Discord resident mode and add appropriate invocation envelope/event behavior or explicit compatible event semantics; implement missing set_typing tool behavior; align whitelist/status/message semantics called out in the comparison; add regression tests for touched acceptance criteria. Do not do the broader FastAPI/asyncpg architecture migration in this tranche; instead document or encode the current decision if needed. Preserve unrelated dirty worktree changes.",
+    "significant_flags": 12,
+    "unresolved_flags": [
+      {
+        "id": "FLAG-001",
+        "concern": "Image source compatibility: the plan uses `caller_uploaded` without explicitly updating the current images source enum, list_images schema, and related tests that only understand `user_uploaded`.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-002",
+        "concern": "Epicless invocation attachments: the plan preprocesses attachments before model execution but does not define behavior when CLI/Python invocation omits `epic_id`, even though current invocation mode supports that path for creating a new epic.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-003",
+        "concern": "Attached-image event plumbing: adding an `attached_image` event requires changes beyond `envelope.py`; otherwise schema validation, tool registration types, and `--stream-events` parity can break.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "FLAG-004",
+        "concern": "CLI attachment baseline: repeatable `--attach` cannot be truly end-to-end under the existing SQLite CLI path unless a Blob adapter is provided or attachments are explicitly rejected for configurations without blob storage.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the user preference for first-class invocation `attached_image` semantics against the current envelope plumbing. The plan chooses a new `attached_image` event kind, but does not explicitly include the existing `agent_kit/envelope.schema.json` and `agent_kit/tool_kit.EventKind` surfaces that currently reject or cannot emit that kind cleanly; this is a plan completeness risk for the approved event-semantics requirement.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness-1",
+        "concern": "Are the proposed changes technically correct?: Checked the planned `source='caller_uploaded'` insertion against `agent_kit/store/migrations/sqlite/002_images.sql` and the `list_images` tool schema. The SQLite images table currently checks `source IN ('agent_generated', 'user_uploaded')`, and `LIST_IMAGES_SCHEMA` only permits `agent_generated` and `user_uploaded`, so implementing the plan literally would fail inserts or block `list_images(source='caller_uploaded')` unless the plan also updates store schema/migrations and tool schema.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "correctness-2",
+        "concern": "Are the proposed changes technically correct?: Checked attachment ingestion before model execution against the current callable API, where `arnold turn` may omit `--epic` and `run_turn` accepts `epic_id: str | None`. The plan requires creating image rows before the turn starts, but image storage and `list_images(epic_id=...)` are epic-scoped; it does not define whether attachments are rejected when `epic_id` is `None`, staged until `create_epic`, or assigned to a synthetic scope.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "scope",
+        "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Searched for image source handling across store, tools, render tests, and resident ingestion. Existing resident uploads consistently use `user_uploaded`, while the spec and current plan introduce `caller_uploaded`; the plan treats this as a local invocation-ingestion detail, but the related schema, reference-key generation, render metadata, and tests all need an intentional compatibility decision rather than only adding one ingestion branch.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations-1",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Checked all event-kind definitions. `agent_kit/envelope.py` permits only `tool_call`, `activity`, `turn_start`, and `turn_end`; `agent_kit/envelope.schema.json` has the same enum; and `agent_kit/tool_kit.py` has a narrower `EventKind = Literal['tool_call', 'activity']`. Step 4 names `agent_kit/envelope.py` and tests, but misses schema and tool-kit registration/emission changes needed for a valid `attached_image` event.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations-2",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Checked stream-event support for non-tool events. `audit_wrap()` appends and streams only the single event derived from the tool call after the tool function returns; if `send_image` appends an additional caller-facing `attached_image` event inside the tool body, current `on_event` streaming will not automatically emit it, so Step 4 needs explicit event-emitter plumbing, not only a new enum value.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "all_locations-3",
+        "concern": "Does the change touch all locations AND supporting infrastructure?: Checked CLI attachment support against current CLI store/model construction. `_turn()` only builds a store and model, with no local blob adapter for SQLite invocation mode; Step 7 notices CLI blob selection may be missing, but the must-have CLI `--attach` criterion cannot pass end-to-end unless the plan adds or selects a Blob implementation for CLI invocations.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "callers",
+        "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked callers of image blob reads. `view_image` already constructs `BlobRef(epic_id=image['epic_id'], key=image['storage_url'], mime_type=...)`; `send_image` currently does not require `context.blob`. Step 3's requirement to fetch bytes via blob is in the right callee, but it must construct a `BlobRef` from the image row rather than passing `storage_url` directly to `Blob.get`.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "resolved_flags": [],
+    "weighted_score": 13.5,
+    "weighted_history": [],
+    "plan_delta_from_previous": null,
+    "recurring_critiques": [],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 1. Weighted score trajectory: 13.5. Plan deltas: n/a. Recurring critiques: 0. Resolved flags: 0. Open significant flags: 12.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": []
+  },
+  "warnings": [],
+  "criteria_check": {
+    "count": 12,
+    "items": [
+      {
+        "criterion": "Project metadata declares Python 3.12+ support and exposes a documented test dependency extra without breaking the existing test install path.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_shell"
+        ]
+      },
+      {
+        "criterion": "CLI invocation accepts repeatable `--attach` arguments and passes supported image attachments into turn execution without changing the one-turn envelope contract.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "Python `run_turn(..., attachments=...)` supports at least image attachments from `Path`, `bytes`, and `(bytes, mime_type)` inputs, creating caller-uploaded image records visible to tools before model execution.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "Resident-mode `send_image` posts actual file payloads through the Discord transport, updates the outbound message row with the confirmed Discord id, and settles the Discord external request ledger row.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "parse_diff",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Invocation-mode `send_image` exposes caller-consumable attached-image semantics in the envelope/events while preserving tool-call auditability.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "parse_diff",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "`set_typing` is registered as a tool; resident mode calls the transport typing behavior and invocation mode succeeds as a no-op/audited event.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "parse_diff",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "Whitelist rejection, status-message non-persistence, outbound message persistence, and status lifecycle behavior remain aligned with the spec and covered by regression tests.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_files",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "The broader FastAPI/asyncpg architecture migration is not implemented in this tranche and any current decision to defer it is encoded in code comments/tests only if necessary.",
+        "priority": "must",
+        "requires": [
+          "parse_diff",
+          "read_files"
+        ]
+      },
+      {
+        "criterion": "All touched focused tests pass before running the full suite.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "The full test suite passes after the tranche is complete.",
+        "priority": "must",
+        "requires": [
+          "run_tests",
+          "read_build_output"
+        ]
+      },
+      {
+        "criterion": "Attachment normalization remains small and direct, with no broad storage abstraction rewrite beyond what invocation attachment passing requires.",
+        "priority": "should",
+        "requires": [
+          "subjective_judgment",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "New tests are focused on acceptance criteria rather than broad snapshots that would make unrelated future changes noisy.",
+        "priority": "should",
+        "requires": [
+          "subjective_judgment",
+          "read_files"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Image source compatibility: the plan uses `caller_uploaded` without explicitly updating the current images source enum, list_images schema, and related tests that only understand `user_uploaded`.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/store/migrations/sqlite/002_images.sql` checks `source IN ('agent_generated', 'user_uploaded')`; `agent_kit/tools/images.py` LIST_IMAGES_SCHEMA enum excludes `caller_uploaded`; the plan requires `source='caller_uploaded'` and `list_images(source='caller_uploaded')`.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Epicless invocation attachments: the plan preprocesses attachments before model execution but does not define behavior when CLI/Python invocation omits `epic_id`, even though current invocation mode supports that path for creating a new epic.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/loop.py` accepts `epic_id: str | None`; `arnold/cli.py` documents omitting `--epic` to start a new epic; image rows and blob paths are currently epic-scoped.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Attached-image event plumbing: adding an `attached_image` event requires changes beyond `envelope.py`; otherwise schema validation, tool registration types, and `--stream-events` parity can break.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/envelope.schema.json` event enum excludes `attached_image`; `agent_kit/tool_kit.py` only permits `tool_call` and `activity`; `audit_wrap()` streams only `invocation.event`.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "FLAG-004",
+      "concern": "CLI attachment baseline: repeatable `--attach` cannot be truly end-to-end under the existing SQLite CLI path unless a Blob adapter is provided or attachments are explicitly rejected for configurations without blob storage.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`arnold/cli.py` builds `SQLiteStore(args.db)` and `AnthropicModel/FakeModel` only; no local blob implementation is present in `agent_kit/blob` besides Supabase storage.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "issue_hints",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Checked the user preference for first-class invocation `attached_image` semantics against the current envelope plumbing. The plan chooses a new `attached_image` event kind, but does not explicitly include the existing `agent_kit/envelope.schema.json` and `agent_kit/tool_kit.EventKind` surfaces that currently reject or cannot emit that kind cleanly; this is a plan completeness risk for the approved event-semantics requirement.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the user preference for first-class invocation `attached_image` semantics against the current envelope plumbing. The plan chooses a new `attached_image` event kind, but does not explicitly include the existing `agent_kit/envelope.schema.json` and `agent_kit/tool_kit.EventKind` surfaces that currently reject or cannot emit that kind cleanly; this is a plan completeness risk for the approved event-semantics requirement.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "correctness-1",
+      "concern": "Are the proposed changes technically correct?: Checked the planned `source='caller_uploaded'` insertion against `agent_kit/store/migrations/sqlite/002_images.sql` and the `list_images` tool schema. The SQLite images table currently checks `source IN ('agent_generated', 'user_uploaded')`, and `LIST_IMAGES_SCHEMA` only permits `agent_generated` and `user_uploaded`, so implementing the plan literally would fail inserts or block `list_images(source='caller_uploaded')` unless the plan also updates store schema/migrations and tool schema.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked the planned `source='caller_uploaded'` insertion against `agent_kit/store/migrations/sqlite/002_images.sql` and the `list_images` tool schema. The SQLite images table currently checks `source IN ('agent_generated', 'user_uploaded')`, and `LIST_IMAGES_SCHEMA` only permits `agent_generated` and `user_uploaded`, so implementing the plan literally would fail inserts or block `list_images(source='caller_uploaded')` unless the plan also updates store schema/migrations and tool schema.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "correctness-2",
+      "concern": "Are the proposed changes technically correct?: Checked attachment ingestion before model execution against the current callable API, where `arnold turn` may omit `--epic` and `run_turn` accepts `epic_id: str | None`. The plan requires creating image rows before the turn starts, but image storage and `list_images(epic_id=...)` are epic-scoped; it does not define whether attachments are rejected when `epic_id` is `None`, staged until `create_epic`, or assigned to a synthetic scope.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked attachment ingestion before model execution against the current callable API, where `arnold turn` may omit `--epic` and `run_turn` accepts `epic_id: str | None`. The plan requires creating image rows before the turn starts, but image storage and `list_images(epic_id=...)` are epic-scoped; it does not define whether attachments are rejected when `epic_id` is `None`, staged until `create_epic`, or assigned to a synthetic scope.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "scope",
+      "concern": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?: Searched for image source handling across store, tools, render tests, and resident ingestion. Existing resident uploads consistently use `user_uploaded`, while the spec and current plan introduce `caller_uploaded`; the plan treats this as a local invocation-ingestion detail, but the related schema, reference-key generation, render metadata, and tests all need an intentional compatibility decision rather than only adding one ingestion branch.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Searched for image source handling across store, tools, render tests, and resident ingestion. Existing resident uploads consistently use `user_uploaded`, while the spec and current plan introduce `caller_uploaded`; the plan treats this as a local invocation-ingestion detail, but the related schema, reference-key generation, render metadata, and tests all need an intentional compatibility decision rather than only adding one ingestion branch.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "all_locations-1",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: Checked all event-kind definitions. `agent_kit/envelope.py` permits only `tool_call`, `activity`, `turn_start`, and `turn_end`; `agent_kit/envelope.schema.json` has the same enum; and `agent_kit/tool_kit.py` has a narrower `EventKind = Literal['tool_call', 'activity']`. Step 4 names `agent_kit/envelope.py` and tests, but misses schema and tool-kit registration/emission changes needed for a valid `attached_image` event.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked all event-kind definitions. `agent_kit/envelope.py` permits only `tool_call`, `activity`, `turn_start`, and `turn_end`; `agent_kit/envelope.schema.json` has the same enum; and `agent_kit/tool_kit.py` has a narrower `EventKind = Literal['tool_call', 'activity']`. Step 4 names `agent_kit/envelope.py` and tests, but misses schema and tool-kit registration/emission changes needed for a valid `attached_image` event.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "all_locations-2",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: Checked stream-event support for non-tool events. `audit_wrap()` appends and streams only the single event derived from the tool call after the tool function returns; if `send_image` appends an additional caller-facing `attached_image` event inside the tool body, current `on_event` streaming will not automatically emit it, so Step 4 needs explicit event-emitter plumbing, not only a new enum value.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked stream-event support for non-tool events. `audit_wrap()` appends and streams only the single event derived from the tool call after the tool function returns; if `send_image` appends an additional caller-facing `attached_image` event inside the tool body, current `on_event` streaming will not automatically emit it, so Step 4 needs explicit event-emitter plumbing, not only a new enum value.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "all_locations-3",
+      "concern": "Does the change touch all locations AND supporting infrastructure?: Checked CLI attachment support against current CLI store/model construction. `_turn()` only builds a store and model, with no local blob adapter for SQLite invocation mode; Step 7 notices CLI blob selection may be missing, but the must-have CLI `--attach` criterion cannot pass end-to-end unless the plan adds or selects a Blob implementation for CLI invocations.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked CLI attachment support against current CLI store/model construction. `_turn()` only builds a store and model, with no local blob adapter for SQLite invocation mode; Step 7 notices CLI blob selection may be missing, but the must-have CLI `--attach` criterion cannot pass end-to-end unless the plan adds or selects a Blob implementation for CLI invocations.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "callers",
+      "concern": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?: Checked callers of image blob reads. `view_image` already constructs `BlobRef(epic_id=image['epic_id'], key=image['storage_url'], mime_type=...)`; `send_image` currently does not require `context.blob`. Step 3's requirement to fetch bytes via blob is in the right callee, but it must construct a `BlobRef` from the image row rather than passing `storage_url` directly to `Blob.get`.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Checked callers of image blob reads. `view_image` already constructs `BlobRef(epic_id=image['epic_id'], key=image['storage_url'], mime_type=...)`; `send_image` currently does not require `context.blob`. Step 3's requirement to fetch bytes via blob is in the right callee, but it must construct a `BlobRef` from the image row rather than passing `storage_url` directly to `Blob.get`.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ]
+}

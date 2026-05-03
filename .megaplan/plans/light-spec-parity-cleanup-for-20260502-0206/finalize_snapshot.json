@@ -1,0 +1,180 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Patch `planning-bot-spec.md` for public API, event stream, image/tool surfacing, attachment, idempotency, and transcription parity: use `from arnold import run_turn, Envelope`; state CLI progress NDJSON goes to stderr and final envelope to stdout; make `generate_image` create/store/return metadata only and `send_image` surface images; update system idempotency to `sha256(turn_id:system:provider:endpoint:system_seq)[:16]`; document CLI/Python image attachments only, invocation audio deferred, HTTP future; describe voice transcription as automatic resident ingestion or deferred, not a bot-callable `transcribe_voice` tool.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [
+        "planning-bot-spec.md"
+      ],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T2",
+      "description": "Add only thin read aliases in `agent_kit/tools/editorial_reads.py`: `get_checklist(epic_id, status?)` backed by `context.store.list_checklist_items`; `get_sprints(epic_id)` backed by `context.store.list_sprints_with_items`; `recent_messages(epic_id, n=10)` backed by `context.store.load_hot_context(epic_id)[\"recent_messages\"]`, trimmed to `n` and with any hot-context cap clearly reflected in the spec if larger `n` cannot be honored. Register all as `operation_kind=\"read\"` with strict local JSON schemas and payload keys `checklist`, `sprints`, and `recent_messages`. Do not add `transcribe_voice`; do not refactor Store or ports.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [
+        "agent_kit/tools/editorial_reads.py",
+        "planning-bot-spec.md"
+      ],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T3",
+      "description": "Extend existing focused tests, without creating new test files, to cover the new read aliases and public API exports. Add alias assertions near existing editorial read/sprint tests so `get_checklist`, `get_sprints`, and `recent_messages` are registered read tools and return expected payloads from existing SQLite-backed fixtures. Extend an existing public API or import compatibility test to assert `arnold.run_turn` and `arnold.Envelope` are exported.",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [
+        "tests/test_editorial_loop.py",
+        "tests/test_sprints.py",
+        "tests/test_megaplan_arnold_import.py"
+      ],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T4",
+      "description": "Run narrow validation and fix failures until clean. First run `rg -n \"from megaplan\\.arnold|stdout \\(NDJSON\\)|emitted live on stdout|generate_image.*creates AND sends|image/audio|transcribe_voice\" planning-bot-spec.md` and confirm stale matches are gone or intentionally retained only as compatibility/deferred wording. Then run focused tests: `python -m pytest tests/test_megaplan_arnold_import.py tests/test_editorial_loop.py tests/test_sprints.py tests/test_cli.py tests/test_ledger.py tests/test_image_tools.py`. Also write a short throwaway script outside the repo test tree to exercise alias registration and payload shape, run it, then delete it. Inspect `git diff -- planning-bot-spec.md agent_kit/tools/editorial_reads.py tests/test_megaplan_arnold_import.py tests/test_editorial_loop.py tests/test_sprints.py` to ensure scope stayed limited and unrelated dirty changes were preserved.",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    }
+  ],
+  "watch_items": [
+    "Preserve unrelated dirty worktree changes; do not run destructive git commands or broad cleanup.",
+    "Do not invoke the megaplan CLI, read the megaplan skill, or start nested planning harnesses.",
+    "Do not touch Store/ports, HTTP/FastAPI/asyncpg, transport surfaces, or compatibility shim tests except for narrow public API export assertions.",
+    "FLAG-001: `recent_messages(epic_id, n)` cannot exceed the fixed hot-context recent-message window if backed only by `load_hot_context`; either cap/document that behavior or keep implementation honest without Store/ports refactor.",
+    "Keep `megaplan.arnold` as compatibility context only; public spec import path should be `arnold`.",
+    "`generate_image` must not be documented as surfacing/posting; `send_image` is the surfacing step.",
+    "Invocation attachments currently mean image attachments for CLI/Python only; invocation audio and HTTP multipart remain deferred/future.",
+    "`transcribe_voice` should not become a bot-callable tool in this pass.",
+    "Tests should be local-only and avoid Supabase, Discord, Groq, OpenAI, and network dependencies."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Does the spec now consistently match implemented behavior for `arnold` imports, stderr/stdout event streams, image surfacing, image-only invocation attachments, deferred audio/HTTP, `system_seq` idempotency, and non-tool voice transcription?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Are the added aliases strict read-only wrappers over existing Store/hot-context behavior, with no Store/ports refactor and with `recent_messages` behavior honestly constrained by the hot-context cap?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Do existing test files now verify alias registration/payloads and `arnold.run_turn`/`arnold.Envelope` exports without adding new test files or network dependencies?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Do the rg checks, focused pytest command, throwaway reproduction script, and final diff inspection all pass while keeping the changed-file scope limited to the approved files?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute this as a narrow parity cleanup, not a platform expansion. The only code change should be lightweight read alias registration if it stays as a thin wrapper over existing behavior. Treat the `recent_messages` critique as the main judgment call: do not imply arbitrary `n` support if the only allowed backing data is hot-context `LIMIT 10`; cap it or document the cap. Keep spec language precise about current support versus deferred surfaces, especially audio and HTTP.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Step 1: Patch public API import and invocation stream wording in the spec",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 2: Align image tool and invocation attachment semantics in the spec",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 3: Align external request idempotency text with `system_seq` formula",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 4: Reconcile lightweight tool-name parity with read aliases and transcription wording",
+        "finalize_item_ids": [
+          "T1",
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 5: Add focused regression coverage for aliases and `arnold` exports in existing tests",
+        "finalize_item_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 6: Run rg checks, focused tests, throwaway reproduction, and diff scope inspection",
+        "finalize_item_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Execution order: spec first, aliases second, tests third, validation last",
+        "finalize_item_ids": [
+          "T1",
+          "T2",
+          "T3",
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Validation order: rg stale phrase checks, focused unit tests, CLI/ledger/image tests, scoped diff review",
+        "finalize_item_ids": [
+          "T4"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All approved plan steps are mapped. The only deviation is that regression coverage should be added by extending existing test files rather than creating a new test file, per final execution requirements. No human-only actions are required.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": [],
+  "baseline_test_command": "pytest --tb=no -q --no-header",
+  "baseline_test_note": "No baseline tests were run during briefing generation; validation is assigned to final execution task T4."
+}

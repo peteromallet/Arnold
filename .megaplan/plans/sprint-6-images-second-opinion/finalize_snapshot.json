@@ -1,0 +1,448 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Add `second_opinions` persistence and store support. Create SQLite and Supabase migration `008_second_opinions` with the approved columns and indexes; extend store ports/adapters with `create_second_opinion`, `list_second_opinions`, `set_second_opinion_checklist_items`, active image lookup helpers, active reference-key checks, and same-epic active image deactivation. Extend hot context with active image metadata and the latest two second-opinion summaries without image bytes.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T2",
+      "description": "Add injectable OpenAI operations. Add the OpenAI dependency if missing; create a narrow `openai_ops` port and real adapter for `generate_image(prompt, quality, size, idempotency_key)` using `gpt-image-2` and `request_second_opinion(payload, idempotency_key)` using `gpt-5.5`; thread optional `openai_ops` through `ToolContext` and `run_turn` so tests can inject fakes and the default test suite does not make live network calls.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T3",
+      "description": "Implement synchronous external-effect ledger support for tool bodies. Add a helper that records an `external_requests` row with `status='pending'` before result-dependent OpenAI or Blob effects, passes an idempotency key where supported, and marks the row `confirmed` or `failed`. Preserve the existing post-commit `context.external_queue` behavior for Discord sends and other queued effects.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T4",
+      "description": "Implement generated-image helpers and the `generate_image` tool. Add quality auto-selection, generated `img_<8 hex chars>` reference keys checked for active uniqueness, compact prompt construction from epic context and active image descriptions, default description derivation, reference-key validation, Blob upload through the synchronous ledger helper, `images` row creation with `source='agent_generated'`, and regeneration semantics that deactivate the prior active row before inserting the replacement. Return image metadata and external request IDs, and do not post to Discord from this tool.",
+      "depends_on": [
+        "T1",
+        "T2",
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T5",
+      "description": "Resolve markdown body image references in `render_epic`. Convert `![caption](image:reference_key)` to `![caption](storage_url)` using the active image for the epic, for both `user_uploaded` and `agent_generated` rows. Leave raw `epics.body` unchanged, and return stable missing-reference placeholders plus `missing_image_references` for unresolved keys.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T6",
+      "description": "Implement second-opinion parsing and `request_second_opinion`. Add `agent_kit/second_opinion.py` prompt construction from epic body, checklist, sprints, recent feedback, and optional focus/scoring inputs; parse structured output for score, strengths, holes, verdict, and summary; fail deterministically on malformed score/verdict/holes; convert significant holes into proposed checklist item objects without writing checklist rows. Register `request_second_opinion(epic_id, focus_areas?, scoring_override?, requested_by?)`, call OpenAI through the synchronous ledger helper, persist the `second_opinions` row, and return the row id, score, summary, verdict, holes, and proposed checklist items.",
+      "depends_on": [
+        "T1",
+        "T2",
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T7",
+      "description": "Link user-confirmed checklist items back to second opinions. Extend `edit_epic` checklist-add inputs with optional `source_second_opinion_id`, change checklist application to return created rows, include `created_checklist_items` and `created_checklist_item_ids` in the result, and when added items include a source second-opinion id, update `second_opinions.resulting_checklist_item_ids` in the same edit transaction.",
+      "depends_on": [
+        "T1",
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T8",
+      "description": "Wire prompt, score-driven response, and state-gate behavior. Update system prompt guidance so the bot surfaces score/verdict, proposes checklist items individually, never auto-edits from audit findings, and suggests reframing when score is below 5. Add deterministic end-of-turn coverage for score `<5` requiring a reframing suggestion in the next response path, and add default-on advisory second-opinion workflow at state-advance gates with a decline path such as `skip second opinion until I ask`.",
+      "depends_on": [
+        "T6",
+        "T7"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T9",
+      "description": "Add and update focused Sprint 6 tests. Cover image quality selection, explicit override, reference-key validation and uniqueness, regeneration deactivation, render-time `image:` resolution, structured second-opinion parsing including malformed output, score `<5` reframing, score 6 with three holes producing three proposed checklist items, external request ledger rows for mocked OpenAI and Blob effects, checklist item creation/linking to `second_opinions`, full mocked image generation plus separate `send_image` audit calls, and full mocked second-opinion flow with checklist confirmation.",
+      "depends_on": [
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T10",
+      "description": "Run validation and fix failures until the Sprint 6 changes work. Run the targeted commands `pytest tests/test_image_tools.py tests/test_second_opinion.py`, `pytest tests/test_sprint6_images_second_opinion.py`, and `pytest tests/test_editorial_loop.py tests/test_image_attachment_pipeline.py tests/test_end_of_turn.py`, then run full `pytest`. Also write a short throwaway script that exercises the mocked generated-image plus body-reference path and mocked second-opinion checklist-linking path, run it to confirm the behavior, then delete the script. If any test or script fails, read the error, fix the code, and rerun the relevant validation.",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T11",
+      "description": "Surface after_execute user_actions to the user:\n- U1: Provide real OpenAI credentials and any required project/org environment settings for manual staging of `gpt-image-2` and `gpt-5.5` after mocked tests pass.\n- U2: Apply the Supabase migration to the target staging/production project when ready for non-local validation.\n- U3: Manually smoke test the staging bot with real Supabase/OpenAI/Discord credentials by generating an image, sending it to Discord, rendering a body reference, requesting a second opinion, and confirming proposed checklist items.\nDo not perform them yourself \u2014 these require human action. Mark this task done once they have been clearly communicated.",
+      "depends_on": [
+        "T10"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Use `gpt-image-2` for image generation and `gpt-5.5` for second opinions exactly as specified.",
+    "Tests must inject fake OpenAI operations; automated tests must not perform live OpenAI or network calls.",
+    "For result-dependent external effects, create the `external_requests` pending row before OpenAI or Blob work starts, then confirm or fail it after the effect completes.",
+    "Keep `send_image` as a separate audited tool call; `generate_image` must only generate, upload, and create the `images` row.",
+    "When reusing an image `reference_key`, deactivate only the prior active row for the same epic/reference key and make the new row the resolver target.",
+    "`render_epic` must not mutate raw epic body markdown; resolution happens only in rendered output/tool result.",
+    "Missing `image:` references should not crash rendering; they should produce a stable placeholder and be reported in `missing_image_references`.",
+    "Second-opinion malformed structured output must fail deterministically and must not invent a score, verdict, holes, or row.",
+    "`request_second_opinion` proposes checklist items only; checklist rows are created later through user-confirmed `edit_epic`.",
+    "Confirmed checklist items carrying `source_second_opinion_id` must update `second_opinions.resulting_checklist_item_ids` in the same edit transaction.",
+    "Score below 5 must be visible in the next response path as a reframing suggestion, not just persisted in storage.",
+    "Auto-second-opinion at state gates is advisory/default-on, not a hard blocker; user decline language must suppress the advisory workflow.",
+    "Hot context may include active image metadata and recent second-opinion summaries, but never image bytes.",
+    "Do not worsen known storage recovery debt: for new generated-image storage effects, the ledger should contain enough request metadata to understand failures, while avoiding false claims of deterministic replay if bytes are not durable.",
+    "Prefer existing store/tool/audit patterns and keep unrelated refactors out of scope."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Do both SQLite and Supabase migrations create the same `second_opinions` shape and indexes, and do store adapters expose the new second-opinion and active-image operations consistently?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Can tests pass fake OpenAI operations through `run_turn`/`ToolContext` without importing or calling the real OpenAI client?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "For each OpenAI and Blob effect, is an `external_requests` row pending before the effect and confirmed or failed afterward, including failure paths?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Does `generate_image` create exactly one active `agent_generated` image row with prompt, quality, size, description, reference key, storage URL, and external request IDs while leaving Discord posting to `send_image`?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does `render_epic` resolve active `image:` references for both uploaded and generated images without changing the persisted epic body and with clear reporting for missing keys?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Does `request_second_opinion` persist raw and parsed GPT-5.5 output on valid responses, reject malformed output without creating invented rows, and return proposed checklist items only?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "When confirmed checklist items include `source_second_opinion_id`, are created item IDs returned to the caller and linked back to `second_opinions.resulting_checklist_item_ids` atomically?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Do tested bot response paths include a reframing suggestion after a just-requested score below 5, and can the user decline state-gate second-opinion advice?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Do the tests cover all acceptance criteria, including separate `generate_image` and `send_image` audit rows, regeneration, body reference resolution, second-opinion scoring, and checklist proposal/linking?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Do targeted tests, full `pytest`, and the deleted throwaway reproduction script all pass after fixes, with no live OpenAI calls in the automated suite?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "question": "Were all after_execute user_actions clearly surfaced to the user without the executor performing them?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "user_actions": [
+    {
+      "id": "U1",
+      "description": "Provide real OpenAI credentials and any required project/org environment settings for manual staging of `gpt-image-2` and `gpt-5.5` after mocked tests pass.",
+      "phase": "after_execute",
+      "blocks_task_ids": null,
+      "rationale": "Repo work should use injected fakes, but real provider smoke testing needs secrets outside the executor's code edits.",
+      "requires_human_only_reason": null
+    },
+    {
+      "id": "U2",
+      "description": "Apply the Supabase migration to the target staging/production project when ready for non-local validation.",
+      "phase": "after_execute",
+      "blocks_task_ids": null,
+      "rationale": "The executor can write migration SQL, but applying it to a hosted Supabase environment requires deployment access and timing.",
+      "requires_human_only_reason": null
+    },
+    {
+      "id": "U3",
+      "description": "Manually smoke test the staging bot with real Supabase/OpenAI/Discord credentials by generating an image, sending it to Discord, rendering a body reference, requesting a second opinion, and confirming proposed checklist items.",
+      "phase": "after_execute",
+      "blocks_task_ids": null,
+      "rationale": "The final production-like acceptance criterion requires runtime logs/UI behavior and real external services.",
+      "requires_human_only_reason": null
+    }
+  ],
+  "meta_commentary": "Execute in dependency order: persistence first, then injection and ledger, then tools, then response/gate behavior, then tests. The two highest-risk mechanics are the synchronous `external_requests` rows for effects whose outputs are needed inside the tool body, and the checklist confirmation path back to `second_opinions.resulting_checklist_item_ids`; keep both visible in code review. Use existing adapter conventions for JSON arrays and Blob URLs instead of inventing new storage semantics unless the current code forces it. Keep network-facing code behind injection and prove the default test path is fake-only.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Step 1: Add second-opinion SQLite and Supabase persistence with indexes",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 2: Extend store contracts for second opinions, active image lookup/deactivation, and hot context",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 3: Add injectable OpenAI operations and default real adapter",
+        "finalize_item_ids": [
+          "T2",
+          "U1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 4: Add synchronous external-effect ledger support",
+        "finalize_item_ids": [
+          "T3",
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 5: Implement generated-image helper logic",
+        "finalize_item_ids": [
+          "T4",
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 6: Add `generate_image` tool with OpenAI, Blob upload, image row creation, and regeneration semantics",
+        "finalize_item_ids": [
+          "T4",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 7: Resolve body `image:` references in `render_epic`",
+        "finalize_item_ids": [
+          "T5",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 8: Add second-opinion prompt, structured parsing, scoring, and proposed checklist helpers",
+        "finalize_item_ids": [
+          "T6",
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 9: Implement `request_second_opinion` tool and prompt guidance",
+        "finalize_item_ids": [
+          "T6",
+          "T8",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 10: Link confirmed checklist items back to originating second opinions",
+        "finalize_item_ids": [
+          "T7",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 11: Wire score-based reframing and advisory state-gate behavior",
+        "finalize_item_ids": [
+          "T8",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 12: Add focused unit tests for images, second opinions, end-of-turn behavior, ledger rows, and checklist linking",
+        "finalize_item_ids": [
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 13: Add Sprint 6 integration tests for image generation/rendering, separate send audit, second opinions, and checklist confirmation",
+        "finalize_item_ids": [
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Execution order: land migrations/store, provider injection, ledger, rendering, tools, second-opinion linking, gate behavior, and integration tests",
+        "finalize_item_ids": [
+          "T1",
+          "T2",
+          "T3",
+          "T5",
+          "T4",
+          "T6",
+          "T7",
+          "T8",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Validation order: run targeted image/second-opinion tests, Sprint 6 integration tests, related regression tests, then full pytest",
+        "finalize_item_ids": [
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Manual staging with hosted Supabase/OpenAI/Discord credentials",
+        "finalize_item_ids": [
+          "U1",
+          "U2",
+          "U3"
+        ]
+      },
+      {
+        "plan_step_summary": "Surface after_execute user_actions",
+        "finalize_item_ids": [
+          "T11"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All approved plan steps and validation requirements map to execution tasks or human-only post-execution actions. The automated executor should not require live secrets; U1-U3 cover only real-service staging and deployment operations outside repo editing. The final task explicitly includes targeted commands, full regression, and a deleted throwaway reproduction script as required.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": [],
+  "baseline_test_command": "pytest --tb=no -q --no-header",
+  "baseline_test_note": "No baseline test run was requested for this briefing-only finalization step."
+}

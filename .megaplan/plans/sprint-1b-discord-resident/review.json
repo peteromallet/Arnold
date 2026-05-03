@@ -228,7 +228,7 @@
   "rework_items": [
     {
       "task_id": "T2",
-      "issue": "Leaked Supabase service-role JWT is still committed to tracked plan-state files. The unique signature `xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY` and the Supabase JWT prefix `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI` appear in tracked files .megaplan/plans/sprint-1b-discord-resident/state.json (`idea` field), execution_trace.jsonl, finalize.json, and final.md.",
+      "issue": "Leaked Supabase service-role JWT is still committed to tracked plan-state files. The unique signature `xFknK1AD9JF6JIcGTYYOyOLUQNNj_WMNGL08K9Xr2NY` and the Supabase JWT prefix `[REDACTED_SUPABASE_JWT_PREFIX]` appear in tracked files .megaplan/plans/sprint-1b-discord-resident/state.json (`idea` field), execution_trace.jsonl, finalize.json, and final.md.",
       "expected": "No literal Supabase service-role JWT, Discord/Anthropic/Groq token in any tracked file. tests/test_no_leaked_secrets.py runs green. The user-supplied idea text in state.json/execution_trace.jsonl/final.md/finalize.json must have the JWT redacted (e.g., replaced with `<REDACTED_SERVICE_ROLE_JWT>`), and the secret guard's reference to the prefix should be expressed via a non-matching constant (e.g., concatenation or chr() build) so the guard itself does not trip its own check via the description.",
       "actual": "git ls-files | xargs grep finds the full unique signature in two tracked files (state.json, execution_trace.jsonl) and the prefix in five tracked files (state.json, execution_trace.jsonl, final.md, finalize.json, finalize_snapshot.json indirectly via state). T2 was claimed done but redaction was incomplete.",
       "evidence_file": ".megaplan/plans/sprint-1b-discord-resident/state.json",
@@ -238,7 +238,7 @@
     {
       "task_id": "T21",
       "issue": "Final verification claim that the JWT-prefix grep returns zero matches across tracked files is contradicted by the current repo state.",
-      "expected": "Run `git ls-files | xargs grep -l 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI'` and get an empty result, with tests/test_no_leaked_secrets.py passing.",
+      "expected": "Run `git ls-files | xargs grep -l '[REDACTED_SUPABASE_JWT_PREFIX]'` and get an empty result, with tests/test_no_leaked_secrets.py passing.",
       "actual": "Five tracked files match the prefix; two also contain the unique JWT signature. The secret-guard test would fail.",
       "evidence_file": "tests/test_no_leaked_secrets.py",
       "flag_id": "FLAG-006",

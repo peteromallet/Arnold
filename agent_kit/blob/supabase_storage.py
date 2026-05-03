@@ -22,7 +22,11 @@ class SupabaseStorageBlob:
         client=None,
     ) -> None:
         self.url = (url or os.environ["SUPABASE_URL"]).rstrip("/")
-        self.service_key = service_key or os.environ["SUPABASE_SERVICE_KEY"]
+        self.service_key = (
+            service_key
+            or os.environ.get("SUPABASE_SERVICE_KEY")
+            or os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+        )
         self.bucket = bucket or os.environ.get("SUPABASE_STORAGE_BUCKET", "arnold")
         self._client = client
 

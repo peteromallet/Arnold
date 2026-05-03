@@ -202,6 +202,161 @@ def test_sqlite_feedback_schema_columns_constraints_and_indexes(store_factory) -
     } <= indexes
 
 
+def test_sqlite_sprint_schema_columns_constraints_and_indexes(store_factory) -> None:
+    _store, conn = store_factory()
+
+    sprint_cols = {
+        row[1]: {
+            "type": row[2],
+            "not_null": bool(row[3]),
+            "default": row[4],
+            "pk": bool(row[5]),
+        }
+        for row in conn.execute("PRAGMA table_info(sprints)")
+    }
+    assert {
+        "id",
+        "epic_id",
+        "sprint_number",
+        "name",
+        "goal",
+        "status",
+        "queue_position",
+        "pending_reason",
+        "target_weeks",
+        "created_at",
+        "updated_at",
+        "queued_at",
+    } <= set(sprint_cols)
+    assert sprint_cols["id"]["pk"] is True
+    assert sprint_cols["epic_id"]["not_null"] is True
+    assert sprint_cols["status"]["not_null"] is True
+    assert sprint_cols["target_weeks"]["default"] == "2"
+
+    sprint_item_cols = {
+        row[1]: {
+            "type": row[2],
+            "not_null": bool(row[3]),
+            "default": row[4],
+            "pk": bool(row[5]),
+        }
+        for row in conn.execute("PRAGMA table_info(sprint_items)")
+    }
+    assert {
+        "id",
+        "sprint_id",
+        "content",
+        "estimated_complexity",
+        "status",
+        "source_section",
+        "position",
+        "created_at",
+    } <= set(sprint_item_cols)
+    assert sprint_item_cols["id"]["pk"] is True
+    assert sprint_item_cols["sprint_id"]["not_null"] is True
+
+    indexes = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        )
+    }
+    assert {
+        "idx_sprints_epic_sprint_number",
+        "idx_sprints_epic_status",
+        "idx_sprints_epic_queued_position",
+        "idx_sprint_items_sprint_position",
+    } <= indexes
+
+    conn.execute(
+        """
+        INSERT INTO epics (id, title, goal, body, state)
+        VALUES ('epic_1', 'Title', 'Goal', '# Title', 'shaping')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO sprints (
+            id, epic_id, sprint_number, name, goal, status, queue_position
+        )
+        VALUES ('sprint_1', 'epic_1', 1, 'Sprint 1', 'Goal', 'queued', 1)
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO sprints (
+            id, epic_id, sprint_number, name, goal, status, pending_reason
+        )
+        VALUES ('sprint_2', 'epic_1', 2, 'Sprint 2', 'Goal', 'pending', 'blocked')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO sprint_items (
+            id, sprint_id, content, estimated_complexity, status, position
+        )
+        VALUES ('item_1', 'sprint_1', 'PM-level task', 'medium', 'open', 1)
+        """
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO sprints (
+                id, epic_id, sprint_number, name, goal, status, queue_position
+            )
+            VALUES ('sprint_dupe', 'epic_1', 3, 'Duplicate', 'Goal', 'queued', 1)
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO sprint_items (
+                id, sprint_id, content, estimated_complexity, status, position
+            )
+            VALUES ('item_bad', 'sprint_1', 'Bad task', 'tiny', 'open', 2)
+            """
+        )
+
+
+def test_sqlite_sprint_crud_items_and_hot_context(store_factory) -> None:
+    store, _conn = store_factory()
+    epic = store.create_epic(
+        title="Sprint Title",
+        goal="Sprint goal",
+        body="# Sprint Title\n\n## Goal\n\nSprint goal\n",
+        state="sprinting",
+    )
+    sprint = store.create_sprint(
+        epic_id=epic["id"],
+        sprint_number=1,
+        name="Sprint 1",
+        goal="Make the lifecycle work",
+    )
+    items = store.replace_sprint_items(
+        sprint["id"],
+        [
+            {
+                "content": "PM-level task",
+                "estimated_complexity": "medium",
+                "source_section": "Deliverable",
+            }
+        ],
+    )
+    assert items[0]["position"] == 1
+    updated = store.update_sprint(
+        sprint["id"],
+        status="pending",
+        pending_reason="waiting for kickoff",
+    )
+    assert updated["status"] == "pending"
+    assert updated["pending_reason"] == "waiting for kickoff"
+    loaded = store.list_sprints_with_items(epic["id"])
+    assert loaded[0]["items"][0]["content"] == "PM-level task"
+    hot_context = store.load_hot_context(epic["id"])
+    assert hot_context["sprints"][0]["id"] == sprint["id"]
+    assert hot_context["all_sprints_pending_no_queued"] is True
+
+
 def test_sqlite_feedback_observation_persistence_and_hot_context(store_factory) -> None:
     store, _conn = store_factory()
     epic = store.create_epic(

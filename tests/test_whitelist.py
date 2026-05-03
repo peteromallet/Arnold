@@ -12,6 +12,8 @@ def test_non_whitelisted_dm_is_logged_without_persisting_message() -> None:
     asyncio.run(transport.on_message(Message(author_id=42, content="blocked")))
 
     assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM bot_turns").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM external_requests").fetchone()[0] == 0
     log = conn.execute("SELECT level, category, event_type FROM system_logs").fetchone()
     assert dict(log) == {
         "level": "info",

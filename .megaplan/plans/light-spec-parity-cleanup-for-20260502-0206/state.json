@@ -1,0 +1,154 @@
+{
+  "name": "light-spec-parity-cleanup-for-20260502-0206",
+  "idea": "Light spec parity cleanup for planning-bot-spec.md. Scope: fix only the clearly good spec/repo parity issues: update Callable API Python import to from arnold import run_turn, Envelope; make invocation CLI event stream wording consistently stderr, not stdout; fix send_image/generate_image wording so generate_image creates/stores only and send_image surfaces images; update external_requests system idempotency formula to include system_seq matching agent_kit/ledger.py; make invocation attachment wording match the implemented current tranche: image attachments only for CLI/Python, with invocation audio explicitly deferred rather than implied supported; reconcile tool-name parity by either adding exact lightweight tool aliases for get_checklist/get_sprints/recent_messages/transcribe_voice if trivial and already backed by existing behavior, or else adjust the spec to mark them automatic/covered/deferred. Do not refactor Store/ports. Do not implement HTTP/FastAPI/asyncpg. Preserve unrelated dirty worktree changes.",
+  "current_state": "done",
+  "iteration": 2,
+  "created_at": "2026-05-02T01:06:11Z",
+  "config": {
+    "project_dir": "/Users/peteromalley/Documents/arnold-v2",
+    "auto_approve": true,
+    "robustness": "light",
+    "mode": "code",
+    "strict_notes": false,
+    "agent": ""
+  },
+  "sessions": {
+    "codex_planner": {
+      "id": "019de638-d5d6-7631-875f-b32615209a8c",
+      "mode": "persistent",
+      "created_at": "2026-05-02T01:07:52Z",
+      "last_used_at": "2026-05-02T01:10:20Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019de63a-658d-70e2-abf4-996381ad90ce",
+      "mode": "persistent",
+      "created_at": "2026-05-02T01:09:24Z",
+      "last_used_at": "2026-05-02T01:09:24Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019de63c-a62f-7123-a6be-98fb564f8c31",
+      "mode": "persistent",
+      "created_at": "2026-05-02T01:11:11Z",
+      "last_used_at": "2026-05-02T01:11:11Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019de63d-6a6c-7480-b41a-2d58eb274185",
+      "mode": "persistent",
+      "created_at": "2026-05-02T01:14:50Z",
+      "last_used_at": "2026-05-02T01:22:58Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:2f9466105090107ba6969a2661b1d9a1d09b0d53f920ed6a40bda03d5c3160fb",
+      "timestamp": "2026-05-02T01:07:52Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:fdd6359268a62935670f9ad5ce89a77ce20b5094ee0329580b3651378b22afaa",
+      "timestamp": "2026-05-02T01:10:20Z"
+    }
+  ],
+  "history": [
+    {
+      "step": "init",
+      "timestamp": "2026-05-02T01:06:11Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "success",
+      "environment": {
+        "claude": true,
+        "codex": true
+      }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-05-02T01:07:52Z",
+      "duration_ms": 95221,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de638-d5d6-7631-875f-b32615209a8c",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:2f9466105090107ba6969a2661b1d9a1d09b0d53f920ed6a40bda03d5c3160fb"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-05-02T01:09:24Z",
+      "duration_ms": 85509,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de63a-658d-70e2-abf4-996381ad90ce",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:21cc2c0fc79dd42f041acb144b404af2095e1a91f9c949d3209a625e203ab754",
+      "flags_count": 2
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-05-02T01:10:20Z",
+      "duration_ms": 52097,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de638-d5d6-7631-875f-b32615209a8c",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:fdd6359268a62935670f9ad5ce89a77ce20b5094ee0329580b3651378b22afaa",
+      "flags_addressed": []
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-05-02T01:11:11Z",
+      "duration_ms": 43693,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de63c-a62f-7123-a6be-98fb564f8c31",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:d3781d03606bed16ae1ab4d33bbf4be4ff747147c863fb7f4cb07e7a70b1787c"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-05-02T01:22:58Z",
+      "duration_ms": 700287,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019de63d-6a6c-7480-b41a-2d58eb274185",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:34eafb76bf6fe942f87672b13dad2a2334cc002447a6914d812a7227cd4e7cca",
+      "finalize_hash": "sha256:0fd90262775a4b4a2abcf811e3e4d03f8d4444fbcf022437326eb35e390250a6",
+      "approval_mode": "auto_approve"
+    }
+  ],
+  "meta": {
+    "significant_counts": [
+      0
+    ],
+    "weighted_scores": [],
+    "plan_deltas": [
+      48.37
+    ],
+    "recurring_critiques": [
+      []
+    ],
+    "total_cost_usd": 0.0,
+    "overrides": [],
+    "notes": []
+  },
+  "last_gate": {
+    "recommendation": "ITERATE"
+  }
+}

@@ -17,7 +17,7 @@ An epic is **planned** (handoff-ready) when the body is at PM-handoff fidelity A
 - ✅ All ~30 tools fully specified with signatures and behavior, including per-tool mode applicability (resident / invocation / both)
 - ✅ All 15 data tables concretely defined
 - ✅ Edge cases enumerated (~25 failure modes documented)
-- ✅ Both execution modes (resident / invocation) specified — Subagent Contract envelope schema, Callable API entry points, attachment passing, cross-mode concurrency lock, mode-divergent tool behaviors
+- ✅ Both execution modes (resident / invocation) specified — Subagent Contract envelope schema, Callable API entry points, image attachment passing for current CLI/Python surfaces, cross-mode concurrency lock, mode-divergent tool behaviors
 - ⚠️ Doc is 162KB single-file — content-complete but **splitting before implementation is recommended** (suggested: `architecture.md` / `behavior.md` / `sprints.md` / `setup.md`)
 
 **Substrate framing.** This spec describes Arnold (the first user-facing instance) but its Execution Modes / Subagent Contract / Callable API sections also implicitly bootstrap a reusable substrate (`agent_kit`: ports, loop runtime, envelope, tool families) intended to host future agentic tools. Sprint 1a builds the substrate concretely against Arnold's needs; sprints 1b+ layer Arnold-specific behavior on top. Future tools (e.g., a codebase-research bot, a video-editing assistant, an extension of Lota) are expected to sit on the same substrate with different artifacts and tool sets — the substrate is not extracted into its own package until at least one such second consumer exists.
@@ -62,7 +62,7 @@ Each half-sprint ends with something demonstrably working through automated test
 - Integration: full receive→reason→respond loop with mocked Anthropic; verify envelope contents and DB state
 - Integration: CLI ↔ Python equivalence — invoke same input both ways, assert envelopes match (modulo non-deterministic `reply` text)
 
-**Readiness gate:** All decisions locked. Engineers have: agent_kit package layout; four `Port` protocols (Transport, Store, Model, Blob) with method signatures; `Envelope` JSON schema (see Subagent Contract) with field semantics and `outcome` enum; Callable API command shape (CLI, Python, deferred HTTP); attachment-passing protocol for invocation mode (CLI `--attach`, Python `attachments=`); cross-mode concurrency lock semantics (per-epic advisory lock, 60s invocation block, recovery-driven release); per-tool mode applicability (resident-only / invocation-only / both / mode-divergent); `defer_to_caller` tool signature and triggering rules; SQLite migration files; Anthropic model wiring; deterministic-structure rule for tests. No product questions remaining.
+**Readiness gate:** All decisions locked. Engineers have: agent_kit package layout; four `Port` protocols (Transport, Store, Model, Blob) with method signatures; `Envelope` JSON schema (see Subagent Contract) with field semantics and `outcome` enum; Callable API command shape (CLI, Python, deferred HTTP); image attachment-passing protocol for current invocation mode (CLI `--attach`, Python `attachments=`; audio and HTTP multipart deferred); cross-mode concurrency lock semantics (per-epic advisory lock, 60s invocation block, recovery-driven release); per-tool mode applicability (resident-only / invocation-only / both / mode-divergent); `defer_to_caller` tool signature and triggering rules; SQLite migration files; Anthropic model wiring; deterministic-structure rule for tests. No product questions remaining.
 
 ---
 
@@ -77,7 +77,7 @@ Each half-sprint ends with something demonstrably working through automated test
 - Discord transport adapter (push, second `Transport` impl): bot account; gateway connection via discord.py; `on_message` handler for DMs; user whitelist enforced before any processing
 - Multi-message coalescing — 10s window, burst handling (resident-only; see Multi-Message Handling)
 - Restart safety: messages persisted on receipt; recovery routine runs at startup + every 5min; abandoned turns marked; **`external_requests` ledger table; idempotency-key generation; per-provider reconciliation logic** (see Idempotency and Recovery and `external_requests` table)
-- Voice message support: Groq Whisper integration; Discord voice attachment detection; transcription stored in `messages.content`, original audio in Supabase Storage; `was_voice_message` flag; `transcribe_voice` tool
+- Voice message support: Groq Whisper integration; Discord voice attachment detection; automatic resident-mode transcription stored in `messages.content`, original audio in Supabase Storage; `was_voice_message` flag. There is no bot-callable `transcribe_voice` tool in the current surface.
 - **Image attachment handling:** Discord image attachment detection; download to Supabase Storage; create `images` row with `source='user_uploaded'`; auto-assigned reference_key; description blank initially (bot fills in via view_image when needed); `messages.has_image_attachment=true`; bot can call `view_image(image_id, mode='visual')` to actually see the image
 - Image table: `images` (full schema; image *generation* feature deferred to Sprint 6 but the table and basic tools live here)
 - Image tools: `list_images`, `view_image`, `send_image`, `update_image_metadata`
@@ -106,7 +106,7 @@ Each half-sprint ends with something demonstrably working through automated test
 
 **Notes:** This is the heaviest week — coalescing, restart safety + idempotency, voice, images, status message, mid-turn handling. Many separate features but each is straightforward in isolation. If it slips, defer image handling (the four image tools and the images table) to Sprint 6 alongside generation; everything else has to ship here for the bot to be production-viable.
 
-**Readiness gate:** All decisions locked. Engineers have: 10s/30s/10msgs coalescing constants, 5-min recovery cadence + on-startup, Groq Whisper model string, 25MB attachment cap, 1-second status edit debounce, Discord dynamic timestamp format `<t:UNIX:R>`, full schema for `images` table including the `source` enum and reference_key regex, mid-turn end-of-turn check semantics, **`external_requests` table schema, idempotency-key generation algorithm (`sha256(turn_id:tool_call_id:provider:endpoint:args)[:16]`), per-provider reconciliation rules (Anthropic/OpenAI use idempotency-key replay; Discord uses post-hoc message lookup; Groq/GitHub/Storage are deterministic re-issue)**. No product questions remaining.
+**Readiness gate:** All decisions locked. Engineers have: 10s/30s/10msgs coalescing constants, 5-min recovery cadence + on-startup, Groq Whisper model string, 25MB attachment cap, 1-second status edit debounce, Discord dynamic timestamp format `<t:UNIX:R>`, full schema for `images` table including the `source` enum and reference_key regex, mid-turn end-of-turn check semantics, **`external_requests` table schema, idempotency-key generation algorithm (tool calls: `sha256(turn_id:tool_call_id:provider:endpoint:args)[:16]`; system calls: `sha256(turn_id:system:provider:endpoint:system_seq)[:16]`), per-provider reconciliation rules (Anthropic/OpenAI use idempotency-key replay; Discord uses post-hoc message lookup; Groq/GitHub/Storage are deterministic re-issue)**. No product questions remaining.
 
 ---
 
@@ -404,7 +404,7 @@ A **turn** is the same atom in both modes: one Anthropic invocation expanded to 
 | Turn trigger | inbound message + coalescing window expiry | caller invokes explicitly |
 | Multi-message coalescing | server-side, 10s window (see Multi-Message Handling) | caller batches inputs; Arnold sees one input per turn |
 | Mid-turn message arrival | real concern (see Mid-Turn Handling under Multi-Message Handling) | N/A — caller blocks on the turn return |
-| Status surface | live-edited Discord message (see Status Message) | structured progress events on stdout (NDJSON) |
+| Status surface | live-edited Discord message (see Status Message) | structured progress events on stderr (NDJSON); final envelope on stdout |
 | Recovery | server-side recovery routine + ledger replay (see Idempotency and Recovery) | caller retries; ledger replay on next invocation |
 | Turn return | `send_message` posts to Discord; envelope is implicit | exit with structured result envelope (see Subagent Contract) |
 | `set_typing` / `set_activity` | drive Discord typing indicator and status line | emit progress events; otherwise no-op |
@@ -869,7 +869,7 @@ Inbound voice messages from Discord are first-class input.
 **Flow:**
 1. Discord delivers a voice message as an audio attachment
 2. Bot stores audio in Supabase Storage immediately on receipt
-3. `transcribe_voice` calls Groq Whisper (`whisper-large-v3`) — typically 1-2s latency for short clips
+3. Resident ingestion automatically calls Groq Whisper (`whisper-large-v3`) — typically 1-2s latency for short clips
 4. Transcription becomes the `messages.content`; metadata stored in `transcription_metadata`; `was_voice_message=true`
 5. From here, treated as a normal text message — coalescing, epic selection, agentic loop all apply
 
@@ -1587,7 +1587,7 @@ Indexes: `(idempotency_key)` unique, `(provider, status, last_attempted_at)`, `(
 
 **Purpose:** every external API call is recorded here *before* it's attempted. Treats external calls as **at-least-once delivery** — a call may execute and the recording write may fail (or vice versa), so the system needs to detect and reconcile.
 
-**Idempotency key generation:** deterministic from the call's intent. For tool-call-driven requests: `sha256(turn_id + ":" + tool_call_id + ":" + provider + ":" + endpoint + ":" + canonical_args)[:16]`. For system requests (e.g., the loop's main LLM call per turn): `sha256(turn_id + ":system:" + provider + ":" + endpoint)[:16]`. Same retry produces same key — the database's unique constraint on `idempotency_key` prevents double-recording.
+**Idempotency key generation:** deterministic from the call's intent. For tool-call-driven requests: `sha256(turn_id + ":" + tool_call_id + ":" + provider + ":" + endpoint + ":" + canonical_args)[:16]`. For system requests (e.g., the loop's main LLM call per turn): `sha256(turn_id + ":system:" + provider + ":" + endpoint + ":" + system_seq)[:16]`, where `system_seq` is the per-turn system-request sequence number recorded by the ledger. Same retry produces same key — the database's unique constraint on `idempotency_key` prevents double-recording.
 
 **Lifecycle:**
 1. Before issuing call: insert row with `status='pending'`, idempotency_key, request_summary
@@ -1672,7 +1672,7 @@ The write surface is minimal because the bot edits epics like a structured docum
 - `get_checklist(epic_id, status?)`
 - `get_sprints(epic_id)`
 - `search_epics(query)` — finds which epics match; combine with `search_in_body` per match for precise location
-- `recent_messages(epic_id, n)`
+- `recent_messages(epic_id, n=10)` — returns recent conversation entries from hot context, capped at the implemented hot-context window of 10 messages. Requests above 10 return at most 10 unless the Store/hot-context contract is expanded in a future pass.
 - `search_messages(query, epic_id?, date_range?)` — full-text
 - `get_history(epic_id, kind?, since?)` — unified audit query
 - `get_epic_at_time(epic_id, timestamp)` — replays `epic_events` to reconstruct epic state (body, checklist, sprints) as it was at that moment. Read-only. Returns the same shape as `get_epic` plus a `reconstructed_at` timestamp. Bot uses this when user asks "what did this look like Tuesday?" or "before I made that change." Precision: returns state as of the most recent event with `occurred_at <= timestamp`. Tied timestamps ordered by `(occurred_at, id)` ascending. If no events exist before timestamp, returns the epic's initial state.
@@ -1685,7 +1685,7 @@ The write surface is minimal because the bot edits epics like a structured docum
 - `view_image(image_id, mode='visual'|'description')` — fetches image bytes when bot needs to actually see it; description-only mode returns just metadata. The bot uses `mode='visual'` for both bot-generated images (less common, since it has the description from creation) and user-uploaded images (essential for understanding what the user sent).
 
 ### Write — images
-- `send_image(image_id, caption?)` — posts an existing image to Discord. Used when bot wants to re-show an image the user has seen before, or surface a generated image in a follow-up turn. Different from `generate_image` (which creates AND sends). Different from body-reference syntax (which embeds in rendered body, not in chat).
+- `send_image(image_id, caption?)` — surfaces an existing image. In resident mode, it posts the image to Discord. In invocation mode, it adds an `attached_image` event to the envelope. Used when bot wants to re-show an image the user has seen before, or surface a generated image in a follow-up turn. Different from `generate_image`, which only creates/stores image data and returns metadata. Different from body-reference syntax (which embeds in rendered body, not in chat).
 - `update_image_metadata(image_id, caption?, description?, reference_key?)` — edit metadata without creating a new image. Useful for user uploads where bot fills in description after viewing, or when caption needs correction.
 
 ### Read — code
@@ -1764,9 +1764,10 @@ Distinct write/read entry points from user feedback for cognitive clarity, but o
 - `mark_observation_resolved(observation_id, resolution_note)` — sets `resolved=true`, `resolution_note`, `resolved_at` on the row. Only valid for rows with `source='agent_observation'`.
 
 ### Operation tools (full end-to-end operations)
-- `generate_image(epic_id, prompt, quality?, size?, reference_key?, caption?)` — calls GPT Image 2, saves binary to Supabase Storage, creates `images` row with description and reference_key (auto-generated if not supplied), returns reference_key + image_id + storage_url. **Does NOT auto-send to Discord.** The bot decides what to do next: typically calls `send_image(image_id, caption)` to show the user (if they asked to see it), and/or `edit_epic` to embed via `![caption](image:reference_key)` if it belongs in the body. Separating creation from sending lets the bot generate-and-defer (e.g., generate an image to use in the body without surfacing it in chat) and avoids surprising the user with auto-posts.
+- `generate_image(epic_id, prompt, quality?, size?, reference_key?, caption?)` — calls GPT Image 2, saves binary to Supabase Storage, creates an `images` row with description and reference_key (auto-generated if not supplied), and returns reference_key + image_id + storage_url metadata. **Does NOT auto-send to Discord or attach anything to an invocation envelope.** The bot decides what to do next: typically calls `send_image(image_id, caption)` to surface the image (if the user asked to see it), and/or `edit_epic` to embed via `![caption](image:reference_key)` if it belongs in the body. Separating creation from surfacing lets the bot generate-and-defer (e.g., generate an image to use in the body without surfacing it in chat) and avoids surprising the user with auto-posts.
 - `request_second_opinion(epic_id, focus_areas?, scoring_override?)` — bundles epic + focus, calls non-Anthropic API, distills, stores, returns score + summary
-- `transcribe_voice(audio_url)` — calls Groq Whisper, returns transcription + metadata; called automatically when an inbound message has audio attachment
+
+**Voice transcription is not a bot-callable tool.** Resident Discord ingestion transcribes voice messages automatically before the agentic loop sees the message. Invocation-mode audio transcription is deferred; current CLI/Python invocation attachments are image-only.
 
 ---
 
@@ -1827,7 +1828,7 @@ When Arnold runs in invocation mode (CLI / programmatic / HTTP), each turn retur
 - `reply` — what `send_message` would have posted. In invocation mode, `send_message` writes to the reply buffer instead of Discord. If the bot called `send_message` multiple times within the turn, they are concatenated with blank lines.
 - `state_delta` — what changed in the artifact. Computed from `epic_events` rows written during the turn; the caller can use this to surface the change without re-reading the body.
 - `questions` — anything the bot decided needed caller input rather than committing. Populated when the bot calls `defer_to_caller(questions, reason?)` (see Tools → Communication). When that tool is called, `outcome` is set to `blocked_on_caller`. If the bot just phrases questions inside `reply` without calling `defer_to_caller`, `questions` stays empty and `outcome` remains `completed` — i.e., the structured handoff is opt-in by the bot, not auto-detected from prose.
-- `events` — flat list of progress events emitted during the turn (tool calls, set_activity strings, mid-turn-message annotations if any). NDJSON-streamable: when emitted live on stdout (see Callable API), each event is one line; the final envelope contains the full list.
+- `events` — flat list of progress events emitted during the turn (tool calls, set_activity strings, mid-turn-message annotations if any). NDJSON-streamable: when emitted live on stderr (see Callable API), each event is one line; the final envelope on stdout contains the full list.
 - `outcome` — one of `completed`, `blocked_on_caller`, `errored`, `aborted`. `blocked_on_caller` means the bot stopped early and is handing back questions; `aborted` means the caller signalled cancellation.
 - `error` — non-null only when `outcome="errored"`; contains `{ "code": "...", "message": "...", "retryable": bool }`.
 
@@ -1857,7 +1858,7 @@ arnold turn --epic <epic_id> [--from-stdin | --input "<text>"] [--stream-events]
 **2. Python (primary surface for in-process callers — megaplan handlers, other agents importing the package):**
 
 ```python
-from megaplan.arnold import run_turn, Envelope
+from arnold import run_turn, Envelope
 
 env: Envelope = run_turn(
     epic_id="epic_01H...",
@@ -1892,18 +1893,18 @@ Authorization: Bearer <token>
 - Persist the envelope if needed for audit; the store records every turn server-side, but callers may want their own copy.
 - Decide what to do with `outcome="blocked_on_caller"` and `questions` — Arnold does not retry on its own in invocation mode.
 
-**Attachments in invocation mode.** Callers can pass image and audio attachments alongside `input`, equivalent to a Discord user attaching them to a message:
+**Attachments in invocation mode.** Current CLI and Python callers can pass image attachments alongside `input`, equivalent to a Discord user attaching an image to a message. Invocation-mode audio attachments are deferred; HTTP multipart is deferred with the HTTP surface.
 
-- **CLI:** `--attach <path>` (repeatable). Accepted MIME types: same as resident mode (PNG/JPEG/WEBP for images up to 25MB; OGG/MP3/WAV/M4A for audio up to 25MB).
-- **Python:** `attachments: list[Path | bytes | tuple[bytes, mime_type]]` parameter on `run_turn`.
-- **HTTP (Sprint 7):** multipart form; image/audio parts alongside the JSON `body` part.
+- **CLI:** `--attach <path>` (repeatable). Accepted MIME types: PNG/JPEG/WEBP images up to 25MB.
+- **Python:** `attachments: list[Path | bytes | tuple[bytes, mime_type]]` parameter on `run_turn`, currently for PNG/JPEG/WEBP image payloads.
+- **Audio:** deferred for invocation mode. Resident Discord voice messages are still transcribed automatically on ingestion.
+- **HTTP (Sprint 7):** deferred multipart form; image/audio parts can be added when the HTTP surface ships.
 
-**Pre-processing (runs before the turn starts, in all three entry points):**
+**Pre-processing (runs before the turn starts for current CLI/Python image attachments):**
 
 1. Each attachment is copied into the configured `BlobStore` (Supabase Storage or local-disk impl), addressed by `(epic_id, sha256)` for natural deduplication.
 2. For images: an `images` row is created with `source='caller_uploaded'`, auto-assigned `reference_key`, blank description (the bot fills it in via `view_image` if it cares).
-3. For audio: transcribed via the configured transcription provider (Groq Whisper by default), transcript appended to `input` with a marker (`\n\n[Voice attachment transcript]:\n<text>`); original audio retained in BlobStore.
-4. The turn then runs normally. The bot sees the attachments via `list_images(source='caller_uploaded')` (for images) and the inline transcript (for audio), exactly as it would see attachments in resident mode.
+3. The turn then runs normally. The bot sees image attachments via `list_images(source='caller_uploaded')`, exactly as it would see images in resident mode.
 
 **Caller-uploaded attachments do not auto-render in the envelope.** They live in the store like any other epic image; if the bot wants to surface one back to the caller, it calls `send_image(image_id)`, which adds an `attached_image` event to the envelope (see Mode applicability for `send_image`). This means: an invocation-mode caller can hand Arnold an image to look at, and Arnold can hand a (different) image back, without either side touching Discord.
 
@@ -2470,7 +2471,7 @@ Either both commit or neither does. There's no state where a write succeeded but
 
 **This atomicity does NOT cover external side effects** — Discord sends, LLM calls, image generation, GitHub API calls, Groq transcription, Storage uploads. DB transactions can only roll back DB writes, not "unsend" a Discord message or "uncall" the OpenAI API. External calls are handled separately via the `external_requests` ledger (see Data Model) with **at-least-once semantics** — the system guarantees the call eventually happens, with idempotency keys (where the provider supports them) and post-hoc reconciliation (where they don't) to prevent user-visible duplicates.
 
-For tool calls that mix DB mutation with external effect (e.g., `send_message` writes a `messages` row AND posts to Discord; `generate_image` writes an `images` row AND calls OpenAI AND uploads to Storage AND posts to Discord), the order is:
+For tool calls that mix DB mutation with external effect (e.g., `send_message` writes a `messages` row AND posts to Discord; `generate_image` writes an `images` row AND calls OpenAI AND uploads to Storage), the order is:
 1. Insert `external_requests` row(s) with `status='pending'` (separate transaction)
 2. Begin DB transaction: write the mutation + tool_call row, commit
 3. Issue external call(s)

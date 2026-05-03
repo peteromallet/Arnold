@@ -1,0 +1,143 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T12:23:15Z",
+  "hash": "sha256:c252df2cb06cb4d45d12c878d5ac3c0c37e4a162391d26c75dd098061119bacb",
+  "changes_summary": "Addressed the critique by adding explicit phases for invocation envelope state/sprint deltas and editorial read/time-travel replay support. The revised plan keeps `edit_epic` as the root write path, but now also wires every existing observation surface needed for Sprint 4 to be visible and reconstructible.",
+  "flags_addressed": [
+    "FLAG-001",
+    "FLAG-002"
+  ],
+  "questions": [
+    "Should PM-handoff fidelity be implemented as a deterministic heuristic for Sprint 4, or is a live/LLM-graded gate required at runtime? The plan assumes deterministic server-side checks and LLM-graded tests only where already optional.",
+    "What exact `changes.sprints` JSON shape should external callers rely on? The plan proposes simple operations (`replace`, `upsert`, `update`, `lock_in`, `queue`, `pend`, `reorder`) under the existing `edit_epic` tool.",
+    "When pending reason is omitted, should the stored value be `no reason given`, nullable, or should the tool block? The spec says pending reason is encouraged but acceptance says pending has a pending_reason; the plan assumes a stored explicit default like `no reason given`.",
+    "Should all-pending planned state require extra confirmation in the server tool, or just a warning in end-of-turn/user response? The plan assumes it is allowed server-side and surfaced as a phase-aware warning."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "SQLite and Supabase migrations create `sprints` and `sprint_items` with status checks, timestamps, item fields, and a partial unique constraint preventing duplicate queued `queue_position` per epic.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Store protocol plus SQLite and Supabase adapters expose sprint CRUD and sprint item replacement/listing, and common store contract tests pass for the new methods.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`edit_epic` accepts sprint changes and state transition changes instead of returning `not_yet_supported`, while preserving existing body/checklist edit behavior and audit wrapping.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Attempting `shaping -> sprinting` with a body under 500 characters fails with a structured blockers list unless `force: true` is supplied.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Force-through state advancement succeeds and records a `forced_handoff` event containing the bypassed blockers.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Sprint shaping writes proposed sprint rows and sprint items; lock-in moves every sprint to either `queued` with queue position or `pending` with a pending reason/default.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Every lifecycle path to `planned` requires at least one sprint, including decision-doc-shaped epics.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Post-handoff queue and reorder operations update sprint status/queue positions correctly, keep the epic planned, and record `sprint_status_change` audit events.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Completed invocation envelopes reload the actual post-turn epic state and include `state_transition` plus `sprint_changes` for Sprint 4 edits.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`get_epic` returns current sprints with items, and `get_epic_at_time` reconstructs sprint/status/state history from event replay.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Open-decisions lockdown scan blocks listed unresolved phrases outside `Open Questions`, ignores those phrases inside `Open Questions`, and ignores fenced code blocks.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Existing editorial loop, body parser, end-of-turn, envelope, read-tool, store, and Supabase adapter tests continue to pass after Sprint 4 changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Prompt updates tell Arnold to use the two-beat sprint lock-in flow, surface blockers with address/skip/force options, and use `edit_epic` for sprint queue/pending/reorder operations.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Sprint/gating helpers remain small, deterministic, and directly unit-tested rather than embedding natural-language parsing in persistence adapters.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Manual production Supabase migration against the provided project URL is coordinated separately; no service-role secret is committed or logged.",
+      "priority": "info",
+      "requires": [
+        "verify_physical_device"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Do not use the redacted Supabase service key from the brief; implementation and validation should use migrations, fake Supabase adapter tests, and local SQLite unless credentials are supplied through the normal environment.",
+    "`edit_epic` remains the only sprint write tool for Sprint 4; no separate `edit_sprint` tool is introduced unless implementation evidence shows the schema becomes unmanageable.",
+    "Server-side PM-handoff fidelity is deterministic for now: section/content/sprint/checklist/lockdown checks, not a live LLM call during state advancement.",
+    "Natural-language understanding for phrases like `queue sprint 2` and `do sprint 3 first` is handled by the existing model loop and prompt; server code receives structured `edit_epic` arguments and enforces correctness.",
+    "Pending sprints without a user-provided reason store an explicit default reason so acceptance criteria can assert `pending_reason` is populated.",
+    "The existing body parser is the source of truth for section attribution; new lockdown logic should reuse or mirror its fenced-code behavior rather than creating an incompatible markdown parser.",
+    "Invocation envelopes should use the existing `StateDelta.state_transition` and `StateDelta.sprint_changes` fields rather than inventing a parallel response shape.",
+    "Sprint event prior-state snapshots are the canonical source for both revert and `get_epic_at_time` reconstruction."
+  ],
+  "delta_from_previous_percent": 15.34,
+  "structure_warnings": []
+}

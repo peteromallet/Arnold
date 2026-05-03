@@ -1,0 +1,31 @@
+{
+  "receipt_id": "8f10b804-3d81-4a44-978b-17aa01bd258f",
+  "plan_id": "sprint-6-images-second-opinion",
+  "phase": "finalize",
+  "iteration": 2,
+  "attempt": 1,
+  "timestamp_utc": "2026-04-30T13:25:37.371617+00:00",
+  "profile_name": "all-codex",
+  "agent": "codex",
+  "agent_mode": "persistent",
+  "model_configured": "codex",
+  "model_actual": null,
+  "session_id": "019dde8f-bb36-76f3-9716-def859af5fd4",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "ee5af55a6a6609bf683bee3a68479f0aba45324f3585d0587470a5315a37f017",
+  "prompt_hash_canonical": "fc5094218754f7711ca4713f806e155ac22c8513d45d2b9939de3180615101c2",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [],
+  "cost_usd": 0.0,
+  "duration_ms": 82081,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "tasks_count": 11,
+    "sense_checks_count": 11,
+    "per_task_evidence_file_count": 0
+  },
+  "scope_drift_severity": null
+}

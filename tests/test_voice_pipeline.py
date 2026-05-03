@@ -31,9 +31,11 @@ def test_voice_pipeline_persists_first_then_transcribes_and_confirms_ledgers() -
     assert message["content"] == "transcribed voice"
     assert message["audio_storage_url"] == "stored/1.ogg"
     assert json.loads(message["transcription_metadata"])["model"] == "whisper-large-v3"
+    epic = conn.execute("SELECT * FROM epics WHERE id = ?", (message["epic_id"],)).fetchone()
+    assert epic["title"] == "Discord DM 42"
     assert blob.puts == [
         {
-            "epic_id": "epic_1",
+            "epic_id": message["epic_id"],
             "content": b"attachment bytes",
             "mime_type": "audio/ogg",
         }

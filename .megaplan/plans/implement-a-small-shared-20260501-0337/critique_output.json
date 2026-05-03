@@ -1,0 +1,21 @@
+{
+  "checks": [],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Discord transport abstraction: shared REST helper scope omits operations Arnold currently requires. The plan says to replace Arnold helper behavior around `post_message`, `edit_message`, typing, and channel resolution, but the proposed `discord_rest.py` only names DM channel creation, send message, send typing, add reaction, and fetch messages. Arnold's `DiscordTransport.post_message(..., files=...)` supports file uploads, and `ResidentRunner._edit_status()` depends on `transport.edit_message(...)` for status lifecycle. Following the plan as written would either leave the most important Arnold send/edit behavior duplicated or risk breaking file sends/status edits.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "In `agent_kit/transport/discord.py`, `post_message` accepts `files: Sequence[FileUpload] | None` and `_post_message` calls `channel.send(content, files=discord_files)`; `_edit_message` fetches and edits a Discord message. In `agent_kit/resident.py`, `_edit_status` calls `self.transport.edit_message(...)`. Existing Arnold tests include `test_post_message_converts_file_uploads_to_discord_files` and status lifecycle assertions."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Dependency compatibility: the plan does not pin the shared package to Veas's supported Python floor. Arnold declares `requires-python = \">=3.12\"`, while Veas declares `requires-python = \">=3.11\"`; a new sibling package authored with Arnold's Python 3.12 assumptions or metadata would make Veas installation fail in a supported Python 3.11 environment.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`/Users/peteromalley/Documents/arnold-v2/pyproject.toml` has `requires-python = \">=3.12\"`; `/Users/peteromalley/Documents/Veas/pyproject.toml` has `requires-python = \">=3.11\"`. Step 1 creates new package metadata but does not state that `resident-chat-runtime` must be Python 3.11-compatible."
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

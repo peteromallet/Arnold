@@ -1,0 +1,92 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": [],
+  "criteria": [
+    {
+      "name": "A local shared `resident-chat-runtime` package exists, declares Python `>=3.11`, and is importable from both Arnold and Veas through local path dependency wiring.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The shared package contains only infrastructure primitives: env/settings helpers, Discord REST/Gateway helpers, discord.py channel adapter helpers, guarded async bridging, burst coalescing, lightweight health checks, and startup diagnostics; it does not contain Arnold or Veas domain prompts, tools, schemas, database models, or business logic.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The shared Discord helpers preserve Arnold\u2019s required channel operations: send message, send message with files, edit message, typing, channel resolution, and recent message fetch.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Arnold Discord inbound text, image, and voice paths create or reuse a real epic before inserting inbound message rows.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Arnold resident turn execution does not call sync Discord transport methods from the Discord event loop and continues to isolate `run_turn` with worker-thread execution when needed.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Arnold Discord DM resident mode avoids visible `Planning turn in progress.` status messages and uses typing for in-progress feedback.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Veas behavior for Discord outbound send, typing, reactions, gateway ingestion, catch-up ingestion, message edit/delete handling, and partner whitelist mapping remains unchanged after adopting shared helpers.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Burst coalescing behavior remains equivalent in both repos: rapid messages are grouped, hard-cap timing flushes, and existing public wrapper APIs still work.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Focused tests pass in the shared package, Arnold, and Veas using the validation commands named in the plan.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Existing dirty user changes are preserved; implementation diffs are limited to the expected package, dependency, runtime, and focused test files.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Startup diagnostics and health checks avoid logging secrets or exposing raw tokens in outputs.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The shared package API remains small and documented enough that Arnold and Veas adapters are thin, with no broad rewrites or unrelated formatting churn.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Cheap shared-package and focused repo tests are run before broader smoke checks to localize failures quickly.",
+      "priority": "should",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Light robustness: review skipped; stub written for artifact parity.",
+  "task_verdicts": [],
+  "sense_check_verdicts": []
+}

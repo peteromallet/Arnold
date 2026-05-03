@@ -3,17 +3,22 @@ from __future__ import annotations
 import sqlite3
 
 from agent_kit.store.sqlite import SQLiteStore
-from agent_kit.tool_kit import ToolContext
+from agent_kit.tool_kit import ToolContext, registry
 from agent_kit.tools.communication import send_message, set_activity
 
 
 class FakePushTransport:
     def __init__(self) -> None:
         self.posts = []
+        self.typing = []
 
     def post_message(self, channel_id, content, *, files=None):
         self.posts.append({"channel_id": channel_id, "content": content, "files": files})
         return {"id": "discord_123", "ok": True}
+
+    def set_typing(self, channel_id, on):
+        self.typing.append({"channel_id": channel_id, "on": on})
+        return {"channel_id": channel_id, "typing": on}
 
 
 def _store_with_turn():
@@ -101,3 +106,60 @@ def test_set_activity_updates_current_activity() -> None:
         "SELECT current_activity FROM bot_turns WHERE id = ?",
         (turn["id"],),
     ).fetchone()["current_activity"] == "drafting"
+
+
+def test_set_typing_invocation_mode_is_audited_noop() -> None:
+    store, conn, turn = _store_with_turn()
+    context = ToolContext(
+        store=store,
+        turn_id=turn["id"],
+        events=[],
+        metadata={"epic_id": "epic_1"},
+    )
+
+    invocation = registry.invoke("set_typing", context, {"on": True})
+
+    assert invocation.result == {"typing": True, "mode": "invocation", "noop": True}
+    assert invocation.event.kind == "tool_call"
+    assert invocation.event.name == "set_typing"
+    row = conn.execute(
+        "SELECT tool_name, arguments, result FROM tool_calls WHERE id = ?",
+        (invocation.tool_call["id"],),
+    ).fetchone()
+    assert row["tool_name"] == "set_typing"
+    assert json_loads(row["arguments"]) == {"on": True}
+    assert json_loads(row["result"]) == invocation.result
+
+
+def test_set_typing_resident_mode_delegates_to_transport() -> None:
+    store, conn, turn = _store_with_turn()
+    transport = FakePushTransport()
+    context = ToolContext(
+        store=store,
+        turn_id=turn["id"],
+        events=[],
+        metadata={"epic_id": "epic_1", "channel_id": "channel_1"},
+        transport=transport,
+    )
+
+    invocation = registry.invoke("set_typing", context, {"on": False})
+
+    assert invocation.result == {"typing": False, "mode": "resident"}
+    assert transport.typing == [{"channel_id": "channel_1", "on": False}]
+    assert conn.execute(
+        "SELECT tool_name FROM tool_calls WHERE id = ?",
+        (invocation.tool_call["id"],),
+    ).fetchone()["tool_name"] == "set_typing"
+
+
+def test_set_typing_is_registered_with_boolean_schema() -> None:
+    definition = next(item for item in registry.definitions() if item["name"] == "set_typing")
+
+    assert definition["schema"]["required"] == ["on"]
+    assert definition["schema"]["properties"]["on"] == {"type": "boolean"}
+
+
+def json_loads(value: str):
+    import json
+
+    return json.loads(value)

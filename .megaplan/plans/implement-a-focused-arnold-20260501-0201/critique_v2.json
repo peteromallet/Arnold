@@ -1,0 +1,235 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "guidance": "Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.",
+      "findings": [
+        {
+          "detail": "Verified the revised plan against the user note that invocation attachment parity is image-only for this tranche. Steps 4 and 11 now explicitly reject audio attachments with an image-only error instead of planning Groq/voice work, which keeps the tranche within the settled scope.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the revised baseline step against the existing `pyproject.toml`; it keeps `[project.optional-dependencies].test` canonical and only allows an additive `test-extra` alias, so the current install path is preserved.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the revised `attached_image` plan against the prior event-plumbing critique. Step 8 now names `agent_kit/envelope.py`, `agent_kit/envelope.schema.json`, `agent_kit/tool_kit.py`, extra-event streaming, schema tests, and CLI stream parity, so the earlier first-class event contract gap is addressed at the planning level.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked the user note that invocation attachment parity only needs image attachments in this tranche against Step 2. The plan still includes audio normalization and a conditional Groq/transcription branch, but it correctly makes image support the hard requirement and allows explicit blocked/error behavior for audio if existing plumbing is not reusable.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked the user note to keep the existing `test` optional dependency canonical against `pyproject.toml`. Step 1 preserves `[project.optional-dependencies].test` and only suggests a compatibility alias if useful, which matches the requested install-path constraint.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked the user preference for first-class invocation `attached_image` semantics against the current envelope plumbing. The plan chooses a new `attached_image` event kind, but does not explicitly include the existing `agent_kit/envelope.schema.json` and `agent_kit/tool_kit.EventKind` surfaces that currently reject or cannot emit that kind cleanly; this is a plan completeness risk for the approved event-semantics requirement.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "guidance": "Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases \u2014 not just the one reported in the issue.",
+      "findings": [
+        {
+          "detail": "Verified the prior `caller_uploaded` source issue against the current schema and revised plan. The repository currently constrains image sources in both SQLite and Supabase migrations and in `LIST_IMAGES_SCHEMA`; Step 2 now explicitly updates those constraints and preserves existing `user_uploaded` Discord behavior, so the previous source-contract flag is addressed.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the prior epicless attachment issue against current `run_turn(epic_id: str | None)` and CLI behavior. Step 5 now defines `attachments_require_epic` for `epic_id is None`, which is a coherent fix because image rows and blob keys are epic-scoped in the current store APIs.",
+          "flagged": false
+        },
+        {
+          "detail": "The revised plan still leaves raw `bytes` attachment MIME handling under-specified. Step 4 promises support for `Path`, raw `bytes`, and `(bytes, mime_type)`, but only describes MIME inference for `Path`; without magic-byte sniffing, a default, or an explicit rejection rule, the required raw `bytes` acceptance criterion is ambiguous.",
+          "flagged": true
+        },
+        {
+          "detail": "Step 7 says to queue concrete file payloads containing bytes in the Discord external request body/summary, but the existing ledger path persists `request_body` through JSON serialization. Raw bytes are not JSON-serializable and should be kept in the in-memory external callback payload while the persisted `request_body` stores only replay-safe metadata.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked the planned `source='caller_uploaded'` insertion against `agent_kit/store/migrations/sqlite/002_images.sql` and the `list_images` tool schema. The SQLite images table currently checks `source IN ('agent_generated', 'user_uploaded')`, and `LIST_IMAGES_SCHEMA` only permits `agent_generated` and `user_uploaded`, so implementing the plan literally would fail inserts or block `list_images(source='caller_uploaded')` unless the plan also updates store schema/migrations and tool schema.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked attachment ingestion before model execution against the current callable API, where `arnold turn` may omit `--epic` and `run_turn` accepts `epic_id: str | None`. The plan requires creating image rows before the turn starts, but image storage and `list_images(epic_id=...)` are epic-scoped; it does not define whether attachments are rejected when `epic_id` is `None`, staged until `create_epic`, or assigned to a synthetic scope.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked Step 3 against current resident `send_image`: `agent_kit/tools/images.py` queues only image metadata in `files`, and `DiscordTransport.post_message()` currently deletes `files`. The plan correctly identifies this runtime bug and proposes fetching blob bytes plus converting them to Discord upload payloads before calling `channel.send`.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "guidance": "Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes.",
+      "findings": [
+        {
+          "detail": "Re-checked image source handling across resident ingestion, render tests, and image tools. The revision treats `caller_uploaded` as additive and explicitly preserves `user_uploaded` for Discord resident uploads, which contains the source-contract change without rewriting existing resident behavior.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked whether the revised plan broadens the accepted Discord ingestion recovery debt. It does not change the crash-before-upload recovery contract for inbound Discord voice/image attachments, and the new LocalBlobStore work is limited to invocation attachment parity, so the accepted recovery debt remains contained.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the plan for broader FastAPI/asyncpg migration scope. The revision repeatedly states that the current SQLite/local invocation and Discord resident architecture remains the target and does not introduce FastAPI or asyncpg tasks.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Searched for image source handling across store, tools, render tests, and resident ingestion. Existing resident uploads consistently use `user_uploaded`, while the spec and current plan introduce `caller_uploaded`; the plan treats this as a local invocation-ingestion detail, but the related schema, reference-key generation, render metadata, and tests all need an intentional compatibility decision rather than only adding one ingestion branch.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked the broader storage recovery debt already accepted for Discord ingestion. This focused plan does not broaden the crash-before-upload recovery promise and only touches invocation caller uploads and outbound send_image, so the accepted Discord attachment URL/orphan limitation should not be re-flagged for this tranche.",
+          "flagged": false,
+          "status": "n/a"
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "guidance": "Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.",
+      "findings": [
+        {
+          "detail": "Verified the prior event-location gap against current files. The revision now includes the dataclass event kind, JSON schema enum, tool-kit event/streaming support, invocation `send_image`, envelope tests, image tests, and CLI stream tests, which covers the relevant event-contract surfaces.",
+          "flagged": false
+        },
+        {
+          "detail": "Verified the prior CLI blob gap against current CLI construction. Step 3 adds `agent_kit/blob/local.py` and Step 6 wires `LocalBlobStore` for SQLite and `SupabaseStorageBlob` for Supabase, so repeatable `--attach` now has a concrete blob path in the plan.",
+          "flagged": false
+        },
+        {
+          "detail": "The revised Step 5 lists `arnold_sdk/__init__.py`, but this repository has `arnold/__init__.py`, `megaplan/__init__.py`, and `megaplan/arnold/__init__.py`; no `arnold_sdk` package exists in the current checkout. The public import re-export work should target the actual packages or explicitly add a new package if that is intended.",
+          "flagged": true
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Checked all event-kind definitions. `agent_kit/envelope.py` permits only `tool_call`, `activity`, `turn_start`, and `turn_end`; `agent_kit/envelope.schema.json` has the same enum; and `agent_kit/tool_kit.py` has a narrower `EventKind = Literal['tool_call', 'activity']`. Step 4 names `agent_kit/envelope.py` and tests, but misses schema and tool-kit registration/emission changes needed for a valid `attached_image` event.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked stream-event support for non-tool events. `audit_wrap()` appends and streams only the single event derived from the tool call after the tool function returns; if `send_image` appends an additional caller-facing `attached_image` event inside the tool body, current `on_event` streaming will not automatically emit it, so Step 4 needs explicit event-emitter plumbing, not only a new enum value.",
+          "flagged": true,
+          "status": "addressed"
+        },
+        {
+          "detail": "Checked CLI attachment support against current CLI store/model construction. `_turn()` only builds a store and model, with no local blob adapter for SQLite invocation mode; Step 7 notices CLI blob selection may be missing, but the must-have CLI `--attach` criterion cannot pass end-to-end unless the plan adds or selects a Blob implementation for CLI invocations.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "guidance": "Grep for call sites. For each caller, check what values it passes \u2014 especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?",
+      "findings": [
+        {
+          "detail": "Re-checked `run_turn` callers through `arnold`, `megaplan`, direct tests, and `arun_turn(*args, **kwargs)`. Adding a keyword-only `attachments=None` remains backwards-compatible for existing callers and automatically passes through the async wrapper.",
+          "flagged": false
+        },
+        {
+          "detail": "Re-checked image blob reads and the prior `BlobRef` caller concern. Step 7 now explicitly constructs `BlobRef(epic_id=image['epic_id'], key=image['storage_url'], mime_type=...)` before `Blob.get`, matching the existing `view_image` pattern.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked `post_message` callers in `send_message`, `send_image`, and resident status/announcement paths. The plan updates file handling for `send_image` while preserving `files=None` behavior for text/status posts; the remaining risk is not call-site coverage but the JSON ledger/body representation of bytes flagged under correctness.",
+          "flagged": false
+        }
+      ],
+      "prior_findings": [
+        {
+          "detail": "Grep found `run_turn` is imported through `arnold`, `megaplan`, and `megaplan.arnold`, called directly in many tests, and wrapped by `arun_turn(*args, **kwargs)`. Adding an optional keyword-only `attachments=` to `run_turn` should be backwards-compatible for existing callers and will automatically pass through `arun_turn`; no existing positional-call breakage is apparent.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked callers of `PushTransport.post_message`: `send_message` passes `files=None`, `send_image` passes a list of file metadata, and fake transports in tests accept `files`. The plan's change to make `files` concrete upload payloads needs to keep `send_message`'s `None` path and fake transports working, but its protocol/fake-transport test step covers that integration point.",
+          "flagged": false,
+          "status": "n/a"
+        },
+        {
+          "detail": "Checked callers of image blob reads. `view_image` already constructs `BlobRef(epic_id=image['epic_id'], key=image['storage_url'], mime_type=...)`; `send_image` currently does not require `context.blob`. Step 3's requirement to fetch bytes via blob is in the right callee, but it must construct a `BlobRef` from the image row rather than passing `storage_url` directly to `Blob.get`.",
+          "flagged": true,
+          "status": "addressed"
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-005",
+      "concern": "Discord file payload persistence: Step 7 risks putting raw image bytes into `external_requests.request_body`/summary even though the current ledger stores those fields as JSON.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/tool_kit.audit_wrap()` passes `ExternalSpec.request_body` to `Ledger.record_pending`; `SQLiteStore.insert_pending` serializes `request_body` as JSON, so bytes in the persisted request body would fail unless only metadata is persisted and bytes stay in the in-memory callback payload."
+    },
+    {
+      "id": "FLAG-006",
+      "concern": "Attachment normalization: raw `bytes` inputs are required but the revised plan only defines MIME inference for `Path`, leaving bytes-without-mime behavior ambiguous.",
+      "category": "completeness",
+      "severity_hint": "moderate",
+      "evidence": "Step 4 says normalize `Path`, raw `bytes`, and `(bytes, mime_type)` and accept PNG/JPEG/WEBP, but only describes filename/content-type inference for `Path`; the success criteria require raw `bytes` support."
+    },
+    {
+      "id": "FLAG-007",
+      "concern": "Wrong public package target: the plan names `arnold_sdk/__init__.py`, which does not exist in this repository.",
+      "category": "maintainability",
+      "severity_hint": "minor",
+      "evidence": "`rg --files` shows `arnold/__init__.py`, `megaplan/__init__.py`, and `megaplan/arnold/__init__.py`, but no `arnold_sdk` package."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 13: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 14: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [
+    "FLAG-001",
+    "FLAG-002",
+    "FLAG-003",
+    "FLAG-004",
+    "issue_hints",
+    "correctness-1",
+    "correctness-2",
+    "scope",
+    "all_locations-1",
+    "all_locations-2",
+    "all_locations-3",
+    "callers"
+  ],
+  "disputed_flag_ids": []
+}

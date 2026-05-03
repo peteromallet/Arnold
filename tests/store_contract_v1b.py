@@ -105,14 +105,23 @@ def run_store_contract_v1b(store_factory: Callable) -> None:
         reference_key="hero",
         active=False,
     )
+    caller_uploaded_image = store.create_image(
+        epic_id="epic_1",
+        source="caller_uploaded",
+        storage_url="images/epic_1/caller.png",
+    )
     assert first_image["reference_key"] == "img_user_upload_1"
+    assert caller_uploaded_image["reference_key"] == "img_caller_upload_1"
     assert store.load_image(first_image["id"])["discord_attachment_id"] == "attachment_1"
-    assert [row["id"] for row in store.list_images(epic_id="epic_1")] == [
-        first_image["id"]
-    ]
+    assert {
+        row["id"] for row in store.list_images(epic_id="epic_1")
+    } == {first_image["id"], caller_uploaded_image["id"]}
+    assert [
+        row["id"] for row in store.list_images(epic_id="epic_1", source="caller_uploaded")
+    ] == [caller_uploaded_image["id"]]
     assert {
         row["id"] for row in store.list_images(epic_id="epic_1", active=None)
-    } == {first_image["id"], second_image["id"]}
+    } == {first_image["id"], second_image["id"], caller_uploaded_image["id"]}
     updated_image = store.update_image(
         first_image["id"],
         caption="caption",

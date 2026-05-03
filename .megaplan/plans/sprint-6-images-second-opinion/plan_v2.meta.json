@@ -1,0 +1,163 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T13:24:12Z",
+  "hash": "sha256:288b45a1c20635eadac87bbb13cdd06bb9c6d4eb5c7193baefe905225bdab37a",
+  "changes_summary": "Revised the plan to explicitly cover result-dependent external effects with `external_requests` ledger rows for OpenAI and Storage, and to add a concrete `edit_epic` checklist-linking path so confirmed second-opinion checklist items update `second_opinions.resulting_checklist_item_ids`.",
+  "flags_addressed": [
+    "FLAG-001",
+    "FLAG-002"
+  ],
+  "questions": [
+    "What environment variable name and OpenAI project/org settings should the real adapter use: plain `OPENAI_API_KEY`, or an existing deployment-specific convention?",
+    "Should auto-second-opinion at state-advance gates remain prompt/workflow advisory only, or should `edit_epic` return a typed advisory that the model must explicitly decline?",
+    "Should rendered `image:` references use public storage URLs, signed URLs, or raw blob keys in this codebase's current Supabase Storage setup?",
+    "Should second-opinion-origin checklist items use a dedicated `source_second_opinion_id` field in tool arguments only, or should the `checklist_items` table also gain a persistent origin column beyond the existing `source` text?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "SQLite and Supabase migrations create a `second_opinions` table with the specified columns and indexes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`generate_image` with mocked OpenAI and Blob storage creates an active `images` row with `source='agent_generated'`, prompt, quality, size, description, reference key, and storage URL.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`generate_image` records and confirms mocked OpenAI image and Storage upload effects in `external_requests`; failures mark the relevant request failed.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "A generated image is not posted to Discord unless `send_image` is called separately, and the audited flow records distinct `generate_image` and `send_image` tool calls.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Reusing an existing active `reference_key` for generation deactivates the prior row and makes the new row the active resolver target.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`render_epic` resolves `![caption](image:reference_key)` to the active image storage URL for both `user_uploaded` and `agent_generated` images without mutating raw epic body markdown.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`request_second_opinion` with mocked GPT-5.5 stores a `second_opinions` row containing raw response, score, summary, verdict, focus areas, and model string.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`request_second_opinion` records and confirms the mocked GPT-5.5 call in `external_requests`; provider failure leaves no invented second-opinion row.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Malformed second-opinion structured output fails deterministically instead of silently inventing score, summary, or holes.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "A score below 5 causes the next bot response path to include a reframing suggestion in the tested flow.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "A score of 6 with three significant holes produces three proposed checklist items.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "When the user confirms second-opinion proposed checklist items, `edit_epic` returns created checklist item IDs and links those IDs to `second_opinions.resulting_checklist_item_ids`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "All existing tests continue to pass after Sprint 6 changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "OpenAI calls are injectable/mocked in automated tests and the default test suite performs no live network calls.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Generated-image and second-opinion code follows existing tool/store patterns without introducing broad unrelated refactors.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Provider prompt construction uses compact epic context and image metadata, not full image bytes unless explicitly requested through `view_image`.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Manual staging with real Supabase/OpenAI credentials can generate and send an image in Discord.",
+      "priority": "info",
+      "requires": [
+        "observe_runtime_logs",
+        "inspect_runtime_ui"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Use `gpt-image-2` for image generation and `gpt-5.5` for second opinions exactly as specified.",
+    "The service-role Supabase key is not needed in code or tests; existing store adapters and local SQLite/Supabase test wiring remain the validation path.",
+    "Generated images default to size `1024x1024` unless the tool caller supplies `size` or prompt context strongly implies a wide diagram.",
+    "`generate_image` creates one image per call; multiple images require multiple tool calls.",
+    "`request_second_opinion` proposes checklist items only; checklist rows are created later through user-confirmed `edit_epic` calls.",
+    "Confirmed checklist items can carry `source_second_opinion_id`, allowing `edit_epic` to update `second_opinions.resulting_checklist_item_ids` in the same transaction.",
+    "Result-dependent external effects use a new synchronous ledger helper because the current post-commit `context.external_queue` cannot create pending rows before OpenAI/Storage calls that are needed to compute the tool result.",
+    "Auto-second-opinion is default-on workflow guidance, not a hard server-side state gate, unless clarified otherwise.",
+    "Storage upload uses the existing `Blob.put` port; tests use fake blob storage and assert returned keys/URLs plus external request rows.",
+    "Missing `image:` references should not crash rendering; they should be reported in the tool result for later repair."
+  ],
+  "delta_from_previous_percent": 49.62,
+  "structure_warnings": []
+}

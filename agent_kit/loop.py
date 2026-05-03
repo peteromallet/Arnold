@@ -9,15 +9,18 @@ from typing import Callable, Sequence
 from uuid import uuid4
 
 from agent_kit import body
+from agent_kit.attachments import AttachmentInput, UnsupportedMediaTypeError, normalize_image_attachments
 from agent_kit.end_of_turn import (
     DEFAULT_END_OF_TURN_ACKNOWLEDGMENT,
     EndOfTurnToolCall,
+    ensure_reframing_suggestion,
     evaluate_end_of_turn,
 )
 from agent_kit.envelope import Envelope, EnvelopeError, Event, StateDelta
 from agent_kit.ledger import Ledger
 from agent_kit.logging import log
-from agent_kit.ports import Blob, JSONDict, Model, ProviderError, PushTransport, Store
+from agent_kit.ports import Blob, JSONDict, Model, OpenAIOps, ProviderError, PushTransport, Store
+from agent_kit.epic_routing import conversation_gap_acknowledgment, detect_user_mode, resolve_reference
 from agent_kit.prompts import (
     DEFAULT_PROMPT_VERSION,
     build_system_prompt,
@@ -29,6 +32,8 @@ import agent_kit.tools.editorial  # noqa: F401
 import agent_kit.tools.feedback  # noqa: F401
 import agent_kit.tools.editorial_reads  # noqa: F401
 import agent_kit.tools.images  # noqa: F401
+import agent_kit.tools.second_opinion  # noqa: F401
+import agent_kit.tools.code  # noqa: F401
 
 
 ANTHROPIC_MESSAGES_ENDPOINT = "POST /v1/messages"
@@ -48,8 +53,77 @@ def run_turn(
     mid_turn_message_check: Callable[[JSONDict], list[JSONDict] | None] | None = None,
     transport: PushTransport | None = None,
     blob: Blob | None = None,
+    attachments: Sequence[AttachmentInput] | None = None,
+    openai_ops: OpenAIOps | None = None,
     channel_id: str | None = None,
+    response_policy: JSONDict | None = None,
+    resolved_reference: JSONDict | None = None,
 ) -> Envelope:
+    normalized_attachments = []
+    if attachments:
+        if triggered_by_message_ids is not None:
+            return Envelope(
+                turn_id=f"turn_attachments_{uuid4().hex}",
+                epic_id=epic_id,
+                epic_state_before="unknown",
+                epic_state_after="unknown",
+                reply="",
+                state_delta=StateDelta(),
+                outcome="errored",
+                error=EnvelopeError(
+                    code="attachments_require_invocation",
+                    message="Image attachments are only supported for direct invocation turns.",
+                    retryable=False,
+                ),
+            )
+        if epic_id is None:
+            return Envelope(
+                turn_id=f"turn_attachments_{uuid4().hex}",
+                epic_id=None,
+                epic_state_before="unknown",
+                epic_state_after="unknown",
+                reply="",
+                state_delta=StateDelta(),
+                outcome="errored",
+                error=EnvelopeError(
+                    code="attachments_require_epic",
+                    message="Image attachments require an explicit epic_id.",
+                    retryable=False,
+                ),
+            )
+        if blob is None:
+            return Envelope(
+                turn_id=f"turn_attachments_{uuid4().hex}",
+                epic_id=epic_id,
+                epic_state_before="unknown",
+                epic_state_after="unknown",
+                reply="",
+                state_delta=StateDelta(),
+                outcome="errored",
+                error=EnvelopeError(
+                    code="attachments_require_blob",
+                    message="Image attachments require a blob adapter.",
+                    retryable=False,
+                ),
+            )
+        try:
+            normalized_attachments = normalize_image_attachments(tuple(attachments))
+        except UnsupportedMediaTypeError as exc:
+            return Envelope(
+                turn_id=f"turn_attachments_{uuid4().hex}",
+                epic_id=epic_id,
+                epic_state_before="unknown",
+                epic_state_after="unknown",
+                reply="",
+                state_delta=StateDelta(),
+                outcome="errored",
+                error=EnvelopeError(
+                    code="unsupported_media_type",
+                    message=str(exc),
+                    retryable=False,
+                ),
+            )
+
     holder_id = f"turn_holder_{uuid4().hex}"
     active_epic_id: str | None = epic_id
     lock_acquired = False
@@ -100,11 +174,47 @@ def run_turn(
                 content=input,
                 discord_message_id=f"inv_in_{uuid4().hex}",
             )
+            if normalized_attachments:
+                _store_invocation_image_attachments(
+                    store=store,
+                    blob=blob,
+                    epic_id=active_epic_id,
+                    message_id=inbound["id"],
+                    attachments=normalized_attachments,
+                )
+                inbound = store.update_message(
+                    inbound["id"],
+                    has_image_attachment=True,
+                )
             turn_message_ids = [inbound["id"]]
         else:
             turn_message_ids = list(triggered_by_message_ids)
 
         hot_context = store.load_hot_context(active_epic_id)
+        latest_outbound = store.latest_outbound_message(epic_id=active_epic_id)
+        if response_policy is None:
+            recent_messages = hot_context.get("recent_messages") or []
+            previous_inbound = next(
+                (
+                    row for row in reversed(recent_messages)
+                    if row.get("direction") == "inbound"
+                    and row.get("id") not in set(turn_message_ids)
+                ),
+                None,
+            )
+            response_policy = {
+                "mode": detect_user_mode(initial_user_prompt),
+                "conversation_gap_acknowledgment": conversation_gap_acknowledgment(
+                    previous_inbound.get("sent_at") if previous_inbound else None
+                ),
+            }
+        if resolved_reference is None:
+            resolved_reference = resolve_reference(
+                initial_user_prompt,
+                str(latest_outbound.get("content") or "") if latest_outbound else None,
+            )
+        hot_context["response_policy"] = response_policy
+        hot_context["resolved_reference"] = resolved_reference
         epic = hot_context.get("epic") or {}
         state_before = epic.get("state", "unknown")
         body_before = str(epic.get("body") or "") if epic else None
@@ -142,6 +252,7 @@ def run_turn(
             },
             transport=transport,
             blob=blob,
+            openai_ops=openai_ops,
         )
         if triggered_by_message_ids is None:
             context.metadata["inbound_message_id"] = inbound["id"]
@@ -398,6 +509,43 @@ async def arun_turn(*args, **kwargs) -> Envelope:
 __all__ = ["Envelope", "arun_turn", "run_turn"]
 
 
+def _store_invocation_image_attachments(
+    *,
+    store: Store,
+    blob: Blob | None,
+    epic_id: str | None,
+    message_id: str,
+    attachments: Sequence[object],
+) -> list[JSONDict]:
+    if epic_id is None:
+        raise ValueError("attachments require epic_id")
+    if blob is None:
+        raise ValueError("attachments require blob")
+    images: list[JSONDict] = []
+    with store.transaction():
+        for index, attachment in enumerate(attachments, start=1):
+            content = getattr(attachment, "content")
+            mime_type = getattr(attachment, "mime_type")
+            filename = getattr(attachment, "filename", None)
+            ref = blob.put(
+                epic_id,
+                content,
+                mime_type,
+                idempotency_key=f"{message_id}_{index}",
+            )
+            caption = str(filename) if filename else None
+            images.append(
+                store.create_image(
+                    epic_id=epic_id,
+                    source="caller_uploaded",
+                    storage_url=ref.key,
+                    caption=caption,
+                    description="Invocation image attachment.",
+                )
+            )
+    return images
+
+
 def _abort_turn(
     store: Store,
     turn: dict,
@@ -476,6 +624,12 @@ def _finish_after_model_response(
     outbound_text = (final_text or "").strip()
     if not outbound_text and decision.should_send_default_acknowledgment:
         outbound_text = DEFAULT_END_OF_TURN_ACKNOWLEDGMENT
+    if outbound_text:
+        outbound_text = ensure_reframing_suggestion(
+            outbound_text,
+            tool_calls=tool_calls_this_turn,
+            low_score_details=context.metadata.get("low_second_opinion"),
+        )
 
     if outbound_text and not reply_buffer:
         invocation = registry.invoke(
@@ -498,10 +652,17 @@ def _finish_after_model_response(
         turn_id=turn["id"],
         epic_id=active_epic_id,
         state_before=state_before,
-        state_after=state_before,
+        state_after=_current_state(store, active_epic_id, state_before),
         reply_buffer=reply_buffer,
         events=events,
         outcome="completed",
+        state_delta=_state_delta(
+            body_before,
+            body_after,
+            checklist_before,
+            checklist_after,
+            tool_calls_this_turn,
+        ),
     )
 
 
@@ -512,6 +673,65 @@ def _current_body(store: Store, epic_id: str | None) -> str | None:
     if not epic:
         return None
     return str(epic.get("body") or "")
+
+
+def _current_state(store: Store, epic_id: str | None, fallback: str) -> str:
+    if epic_id is None:
+        return fallback
+    epic = store.load_epic(epic_id)
+    if not epic:
+        return fallback
+    return str(epic.get("state") or fallback)
+
+
+def _state_delta(
+    body_before: str | None,
+    body_after: str | None,
+    checklist_before: list[JSONDict],
+    checklist_after: list[JSONDict],
+    tool_calls: list[EndOfTurnToolCall],
+) -> StateDelta:
+    body_diff = ""
+    if (body_before or "") != (body_after or ""):
+        body_diff = body.compute_diff(body_before or "", body_after or "")
+    sprint_changes: list[JSONDict] = []
+    state_transition: JSONDict | None = None
+    for call in tool_calls:
+        result = call.result if isinstance(call.result, dict) else {}
+        if isinstance(result.get("sprint_changes"), list):
+            sprint_changes.extend(result["sprint_changes"])
+        if isinstance(result.get("state_transition"), dict):
+            state_transition = result["state_transition"]
+    return StateDelta(
+        body_diff=body_diff,
+        checklist_changes=_checklist_delta(checklist_before, checklist_after),
+        sprint_changes=sprint_changes,
+        state_transition=state_transition,
+    )
+
+
+def _checklist_delta(before: list[JSONDict], after: list[JSONDict]) -> list[JSONDict]:
+    before_by_id = {str(item.get("id")): item for item in before}
+    after_ids = {str(item.get("id")) for item in after}
+    changes: list[JSONDict] = []
+    for item in after:
+        item_id = str(item.get("id"))
+        previous = before_by_id.get(item_id)
+        if previous is None:
+            changes.append({"kind": "added", "id": item_id, "status": item.get("status")})
+        elif previous.get("status") != item.get("status"):
+            changes.append(
+                {
+                    "kind": "status",
+                    "id": item_id,
+                    "from": previous.get("status"),
+                    "to": item.get("status"),
+                }
+            )
+    for item_id in before_by_id:
+        if item_id not in after_ids:
+            changes.append({"kind": "deleted", "id": item_id})
+    return changes
 
 
 def _end_of_turn_tool_call(tool_call: JSONDict) -> EndOfTurnToolCall:
@@ -555,6 +775,7 @@ def _envelope(
     outcome: str,
     questions: list[str] | None = None,
     error: EnvelopeError | None = None,
+    state_delta: StateDelta | None = None,
 ) -> Envelope:
     return Envelope(
         turn_id=turn_id,
@@ -562,7 +783,7 @@ def _envelope(
         epic_state_before=state_before,
         epic_state_after=state_after,
         reply="\n\n".join(reply_buffer),
-        state_delta=StateDelta(),
+        state_delta=state_delta or StateDelta(),
         questions=questions or [],
         events=events,
         tool_call_count=sum(1 for event in events if event.tool_call_id),
@@ -694,4 +915,6 @@ def _summarize_hot_context(hot_context: dict) -> dict:
         "recent_tool_call_count": len(hot_context.get("recent_tool_calls", [])),
         "active_feedback_count": len(hot_context.get("active_feedback", [])),
         "unresolved_observation_count": len(hot_context.get("unresolved_observations", [])),
+        "sprint_count": len(hot_context.get("sprints", [])),
+        "all_sprints_pending_no_queued": bool(hot_context.get("all_sprints_pending_no_queued")),
     }

@@ -1,0 +1,16 @@
+{"type":"thread.started","thread_id":"019de0e5-9457-7dd0-a093-103b86c34f69"}
+{"type":"turn.started"}
+{"type":"error","message":"Error running remote compact task: {\n  \"error\": {\n    \"message\": \"Your input exceeds the context window of this model. Please adjust your input and try again.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"input\",\n    \"code\": \"context_length_exceeded\"\n  }\n}"}
+{"type":"turn.failed","error":{"message":"Error running remote compact task: {\n  \"error\": {\n    \"message\": \"Your input exceeds the context window of this model. Please adjust your input and try again.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": \"input\",\n    \"code\": \"context_length_exceeded\"\n  }\n}"}}
+2026-05-01T00:23:49.362022Z ERROR codex_core::session: failed to load skill /Users/peteromalley/Documents/reigh-workspace/ArtAgents/artagents/performers/curated/vibecomfy/SKILL.md: missing YAML frontmatter delimited by ---
+2026-05-01T00:23:49.362039Z ERROR codex_core::session: failed to load skill /Users/peteromalley/Documents/reigh-workspace/ArtAgents/artagents/performers/curated/moirae/SKILL.md: missing YAML frontmatter delimited by ---
+2026-05-01T00:23:52.818183Z ERROR codex_core::compact_remote: remote compaction failed turn_id=019de0eb-97a8-7413-87c4-626d403a9182 last_api_response_total_tokens=0 all_history_items_model_visible_bytes=1674443 estimated_tokens_of_items_added_since_last_successful_api_response=311144 estimated_bytes_of_items_added_since_last_successful_api_response=1244572 model_context_window_tokens=Some(258400) failing_compaction_request_model_visible_bytes=1695790 compact_error={
+  "error": {
+    "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+    "type": "invalid_request_error",
+    "param": "input",
+    "code": "context_length_exceeded"
+  }
+}
+2026-05-01T00:23:52.826158Z ERROR codex_core::session::turn: Failed to run pre-sampling compact
+2026-05-01T00:23:52.845427Z ERROR codex_core::session: failed to record rollout items: thread 019de0e5-9457-7dd0-a093-103b86c34f69 not found

@@ -37,6 +37,37 @@ def test_sprint_2b_system_prompt_contains_required_sections() -> None:
         assert phrase in prompt
 
 
+def test_sprint_2b_system_prompt_encodes_editorial_operating_rules() -> None:
+    prompt = load_system_prompt()
+
+    required_rules = [
+        "Apply them silently by default.",
+        "Show changes after edits.",
+        "edits are section-level, not line-level",
+        "Never save feedback the user did not agree to save.",
+        "Observations are Arnold-authored diagnostic notes.",
+        "Use recent unresolved observations to self-correct.",
+        "Never drop sprint organization.",
+        "Every epic produces at least one sprint",
+    ]
+    for rule in required_rules:
+        assert rule in prompt
+
+
+def test_system_prompt_covers_second_opinion_response_policy() -> None:
+    prompt = load_system_prompt()
+    required_rules = [
+        "State-gate second opinions are advisory and default-on.",
+        "skip second opinion until I ask",
+        "Surface the score and verdict plainly",
+        "propose actionable checklist items individually",
+        "Never auto-edit the body or checklist from audit findings.",
+        "If the score is below 5 out of 10, suggest reframing the epic before continuing.",
+    ]
+    for rule in required_rules:
+        assert rule in prompt
+
+
 def test_sprint_2b_system_prompt_covers_all_checklist_items() -> None:
     prompt = load_system_prompt()
     for index, item in enumerate(DEFAULT_CHECKLIST_SEED, start=1):

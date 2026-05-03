@@ -38,6 +38,8 @@ def _store_and_context(tmp_path):
 def test_feedback_tools_validate_and_update_feedback_lifecycle(tmp_path) -> None:
     store, _epic, context = _store_and_context(tmp_path)
 
+    assert registry.get("list_feedback").operation_kind == "read"
+
     invalid_kind = registry.invoke(
         "save_feedback",
         context,
@@ -98,6 +100,8 @@ def test_feedback_tools_validate_and_update_feedback_lifecycle(tmp_path) -> None
 
 def test_observation_tools_autofill_resolve_and_leave_hot_context(tmp_path) -> None:
     store, epic, context = _store_and_context(tmp_path)
+
+    assert registry.get("list_observations").operation_kind == "read"
 
     invalid_kind = registry.invoke(
         "record_observation",

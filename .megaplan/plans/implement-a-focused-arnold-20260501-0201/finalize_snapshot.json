@@ -1,0 +1,358 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Update project baseline metadata and image source contracts: require Python >=3.12 in pyproject.toml, preserve the canonical test extra, optionally add a non-breaking test-extra alias, add caller_uploaded to SQLite/Supabase image source constraints and image tool validation/list_images schema while preserving existing user_uploaded behavior.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T2",
+      "description": "Implement a small LocalBlobStore using the existing Blob protocol, export it from agent_kit.blob, and wire CLI blob selection so SQLite CLI runs default to a deterministic local blob directory near the SQLite DB while Supabase mode continues to use SupabaseStorageBlob.from_env when attachments are present.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T3",
+      "description": "Add reusable invocation image attachment normalization for Path, raw bytes, and (bytes, mime_type). Support PNG, JPEG, and WEBP up to 25MB; infer/sniff MIME types via filename and magic bytes; reject unknown raw bytes, unsupported media, audio, and detectable MIME mismatches with explicit unsupported media type errors.",
+      "depends_on": [
+        "T1",
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T4",
+      "description": "Wire Python invocation attachments into run_turn/arun_turn and actual public exports. Require blob when attachments are supplied; if attachments are provided without epic_id, return an errored Envelope with error.code attachments_require_epic and create no orphan image/blob state. For valid attachments, create the inbound invocation message first, store blobs, create caller_uploaded image rows, mark the message has_image_attachment, and make uploaded images discoverable through existing image tools before model execution.",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T5",
+      "description": "Wire CLI attachment support end to end: add repeatable arnold turn --attach <path>, normalize paths, select the correct blob adapter, pass attachments/blob into run_turn, preserve --stream-events behavior, and make --attach without --epic surface the attachments_require_epic envelope error rather than creating state.",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T6",
+      "description": "Fix resident send_image to post real Discord files. In resident mode require context.blob, construct BlobRef from the image row, fetch bytes through Blob.get, pass concrete in-memory file payloads to PushTransport.post_message, convert them to discord.File in DiscordTransport, update outbound message discord_message_id after confirmation, and persist only JSON-safe metadata in external_requests.request_body/request_summary.",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T7",
+      "description": "Add first-class invocation attached_image event semantics while preserving audited tool_call events. Update envelope dataclasses/types/schema, any tool-kit event kind aliases, and event streaming helpers so invocation-mode send_image emits both the normal tool_call audit event and an attached_image event with image_id, caption, storage_url, reference_key, and media_type. Resident send_image must not emit attached_image.",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T8",
+      "description": "Implement the set_typing tool and transport support. Register set_typing with an {on: boolean} schema; in invocation mode return an explicit no-op result while preserving normal tool_call auditing; in resident mode call a transport typing method when available and return {typing: on, mode: resident}.",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T9",
+      "description": "Add focused regression coverage in existing test files for caller_uploaded filtering, LocalBlobStore, attachment normalization, Python and CLI attachment ingestion, epicless attachment rejection, resident send_image file bytes and JSON-safe ledger metadata, attached_image schema/stream parity, set_typing, whitelist rejection, status-message non-persistence, outbound message persistence, and status lifecycle semantics.",
+      "depends_on": [
+        "T5",
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T10",
+      "description": "Run validation and inspect scope. First run the targeted suite: python -m pytest tests/test_cli.py tests/test_run_turn.py tests/test_image_tools.py tests/test_discord_transport.py tests/test_communication_resident.py tests/test_envelope.py tests/test_status_lifecycle.py tests/test_whitelist.py -q. Then run python -m pytest -q. Also write a short throwaway script that exercises the specific attachment/send_image/event behavior changed here, run it, and delete it. If tests fail, read the error, fix the implementation, and rerun until passing or clearly document unrelated failures. Inspect the diff to confirm no FastAPI/asyncpg migration or unrelated dirty worktree changes were introduced.",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    }
+  ],
+  "watch_items": [
+    "Do not invoke the megaplan CLI, read the megaplan skill, or start a nested planning harness; treat megaplan mentions as repository context only.",
+    "Preserve unrelated dirty worktree changes; inspect before editing touched files and never revert changes you did not make.",
+    "Invocation attachment parity is image-only for this tranche; do not build full audio/Groq attachment flow unless it is already trivially supported by existing code.",
+    "Keep optional dependency extra test canonical; any test-extra alias must be additive and non-breaking.",
+    "Attachments require an explicit epic_id; epicless attachment calls must return attachments_require_epic and create no image/blob rows.",
+    "Raw bytes must be identified by PNG/JPEG/WEBP magic bytes; do not guess MIME type for unknown bytes.",
+    "For (bytes, mime_type), reject detectable byte/MIME mismatches instead of silently trusting metadata.",
+    "caller_uploaded is invocation-specific; preserve user_uploaded behavior for Discord resident uploads.",
+    "Resident send_image raw file bytes must remain in memory only; persisted external request request_body/request_summary must contain JSON-safe metadata without bytes.",
+    "Resident send_image must construct BlobRef from image epic_id/storage_url/media type before Blob.get; do not pass storage_url directly to Blob.get.",
+    "attached_image is for invocation-mode user-facing image output only; preserve tool_call audit events and rows.",
+    "Streamed events from on_event/--stream-events must match final Envelope.events for attached_image.",
+    "Whitelist rejection should not create messages rows; status content should not pollute message history.",
+    "Do not implement the broader FastAPI/asyncpg migration in this tranche.",
+    "If the local Python interpreter is below 3.12, report that environment limitation while keeping metadata correct."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Does project metadata require Python 3.12+, keep test as the canonical optional dependency, and accept caller_uploaded everywhere image source constraints/tool schemas require it without changing user_uploaded behavior?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Can SQLite CLI invocation store and retrieve image blobs through a small LocalBlobStore using BlobRef-compatible keys, while Supabase mode still uses the existing Supabase blob implementation?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Do attachment normalization paths correctly accept PNG/JPEG/WEBP Path, raw bytes, and (bytes, mime_type), and explicitly reject unknown bytes, audio, oversized files, and declared MIME mismatches?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Do run_turn/arun_turn create caller_uploaded image rows before model execution for valid attachments and return attachments_require_epic with no orphan state when epic_id is missing?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does arnold turn --attach work end to end for SQLite with an explicit epic, and does --attach without --epic surface the expected envelope error?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Does resident send_image fetch file bytes via BlobRef/Blob.get, pass concrete upload payloads to Discord transport, update the outbound message after confirmation, and keep persisted ledger JSON byte-free?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Do invocation send_image calls produce both audited tool_call behavior and schema-valid attached_image events, with final envelope events matching streamed events?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Is set_typing registered and audited, no-op successful in invocation mode, and delegated to transport typing behavior in resident mode?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Are the added regressions focused on acceptance criteria in existing test files, without broad snapshots or unrelated new coverage noise?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Do the targeted suite and full suite pass, or are any remaining failures clearly unrelated and documented, with the final diff scoped away from FastAPI/asyncpg migration and unrelated worktree changes?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute in the approved order: contracts first, then local blob, normalization, Python API, CLI, resident send_image, event plumbing, set_typing, regressions, and validation. Keep changes narrow and inspect existing patterns before adding abstractions. The highest-risk areas are event streaming parity, JSON-safe Discord external request persistence, and avoiding orphan attachment state when epic_id is missing. Tests should be added to existing test files named in the plan; the final validation task should run the existing suites plus a temporary local reproduction script that is deleted after use.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Step 1: Establish Python 3.12+/test extra baseline",
+        "finalize_item_ids": [
+          "T1",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 2: Update image source compatibility for caller_uploaded",
+        "finalize_item_ids": [
+          "T1",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 3: Add local blob adapter for invocation mode",
+        "finalize_item_ids": [
+          "T2",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 4: Add image attachment normalization",
+        "finalize_item_ids": [
+          "T3",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 5: Wire Python invocation attachments",
+        "finalize_item_ids": [
+          "T4",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 6: Wire CLI --attach end to end",
+        "finalize_item_ids": [
+          "T5",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 7: Make resident send_image post real Discord files",
+        "finalize_item_ids": [
+          "T6",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 8: Add first-class invocation attached_image events",
+        "finalize_item_ids": [
+          "T7",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 9: Implement set_typing",
+        "finalize_item_ids": [
+          "T8",
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 10: Reconcile whitelist/status/message semantics",
+        "finalize_item_ids": [
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 11: Add targeted regression tests",
+        "finalize_item_ids": [
+          "T9",
+          "T10"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 12: Validate focused suite, full suite, and diff scope",
+        "finalize_item_ids": [
+          "T10"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All approved plan steps are mapped to executor tasks. No human-only setup is required by the approved plan; environment limitations such as Python <3.12 should be reported during T10 rather than represented as a blocking user action. Regression work is intentionally assigned to existing test files to honor the execution requirement not to create new test files.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": [],
+  "baseline_test_command": "pytest --tb=no -q --no-header",
+  "baseline_test_note": "No baseline tests were run during briefing finalization; T10 contains the required targeted and full validation commands."
+}

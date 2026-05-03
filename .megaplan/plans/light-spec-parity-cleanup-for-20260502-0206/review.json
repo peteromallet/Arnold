@@ -1,0 +1,74 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": [],
+  "criteria": [
+    {
+      "name": "`planning-bot-spec.md` uses `from arnold import run_turn, Envelope` for the Callable API Python example and does not present `megaplan.arnold` as the public spec import path.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Invocation event-stream documentation consistently says live CLI progress events go to stderr and the final envelope goes to stdout.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Spec image-tool wording states that `generate_image` creates/stores image data without surfacing it, and `send_image` is the tool that surfaces images to Discord or invocation envelopes.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Spec idempotency documentation includes the implemented system-request formula with `system_seq` and preserves the tool-call idempotency formula.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Invocation attachment documentation matches current implementation: image attachments are supported for CLI/Python, invocation audio is explicitly deferred, and HTTP remains future work.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`get_checklist`, `get_sprints`, and `recent_messages`, if added, are registered read tools backed by existing Store/hot-context behavior with no Store/ports refactor.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`transcribe_voice` is not falsely documented as a current bot-callable tool; it is marked automatic resident behavior or deferred as appropriate.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Focused tests covering touched code behavior pass.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Unrelated dirty worktree changes are preserved; the final task diff is limited to the spec, lightweight alias code if needed, and focused tests.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The implementation remains small and avoids new transport, Store, FastAPI, asyncpg, or HTTP surface area.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Light robustness: review skipped; stub written for artifact parity.",
+  "task_verdicts": [],
+  "sense_check_verdicts": []
+}

@@ -1,0 +1,35 @@
+{
+  "checks": [],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Security: code investigation outputs need explicit content redaction before they are returned to the model, recorded in tool_calls, logged, or replayed from cache. The plan covers GitHub fetching, file reads, artifact caching, and read_codebase_file tests, but does not include the spec's Sprint 1a/5 prompt/log redaction requirement for OpenAI keys, GitHub tokens, AWS keys, and high-entropy hex values. Existing logging only redacts sensitive dictionary keys, so a fetched source file containing a token in a string value would be persisted verbatim unless this sprint adds a content scrubber.",
+      "category": "security",
+      "severity_hint": "likely-significant",
+      "evidence": "planning-bot-spec.md:2621-2622 requires read_codebase_file results stored in tool_calls.result and surfaced to the bot to redact secret-like content; agent_kit/logging.py:10-57 only redacts selected key names; the plan's Step 6/11 mentions line parsing and mocked GitHub tests but not redaction or the required secret fixture."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Migrations: the Supabase migration filename in the plan does not follow the repository's Supabase migration convention and may not be picked up cleanly by the Supabase migration workflow. The plan says to create `008_codebase_research.sql` in both migration directories, but every existing Supabase migration uses a timestamp-prefixed version name while only SQLite uses simple numeric filenames.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "Existing files are agent_kit/store/migrations/sqlite/001_core.sql through 007_message_search.sql, but supabase/migrations/202604300001_001_core.sql through 202604300007_007_message_search.sql. Plan Step 1 names `008_codebase_research.sql` for both Supabase and SQLite."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

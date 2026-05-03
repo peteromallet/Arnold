@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import sqlite3
+import sys
+from types import SimpleNamespace
 
 from agent_kit.ledger import Ledger, derive_idempotency_key
-from agent_kit.ports import BlobRef
+from agent_kit.ports import BlobRef, FileUpload
 from agent_kit.store.sqlite import SQLiteStore
 from agent_kit.transport.discord import DiscordTransport
 
@@ -157,6 +159,8 @@ def test_text_dm_persists_message_and_invokes_handler() -> None:
     row = conn.execute("SELECT * FROM messages").fetchone()
     assert row["content"] == "hello text"
     assert row["discord_message_id"] == "200"
+    epic = conn.execute("SELECT * FROM epics WHERE id = ?", (row["epic_id"],)).fetchone()
+    assert epic["title"] == "Discord DM 42"
     assert seen[0]["message_id"] == row["id"]
     assert conn.execute("SELECT COUNT(*) FROM external_requests").fetchone()[0] == 0
 
@@ -183,6 +187,8 @@ def test_voice_message_persists_message_and_ledgers_before_external_io() -> None
     }
     message = conn.execute("SELECT * FROM messages").fetchone()
     assert message["was_voice_message"] == 1
+    epic = conn.execute("SELECT * FROM epics WHERE id = ?", (message["epic_id"],)).fetchone()
+    assert epic["title"] == "Discord DM 42"
     assert message["content"] == "transcribed voice"
     assert message["audio_storage_url"] == "stored/1.ogg"
     requests = conn.execute(
@@ -219,6 +225,8 @@ def test_image_message_persists_message_and_ledger_before_upload_then_creates_im
     message = conn.execute("SELECT * FROM messages").fetchone()
     assert message["has_image_attachment"] == 1
     assert message["content"] == "caption"
+    epic = conn.execute("SELECT * FROM epics WHERE id = ?", (message["epic_id"],)).fetchone()
+    assert epic["title"] == "Discord DM 42"
     image = conn.execute("SELECT * FROM images").fetchone()
     assert image["source"] == "user_uploaded"
     assert image["reference_key"] == "img_user_upload_1"
@@ -247,3 +255,63 @@ def test_ingest_idempotency_key_branch_is_stable() -> None:
 
     assert first == second
     assert len(first) == 16
+
+
+def test_post_message_converts_file_uploads_to_discord_files(monkeypatch) -> None:
+    store, conn = _store()
+    transport = _transport(store, conn)
+    sent = {}
+
+    class FakeDiscordFile:
+        def __init__(self, *, fp, filename):
+            self.content = fp.read()
+            self.filename = filename
+
+    class FakeChannel:
+        async def send(self, content, *, files=None):
+            sent["content"] = content
+            sent["files"] = files
+            return SimpleNamespace(id=777)
+
+    class FakeClient:
+        def get_channel(self, channel_id):
+            sent["channel_id"] = channel_id
+            return FakeChannel()
+
+    monkeypatch.setitem(sys.modules, "discord", SimpleNamespace(File=FakeDiscordFile))
+    transport._client = FakeClient()
+
+    response = asyncio.run(
+        transport._post_message(
+            "100",
+            "caption",
+            files=[
+                FileUpload(
+                    filename="image.png",
+                    content=b"png bytes",
+                    mime_type="image/png",
+                )
+            ],
+        )
+    )
+
+    assert response == {"id": "777", "channel_id": "100"}
+    assert sent["content"] == "caption"
+    assert sent["files"][0].filename == "image.png"
+    assert sent["files"][0].content == b"png bytes"
+
+
+def test_sync_transport_method_fails_from_discord_event_loop() -> None:
+    async def scenario() -> None:
+        store, conn = _store()
+        transport = _transport(store, conn)
+        transport._loop = asyncio.get_running_loop()
+
+        try:
+            transport.post_message("100", "hello")
+        except RuntimeError as exc:
+            assert "DiscordTransport sync method called from Discord event loop" in str(exc)
+        else:
+            raise AssertionError("expected sync Discord method to fail on Discord loop")
+
+    asyncio.run(scenario())

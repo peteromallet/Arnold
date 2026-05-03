@@ -7,6 +7,10 @@ from typing import Any
 
 
 DEFAULT_END_OF_TURN_ACKNOWLEDGMENT = "Done."
+LOW_SECOND_OPINION_REFRAMING_SUGGESTION = (
+    "Given the second-opinion score below 5, I suggest we pause and reframe the epic "
+    "before adding more detail."
+)
 
 
 @dataclass(frozen=True)
@@ -89,11 +93,59 @@ def evaluate_end_of_turn(
                 details={"open_items": _open_checklist_count(checklist_before)},
             )
         )
+    low_score = _low_second_opinion_score(tool_calls)
+    if low_score is not None and not contains_reframing_suggestion(normalized_response):
+        findings.append(
+            EndOfTurnFinding(
+                category="second_opinion_reframe_missing",
+                message="Second-opinion score below 5 requires a reframing suggestion.",
+                details={"score": low_score},
+            )
+        )
 
     return EndOfTurnDecision(
         findings=tuple(findings),
         should_send_default_acknowledgment=not message_will_be_sent and progress_made,
         should_error_empty_response=not normalized_response and not progress_made,
+    )
+
+
+def ensure_reframing_suggestion(
+    response_text: str,
+    *,
+    tool_calls: list[EndOfTurnToolCall] | None = None,
+    low_score_details: dict[str, Any] | None = None,
+) -> str:
+    """Append the required low-score reframing suggestion when missing."""
+
+    if contains_reframing_suggestion(response_text):
+        return response_text
+    score = None
+    if isinstance(low_score_details, dict):
+        score = _coerce_score(low_score_details.get("score"))
+    if score is None and tool_calls is not None:
+        score = _low_second_opinion_score(tool_calls)
+    if score is None or score >= 5:
+        return response_text
+    stripped = response_text.strip()
+    if not stripped:
+        return LOW_SECOND_OPINION_REFRAMING_SUGGESTION
+    return f"{stripped}\n\n{LOW_SECOND_OPINION_REFRAMING_SUGGESTION}"
+
+
+def contains_reframing_suggestion(response_text: str | None) -> bool:
+    lowered = (response_text or "").lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "reframe",
+            "re-frame",
+            "reframing",
+            "re-framing",
+            "rethink the epic",
+            "revisit the premise",
+            "change the approach",
+        )
     )
 
 
@@ -113,6 +165,26 @@ def _has_substantive_tool_work(tool_calls: list[EndOfTurnToolCall]) -> bool:
             continue
         return True
     return False
+
+
+def _low_second_opinion_score(tool_calls: list[EndOfTurnToolCall]) -> int | None:
+    lowest: int | None = None
+    for call in tool_calls:
+        if call.name != "request_second_opinion":
+            continue
+        score = _coerce_score(call.result.get("score"))
+        if score is None or score >= 5:
+            continue
+        lowest = score if lowest is None else min(lowest, score)
+    return lowest
+
+
+def _coerce_score(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
 
 
 def _expects_body_change(
@@ -184,5 +256,8 @@ __all__ = [
     "EndOfTurnDecision",
     "EndOfTurnFinding",
     "EndOfTurnToolCall",
+    "LOW_SECOND_OPINION_REFRAMING_SUGGESTION",
+    "contains_reframing_suggestion",
+    "ensure_reframing_suggestion",
     "evaluate_end_of_turn",
 ]

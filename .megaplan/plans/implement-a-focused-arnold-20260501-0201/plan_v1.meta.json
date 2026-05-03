@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "timestamp": "2026-05-01T00:03:40Z",
+  "hash": "sha256:af8ce40f5c883eba43f58dbdd64b715e7858615abe7041115767df74b85cdfa4",
+  "questions": [
+    "Should invocation-mode audio attachments be fully implemented in this tranche, including Groq transcription wiring, or is image attachment parity sufficient for this focused pass if audio requires new runtime configuration?",
+    "Should the install/test extra be named exactly `test-extra`, or should the existing `test` extra remain canonical with an added compatibility alias?",
+    "For invocation-mode `send_image`, should reviewers expect a new `attached_image` event kind, or is a `tool_call` event with explicit `details.attached_image` considered compatible enough?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Project metadata declares Python 3.12+ support and exposes a documented test dependency extra without breaking the existing test install path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "CLI invocation accepts repeatable `--attach` arguments and passes supported image attachments into turn execution without changing the one-turn envelope contract.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Python `run_turn(..., attachments=...)` supports at least image attachments from `Path`, `bytes`, and `(bytes, mime_type)` inputs, creating caller-uploaded image records visible to tools before model execution.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Resident-mode `send_image` posts actual file payloads through the Discord transport, updates the outbound message row with the confirmed Discord id, and settles the Discord external request ledger row.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Invocation-mode `send_image` exposes caller-consumable attached-image semantics in the envelope/events while preserving tool-call auditability.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`set_typing` is registered as a tool; resident mode calls the transport typing behavior and invocation mode succeeds as a no-op/audited event.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Whitelist rejection, status-message non-persistence, outbound message persistence, and status lifecycle behavior remain aligned with the spec and covered by regression tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The broader FastAPI/asyncpg architecture migration is not implemented in this tranche and any current decision to defer it is encoded in code comments/tests only if necessary.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "All touched focused tests pass before running the full suite.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The full test suite passes after the tranche is complete.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Attachment normalization remains small and direct, with no broad storage abstraction rewrite beyond what invocation attachment passing requires.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "New tests are focused on acceptance criteria rather than broad snapshots that would make unrelated future changes noisy.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The current SQLite/local invocation architecture remains the implementation target for this tranche; FastAPI and asyncpg are intentionally deferred.",
+    "The existing `test` optional dependency extra is in use and should not be removed without confirmation.",
+    "Image attachment parity is the hard requirement for invocation attachments; audio transcription will reuse existing Groq plumbing only if it can be done without a new architecture/configuration surface.",
+    "A new `attached_image` event kind is the cleanest invocation-mode event semantic unless reviewers prefer compatibility through `tool_call.details`.",
+    "Existing dirty worktree changes, if any, are unrelated and must not be reverted."
+  ],
+  "structure_warnings": []
+}

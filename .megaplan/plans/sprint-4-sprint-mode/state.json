@@ -1,8 +1,8 @@
 {
   "name": "sprint-4-sprint-mode",
   "idea": "# Sprint 4 \u2014 Sprint mode and handoff gating\n\nEpics can be taken through the full lifecycle to handoff-ready (planned) state, with sprints queued or pending. Every epic produces at least one sprint.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to Sprint Organization, State Advance Gating, Epic Abstraction Level sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: [REDACTED_SUPABASE_SERVICE_ROLE_JWT]\n\n## Scope\n\n- Tables: sprints (with queue_position, pending_reason, status values), sprint_items\n- edit_epic extension for sprints field including status transitions\n- State advance gating logic \u2014 concrete conditions enforced server-side:\n  - shaping \u2192 sprinting: body >500 chars, Goal + Deliverable sections, checklist mostly resolved\n  - sprinting \u2192 planned: all sprints queued or pending, checklist done/skipped/superseded, PM-handoff fidelity\n- Open-decisions lockdown scan: regex check for TBD/to be decided/to be determined/we'll see/figure out later/tunable/depends on what surfaces/can adjust later/decide later \u2014 matches outside Open Questions section block sprinting \u2192 planned unless force-through\n- Blocker surfacing flow \u2014 list open items, offer skip/address/force\n- Sprint shaping: propose \u2192 refine \u2192 finalize, items at PM-task level\n- Every epic produces at least one sprint (including decision docs, conversation prep)\n- Two-beat lock-in flow: confirmation \u2192 queue/pend assignment (first sprint queued, rest pending)\n- Pending reason capture\n- Queue reordering via natural language\n- Force-through with logging (forced_handoff event)\n- Phase-aware end-of-turn checks\n\n## Key Data Model\n\n### sprints\nid, epic_id, sprint_number, name, goal, status (proposed|queued|pending|done), queue_position (nullable int), pending_reason (nullable), target_weeks (default 2), created_at, updated_at, queued_at\nUnique constraint: (epic_id, queue_position) WHERE status='queued'\n\n### sprint_items\nid, sprint_id, content, estimated_complexity (small|medium|large), status (open|in_progress|done), source_section, position, created_at\n\n## Acceptance Criteria\n\n- Try to advance shaping \u2192 sprinting with body <500 chars \u2192 edit_epic fails with blockers list\n- Force-through with force: true \u2192 succeeds, forced_handoff event logged\n- Sprint shaping \u2192 sprints rows edited; lock-in moves to queued/pending\n- Decision-doc epic \u2192 at least one sprint (test: create, take through lifecycle, assert \u22651 sprint)\n- After lock-in: each sprint is queued (with queue_position) or pending (with pending_reason); epic \u2192 planned\n- Two queued sprints can't share queue_position (DB constraint)\n- Post-handoff: \"queue sprint 2\" \u2192 status flips, position assigned\n- Post-handoff: \"do sprint 3 first\" \u2192 queue_positions adjusted, audit event logged\n- Lockdown scan blocks when body contains \"TBD\" outside Open Questions; passes when in Open Questions\n\n## Tests\n- Unit: gating condition evaluation; confirmation parsing; queue/pend defaults; queue reordering; lockdown scan regex\n- Integration: full epic lifecycle (create \u2192 shape \u2192 sprint \u2192 finalize \u2192 queue/pend \u2192 planned)",
-  "current_state": "initialized",
-  "iteration": 0,
+  "current_state": "done",
+  "iteration": 2,
   "created_at": "2026-04-30T01:13:14Z",
   "config": {
     "project_dir": "/Users/peteromalley/Documents/arnold-v2",
@@ -27,8 +27,29 @@
       "tiebreaker_challenger=codex"
     ]
   },
-  "sessions": {},
-  "plan_versions": [],
+  "sessions": {
+    "codex_executor": {
+      "id": "019dde84-20f2-7130-9ca6-da3fa033db13",
+      "mode": "persistent",
+      "created_at": "2026-04-30T13:16:00Z",
+      "last_used_at": "2026-04-30T13:16:00Z",
+      "refreshed": false
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:3f7335e17ef162a63831a1433f1f0bf41e39bead0233ea3ec5a3391ba30e299a",
+      "timestamp": "2026-04-30T12:19:20Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:c252df2cb06cb4d45d12c878d5ac3c0c37e4a162391d26c75dd098061119bacb",
+      "timestamp": "2026-04-30T12:23:15Z"
+    }
+  ],
   "history": [
     {
       "step": "init",
@@ -40,13 +61,86 @@
         "claude": true,
         "codex": true
       }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T12:19:20Z",
+      "duration_ms": 141303,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde52-28be-7382-9ffc-cbb61e8d5395",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:3f7335e17ef162a63831a1433f1f0bf41e39bead0233ea3ec5a3391ba30e299a"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T12:21:36Z",
+      "duration_ms": 133896,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde54-56c3-76a3-84a3-75785052f8e6",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:43870bbaec817a721debbee8b114670baa43a1876f2fceee533193cfc9703c5e",
+      "flags_count": 6
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T12:23:15Z",
+      "duration_ms": 97376,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde52-28be-7382-9ffc-cbb61e8d5395",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:c252df2cb06cb4d45d12c878d5ac3c0c37e4a162391d26c75dd098061119bacb",
+      "flags_addressed": [
+        "FLAG-001",
+        "FLAG-002"
+      ]
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T12:24:27Z",
+      "duration_ms": 69978,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde57-eabe-7aa3-9c0a-bab5355d1a1e",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:853ed44fbd6853e0aaba7b85d48634db41660ca931d5c2454b19f89e5212ae80"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T13:16:00Z",
+      "duration_ms": 270692,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde84-20f2-7130-9ca6-da3fa033db13",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:56ffc55d86709ac725e0b397c2f18ae6e0763da73ede86a7d1aee47acd666ffe",
+      "finalize_hash": "sha256:0e3e3d4b9de3ccf9eb6de07a84efd6ef4042285eaddc386b0d43d31bc3ca86a3",
+      "approval_mode": "auto_approve"
     }
   ],
   "meta": {
-    "significant_counts": [],
+    "significant_counts": [
+      2
+    ],
     "weighted_scores": [],
-    "plan_deltas": [],
-    "recurring_critiques": [],
+    "plan_deltas": [
+      15.34
+    ],
+    "recurring_critiques": [
+      []
+    ],
     "total_cost_usd": 0.0,
     "overrides": [
       {
@@ -57,7 +151,10 @@
         "reason": "switch to all-codex profile"
       }
     ],
-    "notes": []
+    "notes": [],
+    "user_approved_gate": true
   },
-  "last_gate": {}
+  "last_gate": {
+    "recommendation": "ITERATE"
+  }
 }

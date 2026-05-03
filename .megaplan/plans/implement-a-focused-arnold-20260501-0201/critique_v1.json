@@ -1,0 +1,136 @@
+{
+  "checks": [
+    {
+      "id": "issue_hints",
+      "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+      "findings": [
+        {
+          "detail": "Checked the user note that invocation attachment parity only needs image attachments in this tranche against Step 2. The plan still includes audio normalization and a conditional Groq/transcription branch, but it correctly makes image support the hard requirement and allows explicit blocked/error behavior for audio if existing plumbing is not reusable.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the user note to keep the existing `test` optional dependency canonical against `pyproject.toml`. Step 1 preserves `[project.optional-dependencies].test` and only suggests a compatibility alias if useful, which matches the requested install-path constraint.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked the user preference for first-class invocation `attached_image` semantics against the current envelope plumbing. The plan chooses a new `attached_image` event kind, but does not explicitly include the existing `agent_kit/envelope.schema.json` and `agent_kit/tool_kit.EventKind` surfaces that currently reject or cannot emit that kind cleanly; this is a plan completeness risk for the approved event-semantics requirement.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "question": "Are the proposed changes technically correct?",
+      "findings": [
+        {
+          "detail": "Checked the planned `source='caller_uploaded'` insertion against `agent_kit/store/migrations/sqlite/002_images.sql` and the `list_images` tool schema. The SQLite images table currently checks `source IN ('agent_generated', 'user_uploaded')`, and `LIST_IMAGES_SCHEMA` only permits `agent_generated` and `user_uploaded`, so implementing the plan literally would fail inserts or block `list_images(source='caller_uploaded')` unless the plan also updates store schema/migrations and tool schema.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked attachment ingestion before model execution against the current callable API, where `arnold turn` may omit `--epic` and `run_turn` accepts `epic_id: str | None`. The plan requires creating image rows before the turn starts, but image storage and `list_images(epic_id=...)` are epic-scoped; it does not define whether attachments are rejected when `epic_id` is `None`, staged until `create_epic`, or assigned to a synthetic scope.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked Step 3 against current resident `send_image`: `agent_kit/tools/images.py` queues only image metadata in `files`, and `DiscordTransport.post_message()` currently deletes `files`. The plan correctly identifies this runtime bug and proposes fetching blob bytes plus converting them to Discord upload payloads before calling `channel.send`.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+      "findings": [
+        {
+          "detail": "Searched for image source handling across store, tools, render tests, and resident ingestion. Existing resident uploads consistently use `user_uploaded`, while the spec and current plan introduce `caller_uploaded`; the plan treats this as a local invocation-ingestion detail, but the related schema, reference-key generation, render metadata, and tests all need an intentional compatibility decision rather than only adding one ingestion branch.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked the broader storage recovery debt already accepted for Discord ingestion. This focused plan does not broaden the crash-before-upload recovery promise and only touches invocation caller uploads and outbound send_image, so the accepted Discord attachment URL/orphan limitation should not be re-flagged for this tranche.",
+          "flagged": false
+        }
+      ]
+    },
+    {
+      "id": "all_locations",
+      "question": "Does the change touch all locations AND supporting infrastructure?",
+      "findings": [
+        {
+          "detail": "Checked all event-kind definitions. `agent_kit/envelope.py` permits only `tool_call`, `activity`, `turn_start`, and `turn_end`; `agent_kit/envelope.schema.json` has the same enum; and `agent_kit/tool_kit.py` has a narrower `EventKind = Literal['tool_call', 'activity']`. Step 4 names `agent_kit/envelope.py` and tests, but misses schema and tool-kit registration/emission changes needed for a valid `attached_image` event.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked stream-event support for non-tool events. `audit_wrap()` appends and streams only the single event derived from the tool call after the tool function returns; if `send_image` appends an additional caller-facing `attached_image` event inside the tool body, current `on_event` streaming will not automatically emit it, so Step 4 needs explicit event-emitter plumbing, not only a new enum value.",
+          "flagged": true
+        },
+        {
+          "detail": "Checked CLI attachment support against current CLI store/model construction. `_turn()` only builds a store and model, with no local blob adapter for SQLite invocation mode; Step 7 notices CLI blob selection may be missing, but the must-have CLI `--attach` criterion cannot pass end-to-end unless the plan adds or selects a Blob implementation for CLI invocations.",
+          "flagged": true
+        }
+      ]
+    },
+    {
+      "id": "callers",
+      "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+      "findings": [
+        {
+          "detail": "Grep found `run_turn` is imported through `arnold`, `megaplan`, and `megaplan.arnold`, called directly in many tests, and wrapped by `arun_turn(*args, **kwargs)`. Adding an optional keyword-only `attachments=` to `run_turn` should be backwards-compatible for existing callers and will automatically pass through `arun_turn`; no existing positional-call breakage is apparent.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked callers of `PushTransport.post_message`: `send_message` passes `files=None`, `send_image` passes a list of file metadata, and fake transports in tests accept `files`. The plan's change to make `files` concrete upload payloads needs to keep `send_message`'s `None` path and fake transports working, but its protocol/fake-transport test step covers that integration point.",
+          "flagged": false
+        },
+        {
+          "detail": "Checked callers of image blob reads. `view_image` already constructs `BlobRef(epic_id=image['epic_id'], key=image['storage_url'], mime_type=...)`; `send_image` currently does not require `context.blob`. Step 3's requirement to fetch bytes via blob is in the right callee, but it must construct a `BlobRef` from the image row rather than passing `storage_url` directly to `Blob.get`.",
+          "flagged": true
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Image source compatibility: the plan uses `caller_uploaded` without explicitly updating the current images source enum, list_images schema, and related tests that only understand `user_uploaded`.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/store/migrations/sqlite/002_images.sql` checks `source IN ('agent_generated', 'user_uploaded')`; `agent_kit/tools/images.py` LIST_IMAGES_SCHEMA enum excludes `caller_uploaded`; the plan requires `source='caller_uploaded'` and `list_images(source='caller_uploaded')`."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Epicless invocation attachments: the plan preprocesses attachments before model execution but does not define behavior when CLI/Python invocation omits `epic_id`, even though current invocation mode supports that path for creating a new epic.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/loop.py` accepts `epic_id: str | None`; `arnold/cli.py` documents omitting `--epic` to start a new epic; image rows and blob paths are currently epic-scoped."
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Attached-image event plumbing: adding an `attached_image` event requires changes beyond `envelope.py`; otherwise schema validation, tool registration types, and `--stream-events` parity can break.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`agent_kit/envelope.schema.json` event enum excludes `attached_image`; `agent_kit/tool_kit.py` only permits `tool_call` and `activity`; `audit_wrap()` streams only `invocation.event`."
+    },
+    {
+      "id": "FLAG-004",
+      "concern": "CLI attachment baseline: repeatable `--attach` cannot be truly end-to-end under the existing SQLite CLI path unless a Blob adapter is provided or attachments are explicitly rejected for configurations without blob storage.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "`arnold/cli.py` builds `SQLiteStore(args.db)` and `AnthropicModel/FakeModel` only; no local blob implementation is present in `agent_kit/blob` besides Supabase storage."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

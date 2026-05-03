@@ -40,7 +40,7 @@
     },
     {
       "id": "T2",
-      "description": "Create/update .gitignore to exclude `.env`, `.env.local`, `supabase/.branches/*`. Add a cheap secrets guard (e.g. a pytest fixture, conftest hook, or a tiny `tests/test_no_leaked_secrets.py`) that greps the repo tree for the JWT prefix `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI` and fails if matched. Do NOT commit the literal JWT supplied in the idea block anywhere.",
+      "description": "Create/update .gitignore to exclude `.env`, `.env.local`, `supabase/.branches/*`. Add a cheap secrets guard (e.g. a pytest fixture, conftest hook, or a tiny `tests/test_no_leaked_secrets.py`) that greps the repo tree for the JWT prefix `[REDACTED_SUPABASE_JWT_PREFIX]` and fails if matched. Do NOT commit the literal JWT supplied in the idea block anywhere.",
       "depends_on": [
         "T22"
       ],
@@ -523,7 +523,7 @@
     },
     {
       "id": "T21",
-      "description": "Run the full test suite: `pytest`. Verify Sprint 1a tests pass UNCHANGED (`tests/test_envelope.py`, `tests/test_ledger.py`, `tests/test_run_turn.py`, `tests/test_cli.py`, `tests/test_tool_kit.py`, existing assertions in `tests/test_sqlite_store.py`). Verify the Sprint 1b unit, contract, and integration tests pass. Run a grep guard for the leaked JWT prefix `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI` over the entire tracked tree to confirm no literal secrets are committed. Confirm new modules `agent_kit/store/supabase.py`, `agent_kit/resident.py`, `agent_kit/transport/discord.py` are each \u2264400 lines (`wc -l`). If any test fails: read the error, fix the code, re-run until green. DO NOT modify test assertions to make tests pass.",
+      "description": "Run the full test suite: `pytest`. Verify Sprint 1a tests pass UNCHANGED (`tests/test_envelope.py`, `tests/test_ledger.py`, `tests/test_run_turn.py`, `tests/test_cli.py`, `tests/test_tool_kit.py`, existing assertions in `tests/test_sqlite_store.py`). Verify the Sprint 1b unit, contract, and integration tests pass. Run a grep guard for the leaked JWT prefix `[REDACTED_SUPABASE_JWT_PREFIX]` over the entire tracked tree to confirm no literal secrets are committed. Confirm new modules `agent_kit/store/supabase.py`, `agent_kit/resident.py`, `agent_kit/transport/discord.py` are each \u2264400 lines (`wc -l`). If any test fails: read the error, fix the code, re-run until green. DO NOT modify test assertions to make tests pass.",
       "depends_on": [
         "T22",
         "T1",

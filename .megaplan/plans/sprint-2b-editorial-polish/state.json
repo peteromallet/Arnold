@@ -28,32 +28,11 @@
     ]
   },
   "sessions": {
-    "codex_planner": {
-      "id": "019dde16-0397-7301-860a-3f170e2cdb1f",
-      "mode": "persistent",
-      "created_at": "2026-04-30T11:14:02Z",
-      "last_used_at": "2026-04-30T11:17:24Z",
-      "refreshed": false
-    },
-    "codex_critic": {
-      "id": "019dde18-8cbb-73f3-99d3-101476803237",
-      "mode": "persistent",
-      "created_at": "2026-04-30T11:15:56Z",
-      "last_used_at": "2026-04-30T11:15:56Z",
-      "refreshed": false
-    },
-    "codex_finalizer": {
-      "id": "019dde1b-a3fd-7d82-a110-e7e7e92858f4",
-      "mode": "persistent",
-      "created_at": "2026-04-30T11:18:44Z",
-      "last_used_at": "2026-04-30T11:18:44Z",
-      "refreshed": false
-    },
     "codex_executor": {
-      "id": "019dde1c-da1f-7c71-897e-a4896c13f971",
+      "id": "019dde6f-d064-7693-9796-b833982648f2",
       "mode": "persistent",
-      "created_at": "2026-04-30T11:21:00Z",
-      "last_used_at": "2026-04-30T12:01:51Z",
+      "created_at": "2026-04-30T12:53:16Z",
+      "last_used_at": "2026-04-30T12:53:16Z",
       "refreshed": false
     }
   },
@@ -207,6 +186,43 @@
       "output_file": "execution.json",
       "artifact_hash": "sha256:9980f122162cb28eacf3a442019998a1fbbe60cc5cf64613a12e9f8cd21d68c3",
       "finalize_hash": "sha256:43b1a855e107c7a4c1e288ebb965f2e2c53327e61b28d34c41777fe5854aa910",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T12:21:56Z",
+      "duration_ms": 46400,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde1c-da1f-7c71-897e-a4896c13f971",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:321bc526a44e248a7c63d1ce775109dffba88eb93dba7f5a40690b02616256bd",
+      "finalize_hash": "sha256:0ad10b9124b15e3bd5ab6cca6457700d764564c836266c34a40dfc957fd13afe",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T12:48:40Z",
+      "duration_ms": 0,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "execute_v2_raw.txt",
+      "message": "Output file tmp8bp9oc3d was not valid JSON and no fallback found"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T12:53:16Z",
+      "duration_ms": 232933,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde6f-d064-7693-9796-b833982648f2",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:56d64e250d22208976f77af9fbe4d573a25fb977f23d704e6a95b2d9e6cc5412",
+      "finalize_hash": "sha256:19876ecb90b9e4ccd01467604112f770f5cfb58fcfd0fdf130d39e034143c2ba",
       "approval_mode": "auto_approve"
     }
   ],

@@ -7,14 +7,16 @@ name = "arnold-v2"
 version = "0.1.0"
 description = "Arnold Discord planning bot core."
 readme = "planning-bot-spec.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "anthropic",
+    "openai",
     # Sprint 1b resident adapters: Discord gateway, Supabase Storage, Groq voice, and Postgres.
     "discord.py",
     "groq",
     "httpx",
     "psycopg[binary]>=3.1",
+    "resident-chat-runtime",
     "supabase",
 ]
 
@@ -44,3 +46,6 @@ python_files = ["test_*.py", "*_test.py"]
 markers = [
     "llm_eval: optional live or model-graded evaluation tests gated by ARNOLD_RUN_LLM_EVALS",
 ]
+
+[tool.uv.sources]
+resident-chat-runtime = { path = "resident_chat_runtime" }

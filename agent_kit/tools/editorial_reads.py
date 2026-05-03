@@ -20,6 +20,26 @@ EPIC_ID_SCHEMA = {
     },
 }
 
+GET_CHECKLIST_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["epic_id"],
+    "properties": {
+        "epic_id": {"type": "string"},
+        "status": {"type": ["string", "null"]},
+    },
+}
+
+RECENT_MESSAGES_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["epic_id"],
+    "properties": {
+        "epic_id": {"type": "string"},
+        "n": {"type": "integer"},
+    },
+}
+
 GET_EPIC_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -74,6 +94,37 @@ SEARCH_TOOL_CALLS_SCHEMA = {
     },
 }
 
+LIST_EPICS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "active_only": {"type": "boolean"},
+        "limit": {"type": "integer"},
+    },
+}
+
+SEARCH_EPICS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["query"],
+    "properties": {
+        "query": {"type": "string"},
+        "active_only": {"type": "boolean"},
+        "limit": {"type": "integer"},
+    },
+}
+
+SEARCH_MESSAGES_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["query"],
+    "properties": {
+        "query": {"type": "string"},
+        "epic_id": {"type": ["string", "null"]},
+        "limit": {"type": "integer"},
+    },
+}
+
 SEARCH_IN_BODY_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -100,7 +151,11 @@ def get_epic(
     if not epic:
         return {"error": "epic_not_found", "epic_id": epic_id}
     parsed = body.parse(str(epic.get("body") or ""))
-    return _epic_payload(epic, parsed, sections)
+    return _epic_payload(
+        {**epic, "sprints": context.store.list_sprints_with_items(epic_id)},
+        parsed,
+        sections,
+    )
 
 
 @register_tool(
@@ -156,6 +211,52 @@ def search_in_body(
 
 
 @register_tool(
+    "get_checklist",
+    schema=GET_CHECKLIST_SCHEMA,
+    operation_kind="read",
+)
+def get_checklist(
+    context: ToolContext,
+    epic_id: str,
+    status: str | None = None,
+) -> JSONDict:
+    return {
+        "epic_id": epic_id,
+        "status": status,
+        "checklist": context.store.list_checklist_items(epic_id, status=status),
+    }
+
+
+@register_tool(
+    "get_sprints",
+    schema=EPIC_ID_SCHEMA,
+    operation_kind="read",
+)
+def get_sprints(context: ToolContext, epic_id: str) -> JSONDict:
+    return {
+        "epic_id": epic_id,
+        "sprints": context.store.list_sprints_with_items(epic_id),
+    }
+
+
+@register_tool(
+    "recent_messages",
+    schema=RECENT_MESSAGES_SCHEMA,
+    operation_kind="read",
+)
+def recent_messages(context: ToolContext, epic_id: str, n: int = 10) -> JSONDict:
+    limit = max(0, min(n, 10))
+    messages = context.store.load_hot_context(epic_id).get("recent_messages") or []
+    return {
+        "epic_id": epic_id,
+        "requested_n": n,
+        "returned_n": min(limit, len(messages)),
+        "max_available": 10,
+        "recent_messages": messages[-limit:] if limit else [],
+    }
+
+
+@register_tool(
     "get_history",
     schema=GET_HISTORY_SCHEMA,
     operation_kind="read",
@@ -186,13 +287,27 @@ def get_self_understanding(context: ToolContext, epic_id: str) -> JSONDict:
     parsed = body.parse(str(epic.get("body") or ""))
     open_items = context.store.list_checklist_items(epic_id, status="open")
     events = context.store.list_epic_events(epic_id)
+    images = context.store.list_images(epic_id=epic_id, active=True)
+    second_opinions = [
+        event for event in events
+        if event.get("event_type") == "second_opinion_requested"
+    ]
     return {
+        "epic_id": epic_id,
         "goal": epic.get("goal") or parsed.goal_first_paragraph,
         "state": epic.get("state"),
         "open_checklist_count": len(open_items),
         "section_names": [section.name for section in parsed.sections],
-        "recent_events": list(reversed(events))[:3],
-        "note": "The full seven-section self-understanding structure lights up incrementally.",
+        "goal_and_current_state": {
+            "goal": epic.get("goal") or parsed.goal_first_paragraph,
+            "state": epic.get("state"),
+        },
+        "active_checklist_items": open_items,
+        "principles_captured": _section_content(parsed, ["principles", "constraints", "non-goals"]),
+        "recent_decisions": list(reversed(events))[:5],
+        "code_references": _section_content(parsed, ["code references", "implementation notes"]),
+        "recent_images": images[:5],
+        "recent_second_opinion_findings": list(reversed(second_opinions))[:5],
     }
 
 
@@ -212,6 +327,7 @@ def get_epic_at_time(context: ToolContext, epic_id: str, timestamp: str) -> JSON
         "goal": epic.get("goal"),
         "state": epic.get("state"),
         "checklist": context.store.list_checklist_items(epic_id),
+        "sprints": context.store.list_sprints_with_items(epic_id),
     }
     events = context.store.list_epic_events(epic_id)
     target = _parse_time(timestamp)
@@ -237,9 +353,16 @@ def get_epic_at_time(context: ToolContext, epic_id: str, timestamp: str) -> JSON
                     "body": prior_state.get("body", state["body"]),
                     "title": prior_state.get("title", state["title"]),
                     "goal": prior_state.get("goal", state["goal"]),
+                    "state": prior_state.get("state", state["state"]),
                     "checklist": prior_state.get("checklist", state["checklist"]),
+                    "sprints": prior_state.get("sprints", state["sprints"]),
                 }
             )
+        elif event_type in {"sprints_change", "sprint_status_change", "state_change", "forced_handoff"}:
+            if "state" in prior_state:
+                state["state"] = prior_state.get("state")
+            if "sprints" in prior_state:
+                state["sprints"] = prior_state.get("sprints", state["sprints"])
         elif event_type == "created":
             state.update(
                 {
@@ -258,11 +381,13 @@ def get_epic_at_time(context: ToolContext, epic_id: str, timestamp: str) -> JSON
             "goal": state["goal"],
             "body": state["body"],
             "state": state["state"],
+            "sprints": state["sprints"],
         },
         parsed,
         None,
     )
     payload["checklist"] = state["checklist"]
+    payload["sprints"] = state["sprints"]
     return payload
 
 
@@ -316,6 +441,61 @@ def search_tool_calls(
     }
 
 
+@register_tool(
+    "list_epics",
+    schema=LIST_EPICS_SCHEMA,
+    operation_kind="read",
+)
+def list_epics(
+    context: ToolContext,
+    active_only: bool = True,
+    limit: int = 20,
+) -> JSONDict:
+    return {"epics": context.store.list_epics(active_only=active_only, limit=limit)}
+
+
+@register_tool(
+    "search_epics",
+    schema=SEARCH_EPICS_SCHEMA,
+    operation_kind="read",
+)
+def search_epics(
+    context: ToolContext,
+    query: str,
+    active_only: bool = True,
+    limit: int = 20,
+) -> JSONDict:
+    return {
+        "query": query,
+        "epics": context.store.search_epics(
+            query=query,
+            active_only=active_only,
+            limit=limit,
+        ),
+    }
+
+
+@register_tool(
+    "search_messages",
+    schema=SEARCH_MESSAGES_SCHEMA,
+    operation_kind="read",
+)
+def search_messages(
+    context: ToolContext,
+    query: str,
+    epic_id: str | None = None,
+    limit: int = 20,
+) -> JSONDict:
+    return {
+        "query": query,
+        "messages": context.store.search_messages(
+            query=query,
+            epic_id=epic_id,
+            limit=limit,
+        ),
+    }
+
+
 def _epic_payload(
     epic: JSONDict,
     parsed: body.ParsedBody,
@@ -334,6 +514,8 @@ def _epic_payload(
         "sections": sections,
         "section_names": [section.name for section in parsed.sections],
         "state": epic.get("state"),
+        "planned_at": epic.get("planned_at"),
+        "sprints": epic.get("sprints", []),
     }
 
 
@@ -341,14 +523,29 @@ def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _section_content(parsed: body.ParsedBody, names: list[str]) -> list[JSONDict]:
+    wanted = {name.lower() for name in names}
+    return [
+        {"section": section.name, "content": section.content}
+        for section in parsed.sections
+        if section.name.lower() in wanted
+    ]
+
+
 __all__ = [
     "get_body_outline",
+    "get_checklist",
     "get_epic",
     "get_epic_at_time",
     "get_history",
     "get_recent_turns",
     "get_section_names",
     "get_self_understanding",
+    "get_sprints",
+    "list_epics",
+    "recent_messages",
     "search_in_body",
+    "search_epics",
+    "search_messages",
     "search_tool_calls",
 ]

@@ -1,0 +1,226 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Create the sibling shared package at `/Users/peteromalley/Documents/resident_chat_runtime` with Python `>=3.11` metadata and narrow infrastructure modules only: env diagnostics, async burst coalescing, Discord REST helpers, Discord gateway loop, discord.py channel adapter helpers including send/edit/file upload/typing/fetch, guarded async bridge, cached provider health checks, and startup diagnostics. Add focused package tests for those shared primitives using fakes and no Arnold or Veas domain imports.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T2",
+      "description": "Integrate the shared package into Arnold minimally. Refactor `agent_kit/transport/discord.py`, `agent_kit/resident.py`, and `arnold/cli.py` to reuse shared helpers while preserving Arnold domain behavior: real epic creation before inbound text/image/voice message insert, file upload sends, status edits, guarded sync-over-async failure from the Discord event loop, worker-thread resident turn execution when Discord owns the loop, and quiet Discord DM in-progress status behavior using typing instead of visible `Planning turn in progress.` messages. Update focused Arnold tests only where needed to lock these behaviors.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T3",
+      "description": "Integrate the shared package into Veas only where it reduces duplicated infrastructure. Refactor `app/services/discord.py` to use shared REST and gateway helpers while keeping Veas policy, partner mapping, whitelist behavior, DB writes, catch-up ingestion, edit/delete/reaction handlers, and delayed typing behavior unchanged. Wrap shared coalescing inside `app/services/debouncer.py` while preserving the existing public API and per-user concurrency semantics. Reuse shared cached provider health and startup diagnostics in `app/routers/health.py` and `app/main.py` without replacing Veas Pydantic settings or changing startup order. Update focused Veas tests only where needed to preserve behavior.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T4",
+      "description": "Wire the local path dependency in both repos. Add `resident-chat-runtime @ file:///Users/peteromalley/Documents/resident_chat_runtime` or an equivalent local path dependency to Arnold and Veas dependency metadata, preserving Arnold's Python `>=3.12` compatibility and Veas's Python `>=3.11` compatibility. Update lockfiles only if required by the repo workflow and only after imports are stable.",
+      "depends_on": [
+        "T1",
+        "T2",
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T5",
+      "description": "Run validation and produce the execution closeout. Run shared package tests, focused Arnold tests (`python -m pytest tests/test_discord_transport.py tests/test_resident.py tests/test_coalescer.py tests/test_status_lifecycle.py tests/test_communication_resident.py`), focused Veas tests (`python -m pytest tests/test_discord.py tests/test_debouncer.py tests/test_health.py tests/test_config.py`), then broader import smoke checks if focused tests pass. Also write a short throwaway script or scripts outside tracked test files to exercise the key runtime bug fixes, run them, and delete them. If any test fails, inspect the error, fix the code, and rerun until passing or report the concrete blocker. Final closeout must include plan name `shared-resident-chat-runtime`, files changed, tests run, and blockers if any.",
+      "depends_on": [
+        "T1",
+        "T2",
+        "T3",
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    }
+  ],
+  "watch_items": [
+    "Do not invoke the `megaplan` CLI, read or activate the `megaplan` skill, start nested plans, or edit `.megaplan/` artifacts; repository mentions of megaplan are implementation context only.",
+    "Both Arnold and Veas worktrees are dirty. Inspect relevant diffs before edits and preserve unrelated user changes; never revert or broad-format unrelated files.",
+    "The shared package must stay infrastructure-only. Do not move Arnold prompts, tools, schemas, resident domain loop, store models, ledger logic, persistence, Groq transcription, attachment persistence, or Veas mediation/policy/database logic into it.",
+    "The shared package must support Python 3.11. Avoid Python 3.12-only syntax and APIs even though Arnold itself requires Python 3.12.",
+    "Arnold Discord helpers must preserve channel send, send with files, edit status message, typing, channel resolution, and recent message fetch behavior. File upload and status edit regressions are high-risk.",
+    "Arnold inbound Discord text, image, and voice paths must create or reuse a real epic before inserting inbound messages.",
+    "Arnold must not call sync Discord transport methods from the Discord event loop. Same-loop sync-over-async misuse should fail loudly, and resident turn execution should remain isolated with worker-thread execution when needed.",
+    "Arnold Discord DM resident mode should suppress visible in-progress `Planning turn in progress.` messages and use typing for in-progress feedback; do not accidentally remove invocation-mode status behavior.",
+    "Veas must remain REST/gateway based and must keep existing behavior for outbound sends, typing, reactions, gateway ingestion, catch-up ingestion, message edit/delete handling, partner whitelist mapping, and delayed typing before processing accepted partner DMs.",
+    "Coalescing behavior must remain equivalent in both repos: rapid messages group, hard-cap timing flushes, existing Arnold `MessageCoalescer` and Veas `BurstCoalescer` public APIs continue to work.",
+    "Startup diagnostics and health checks must not log secrets or expose raw tokens. Use safe configured/missing status only.",
+    "Use local path dependency wiring that works from both `/Users/peteromalley/Documents/arnold-v2` and `/Users/peteromalley/Documents/Veas`; update lockfiles only if the local workflow requires it and succeeds.",
+    "Focused tests should run before broad suites so failures localize quickly. Do not mask focused failures with unrelated broad-suite noise.",
+    "Existing debt around Discord attachment storage reconciliation is out of scope; do not make it worse or promise deterministic recovery for crash-before-upload without durable payload source material."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Does the new shared package declare Python `>=3.11`, contain only generic resident-chat infrastructure primitives, and have focused tests proving env parsing, coalescing timing, async bridge guard behavior, Discord REST/header shaping, discord.py channel adapter send/edit/file behavior, gateway callback plumbing, health caching, and safe diagnostics?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "After Arnold integration, do tests and code inspection prove inbound text/image/voice still ensure a real epic before message insert, file uploads and status edits still reach Discord, same-loop sync Discord misuse fails loudly, resident turn execution stays off the Discord event loop, and Discord DM mode avoids visible in-progress status messages?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "After Veas integration, are policy/database/partner mapping behaviors still local to Veas, REST/gateway behavior equivalent, delayed typing preserved, the debouncer API unchanged, and health/startup changes limited to generic helper reuse?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Can both Arnold and Veas import `resident_chat_runtime` through the local path dependency without violating Veas's Python 3.11 floor or Arnold's Python 3.12 metadata?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Did the executor run the shared, Arnold focused, and Veas focused test commands plus applicable smoke checks, fix and rerun any failures, delete throwaway reproduction scripts, and report plan name, files changed, tests run, and blockers?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execution should proceed in the approved order: build the shared package first, integrate Arnold next because it carries the live correctness fixes, integrate Veas only where wrappers stay thin, then wire dependency metadata and validate. Treat the sibling package location `/Users/peteromalley/Documents/resident_chat_runtime` as the working default unless a real filesystem command fails. Keep the extraction boundary strict: shared code should be boring plumbing, while repo-specific persistence, policies, prompts, schemas, and product wording stay in their repos. Before editing each target file, inspect nearby existing changes so user-owned dirty work is preserved. Prefer small compatibility wrappers over broad rewrites, especially for `MessageCoalescer` and `BurstCoalescer`. The final closeout should be operational, not speculative: exact files changed, exact commands run, pass/fail status, and concrete blockers only.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Step 1: Add Python 3.11-compatible shared package skeleton and infrastructure modules",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 2: Add shared-package tests for env, coalescing, async bridge, Discord helpers, and health behavior",
+        "finalize_item_ids": [
+          "T1",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 3: Refactor Arnold Discord infrastructure while preserving real-epic, file upload, status edit, and async guard behavior",
+        "finalize_item_ids": [
+          "T2",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 4: Refactor Arnold coalescing and status behavior while preserving event-loop isolation and quiet DM mode",
+        "finalize_item_ids": [
+          "T2",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 5: Refactor Arnold env/startup diagnostics using shared helpers without exposing secrets",
+        "finalize_item_ids": [
+          "T2",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 6: Refactor Veas Discord REST and Gateway helpers while preserving Veas-specific handlers and policy",
+        "finalize_item_ids": [
+          "T3",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 7: Wrap shared coalescing in Veas `BurstCoalescer` while preserving public API and locks",
+        "finalize_item_ids": [
+          "T3",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 8: Reuse shared health/startup helpers in Veas while keeping Pydantic settings and startup order",
+        "finalize_item_ids": [
+          "T3",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 9: Add local path dependency in Arnold and Veas dependency metadata",
+        "finalize_item_ids": [
+          "T4",
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 10: Run focused tests in shared package, Arnold, and Veas",
+        "finalize_item_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 11: Run broader import/package smoke checks if focused tests pass",
+        "finalize_item_ids": [
+          "T5"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All approved plan steps are mapped to execution tasks. No human-only setup is required because secrets should be faked or absent in tests, the work is local code editing, and deploy/manual production smoke testing is not part of the approved scope. The final validation task explicitly includes the requested focused test commands, smoke checks, throwaway reproduction script requirement, and final closeout fields.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": [],
+  "baseline_test_command": "pytest --tb=no -q --no-header",
+  "baseline_test_note": "No baseline tests were run while preparing this execution briefing; tests are assigned to T5 after implementation."
+}

@@ -1,0 +1,104 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": [],
+  "criteria": [
+    {
+      "name": "SQLite and Supabase migrations create `sprints` and `sprint_items` with status checks, timestamps, item fields, and a partial unique constraint preventing duplicate queued `queue_position` per epic.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Store protocol plus SQLite and Supabase adapters expose sprint CRUD and sprint item replacement/listing, and common store contract tests pass for the new methods.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`edit_epic` accepts sprint changes and state transition changes instead of returning `not_yet_supported`, while preserving existing body/checklist edit behavior and audit wrapping.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Attempting `shaping -> sprinting` with a body under 500 characters fails with a structured blockers list unless `force: true` is supplied.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Force-through state advancement succeeds and records a `forced_handoff` event containing the bypassed blockers.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Sprint shaping writes proposed sprint rows and sprint items; lock-in moves every sprint to either `queued` with queue position or `pending` with a pending reason/default.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Every lifecycle path to `planned` requires at least one sprint, including decision-doc-shaped epics.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Post-handoff queue and reorder operations update sprint status/queue positions correctly, keep the epic planned, and record `sprint_status_change` audit events.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Completed invocation envelopes reload the actual post-turn epic state and include `state_transition` plus `sprint_changes` for Sprint 4 edits.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`get_epic` returns current sprints with items, and `get_epic_at_time` reconstructs sprint/status/state history from event replay.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Open-decisions lockdown scan blocks listed unresolved phrases outside `Open Questions`, ignores those phrases inside `Open Questions`, and ignores fenced code blocks.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Existing editorial loop, body parser, end-of-turn, envelope, read-tool, store, and Supabase adapter tests continue to pass after Sprint 4 changes.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Prompt updates tell Arnold to use the two-beat sprint lock-in flow, surface blockers with address/skip/force options, and use `edit_epic` for sprint queue/pending/reorder operations.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Sprint/gating helpers remain small, deterministic, and directly unit-tested rather than embedding natural-language parsing in persistence adapters.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Manual production Supabase migration against the provided project URL is coordinated separately; no service-role secret is committed or logged.",
+      "priority": "info",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Light robustness: review skipped; stub written for artifact parity.",
+  "task_verdicts": [],
+  "sense_check_verdicts": []
+}

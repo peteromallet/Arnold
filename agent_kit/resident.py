@@ -9,7 +9,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from resident_chat_runtime.coalescing import BurstBatch
+
 from agent_kit.envelope import Envelope, Event
+from agent_kit.epic_routing import select_epic_for_message
 from agent_kit.ledger import Ledger, Reconciler
 from agent_kit.loop import run_turn
 from agent_kit.ports import Blob, JSONDict, Model, PushTransport, Store
@@ -66,7 +69,11 @@ class MessageCoalescer:
             burst.timer.cancel()
         if epic_id in self.in_flight:
             return
-        asyncio.create_task(self._dispatch(epic_id, list(burst.message_ids)))
+        batch = BurstBatch(key=epic_id, items=tuple(burst.message_ids))
+        asyncio.create_task(self._dispatch_batch(batch))
+
+    async def _dispatch_batch(self, batch: BurstBatch[str, str]) -> None:
+        await self._dispatch(batch.key, list(batch.items))
 
     async def _dispatch(self, epic_id: str, message_ids: list[str]) -> None:
         result = self.dispatch(epic_id, message_ids)
@@ -102,35 +109,67 @@ class ResidentRunner:
         self.current_activity: dict[str, str] = {}
         self.last_status_edit_at: dict[str, float] = {}
         self.mid_turn_notes: dict[str, list[str]] = {}
+        self.previous_epic_by_channel: dict[str, str] = {}
         self._recovery_task: asyncio.Task | None = None
 
     def handle_transport_message(self, payload: JSONDict) -> None:
-        epic_id = str(payload["epic_id"])
-        message_id = str(payload.get("message_id") or payload["message_ids"][0])
+        message_ids = [str(message_id) for message_id in payload.get("message_ids") or []]
+        if not message_ids:
+            message_ids = [str(payload["message_id"])]
+            payload["message_ids"] = message_ids
+        message_id = str(payload.get("message_id") or message_ids[0])
+        original_epic_id = str(payload["epic_id"])
         channel_id = payload.get("channel_id")
+        rows = self.store.load_messages(message_ids)
+        content = "\n".join(str(row.get("content") or "") for row in rows)
+        decision = select_epic_for_message(
+            content,
+            self.store.list_epics(active_only=True, limit=50),
+            previous_epic_id=self.previous_epic_by_channel.get(str(channel_id or "")),
+        )
+        if decision.needs_clarification:
+            if channel_id is not None:
+                self.transport.post_message(
+                    str(channel_id),
+                    "Which epic should I use for this?",
+                )
+            return
+        epic_id = decision.epic_id or original_epic_id
+        if epic_id != original_epic_id:
+            for queued_message_id in message_ids:
+                self.store.update_message(queued_message_id, epic_id=epic_id)
+            payload["epic_id"] = epic_id
         if channel_id is not None:
             self.channel_ids[epic_id] = str(channel_id)
-        self.coalescer.add(epic_id, message_id)
+            self.previous_epic_by_channel[str(channel_id)] = epic_id
+        if decision.switch_announcement and channel_id is not None:
+            self.transport.post_message(str(channel_id), decision.switch_announcement)
+        for queued_message_id in message_ids:
+            self.coalescer.add(epic_id, queued_message_id)
 
     async def dispatch_turn(self, epic_id: str, message_ids: Sequence[str]) -> Envelope:
         self.coalescer.in_flight.add(epic_id)
         rows = self.store.load_messages(message_ids)
         try:
-            envelope = run_turn(
-                epic_id=epic_id,
-                input=_messages_prompt(rows),
-                store=self.store,
-                model=self.model,
-                model_id=self.model_id,
-                on_event=self._on_event,
-                triggered_by_message_ids=list(message_ids),
-                recovered_input_messages=rows,
-                on_turn_start=self._on_turn_start,
-                mid_turn_message_check=self._mid_turn_check,
-                transport=self.transport,
-                blob=self.blob,
-                channel_id=self.channel_ids.get(epic_id),
-            )
+            turn_kwargs = {
+                "epic_id": epic_id,
+                "input": _messages_prompt(rows),
+                "store": self.store,
+                "model": self.model,
+                "model_id": self.model_id,
+                "on_event": self._on_event,
+                "triggered_by_message_ids": list(message_ids),
+                "recovered_input_messages": rows,
+                "on_turn_start": self._on_turn_start,
+                "mid_turn_message_check": self._mid_turn_check,
+                "transport": self.transport,
+                "blob": self.blob,
+                "channel_id": self.channel_ids.get(epic_id),
+            }
+            if getattr(self.transport, "_loop", None) is not None:
+                envelope = await asyncio.to_thread(run_turn, **turn_kwargs)
+            else:
+                envelope = run_turn(**turn_kwargs)
             self.turn_rows[envelope.turn_id] = self.store.update_turn(envelope.turn_id)
             self._edit_status(envelope.turn_id, force=True)
             return envelope
@@ -162,6 +201,11 @@ class ResidentRunner:
     def _on_turn_start(self, turn: JSONDict) -> None:
         epic_id = str(turn["epic_id"])
         channel_id = self.channel_ids.get(epic_id, "")
+        if self._quiet_status_mode():
+            self.turn_rows[turn["id"]] = turn
+            if channel_id:
+                self.transport.set_typing(channel_id, True)
+            return
         content = format_status(turn, [], turn.get("current_activity"), _now_ts())
         request_id, _ = self.ledger.record_pending(
             provider="discord",
@@ -193,6 +237,11 @@ class ResidentRunner:
         updated = self.store.update_turn(turn["id"], status_message_id=message_id)
         self.turn_rows[turn["id"]] = updated
         self.status_message_ids[turn["id"]] = message_id
+
+    def _quiet_status_mode(self) -> bool:
+        return bool(getattr(self.transport, "quiet_status_updates", False)) or getattr(
+            self.transport, "_loop", None
+        ) is not None
 
     def _on_event(self, event: Event) -> None:
         if event.kind not in {"tool_call", "activity"}:

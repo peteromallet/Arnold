@@ -10,9 +10,12 @@ import sqlite3
 from typing import Any, Iterator, Sequence
 from uuid import uuid4
 
+from agent_kit.code_redaction import redact_code_secrets
+
 
 JSONDict = dict[str, Any]
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations" / "sqlite"
+_ACTIVE_EPIC_STATES = ("shaping", "sprinting", "planned", "paused")
 
 _JSON_COLUMNS = {
     "arguments",
@@ -26,10 +29,14 @@ _JSON_COLUMNS = {
     "request_body",
     "request_summary",
     "result",
+    "resulting_checklist_item_ids",
     "state_at_turn",
     "transcription_metadata",
     "triggered_by_message_ids",
     "warnings_issued",
+    "focus_areas",
+    "line_range",
+    "metadata",
 }
 
 
@@ -183,6 +190,24 @@ class SQLiteStore:
     def update_message(self, message_id: str, **changes: Any) -> JSONDict:
         return self._update("messages", "id", message_id, changes, _MESSAGE_COLUMNS, self.load_message)
 
+    def latest_outbound_message(self, *, epic_id: str | None = None) -> JSONDict | None:
+        clauses = ["direction = 'outbound'"]
+        params: list[Any] = []
+        if epic_id is not None:
+            clauses.append("epic_id = ?")
+            params.append(epic_id)
+        return _decode_row(
+            self._conn.execute(
+                f"""
+                SELECT * FROM messages
+                WHERE {' AND '.join(clauses)}
+                ORDER BY sent_at DESC, id DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        )
+
     def create_turn(
         self,
         *,
@@ -264,8 +289,8 @@ class SQLiteStore:
                 turn_id,
                 tool_name,
                 operation_kind,
-                _json_dumps(arguments),
-                _json_dumps(result),
+                _json_dumps(redact_code_secrets(arguments)),
+                _json_dumps(redact_code_secrets(result)),
                 duration_ms,
             ),
         )
@@ -298,7 +323,7 @@ class SQLiteStore:
                 category,
                 event_type,
                 message,
-                _json_dumps(details or {}),
+                _json_dumps(redact_code_secrets(details or {})),
                 turn_id,
                 epic_id,
             ),
@@ -363,6 +388,7 @@ class SQLiteStore:
         epic = None
         messages: list[JSONDict | None] = []
         tool_calls: list[JSONDict | None] = []
+        sprints: list[JSONDict] = []
         if epic_id is not None:
             epic = _decode_row(
                 self._conn.execute(
@@ -396,12 +422,41 @@ class SQLiteStore:
                     (epic_id,),
                 ).fetchall()
             ]
+            sprints = self.list_sprints_with_items(epic_id)
+            active_images = self.list_active_images(epic_id)
+            recent_second_opinions = self.list_second_opinions(epic_id, limit=2)
+        else:
+            active_images = []
+            recent_second_opinions = []
+        queued_count = sum(1 for sprint in sprints if sprint.get("status") == "queued")
+        pending_count = sum(1 for sprint in sprints if sprint.get("status") == "pending")
         return {
             "epic": epic,
             "recent_messages": list(reversed(messages)),
             "recent_tool_calls": list(reversed(tool_calls)),
             "active_feedback": self.list_feedback(epic_id=epic_id, active=True),
             "unresolved_observations": self.list_observations(resolved=False, limit=5),
+            "sprints": sprints,
+            "codebases": [
+                _hot_context_codebase(row)
+                for row in self.list_codebases(epic_id=epic_id, include_global=True)
+            ],
+            "recent_code_artifacts": [
+                _hot_context_code_artifact(row)
+                for row in self.list_code_artifacts(
+                    epic_id=epic_id,
+                    include_expired=False,
+                    limit=5,
+                )
+            ],
+            "active_images": [_hot_context_image(row) for row in active_images],
+            "recent_second_opinions": [
+                _hot_context_second_opinion(row)
+                for row in recent_second_opinions
+            ],
+            "all_sprints_pending_no_queued": bool(sprints)
+            and pending_count == len(sprints)
+            and queued_count == 0,
         }
 
     def find_unprocessed_messages(
@@ -637,6 +692,530 @@ class SQLiteStore:
     def update_image(self, image_id: str, **changes: Any) -> JSONDict:
         return self._update("images", "id", image_id, changes, _IMAGE_COLUMNS, self.load_image)
 
+    def list_active_images(self, epic_id: str) -> list[JSONDict]:
+        return self.list_images(epic_id=epic_id, active=True)
+
+    def load_active_image_by_reference(
+        self,
+        epic_id: str,
+        reference_key: str,
+    ) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                """
+                SELECT * FROM images
+                WHERE epic_id = ? AND reference_key = ? AND active = 1
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (epic_id, reference_key),
+            ).fetchone()
+        )
+
+    def active_image_reference_exists(self, epic_id: str, reference_key: str) -> bool:
+        row = self._conn.execute(
+            """
+            SELECT 1 FROM images
+            WHERE epic_id = ? AND reference_key = ? AND active = 1
+            LIMIT 1
+            """,
+            (epic_id, reference_key),
+        ).fetchone()
+        return row is not None
+
+    def deactivate_active_image_reference(
+        self,
+        epic_id: str,
+        reference_key: str,
+    ) -> list[JSONDict]:
+        rows = [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                """
+                SELECT * FROM images
+                WHERE epic_id = ? AND reference_key = ? AND active = 1
+                ORDER BY created_at DESC, id DESC
+                """,
+                (epic_id, reference_key),
+            ).fetchall()
+        ]
+        self._conn.execute(
+            """
+            UPDATE images
+            SET active = 0
+            WHERE epic_id = ? AND reference_key = ? AND active = 1
+            """,
+            (epic_id, reference_key),
+        )
+        self._commit_if_needed()
+        return rows
+
+    def create_second_opinion(
+        self,
+        *,
+        epic_id: str,
+        requested_by: str,
+        focus_areas: Sequence[str],
+        raw_response: str,
+        score: int,
+        summary: str,
+        verdict: str,
+        model_used: str,
+        resulting_checklist_item_ids: Sequence[str] | None = None,
+    ) -> JSONDict:
+        opinion_id = _new_id("opinion")
+        self._conn.execute(
+            """
+            INSERT INTO second_opinions (
+                id, epic_id, requested_by, focus_areas, raw_response, score,
+                summary, verdict, resulting_checklist_item_ids, model_used
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                opinion_id,
+                epic_id,
+                requested_by,
+                _json_dumps(list(focus_areas)),
+                raw_response,
+                int(score),
+                summary,
+                verdict,
+                _json_dumps(list(resulting_checklist_item_ids or [])),
+                model_used,
+            ),
+        )
+        self._commit_if_needed()
+        return self._load_second_opinion(opinion_id) or {}
+
+    def list_second_opinions(
+        self,
+        epic_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        limit_sql = "LIMIT ?" if limit is not None else ""
+        params: list[Any] = [epic_id]
+        if limit is not None:
+            params.append(int(limit))
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM second_opinions
+                WHERE epic_id = ?
+                ORDER BY requested_at DESC, id DESC
+                {limit_sql}
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def set_second_opinion_checklist_items(
+        self,
+        second_opinion_id: str,
+        checklist_item_ids: Sequence[str],
+    ) -> JSONDict:
+        self._conn.execute(
+            """
+            UPDATE second_opinions
+            SET resulting_checklist_item_ids = ?
+            WHERE id = ?
+            """,
+            (_json_dumps(list(checklist_item_ids)), second_opinion_id),
+        )
+        self._commit_if_needed()
+        return self._load_second_opinion(second_opinion_id) or {}
+
+    def create_codebase(
+        self,
+        *,
+        owner: str,
+        name: str,
+        default_branch: str,
+        scope: str = "global",
+        group_name: str | None = None,
+        associated_epic_id: str | None = None,
+        added_via: str = "manual",
+        verified_accessible_at: str | None = None,
+        notes: str | None = None,
+        codebase_id: str | None = None,
+    ) -> JSONDict:
+        normalized_owner, normalized_name = _normalize_repo_key(owner, name)
+        codebase_id = codebase_id or _new_id("codebase")
+        self._conn.execute(
+            """
+            INSERT INTO codebases (
+                id, owner, name, default_branch, scope, group_name,
+                associated_epic_id, added_via, verified_accessible_at, notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                codebase_id,
+                normalized_owner,
+                normalized_name,
+                default_branch,
+                scope,
+                group_name,
+                associated_epic_id,
+                added_via,
+                verified_accessible_at,
+                notes,
+            ),
+        )
+        self._commit_if_needed()
+        return self.load_codebase(codebase_id) or {}
+
+    def upsert_codebase(
+        self,
+        *,
+        owner: str,
+        name: str,
+        default_branch: str,
+        scope: str = "global",
+        group_name: str | None = None,
+        associated_epic_id: str | None = None,
+        added_via: str = "manual",
+        verified_accessible_at: str | None = None,
+        notes: str | None = None,
+    ) -> JSONDict:
+        existing = self.find_codebase(owner, name)
+        if existing is None:
+            return self.create_codebase(
+                owner=owner,
+                name=name,
+                default_branch=default_branch,
+                scope=scope,
+                group_name=group_name,
+                associated_epic_id=associated_epic_id,
+                added_via=added_via,
+                verified_accessible_at=verified_accessible_at,
+                notes=notes,
+            )
+        changes = {
+            "default_branch": default_branch,
+            "scope": scope,
+            "group_name": group_name,
+            "associated_epic_id": associated_epic_id,
+            "added_via": added_via,
+            "notes": notes,
+        }
+        if verified_accessible_at is not None:
+            changes["verified_accessible_at"] = verified_accessible_at
+        return self.update_codebase(str(existing["id"]), **changes)
+
+    def load_codebase(self, codebase_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM codebases WHERE id = ?",
+                (codebase_id,),
+            ).fetchone()
+        )
+
+    def find_codebase(self, owner: str, name: str) -> JSONDict | None:
+        normalized_owner, normalized_name = _normalize_repo_key(owner, name)
+        return _decode_row(
+            self._conn.execute(
+                """
+                SELECT * FROM codebases
+                WHERE owner = ? AND name = ?
+                ORDER BY added_at DESC, id DESC
+                LIMIT 1
+                """,
+                (normalized_owner, normalized_name),
+            ).fetchone()
+        )
+
+    def list_codebases(
+        self,
+        *,
+        scope: str | None = None,
+        group_name: str | None = None,
+        epic_id: str | None = None,
+        include_global: bool = True,
+    ) -> list[JSONDict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if scope is not None:
+            clauses.append("scope = ?")
+            params.append(scope)
+        if group_name is not None:
+            clauses.append("group_name = ?")
+            params.append(group_name)
+        if epic_id is not None:
+            if include_global:
+                clauses.append("(associated_epic_id = ? OR scope = 'global')")
+            else:
+                clauses.append("associated_epic_id = ?")
+            params.append(epic_id)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM codebases
+                {where_sql}
+                ORDER BY group_name IS NULL, group_name, owner, name
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def update_codebase(self, codebase_id: str, **changes: Any) -> JSONDict:
+        normalized = dict(changes)
+        if "owner" in normalized or "name" in normalized:
+            current = self.load_codebase(codebase_id) or {}
+            owner = str(normalized.get("owner", current.get("owner", "")))
+            name = str(normalized.get("name", current.get("name", "")))
+            normalized["owner"], normalized["name"] = _normalize_repo_key(owner, name)
+        return self._update("codebases", "id", codebase_id, normalized, _CODEBASE_COLUMNS, self.load_codebase)
+
+    def remove_codebase(self, codebase_id: str) -> None:
+        self._conn.execute("DELETE FROM codebases WHERE id = ?", (codebase_id,))
+        self._commit_if_needed()
+
+    def touch_codebase_accessed(
+        self,
+        codebase_id: str,
+        *,
+        accessed_at: str | None = None,
+    ) -> JSONDict:
+        return self.update_codebase(codebase_id, last_accessed_at=accessed_at or _now())
+
+    def mark_codebase_verified(
+        self,
+        codebase_id: str,
+        *,
+        verified_at: str | None = None,
+        default_branch: str | None = None,
+    ) -> JSONDict:
+        changes: dict[str, Any] = {"verified_accessible_at": verified_at or _now()}
+        if default_branch is not None:
+            changes["default_branch"] = default_branch
+        return self.update_codebase(codebase_id, **changes)
+
+    def create_code_artifact(
+        self,
+        *,
+        kind: str,
+        source: str,
+        content: str,
+        codebase_id: str | None = None,
+        epic_id: str | None = None,
+        file_path: str | None = None,
+        line_range: Any = None,
+        scope: str | None = None,
+        content_summary: str | None = None,
+        metadata: JSONDict | None = None,
+        expires_at: str | None = None,
+        artifact_id: str | None = None,
+    ) -> JSONDict:
+        artifact_id = artifact_id or _new_id("artifact")
+        safe_content = redact_code_secrets(content)
+        safe_summary = redact_code_secrets(content_summary)
+        safe_metadata = redact_code_secrets(metadata or {})
+        self._conn.execute(
+            """
+            INSERT INTO code_artifacts (
+                id, codebase_id, epic_id, kind, source, file_path, line_range,
+                scope, content, content_summary, metadata, expires_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                artifact_id,
+                codebase_id,
+                epic_id,
+                kind,
+                source,
+                file_path,
+                _json_dumps(line_range) if line_range is not None else None,
+                scope,
+                safe_content,
+                safe_summary,
+                _json_dumps(safe_metadata),
+                expires_at,
+            ),
+        )
+        self._commit_if_needed()
+        return self.load_code_artifact(artifact_id) or {}
+
+    def load_code_artifact(self, artifact_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM code_artifacts WHERE id = ?",
+                (artifact_id,),
+            ).fetchone()
+        )
+
+    def list_code_artifacts(
+        self,
+        *,
+        codebase_id: str | None = None,
+        epic_id: str | None = None,
+        kind: str | None = None,
+        source: str | None = None,
+        file_path: str | None = None,
+        scope: str | None = None,
+        include_expired: bool = True,
+        limit: int | None = 50,
+    ) -> list[JSONDict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if codebase_id is not None:
+            clauses.append("codebase_id = ?")
+            params.append(codebase_id)
+        if epic_id is not None:
+            clauses.append("epic_id = ?")
+            params.append(epic_id)
+        if kind is not None:
+            clauses.append("kind = ?")
+            params.append(kind)
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(source)
+        if file_path is not None:
+            clauses.append("file_path = ?")
+            params.append(file_path)
+        if scope is not None:
+            clauses.append("scope = ?")
+            params.append(scope)
+        if not include_expired:
+            clauses.append("(expires_at IS NULL OR expires_at > ?)")
+            params.append(_now())
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        limit_sql = "LIMIT ?" if limit is not None else ""
+        if limit is not None:
+            params.append(int(limit))
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                f"""
+                SELECT * FROM code_artifacts
+                {where_sql}
+                ORDER BY created_at DESC, id DESC
+                {limit_sql}
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def update_code_artifact(self, artifact_id: str, **changes: Any) -> JSONDict:
+        return self._update(
+            "code_artifacts",
+            "id",
+            artifact_id,
+            changes,
+            _CODE_ARTIFACT_COLUMNS,
+            self.load_code_artifact,
+        )
+
+    def delete_code_artifact(self, artifact_id: str) -> None:
+        self._conn.execute("DELETE FROM code_artifacts WHERE id = ?", (artifact_id,))
+        self._commit_if_needed()
+
+    def touch_code_artifact_used(
+        self,
+        artifact_id: str,
+        *,
+        used_at: str | None = None,
+    ) -> JSONDict:
+        return self.update_code_artifact(artifact_id, last_used_at=used_at or _now())
+
+    def get_api_cache(
+        self,
+        cache_key: str,
+        *,
+        now: str | None = None,
+        touch: bool = True,
+    ) -> JSONDict | None:
+        checked_at = now or _now()
+        row = _decode_row(
+            self._conn.execute(
+                """
+                SELECT * FROM code_artifacts
+                WHERE kind = 'api_cache'
+                  AND json_extract(metadata, '$.cache_key') = ?
+                  AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (cache_key, checked_at),
+            ).fetchone()
+        )
+        if row is not None and touch:
+            return self.touch_code_artifact_used(str(row["id"]), used_at=checked_at)
+        return row
+
+    def upsert_api_cache(
+        self,
+        *,
+        cache_key: str,
+        content: str,
+        content_summary: str | None = None,
+        metadata: JSONDict | None = None,
+        codebase_id: str | None = None,
+        epic_id: str | None = None,
+        file_path: str | None = None,
+        scope: str | None = None,
+        expires_at: str | None = None,
+        ttl_seconds: int = 3600,
+    ) -> JSONDict:
+        cache_metadata = {**(metadata or {}), "cache_key": cache_key}
+        expires_at = expires_at or _format_datetime(datetime.now(UTC) + timedelta(seconds=ttl_seconds))
+        existing = _decode_row(
+            self._conn.execute(
+                """
+                SELECT * FROM code_artifacts
+                WHERE kind = 'api_cache'
+                  AND json_extract(metadata, '$.cache_key') = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (cache_key,),
+            ).fetchone()
+        )
+        if existing is None:
+            return self.create_code_artifact(
+                kind="api_cache",
+                source="codebase",
+                content=content,
+                codebase_id=codebase_id,
+                epic_id=epic_id,
+                file_path=file_path,
+                scope=scope,
+                content_summary=content_summary,
+                metadata=cache_metadata,
+                expires_at=expires_at,
+            )
+        return self.update_code_artifact(
+            str(existing["id"]),
+            codebase_id=codebase_id,
+            epic_id=epic_id,
+            file_path=file_path,
+            scope=scope,
+            content=content,
+            content_summary=content_summary,
+            metadata=cache_metadata,
+            expires_at=expires_at,
+            last_used_at=_now(),
+        )
+
+    def cleanup_expired_api_cache(self, *, now: str | None = None) -> int:
+        checked_at = now or _now()
+        cursor = self._conn.execute(
+            """
+            DELETE FROM code_artifacts
+            WHERE kind = 'api_cache'
+              AND expires_at IS NOT NULL
+              AND expires_at < ?
+            """,
+            (checked_at,),
+        )
+        self._commit_if_needed()
+        return int(cursor.rowcount or 0)
+
     def create_epic(
         self,
         *,
@@ -663,6 +1242,95 @@ class SQLiteStore:
                 (epic_id,),
             ).fetchone()
         )
+
+    def list_epics(self, *, active_only: bool = True, limit: int = 20) -> list[JSONDict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if active_only:
+            clauses.append(f"state IN ({', '.join('?' for _ in _ACTIVE_EPIC_STATES)})")
+            params.extend(_ACTIVE_EPIC_STATES)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(limit))
+        return [
+            _epic_result(row)
+            for row in self._conn.execute(
+                f"""
+                SELECT epics.*,
+                       substr(body, 1, 240) AS snippet
+                FROM epics
+                {where_sql}
+                ORDER BY last_edited_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        ]
+
+    def search_epics(
+        self,
+        *,
+        query: str,
+        active_only: bool = True,
+        limit: int = 20,
+    ) -> list[JSONDict]:
+        like = f"%{query.lower()}%"
+        clauses = [
+            "(lower(title) LIKE ? OR lower(goal) LIKE ? OR lower(body) LIKE ?)"
+        ]
+        params: list[Any] = [like, like, like]
+        if active_only:
+            clauses.append(f"state IN ({', '.join('?' for _ in _ACTIVE_EPIC_STATES)})")
+            params.extend(_ACTIVE_EPIC_STATES)
+        params.append(int(limit))
+        return [
+            _epic_result(row)
+            for row in self._conn.execute(
+                f"""
+                SELECT epics.*,
+                       substr(body, 1, 240) AS snippet,
+                       CASE
+                         WHEN lower(title) LIKE ? THEN 3
+                         WHEN lower(goal) LIKE ? THEN 2
+                         ELSE 1
+                       END AS rank
+                FROM epics
+                WHERE {' AND '.join(clauses)}
+                ORDER BY rank DESC, last_edited_at DESC, id DESC
+                LIMIT ?
+                """,
+                [like, like, *params],
+            ).fetchall()
+        ]
+
+    def search_messages(
+        self,
+        *,
+        query: str,
+        epic_id: str | None = None,
+        limit: int = 20,
+    ) -> list[JSONDict]:
+        clauses: list[str] = []
+        params: list[Any] = [query]
+        if epic_id is not None:
+            clauses.append("messages.epic_id = ?")
+            params.append(epic_id)
+        where_sql = f"AND {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(limit))
+        rows = self._conn.execute(
+            f"""
+            SELECT messages.*,
+                   bm25(messages_fts) AS rank,
+                   snippet(messages_fts, 1, '[', ']', '...', 12) AS snippet
+            FROM messages_fts
+            JOIN messages ON messages.id = messages_fts.message_id
+            WHERE messages_fts MATCH ?
+            {where_sql}
+            ORDER BY rank, messages.sent_at DESC, messages.id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [_message_result(row) for row in rows]
 
     def update_epic(self, epic_id: str, **changes: Any) -> JSONDict:
         return self._update("epics", "id", epic_id, changes, _EPIC_COLUMNS, self.load_epic)
@@ -709,6 +1377,10 @@ class SQLiteStore:
 
     def add_checklist_items(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
         added: list[JSONDict] = []
+        max_position = self._conn.execute(
+            "SELECT COALESCE(MAX(position), 0) FROM checklist_items WHERE epic_id = ?",
+            (epic_id,),
+        ).fetchone()[0]
         for offset, item in enumerate(items, start=1):
             item_id = str(item.get("id") or _new_id("check"))
             self._conn.execute(
@@ -724,7 +1396,7 @@ class SQLiteStore:
                     epic_id,
                     item["content"],
                     item.get("status", "open"),
-                    item.get("position", offset),
+                    item.get("position", max_position + offset),
                     item.get("source", "bot_inferred"),
                     item.get("skip_reason"),
                     item.get("superseded_by_item_id"),
@@ -1016,6 +1688,120 @@ class SQLiteStore:
             ).fetchall()
         ]
 
+    def create_sprint(
+        self,
+        *,
+        epic_id: str,
+        sprint_number: int,
+        name: str,
+        goal: str,
+        status: str = "proposed",
+        queue_position: int | None = None,
+        pending_reason: str | None = None,
+        target_weeks: int = 2,
+    ) -> JSONDict:
+        sprint_id = _new_id("sprint")
+        self._conn.execute(
+            """
+            INSERT INTO sprints (
+                id, epic_id, sprint_number, name, goal, status, queue_position,
+                pending_reason, target_weeks, queued_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sprint_id,
+                epic_id,
+                int(sprint_number),
+                name,
+                goal,
+                status,
+                queue_position,
+                pending_reason,
+                int(target_weeks),
+                _now() if status == "queued" else None,
+            ),
+        )
+        self._commit_if_needed()
+        return self.load_sprint(sprint_id) or {}
+
+    def load_sprint(self, sprint_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute("SELECT * FROM sprints WHERE id = ?", (sprint_id,)).fetchone()
+        )
+
+    def list_sprints(self, epic_id: str) -> list[JSONDict]:
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                """
+                SELECT * FROM sprints
+                WHERE epic_id = ?
+                ORDER BY sprint_number, id
+                """,
+                (epic_id,),
+            ).fetchall()
+        ]
+
+    def update_sprint(self, sprint_id: str, **changes: Any) -> JSONDict:
+        normalized = dict(changes)
+        if normalized.get("status") == "queued" and "queued_at" not in normalized:
+            normalized["queued_at"] = _now()
+        if normalized:
+            normalized.setdefault("updated_at", _now())
+        return self._update("sprints", "id", sprint_id, normalized, _SPRINT_COLUMNS, self.load_sprint)
+
+    def delete_sprint(self, sprint_id: str) -> None:
+        self._conn.execute("DELETE FROM sprints WHERE id = ?", (sprint_id,))
+        self._commit_if_needed()
+
+    def replace_sprint_items(self, sprint_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        with self.transaction():
+            self._conn.execute("DELETE FROM sprint_items WHERE sprint_id = ?", (sprint_id,))
+            added: list[JSONDict] = []
+            for offset, item in enumerate(items, start=1):
+                item_id = str(item.get("id") or _new_id("sitem"))
+                self._conn.execute(
+                    """
+                    INSERT INTO sprint_items (
+                        id, sprint_id, content, estimated_complexity, status,
+                        source_section, position, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))
+                    """,
+                    (
+                        item_id,
+                        sprint_id,
+                        item["content"],
+                        item.get("estimated_complexity", "medium"),
+                        item.get("status", "open"),
+                        item.get("source_section"),
+                        int(item.get("position", offset)),
+                        item.get("created_at"),
+                    ),
+                )
+                added.append(self._load_sprint_item(item_id) or {})
+            return added
+
+    def list_sprint_items(self, sprint_id: str) -> list[JSONDict]:
+        return [
+            _decode_row(row) or {}
+            for row in self._conn.execute(
+                """
+                SELECT * FROM sprint_items
+                WHERE sprint_id = ?
+                ORDER BY position, id
+                """,
+                (sprint_id,),
+            ).fetchall()
+        ]
+
+    def list_sprints_with_items(self, epic_id: str) -> list[JSONDict]:
+        return [
+            {**sprint, "items": self.list_sprint_items(str(sprint["id"]))}
+            for sprint in self.list_sprints(epic_id)
+        ]
+
     def _next_invocation_message_id(self, turn_id: str) -> str:
         count = self._conn.execute(
             """
@@ -1027,11 +1813,12 @@ class SQLiteStore:
         return f"inv_{turn_id}_{count + 1}"
 
     def _next_image_reference_key(self, epic_id: str, source: str) -> str:
-        prefix = (
-            "img_user_upload"
-            if source == "user_uploaded"
-            else "img_agent"
-        )
+        if source == "user_uploaded":
+            prefix = "img_user_upload"
+        elif source == "caller_uploaded":
+            prefix = "img_caller_upload"
+        else:
+            prefix = "img_agent"
         rows = self._conn.execute(
             """
             SELECT reference_key FROM images
@@ -1077,6 +1864,20 @@ class SQLiteStore:
             ).fetchone()
         )
 
+    def _load_second_opinion(self, opinion_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM second_opinions WHERE id = ?",
+                (opinion_id,),
+            ).fetchone()
+        )
+
+    def _load_codebase(self, codebase_id: str) -> JSONDict | None:
+        return self.load_codebase(codebase_id)
+
+    def _load_code_artifact(self, artifact_id: str) -> JSONDict | None:
+        return self.load_code_artifact(artifact_id)
+
     def _load_checklist_item(self, item_id: str) -> JSONDict | None:
         return _decode_row(
             self._conn.execute(
@@ -1090,6 +1891,14 @@ class SQLiteStore:
             self._conn.execute(
                 "SELECT * FROM epic_events WHERE id = ?",
                 (event_id,),
+            ).fetchone()
+        )
+
+    def _load_sprint_item(self, item_id: str) -> JSONDict | None:
+        return _decode_row(
+            self._conn.execute(
+                "SELECT * FROM sprint_items WHERE id = ?",
+                (item_id,),
             ).fetchone()
         )
 
@@ -1108,7 +1917,7 @@ class SQLiteStore:
         if unknown:
             raise ValueError(f"unsupported {table} columns: {', '.join(sorted(unknown))}")
         normalized = {
-            key: _to_sql_value(key, value)
+            key: _to_sql_value(key, _redacted_update_value(table, key, value))
             for key, value in changes.items()
         }
         assignments = ", ".join(f"{key} = ?" for key in normalized)
@@ -1135,6 +1944,95 @@ def _decode_row(row: sqlite3.Row | None) -> JSONDict | None:
     return decoded
 
 
+def _epic_result(row: sqlite3.Row) -> JSONDict:
+    decoded = _decode_row(row) or {}
+    return {
+        "id": decoded.get("id"),
+        "title": decoded.get("title"),
+        "goal": decoded.get("goal"),
+        "state": decoded.get("state"),
+        "snippet": decoded.get("snippet"),
+        "created_at": decoded.get("created_at"),
+        "last_edited_at": decoded.get("last_edited_at"),
+        "last_active_at": decoded.get("last_active_at"),
+        "rank": decoded.get("rank"),
+        "disambiguation": {
+            "label": decoded.get("title"),
+            "updated": decoded.get("last_edited_at"),
+        },
+    }
+
+
+def _message_result(row: sqlite3.Row) -> JSONDict:
+    decoded = _decode_row(row) or {}
+    return {
+        "id": decoded.get("id"),
+        "epic_id": decoded.get("epic_id"),
+        "direction": decoded.get("direction"),
+        "snippet": decoded.get("snippet"),
+        "content": decoded.get("content"),
+        "sent_at": decoded.get("sent_at"),
+        "rank": decoded.get("rank"),
+        "disambiguation": {
+            "direction": decoded.get("direction"),
+            "sent_at": decoded.get("sent_at"),
+        },
+    }
+
+
+def _hot_context_image(row: JSONDict) -> JSONDict:
+    return {
+        "id": row.get("id"),
+        "reference_key": row.get("reference_key"),
+        "source": row.get("source"),
+        "description": row.get("description"),
+        "caption": row.get("caption"),
+        "storage_url": row.get("storage_url"),
+        "quality": row.get("quality"),
+        "size": row.get("size"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _hot_context_codebase(row: JSONDict) -> JSONDict:
+    return {
+        "id": row.get("id"),
+        "owner": row.get("owner"),
+        "name": row.get("name"),
+        "scope": row.get("scope"),
+        "group_name": row.get("group_name"),
+        "notes": row.get("notes"),
+        "verified_accessible_at": row.get("verified_accessible_at"),
+    }
+
+
+def _hot_context_code_artifact(row: JSONDict) -> JSONDict:
+    return {
+        "id": row.get("id"),
+        "kind": row.get("kind"),
+        "source": row.get("source"),
+        "file_path": row.get("file_path"),
+        "line_range": row.get("line_range"),
+        "scope": row.get("scope"),
+        "content_summary": row.get("content_summary"),
+        "metadata": row.get("metadata"),
+    }
+
+
+def _hot_context_second_opinion(row: JSONDict) -> JSONDict:
+    return {
+        "id": row.get("id"),
+        "requested_at": row.get("requested_at"),
+        "requested_by": row.get("requested_by"),
+        "focus_areas": row.get("focus_areas") or [],
+        "score": row.get("score"),
+        "summary": row.get("summary"),
+        "verdict": row.get("verdict"),
+        "model_used": row.get("model_used"),
+        "resulting_checklist_item_ids": row.get("resulting_checklist_item_ids") or [],
+    }
+
+
 def _to_sql_value(key: str, value: Any) -> Any:
     if key in _JSON_COLUMNS and value is not None:
         return _json_dumps(value)
@@ -1145,6 +2043,27 @@ def _to_sql_value(key: str, value: Any) -> Any:
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _redacted_update_value(table: str, key: str, value: Any) -> Any:
+    if table in {"tool_calls", "system_logs", "code_artifacts"} and key in {
+        "arguments",
+        "result",
+        "details",
+        "content",
+        "content_summary",
+        "metadata",
+    }:
+        return redact_code_secrets(value)
+    return value
+
+
+def _normalize_repo_key(owner: str, name: str) -> tuple[str, str]:
+    normalized_owner = owner.strip().lower()
+    normalized_name = name.strip().lower()
+    if not normalized_owner or not normalized_name:
+        raise ValueError("owner and name are required")
+    return normalized_owner, normalized_name
 
 
 def _new_id(prefix: str) -> str:
@@ -1203,6 +2122,35 @@ _IMAGE_COLUMNS = {
     "active",
     "discord_attachment_id",
 }
+_SECOND_OPINION_COLUMNS = {
+    "resulting_checklist_item_ids",
+}
+_CODEBASE_COLUMNS = {
+    "owner",
+    "name",
+    "default_branch",
+    "scope",
+    "group_name",
+    "associated_epic_id",
+    "added_via",
+    "last_accessed_at",
+    "verified_accessible_at",
+    "notes",
+}
+_CODE_ARTIFACT_COLUMNS = {
+    "codebase_id",
+    "epic_id",
+    "kind",
+    "source",
+    "file_path",
+    "line_range",
+    "scope",
+    "content",
+    "content_summary",
+    "metadata",
+    "last_used_at",
+    "expires_at",
+}
 _EPIC_COLUMNS = {
     "title",
     "goal",
@@ -1235,4 +2183,15 @@ _FEEDBACK_COLUMNS = {
     "resolved_at",
     "last_referenced_at",
     "last_applied_at",
+}
+_SPRINT_COLUMNS = {
+    "sprint_number",
+    "name",
+    "goal",
+    "status",
+    "queue_position",
+    "pending_reason",
+    "target_weeks",
+    "updated_at",
+    "queued_at",
 }

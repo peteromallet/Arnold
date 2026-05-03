@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"019dde91-065b-7462-a7b8-fe1e1e33809d"}
+{"type":"turn.started"}
+{"type":"error","message":"Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying."}
+{"type":"turn.failed","error":{"message":"Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying."}}
+2026-04-30T13:43:17.603266Z ERROR codex_core::session: failed to record rollout items: thread 019dde91-065b-7462-a7b8-fe1e1e33809d not found

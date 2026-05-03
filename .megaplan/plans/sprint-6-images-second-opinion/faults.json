@@ -1,0 +1,61 @@
+{
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "External effects: the plan does not adapt the existing external_requests ledger for generate_image/request_second_opinion, so the likely implementation will call OpenAI/Storage inside the tool body before an audited pending request exists.",
+      "category": "correctness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to explicitly cover result-dependent external effects with `external_requests` ledger rows for OpenAI and Storage, and to add a concrete `edit_epic` checklist-linking path so confirmed second-opinion checklist items update `second_opinions.resulting_checklist_item_ids`.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "Second-opinion checklist linking: the plan says confirmed checklist items can be linked back to the second_opinions row, but it does not add a source id to edit_epic or return created checklist item ids from the existing checklist workflow.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Revised the plan to explicitly cover result-dependent external effects with `external_requests` ledger rows for OpenAI and Storage, and to add a concrete `edit_epic` checklist-linking path so confirmed second-opinion checklist items update `second_opinions.resulting_checklist_item_ids`.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 7: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 13: requires human verification (inspect_runtime_ui, observe_runtime_logs).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    }
+  ]
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_kit.end_of_turn import ensure_reframing_suggestion
 from agent_kit.logging import log
 from agent_kit.tool_kit import ExternalSpec, ToolContext, register_tool
 
@@ -27,6 +28,15 @@ SET_ACTIVITY_SCHEMA = {
     "required": ["description"],
     "properties": {
         "description": {"type": "string"},
+    },
+}
+
+SET_TYPING_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["on"],
+    "properties": {
+        "on": {"type": "boolean"},
     },
 }
 
@@ -56,6 +66,10 @@ def send_message(
     attach_files: list[str] | None = None,
 ) -> str:
     del attach_files
+    content = ensure_reframing_suggestion(
+        content,
+        low_score_details=context.metadata.get("low_second_opinion"),
+    )
     context.reply_buffer.append(content)
     is_resident = context.transport is not None
     # Resident sends must wait for Discord confirmation before filling the external id.
@@ -134,6 +148,23 @@ def set_activity(context: ToolContext, description: str) -> dict[str, str]:
 
 
 @register_tool(
+    "set_typing",
+    schema=SET_TYPING_SCHEMA,
+    event_kind="tool_call",
+    operation_kind="write",
+)
+def set_typing(context: ToolContext, on: bool) -> dict[str, Any]:
+    if context.transport is None:
+        return {"typing": bool(on), "mode": "invocation", "noop": True}
+
+    channel_id = str(context.metadata.get("channel_id") or "")
+    set_typing_method = getattr(context.transport, "set_typing", None)
+    if callable(set_typing_method):
+        set_typing_method(channel_id, bool(on))
+    return {"typing": bool(on), "mode": "resident"}
+
+
+@register_tool(
     "defer_to_caller",
     schema=DEFER_TO_CALLER_SCHEMA,
     event_kind="tool_call",
@@ -155,7 +186,9 @@ __all__ = [
     "DEFER_TO_CALLER_SCHEMA",
     "SEND_MESSAGE_SCHEMA",
     "SET_ACTIVITY_SCHEMA",
+    "SET_TYPING_SCHEMA",
     "defer_to_caller",
     "send_message",
     "set_activity",
+    "set_typing",
 ]

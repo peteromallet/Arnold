@@ -1,0 +1,26 @@
+{
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Tool alias scope: `recent_messages` is not backed by a Store method that can honor `recent_messages(epic_id, n)`; the plan\u2019s proposed hot-context-backed alias would only return the fixed hot-context window, so larger `n` values would be silently truncated unless the spec explicitly defines that cap or the implementation uses an existing query path that can actually apply the requested limit.",
+      "category": "correctness",
+      "severity_hint": "likely-minor",
+      "evidence": "`planning-bot-spec.md` lists `recent_messages(epic_id, n)`. `agent_kit/store/sqlite.py::load_hot_context` and `agent_kit/store/supabase.py::load_hot_context` load recent messages with `LIMIT 10`, while `agent_kit/ports.py` exposes `search_messages` but no general recent-message listing method. The plan says to implement the alias as a thin read over hot-context/recent-message data and also says not to refactor Store/ports.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 9: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    }
+  ]
+}

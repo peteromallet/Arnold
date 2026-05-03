@@ -1,0 +1,49 @@
+{
+  "checks": [],
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Invocation envelope: state transitions and sprint deltas would remain invisible to callable clients. The plan wires edit_epic and end-of-turn checks, but does not update the turn envelope path; the current loop always returns state_after=state_before on successful turns, and StateDelta already has sprint_changes/state_transition fields that would stay empty.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "agent_kit/loop.py:497-505 constructs the completed envelope with state_after=state_before; agent_kit/envelope.py:27-32 defines sprint_changes and state_transition fields. Sprint 4 changes state to planned and queues/reorders sprints, so invocation-mode callers would not see the transition even if the DB write succeeds."
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "History/read tools: sprint state is not included in get_epic/get_epic_at_time replay. The plan adds hot-context loading and revert support, but omits the existing editorial read surface and time-travel reconstruction, so users and tests can inspect an epic without seeing its sprints, and replay cannot reconstruct sprint/status changes.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "agent_kit/tools/editorial_reads.py:94-103 returns _epic_payload from the epic body only, and _epic_payload at lines 319-337 has no sprints field. get_epic_at_time initializes only body/title/goal/state/checklist at lines 209-215 and replays only body_edit/checklist_change/reverted_to/created at lines 224-252, while planning-bot-spec.md:1030 says state is reconstructible by replaying events and lines 1392-1396 define sprints_change/state_change prior_state for revert/reconstruction."
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Lifecycle metadata: planned_at and all-pending hot-context flag are missing from the plan. The spec has an explicit Sprint 4 test for all-pending planned state requiring epics.planned_at to be set and hot context to show that nothing is queued, but the plan only says to update epic state and surface an end-of-turn warning.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "planning-bot-spec.md:2627-2632 requires state planned, epics.planned_at set, a hot-context flag for all sprints pending, and an explicit user-facing note. The current epics schema already has planned_at at agent_kit/store/migrations/sqlite/001_core.sql:8-12, but the plan's state/gating steps do not mention setting it or adding the all-pending flag to load_hot_context."
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 12: requires human verification (verify_physical_device).",
+      "category": "verifiability",
+      "severity_hint": "likely-minor",
+      "status": "open"
+    }
+  ],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": []
+}

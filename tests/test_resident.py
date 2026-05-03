@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
+from agent_kit.envelope import Envelope
 from agent_kit.ledger import Ledger, Reconciler
 from agent_kit.model import FakeModel
 from agent_kit.resident import MessageCoalescer, ResidentRunner, format_status
@@ -12,6 +14,7 @@ class FakePushTransport:
     def __init__(self) -> None:
         self.posts = []
         self.edits = []
+        self.typing = []
         self.handler = None
 
     def start(self, handler):
@@ -30,6 +33,10 @@ class FakePushTransport:
             {"channel_id": channel_id, "message_id": message_id, "content": content}
         )
         return {"discord_message_id": message_id, "content": content}
+
+    def set_typing(self, channel_id, on):
+        self.typing.append({"channel_id": channel_id, "on": on})
+        return {"channel_id": channel_id, "typing": on}
 
     def download_attachment(self, url):
         return b""
@@ -75,6 +82,155 @@ def test_message_coalescer_flushes_burst_after_reset_window() -> None:
         coalescer.add("epic_1", "msg_2")
         await asyncio.sleep(0.03)
         assert dispatched == [("epic_1", ["msg_1", "msg_2"])]
+
+    asyncio.run(scenario())
+
+
+def test_resident_runner_uses_worker_thread_when_transport_owns_loop(tmp_path, monkeypatch) -> None:
+    async def scenario():
+        store, conn = create_store(tmp_path / "arnold.db")
+        insert_epic(conn)
+        message = store.create_message(
+            epic_id="epic_1",
+            direction="inbound",
+            content="hello",
+            discord_message_id="discord_in_1",
+        )
+        transport = FakePushTransport()
+        transport._loop = asyncio.get_running_loop()
+        loop_thread_id = threading.get_ident()
+        run_turn_thread_ids = []
+        turn = store.create_turn(
+            epic_id="epic_1",
+            triggered_by_message_ids=[message["id"]],
+        )
+
+        def fake_run_turn(**kwargs):
+            run_turn_thread_ids.append(threading.get_ident())
+            return Envelope(
+                turn_id=turn["id"],
+                epic_id=kwargs["epic_id"],
+                epic_state_before="shaping",
+                epic_state_after="shaping",
+                reply="",
+            )
+
+        monkeypatch.setattr("agent_kit.resident.run_turn", fake_run_turn)
+        runner = ResidentRunner(
+            store=store,
+            model=FakeModel(script=[{"final_text": "unused"}]),
+            model_id="fake",
+            transport=transport,
+            blob=None,
+            ledger=Ledger(store),
+            reconciler=Reconciler(store),
+            status_debounce_seconds=0,
+        )
+        runner.channel_ids["epic_1"] = "channel_1"
+
+        await runner.dispatch_turn("epic_1", [message["id"]])
+
+        assert run_turn_thread_ids
+        assert run_turn_thread_ids[0] != loop_thread_id
+
+    asyncio.run(scenario())
+
+
+def test_resident_runner_quiet_discord_mode_uses_typing_without_status_post(tmp_path, monkeypatch) -> None:
+    async def scenario():
+        store, conn = create_store(tmp_path / "arnold.db")
+        insert_epic(conn)
+        message = store.create_message(
+            epic_id="epic_1",
+            direction="inbound",
+            content="hello",
+            discord_message_id="discord_in_1",
+        )
+        transport = FakePushTransport()
+        transport._loop = asyncio.get_running_loop()
+        turn = store.create_turn(
+            epic_id="epic_1",
+            triggered_by_message_ids=[message["id"]],
+        )
+
+        def fake_run_turn(**kwargs):
+            kwargs["on_turn_start"](turn)
+            return Envelope(
+                turn_id=turn["id"],
+                epic_id=kwargs["epic_id"],
+                epic_state_before="shaping",
+                epic_state_after="shaping",
+                reply="",
+            )
+
+        runner = ResidentRunner(
+            store=store,
+            model=FakeModel(script=[{"final_text": "resident reply"}]),
+            model_id="fake",
+            transport=transport,
+            blob=None,
+            ledger=Ledger(store),
+            reconciler=Reconciler(store),
+            status_debounce_seconds=0,
+        )
+        runner.channel_ids["epic_1"] = "channel_1"
+
+        monkeypatch.setattr("agent_kit.resident.run_turn", fake_run_turn)
+        await runner.dispatch_turn("epic_1", [message["id"]])
+
+        assert transport.typing == [{"channel_id": "channel_1", "on": True}]
+        assert all("Planning turn in progress" not in post["content"] for post in transport.posts)
+        assert transport.posts == []
+        assert transport.edits == []
+
+    asyncio.run(scenario())
+
+
+def test_resident_runner_quiet_status_flag_uses_typing_without_status_post(tmp_path, monkeypatch) -> None:
+    async def scenario():
+        store, conn = create_store(tmp_path / "arnold.db")
+        insert_epic(conn)
+        message = store.create_message(
+            epic_id="epic_1",
+            direction="inbound",
+            content="hello",
+            discord_message_id="discord_in_1",
+        )
+        transport = FakePushTransport()
+        transport.quiet_status_updates = True
+        turn = store.create_turn(
+            epic_id="epic_1",
+            triggered_by_message_ids=[message["id"]],
+        )
+
+        def fake_run_turn(**kwargs):
+            kwargs["on_turn_start"](turn)
+            return Envelope(
+                turn_id=turn["id"],
+                epic_id=kwargs["epic_id"],
+                epic_state_before="shaping",
+                epic_state_after="shaping",
+                reply="",
+            )
+
+        runner = ResidentRunner(
+            store=store,
+            model=FakeModel(script=[{"final_text": "resident reply"}]),
+            model_id="fake",
+            transport=transport,
+            blob=None,
+            ledger=Ledger(store),
+            reconciler=Reconciler(store),
+            status_debounce_seconds=0,
+        )
+        runner.channel_ids["epic_1"] = "channel_1"
+
+        monkeypatch.setattr("agent_kit.resident.run_turn", fake_run_turn)
+        await runner.dispatch_turn("epic_1", [message["id"]])
+
+        assert transport.typing == [{"channel_id": "channel_1", "on": True}]
+        assert transport.posts == []
+        assert transport.edits == []
 
     asyncio.run(scenario())
 

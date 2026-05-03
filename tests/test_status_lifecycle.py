@@ -45,6 +45,17 @@ def test_status_lifecycle_posts_initial_edits_tools_and_final_done(tmp_path) -> 
         assert 1 <= len(transport.edits) <= 4
         assert "✅ Done. 3 tool calls." in transport.edits[-1]["content"]
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 3
+        message_rows = conn.execute(
+            "SELECT direction, content, discord_message_id FROM messages ORDER BY rowid"
+        ).fetchall()
+        assert [(row["direction"], row["content"]) for row in message_rows] == [
+            ("inbound", "run tools"),
+            ("outbound", "done"),
+        ]
+        assert all(
+            "Planning turn in progress" not in row["content"] for row in message_rows
+        )
+        assert message_rows[-1]["discord_message_id"] == "discord_2"
 
     asyncio.run(scenario())
 

@@ -43,6 +43,14 @@ class BlobRef:
 
 
 @dataclass(frozen=True)
+class FileUpload:
+    filename: str
+    content: bytes
+    mime_type: str
+    metadata: JSONDict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ToolRequest:
     name: str
     arguments: JSONDict
@@ -98,6 +106,13 @@ class Store(Protocol):
         ...
 
     def update_message(self, message_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def latest_outbound_message(
+        self,
+        *,
+        epic_id: str | None = None,
+    ) -> JSONDict | None:
         ...
 
     def create_turn(
@@ -246,6 +261,203 @@ class Store(Protocol):
     def update_image(self, image_id: str, **changes: Any) -> JSONDict:
         ...
 
+    def list_active_images(self, epic_id: str) -> list[JSONDict]:
+        ...
+
+    def load_active_image_by_reference(
+        self,
+        epic_id: str,
+        reference_key: str,
+    ) -> JSONDict | None:
+        ...
+
+    def active_image_reference_exists(self, epic_id: str, reference_key: str) -> bool:
+        ...
+
+    def deactivate_active_image_reference(
+        self,
+        epic_id: str,
+        reference_key: str,
+    ) -> list[JSONDict]:
+        ...
+
+    def create_second_opinion(
+        self,
+        *,
+        epic_id: str,
+        requested_by: str,
+        focus_areas: Sequence[str],
+        raw_response: str,
+        score: int,
+        summary: str,
+        verdict: str,
+        model_used: str,
+        resulting_checklist_item_ids: Sequence[str] | None = None,
+    ) -> JSONDict:
+        ...
+
+    def list_second_opinions(
+        self,
+        epic_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[JSONDict]:
+        ...
+
+    def set_second_opinion_checklist_items(
+        self,
+        second_opinion_id: str,
+        checklist_item_ids: Sequence[str],
+    ) -> JSONDict:
+        ...
+
+    def create_codebase(
+        self,
+        *,
+        owner: str,
+        name: str,
+        default_branch: str,
+        scope: str = "global",
+        group_name: str | None = None,
+        associated_epic_id: str | None = None,
+        added_via: str = "manual",
+        verified_accessible_at: str | None = None,
+        notes: str | None = None,
+        codebase_id: str | None = None,
+    ) -> JSONDict:
+        ...
+
+    def upsert_codebase(
+        self,
+        *,
+        owner: str,
+        name: str,
+        default_branch: str,
+        scope: str = "global",
+        group_name: str | None = None,
+        associated_epic_id: str | None = None,
+        added_via: str = "manual",
+        verified_accessible_at: str | None = None,
+        notes: str | None = None,
+    ) -> JSONDict:
+        ...
+
+    def load_codebase(self, codebase_id: str) -> JSONDict | None:
+        ...
+
+    def find_codebase(self, owner: str, name: str) -> JSONDict | None:
+        ...
+
+    def list_codebases(
+        self,
+        *,
+        scope: str | None = None,
+        group_name: str | None = None,
+        epic_id: str | None = None,
+        include_global: bool = True,
+    ) -> list[JSONDict]:
+        ...
+
+    def update_codebase(self, codebase_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def remove_codebase(self, codebase_id: str) -> None:
+        ...
+
+    def touch_codebase_accessed(
+        self,
+        codebase_id: str,
+        *,
+        accessed_at: str | None = None,
+    ) -> JSONDict:
+        ...
+
+    def mark_codebase_verified(
+        self,
+        codebase_id: str,
+        *,
+        verified_at: str | None = None,
+        default_branch: str | None = None,
+    ) -> JSONDict:
+        ...
+
+    def create_code_artifact(
+        self,
+        *,
+        kind: str,
+        source: str,
+        content: str,
+        codebase_id: str | None = None,
+        epic_id: str | None = None,
+        file_path: str | None = None,
+        line_range: Any = None,
+        scope: str | None = None,
+        content_summary: str | None = None,
+        metadata: JSONDict | None = None,
+        expires_at: str | None = None,
+        artifact_id: str | None = None,
+    ) -> JSONDict:
+        ...
+
+    def load_code_artifact(self, artifact_id: str) -> JSONDict | None:
+        ...
+
+    def list_code_artifacts(
+        self,
+        *,
+        codebase_id: str | None = None,
+        epic_id: str | None = None,
+        kind: str | None = None,
+        source: str | None = None,
+        file_path: str | None = None,
+        scope: str | None = None,
+        include_expired: bool = True,
+        limit: int | None = 50,
+    ) -> list[JSONDict]:
+        ...
+
+    def update_code_artifact(self, artifact_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def delete_code_artifact(self, artifact_id: str) -> None:
+        ...
+
+    def touch_code_artifact_used(
+        self,
+        artifact_id: str,
+        *,
+        used_at: str | None = None,
+    ) -> JSONDict:
+        ...
+
+    def get_api_cache(
+        self,
+        cache_key: str,
+        *,
+        now: str | None = None,
+        touch: bool = True,
+    ) -> JSONDict | None:
+        ...
+
+    def upsert_api_cache(
+        self,
+        *,
+        cache_key: str,
+        content: str,
+        content_summary: str | None = None,
+        metadata: JSONDict | None = None,
+        codebase_id: str | None = None,
+        epic_id: str | None = None,
+        file_path: str | None = None,
+        scope: str | None = None,
+        expires_at: str | None = None,
+        ttl_seconds: int = 3600,
+    ) -> JSONDict:
+        ...
+
+    def cleanup_expired_api_cache(self, *, now: str | None = None) -> int:
+        ...
+
     def create_epic(
         self,
         *,
@@ -257,6 +469,32 @@ class Store(Protocol):
         ...
 
     def load_epic(self, epic_id: str) -> JSONDict | None:
+        ...
+
+    def list_epics(
+        self,
+        *,
+        active_only: bool = True,
+        limit: int = 20,
+    ) -> list[JSONDict]:
+        ...
+
+    def search_epics(
+        self,
+        *,
+        query: str,
+        active_only: bool = True,
+        limit: int = 20,
+    ) -> list[JSONDict]:
+        ...
+
+    def search_messages(
+        self,
+        *,
+        query: str,
+        epic_id: str | None = None,
+        limit: int = 20,
+    ) -> list[JSONDict]:
         ...
 
     def update_epic(self, epic_id: str, **changes: Any) -> JSONDict:
@@ -369,6 +607,41 @@ class Store(Protocol):
     ) -> list[JSONDict]:
         ...
 
+    def create_sprint(
+        self,
+        *,
+        epic_id: str,
+        sprint_number: int,
+        name: str,
+        goal: str,
+        status: str = "proposed",
+        queue_position: int | None = None,
+        pending_reason: str | None = None,
+        target_weeks: int = 2,
+    ) -> JSONDict:
+        ...
+
+    def load_sprint(self, sprint_id: str) -> JSONDict | None:
+        ...
+
+    def list_sprints(self, epic_id: str) -> list[JSONDict]:
+        ...
+
+    def update_sprint(self, sprint_id: str, **changes: Any) -> JSONDict:
+        ...
+
+    def delete_sprint(self, sprint_id: str) -> None:
+        ...
+
+    def replace_sprint_items(self, sprint_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
+        ...
+
+    def list_sprint_items(self, sprint_id: str) -> list[JSONDict]:
+        ...
+
+    def list_sprints_with_items(self, epic_id: str) -> list[JSONDict]:
+        ...
+
 
 class Model(Protocol):
     """Model adapter boundary.
@@ -391,10 +664,54 @@ class Model(Protocol):
         ...
 
 
-class Blob(Protocol):
-    """Blob storage port only; Sprint 1a intentionally ships no implementation."""
+@dataclass(frozen=True)
+class OpenAIImageResult:
+    content: bytes
+    mime_type: str = "image/png"
+    provider_request_id: str | None = None
+    response_summary: JSONDict | None = None
 
-    def put(self, epic_id: str, content: bytes, mime_type: str) -> BlobRef:
+
+@dataclass(frozen=True)
+class OpenAISecondOpinionResult:
+    raw_response: str
+    provider_request_id: str | None = None
+    response_summary: JSONDict | None = None
+
+
+class OpenAIOps(Protocol):
+    """Narrow OpenAI operations boundary used by tools."""
+
+    def generate_image(
+        self,
+        *,
+        prompt: str,
+        quality: str,
+        size: str,
+        idempotency_key: str,
+    ) -> OpenAIImageResult:
+        ...
+
+    def request_second_opinion(
+        self,
+        *,
+        payload: JSONDict,
+        idempotency_key: str,
+    ) -> OpenAISecondOpinionResult:
+        ...
+
+
+class Blob(Protocol):
+    """Blob storage port."""
+
+    def put(
+        self,
+        epic_id: str,
+        content: bytes,
+        mime_type: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> BlobRef:
         ...
 
     def get(self, ref: BlobRef) -> bytes:
@@ -418,7 +735,7 @@ class PushTransport(Protocol):
         channel_id: str,
         content: str,
         *,
-        files: Sequence[JSONDict] | None = None,
+        files: Sequence[FileUpload] | None = None,
     ) -> JSONDict:
         ...
 
@@ -428,6 +745,9 @@ class PushTransport(Protocol):
         message_id: str,
         content: str,
     ) -> JSONDict:
+        ...
+
+    def set_typing(self, channel_id: str, on: bool) -> JSONDict:
         ...
 
     def download_attachment(self, url: str) -> bytes:

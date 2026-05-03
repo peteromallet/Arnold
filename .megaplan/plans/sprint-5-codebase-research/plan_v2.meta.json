@@ -1,0 +1,148 @@
+{
+  "version": 2,
+  "timestamp": "2026-04-30T13:22:45Z",
+  "hash": "sha256:2db1dda47b3b93723a1586035366d32d7dcc11580422a999d0d51f9e66e413dc",
+  "changes_summary": "Addressed the security critique by adding an explicit code-content redaction phase before GitHub code is returned, cached, logged, or persisted, plus tests that assert secret-like fixture values never appear in tool results, artifacts, logs, or replayed cache content.",
+  "flags_addressed": [
+    "FLAG-001"
+  ],
+  "questions": [
+    "Should `remove_codebase` hard-delete rows, mark them inactive, or only detach them from an epic while retaining global rows and artifacts? The current spec names removal but does not define retention semantics.",
+    "Should `analyze_code` call the configured model internally for summaries, or produce deterministic extractive summaries in v1 tests with model-backed behavior only through the normal turn loop? This changes both implementation boundaries and test fixtures.",
+    "What production scheduler should run cache cleanup: Supabase scheduled function/pg_cron, Railway cron, or a manually invoked script? The plan includes a script entry point, but the deployment mechanism is not pinned in the repo."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "SQLite and Supabase migrations create `codebases` and `code_artifacts` with the specified columns, constraints, and indexes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Store adapters can add, list, filter, update, and cache codebases/artifacts consistently across SQLite and Supabase implementations.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`add_codebase` lowercases owner/name, verifies GitHub repo metadata, stores `default_branch`, and sets `verified_accessible_at` on success.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Populator reports inaccessible repos explicitly and creates verified rows for mocked `peteromallet` and `banodoco` org listings.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`get_codebase_tree`, `search_code`, and `read_codebase_file` return expected data against mocked GitHub responses and handle 404s without deleting cached artifacts.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Fetched source content is redacted before it appears in model-visible tool results, `tool_calls.result`, `code_artifacts.content`, `system_logs.details`, or cache replay.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Redaction tests cover OpenAI-style keys, GitHub tokens, AWS keys/secrets, and high-entropy hex-like values in fetched code fixtures.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`analyze_code` accepts multiple `codebase_ids` and returns analysis that names or otherwise covers every referenced codebase in the fixture scenario.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Repeating the same `analyze_code` request within one hour is served from `code_artifacts` cache with no additional GitHub API call in tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "GitHub rate-limit usage at or above 80% records a `system_logs` row with `level='warn'` and `category='external_api'` without including sensitive request content.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The full investigation chain test passes: tree, search, read, save excerpt, and mark code in body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The code tools are registered in the turn loop and appear in model tool definitions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Implementation keeps GitHub API concerns isolated in a small client/cache layer rather than embedding raw HTTP calls across tools.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Prompt/hot-context additions include available codebases and recent redacted artifact summaries without loading large code content into every turn.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Operational cache cleanup has a documented command or callable that can be scheduled in production.",
+      "priority": "info",
+      "requires": [
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Use `GITHUB_PAT` as the required environment variable, matching the spec; unauthenticated GitHub access is not supported.",
+    "Use `httpx`, already present in project dependencies, for GitHub REST calls.",
+    "Implement tests with mocked GitHub responses only; do not hit real GitHub or Supabase during normal test runs.",
+    "Keep `code_artifacts.kind='api_cache'` transient with one-hour TTL and preserve `excerpt`/`summary` artifacts unless explicitly removed by a future product decision.",
+    "Treat `mark_code_in_body` as a durable artifact marker plus audit event; actual body text insertion should happen through the existing `edit_epic` tool.",
+    "Use SQLite as the cheapest validation path first, then mirror behavior into Supabase adapter tests where existing test infrastructure supports it.",
+    "Secret-like content in fetched source should be masked before persistence rather than encrypted or retained raw, because the bot only needs to reason about surrounding code structure and should not replay secrets to the model."
+  ],
+  "delta_from_previous_percent": 15.06,
+  "structure_warnings": []
+}

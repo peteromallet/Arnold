@@ -140,6 +140,7 @@
           "enum": [
             "tool_call",
             "activity",
+            "attached_image",
             "turn_start",
             "turn_end"
           ]

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from agent_kit.end_of_turn import EndOfTurnToolCall, evaluate_end_of_turn
+from agent_kit.end_of_turn import (
+    LOW_SECOND_OPINION_REFRAMING_SUGGESTION,
+    EndOfTurnToolCall,
+    ensure_reframing_suggestion,
+    evaluate_end_of_turn,
+)
 
 
 def test_end_of_turn_reports_all_five_check_categories() -> None:
@@ -90,3 +95,32 @@ def test_end_of_turn_body_and_checklist_progress_clear_expected_findings() -> No
     assert "checklist_stall" not in {finding.category for finding in decision.findings}
     assert decision.should_error_empty_response is False
     assert decision.should_send_default_acknowledgment is False
+
+
+def test_low_second_opinion_score_requires_reframing_suggestion() -> None:
+    tool_calls = [
+        EndOfTurnToolCall(
+            name="request_second_opinion",
+            operation_kind="write",
+            result={"score": 4, "verdict": "not ready"},
+        )
+    ]
+    decision = evaluate_end_of_turn(
+        user_message="get a second opinion",
+        response_text="Score 4/10. Verdict: not ready.",
+        reply_sent=False,
+        tool_calls=tool_calls,
+        body_before="# Title",
+        body_after="# Title",
+        checklist_before=[],
+        checklist_after=[],
+    )
+
+    assert "second_opinion_reframe_missing" in {
+        finding.category for finding in decision.findings
+    }
+    assert (
+        ensure_reframing_suggestion("Score 4/10. Verdict: not ready.", tool_calls=tool_calls)
+        == "Score 4/10. Verdict: not ready.\n\n"
+        + LOW_SECOND_OPINION_REFRAMING_SUGGESTION
+    )

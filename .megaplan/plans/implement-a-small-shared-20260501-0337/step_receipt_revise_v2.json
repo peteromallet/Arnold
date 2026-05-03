@@ -1,0 +1,31 @@
+{
+  "receipt_id": "bb5fbc01-8598-4c9e-9bdd-0d748aeae168",
+  "plan_id": "implement-a-small-shared-20260501-0337",
+  "phase": "revise",
+  "iteration": 2,
+  "attempt": 1,
+  "timestamp_utc": "2026-05-01T01:42:50.861237+00:00",
+  "profile_name": null,
+  "agent": "codex",
+  "agent_mode": "persistent",
+  "model_configured": null,
+  "model_actual": null,
+  "session_id": "019de12e-d813-7723-a75e-4833ee88be58",
+  "megaplan_version": "0.8.1",
+  "schema_version": 1,
+  "prompt_hash_raw": "65fb6fd3f22fed8deef2f9b6ae1bc2a9f43419ef2a35ce6fb2884c7771860b6f",
+  "prompt_hash_canonical": "923aa2db935a140bd6553505c95b90cfc436149245d6956848c597e17200f941",
+  "canonicalization_version": 1,
+  "upstream_artifact_hashes": [],
+  "cost_usd": 0.0,
+  "duration_ms": 92361,
+  "prompt_tokens": 0,
+  "completion_tokens": 0,
+  "verdict": null,
+  "metrics": {
+    "start_timestamp_utc": "2026-05-01T01:41:18Z",
+    "notes_consumed": [],
+    "notes_consumed_count": 0
+  },
+  "scope_drift_severity": null
+}

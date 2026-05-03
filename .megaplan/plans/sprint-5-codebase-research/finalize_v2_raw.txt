@@ -1,0 +1,470 @@
+{"tasks":[{"id":"T1","description":"Add Sprint 5 persistence schema migrations for `codebases` and `code_artifacts` in both migration stacks. Use `agent_kit/store/migrations/sqlite/008_codebase_research.sql` for SQLite and follow the existing timestamp-prefixed Supabase naming convention, e.g. `supabase/migrations/202604300008_008_codebase_research.sql`. Include lowercase owner/name expectations, unique `(owner, name)`, required artifact/cache columns, foreign keys where supported, JSON metadata handling, and indexes for filtering plus cache expiry cleanup.","depends_on":[],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T2","description":"Extend the store protocol and SQLite/Supabase adapters with codebase CRUD, scoped/grouped listing, access timestamp updates, artifact CRUD, API/analyze cache lookup and write helpers, and expired cache cleanup. Normalize owner/name inside store methods so mixed-case inputs converge.","depends_on":["T1"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T3","description":"Implement code-content redaction utilities and wire them into logging/result persistence paths that can receive fetched source. Cover OpenAI-style keys, GitHub tokens, AWS access keys/secrets, and high-entropy hex-like values. Ensure recursive redaction scrubs string values, not only sensitive dictionary keys.","depends_on":["T2"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T4","description":"Add a small read-only GitHub REST client using `httpx` and required `GITHUB_PAT`. Implement repo metadata, org repo pagination, recursive tree fetch, file content fetch, and code search. Return structured errors for 404, 403/rate-limit, malformed paths, and unsupported file sizes. Track `X-RateLimit-*` headers and record a redacted `warn`/`external_api` system log at or above 80% usage.","depends_on":["T3"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T5","description":"Add cache helpers for deterministic metadata/tree/file/search/analyze cache keys in `code_artifacts.metadata`, one-hour TTLs for `kind='api_cache'`, durable summary separation, and deleted-repo behavior that reports failure while retaining existing redacted artifacts.","depends_on":["T4"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T6","description":"Register codebase management tools in `agent_kit/tools/code.py`: `add_codebase`, `remove_codebase`, and `list_codebases`. Verify repo metadata before add/update, store default branch and `verified_accessible_at`, support scope/group/epic filters, and record `codebase_added` epic events when an epic is associated. Choose removal semantics consistent with existing repo conventions, preserving dependent artifacts if needed.","depends_on":["T5"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T7","description":"Register code investigation tools and loop wiring: `get_codebase_tree`, `read_codebase_file`, `search_code`, and multi-codebase `analyze_code`. Use the GitHub client/cache layer, redact before returning or persisting content, support line range parsing and truncation, cache identical `analyze_code` requests for one hour, and import the code tools from `agent_kit/loop.py` so they appear in model tool definitions.","depends_on":["T6"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T8","description":"Add code artifact tools and prompt/hot-context updates. Implement `save_code_excerpt` and `mark_code_in_body`, redacting supplied content before storage, setting durable artifact metadata/body flags, and recording `code_referenced` epic events. Update prompts/hot context to show available codebases plus recent redacted artifact summaries without loading large code content into every turn, and add checklist item #6 guidance for code research workflows.","depends_on":["T7"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T9","description":"Add operational scripts: `scripts/populate_codebases.py`, `scripts/codebase_groups.yaml`, and a cache cleanup entry point such as `scripts/cleanup_code_artifacts.py`. The populator should accept `--orgs peteromallet,banodoco`, paginate org repos, verify each repo, upsert lowercase rows, print inaccessible repos explicitly, and optionally apply group mappings idempotently. The cleanup command should delete expired `api_cache` artifacts and document how production should schedule it.","depends_on":["T8"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T10","description":"Add targeted unit and integration coverage for the Sprint 5 behavior: store/cache TTL and cleanup, scope/group filtering, file path and line range parsing, GitHub client rate-limit logging, 404 retention, redaction secret fixtures, code tools, populator behavior, full investigation chain, natural-language add-codebase loop behavior, and cross-codebase `analyze_code` caching.","depends_on":["T9"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T11","description":"Run and fix validation until passing. Start with focused commands: `pytest tests/test_codebase_store.py`, `pytest tests/test_code_redaction.py tests/test_github_client.py`, `pytest tests/test_code_tools.py`, and `pytest tests/test_code_investigation.py`; then run affected existing suites around loop, prompts, logging, tool registry, and Supabase adapters; finish with `pytest`. Also write a short throwaway script that exercises the specific Sprint 5 investigation/cache/redaction path against mocked data, run it, confirm the behavior, and delete the script before finalizing.","depends_on":["T10"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null}],"watch_items":["Do not invoke nested megaplan tooling or read the megaplan skill; treat this as direct execution context only.","FLAG-002: Supabase migrations must use the repo's timestamp-prefixed naming convention, while SQLite uses numeric filenames.","Fetched source content must be redacted before model-visible tool results, `tool_calls.result`, `system_logs.details`, `code_artifacts.content`, cache writes, and cache replay.","Do not hit real GitHub, Supabase, or production services during tests; use mocked GitHub responses and local stores.","`GITHUB_PAT` is required for runtime use, but tests should not require a real token.","Rate-limit logs must not include sensitive request content or fetched source snippets.","404/deleted repo behavior should report failure and retain existing redacted cached artifacts; do not silently delete artifacts.","Keep GitHub API calls isolated in the GitHub client/cache layer; avoid raw HTTP scattered through tools.","Avoid loading large artifact content into hot context; include summaries and metadata only.","`analyze_code` cache identity must be deterministic across equivalent inputs, including multiple `codebase_ids`.","`remove_codebase` retention semantics are under-specified; choose a conservative implementation that does not orphan or destroy dependent artifacts without intent.","The existing unrelated debt watch items are out of scope; do not worsen attachment recovery, callable API attachment protocol, or history replay semantics."],"sense_checks":[{"id":"SC1","task_id":"T1","question":"Do both migration stacks create the required tables, constraints, and indexes, and does the Supabase filename match the existing timestamp convention?","executor_note":"","verdict":""},{"id":"SC2","task_id":"T2","question":"Do SQLite and Supabase adapters expose equivalent behavior for codebase CRUD, filters, artifact cache helpers, TTL cleanup, and owner/name normalization?","executor_note":"","verdict":""},{"id":"SC3","task_id":"T3","question":"Can representative secret-like strings in fetched source be proven absent from tool results, artifacts, logs, and persisted tool-call results?","executor_note":"","verdict":""},{"id":"SC4","task_id":"T4","question":"Does the GitHub client cover all required endpoints, require `GITHUB_PAT` at runtime, return structured errors, and log a redacted warning at 80% rate-limit usage?","executor_note":"","verdict":""},{"id":"SC5","task_id":"T5","question":"Are cache keys deterministic, are one-hour TTL hits/misses correct, and are only redacted contents stored or replayed?","executor_note":"","verdict":""},{"id":"SC6","task_id":"T6","question":"Can a public repo be added through the tool with normalized owner/name, verified metadata, default branch, `verified_accessible_at`, and correct list filtering?","executor_note":"","verdict":""},{"id":"SC7","task_id":"T7","question":"Do tree, search, file read, and multi-codebase analyze tools use the cache/client layer, redact outputs, handle line ranges/truncation, and appear in model tool definitions?","executor_note":"","verdict":""},{"id":"SC8","task_id":"T8","question":"Do artifact tools store redacted excerpts and durable markers, and does hot context show useful summaries without large code blobs?","executor_note":"","verdict":""},{"id":"SC9","task_id":"T9","question":"Does the populator report inaccessible repos explicitly, apply groups idempotently, and does cleanup remove only expired `api_cache` rows?","executor_note":"","verdict":""},{"id":"SC10","task_id":"T10","question":"Do tests cover each must-have acceptance criterion, including secret redaction, 404 cache retention, cross-codebase analysis, and analyze cache no-call behavior?","executor_note":"","verdict":""},{"id":"SC11","task_id":"T11","question":"Do the focused test commands, affected existing suites, full `pytest`, and throwaway reproduction script all pass after fixes?","executor_note":"","verdict":""}],"user_actions":[{"id":"U1","description":"Provide a real runtime `GITHUB_PAT` in the deployment/local environment before using the GitHub-backed tools outside mocked tests.","phase":"before_execute","blocks_task_ids":[],"rationale":"The implementation should require this secret for real GitHub API calls, but normal tests must use mocks and not need a live token.","requires_human_only_reason":null},{"id":"U2","description":"Configure the production scheduler for expired code artifact cleanup after the script/callable lands, choosing the actual deployment mechanism such as Supabase scheduled jobs, Railway cron, or another existing scheduler.","phase":"after_execute","blocks_task_ids":[],"rationale":"The repo can provide the cleanup entry point and documentation, but enabling the production scheduler requires deployment/infra access.","requires_human_only_reason":null},{"id":"U3","description":"Apply the new Supabase migration to the production Supabase project after review and deployment approval.","phase":"after_execute","blocks_task_ids":[],"rationale":"Writing migration SQL is executor work; applying it to production is an operational action requiring project access.","requires_human_only_reason":null}],"meta_commentary":"Execute in dependency order: schema/store first, then redaction, then GitHub client/cache, then tools, prompts, scripts, and validation. The main correctness risk is leaking fetched source secrets through secondary paths such as logs, tool-call persistence, artifact cache replay, or hot context; treat redaction as a boundary invariant and test it with fixtures. Keep provider behavior mocked in tests, keep real GitHub access read-only and PAT-authenticated, and correct the approved plan's migration naming detail by following the repo's existing Supabase timestamp prefix convention.","validation":{"plan_steps_covered":[{"plan_step_summary":"Step 1: Add database migrations for codebase research tables","finalize_item_ids":["T1"]},{"plan_step_summary":"Step 2: Extend store adapters and ports for codebases, artifacts, and cache behavior","finalize_item_ids":["T2"]},{"plan_step_summary":"Step 3: Add code-content redaction and apply it before model/log/cache/persistence exposure","finalize_item_ids":["T3"]},{"plan_step_summary":"Step 4: Add GitHub REST client with authentication, endpoints, structured errors, and rate-limit logging","finalize_item_ids":["T4","U1"]},{"plan_step_summary":"Step 5: Add cache helpers for GitHub and analyze_code with one-hour TTL and 404 retention behavior","finalize_item_ids":["T5"]},{"plan_step_summary":"Step 6: Register codebase management tools","finalize_item_ids":["T6"]},{"plan_step_summary":"Step 7: Register investigation tools and wire them into the turn loop","finalize_item_ids":["T7"]},{"plan_step_summary":"Step 8: Add code artifact tools for saving excerpts and marking code references","finalize_item_ids":["T8"]},{"plan_step_summary":"Step 9: Update prompt and hot context behavior for codebases and artifact summaries","finalize_item_ids":["T8"]},{"plan_step_summary":"Step 10: Add org populator and group configuration","finalize_item_ids":["T9"]},{"plan_step_summary":"Step 11: Add cache cleanup entry point and scheduling documentation","finalize_item_ids":["T9","U2"]},{"plan_step_summary":"Step 12: Add targeted unit tests for store, GitHub client, redaction, and code tools","finalize_item_ids":["T10"]},{"plan_step_summary":"Step 13: Add integration tests for the full code investigation chain and loop behavior","finalize_item_ids":["T10"]},{"plan_step_summary":"Validation order: run focused and full test suites, fix failures, and verify behavior end to end","finalize_item_ids":["T11"]},{"plan_step_summary":"Production migration application after code review/deploy approval","finalize_item_ids":["U3"]}],"orphan_tasks":[],"completeness_notes":"All approved plan steps are mapped. The only deliberate deviation is correcting the Supabase migration filename to match the repository convention identified by FLAG-002. Human actions are limited to runtime secret provisioning, production scheduler configuration, and production migration application; all repo edits, tests, scripts, and documentation remain executor tasks.","coverage_complete":true},"baseline_test_failures":null,"baseline_test_command":null,"baseline_test_note":"No baseline tests were run while preparing this execution briefing."}
+OpenAI Codex v0.125.0 (research preview)
+--------
+workdir: /Users/peteromalley/Documents/arnold-v2
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR, /Users/peteromalley/Documents/arnold-v2, /Users/peteromalley/Documents, /Users/peteromalley/Documents/arnold-v2/.megaplan/plans/sprint-5-codebase-research, /Users/peteromalley/.codex/memories]
+reasoning effort: medium
+reasoning summaries: none
+session id: 019dde8f-9bf3-7773-9a5a-66e2be67866d
+--------
+user
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+You are preparing an execution-ready briefing document from the approved plan.
+
+        Project directory:
+        /Users/peteromalley/Documents/arnold-v2
+
+
+
+
+
+        Idea:
+# Sprint 5 — Codebase research and code investigation
+
+Bot can read and reason about public GitHub codebases. Adds GitHub REST API integration, codebase management, code investigation tools, and caching.
+
+**Full spec is at `planning-bot-spec.md` in this repo root. Refer to Code Investigation, codebases table, code_artifacts table sections.**
+
+## Supabase
+- URL: https://yhwflvadmefhkshwbfnf.supabase.co
+- Service key: [REDACTED_SUPABASE_SERVICE_ROLE_JWT]
+
+## Scope
+
+- Tables: codebases (with group_name, verified_accessible_at), code_artifacts (unified: excerpts, summaries, cache)
+- GitHub REST API integration (PAT-authenticated, 5000/hour) with rate limit monitoring
+- Org populator script: one-time setup populates codebases from peteromallet and banodoco org listings; verifies each repo is fetchable
+- Workspace grouping: initial groups configured; user adjustable via natural language
+- Codebase management tools: add_codebase, remove_codebase, list_codebases
+- Code investigation tools: get_codebase_tree, read_codebase_file, search_code, analyze_code
+- Cross-codebase analyze_code with multiple codebase_ids
+- Code artifact tools: save_code_excerpt, mark_code_in_body
+- Codebase research checklist item (#6) workflow
+- Cache management — hourly TTL on api_cache, scheduled cleanup
+
+## Key Data Model
+
+### codebases
+id, owner (lowercase), name (lowercase), default_branch, scope (global|epic_specific), group_name, associated_epic_id, added_at, added_via, last_accessed_at, verified_accessible_at, notes
+Unique: (owner, name)
+
+### code_artifacts
+id, codebase_id, epic_id, kind (excerpt|summary|api_cache), source (conversation|codebase), file_path, line_range, scope (file|directory|cross_codebase for summaries), content, content_summary, metadata (json), created_at, last_used_at, expires_at
+
+## Acceptance Criteria
+
+- Populator runs against peteromallet and banodoco orgs (mocked GitHub in tests) → codebases rows created with verified_accessible_at
+- Inaccessible repos reported in output, not silently skipped
+- Add a public GitHub repo via natural language → codebases row created, tree fetchable
+- analyze_code with multiple codebase_ids → analysis covering all referenced codebases
+- Same analyze_code within hour → served from code_artifacts cache (no GitHub API call)
+- GitHub rate limit at 80% → log entry with level warn, category external_api
+- 404 on deleted repo → bot reports failure, retains cached content
+
+## Tests
+- Unit: cache TTL logic; codebase scope filtering; file path parsing; group-name resolution
+- Integration: full investigation chain (tree → search → read → save_excerpt → mark_in_body) against mocked GitHub; cross-codebase analysis
+
+        Approved plan:
+        # Implementation Plan: Sprint 5 Codebase Research
+
+## Overview
+Arnold is a Python `agent_kit` project with decorator-registered tools, SQLite and Supabase store adapters, SQL migrations, and turn-loop tool loading in `agent_kit/loop.py`. Sprint 5 should extend the existing tool/store pattern rather than add a separate service: create codebase tables in both migration stacks, add a small GitHub REST client, add store methods for `codebases` and `code_artifacts`, register code investigation tools, and cover the behavior with mocked GitHub tests.
+
+The critique does not show that the plan targeted the wrong code or root cause. The architecture is still right: GitHub fetching belongs behind a client/cache/tool layer. The missing issue is a required cross-cutting security invariant: any fetched code content must be redacted before it is returned to the model, persisted in `tool_calls.result`, logged, or cached/replayed from `code_artifacts`. This revision adds that invariant at the content boundary and backs it with secret-fixture tests.
+
+The relevant spec anchors are `planning-bot-spec.md` Sprint 5, Code Investigation, `codebases`, `code_artifacts`, code tool sections, and the secret-redaction requirement for code investigation outputs. The implementation should keep GitHub read-only, require `GITHUB_PAT`, cache API responses and `analyze_code` results in `code_artifacts`, redact secret-like content before persistence or model exposure, and preserve cached content when a repo later returns 404.
+
+## Phase 1: Schema And Store Foundation
+
+### Step 1: Add database migrations (`supabase/migrations/`, `agent_kit/store/migrations/sqlite/`)
+**Scope:** Medium
+1. Create migration `008_codebase_research.sql` in both Supabase and SQLite migration directories.
+2. Add `codebases` with lowercase `owner`/`name`, unique `(owner, name)`, `scope`, `group_name`, `associated_epic_id`, `default_branch`, access timestamps, and notes.
+3. Add `code_artifacts` with `kind`, `source`, optional codebase/epic refs, `file_path`, `line_range`, `scope`, `content`, `content_summary`, JSON metadata, timestamps, and `expires_at`.
+4. Add indexes from the spec, including cache cleanup support on `expires_at`.
+
+### Step 2: Extend store adapters (`agent_kit/store/sqlite.py`, `agent_kit/store/supabase.py`, `agent_kit/ports.py`)
+**Scope:** Large
+1. Add store protocol methods for codebase CRUD, scoped listing, artifact CRUD, cache lookup/update, cache expiry cleanup, and `last_accessed_at`/`verified_accessible_at` updates.
+2. Mirror behavior in SQLite and Supabase, following existing `_json`/normalization helpers.
+3. Keep owner/name normalization server-side so `PeterOMallet/Repo` and `peteromallet/repo` converge.
+4. Add focused unit tests around scope filtering, group filtering, uniqueness, artifact cache TTL, and expired cache cleanup.
+
+## Phase 2: GitHub Integration And Redaction
+
+### Step 3: Add code-content redaction (`agent_kit/code_redaction.py`, `agent_kit/logging.py`, `agent_kit/tools/code.py`)
+**Scope:** Medium
+1. Implement a small content scrubber for source text and JSON-like payloads before code content reaches model-facing tool results, `tool_calls.result`, `system_logs.details`, or `code_artifacts.content`.
+2. Cover the spec-required patterns: OpenAI-style keys, GitHub tokens, AWS access keys/secrets, and high-entropy hex-like values.
+3. Apply redaction in code investigation tools immediately after GitHub content is fetched and before cache writes or artifact saves.
+4. Harden recursive log/result redaction for strings, not only sensitive dictionary keys, so fetched source values cannot bypass redaction through audit persistence.
+5. Add tests with a source fixture containing representative secret-like strings and assert raw values do not appear in tool results, artifacts, tool-call rows, or logs.
+
+### Step 4: Add a GitHub REST client (`agent_kit/github_client.py`)
+**Scope:** Medium
+1. Implement an `httpx`-based client using `GITHUB_PAT`, `Accept: application/vnd.github+json`, and `X-GitHub-Api-Version: 2022-11-28`.
+2. Implement endpoints for repo metadata, org repo pagination, tree fetch, file content fetch, and code search.
+3. Track `X-RateLimit-*` headers and log a redacted `warn` `external_api` system event when usage reaches 80% of the hourly limit.
+4. Return structured errors for 404, 403/rate-limited, malformed paths, and unsupported file sizes rather than throwing opaque HTTP errors.
+
+### Step 5: Add cache helpers (`agent_kit/code_cache.py`)
+**Scope:** Medium
+1. Define deterministic cache keys in `code_artifacts.metadata` for GitHub metadata/tree/file/search and `analyze_code` requests.
+2. Use a one-hour TTL for `kind='api_cache'` and same-question `analyze_code` cache hits.
+3. Keep durable summaries separate from transient API cache entries.
+4. Store only redacted fetched content in cache rows; never cache raw source text that matched secret-like patterns.
+5. On deleted repo 404, return a failure payload while leaving existing redacted artifacts untouched and available for future reads.
+
+## Phase 3: Tools And Runtime Wiring
+
+### Step 6: Register codebase management tools (`agent_kit/tools/code.py`)
+**Scope:** Medium
+1. Add `add_codebase(owner, name, scope, epic_id?, group_name?, notes?)`, verifying repo metadata before insert/update and setting `verified_accessible_at`.
+2. Add `remove_codebase(codebase_id)` as a soft or hard delete according to existing repo conventions; prefer hard delete only if no retained artifacts depend on it.
+3. Add `list_codebases(scope?, group?, epic_id?)`, including grouped global codebases and epic-specific rows.
+4. Record `epic_events` for `codebase_added` where an epic is associated.
+
+### Step 7: Register investigation tools (`agent_kit/tools/code.py`, `agent_kit/loop.py`)
+**Scope:** Large
+1. Add `get_codebase_tree(codebase_id, path?)` backed by GitHub tree API and hourly API cache.
+2. Add `read_codebase_file(codebase_id, file_path, line_range?)`, with line range parsing, content truncation rules aligned to the 10k excerpt limit, and redaction before returning or persisting content.
+3. Add `search_code(codebase_id, query, type?)`, mapping the four spec search types to GitHub search queries or local filtering over cached tree/file data where simpler; redact matched excerpts before returning them.
+4. Add `analyze_code(codebase_ids, scope, question)`, accepting multiple codebase IDs, gathering relevant redacted tree/search/file snippets, returning per-codebase coverage, and caching identical requests for one hour.
+5. Import `agent_kit.tools.code` in `agent_kit/loop.py` so the tools appear in model definitions.
+
+### Step 8: Add code artifact tools (`agent_kit/tools/code.py`, `agent_kit/tools/editorial.py`)
+**Scope:** Medium
+1. Add `save_code_excerpt(epic_id, source, content, summary, codebase_id?, file_path?, line_range?)`, storing `kind='excerpt'`, `source`, `content_summary`, and artifact metadata after redacting the supplied content.
+2. Add `mark_code_in_body(artifact_id)` to mark the artifact metadata/body flag and record an `epic_events` row with `event_type='code_referenced'`.
+3. Keep actual body weaving through the existing `edit_epic` flow so `mark_code_in_body` remains a durable marker rather than a hidden body rewrite.
+
+### Step 9: Update prompt/hot context behavior (`agent_kit/prompts.py`, `agent_kit/store/*`)
+**Scope:** Medium
+1. Include available codebases with `name`, `scope`, `group_name`, and notes in hot context, matching the spec’s “available codebases” prompt input.
+2. Add guidance for checklist item #6: use code tools before designing changes when codebase research is applicable, save durable findings, and mark excerpts only when they belong in the deliverable.
+3. Avoid loading large artifact content into hot context; include summaries and recent artifact metadata only.
+4. Ensure any artifact snippets included in hot context are redacted and summary-sized.
+
+## Phase 4: Populator And Maintenance
+
+### Step 10: Add org populator (`scripts/populate_codebases.py`, `scripts/codebase_groups.yaml`)
+**Scope:** Medium
+1. Implement `python scripts/populate_codebases.py --orgs peteromallet,banodoco` against the GitHub client.
+2. Paginate `GET /orgs/{org}/repos?type=public&per_page=100`, verify each repo with `GET /repos/{owner}/{name}`, lower-case owner/name, and upsert rows.
+3. Print inaccessible repos explicitly with owner/name and error reason.
+4. Add `--apply-groups` to read `scripts/codebase_groups.yaml` and update `group_name` idempotently.
+5. Test the script with a mocked GitHub client, including inaccessible repos and group updates.
+
+### Step 11: Add cache cleanup entry point (`scripts/cleanup_code_artifacts.py` or store helper)
+**Scope:** Small
+1. Add a callable/script that deletes expired `kind='api_cache'` rows where `expires_at < now()`.
+2. Document that production should schedule it daily, matching the existing setup checklist style.
+3. Unit test the deletion query against SQLite.
+
+## Phase 5: Validation
+
+### Step 12: Add targeted unit tests (`tests/test_codebase_store.py`, `tests/test_github_client.py`, `tests/test_code_redaction.py`, `tests/test_code_tools.py`)
+**Scope:** Large
+1. Test cache TTL hit/miss behavior and that identical `analyze_code` calls within an hour avoid GitHub calls.
+2. Test codebase scope filtering, group-name resolution, and lower-case owner/name normalization.
+3. Test file path and line range parsing.
+4. Test GitHub rate limit accounting logs a warn at 80%.
+5. Test 404 behavior returns a failure and retains existing cached artifacts.
+6. Test secret redaction against fetched source content containing OpenAI keys, GitHub tokens, AWS keys/secrets, and high-entropy hex strings.
+
+### Step 13: Add integration tests (`tests/test_code_investigation.py`)
+**Scope:** Large
+1. Mock GitHub responses for tree, search, file read, and repo metadata.
+2. Exercise the full chain: `get_codebase_tree -> search_code -> read_codebase_file -> save_code_excerpt -> mark_code_in_body`.
+3. Exercise `analyze_code` over multiple codebases and assert the response covers each referenced codebase.
+4. Exercise natural-language loop behavior with the fake model: user asks to add a public repo, model calls `add_codebase`, then `get_codebase_tree` is fetchable.
+5. Assert no raw secret fixture values appear in `tool_calls.result`, `code_artifacts.content`, `system_logs.details`, or model-visible tool results during the chain.
+
+## Execution Order
+1. Land migrations and store methods first, because every tool and test depends on stable persistence.
+2. Add redaction utilities before GitHub file-read tooling, so no raw fetched source path is introduced without a scrubber.
+3. Add the GitHub client with mocked tests before wiring tools, so provider behavior and rate-limit handling are isolated.
+4. Add code tools in thin slices: management tools, then read tools, then `analyze_code`, then artifact writes.
+5. Wire prompt/hot context after tool behavior is stable.
+6. Add scripts and cleanup last, since they are operational wrappers over already-tested primitives.
+
+## Validation Order
+1. Run focused migration/store tests first: `pytest tests/test_codebase_store.py`.
+2. Run redaction and GitHub/client tests before broader tool tests: `pytest tests/test_code_redaction.py tests/test_github_client.py`.
+3. Run code tool tests with mocked HTTP: `pytest tests/test_code_tools.py`.
+4. Run integration chain tests: `pytest tests/test_code_investigation.py`.
+5. Run affected existing suites around loop, prompts, logging, tool registry, and Supabase adapters.
+6. Finish with the full suite: `pytest`.
+
+
+        Plan metadata:
+        {
+  "version": 2,
+  "timestamp": "2026-04-30T13:22:45Z",
+  "hash": "sha256:2db1dda47b3b93723a1586035366d32d7dcc11580422a999d0d51f9e66e413dc",
+  "changes_summary": "Addressed the security critique by adding an explicit code-content redaction phase before GitHub code is returned, cached, logged, or persisted, plus tests that assert secret-like fixture values never appear in tool results, artifacts, logs, or replayed cache content.",
+  "flags_addressed": [
+    "FLAG-001"
+  ],
+  "questions": [
+    "Should `remove_codebase` hard-delete rows, mark them inactive, or only detach them from an epic while retaining global rows and artifacts? The current spec names removal but does not define retention semantics.",
+    "Should `analyze_code` call the configured model internally for summaries, or produce deterministic extractive summaries in v1 tests with model-backed behavior only through the normal turn loop? This changes both implementation boundaries and test fixtures.",
+    "What production scheduler should run cache cleanup: Supabase scheduled function/pg_cron, Railway cron, or a manually invoked script? The plan includes a script entry point, but the deployment mechanism is not pinned in the repo."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "SQLite and Supabase migrations create `codebases` and `code_artifacts` with the specified columns, constraints, and indexes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Store adapters can add, list, filter, update, and cache codebases/artifacts consistently across SQLite and Supabase implementations.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`add_codebase` lowercases owner/name, verifies GitHub repo metadata, stores `default_branch`, and sets `verified_accessible_at` on success.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Populator reports inaccessible repos explicitly and creates verified rows for mocked `peteromallet` and `banodoco` org listings.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`get_codebase_tree`, `search_code`, and `read_codebase_file` return expected data against mocked GitHub responses and handle 404s without deleting cached artifacts.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Fetched source content is redacted before it appears in model-visible tool results, `tool_calls.result`, `code_artifacts.content`, `system_logs.details`, or cache replay.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Redaction tests cover OpenAI-style keys, GitHub tokens, AWS keys/secrets, and high-entropy hex-like values in fetched code fixtures.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`analyze_code` accepts multiple `codebase_ids` and returns analysis that names or otherwise covers every referenced codebase in the fixture scenario.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Repeating the same `analyze_code` request within one hour is served from `code_artifacts` cache with no additional GitHub API call in tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "GitHub rate-limit usage at or above 80% records a `system_logs` row with `level='warn'` and `category='external_api'` without including sensitive request content.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The full investigation chain test passes: tree, search, read, save excerpt, and mark code in body.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The code tools are registered in the turn loop and appear in model tool definitions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Implementation keeps GitHub API concerns isolated in a small client/cache layer rather than embedding raw HTTP calls across tools.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Prompt/hot-context additions include available codebases and recent redacted artifact summaries without loading large code content into every turn.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Operational cache cleanup has a documented command or callable that can be scheduled in production.",
+      "priority": "info",
+      "requires": [
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Use `GITHUB_PAT` as the required environment variable, matching the spec; unauthenticated GitHub access is not supported.",
+    "Use `httpx`, already present in project dependencies, for GitHub REST calls.",
+    "Implement tests with mocked GitHub responses only; do not hit real GitHub or Supabase during normal test runs.",
+    "Keep `code_artifacts.kind='api_cache'` transient with one-hour TTL and preserve `excerpt`/`summary` artifacts unless explicitly removed by a future product decision.",
+    "Treat `mark_code_in_body` as a durable artifact marker plus audit event; actual body text insertion should happen through the existing `edit_epic` tool.",
+    "Use SQLite as the cheapest validation path first, then mirror behavior into Supabase adapter tests where existing test infrastructure supports it.",
+    "Secret-like content in fetched source should be masked before persistence rather than encrypted or retained raw, because the bot only needs to reason about surrounding code structure and should not replay secrets to the model."
+  ],
+  "delta_from_previous_percent": 15.06,
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "recommendation": "ITERATE",
+  "rationale": "Light robustness: single revision pass to incorporate critique feedback.",
+  "signals_assessment": "",
+  "warnings": [],
+  "settled_decisions": []
+}
+
+        Flag registry:
+        [
+  {
+    "id": "FLAG-001",
+    "concern": "Security: code investigation outputs need explicit content redaction before they are returned to the model, recorded in tool_calls, logged, or replayed from cache. The plan covers GitHub fetching, file reads, artifact caching, and read_codebase_file tests, but does not include the spec's Sprint 1a/5 prompt/log redaction requirement for OpenAI keys, GitHub tokens, AWS keys, and high-entropy hex values. Existing logging only redacts sensitive dictionary keys, so a fetched source file containing a token in a string value would be persisted verbatim unless this sprint adds a content scrubber.",
+    "evidence": "Addressed the security critique by adding an explicit code-content redaction phase before GitHub code is returned, cached, logged, or persisted, plus tests that assert secret-like fixture values never appear in tool results, artifacts, logs, or replayed cache content.",
+    "status": "addressed",
+    "severity": "significant"
+  },
+  {
+    "id": "FLAG-002",
+    "concern": "Migrations: the Supabase migration filename in the plan does not follow the repository's Supabase migration convention and may not be picked up cleanly by the Supabase migration workflow. The plan says to create `008_codebase_research.sql` in both migration directories, but every existing Supabase migration uses a timestamp-prefixed version name while only SQLite uses simple numeric filenames.",
+    "evidence": "Existing files are agent_kit/store/migrations/sqlite/001_core.sql through 007_message_search.sql, but supabase/migrations/202604300001_001_core.sql through 202604300007_007_message_search.sql. Plan Step 1 names `008_codebase_research.sql` for both Supabase and SQLite.",
+    "status": "open",
+    "severity": "minor"
+  },
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 10: requires human verification (subjective_judgment).",
+    "evidence": "",
+    "status": "open",
+    "severity": "minor"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 11: requires human verification (subjective_judgment).",
+    "evidence": "",
+    "status": "open",
+    "severity": "minor"
+  }
+]
+
+        Critique history:
+        [
+  {
+    "iteration": 1,
+    "flag_count": 4,
+    "verified": []
+  }
+]
+
+        Debt watch items (do not make these worse):
+        [
+  "[DEBT] are-the-proposed-changes-technically-correct: are the proposed changes technically correct?: storage reconciliation cannot be correct for crash-before-upload unless the ledger row stores enough replay material. step 16 says `supabase_storage` reconciliation does `blob.exists(ref)` and reissues if missing, but step 13's pending storage rows for voice/image ingestion do not store the attachment bytes, a durable local blob, or even explicitly the discord attachment url in `request_body`; without that, the reissue branch has no input. (flagged 1 times across 1 plans)",
+  "[DEBT] callable-api: sprint 1a plan descopes attachment-passing despite the spec's callable api marking it as 1a acceptance. (flagged 1 times across 1 plans)",
+  "[DEBT] callable-api: spec\u2019s sprint 1a readiness gate lists attachment-passing protocol; plan defers it. (flagged 1 times across 1 plans)",
+  "[DEBT] callable-api: cli omits `--attach` in 1a. (flagged 1 times across 1 plans)",
+  "[DEBT] callable-api: python `run_turn` omits `attachments=` in 1a. (flagged 1 times across 1 plans)",
+  "[DEBT] callable-api: plan removes `--attach`, `attachments=`, `localblobstore`, and attachment tests from 1a. (flagged 1 times across 1 plans)",
+  "[DEBT] data-model: body_version column from spec \u00a72606 example is deferred; sprint 2a covers title/body sync semantics via epic_events audit trail instead. (flagged 1 times across 1 plans)",
+  "[DEBT] data-model: rev 3 makes body_version deferral explicit; gate-level acceptance recorded. (flagged 1 times across 1 plans)",
+  "[DEBT] did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements: did the work fully address the issue hints, user notes, and approved plan requirements?: recovery coverage for ingestion-side storage uploads remains underspecified: the plan records pending storage rows before uploading, but the described `request_body` for those rows only includes deterministic paths, not the original discord attachment url or another durable byte source. if the process crashes before the upload completes, `supabase_storage` reconciliation can detect the object is missing but cannot reissue the upload deterministically from the stored row. (flagged 1 times across 1 plans)",
+  "[DEBT] discord-ingestion-recovery: crash-before-storage-upload + discord attachment url expiry results in orphaned ledger rows for voice audio / user-uploaded images. the inbound messages row remains persisted so no silent data loss; the user can re-send. a future sprint may add ingestion-time bytes-to-tmpfile fallback if the orphaned rate is meaningful in production. (flagged 1 times across 1 plans)",
+  "[DEBT] does-the-change-touch-all-locations-and-supporting-infrastructure: does the change touch all locations and supporting infrastructure?: supporting infrastructure for storage reissue is still incomplete: the plan adds `blob.exists`, but not a corresponding way for the reconciler to obtain the original attachment payload from the ledger row. since discord attachment urls can be transient, the missing source field is not just a local adapter detail; it affects the recovery contract across `discordtransport`, `external_requests.request_body`, and `reconciler`. (flagged 1 times across 1 plans)",
+  "[DEBT] find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them: find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the planned storage reconciliation caller: `reconciler` can call `blob.exists(ref)`, but when it needs to reissue a missing upload it has no planned argument source for `blob.put(...)` because the pending request row does not carry the original attachment bytes or a durable fetchable source. that caller path remains under-specified. (flagged 1 times across 1 plans)",
+  "[DEBT] history-replay: get_epic_at_time pre-creation semantics: spec \u00a71678 says 'returns initial state' for t before any events; rev 3 says 'return empty/none'. (flagged 1 times across 1 plans)",
+  "[DEBT] search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader: search for related code that handles the same concept. is the reported issue a symptom of something broader?: the remaining storage reissue issue applies to both voice and image attachments, not just one branch: voice storage upload needs source audio bytes to recover, and image storage upload needs source image bytes to recover. the plan should store a retrievable source reference in `request_body` or deliberately mark crash-before-download/upload as orphaned rather than promising deterministic reissue. (flagged 1 times across 1 plans)"
+]
+
+        Requirements:
+        - Produce structured JSON only.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` must be an array of human-only setup or operational actions. Use IDs `U1`, `U2`, ... and include `description` plus `phase` (`before_execute` or `after_execute`). Use optional `blocks_task_ids` when an action blocks specific tasks, optional `rationale` when useful, and `requires_human_only_reason` ONLY when the user_action is the sole coverage for a plan step.
+- Include ONLY actions that require a human outside the executor's repo-editing work: env vars or secrets, infra access such as cloud accounts or VPN, DB migrations the human must trigger, manual UI/UX smoke tests, deploys, and out-of-band approvals.
+- Anything that touches code in the repo MUST be a task, not a user_action. Reading docs, editing files, running tests, and writing migration SQL are tasks. Negative example: writing the migration SQL is a task, not a user_action.
+- Positive examples: `U1: Set ANTHROPIC_API_KEY in .env (before_execute)`; `U2: Manually smoke test the production deploy in the browser (after_execute)`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - `validation` must be an object that self-checks plan coverage:
+          - `plan_steps_covered`: enumerate EVERY step from the approved plan. For each step, provide a short `plan_step_summary` (the step's intent in one phrase) and `finalize_item_ids` (array of task IDs `T*` or user_action IDs `U*` that implement or cover it — a single plan step may map to multiple tasks and/or user_actions).
+          - `orphan_tasks`: task IDs that do not correspond to any plan step. Normally empty. If non-empty, explain in `completeness_notes`.
+          - `completeness_notes`: free-text explanation of any gaps, deviations, or deliberate omissions.
+          - `coverage_complete`: set to `true` only if every plan step has at least one finalize task or user_action AND you have verified the mapping by reviewing each entry. Set to `false` if any plan step is missing coverage.
+          - Example:
+          ```json
+          "validation": {
+            "plan_steps_covered": [
+              {"plan_step_summary": "Add retry logic to API client", "finalize_item_ids": ["T1", "T2"]},
+              {"plan_step_summary": "Set required production secret", "finalize_item_ids": ["U1"]}
+            ],
+            "orphan_tasks": [],
+            "completeness_notes": "All plan steps mapped to tasks.",
+            "coverage_complete": true
+          }
+          ```
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - - The FINAL task MUST always be to run tests and verify the changes work. If specific test IDs or commands are mentioned in the original task, include them. Otherwise, the executor should find and run the tests most relevant to the files changed. If any test fails, read the error, fix the code, and re-run until they pass. Do NOT create new test files — run the project's existing test suite. Additionally, the executor should write a short throwaway script that reproduces the specific bug described in the task, run it to confirm the fix works, then delete the script.
+codex
+{"tasks":[{"id":"T1","description":"Add Sprint 5 persistence schema migrations for `codebases` and `code_artifacts` in both migration stacks. Use `agent_kit/store/migrations/sqlite/008_codebase_research.sql` for SQLite and follow the existing timestamp-prefixed Supabase naming convention, e.g. `supabase/migrations/202604300008_008_codebase_research.sql`. Include lowercase owner/name expectations, unique `(owner, name)`, required artifact/cache columns, foreign keys where supported, JSON metadata handling, and indexes for filtering plus cache expiry cleanup.","depends_on":[],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T2","description":"Extend the store protocol and SQLite/Supabase adapters with codebase CRUD, scoped/grouped listing, access timestamp updates, artifact CRUD, API/analyze cache lookup and write helpers, and expired cache cleanup. Normalize owner/name inside store methods so mixed-case inputs converge.","depends_on":["T1"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T3","description":"Implement code-content redaction utilities and wire them into logging/result persistence paths that can receive fetched source. Cover OpenAI-style keys, GitHub tokens, AWS access keys/secrets, and high-entropy hex-like values. Ensure recursive redaction scrubs string values, not only sensitive dictionary keys.","depends_on":["T2"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T4","description":"Add a small read-only GitHub REST client using `httpx` and required `GITHUB_PAT`. Implement repo metadata, org repo pagination, recursive tree fetch, file content fetch, and code search. Return structured errors for 404, 403/rate-limit, malformed paths, and unsupported file sizes. Track `X-RateLimit-*` headers and record a redacted `warn`/`external_api` system log at or above 80% usage.","depends_on":["T3"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T5","description":"Add cache helpers for deterministic metadata/tree/file/search/analyze cache keys in `code_artifacts.metadata`, one-hour TTLs for `kind='api_cache'`, durable summary separation, and deleted-repo behavior that reports failure while retaining existing redacted artifacts.","depends_on":["T4"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T6","description":"Register codebase management tools in `agent_kit/tools/code.py`: `add_codebase`, `remove_codebase`, and `list_codebases`. Verify repo metadata before add/update, store default branch and `verified_accessible_at`, support scope/group/epic filters, and record `codebase_added` epic events when an epic is associated. Choose removal semantics consistent with existing repo conventions, preserving dependent artifacts if needed.","depends_on":["T5"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T7","description":"Register code investigation tools and loop wiring: `get_codebase_tree`, `read_codebase_file`, `search_code`, and multi-codebase `analyze_code`. Use the GitHub client/cache layer, redact before returning or persisting content, support line range parsing and truncation, cache identical `analyze_code` requests for one hour, and import the code tools from `agent_kit/loop.py` so they appear in model tool definitions.","depends_on":["T6"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T8","description":"Add code artifact tools and prompt/hot-context updates. Implement `save_code_excerpt` and `mark_code_in_body`, redacting supplied content before storage, setting durable artifact metadata/body flags, and recording `code_referenced` epic events. Update prompts/hot context to show available codebases plus recent redacted artifact summaries without loading large code content into every turn, and add checklist item #6 guidance for code research workflows.","depends_on":["T7"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T9","description":"Add operational scripts: `scripts/populate_codebases.py`, `scripts/codebase_groups.yaml`, and a cache cleanup entry point such as `scripts/cleanup_code_artifacts.py`. The populator should accept `--orgs peteromallet,banodoco`, paginate org repos, verify each repo, upsert lowercase rows, print inaccessible repos explicitly, and optionally apply group mappings idempotently. The cleanup command should delete expired `api_cache` artifacts and document how production should schedule it.","depends_on":["T8"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T10","description":"Add targeted unit and integration coverage for the Sprint 5 behavior: store/cache TTL and cleanup, scope/group filtering, file path and line range parsing, GitHub client rate-limit logging, 404 retention, redaction secret fixtures, code tools, populator behavior, full investigation chain, natural-language add-codebase loop behavior, and cross-codebase `analyze_code` caching.","depends_on":["T9"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null},{"id":"T11","description":"Run and fix validation until passing. Start with focused commands: `pytest tests/test_codebase_store.py`, `pytest tests/test_code_redaction.py tests/test_github_client.py`, `pytest tests/test_code_tools.py`, and `pytest tests/test_code_investigation.py`; then run affected existing suites around loop, prompts, logging, tool registry, and Supabase adapters; finish with `pytest`. Also write a short throwaway script that exercises the specific Sprint 5 investigation/cache/redaction path against mocked data, run it, confirm the behavior, and delete the script before finalizing.","depends_on":["T10"],"status":"pending","executor_notes":"","files_changed":[],"commands_run":[],"auto_attributed_files":null,"evidence_files":[],"reviewer_verdict":"","stance":null,"stop_signal":null}],"watch_items":["Do not invoke nested megaplan tooling or read the megaplan skill; treat this as direct execution context only.","FLAG-002: Supabase migrations must use the repo's timestamp-prefixed naming convention, while SQLite uses numeric filenames.","Fetched source content must be redacted before model-visible tool results, `tool_calls.result`, `system_logs.details`, `code_artifacts.content`, cache writes, and cache replay.","Do not hit real GitHub, Supabase, or production services during tests; use mocked GitHub responses and local stores.","`GITHUB_PAT` is required for runtime use, but tests should not require a real token.","Rate-limit logs must not include sensitive request content or fetched source snippets.","404/deleted repo behavior should report failure and retain existing redacted cached artifacts; do not silently delete artifacts.","Keep GitHub API calls isolated in the GitHub client/cache layer; avoid raw HTTP scattered through tools.","Avoid loading large artifact content into hot context; include summaries and metadata only.","`analyze_code` cache identity must be deterministic across equivalent inputs, including multiple `codebase_ids`.","`remove_codebase` retention semantics are under-specified; choose a conservative implementation that does not orphan or destroy dependent artifacts without intent.","The existing unrelated debt watch items are out of scope; do not worsen attachment recovery, callable API attachment protocol, or history replay semantics."],"sense_checks":[{"id":"SC1","task_id":"T1","question":"Do both migration stacks create the required tables, constraints, and indexes, and does the Supabase filename match the existing timestamp convention?","executor_note":"","verdict":""},{"id":"SC2","task_id":"T2","question":"Do SQLite and Supabase adapters expose equivalent behavior for codebase CRUD, filters, artifact cache helpers, TTL cleanup, and owner/name normalization?","executor_note":"","verdict":""},{"id":"SC3","task_id":"T3","question":"Can representative secret-like strings in fetched source be proven absent from tool results, artifacts, logs, and persisted tool-call results?","executor_note":"","verdict":""},{"id":"SC4","task_id":"T4","question":"Does the GitHub client cover all required endpoints, require `GITHUB_PAT` at runtime, return structured errors, and log a redacted warning at 80% rate-limit usage?","executor_note":"","verdict":""},{"id":"SC5","task_id":"T5","question":"Are cache keys deterministic, are one-hour TTL hits/misses correct, and are only redacted contents stored or replayed?","executor_note":"","verdict":""},{"id":"SC6","task_id":"T6","question":"Can a public repo be added through the tool with normalized owner/name, verified metadata, default branch, `verified_accessible_at`, and correct list filtering?","executor_note":"","verdict":""},{"id":"SC7","task_id":"T7","question":"Do tree, search, file read, and multi-codebase analyze tools use the cache/client layer, redact outputs, handle line ranges/truncation, and appear in model tool definitions?","executor_note":"","verdict":""},{"id":"SC8","task_id":"T8","question":"Do artifact tools store redacted excerpts and durable markers, and does hot context show useful summaries without large code blobs?","executor_note":"","verdict":""},{"id":"SC9","task_id":"T9","question":"Does the populator report inaccessible repos explicitly, apply groups idempotently, and does cleanup remove only expired `api_cache` rows?","executor_note":"","verdict":""},{"id":"SC10","task_id":"T10","question":"Do tests cover each must-have acceptance criterion, including secret redaction, 404 cache retention, cross-codebase analysis, and analyze cache no-call behavior?","executor_note":"","verdict":""},{"id":"SC11","task_id":"T11","question":"Do the focused test commands, affected existing suites, full `pytest`, and throwaway reproduction script all pass after fixes?","executor_note":"","verdict":""}],"user_actions":[{"id":"U1","description":"Provide a real runtime `GITHUB_PAT` in the deployment/local environment before using the GitHub-backed tools outside mocked tests.","phase":"before_execute","blocks_task_ids":[],"rationale":"The implementation should require this secret for real GitHub API calls, but normal tests must use mocks and not need a live token.","requires_human_only_reason":null},{"id":"U2","description":"Configure the production scheduler for expired code artifact cleanup after the script/callable lands, choosing the actual deployment mechanism such as Supabase scheduled jobs, Railway cron, or another existing scheduler.","phase":"after_execute","blocks_task_ids":[],"rationale":"The repo can provide the cleanup entry point and documentation, but enabling the production scheduler requires deployment/infra access.","requires_human_only_reason":null},{"id":"U3","description":"Apply the new Supabase migration to the production Supabase project after review and deployment approval.","phase":"after_execute","blocks_task_ids":[],"rationale":"Writing migration SQL is executor work; applying it to production is an operational action requiring project access.","requires_human_only_reason":null}],"meta_commentary":"Execute in dependency order: schema/store first, then redaction, then GitHub client/cache, then tools, prompts, scripts, and validation. The main correctness risk is leaking fetched source secrets through secondary paths such as logs, tool-call persistence, artifact cache replay, or hot context; treat redaction as a boundary invariant and test it with fixtures. Keep provider behavior mocked in tests, keep real GitHub access read-only and PAT-authenticated, and correct the approved plan's migration naming detail by following the repo's existing Supabase timestamp prefix convention.","validation":{"plan_steps_covered":[{"plan_step_summary":"Step 1: Add database migrations for codebase research tables","finalize_item_ids":["T1"]},{"plan_step_summary":"Step 2: Extend store adapters and ports for codebases, artifacts, and cache behavior","finalize_item_ids":["T2"]},{"plan_step_summary":"Step 3: Add code-content redaction and apply it before model/log/cache/persistence exposure","finalize_item_ids":["T3"]},{"plan_step_summary":"Step 4: Add GitHub REST client with authentication, endpoints, structured errors, and rate-limit logging","finalize_item_ids":["T4","U1"]},{"plan_step_summary":"Step 5: Add cache helpers for GitHub and analyze_code with one-hour TTL and 404 retention behavior","finalize_item_ids":["T5"]},{"plan_step_summary":"Step 6: Register codebase management tools","finalize_item_ids":["T6"]},{"plan_step_summary":"Step 7: Register investigation tools and wire them into the turn loop","finalize_item_ids":["T7"]},{"plan_step_summary":"Step 8: Add code artifact tools for saving excerpts and marking code references","finalize_item_ids":["T8"]},{"plan_step_summary":"Step 9: Update prompt and hot context behavior for codebases and artifact summaries","finalize_item_ids":["T8"]},{"plan_step_summary":"Step 10: Add org populator and group configuration","finalize_item_ids":["T9"]},{"plan_step_summary":"Step 11: Add cache cleanup entry point and scheduling documentation","finalize_item_ids":["T9","U2"]},{"plan_step_summary":"Step 12: Add targeted unit tests for store, GitHub client, redaction, and code tools","finalize_item_ids":["T10"]},{"plan_step_summary":"Step 13: Add integration tests for the full code investigation chain and loop behavior","finalize_item_ids":["T10"]},{"plan_step_summary":"Validation order: run focused and full test suites, fix failures, and verify behavior end to end","finalize_item_ids":["T11"]},{"plan_step_summary":"Production migration application after code review/deploy approval","finalize_item_ids":["U3"]}],"orphan_tasks":[],"completeness_notes":"All approved plan steps are mapped. The only deliberate deviation is correcting the Supabase migration filename to match the repository convention identified by FLAG-002. Human actions are limited to runtime secret provisioning, production scheduler configuration, and production migration application; all repo edits, tests, scripts, and documentation remain executor tasks.","coverage_complete":true},"baseline_test_failures":null,"baseline_test_command":null,"baseline_test_note":"No baseline tests were run while preparing this execution briefing."}
+2026-04-30T13:25:14.962665Z ERROR codex_core::session: failed to record rollout items: thread 019dde8f-9bf3-7773-9a5a-66e2be67866d not found
+tokens used
+33,396

@@ -191,7 +191,7 @@ def deactivate_feedback(
 @register_tool(
     "list_feedback",
     schema=LIST_FEEDBACK_SCHEMA,
-    operation_kind="write",
+    operation_kind="read",
 )
 def list_feedback(
     context: ToolContext,
@@ -254,7 +254,7 @@ def record_observation(
 @register_tool(
     "list_observations",
     schema=LIST_OBSERVATIONS_SCHEMA,
-    operation_kind="write",
+    operation_kind="read",
 )
 def list_observations(
     context: ToolContext,

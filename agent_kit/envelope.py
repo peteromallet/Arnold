@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 
 Outcome = Literal["completed", "blocked_on_caller", "errored", "aborted"]
-EventKind = Literal["tool_call", "activity", "turn_start", "turn_end"]
+EventKind = Literal["tool_call", "activity", "attached_image", "turn_start", "turn_end"]
 
 
 @dataclass(frozen=True)
@@ -126,7 +126,7 @@ def _strip_diff_nondeterminism(value: Any) -> Any:
         return {
             key: _strip_diff_nondeterminism(item)
             for key, item in value.items()
-            if key not in {"reply", "text", "started_at", "completed_at"}
+            if key not in {"reply", "text", "ms", "started_at", "completed_at"}
         }
     if isinstance(value, list):
         return [_strip_diff_nondeterminism(item) for item in value]

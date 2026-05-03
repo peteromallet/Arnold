@@ -1,0 +1,104 @@
+{
+  "review_verdict": "approved",
+  "checks": [],
+  "pre_check_flags": [],
+  "verified_flag_ids": [],
+  "disputed_flag_ids": [],
+  "criteria": [
+    {
+      "name": "SQLite and Supabase migrations create `codebases` and `code_artifacts` with the specified columns, constraints, and indexes.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Store adapters can add, list, filter, update, and cache codebases/artifacts consistently across SQLite and Supabase implementations.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`add_codebase` lowercases owner/name, verifies GitHub repo metadata, stores `default_branch`, and sets `verified_accessible_at` on success.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Populator reports inaccessible repos explicitly and creates verified rows for mocked `peteromallet` and `banodoco` org listings.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`get_codebase_tree`, `search_code`, and `read_codebase_file` return expected data against mocked GitHub responses and handle 404s without deleting cached artifacts.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Fetched source content is redacted before it appears in model-visible tool results, `tool_calls.result`, `code_artifacts.content`, `system_logs.details`, or cache replay.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Redaction tests cover OpenAI-style keys, GitHub tokens, AWS keys/secrets, and high-entropy hex-like values in fetched code fixtures.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "`analyze_code` accepts multiple `codebase_ids` and returns analysis that names or otherwise covers every referenced codebase in the fixture scenario.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Repeating the same `analyze_code` request within one hour is served from `code_artifacts` cache with no additional GitHub API call in tests.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "GitHub rate-limit usage at or above 80% records a `system_logs` row with `level='warn'` and `category='external_api'` without including sensitive request content.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The full investigation chain test passes: tree, search, read, save excerpt, and mark code in body.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "The code tools are registered in the turn loop and appear in model tool definitions.",
+      "priority": "must",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    },
+    {
+      "name": "Implementation keeps GitHub API concerns isolated in a small client/cache layer rather than embedding raw HTTP calls across tools.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Prompt/hot-context additions include available codebases and recent redacted artifact summaries without loading large code content into every turn.",
+      "priority": "should",
+      "pass": "deferred_human",
+      "evidence": "Requires human verification capabilities."
+    },
+    {
+      "name": "Operational cache cleanup has a documented command or callable that can be scheduled in production.",
+      "priority": "info",
+      "pass": "pass",
+      "evidence": "Light robustness: auto-approved."
+    }
+  ],
+  "issues": [],
+  "rework_items": [],
+  "summary": "Light robustness: review skipped; stub written for artifact parity.",
+  "task_verdicts": [],
+  "sense_check_verdicts": []
+}

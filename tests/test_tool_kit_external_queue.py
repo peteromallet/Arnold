@@ -5,7 +5,12 @@ import sqlite3
 import pytest
 
 from agent_kit.store.sqlite import SQLiteStore
-from agent_kit.tool_kit import ExternalSpec, ToolContext, ToolRegistry
+from agent_kit.tool_kit import (
+    ExternalSpec,
+    ToolContext,
+    ToolRegistry,
+    run_synchronous_external_effect,
+)
 
 
 def _store_with_turn():
@@ -139,3 +144,88 @@ def test_tool_body_still_rolls_back_before_external_queue_runs() -> None:
         ).fetchone()[0]
         == 0
     )
+
+
+def test_synchronous_external_effect_records_pending_before_effect_and_confirms() -> None:
+    store, conn, turn = _store_with_turn()
+    observations = {}
+    context = ToolContext(store=store, turn_id=turn["id"], events=[])
+
+    def effect(idempotency_key: str):
+        row = conn.execute("SELECT * FROM external_requests").fetchone()
+        observations["status"] = row["status"]
+        observations["idempotency_key"] = idempotency_key
+        observations["request_body"] = row["request_body"]
+        return "openai_req_1", {"ok": True}, {"text": "done"}
+
+    result = run_synchronous_external_effect(
+        context,
+        ExternalSpec(
+            provider="openai",
+            endpoint="POST /v1/images/generations",
+            request_summary={"model": "gpt-image-2"},
+            request_body={"prompt": "draw a flow"},
+        ),
+        effect,
+    )
+
+    assert result.result == {"text": "done"}
+    assert observations["status"] == "pending"
+    assert observations["idempotency_key"] == result.idempotency_key
+    assert observations["request_body"] == '{"prompt":"draw a flow"}'
+    row = conn.execute("SELECT * FROM external_requests").fetchone()
+    assert row["id"] == result.request_id
+    assert row["status"] == "confirmed"
+    assert row["provider_request_id"] == "openai_req_1"
+
+
+def test_synchronous_external_effect_failure_marks_failed_and_reraises() -> None:
+    store, conn, turn = _store_with_turn()
+    context = ToolContext(store=store, turn_id=turn["id"], events=[])
+
+    def effect(_idempotency_key: str):
+        assert conn.execute("SELECT status FROM external_requests").fetchone()["status"] == "pending"
+        raise RuntimeError("provider down")
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        run_synchronous_external_effect(
+            context,
+            ExternalSpec(
+                provider="supabase_storage",
+                endpoint="PUT /storage/v1/object/images/generated.png",
+                request_summary={"key": "images/generated.png"},
+            ),
+            effect,
+        )
+
+    row = conn.execute("SELECT * FROM external_requests").fetchone()
+    assert row["status"] == "failed"
+    assert '"provider down"' in row["error_details"]
+
+
+def test_synchronous_external_effect_settlement_survives_tool_body_rollback() -> None:
+    store, conn, turn = _store_with_turn()
+    registry = ToolRegistry()
+
+    def failing_tool(context):
+        run_synchronous_external_effect(
+            context,
+            ExternalSpec(
+                provider="openai",
+                endpoint="POST /v1/responses",
+                request_summary={"model": "gpt-5.5"},
+            ),
+            lambda _idempotency_key: ("openai_req_2", {"ok": True}, {"score": 4}),
+        )
+        raise RuntimeError("tool failed later")
+
+    registry.register("failing_sync_tool", failing_tool, {"type": "object"})
+    context = ToolContext(store=store, turn_id=turn["id"], events=[])
+
+    with pytest.raises(RuntimeError, match="tool failed later"):
+        registry.invoke("failing_sync_tool", context, {})
+
+    row = conn.execute("SELECT * FROM external_requests").fetchone()
+    assert row["status"] == "confirmed"
+    assert row["provider_request_id"] == "openai_req_2"
+    assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0

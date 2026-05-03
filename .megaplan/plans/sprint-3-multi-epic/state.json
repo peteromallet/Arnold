@@ -28,32 +28,11 @@
     ]
   },
   "sessions": {
-    "codex_planner": {
-      "id": "019dde45-c862-7753-b83a-075efc8d2678",
-      "mode": "persistent",
-      "created_at": "2026-04-30T12:05:15Z",
-      "last_used_at": "2026-04-30T12:08:34Z",
-      "refreshed": false
-    },
-    "codex_critic": {
-      "id": "019dde47-706f-73f3-84ca-947d1f2d752c",
-      "mode": "persistent",
-      "created_at": "2026-04-30T12:07:03Z",
-      "last_used_at": "2026-04-30T12:07:03Z",
-      "refreshed": false
-    },
-    "codex_finalizer": {
-      "id": "019dde4a-7a3d-78b3-a182-196fbb333e4a",
-      "mode": "persistent",
-      "created_at": "2026-04-30T12:09:55Z",
-      "last_used_at": "2026-04-30T12:09:55Z",
-      "refreshed": false
-    },
     "codex_executor": {
-      "id": "019dde4b-b6dd-7c91-ac65-6c323f38deca",
+      "id": "019dde84-1e62-76b2-b416-9f8a8c242cb9",
       "mode": "persistent",
-      "created_at": "2026-04-30T12:11:25Z",
-      "last_used_at": "2026-04-30T12:16:05Z",
+      "created_at": "2026-04-30T13:16:39Z",
+      "last_used_at": "2026-04-30T13:16:39Z",
       "refreshed": false
     }
   },
@@ -138,30 +117,16 @@
     },
     {
       "step": "execute",
-      "timestamp": "2026-04-30T12:15:13Z",
-      "duration_ms": 315429,
-      "cost_usd": 0.0,
-      "result": "blocked",
-      "session_mode": "persistent",
-      "session_id": "019dde4b-b6dd-7c91-ac65-6c323f38deca",
-      "agent": "codex",
-      "output_file": "execution.json",
-      "artifact_hash": "sha256:9e02b48bcad381d05a11ae33863019835a0d34b4620272963b5195cc371b7300",
-      "finalize_hash": "sha256:e482f5cd6dec0d104938e2fcfbcb1fe63266cc543177f29faeecf2dee6f1c5b6",
-      "approval_mode": "auto_approve"
-    },
-    {
-      "step": "execute",
-      "timestamp": "2026-04-30T12:16:05Z",
-      "duration_ms": 50066,
+      "timestamp": "2026-04-30T13:16:39Z",
+      "duration_ms": 309910,
       "cost_usd": 0.0,
       "result": "success",
       "session_mode": "persistent",
-      "session_id": "019dde4b-b6dd-7c91-ac65-6c323f38deca",
+      "session_id": "019dde84-1e62-76b2-b416-9f8a8c242cb9",
       "agent": "codex",
       "output_file": "execution.json",
-      "artifact_hash": "sha256:1723bab3bc45b96b3b04a63c44964d8a6e82c876e2d65cb97ce1953dfe096792",
-      "finalize_hash": "sha256:3c421af454a747bc16c702dffe3cc2d370f8fed0db220b8f023adb6dfecb7e99",
+      "artifact_hash": "sha256:b245f1a9ac9d841b3739472efa4a22514754acc3755548497ed0682672b88ec8",
+      "finalize_hash": "sha256:9c68845e5ed51152266bb6135640d92a9f9026338bccfc2b27413afc29f9d9fd",
       "approval_mode": "auto_approve"
     }
   ],

@@ -36,6 +36,7 @@ def _truncate(conn) -> None:
               epic_events,
               external_requests,
               tool_calls,
+              second_opinions,
               messages,
               bot_turns,
               system_logs,

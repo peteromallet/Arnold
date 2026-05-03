@@ -3,7 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS images (
     id TEXT PRIMARY KEY,
     epic_id TEXT REFERENCES epics(id) ON DELETE SET NULL,
-    source TEXT NOT NULL CHECK (source IN ('agent_generated', 'user_uploaded')),
+    source TEXT NOT NULL CHECK (source IN ('agent_generated', 'user_uploaded', 'caller_uploaded')),
     prompt TEXT,
     storage_url TEXT NOT NULL,
     quality TEXT,

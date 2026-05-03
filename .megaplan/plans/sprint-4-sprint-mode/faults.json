@@ -1,0 +1,72 @@
+{
+  "flags": [
+    {
+      "id": "FLAG-001",
+      "concern": "Invocation envelope: state transitions and sprint deltas would remain invisible to callable clients. The plan wires edit_epic and end-of-turn checks, but does not update the turn envelope path; the current loop always returns state_after=state_before on successful turns, and StateDelta already has sprint_changes/state_transition fields that would stay empty.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Addressed the critique by adding explicit phases for invocation envelope state/sprint deltas and editorial read/time-travel replay support. The revised plan keeps `edit_epic` as the root write path, but now also wires every existing observation surface needed for Sprint 4 to be visible and reconstructible.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "FLAG-002",
+      "concern": "History/read tools: sprint state is not included in get_epic/get_epic_at_time replay. The plan adds hot-context loading and revert support, but omits the existing editorial read surface and time-travel reconstruction, so users and tests can inspect an epic without seeing its sprints, and replay cannot reconstruct sprint/status changes.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Addressed the critique by adding explicit phases for invocation envelope state/sprint deltas and editorial read/time-travel replay support. The revised plan keeps `edit_epic` as the root write path, but now also wires every existing observation surface needed for Sprint 4 to be visible and reconstructible.",
+      "raised_in": "critique_v1.json",
+      "status": "addressed",
+      "severity": "significant",
+      "verified": false,
+      "addressed_in": "plan_v2.md"
+    },
+    {
+      "id": "FLAG-003",
+      "concern": "Lifecycle metadata: planned_at and all-pending hot-context flag are missing from the plan. The spec has an explicit Sprint 4 test for all-pending planned state requiring epics.planned_at to be set and hot context to show that nothing is queued, but the plan only says to update epic state and surface an end-of-turn warning.",
+      "category": "completeness",
+      "severity_hint": "likely-minor",
+      "evidence": "planning-bot-spec.md:2627-2632 requires state planned, epics.planned_at set, a hot-context flag for all sprints pending, and an explicit user-facing note. The current epics schema already has planned_at at agent_kit/store/migrations/sqlite/001_core.sql:8-12, but the plan's state/gating steps do not mention setting it or adding the all-pending flag to load_hot_context.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-0",
+      "concern": "Criterion 10: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-1",
+      "concern": "Criterion 11: requires human verification (subjective_judgment).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    },
+    {
+      "id": "verifiability-2",
+      "concern": "Criterion 12: requires human verification (verify_physical_device).",
+      "category": "other",
+      "severity_hint": "likely-minor",
+      "evidence": "",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "minor",
+      "verified": false
+    }
+  ]
+}

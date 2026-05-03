@@ -1,0 +1,446 @@
+{
+  "tasks": [
+    {
+      "id": "T1",
+      "description": "Add SQLite and Supabase sprint migrations for `sprints` and `sprint_items`, including status checks, timestamps, item fields, read indexes, and partial unique queued-position constraints.",
+      "depends_on": [],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T2",
+      "description": "Extend the store port plus SQLite and Supabase adapters with sprint CRUD, sprint item replacement/listing, and helper loading of sprints with items. Update hot context to include sprint snapshots and an all-sprints-pending/no-queued flag.",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T3",
+      "description": "Implement deterministic sprint domain logic in `agent_kit/sprints.py`: payload normalization, validation, PM-task-level item checks, default lock-in assignment, queue/pend/reorder operations, gapless positions, and structured sprint-change summaries.",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T4",
+      "description": "Implement deterministic gating and lockdown scanning: `shaping -> sprinting`, `sprinting -> planned`, PM-handoff heuristic, checklist rules, at-least-one-sprint rule, queued/pending invariants, and unresolved-decision phrase blocking outside `Open Questions` and fenced code.",
+      "depends_on": [
+        "T2",
+        "T3"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T5",
+      "description": "Wire `edit_epic` to accept top-level `force`, `changes.sprints`, and `changes.state.target`; run gates before writes unless forced; apply body/checklist/sprint/state writes transactionally; set `planned_at` when entering `planned`; record `sprints_change`, `sprint_status_change`, `state_change`, and `forced_handoff` events with blocker details and prior-state snapshots.",
+      "depends_on": [
+        "T3",
+        "T4"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T6",
+      "description": "Preserve revert semantics for Sprint 4 events by replaying stored prior epic state, prior sprint rows, and prior sprint item rows for `sprints_change`, `sprint_status_change`, `state_change`, and `forced_handoff`.",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T7",
+      "description": "Update editorial read and time-travel tools so `get_epic` returns current sprints with items and `get_epic_at_time` reconstructs sprint/status/state history from event replay, matching the same snapshots used by revert.",
+      "depends_on": [
+        "T5",
+        "T6"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T8",
+      "description": "Update invocation envelope generation so completed turns reload actual post-turn state, populate `StateDelta.state_transition` and `StateDelta.sprint_changes`, and adjust `agent_kit/envelope.schema.json` only if the existing schema is insufficient.",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T9",
+      "description": "Update Arnold prompts and phase-aware end-of-turn checks for the two-beat sprint lock-in flow, blocker surfacing with address/skip/force options, post-handoff queue/pend/reorder commands, sprinting/planned progress findings, and all-pending planned-state user-facing notes.",
+      "depends_on": [
+        "T2",
+        "T5",
+        "T8"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T10",
+      "description": "Add focused unit, adapter, migration, envelope, read/replay, end-of-turn, and lifecycle tests for Sprint 4 behavior: gating, lockdown, force-through event logging, sprint CRUD, duplicate queued-position rejection, lock-in, decision-doc lifecycle, queue/reorder, read surfaces, and invocation deltas.",
+      "depends_on": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T9"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T11",
+      "description": "Run validation and fix failures until green. Use targeted commands first: `pytest tests/test_lockdown.py tests/test_gating.py tests/test_sprints.py`, adapter/migration tests, visibility tests, lifecycle/editorial-loop tests, then full `pytest`. Also write a short throwaway script that reproduces the specific Sprint 4 lifecycle/gating behavior, run it to confirm the implementation, then delete it. Do not create additional test files in this final validation task.",
+      "depends_on": [
+        "T10"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null
+    },
+    {
+      "id": "T12",
+      "description": "Surface after_execute user_actions to the user:\n- U1: Apply the Supabase migration to the real Supabase project and verify it in the production/staging database using secure credentials outside the repo.\nDo not perform them yourself \u2014 these require human action. Mark this task done once they have been clearly communicated.",
+      "depends_on": [
+        "T11"
+      ],
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": [],
+      "reviewer_verdict": ""
+    }
+  ],
+  "watch_items": [
+    "Do not invoke the `megaplan` CLI, read the `megaplan` skill, or start nested planning. Treat megaplan references as context only.",
+    "Do not commit, log, or request the redacted Supabase service key. Use local SQLite, migration text checks, and fake Supabase adapter tests unless credentials are provided through normal environment channels.",
+    "FLAG-003 remains open: entering `planned` must set `epics.planned_at`, and hot context must expose the all-sprints-pending/no-queued condition so the user can be warned.",
+    "Keep enforcement deterministic and server-side. Do not add live LLM calls to gating unless the user explicitly changes the requirement.",
+    "`edit_epic` is the single Sprint 4 write surface. Avoid adding a separate sprint write tool unless implementation evidence proves the schema is unmanageable.",
+    "Pending sprints need a populated `pending_reason`; if omitted, store an explicit default such as `no reason given` so acceptance checks are stable.",
+    "Use the existing markdown body parser behavior for section attribution and fenced-code handling; avoid introducing an incompatible parser for lockdown scanning.",
+    "Sprint event snapshots are the canonical source for both revert and `get_epic_at_time`; do not let those paths drift.",
+    "Invocation callers must see real `state_after`, `state_transition`, and `sprint_changes`; do not leave envelopes echoing `state_before` after successful writes.",
+    "Natural language commands like `queue sprint 2` are prompt/model behavior; server code should receive structured `edit_epic` arguments and enforce correctness.",
+    "Debt watch items about unrelated attachment/storage recovery are out of scope; avoid touching those areas unless required by tests.",
+    "Queue positions for queued sprints must be unique per epic and should be normalized gaplessly after reorder operations."
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "question": "Do both migration sets create `sprints` and `sprint_items` with matching checks, indexes, timestamps, and a partial unique index on `(epic_id, queue_position)` where status is `queued`?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "question": "Can the common store interface create, load, list, update, delete, and item-replace sprints consistently across SQLite and Supabase adapters, and does hot context include sprint/items plus the all-pending/no-queued flag?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "question": "Do sprint operations reject invalid payloads, assign lock-in defaults correctly, require pending reasons/defaults, maintain gapless queued positions, and return structured change summaries?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "question": "Do gates block underspecified `shaping -> sprinting`, enforce all `sprinting -> planned` invariants, require at least one sprint, and report lockdown phrase blockers with section and line number while exempting `Open Questions` and fenced code?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "question": "Does `edit_epic` remove the old unsupported guard, apply sprint/state writes atomically, set `planned_at`, return blockers and sprint/state deltas, and log `forced_handoff` with bypassed blockers when forced?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "question": "Can revert restore prior epic state, sprint rows, and sprint items for every new Sprint 4 event type without corrupting existing body/checklist revert behavior?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "question": "Do `get_epic` and `get_epic_at_time` expose current and historical sprint state accurately before and after lock-in, queue, pend, reorder, force, and revert events?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "question": "Do completed invocation envelopes reload real post-turn state and include `state_transition` plus `sprint_changes` for state advancement, lock-in, queue, and reorder operations?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "question": "Do prompts and end-of-turn checks guide the two-beat flow, blocker options, queue/pend/reorder behavior, and all-pending planned-state warning without relying on unsupported tool shapes?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "question": "Do the added tests cover all acceptance criteria and the open critique item, while keeping helper tests deterministic and independent of production Supabase credentials?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "question": "Do targeted tests, lifecycle/editorial-loop tests, the full suite, and the temporary reproduction script all pass after any necessary fixes, with the throwaway script deleted afterward?",
+      "executor_note": "",
+      "verdict": ""
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "question": "Were all after_execute user_actions clearly surfaced to the user without the executor performing them?",
+      "executor_note": "",
+      "verdict": ""
+    }
+  ],
+  "user_actions": [
+    {
+      "id": "U1",
+      "description": "Apply the Supabase migration to the real Supabase project and verify it in the production/staging database using secure credentials outside the repo.",
+      "phase": "after_execute",
+      "blocks_task_ids": null,
+      "rationale": "Repo work can create and test migration SQL, but applying it to the hosted Supabase project requires human-controlled credentials and deployment authority.",
+      "requires_human_only_reason": "Manual production Supabase migration against the provided project URL is operational work outside the executor's repo-editing permissions."
+    }
+  ],
+  "meta_commentary": "Execute in dependency order: durable schema and store primitives first, deterministic sprint/gating logic second, `edit_epic` orchestration third, then visibility surfaces, prompts/end-of-turn behavior, and tests. The main implementation trap is treating Sprint 4 as only a database write: envelopes, hot context, read tools, replay, revert, and `planned_at` must all reflect the new sprint lifecycle. Keep the tool input structured and deterministic; natural-language interpretation belongs in the model loop and prompt guidance, not persistence adapters or gates.",
+  "validation": {
+    "plan_steps_covered": [
+      {
+        "plan_step_summary": "Step 1: add sprint migrations",
+        "finalize_item_ids": [
+          "T1"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 2: extend store protocol",
+        "finalize_item_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 3: implement SQLite and Supabase sprint adapters plus hot context",
+        "finalize_item_ids": [
+          "T2"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 4: add sprint domain module",
+        "finalize_item_ids": [
+          "T3"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 5: add gate evaluators",
+        "finalize_item_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 6: implement lockdown scanning",
+        "finalize_item_ids": [
+          "T4"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 7: extend `edit_epic` schema and write path",
+        "finalize_item_ids": [
+          "T5"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 8: preserve revert semantics",
+        "finalize_item_ids": [
+          "T6"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 9: populate invocation envelopes",
+        "finalize_item_ids": [
+          "T8"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 10: extend editorial read tools and replay",
+        "finalize_item_ids": [
+          "T7"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 11: update Arnold instructions",
+        "finalize_item_ids": [
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 12: make end-of-turn checks phase-aware",
+        "finalize_item_ids": [
+          "T9"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 13: add focused unit tests",
+        "finalize_item_ids": [
+          "T10",
+          "T11"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 14: add adapter, envelope, read, and migration tests",
+        "finalize_item_ids": [
+          "T10",
+          "T11"
+        ]
+      },
+      {
+        "plan_step_summary": "Step 15: add integration lifecycle tests",
+        "finalize_item_ids": [
+          "T10",
+          "T11"
+        ]
+      },
+      {
+        "plan_step_summary": "Execution order and validation order",
+        "finalize_item_ids": [
+          "T1",
+          "T2",
+          "T3",
+          "T4",
+          "T5",
+          "T6",
+          "T7",
+          "T8",
+          "T9",
+          "T10",
+          "T11"
+        ]
+      },
+      {
+        "plan_step_summary": "Manual hosted Supabase migration coordination",
+        "finalize_item_ids": [
+          "U1"
+        ]
+      },
+      {
+        "plan_step_summary": "Surface after_execute user_actions",
+        "finalize_item_ids": [
+          "T12"
+        ]
+      }
+    ],
+    "orphan_tasks": [],
+    "completeness_notes": "All approved plan steps are mapped. FLAG-003 is folded into T2, T5, T9, and T10 through hot-context all-pending visibility, `planned_at` handling, user-facing warning behavior, and tests. Production Supabase migration application is intentionally a human after-execute action; migration authoring and validation remain repo tasks.",
+    "coverage_complete": true
+  },
+  "baseline_test_failures": [],
+  "baseline_test_command": "pytest --tb=no -q --no-header",
+  "baseline_test_note": "No baseline tests were run while preparing this execution briefing."
+}

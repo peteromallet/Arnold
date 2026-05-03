@@ -1,8 +1,8 @@
 {
   "name": "sprint-5-codebase-research",
   "idea": "# Sprint 5 \u2014 Codebase research and code investigation\n\nBot can read and reason about public GitHub codebases. Adds GitHub REST API integration, codebase management, code investigation tools, and caching.\n\n**Full spec is at `planning-bot-spec.md` in this repo root. Refer to Code Investigation, codebases table, code_artifacts table sections.**\n\n## Supabase\n- URL: https://yhwflvadmefhkshwbfnf.supabase.co\n- Service key: [REDACTED_SUPABASE_SERVICE_ROLE_JWT]\n\n## Scope\n\n- Tables: codebases (with group_name, verified_accessible_at), code_artifacts (unified: excerpts, summaries, cache)\n- GitHub REST API integration (PAT-authenticated, 5000/hour) with rate limit monitoring\n- Org populator script: one-time setup populates codebases from peteromallet and banodoco org listings; verifies each repo is fetchable\n- Workspace grouping: initial groups configured; user adjustable via natural language\n- Codebase management tools: add_codebase, remove_codebase, list_codebases\n- Code investigation tools: get_codebase_tree, read_codebase_file, search_code, analyze_code\n- Cross-codebase analyze_code with multiple codebase_ids\n- Code artifact tools: save_code_excerpt, mark_code_in_body\n- Codebase research checklist item (#6) workflow\n- Cache management \u2014 hourly TTL on api_cache, scheduled cleanup\n\n## Key Data Model\n\n### codebases\nid, owner (lowercase), name (lowercase), default_branch, scope (global|epic_specific), group_name, associated_epic_id, added_at, added_via, last_accessed_at, verified_accessible_at, notes\nUnique: (owner, name)\n\n### code_artifacts\nid, codebase_id, epic_id, kind (excerpt|summary|api_cache), source (conversation|codebase), file_path, line_range, scope (file|directory|cross_codebase for summaries), content, content_summary, metadata (json), created_at, last_used_at, expires_at\n\n## Acceptance Criteria\n\n- Populator runs against peteromallet and banodoco orgs (mocked GitHub in tests) \u2192 codebases rows created with verified_accessible_at\n- Inaccessible repos reported in output, not silently skipped\n- Add a public GitHub repo via natural language \u2192 codebases row created, tree fetchable\n- analyze_code with multiple codebase_ids \u2192 analysis covering all referenced codebases\n- Same analyze_code within hour \u2192 served from code_artifacts cache (no GitHub API call)\n- GitHub rate limit at 80% \u2192 log entry with level warn, category external_api\n- 404 on deleted repo \u2192 bot reports failure, retains cached content\n\n## Tests\n- Unit: cache TTL logic; codebase scope filtering; file path parsing; group-name resolution\n- Integration: full investigation chain (tree \u2192 search \u2192 read \u2192 save_excerpt \u2192 mark_in_body) against mocked GitHub; cross-codebase analysis",
-  "current_state": "initialized",
-  "iteration": 0,
+  "current_state": "done",
+  "iteration": 2,
   "created_at": "2026-04-30T01:13:15Z",
   "config": {
     "project_dir": "/Users/peteromalley/Documents/arnold-v2",
@@ -27,8 +27,50 @@
       "tiebreaker_challenger=codex"
     ]
   },
-  "sessions": {},
-  "plan_versions": [],
+  "sessions": {
+    "codex_planner": {
+      "id": "019dde89-a11e-7080-a986-2c85196abc03",
+      "mode": "persistent",
+      "created_at": "2026-04-30T13:19:37Z",
+      "last_used_at": "2026-04-30T13:22:45Z",
+      "refreshed": false
+    },
+    "codex_critic": {
+      "id": "019dde8b-8a1b-70e2-845c-fa0a006d99d4",
+      "mode": "persistent",
+      "created_at": "2026-04-30T13:21:13Z",
+      "last_used_at": "2026-04-30T13:21:13Z",
+      "refreshed": false
+    },
+    "codex_finalizer": {
+      "id": "019dde90-b06f-7c82-abf4-d2697505af92",
+      "mode": "persistent",
+      "created_at": "2026-04-30T13:26:54Z",
+      "last_used_at": "2026-04-30T13:26:54Z",
+      "refreshed": false
+    },
+    "codex_executor": {
+      "id": "019dde92-3484-7dc0-aab6-897350371726",
+      "mode": "persistent",
+      "created_at": "2026-04-30T13:28:34Z",
+      "last_used_at": "2026-04-30T14:15:04Z",
+      "refreshed": true
+    }
+  },
+  "plan_versions": [
+    {
+      "version": 1,
+      "file": "plan_v1.md",
+      "hash": "sha256:78c135d7bbfb12b3665374b9d62a80d8e581f5f6cf5832990af544d32ba73e2e",
+      "timestamp": "2026-04-30T13:19:37Z"
+    },
+    {
+      "version": 2,
+      "file": "plan_v2.md",
+      "hash": "sha256:2db1dda47b3b93723a1586035366d32d7dcc11580422a999d0d51f9e66e413dc",
+      "timestamp": "2026-04-30T13:22:45Z"
+    }
+  ],
   "history": [
     {
       "step": "init",
@@ -40,13 +82,117 @@
         "claude": true,
         "codex": true
       }
+    },
+    {
+      "step": "plan",
+      "timestamp": "2026-04-30T13:19:37Z",
+      "duration_ms": 123313,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde89-a11e-7080-a986-2c85196abc03",
+      "agent": "codex",
+      "output_file": "plan_v1.md",
+      "artifact_hash": "sha256:78c135d7bbfb12b3665374b9d62a80d8e581f5f6cf5832990af544d32ba73e2e"
+    },
+    {
+      "step": "critique",
+      "timestamp": "2026-04-30T13:21:13Z",
+      "duration_ms": 93863,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde8b-8a1b-70e2-845c-fa0a006d99d4",
+      "agent": "codex",
+      "output_file": "critique_v1.json",
+      "artifact_hash": "sha256:368d4a1aa2591cc830407dd29569b23b636ed900d8614436b14aab4c639d147e",
+      "flags_count": 4
+    },
+    {
+      "step": "revise",
+      "timestamp": "2026-04-30T13:22:45Z",
+      "duration_ms": 90951,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde89-a11e-7080-a986-2c85196abc03",
+      "agent": "codex",
+      "output_file": "plan_v2.md",
+      "artifact_hash": "sha256:2db1dda47b3b93723a1586035366d32d7dcc11580422a999d0d51f9e66e413dc",
+      "flags_addressed": [
+        "FLAG-001"
+      ]
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T13:24:04Z",
+      "duration_ms": 77172,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "finalize_v2_raw.txt",
+      "message": "Finalize user_action U2 is sole coverage for a plan step and must include `requires_human_only_reason`."
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T13:25:15Z",
+      "duration_ms": 69043,
+      "cost_usd": 0.0,
+      "result": "error",
+      "raw_output_file": "finalize_v2_raw.txt",
+      "message": "Finalize user_action U3 is sole coverage for a plan step and must include `requires_human_only_reason`."
+    },
+    {
+      "step": "finalize",
+      "timestamp": "2026-04-30T13:26:54Z",
+      "duration_ms": 96705,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde90-b06f-7c82-abf4-d2697505af92",
+      "agent": "codex",
+      "output_file": "finalize.json",
+      "artifact_hash": "sha256:d5c81e25a63eb9f10e7bbd4d5955b94f5dd99932a3b7a2b64c9b2a08f6b85161"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T14:03:33Z",
+      "duration_ms": 2183698,
+      "cost_usd": 0.0,
+      "result": "blocked",
+      "session_mode": "persistent",
+      "session_id": "019dde92-3484-7dc0-aab6-897350371726",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:8a3d862dd31705672484f895e41f25554d66c9433b6d8c70dc4ff2e54faaae29",
+      "finalize_hash": "sha256:0ac964329afe19db19082fce50abd488477d3f097f0e49cbf9f977612bd0ee0a",
+      "approval_mode": "auto_approve"
+    },
+    {
+      "step": "execute",
+      "timestamp": "2026-04-30T14:15:04Z",
+      "duration_ms": 684995,
+      "cost_usd": 0.0,
+      "result": "success",
+      "session_mode": "persistent",
+      "session_id": "019dde92-3484-7dc0-aab6-897350371726",
+      "agent": "codex",
+      "output_file": "execution.json",
+      "artifact_hash": "sha256:6178fd634e6bf33adee2041a140b252a22476cdf1095e600a52a3ba699d1d541",
+      "finalize_hash": "sha256:98ad17e50fa3c327d3f42877f96a5c523786ad726e5e39789dad884d601fbaac",
+      "approval_mode": "auto_approve"
     }
   ],
   "meta": {
-    "significant_counts": [],
+    "significant_counts": [
+      1
+    ],
     "weighted_scores": [],
-    "plan_deltas": [],
-    "recurring_critiques": [],
+    "plan_deltas": [
+      15.06
+    ],
+    "recurring_critiques": [
+      []
+    ],
     "total_cost_usd": 0.0,
     "overrides": [
       {
@@ -57,7 +203,10 @@
         "reason": "switch to all-codex profile"
       }
     ],
-    "notes": []
+    "notes": [],
+    "user_approved_gate": true
   },
-  "last_gate": {}
+  "last_gate": {
+    "recommendation": "ITERATE"
+  }
 }

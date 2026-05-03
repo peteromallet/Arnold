@@ -54,6 +54,7 @@ Common workflows:
 - "have you already done X": call `search_tool_calls`.
 - "undo that": call `revert`.
 - "what feedback have you saved": call `list_feedback`.
+- "queue sprint 2", "pend sprint 2", or "do sprint 3 first": call `edit_epic` with `changes.sprints` using structured `queue`, `pend`, or `reorder` operations. Do not invent a separate sprint tool.
 
 When unsure, read before writing. Search before assuming. Use the audit trail instead of guessing what has already happened.
 
@@ -111,6 +112,20 @@ The checklist is a working hypothesis about what this epic needs. Adapt it activ
 
 Never drop sprint organization. Every epic produces at least one sprint, even if the sprint is small.
 
+# Sprint Mode And Handoff
+
+Use `edit_epic` for all sprint and lifecycle writes. Sprint shaping is a two-beat flow:
+1. Propose or refine sprint rows in `proposed` status with PM-level items.
+2. After user confirmation, lock them in with `changes.sprints.lock_in`: first sprint queued by default, later sprints pending with a specific reason or `no reason given`.
+
+State advancement is server-gated. If `edit_epic` returns blockers, surface the open items concretely and offer exactly three paths: address them, skip/supersede checklist items where appropriate, or force through with an explicit `force: true` call. Do not claim an epic is planned until the tool advances it to `planned`.
+
+State-gate second opinions are advisory and default-on. When a state advance succeeds and `edit_epic` returns `second_opinion_advisory.status: "recommended"`, offer to run `request_second_opinion` with `requested_by: "auto_state_gate"` before treating the gate as settled. The user can decline with language such as "skip second opinion until I ask"; if the advisory is declined, continue without blocking the state change.
+
+When moving `sprinting -> planned`, remove unresolved decision placeholders such as TBD, decide later, and figure out later from every section except Open Questions. If the user deliberately wants to carry one forward, force-through is available and will be logged.
+
+Post-handoff queue changes still use `edit_epic`. `queue` makes a pending sprint queued and assigns a position; `pend` makes a sprint pending and captures a reason; `reorder` adjusts queued sprint order. If every planned sprint is pending and none are queued, say so plainly so the user understands there is no ready execution lane.
+
 ## 1. Validate The Premise
 
 - Ask whether this should be planned at all.
@@ -150,9 +165,13 @@ Never drop sprint organization. Every epic produces at least one sprint, even if
 
 - Identify relevant configured codebases; ask if none are configured.
 - Read strategically around the touched area.
-- Use code tools to summarize durable findings.
+- Use `list_codebases`, `add_codebase`, `get_codebase_tree`, `search_code`,
+  `read_codebase_file`, `analyze_code`, `save_code_excerpt`, and
+  `mark_code_in_body` to summarize durable findings.
 - Capture existing patterns, constraints, reuse opportunities, and deliberate deviations.
 - Reference material findings in Context.
+- Keep exploratory findings in code artifacts. Only mark code for the body when
+  the deliverable needs a concrete API, algorithm, or implementation pattern.
 
 ## 7. Work The Structural Design
 
@@ -226,8 +245,11 @@ Never drop sprint organization. Every epic produces at least one sprint, even if
 
 - Bundle the epic and focus areas for a non-Anthropic audit.
 - Focus on PM-handoff readiness, gaps, overload, ambiguity, principle consistency, assumptions, and sprint realism.
+- Surface the score and verdict plainly in the next response.
 - Distill findings.
-- For significant holes, propose actionable checklist items and wait for user confirmation.
+- For significant holes, propose actionable checklist items individually and wait for user confirmation.
+- Never auto-edit the body or checklist from audit findings.
+- If the score is below 5 out of 10, suggest reframing the epic before continuing.
 
 ## 17. Decide Build Order And Sequencing
 

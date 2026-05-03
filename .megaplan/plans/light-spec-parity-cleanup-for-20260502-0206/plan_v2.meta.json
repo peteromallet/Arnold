@@ -1,0 +1,100 @@
+{
+  "version": 2,
+  "timestamp": "2026-05-02T01:10:20Z",
+  "hash": "sha256:fdd6359268a62935670f9ad5ce89a77ce20b5094ee0329580b3651378b22afaa",
+  "changes_summary": "No critique flags were raised; refined the plan to make the root-cause check explicit, narrow the alias behavior, clarify that `megaplan.arnold` remains a compatibility shim, and tighten validation around stale spec phrases and final diff scope.",
+  "flags_addressed": [],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`planning-bot-spec.md` uses `from arnold import run_turn, Envelope` for the Callable API Python example and does not present `megaplan.arnold` as the public spec import path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invocation event-stream documentation consistently says live CLI progress events go to stderr and the final envelope goes to stdout.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Spec image-tool wording states that `generate_image` creates/stores image data without surfacing it, and `send_image` is the tool that surfaces images to Discord or invocation envelopes.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Spec idempotency documentation includes the implemented system-request formula with `system_seq` and preserves the tool-call idempotency formula.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invocation attachment documentation matches current implementation: image attachments are supported for CLI/Python, invocation audio is explicitly deferred, and HTTP remains future work.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`get_checklist`, `get_sprints`, and `recent_messages`, if added, are registered read tools backed by existing Store/hot-context behavior with no Store/ports refactor.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`transcribe_voice` is not falsely documented as a current bot-callable tool; it is marked automatic resident behavior or deferred as appropriate.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused tests covering touched code behavior pass.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Unrelated dirty worktree changes are preserved; the final task diff is limited to the spec, lightweight alias code if needed, and focused tests.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The implementation remains small and avoids new transport, Store, FastAPI, asyncpg, or HTTP surface area.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No files should be edited during this revision-planning step.",
+    "The public spec should mention `arnold` as the callable import path while leaving the existing `megaplan.arnold` shim untouched.",
+    "`get_checklist`, `get_sprints`, and `recent_messages` may be added only as thin read aliases over existing Store/hot-context behavior.",
+    "`recent_messages` should return a payload keyed as `recent_messages` to match existing hot-context naming.",
+    "`transcribe_voice` should be documented as automatic resident ingestion behavior or deferred for invocation audio, not added as a bot-callable tool in this pass.",
+    "Validation should avoid `.megaplan/` and unrelated docs/ops material."
+  ],
+  "delta_from_previous_percent": 48.37,
+  "structure_warnings": []
+}
