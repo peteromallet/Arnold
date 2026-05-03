@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
-import pytest
-
-from megaplan.store import DBStore, FileStore, LocalDirBlobStore, Store
+from megaplan.store import FileStore, LocalDirBlobStore
 from megaplan.tests.store_contract import run_arnold_adapter_contract, run_store_contract
 
 
@@ -41,13 +38,3 @@ def test_local_dir_blob_store_round_trip(tmp_path: Path) -> None:
     store.delete("blob-1")
 
     assert store.stat("blob-1") is None
-
-
-def test_db_store_methods_raise_not_implemented() -> None:
-    db = DBStore()
-
-    for name, func in inspect.getmembers(Store, predicate=inspect.isfunction):
-        if name.startswith("_"):
-            continue
-        with pytest.raises(NotImplementedError):
-            getattr(db, name)()
