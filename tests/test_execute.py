@@ -37,7 +37,7 @@ def _missing_code_task_evidence(tasks: list[dict[str, object]]) -> list[str]:
         issues=issues,
         should_classify=lambda task: True,
         has_evidence=lambda task: bool(task.get("files_changed")),
-        has_advisory_evidence=lambda task: bool(task.get("commands_run")),
+        has_advisory_evidence=megaplan.execute.core._has_code_task_advisory_evidence,
         missing_message="missing: ",
         advisory_message="advisory: ",
     )
@@ -89,6 +89,29 @@ def test_auto_attribute_single_done_task_with_unclaimed_changes(tmp_path: Path) 
     ]
     assert result.recursive_snapshot == {"new.py": "<hash>"}
     assert _missing_code_task_evidence(finalize_data["tasks"]) == []
+
+
+def test_done_task_evidence_accepts_evidence_files_and_notes() -> None:
+    tasks = [
+        {
+            "id": "T1",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": ["finalize.json"],
+            "executor_notes": "",
+        },
+        {
+            "id": "T2",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "executor_notes": "Human-only follow-up was surfaced.",
+        },
+    ]
+
+    assert _missing_code_task_evidence(tasks) == []
 
 
 def test_auto_attribute_multiple_done_tasks_share_unclaimed_paths(tmp_path: Path) -> None:

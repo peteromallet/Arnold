@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.io import collect_git_diff_patch
+from megaplan._core.io import collect_git_diff_patch, collect_git_diff_summary
 
 
 def _git_init(repo: Path) -> None:
@@ -72,3 +72,24 @@ def test_collect_git_diff_patch_handles_timeout(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr("megaplan._core.io.subprocess.run", _raise)
 
     assert collect_git_diff_patch(project_dir) == "git diff timed out."
+
+
+def test_collect_git_diff_patch_falls_back_to_branch_diff_when_worktree_clean(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init(repo)
+
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    _git_commit_all(repo, "initial")
+    subprocess.run(["git", "branch", "-M", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+    (repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git_commit_all(repo, "feature change")
+
+    patch = collect_git_diff_patch(repo)
+    summary = collect_git_diff_summary(repo)
+
+    assert "diff --git a/app.py b/app.py" in patch
+    assert "+value = 2" in patch
+    assert "Branch diff against base" in summary
+    assert "app.py" in summary

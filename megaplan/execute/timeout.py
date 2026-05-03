@@ -48,6 +48,13 @@ def _reset_timeout_invalid_tasks(
 ) -> list[str]:
     reset_reasons: dict[str, list[str]] = {}
     mode_state = {"config": {"mode": mode}}
+    def _has_code_task_advisory_evidence(task: dict[str, Any]) -> bool:
+        return bool(
+            task.get("commands_run")
+            or task.get("evidence_files")
+            or str(task.get("executor_notes") or "").strip()
+        )
+
     if is_prose_mode(mode_state):
         missing_task_ids = _check_done_task_evidence(
             finalize_data.get("tasks", []),
@@ -64,9 +71,9 @@ def _reset_timeout_invalid_tasks(
             issues=issues,
             should_classify=lambda task: True,
             has_evidence=lambda task: bool(task.get("files_changed")),
-            has_advisory_evidence=lambda task: bool(task.get("commands_run")),
-            missing_message="Done tasks missing both files_changed and commands_run during timeout recovery: ",
-            advisory_message="Advisory: done tasks rely on commands_run without files_changed during timeout recovery: ",
+            has_advisory_evidence=_has_code_task_advisory_evidence,
+            missing_message="Done tasks missing files_changed, commands_run, evidence_files, and executor_notes during timeout recovery: ",
+            advisory_message="Advisory: done tasks rely on non-file evidence during timeout recovery: ",
         )
     for task_id in missing_task_ids:
         if is_prose_mode(mode_state):

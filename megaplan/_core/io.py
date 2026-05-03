@@ -912,7 +912,56 @@ def collect_git_diff_summary(project_dir: Path) -> str:
         return "git status timed out."
     if process.returncode != 0:
         return f"Unable to read git status: {process.stderr.strip() or process.stdout.strip()}"
-    return process.stdout.strip() or "No git changes detected."
+    status = process.stdout.strip()
+    if status:
+        return status
+    branch_summary = _collect_branch_diff_summary(project_dir)
+    return branch_summary or "No git changes detected."
+
+
+def _branch_diff_base(project_dir: Path) -> str | None:
+    def _git(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+        try:
+            proc = subprocess.run(
+                ["git", *args],
+                cwd=str(project_dir),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+        return proc if proc.returncode == 0 else None
+
+    branch_proc = _git(["branch", "--show-current"])
+    branch = (branch_proc.stdout.strip() if branch_proc else "")
+    if branch in {"", "main", "master"}:
+        return None
+    for candidate in ("origin/main", "main", "origin/master", "master"):
+        base_proc = _git(["merge-base", candidate, "HEAD"])
+        if base_proc and base_proc.stdout.strip():
+            return base_proc.stdout.strip()
+    return None
+
+
+def _collect_branch_diff_summary(project_dir: Path) -> str:
+    base = _branch_diff_base(project_dir)
+    if not base:
+        return ""
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--stat", f"{base}...HEAD"],
+            cwd=str(project_dir),
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    summary = proc.stdout.strip()
+    return f"Branch diff against base {base[:12]}:\n{summary}" if summary else ""
 
 
 def collect_git_diff_patch(project_dir: Path) -> str:
@@ -972,7 +1021,19 @@ def collect_git_diff_patch(project_dir: Path) -> str:
         if patch:
             patches.append(patch)
 
-    return "\n".join(patches).strip() or "No git changes detected."
+    patch = "\n".join(patches).strip()
+    if patch:
+        return patch
+
+    base = _branch_diff_base(project_dir)
+    if base:
+        branch_process, error = _run_git(["diff", "--binary", "--no-ext-diff", f"{base}...HEAD"])
+        if not error:
+            branch_patch = (branch_process.stdout if branch_process is not None else "").strip()
+            if branch_patch:
+                return branch_patch
+
+    return "No git changes detected."
 
 
 def find_command(name: str) -> str | None:
