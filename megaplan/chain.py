@@ -23,12 +23,13 @@ Spec format (YAML)::
     on_escalate:
       abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
 
-Progress is persisted to ``chain_state.json`` beside the spec so a relaunched
-process can resume where the previous run left off.
+Progress is persisted under ``.megaplan/chains/`` so a relaunched process can
+resume where the previous run left off without dirtying milestone branches.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -221,6 +222,12 @@ class ChainState:
 
 
 def _state_path_for(spec_path: Path) -> Path:
+    spec_resolved = spec_path.resolve()
+    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+    return spec_resolved.parent / ".megaplan" / "chains" / f"{spec_resolved.stem}-{digest}.json"
+
+
+def _legacy_state_path_for(spec_path: Path) -> Path:
     return spec_path.with_name("chain_state.json")
 
 
@@ -237,6 +244,10 @@ def load_spec(spec_path: Path) -> ChainSpec:
 def load_chain_state(spec_path: Path) -> ChainState:
     state_path = _state_path_for(spec_path)
     if not state_path.exists():
+        legacy_path = _legacy_state_path_for(spec_path)
+        if legacy_path.exists():
+            state_path = legacy_path
+    if not state_path.exists():
         return ChainState()
     try:
         raw = json.loads(state_path.read_text(encoding="utf-8"))
@@ -249,6 +260,7 @@ def load_chain_state(spec_path: Path) -> ChainState:
 
 def save_chain_state(spec_path: Path, state: ChainState) -> None:
     state_path = _state_path_for(spec_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
     tmp.replace(state_path)

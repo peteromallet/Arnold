@@ -58,7 +58,14 @@ def test_build_uses_docker_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert calls == [
         (
             ["docker", "build", "-t", "megaplan-cloud-svc", str(tmp_path)],
-            {"cwd": None, "capture_output": True, "text": True, "check": False},
+            {
+                "cwd": None,
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "check": False,
+            },
         )
     ]
 
@@ -230,6 +237,8 @@ def test_upload_file_streams_base64_over_railway_ssh(
                 "cwd": None,
                 "capture_output": True,
                 "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
                 "check": False,
             },
         )
@@ -259,7 +268,14 @@ def test_read_remote_file_uses_cat_over_railway_ssh(monkeypatch: pytest.MonkeyPa
                 "--",
                 "cat /workspace/chain_state.json",
             ],
-            {"cwd": None, "capture_output": True, "text": True, "check": False},
+            {
+                "cwd": None,
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "check": False,
+            },
         )
     ]
 
