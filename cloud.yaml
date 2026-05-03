@@ -1,0 +1,37 @@
+provider: railway
+
+repo:
+  url: https://github.com/peteromallet/megaplan.git
+  branch: main
+  workspace: /workspace/megaplan
+
+agents:
+  default: codex
+
+codex:
+  model: gpt-5.4
+  reasoning: high
+
+mode: chain
+
+chain:
+  spec: /workspace/chain.yaml
+
+megaplan:
+  ref: 2fb8f332a7b4d0d2a8d0a13c9b4d9a080d91c033
+
+resources:
+  volume: arnold-merge-volume
+  port: 8080
+
+railway:
+  service: agent
+  session: agent
+
+secrets:
+  - OPENAI_API_KEY
+  - ANTHROPIC_API_KEY
+  - GITHUB_TOKEN
+  - SUPABASE_URL
+  - SUPABASE_ANON_KEY
+  - SUPABASE_SERVICE_ROLE_KEY

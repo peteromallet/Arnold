@@ -1,0 +1,51 @@
+# Arnold-into-megaplan merge chain.
+# 8 sprints sequential; see docs/arnold-merge-design.md for full architecture.
+# Spec consumed by `megaplan chain start --spec /workspace/megaplan/chain.yaml`.
+# Idea paths are container-side absolute paths; they map to local paths under
+# --idea-dir during `megaplan cloud chain` upload.
+
+milestones:
+  - label: sprint-0-spike
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-0-spike.md
+    branch: arnold-merge/sprint-0-spike
+
+  - label: sprint-1-foundation
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-1-foundation.md
+    branch: arnold-merge/sprint-1-foundation
+
+  - label: sprint-2-dbstore
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-2-dbstore.md
+    branch: arnold-merge/sprint-2-dbstore
+
+  - label: sprint-3-migrate-multistore
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-3-migrate-multistore.md
+    branch: arnold-merge/sprint-3-migrate-multistore
+
+  - label: sprint-4-editorial-pure
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-4-editorial-pure.md
+    branch: arnold-merge/sprint-4-editorial-pure
+
+  - label: sprint-5-editorial-gnarly
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-5-editorial-gnarly.md
+    branch: arnold-merge/sprint-5-editorial-gnarly
+
+  - label: sprint-6-discord-control
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-6-discord-control.md
+    branch: arnold-merge/sprint-6-discord-control
+
+  - label: sprint-7-hardening
+    idea: /workspace/megaplan/ideas/arnold-merge/sprint-7-hardening.md
+    branch: arnold-merge/sprint-7-hardening
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+
+driver:
+  stall_threshold: 5
+  max_iterations: 100
+  phase_timeout: 3600
+  on_escalate: force-proceed
+  robustness: standard
+  auto_approve: true
