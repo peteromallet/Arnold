@@ -4,6 +4,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from megaplan.schemas import Plan
 from megaplan.store import PlanRepository
 from megaplan._core.io import orphan_plans_root
@@ -14,6 +16,8 @@ FIXTURE_ROOT = Path("arnold-source/.megaplan/plans")
 
 def _copy_fixture(tmp_path: Path, name: str) -> Path:
     source = FIXTURE_ROOT / name
+    if not source.exists():
+        pytest.skip(f"arnold-source fixture missing: {source}")
     target = tmp_path / name
     shutil.copytree(source, target)
     return target

@@ -6,6 +6,8 @@ import importlib.util
 from pathlib import Path
 import sys
 
+import pytest
+
 from megaplan.schemas import BotTurn, ChecklistItem, Epic, EpicLock, Message, SystemLog, ToolCall, utc_now
 from megaplan.store import ArnoldStoreAdapter, BlobStore, HotContext, LockConflict, Store
 
@@ -20,6 +22,8 @@ def _public_methods(cls: type[object]) -> set[str]:
 
 def _load_arnold_ports() -> object:
     path = Path(__file__).resolve().parents[1] / "arnold-source" / "agent_kit" / "ports.py"
+    if not path.exists():
+        pytest.skip(f"arnold-source fixture missing: {path}")
     spec = importlib.util.spec_from_file_location("_arnold_ports", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
