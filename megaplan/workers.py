@@ -408,6 +408,23 @@ def _is_poisoned_environmental_failure(raw: str) -> bool:
     return False
 
 
+def _is_session_too_large_for_compact(raw: str) -> bool:
+    """Detect a Codex session that has grown too large to remote-compact.
+
+    Codex auto-triggers OpenAI's remote-compaction API when the session
+    approaches the model's context window. If that compaction call hits a
+    rate limit and exhausts its retry budget, codex emits a
+    ``remote compact task ... 429 Too Many Requests`` error and exits
+    non-zero. ``codex exec resume <session-id>`` will keep replaying the
+    same oversized session and hit the same wall — invalidating the
+    session and retrying with ``--fresh`` is the only escape.
+    """
+    if not raw:
+        return False
+    lowered = raw.lower()
+    return "remote compact task" in lowered and "429" in lowered
+
+
 # System directories that should never be auto-promoted to a writable
 # sandbox root. Used by :func:`_auto_writable_roots`. The check below
 # matches the resolved path against these roots exactly *and* against
@@ -1693,6 +1710,34 @@ def run_codex_step(
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
             )
+        # Recover from a session that grew too large to remote-compact:
+        # OpenAI 429s the compaction call, codex gives up and exits. Same
+        # session id will keep failing — start fresh.
+        if (
+            not fresh
+            and persistent
+            and session.get("id")
+            and _is_session_too_large_for_compact(
+                str(error.extra.get("raw_output", ""))
+            )
+        ):
+            print(
+                "[megaplan] Detected oversized codex session (remote compact 429); "
+                "invalidating session and retrying with --fresh",
+                flush=True,
+            )
+            state["sessions"].pop(session_key, None)
+            return run_codex_step(
+                step,
+                state,
+                plan_dir,
+                root=root,
+                persistent=persistent,
+                fresh=True,
+                json_trace=json_trace,
+                prompt_override=prompt_override,
+                prompt_kwargs=prompt_kwargs,
+            )
         if error.code == "worker_timeout":
             recovered_payload = _recover_codex_payload(
                 step,
@@ -1780,6 +1825,32 @@ def run_codex_step(
     ):
         print(
             "[megaplan] Detected poisoned session (obsolete sandbox failure belief); "
+            "invalidating session and retrying with --fresh",
+            flush=True,
+        )
+        state["sessions"].pop(session_key, None)
+        return run_codex_step(
+            step,
+            state,
+            plan_dir,
+            root=root,
+            persistent=persistent,
+            fresh=True,
+            json_trace=json_trace,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+        )
+    # Oversized-session recovery on non-exception path. See the matching
+    # branch in the CliError handler above for context.
+    if (
+        not fresh
+        and persistent
+        and session.get("id")
+        and result.returncode != 0
+        and _is_session_too_large_for_compact(raw)
+    ):
+        print(
+            "[megaplan] Detected oversized codex session (remote compact 429); "
             "invalidating session and retrying with --fresh",
             flush=True,
         )
