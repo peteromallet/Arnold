@@ -32,6 +32,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -457,10 +458,16 @@ def _list_open_pr_for_branch(root: Path, branch: str, *, writer) -> dict[str, An
     return None
 
 
-def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int:
+def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int | None:
     """Create or reuse the draft PR for a milestone branch."""
     if not milestone.branch:
         raise CliError("missing_branch", f"milestone {milestone.label!r} has no branch")
+    if shutil.which("gh") is None:
+        writer(
+            "[chain] gh executable not found; continuing with branch commits/pushes "
+            f"but skipping PR creation for {milestone.branch}\n"
+        )
+        return None
     existing = _list_open_pr_for_branch(root, milestone.branch, writer=writer)
     if existing and isinstance(existing.get("number"), int):
         writer(f"[chain] reusing PR #{existing['number']} for {milestone.branch}\n")
