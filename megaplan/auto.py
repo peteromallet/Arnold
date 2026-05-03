@@ -24,7 +24,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
@@ -323,6 +323,7 @@ def drive(
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
+    on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer=sys.stdout.write,
 ) -> DriverOutcome:
     """Drive ``plan`` to completion.
@@ -681,6 +682,19 @@ def drive(
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
             log(f"phase '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+
+        if on_phase_complete and next_step in {"plan", "critique", "gate", "finalize", "execute", "review"}:
+            try:
+                on_phase_complete(next_step, int(code or 0), out, err)
+            except Exception as error:  # pragma: no cover - defensive callback boundary
+                log(f"phase-complete callback failed after '{next_step}': {error}")
+                return _outcome(
+                    "failed",
+                    final_state=state,
+                    iterations=iteration,
+                    reason=f"phase-complete callback failed after '{next_step}': {error}",
+                    last_phase=last_phase,
+                )
 
         # Worker-blocked detection: execute exited 0 (or returned partial work)
         # but state.json's latest execute history entry has `result: "blocked"`.
