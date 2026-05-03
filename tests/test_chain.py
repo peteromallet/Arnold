@@ -598,6 +598,25 @@ def test_commit_and_push_phase_skips_empty_diff(tmp_path: Path) -> None:
     assert commands == [["git", "add", "-A"]]
 
 
+def test_ensure_milestone_pr_skips_when_gh_missing(tmp_path: Path) -> None:
+    from megaplan.chain import _ensure_milestone_pr
+
+    messages: list[str] = []
+    with patch("megaplan.chain.shutil.which", return_value=None), \
+         patch("megaplan.chain._list_open_pr_for_branch") as list_pr, \
+         patch("megaplan.chain._run_command") as run_command:
+        pr_number = _ensure_milestone_pr(
+            tmp_path,
+            MilestoneSpec(label="m1", idea="idea.txt", branch="mp/m1"),
+            writer=messages.append,
+        )
+
+    assert pr_number is None
+    assert "skipping PR creation" in "".join(messages)
+    list_pr.assert_not_called()
+    run_command.assert_not_called()
+
+
 def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
     idea = _touch_idea(tmp_path, "m1.txt")
     spec_path = _write_spec(
