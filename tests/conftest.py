@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,6 +122,30 @@ def _make_plan_fixture_with_robustness(
         plan_dir=megaplan.plans_root(root) / plan_name,
         make_args=make_args,
     )
+
+
+@pytest.fixture
+def db_store_factory(request: pytest.FixtureRequest):
+    """Factory fixture for DBStore; skips if --backend db not passed or SUPABASE_DB_URL not set."""
+    backend = request.config.getoption("--backend", default=None)
+    if backend != "db":
+        pytest.skip("--backend db not passed")
+    dsn = os.environ.get("SUPABASE_DB_URL")
+    if not dsn:
+        pytest.skip("SUPABASE_DB_URL not set")
+    from megaplan.store import DBStore
+    actor_id = f"ci-actor-{uuid.uuid4().hex[:12]}"
+    bootstrap = DBStore(actor_id=None, dsn=dsn)
+    try:
+        bootstrap.create_automation_actor(
+            actor_id=actor_id,
+            name="CI Contract Actor",
+            granted_epic_ids="*",
+            actor_kind="cli",
+        )
+    finally:
+        bootstrap.close()
+    return lambda: DBStore(actor_id=actor_id, dsn=dsn)
 
 
 @pytest.fixture
