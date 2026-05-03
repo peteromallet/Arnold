@@ -23,8 +23,9 @@ Spec format (YAML)::
     on_escalate:
       abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
 
-Progress is persisted under ``.megaplan/chains/`` so a relaunched process can
-resume where the previous run left off without dirtying milestone branches.
+Progress is persisted under ``.megaplan/plans/.chains/`` so a relaunched
+process can resume where the previous run left off without dirtying milestone
+branches.
 """
 from __future__ import annotations
 
@@ -224,7 +225,7 @@ class ChainState:
 def _state_path_for(spec_path: Path) -> Path:
     spec_resolved = spec_path.resolve()
     digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
-    return spec_resolved.parent / ".megaplan" / "chains" / f"{spec_resolved.stem}-{digest}.json"
+    return spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json"
 
 
 def _legacy_state_path_for(spec_path: Path) -> Path:

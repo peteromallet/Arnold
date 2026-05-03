@@ -1,6 +1,6 @@
 # Example chain spec consumed by `megaplan chain --spec /workspace/chain.yaml`.
 # Copy to /workspace/chain.yaml on the container (or mount it via volume) and
-# edit as needed. Progress is persisted under .megaplan/chains/.
+# edit as needed. Progress is persisted under .megaplan/plans/.chains/.
 
 seed:
   # Plan that was kicked off manually before the chain took over. If its state

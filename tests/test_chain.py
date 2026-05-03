@@ -158,7 +158,7 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     )
     save_chain_state(spec_path, state)
     state_path = _state_path_for(spec_path)
-    assert state_path.parent == tmp_path / ".megaplan" / "chains"
+    assert state_path.parent == tmp_path / ".megaplan" / "plans" / ".chains"
     assert state_path.exists()
     assert not (tmp_path / "chain_state.json").exists()
     loaded = load_chain_state(spec_path)
