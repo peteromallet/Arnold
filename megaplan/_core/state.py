@@ -26,7 +26,9 @@ from .io import (
     atomic_write_json,
     atomic_write_text,
     current_iteration_raw_artifact,
+    find_plan_dir,
     now_utc,
+    plan_search_roots,
     plans_root,
     read_json,
 )
@@ -43,37 +45,22 @@ DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
 # ---------------------------------------------------------------------------
 
 def active_plan_dirs(root: Path) -> list[Path]:
-    if not plans_root(root).exists():
-        return []
-    directories: list[Path] = []
-    for child in plans_root(root).iterdir():
-        if child.is_dir() and (child / "state.json").exists():
-            directories.append(child)
-    return sorted(directories)
+    by_name: dict[str, Path] = {}
+    for candidate_root in plan_search_roots(root):
+        if not candidate_root.exists():
+            continue
+        for child in candidate_root.iterdir():
+            if child.is_dir() and (child / "state.json").exists():
+                by_name.setdefault(child.name, child)
+    return [by_name[name] for name in sorted(by_name)]
 
 
 def resolve_plan_dir(root: Path, requested_name: str | None) -> Path:
     plan_dirs = active_plan_dirs(root)
     if requested_name:
-        plan_dir = plans_root(root) / requested_name
-        if (plan_dir / "state.json").exists():
+        plan_dir = find_plan_dir(root, requested_name)
+        if plan_dir is not None:
             return plan_dir
-        # Walk up parent directories — plan may live in an ancestor's .megaplan/
-        current = root.resolve().parent
-        while True:
-            candidate = plans_root(current) / requested_name
-            if (candidate / "state.json").exists():
-                return candidate
-            parent = current.parent
-            if parent == current:
-                break
-            current = parent
-        # Walk down child directories — plan may live in a subdirectory's .megaplan/
-        for megaplan_dir in sorted(root.resolve().rglob(".megaplan")):
-            if megaplan_dir.is_dir():
-                candidate = megaplan_dir / "plans" / requested_name
-                if (candidate / "state.json").exists():
-                    return candidate
         raise CliError("missing_plan", f"Plan '{requested_name}' does not exist")
     if not plan_dirs:
         raise CliError("missing_plan", "No plans found. Run init first.")

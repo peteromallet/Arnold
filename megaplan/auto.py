@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from megaplan._core import find_plan_dir
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
     STATE_AWAITING_HUMAN,
@@ -179,19 +180,8 @@ def _phase_command(next_step: str) -> list[str]:
 
 
 def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
-    """Best-effort resolution of ``.megaplan/plans/<plan>`` near ``cwd``.
-
-    Walks up parents of ``cwd`` looking for a ``.megaplan/plans/<plan>``
-    directory, matching how ``megaplan status`` resolves plans. Returns
-    ``None`` if the plan dir can't be located — callers should treat that
-    as "no review marker available" and fall back to the plain stall-count.
-    """
-    base = (cwd or Path.cwd()).resolve()
-    for candidate in (base, *base.parents):
-        plan_dir = candidate / ".megaplan" / "plans" / plan
-        if (plan_dir / "state.json").exists():
-            return plan_dir
-    return None
+    """Best-effort resolution of legacy or canonical orphan plan roots near ``cwd``."""
+    return find_plan_dir(cwd or Path.cwd(), plan)
 
 
 def _last_history_step_result(plan_dir: Path | None, step: str) -> str | None:

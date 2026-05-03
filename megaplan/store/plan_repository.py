@@ -1,0 +1,354 @@
+"""Plan-tree access seam for Sprint 1 file mode."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from megaplan._core.io import (
+    atomic_write_bytes,
+    atomic_write_json,
+    atomic_write_text,
+    find_plan_dir,
+    now_utc,
+    plan_search_roots,
+    read_json,
+)
+from megaplan.schemas import Plan, PlanArtifact
+
+from .base import Store
+
+_EXECUTION_BATCH_RE = re.compile(r"execution_batch_(\d+)\.json$")
+_VERSION_RE = re.compile(r"_v(\d+)(?:\.|_|$)")
+
+
+class PlanRepository:
+    """File-mode repository for the existing megaplan tree layout.
+
+    The repository intentionally operates on the current on-disk plan tree
+    instead of routing plan artifacts through ``Store``. This preserves the
+    byte-sensitive fixture and worker surface that still expects a real
+    filesystem directory.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        store: Store | None = None,
+        home: str | Path | None = None,
+    ) -> None:
+        self.root = Path(root)
+        self.store = store
+        self.home = Path(home) if home is not None else None
+        self._plan_dir = self.root if self._looks_like_plan_dir(self.root) else None
+
+    @classmethod
+    def from_plan_dir(
+        cls,
+        plan_dir: str | Path,
+        *,
+        store: Store | None = None,
+        home: str | Path | None = None,
+    ) -> PlanRepository:
+        return cls(plan_dir, store=store, home=home)
+
+    @staticmethod
+    def _looks_like_plan_dir(path: Path) -> bool:
+        return (path / "state.json").exists()
+
+    def _home_path(self) -> Path | None:
+        if self.home is None:
+            return None
+        return self.home.expanduser().resolve()
+
+    def _require_plan_dir(self) -> Path:
+        if self._plan_dir is None:
+            raise RuntimeError("PlanRepository is not bound to a plan directory")
+        return self._plan_dir
+
+    def _resolve_artifact_path(self, name: str | Path) -> Path:
+        relative = Path(name)
+        if relative.is_absolute() or any(part == ".." for part in relative.parts):
+            raise ValueError(f"Artifact path must stay inside the plan tree: {name!r}")
+        return self.plan_dir / relative
+
+    @property
+    def is_bound(self) -> bool:
+        return self._plan_dir is not None
+
+    @property
+    def plan_dir(self) -> Path:
+        return self._require_plan_dir()
+
+    @property
+    def plan_name(self) -> str:
+        return self.plan_dir.name
+
+    @property
+    def working_dir(self) -> Path:
+        return self.plan_dir
+
+    @property
+    def compatibility_lock_path(self) -> Path:
+        return self.plan_dir / ".plan.lock"
+
+    def resolve_plan_dir(self, plan_name: str) -> Path:
+        if self._plan_dir is not None:
+            if self.plan_dir.name != plan_name:
+                raise FileNotFoundError(plan_name)
+            return self.plan_dir
+        plan_dir = find_plan_dir(self.root, plan_name, home=self._home_path())
+        if plan_dir is None:
+            raise FileNotFoundError(plan_name)
+        return plan_dir
+
+    def for_plan(self, plan_name: str) -> PlanRepository:
+        return type(self)(self.resolve_plan_dir(plan_name), store=self.store, home=self.home)
+
+    def active_plan_dirs(self) -> list[Path]:
+        by_name: dict[str, Path] = {}
+        for candidate_root in plan_search_roots(self.root, home=self._home_path()):
+            if not candidate_root.exists():
+                continue
+            for child in candidate_root.iterdir():
+                if child.is_dir() and self._looks_like_plan_dir(child):
+                    by_name.setdefault(child.name, child)
+        return [by_name[name] for name in sorted(by_name)]
+
+    def exists(self) -> bool:
+        return self._require_plan_dir().exists()
+
+    def list_artifact_paths(self) -> list[Path]:
+        plan_dir = self._require_plan_dir()
+        return sorted(
+            (path for path in plan_dir.rglob("*") if path.is_file()),
+            key=lambda path: path.relative_to(plan_dir).as_posix(),
+        )
+
+    def list_artifact_names(self) -> list[str]:
+        plan_dir = self._require_plan_dir()
+        return [path.relative_to(plan_dir).as_posix() for path in self.list_artifact_paths()]
+
+    def artifact_path(self, name: str | Path) -> Path:
+        return self._resolve_artifact_path(name)
+
+    def read_artifact_bytes(self, name: str | Path) -> bytes | None:
+        path = self._resolve_artifact_path(name)
+        return path.read_bytes() if path.exists() else None
+
+    def read_artifact_text(self, name: str | Path) -> str | None:
+        data = self.read_artifact_bytes(name)
+        return data.decode("utf-8") if data is not None else None
+
+    def read_artifact_json(self, name: str | Path) -> dict[str, Any] | list[Any] | None:
+        path = self._resolve_artifact_path(name)
+        return read_json(path) if path.exists() else None
+
+    def write_artifact_bytes(self, name: str | Path, data: bytes) -> Path:
+        path = self._resolve_artifact_path(name)
+        atomic_write_bytes(path, data)
+        return path
+
+    def write_artifact_text(self, name: str | Path, data: str) -> Path:
+        path = self._resolve_artifact_path(name)
+        atomic_write_text(path, data)
+        return path
+
+    def write_artifact_json(self, name: str | Path, data: Any) -> Path:
+        path = self._resolve_artifact_path(name)
+        atomic_write_json(path, data)
+        return path
+
+    def delete_artifact(self, name: str | Path) -> None:
+        path = self._resolve_artifact_path(name)
+        if path.exists():
+            path.unlink()
+
+    def load_state(self) -> dict[str, Any]:
+        return read_json(self.plan_dir / "state.json")
+
+    def save_state(self, state: dict[str, Any]) -> None:
+        atomic_write_json(self.plan_dir / "state.json", state)
+
+    def list_execution_batch_artifacts(self) -> list[Path]:
+        return sorted(
+            (
+                path
+                for path in self.list_artifact_paths()
+                if _EXECUTION_BATCH_RE.fullmatch(path.name)
+            ),
+            key=lambda path: path.name,
+        )
+
+    def latest_execution_batch_artifact(self) -> Path | None:
+        batches = self.list_execution_batch_artifacts()
+        return batches[-1] if batches else None
+
+    def latest_plan_markdown_artifact(self) -> Path | None:
+        state = self.load_state()
+        plan_versions = state.get("plan_versions") or []
+        if not plan_versions:
+            return None
+        latest = plan_versions[-1]
+        if not isinstance(latest, dict):
+            return None
+        filename = latest.get("file")
+        if not isinstance(filename, str) or not filename:
+            return None
+        path = self.artifact_path(filename)
+        return path if path.exists() else None
+
+    def _artifact_kind(self, path: Path) -> str:
+        if path.suffix == ".md":
+            return "markdown"
+        if path.suffix == ".json":
+            return "json"
+        if path.suffix == ".jsonl":
+            return "jsonl"
+        if path.suffix == ".lock":
+            return "lock"
+        if path.suffix == ".txt":
+            return "raw_text"
+        return "derived"
+
+    def _artifact_role(self, path: Path) -> str | None:
+        name = path.name
+        if name == "state.json" or (name.startswith("plan_v") and name.endswith(".meta.json")):
+            return "plan_meta"
+        if name.startswith("plan_v") and name.endswith(".md"):
+            return "plan_version"
+        if name == "prep.json":
+            return "prep"
+        if name == "review.json":
+            return "review"
+        if name.startswith("review_v") and name.endswith("_raw.txt"):
+            return "raw_worker_output"
+        if name == "gate.json":
+            return "gate"
+        if name.startswith("gate_signals_v"):
+            return "gate_signals"
+        if name == "execution.json":
+            return "execution"
+        if name.startswith("execution_batch_"):
+            return "execution_batch"
+        if name == "execution_audit.json":
+            return "execution_audit"
+        if name == "execution_checkpoint.json":
+            return "execution_checkpoint"
+        if name == "execution_trace.jsonl":
+            return "execution_trace"
+        if name.startswith("execute_v") and name.endswith("_raw.txt"):
+            return "raw_worker_output"
+        if name == "finalize.json" or name == "finalize_snapshot.json":
+            return "finalize_snapshot" if name == "finalize_snapshot.json" else "finalize"
+        if name.startswith("critique"):
+            return "critique"
+        if name == "faults.json":
+            return "faults"
+        if name.startswith("step_receipt_"):
+            return "receipt"
+        if name == "final.md":
+            return "derived_final"
+        if name == "directors_notes.json":
+            return "directors_notes"
+        if name == "human_verifications.json":
+            return "human_verifications"
+        if name == "tiebreaker_decisions.json":
+            return "tiebreaker_decisions"
+        if name == "tiebreaker_payload.json":
+            return "tiebreaker_payload"
+        if name.endswith(".tmpl") or name.endswith(".template"):
+            return "template"
+        if name.startswith("research") or name.endswith(".research.json"):
+            return "research"
+        return None
+
+    def _artifact_version(self, path: Path) -> int | None:
+        match = _VERSION_RE.search(path.name)
+        return int(match.group(1)) if match is not None else None
+
+    def _artifact_batch(self, path: Path) -> int | None:
+        match = _EXECUTION_BATCH_RE.fullmatch(path.name)
+        return int(match.group(1)) if match is not None else None
+
+    def _artifact_phase(self, path: Path) -> str | None:
+        name = path.name
+        if name == "state.json":
+            return "state"
+        if name == "final.md":
+            return "finalize"
+        if name.startswith("step_receipt_"):
+            phase = name[len("step_receipt_"):]
+            if "_v" in phase:
+                return phase.split("_v", 1)[0]
+            return phase.removesuffix(".json")
+        if name.startswith("execution_batch_"):
+            return "execute"
+        if "_v" in name:
+            return name.split("_v", 1)[0]
+        if "." in name:
+            return name.split(".", 1)[0]
+        return None
+
+    def describe_artifact(self, name: str | Path) -> PlanArtifact:
+        path = self._resolve_artifact_path(name)
+        if not path.exists():
+            raise FileNotFoundError(path)
+        role = self._artifact_role(path)
+        if role is None:
+            raise ValueError(f"Artifact has no typed PlanArtifact role: {path.name}")
+        data = path.read_bytes()
+        return PlanArtifact(
+            name=path.relative_to(self.plan_dir).as_posix(),
+            kind=self._artifact_kind(path),
+            role=role,
+            version=self._artifact_version(path),
+            batch=self._artifact_batch(path),
+            phase=self._artifact_phase(path),
+            sha256="sha256:" + hashlib.sha256(data).hexdigest(),
+        )
+
+    def list_artifacts(self) -> list[PlanArtifact]:
+        artifacts: list[PlanArtifact] = []
+        for name in self.list_artifact_names():
+            path = self._resolve_artifact_path(name)
+            if self._artifact_role(path) is None:
+                continue
+            artifacts.append(self.describe_artifact(name))
+        return artifacts
+
+    def load_plan(self) -> Plan:
+        state = self.load_state()
+        review = self.read_artifact_json("review.json")
+        finalize = self.read_artifact_json("finalize.json")
+        execution = self.read_artifact_json("execution.json")
+        latest_failure = None
+        history = state.get("history") or []
+        if isinstance(history, list):
+            for entry in reversed(history):
+                if isinstance(entry, dict) and entry.get("result") == "failed":
+                    latest_failure = dict(entry)
+                    break
+        timestamps = [path.stat().st_mtime for path in self.list_artifact_paths()]
+        updated_at = (
+            datetime.fromtimestamp(max(timestamps), tz=UTC)
+            if timestamps
+            else datetime.fromisoformat(now_utc().replace("Z", "+00:00"))
+        )
+        return Plan.from_plan_state(
+            state,
+            plan_id=self.plan_name,
+            artifacts=self.list_artifacts(),
+            latest_finalize=finalize if isinstance(finalize, dict) else None,
+            latest_review=review if isinstance(review, dict) else None,
+            latest_execution=execution if isinstance(execution, dict) else None,
+            latest_failure=latest_failure,
+            updated_at=updated_at,
+        )
+
+    def save_plan(self, plan: Plan) -> None:
+        self.save_state(plan.to_plan_state())

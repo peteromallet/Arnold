@@ -1,0 +1,294 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pytest
+
+from megaplan.schemas import (
+    AutomationActor,
+    BotTurn,
+    ChecklistItem,
+    CodeArtifact,
+    Codebase,
+    ControlMessage,
+    Epic,
+    EpicEvent,
+    EpicLock,
+    ExecutionLease,
+    ExternalRequest,
+    Feedback,
+    Image,
+    Message,
+    MigrationRun,
+    Plan,
+    PlanArtifact,
+    ProgressEvent,
+    SecondOpinion,
+    Sprint,
+    SprintItem,
+    SystemLog,
+    ToolCall,
+)
+from tests.conftest import load_state
+
+
+NOW = datetime(2026, 5, 3, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("model_cls", "payload"),
+    [
+        (Epic, {"id": "epic_1", "title": "Epic", "goal": "Ship it", "body": "Body", "state": "shaping"}),
+        (BotTurn, {"id": "turn_1", "status": "in_progress"}),
+        (Message, {"id": "msg_1", "direction": "inbound", "content": "hello"}),
+        (ToolCall, {"id": "tool_1", "turn_id": "turn_1", "tool_name": "read_file", "operation_kind": "read"}),
+        (SystemLog, {"id": "log_1", "level": "info", "category": "system", "event_type": "boot", "message": "ok"}),
+        (EpicLock, {"epic_id": "epic_1", "holder_id": "worker", "expires_at": NOW}),
+        (
+            ExternalRequest,
+            {
+                "id": "req_1",
+                "idempotency_key": "idem_1",
+                "provider": "openai",
+                "endpoint": "/v1/responses",
+                "status": "pending",
+            },
+        ),
+        (
+            Image,
+            {
+                "id": "img_1",
+                "source": "agent_generated",
+                "storage_url": "https://example.invalid/image.png",
+                "reference_key": "hero",
+            },
+        ),
+        (ChecklistItem, {"id": "item_1", "epic_id": "epic_1", "content": "Do work", "position": 1}),
+        (EpicEvent, {"id": "event_1", "epic_id": "epic_1", "transaction_id": "tx_1", "summary": "Created"}),
+        (
+            Feedback,
+            {
+                "id": "feedback_1",
+                "kind": "style",
+                "content": "Prefer concise replies",
+                "source": "explicit_save_request",
+            },
+        ),
+        (
+            Sprint,
+            {
+                "id": "sprint_1",
+                "epic_id": "epic_1",
+                "sprint_number": 1,
+                "name": "Sprint 1",
+                "goal": "Deliver foundation",
+                "status": "done",
+            },
+        ),
+        (
+            SprintItem,
+            {
+                "id": "sprint_item_1",
+                "sprint_id": "sprint_1",
+                "content": "Implement model layer",
+                "estimated_complexity": "medium",
+                "status": "open",
+                "position": 1,
+            },
+        ),
+        (
+            SecondOpinion,
+            {
+                "id": "opinion_1",
+                "epic_id": "epic_1",
+                "requested_by": "user",
+                "raw_response": "Looks good",
+                "score": 8,
+                "summary": "Strong plan",
+                "verdict": "go",
+                "model_used": "gpt-5.5",
+            },
+        ),
+        (
+            Codebase,
+            {
+                "id": "codebase_1",
+                "owner": "openai",
+                "name": "megaplan",
+                "default_branch": "main",
+            },
+        ),
+        (
+            CodeArtifact,
+            {
+                "id": "artifact_1",
+                "kind": "summary",
+                "source": "codebase",
+                "content": "Important details",
+            },
+        ),
+        (
+            MigrationRun,
+            {
+                "id": "migration_1",
+                "epic_id": "epic_1",
+                "source_backend": "file",
+                "target_backend": "db",
+                "phase": "planning",
+                "holder_id": "worker",
+                "expires_at": NOW,
+            },
+        ),
+        (
+            ExecutionLease,
+            {
+                "plan_id": "plan_1",
+                "holder_id": "worker",
+                "phase": "execute",
+                "worker_kind": "local_cli",
+                "expires_at": NOW,
+            },
+        ),
+        (
+            PlanArtifact,
+            {
+                "name": "plan_v1.md",
+                "kind": "markdown",
+                "role": "plan_version",
+                "sha256": "deadbeef",
+                "created_at": NOW,
+                "updated_at": NOW,
+            },
+        ),
+        (
+            ControlMessage,
+            {
+                "id": "control_1",
+                "epic_id": "epic_1",
+                "actor_id": "actor_1",
+                "intent": "run_sprint",
+                "target_id": "sprint_1",
+                "idempotency_key": "msg_1",
+            },
+        ),
+        (
+            ProgressEvent,
+            {
+                "id": "progress_1",
+                "epic_id": "epic_1",
+                "kind": "phase_start",
+                "summary": "Execution started",
+            },
+        ),
+        (
+            AutomationActor,
+            {
+                "id": "actor_1",
+                "name": "Local CLI",
+                "granted_epic_ids": "*",
+                "actor_kind": "cli",
+            },
+        ),
+        (
+            Plan,
+            {
+                "id": "plan_1",
+                "name": "plan_1",
+                "revision": 0,
+                "idea": "test idea",
+                "current_state": "planned",
+                "iteration": 1,
+                "config": {"project_dir": "/tmp/project"},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [],
+                "meta": {},
+                "last_gate": {},
+                "created_at": NOW,
+                "updated_at": NOW,
+            },
+        ),
+    ],
+)
+def test_storage_models_construct_with_minimal_valid_payloads(model_cls, payload) -> None:
+    model = model_cls.model_validate(payload)
+
+    assert model.model_dump()
+
+
+def test_storage_models_normalize_json_defaults_and_extensions() -> None:
+    request = ExternalRequest.model_validate(
+        {
+            "id": "req_1",
+            "idempotency_key": "idem_1",
+            "provider": "openai",
+            "endpoint": "/v1/responses",
+            "status": "pending",
+            "request_summary": None,
+            "request_body": {"model": "gpt-5.5"},
+        }
+    )
+    opinion = SecondOpinion.model_validate(
+        {
+            "id": "opinion_1",
+            "epic_id": "epic_1",
+            "requested_by": "auto_state_gate",
+            "focus_areas": None,
+            "raw_response": "Need more detail",
+            "score": 4,
+            "summary": "Needs work",
+            "verdict": "revise",
+            "resulting_checklist_item_ids": None,
+            "model_used": "gpt-5.5",
+        }
+    )
+    sprint = Sprint.model_validate(
+        {
+            "id": "sprint_1",
+            "epic_id": "epic_1",
+            "sprint_number": 1,
+            "name": "Sprint 1",
+            "goal": "Deliver foundation",
+            "status": "running",
+        }
+    )
+
+    assert request.request_summary == {}
+    assert request.request_body == {"model": "gpt-5.5"}
+    assert opinion.focus_areas == []
+    assert opinion.resulting_checklist_item_ids == []
+    assert sprint.status == "running"
+
+
+def test_plan_round_trips_current_plan_state_shape(plan_fixture) -> None:
+    state = load_state(plan_fixture.plan_dir)
+
+    plan = Plan.from_plan_state(state, plan_id="plan_1", revision=3)
+
+    assert plan.name == state["name"]
+    assert plan.revision == 3
+    assert plan.to_plan_state() == state
+
+
+def test_feedback_and_sprint_constraints_match_design_extensions() -> None:
+    with pytest.raises(ValueError):
+        Feedback.model_validate(
+            {
+                "id": "feedback_1",
+                "kind": "style",
+                "content": "Too vague",
+                "source": "agent_observation",
+            }
+        )
+
+    with pytest.raises(ValueError):
+        Sprint.model_validate(
+            {
+                "id": "sprint_1",
+                "epic_id": "epic_1",
+                "sprint_number": 1,
+                "name": "Sprint 1",
+                "goal": "Deliver foundation",
+                "status": "queued",
+            }
+        )
