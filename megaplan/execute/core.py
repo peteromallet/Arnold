@@ -302,12 +302,20 @@ def build_blocking_reasons(
         )
     if missing_task_evidence:
         reasons.append(
-            "done tasks missing both files_changed and commands_run: "
+            "done tasks missing files_changed, commands_run, evidence_files, and executor_notes: "
             + ", ".join(missing_task_evidence)
         )
     if timeout_reason is not None:
         reasons.append(timeout_reason)
     return reasons
+
+
+def _has_code_task_advisory_evidence(task: dict[str, Any]) -> bool:
+    return bool(
+        task.get("commands_run")
+        or task.get("evidence_files")
+        or str(task.get("executor_notes") or "").strip()
+    )
 
 
 def _merge_batch_results(
@@ -533,9 +541,9 @@ def _run_and_merge_batch(
             issues=deviations,
             should_classify=lambda task: task.get("id") in batch_task_id_set,
             has_evidence=lambda task: bool(task.get("files_changed")),
-            has_advisory_evidence=lambda task: bool(task.get("commands_run")),
-            missing_message="Done tasks missing both files_changed and commands_run: ",
-            advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
+            has_advisory_evidence=_has_code_task_advisory_evidence,
+            missing_message="Done tasks missing files_changed, commands_run, evidence_files, and executor_notes: ",
+            advisory_message="Advisory: done tasks rely on non-file evidence (FLAG-006 softening): ",
         )
     execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
     if attribution_result.records:
@@ -1167,9 +1175,9 @@ def handle_execute_auto_loop(
             issues=deviations,
             should_classify=lambda task: task.get("id") in active_task_ids,
             has_evidence=lambda task: bool(task.get("files_changed")),
-            has_advisory_evidence=lambda task: bool(task.get("commands_run")),
-            missing_message="Done tasks missing both files_changed and commands_run: ",
-            advisory_message="Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): ",
+            has_advisory_evidence=_has_code_task_advisory_evidence,
+            missing_message="Done tasks missing files_changed, commands_run, evidence_files, and executor_notes: ",
+            advisory_message="Advisory: done tasks rely on non-file evidence (FLAG-006 softening): ",
         )
     blocking_reasons = build_blocking_reasons(
         tracked_tasks=tracked_tasks,
