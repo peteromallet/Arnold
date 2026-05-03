@@ -2258,6 +2258,27 @@ def test_is_poisoned_environmental_failure_ignores_unrelated_errors() -> None:
     assert _is_poisoned_environmental_failure("Permission denied: /root/.cache") is False
 
 
+def test_is_session_too_large_for_compact_matches_real_codex_error() -> None:
+    from megaplan.workers import _is_session_too_large_for_compact
+
+    raw = (
+        '{"type":"error","message":"Error running remote compact task: '
+        'exceeded retry limit, last status: 429 Too Many Requests, '
+        'request id: req_e45c8eddc3204adbb0ce791f23557be9"}'
+    )
+    assert _is_session_too_large_for_compact(raw) is True
+
+
+def test_is_session_too_large_for_compact_ignores_unrelated_errors() -> None:
+    from megaplan.workers import _is_session_too_large_for_compact
+
+    assert _is_session_too_large_for_compact("") is False
+    # 429 alone (without remote-compact context) is generic rate limiting.
+    assert _is_session_too_large_for_compact("429 Too Many Requests on /chat") is False
+    # remote compact mention without 429 is not the failure mode.
+    assert _is_session_too_large_for_compact("remote compact task succeeded") is False
+
+
 def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
