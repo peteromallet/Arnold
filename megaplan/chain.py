@@ -517,17 +517,23 @@ def _commit_and_push_phase(root: Path, branch: str, plan: str, phase: str, *, wr
         check=False,
         timeout=120,
     )
-    if staged.returncode == 0:
-        writer(f"[chain] no changes to commit after {phase}\n")
-        return
-    if staged.returncode != 1:
+    if staged.returncode != 0 and staged.returncode != 1:
         raise CliError(
             "git_commit_failed",
             f"git diff --cached --quiet exited {staged.returncode}",
             extra={"stdout": staged.stdout, "stderr": staged.stderr},
         )
+    nothing_staged = staged.returncode == 0
     message = f"megaplan: {plan} {phase}"
-    _run_command(root, ["git", "commit", "-m", message], writer=writer, error_code="git_commit_failed")
+    commit_argv = ["git", "commit", "-m", message]
+    if nothing_staged:
+        if phase != "init":
+            writer(f"[chain] no changes to commit after {phase}\n")
+            return
+        # Anchor the milestone branch with an empty init commit so a draft PR
+        # can be opened before any phase produces a real diff.
+        commit_argv.insert(2, "--allow-empty")
+    _run_command(root, commit_argv, writer=writer, error_code="git_commit_failed")
     _run_command(root, ["git", "push", "origin", branch], writer=writer, error_code="git_push_failed")
 
 
