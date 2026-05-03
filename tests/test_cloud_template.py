@@ -75,7 +75,7 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
     assert 'sandbox_mode = "danger-full-access"' in rendered
     assert 'if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then' in rendered
     assert "claude setup-token" in rendered
-    assert "WARN: Claude token auth failed; continuing without Claude auth" in rendered
+    assert "WARN: Claude token auth failed or timed out; continuing" in rendered
     assert "exit 1" not in rendered
 
     routing_lines = [

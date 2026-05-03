@@ -30,12 +30,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:
     import yaml
@@ -55,10 +57,11 @@ from megaplan.auto import (
     drive as auto_drive,
 )
 from megaplan._core import resolve_plan_dir
-from megaplan.types import CliError
+from megaplan.types import CliError, STATE_AWAITING_PR_MERGE
 
 
 VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
+VALID_MERGE_POLICIES = ("auto", "review")
 TERMINAL_SKIP_STATES = ("done", "aborted", "failed")
 
 
@@ -90,6 +93,7 @@ class ChainSpec:
     seed_plan: str | None = None
     on_failure: str = "stop_chain"
     on_escalate: str = "stop_chain"
+    merge_policy: str = "auto"
     # Driver knobs propagated into auto.drive for each plan.
     stall_threshold: int = DEFAULT_STALL_THRESHOLD
     max_iterations: int = DEFAULT_MAX_ITERATIONS
@@ -133,6 +137,12 @@ class ChainSpec:
 
         on_failure = _action("on_failure", "stop_chain")
         on_escalate = _action("on_escalate", "stop_chain")
+        merge_policy = raw.get("merge_policy", "auto")
+        if merge_policy not in VALID_MERGE_POLICIES:
+            raise CliError(
+                "invalid_spec",
+                f"merge_policy must be one of {VALID_MERGE_POLICIES}; got {merge_policy!r}",
+            )
 
         driver_raw = raw.get("driver") or {}
         if not isinstance(driver_raw, dict):
@@ -158,6 +168,7 @@ class ChainSpec:
             seed_plan=seed_plan,
             on_failure=on_failure,
             on_escalate=on_escalate,
+            merge_policy=merge_policy,
             stall_threshold=stall,
             max_iterations=max_iter,
             poll_sleep=poll,
@@ -182,6 +193,8 @@ class ChainState:
     current_milestone_index: int = -1
     current_plan_name: str | None = None
     last_state: str | None = None
+    pr_number: int | None = None
+    pr_state: str | None = None
     completed: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -189,6 +202,8 @@ class ChainState:
             "current_milestone_index": self.current_milestone_index,
             "current_plan_name": self.current_plan_name,
             "last_state": self.last_state,
+            "pr_number": self.pr_number,
+            "pr_state": self.pr_state,
             "completed": list(self.completed),
         }
 
@@ -198,6 +213,8 @@ class ChainState:
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
             last_state=raw.get("last_state"),
+            pr_number=int(raw["pr_number"]) if raw.get("pr_number") is not None else None,
+            pr_state=raw.get("pr_state"),
             completed=list(raw.get("completed") or []),
         )
 
@@ -337,6 +354,208 @@ def _refresh_main(root: Path, *, writer, no_git_refresh: bool = False) -> None:
             ) from exc
 
 
+def _run_command(
+    root: Path,
+    cmd: list[str],
+    *,
+    writer,
+    timeout: float = 120,
+    error_code: str = "command_failed",
+) -> subprocess.CompletedProcess[str]:
+    """Run a git/gh command and raise CliError with captured output on failure."""
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+        raise CliError(
+            error_code,
+            f"{' '.join(cmd)} failed with {exc}",
+            extra={"command": cmd, "error": str(exc)},
+        ) from exc
+    writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        if detail:
+            writer(f"[chain] {' '.join(cmd)} output:\n{detail}\n")
+        raise CliError(
+            error_code,
+            f"{' '.join(cmd)} exited {proc.returncode}",
+            extra={
+                "command": cmd,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+        )
+    return proc
+
+
+def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
+    proc = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    writer(f"[chain] git ls-remote --heads origin {branch} -> rc={proc.returncode}\n")
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 2:
+        return False
+    detail = (proc.stderr or proc.stdout or "").strip()
+    raise CliError(
+        "git_branch_lookup_failed",
+        f"git ls-remote --heads origin {branch} exited {proc.returncode}: {detail}",
+        extra={"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr},
+    )
+
+
+def _checkout_milestone_branch(root: Path, branch: str, *, writer) -> None:
+    """Create or resume the milestone branch and push it to origin."""
+    if _remote_branch_exists(root, branch, writer=writer):
+        _run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
+        _run_command(
+            root,
+            ["git", "checkout", "-B", branch, f"origin/{branch}"],
+            writer=writer,
+            error_code="git_branch_failed",
+        )
+        return
+    _run_command(root, ["git", "checkout", "-B", branch, "main"], writer=writer, error_code="git_branch_failed")
+    _run_command(root, ["git", "push", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
+
+
+def _parse_pr_number_from_url(output: str) -> int | None:
+    match = re.search(r"/pull/(\d+)", output)
+    return int(match.group(1)) if match else None
+
+
+def _list_open_pr_for_branch(root: Path, branch: str, *, writer) -> dict[str, Any] | None:
+    proc = _run_command(
+        root,
+        ["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number,state"],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_lookup_failed",
+    )
+    try:
+        payload = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise CliError("gh_pr_lookup_failed", f"gh pr list produced non-JSON output: {exc}") from exc
+    if isinstance(payload, list) and payload:
+        first = payload[0]
+        return first if isinstance(first, dict) else None
+    return None
+
+
+def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int:
+    """Create or reuse the draft PR for a milestone branch."""
+    if not milestone.branch:
+        raise CliError("missing_branch", f"milestone {milestone.label!r} has no branch")
+    existing = _list_open_pr_for_branch(root, milestone.branch, writer=writer)
+    if existing and isinstance(existing.get("number"), int):
+        writer(f"[chain] reusing PR #{existing['number']} for {milestone.branch}\n")
+        return int(existing["number"])
+    title = f"{milestone.label}: megaplan milestone"
+    body = (
+        f"Automated megaplan chain milestone `{milestone.label}`.\n\n"
+        f"Idea file: `{milestone.idea}`\n"
+    )
+    proc = _run_command(
+        root,
+        [
+            "gh",
+            "pr",
+            "create",
+            "--draft",
+            "--base",
+            "main",
+            "--head",
+            milestone.branch,
+            "--title",
+            title,
+            "--body",
+            body,
+        ],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_create_failed",
+    )
+    number = _parse_pr_number_from_url(proc.stdout.strip())
+    if number is not None:
+        return number
+    created = _list_open_pr_for_branch(root, milestone.branch, writer=writer)
+    if created and isinstance(created.get("number"), int):
+        return int(created["number"])
+    raise CliError("gh_pr_create_failed", f"could not determine PR number for {milestone.branch}")
+
+
+def _commit_and_push_phase(root: Path, branch: str, plan: str, phase: str, *, writer) -> None:
+    """Commit any current diff and push the milestone branch."""
+    _run_command(root, ["git", "add", "-A"], writer=writer, error_code="git_commit_failed")
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if staged.returncode == 0:
+        writer(f"[chain] no changes to commit after {phase}\n")
+        return
+    if staged.returncode != 1:
+        raise CliError(
+            "git_commit_failed",
+            f"git diff --cached --quiet exited {staged.returncode}",
+            extra={"stdout": staged.stdout, "stderr": staged.stderr},
+        )
+    message = f"megaplan: {plan} {phase}"
+    _run_command(root, ["git", "commit", "-m", message], writer=writer, error_code="git_commit_failed")
+    _run_command(root, ["git", "push", "origin", branch], writer=writer, error_code="git_push_failed")
+
+
+def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
+    _run_command(root, ["gh", "pr", "ready", str(pr_number)], writer=writer, error_code="gh_pr_ready_failed")
+
+
+def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> None:
+    _run_command(
+        root,
+        ["gh", "pr", "merge", str(pr_number), "--auto", "--squash", "--delete-branch"],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_merge_failed",
+    )
+
+
+def _pr_state(root: Path, pr_number: int, *, writer) -> str:
+    proc = _run_command(
+        root,
+        ["gh", "pr", "view", str(pr_number), "--json", "state"],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_view_failed",
+    )
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise CliError("gh_pr_view_failed", f"gh pr view produced non-JSON output: {exc}") from exc
+    value = payload.get("state")
+    if not isinstance(value, str):
+        raise CliError("gh_pr_view_failed", "gh pr view did not return a string state")
+    return value.lower()
+
+
 def _init_plan(
     root: Path,
     idea_path: str,
@@ -376,6 +595,7 @@ def _drive_plan(
     plan: str,
     spec: ChainSpec,
     *,
+    on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer,
 ) -> DriverOutcome:
     """Run the auto driver for a single plan."""
@@ -388,6 +608,7 @@ def _drive_plan(
         poll_sleep=spec.poll_sleep,
         phase_timeout=spec.phase_timeout,
         status_timeout=spec.status_timeout,
+        on_phase_complete=on_phase_complete,
         writer=writer,
     )
 
@@ -433,11 +654,13 @@ def run_chain(
     *,
     writer=sys.stdout.write,
     no_git_refresh: bool = False,
+    no_push: bool = False,
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
     spec = load_spec(spec_path)
     validate_paths(spec, root)
     state = load_chain_state(spec_path)
+    push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
 
     events: list[dict[str, Any]] = []
 
@@ -482,6 +705,42 @@ def run_chain(
     while idx < len(spec.milestones):
         milestone = spec.milestones[idx]
         log(f"milestone {milestone.label} starting")
+        use_pr = push_enabled and bool(milestone.branch)
+
+        if state.last_state == STATE_AWAITING_PR_MERGE and state.current_milestone_index == idx:
+            if not use_pr or state.pr_number is None:
+                log(f"review merge wait for {milestone.label} has no PR context; advancing")
+                state.pr_state = None
+            else:
+                pr_state = _pr_state(root, state.pr_number, writer=writer)
+                state.pr_state = "merged" if pr_state == "merged" else "awaiting_merge"
+                save_chain_state(spec_path, state)
+                if pr_state != "merged":
+                    log(f"PR #{state.pr_number} state={pr_state}; awaiting merge")
+                    return _result(
+                        STATE_AWAITING_PR_MERGE,
+                        state,
+                        events,
+                        reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
+                    )
+                log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
+            state.completed.append(
+                {
+                    "label": milestone.label,
+                    "plan": state.current_plan_name,
+                    "status": "done",
+                    "pr_number": state.pr_number,
+                    "pr_state": "merged" if state.pr_number is not None else None,
+                }
+            )
+            idx += 1
+            state.current_milestone_index = idx
+            state.current_plan_name = None
+            state.last_state = "done"
+            state.pr_number = None
+            state.pr_state = None
+            save_chain_state(spec_path, state)
+            continue
 
         # Resume mid-milestone if we already have a plan name recorded.
         if (
@@ -492,8 +751,15 @@ def run_chain(
         ):
             plan_name = state.current_plan_name
             log(f"resuming existing plan {plan_name} for {milestone.label}")
+            if use_pr and state.pr_number is None:
+                _checkout_milestone_branch(root, milestone.branch or "", writer=writer)
+                state.pr_number = _ensure_milestone_pr(root, milestone, writer=writer)
+                state.pr_state = "open"
+                save_chain_state(spec_path, state)
         else:
             _refresh_main(root, writer=writer, no_git_refresh=no_git_refresh)
+            if use_pr:
+                _checkout_milestone_branch(root, milestone.branch or "", writer=writer)
             plan_name = _init_plan(
                 root,
                 milestone.idea,
@@ -504,8 +770,23 @@ def run_chain(
             state.current_milestone_index = idx
             state.current_plan_name = plan_name
             save_chain_state(spec_path, state)
+            if use_pr:
+                _commit_and_push_phase(root, milestone.branch or "", plan_name, "init", writer=writer)
+                state.pr_number = _ensure_milestone_pr(root, milestone, writer=writer)
+                state.pr_state = "open"
+                save_chain_state(spec_path, state)
 
-        outcome = _drive_plan(root, plan_name, spec, writer=writer)
+        def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
+            if use_pr and milestone.branch:
+                _commit_and_push_phase(root, milestone.branch, plan_name, phase, writer=writer)
+
+        outcome = _drive_plan(
+            root,
+            plan_name,
+            spec,
+            on_phase_complete=phase_callback if use_pr else None,
+            writer=writer,
+        )
         state.last_state = outcome.status
         save_chain_state(spec_path, state)
         decision = _handle_outcome(outcome, spec=spec, writer=writer)
@@ -520,15 +801,42 @@ def run_chain(
         if decision == "retry":
             log(f"retrying milestone {milestone.label}")
             state.current_plan_name = None  # force re-init next loop
+            state.pr_number = None
+            state.pr_state = None
             save_chain_state(spec_path, state)
             continue
+        if decision == "advance" and use_pr and state.pr_number is not None:
+            _commit_and_push_phase(root, milestone.branch or "", plan_name, "done", writer=writer)
+            _mark_pr_ready(root, state.pr_number, writer=writer)
+            if spec.merge_policy == "review":
+                state.last_state = STATE_AWAITING_PR_MERGE
+                state.pr_state = "awaiting_merge"
+                save_chain_state(spec_path, state)
+                log(f"PR #{state.pr_number} ready; awaiting manual merge")
+                return _result(
+                    STATE_AWAITING_PR_MERGE,
+                    state,
+                    events,
+                    reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
+                )
+            _enable_auto_merge(root, state.pr_number, writer=writer)
+            state.pr_state = "open"
+            save_chain_state(spec_path, state)
         # advance or skip
         state.completed.append(
-            {"label": milestone.label, "plan": plan_name, "status": outcome.status}
+            {
+                "label": milestone.label,
+                "plan": plan_name,
+                "status": outcome.status,
+                "pr_number": state.pr_number,
+                "pr_state": state.pr_state,
+            }
         )
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None
+        state.pr_number = None
+        state.pr_state = None
         save_chain_state(spec_path, state)
 
     log("all milestones complete")
@@ -559,6 +867,8 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
             "label": milestone.label,
             "index": state.current_milestone_index,
         }
+        if milestone.branch:
+            current_milestone["branch"] = milestone.branch
 
     per_milestone: list[dict[str, Any]] = []
     completed: list[dict[str, Any]] = []
@@ -577,7 +887,7 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
         else:
             remaining.append({"label": milestone.label, "index": index})
 
-    return {
+    summary = {
         "current_milestone": current_milestone,
         "completed": completed,
         "remaining": remaining,
@@ -586,6 +896,10 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
         "current_plan_name": state.current_plan_name,
         "last_state": state.last_state,
     }
+    if state.pr_number is not None:
+        summary["pr_number"] = state.pr_number
+        summary["pr_state"] = state.pr_state
+    return summary
 
 
 def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
@@ -606,6 +920,8 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         writer(f"Current plan: {summary['current_plan_name']}\n")
     if summary.get("last_state"):
         writer(f"Last state: {summary['last_state']}\n")
+    if summary.get("pr_number"):
+        writer(f"Current PR: #{summary['pr_number']} ({summary.get('pr_state') or 'unknown'})\n")
     writer("Per-milestone:\n")
     for item in summary.get("per_milestone") or []:
         writer(f"  - [{item['status']}] {item['label']} (index {item['index']})\n")
@@ -640,6 +956,14 @@ def build_chain_parser(subparsers: Any) -> None:
             "behavior)."
         ),
     )
+    chain_parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help=(
+            "Disable milestone branch creation, PR creation, commits, and pushes. "
+            "Also enabled by MEGAPLAN_CHAIN_NO_PUSH=1; intended for local/no-network tests."
+        ),
+    )
 
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
     start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
@@ -650,6 +974,11 @@ def build_chain_parser(subparsers: Any) -> None:
             "Skip the automatic `git checkout main && git pull` that runs "
             "before each milestone."
         ),
+    )
+    start_parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Disable branch/PR/push lifecycle for no-network runs.",
     )
 
     status_parser = chain_sub.add_parser(
@@ -689,8 +1018,9 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
         return _emit_error(CliError("invalid_args", f"Unknown chain action: {action}"))
 
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))
+    no_push = bool(getattr(args, "no_push", False))
     try:
-        result = run_chain(spec_path, root, no_git_refresh=no_git_refresh)
+        result = run_chain(spec_path, root, no_git_refresh=no_git_refresh, no_push=no_push)
     except CliError as exc:
         return _emit_error(exc)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")

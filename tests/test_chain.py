@@ -69,6 +69,26 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
     assert spec.milestones[0] == MilestoneSpec(label="m1", idea=str(idea), branch="mp/m1")
     assert spec.on_failure == "stop_chain"
     assert spec.on_escalate == "skip_milestone"
+    assert spec.merge_policy == "auto"
+
+
+def test_load_spec_parses_review_merge_policy(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "merge_policy": "review",
+            "milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}],
+        },
+    )
+    assert load_spec(spec_path).merge_policy == "review"
+
+
+def test_load_spec_rejects_bad_merge_policy(tmp_path: Path) -> None:
+    spec_path = _write_spec(tmp_path, {"merge_policy": "later", "milestones": []})
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert "merge_policy" in excinfo.value.message
 
 
 def test_load_spec_rejects_missing_label(tmp_path: Path) -> None:
@@ -131,6 +151,8 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
         current_milestone_index=2,
         current_plan_name="foo-20260415",
         last_state="done",
+        pr_number=42,
+        pr_state="open",
         completed=[{"label": "m1", "plan": "m1-x", "status": "done"}],
     )
     save_chain_state(spec_path, state)
@@ -138,6 +160,8 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     assert loaded.current_milestone_index == 2
     assert loaded.current_plan_name == "foo-20260415"
     assert loaded.last_state == "done"
+    assert loaded.pr_number == 42
+    assert loaded.pr_state == "open"
     assert loaded.completed == [{"label": "m1", "plan": "m1-x", "status": "done"}]
 
 
@@ -248,8 +272,16 @@ def test_chain_start_invokes_driver(
     spec_path = _setup_two_milestones(tmp_path)
     calls: list[tuple[Path, Path, bool]] = []
 
-    def fake_run_chain(spec_path_arg: Path, root: Path, *, no_git_refresh: bool = False, writer=None):
+    def fake_run_chain(
+        spec_path_arg: Path,
+        root: Path,
+        *,
+        no_git_refresh: bool = False,
+        no_push: bool = False,
+        writer=None,
+    ):
         del writer
+        del no_push
         calls.append((spec_path_arg, root, no_git_refresh))
         return {"status": "done", "reason": "", "chain_state": {}, "events": []}
 
@@ -258,11 +290,13 @@ def test_chain_start_invokes_driver(
             chain_action="start",
             spec=str(spec_path),
             no_git_refresh=True,
+            no_push=False,
         )
         alias_args = argparse.Namespace(
             chain_action=None,
             spec=str(spec_path),
             no_git_refresh=False,
+            no_push=False,
         )
 
         assert run_chain_cli(tmp_path, start_args) == 0
@@ -515,3 +549,140 @@ def test_run_chain_no_git_refresh_skips_refresh(tmp_path: Path) -> None:
     assert result["status"] == "done"
     assert len(refresh_calls) == 2
     assert all(call is True for call in refresh_calls)
+
+
+def test_run_chain_no_push_skips_branch_pr_lifecycle(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}]},
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    with patch("megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._checkout_milestone_branch") as checkout, \
+         patch("megaplan.chain._ensure_milestone_pr") as ensure_pr:
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, no_push=True)
+
+    assert result["status"] == "done"
+    checkout.assert_not_called()
+    ensure_pr.assert_not_called()
+
+
+def test_commit_and_push_phase_skips_empty_diff(tmp_path: Path) -> None:
+    from megaplan.chain import _commit_and_push_phase
+
+    commands: list[list[str]] = []
+
+    def fake_run_command(root, cmd, *, writer, timeout=120, error_code="command_failed"):
+        del root, writer, timeout, error_code
+        commands.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    def fake_run(cmd, **_kwargs):
+        assert cmd == ["git", "diff", "--cached", "--quiet"]
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run_command), \
+         patch("megaplan.chain.subprocess.run", side_effect=fake_run):
+        _commit_and_push_phase(
+            tmp_path,
+            "mp/m1",
+            "plan-m1",
+            "plan",
+            writer=lambda _m: None,
+        )
+
+    assert commands == [["git", "add", "-A"]]
+
+
+def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}]},
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+    commits: list[tuple[str, str, str]] = []
+
+    def fake_drive(root, plan, spec, *, on_phase_complete=None, writer):
+        del root, spec, writer
+        assert plan == "plan-m1"
+        assert on_phase_complete is not None
+        on_phase_complete("plan", 0, "", "")
+        on_phase_complete("execute", 0, "", "")
+        return _fake_outcome(plan, "done")
+
+    with patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._checkout_milestone_branch") as checkout, \
+         patch("megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
+         patch("megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
+         patch("megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, *, writer: commits.append((branch, plan, phase))), \
+         patch("megaplan.chain._mark_pr_ready") as ready, \
+         patch("megaplan.chain._enable_auto_merge") as merge:
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    checkout.assert_called_once()
+    ensure_pr.assert_called_once()
+    assert commits == [
+        ("mp/m1", "plan-m1", "init"),
+        ("mp/m1", "plan-m1", "plan"),
+        ("mp/m1", "plan-m1", "execute"),
+        ("mp/m1", "plan-m1", "done"),
+    ]
+    assert ready.call_args.args == (tmp_path, 17)
+    assert merge.call_args.args == (tmp_path, 17)
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 1
+    assert saved.pr_number is None
+
+
+def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m1.txt")
+    i2 = _touch_idea(tmp_path, "m2.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "merge_policy": "review",
+            "milestones": [
+                {"label": "m1", "idea": str(i1), "branch": "mp/m1"},
+                {"label": "m2", "idea": str(i2)},
+            ],
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    with patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._checkout_milestone_branch"), \
+         patch("megaplan.chain._ensure_milestone_pr", return_value=23), \
+         patch("megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._mark_pr_ready"):
+        first = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert first["status"] == "awaiting_pr_merge"
+    waiting = load_chain_state(spec_path)
+    assert waiting.current_milestone_index == 0
+    assert waiting.pr_number == 23
+    assert waiting.pr_state == "awaiting_merge"
+
+    with patch("megaplan.chain._pr_state", return_value="open"):
+        second = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+    assert second["status"] == "awaiting_pr_merge"
+    assert load_chain_state(spec_path).current_milestone_index == 0
+
+    with patch("megaplan.chain._pr_state", return_value="merged"), \
+         patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._init_plan", return_value="plan-m2"), \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m2", "done")):
+        final = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert final["status"] == "done"
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 2
+    assert [item["label"] for item in saved.completed] == ["m1", "m2"]
