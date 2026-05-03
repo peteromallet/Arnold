@@ -868,11 +868,29 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
 
 
 # ---------------------------------------------------------------------------
+# Store factory
+# ---------------------------------------------------------------------------
+
+def build_store(args: argparse.Namespace):
+    """Return a DBStore configured for writes, or None for the file backend."""
+    backend = getattr(args, "backend", None) or os.environ.get("MEGAPLAN_BACKEND")
+    if backend == "db":
+        from megaplan.store import DBStore, require_actor_id, resolve_actor_id, validate_actor_exists
+        actor_id = require_actor_id(resolve_actor_id(args))
+        store = DBStore(actor_id=actor_id)
+        validate_actor_exists(store, actor_id)
+        return store
+    return None  # Sprint 3: write-back to DB
+
+
+# ---------------------------------------------------------------------------
 # Parser and dispatch
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Megaplan orchestration CLI")
+    parser.add_argument("--actor", default=None, metavar="ID", help="Actor ID for DB writes (also MEGAPLAN_ACTOR_ID)")
+    parser.add_argument("--backend", choices=["file", "db"], default=None, help="Storage backend (also MEGAPLAN_BACKEND)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     setup_parser = subparsers.add_parser("setup", help="Install megaplan into agent configs (global by default)")
@@ -932,6 +950,12 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
     init_parser.add_argument("--profile", default=None,
                              help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    init_parser.add_argument(
+        "--from-arnold-epic",
+        default=None,
+        metavar="EPIC_ID",
+        help="Load plan idea from Arnold epic via DBStore (read-only; --backend db not required for read path)",
+    )
     init_parser.add_argument("idea", nargs="?")
 
     list_parser = subparsers.add_parser("list")
@@ -1368,6 +1392,27 @@ def main(argv: list[str] | None = None) -> int:
             raise CliError("invalid_args", f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_LEVELS)}")
         if args.command == "override" and args.override_action == "set-profile" and not args.profile:
             raise CliError("invalid_args", "override set-profile requires --profile NAME")
+        if args.command == "init" and getattr(args, "from_arnold_epic", None):
+            from megaplan.store import DBStore
+            epic_id = args.from_arnold_epic
+            store = DBStore(actor_id=None)  # read-only path
+            try:
+                epic = store.load_epic(epic_id)
+                # Sprint 3: write-back to DB — load_hot_context for future context injection
+            except Exception as exc:
+                print(f"Error: failed to load epic {epic_id!r}: {exc}", file=sys.stderr)
+                return 1
+            finally:
+                store.close()
+            if epic is None:
+                print(f"Error: epic {epic_id!r} not found.", file=sys.stderr)
+                return 1
+            parts = [epic.title]
+            if epic.goal:
+                parts.append(epic.goal)
+            if epic.body:
+                parts.append(epic.body)
+            args.idea = "\n\n".join(parts)
         return render_response(handler(root, args))
     except CliError as error:
         return error_response(error, root=root)
