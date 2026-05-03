@@ -65,14 +65,17 @@ class RailwayProvider(Provider):
         return result
 
     def _railway_cmd(self, *args: str) -> list[str]:
+        # railway CLI 4.12+ accepts --project only on `link` and `ssh`.
+        # `link` callers pass --project explicitly; everything else relies on
+        # the linked project context written by an earlier `railway link`.
         command = [self._binary or "railway", *args]
-        scoped: list[str] = []
-        if self._railway.project:
-            scoped.extend(["--project", self._railway.project])
-        if self._railway.environment:
-            scoped.extend(["--environment", self._railway.environment])
-        if scoped and args and args[0] == "link":
+        if not args or args[0] == "link":
             return command
+        scoped: list[str] = []
+        if self._railway.project and args[0] == "ssh":
+            scoped.extend(["--project", self._railway.project])
+        if self._railway.environment and args[0] in ("up", "variables", "logs", "ssh"):
+            scoped.extend(["--environment", self._railway.environment])
         return [*command[:2], *scoped, *command[2:]]
 
     def build(self, deploy_dir: Path) -> int:
