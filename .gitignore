@@ -1,6 +1,7 @@
 __pycache__/
 .claude/
 .megaplan/
+chain_state.json
 .desloppify/
 .doubledip/
 .env
