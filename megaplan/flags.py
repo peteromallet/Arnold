@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -33,6 +34,19 @@ def resolve_severity(hint: str) -> str:
     return "significant"
 
 
+def _coerce_flag_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = [_coerce_flag_text(item) for item in value]
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True)
+    return str(value).strip()
+
+
 def normalize_flag_record(raw_flag: dict[str, Any], fallback_id: str) -> FlagRecord:
     category = raw_flag.get("category", "other")
     if category not in {"correctness", "security", "completeness", "performance", "maintainability", "other"}:
@@ -43,10 +57,10 @@ def normalize_flag_record(raw_flag: dict[str, Any], fallback_id: str) -> FlagRec
     raw_id = raw_flag.get("id")
     return {
         "id": fallback_id if raw_id in {None, "", "FLAG-000"} else raw_id,
-        "concern": raw_flag.get("concern", "").strip(),
+        "concern": _coerce_flag_text(raw_flag.get("concern")),
         "category": category,
         "severity_hint": severity_hint,
-        "evidence": raw_flag.get("evidence", "").strip(),
+        "evidence": _coerce_flag_text(raw_flag.get("evidence")),
     }
 
 

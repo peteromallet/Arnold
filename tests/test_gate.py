@@ -635,6 +635,22 @@ def test_normalize_flag_record_uses_fallback_for_empty_id() -> None:
         assert record["id"] == "FLAG-099"
 
 
+def test_normalize_flag_record_accepts_structured_text_fields() -> None:
+    record = megaplan.normalize_flag_record(
+        {
+            "id": "FLAG-001",
+            "concern": ["First concern", {"path": "src/file.ts", "line": 12}],
+            "evidence": ["Checked src/file.ts", {"reason": "agent returned structured evidence"}],
+        },
+        "FLAG-099",
+    )
+
+    assert "First concern" in record["concern"]
+    assert '"path": "src/file.ts"' in record["concern"]
+    assert "Checked src/file.ts" in record["evidence"]
+    assert '"reason": "agent returned structured evidence"' in record["evidence"]
+
+
 def test_update_flags_after_critique_creates_new_flags(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     critique_payload = {
