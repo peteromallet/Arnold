@@ -1,6 +1,6 @@
 # Example chain spec consumed by `megaplan chain --spec /workspace/chain.yaml`.
 # Copy to /workspace/chain.yaml on the container (or mount it via volume) and
-# edit as needed. Progress is persisted to chain_state.json next to this file.
+# edit as needed. Progress is persisted under .megaplan/chains/.
 
 seed:
   # Plan that was kicked off manually before the chain took over. If its state
@@ -29,7 +29,7 @@ on_escalate:
   abort: stop_chain
 
 # auto: mark each milestone PR ready and enable squash auto-merge.
-# review: mark ready, stop with chain_state.json last_state=awaiting_pr_merge,
+# review: mark ready, stop with chain state last_state=awaiting_pr_merge,
 #         and continue to the next milestone only after the PR is merged.
 merge_policy: auto           # auto | review
 

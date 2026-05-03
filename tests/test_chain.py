@@ -15,6 +15,7 @@ from megaplan.auto import DriverOutcome
 from megaplan.chain import (
     ChainState,
     MilestoneSpec,
+    _state_path_for,
     format_chain_status,
     load_chain_state,
     load_spec,
@@ -156,6 +157,10 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
         completed=[{"label": "m1", "plan": "m1-x", "status": "done"}],
     )
     save_chain_state(spec_path, state)
+    state_path = _state_path_for(spec_path)
+    assert state_path.parent == tmp_path / ".megaplan" / "chains"
+    assert state_path.exists()
+    assert not (tmp_path / "chain_state.json").exists()
     loaded = load_chain_state(spec_path)
     assert loaded.current_milestone_index == 2
     assert loaded.current_plan_name == "foo-20260415"
@@ -163,6 +168,28 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     assert loaded.pr_number == 42
     assert loaded.pr_state == "open"
     assert loaded.completed == [{"label": "m1", "plan": "m1-x", "status": "done"}]
+
+
+def test_load_chain_state_reads_legacy_sibling_state(tmp_path: Path) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    (tmp_path / "chain_state.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 4,
+                "current_plan_name": "legacy-plan",
+                "last_state": "done",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_chain_state(spec_path)
+
+    assert loaded.current_milestone_index == 4
+    assert loaded.current_plan_name == "legacy-plan"
+    assert loaded.last_state == "done"
 
 
 def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
