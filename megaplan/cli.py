@@ -33,6 +33,7 @@ from megaplan._core import (
     escalated_subsystems,
     ensure_runtime_layout,
     get_effective,
+    has_any_plan_root,
     infer_next_steps,
     is_prose_mode,
     json_dump,
@@ -425,7 +426,7 @@ def _collect_megaplan_roots(root: Path, *, tree: bool = False, all_system: bool 
         # Walk up to find parent .megaplan directories
         current = root.resolve().parent
         while True:
-            if (current / ".megaplan" / "plans").is_dir() and current.resolve() != root.resolve():
+            if has_any_plan_root(current) and current.resolve() != root.resolve():
                 roots.append(current)
             parent = current.parent
             if parent == current:
@@ -433,9 +434,9 @@ def _collect_megaplan_roots(root: Path, *, tree: bool = False, all_system: bool 
             current = parent
         # Walk down to find child .megaplan directories
         for megaplan_dir in sorted(root.rglob(".megaplan")):
-            if megaplan_dir.is_dir() and (megaplan_dir / "plans").is_dir():
+            if megaplan_dir.is_dir():
                 candidate = megaplan_dir.parent
-                if candidate.resolve() != root.resolve():
+                if has_any_plan_root(candidate) and candidate.resolve() != root.resolve():
                     roots.append(candidate)
 
     return roots

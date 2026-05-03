@@ -1,4 +1,4 @@
-"""Atomic I/O, JSON helpers, path resolution, and config management."""
+"""Atomic I/O, journaling helpers, path resolution, and config management."""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ import hashlib
 import json
 import os
 import re
+import struct
 import tempfile
+import time
+from base64 import b64decode, b64encode
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping, Sequence
 
 from megaplan.schemas import SCHEMAS, strict_schema
 from megaplan.types import KNOWN_AGENTS
@@ -109,12 +112,79 @@ def compute_global_batches(finalize_data: dict[str, Any]) -> list[list[str]]:
 # Atomic I/O
 # ---------------------------------------------------------------------------
 
-def atomic_write_text(path: Path, content: str) -> None:
+MAX_FRAMED_JSON_RECORD_BYTES = 1024 * 1024
+
+
+def _fsync_file_descriptor(fd: int) -> None:
+    os.fsync(fd)
+
+
+def fsync_dir(path: Path) -> None:
+    directory = path if path.is_dir() else path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        _fsync_file_descriptor(fd)
+    finally:
+        os.close(fd)
+
+
+def fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        _fsync_file_descriptor(handle.fileno())
+
+
+def _write_bytes_direct(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+    with path.open("wb") as handle:
         handle.write(content)
+        handle.flush()
+        _fsync_file_descriptor(handle.fileno())
+    fsync_dir(path.parent)
+
+
+def _restore_staged_payload(entry: Mapping[str, Any]) -> bytes:
+    payload = entry.get("content")
+    storage = entry.get("content_storage")
+    if not isinstance(payload, str):
+        raise ValueError("Prepared journal entry is missing inline content")
+    if storage == "text":
+        return payload.encode("utf-8")
+    if storage == "base64":
+        return b64decode(payload.encode("ascii"))
+    raise ValueError(f"Unsupported prepared content storage: {storage!r}")
+
+
+def _serialize_inline_payload(content: bytes | str) -> tuple[str, str]:
+    if isinstance(content, str):
+        return ("text", content)
+    return ("base64", b64encode(content).decode("ascii"))
+
+
+def _content_sha256(content: bytes | str) -> str:
+    if isinstance(content, str):
+        return sha256_text(content)
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _path_sha256(path: Path) -> str:
+    with path.open("rb") as handle:
+        return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
+        handle.write(content)
+        handle.flush()
+        _fsync_file_descriptor(handle.fileno())
         temp_path = Path(handle.name)
     temp_path.replace(path)
+    fsync_dir(path.parent)
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    atomic_write_bytes(path, content.encode("utf-8"))
 
 
 def atomic_write_json(path: Path, data: Any) -> None:
@@ -123,6 +193,372 @@ def atomic_write_json(path: Path, data: Any) -> None:
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def journal_root(root: Path) -> Path:
+    return root / "_journal"
+
+
+def journal_prepare_path(root: Path, tx_id: str) -> Path:
+    return journal_root(root) / f"tx-{tx_id}.prepare.json"
+
+
+def journal_commit_path(root: Path, tx_id: str) -> Path:
+    return journal_root(root) / f"tx-{tx_id}.commit"
+
+
+def journal_text_write(path: Path, content: str, *, tx_id: str | None = None) -> dict[str, Any]:
+    storage, inline = _serialize_inline_payload(content)
+    temp_name = f".{path.name}.tx-{tx_id or 'pending'}.tmp"
+    return {
+        "target_path": str(path),
+        "temp_path": str(path.parent / temp_name),
+        "content_storage": storage,
+        "content": inline,
+        "content_sha256": _content_sha256(content),
+        "prior_content_sha256": _path_sha256(path) if path.exists() else None,
+    }
+
+
+def journal_bytes_write(path: Path, content: bytes, *, tx_id: str | None = None) -> dict[str, Any]:
+    storage, inline = _serialize_inline_payload(content)
+    temp_name = f".{path.name}.tx-{tx_id or 'pending'}.tmp"
+    return {
+        "target_path": str(path),
+        "temp_path": str(path.parent / temp_name),
+        "content_storage": storage,
+        "content": inline,
+        "content_sha256": _content_sha256(content),
+        "prior_content_sha256": _path_sha256(path) if path.exists() else None,
+    }
+
+
+def journal_event_log(path: Path, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "records": [dict(record) for record in records],
+    }
+
+
+def journal_blob_promotion(
+    blob_dir: Path,
+    content: bytes,
+    *,
+    extension: str,
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    storage, inline = _serialize_inline_payload(content)
+    normalized_ext = extension.lstrip(".")
+    return {
+        "blob_dir": str(blob_dir),
+        "staging_path": str(blob_dir / "data.staging"),
+        "final_path": str(blob_dir / f"data.{normalized_ext}"),
+        "meta_path": str(blob_dir / "meta.json"),
+        "content_storage": storage,
+        "content": inline,
+        "content_sha256": _content_sha256(content),
+        "metadata": dict(metadata),
+    }
+
+
+def framed_json_record_bytes(record: Mapping[str, Any]) -> bytes:
+    payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(payload) > MAX_FRAMED_JSON_RECORD_BYTES:
+        raise ValueError(
+            f"Framed JSON record exceeds {MAX_FRAMED_JSON_RECORD_BYTES} bytes: {len(payload)}",
+        )
+    return struct.pack(">I", len(payload)) + payload + b"\n"
+
+
+def append_framed_json_records(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
+    if not records:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    should_fsync = any(record.get("event_type") == "_tx_commit" for record in records)
+    with path.open("ab", buffering=0) as handle:
+        for record in records:
+            handle.write(framed_json_record_bytes(record))
+        if should_fsync:
+            _fsync_file_descriptor(handle.fileno())
+    if should_fsync:
+        fsync_dir(path.parent)
+
+
+def append_framed_json_transaction(
+    path: Path,
+    tx_id: str,
+    records: Sequence[Mapping[str, Any]],
+) -> None:
+    framed_records: list[dict[str, Any]] = [{"tx_id": tx_id, "event_type": "_tx_begin"}]
+    for record in records:
+        normalized = dict(record)
+        record_tx_id = normalized.get("tx_id")
+        if record_tx_id is not None and record_tx_id != tx_id:
+            raise ValueError(f"Framed record tx_id mismatch: expected {tx_id!r}, got {record_tx_id!r}")
+        normalized["tx_id"] = tx_id
+        framed_records.append(normalized)
+    framed_records.append({"tx_id": tx_id, "event_type": "_tx_commit"})
+    append_framed_json_records(path, framed_records)
+
+
+def iter_framed_json_records(path: Path) -> Iterable[dict[str, Any]]:
+    if not path.exists():
+        return []
+
+    def _iterator() -> Iterable[dict[str, Any]]:
+        with path.open("rb") as handle:
+            while True:
+                length_bytes = handle.read(4)
+                if not length_bytes:
+                    return
+                if len(length_bytes) < 4:
+                    return
+                (payload_len,) = struct.unpack(">I", length_bytes)
+                if payload_len > MAX_FRAMED_JSON_RECORD_BYTES:
+                    return
+                payload = handle.read(payload_len)
+                if len(payload) < payload_len:
+                    return
+                newline = handle.read(1)
+                if newline != b"\n":
+                    return
+                try:
+                    record = json.loads(payload.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return
+                if isinstance(record, dict):
+                    yield record
+
+    return _iterator()
+
+
+def committed_framed_json_transactions(path: Path) -> dict[str, list[dict[str, Any]]]:
+    committed: dict[str, list[dict[str, Any]]] = {}
+    pending: dict[str, list[dict[str, Any]]] = {}
+    for record in iter_framed_json_records(path):
+        tx_id = record.get("tx_id")
+        if not isinstance(tx_id, str) or not tx_id:
+            continue
+        event_type = record.get("event_type")
+        if event_type == "_tx_begin":
+            pending[tx_id] = [record]
+            continue
+        bucket = pending.get(tx_id)
+        if bucket is None:
+            continue
+        bucket.append(record)
+        if event_type == "_tx_commit":
+            committed[tx_id] = bucket
+            pending.pop(tx_id, None)
+    return committed
+
+
+def read_committed_framed_json_records(
+    path: Path,
+    *,
+    include_markers: bool = False,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for transaction in committed_framed_json_transactions(path).values():
+        if include_markers:
+            records.extend(transaction)
+            continue
+        records.extend(
+            record
+            for record in transaction
+            if record.get("event_type") not in {"_tx_begin", "_tx_commit"}
+        )
+    return records
+
+
+def _stage_write_entry(entry: Mapping[str, Any]) -> None:
+    temp_path = Path(entry["temp_path"])
+    _write_bytes_direct(temp_path, _restore_staged_payload(entry))
+
+
+def _stage_blob_entry(entry: Mapping[str, Any]) -> None:
+    staging_path = Path(entry["staging_path"])
+    meta_path = Path(entry["meta_path"])
+    staging_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_bytes_direct(staging_path, _restore_staged_payload(entry))
+    atomic_write_json(meta_path, entry.get("metadata", {}))
+
+
+def prepare_journal_transaction(
+    root: Path,
+    tx_id: str,
+    *,
+    writes: Sequence[Mapping[str, Any]] = (),
+    event_logs: Sequence[Mapping[str, Any]] = (),
+    blobs: Sequence[Mapping[str, Any]] = (),
+) -> Path:
+    normalized_writes = [dict(entry) for entry in writes]
+    normalized_event_logs = [dict(entry) for entry in event_logs]
+    normalized_blobs = [dict(entry) for entry in blobs]
+    for entry in normalized_writes:
+        target_path = Path(entry["target_path"])
+        temp_path = entry.get("temp_path")
+        if not isinstance(temp_path, str) or ".tx-pending." in temp_path:
+            entry["temp_path"] = str(target_path.parent / f".{target_path.name}.tx-{tx_id}.tmp")
+    prepare_path = journal_prepare_path(root, tx_id)
+    payload = {
+        "tx_id": tx_id,
+        "prepared_at": now_utc(),
+        "writes": normalized_writes,
+        "event_logs": normalized_event_logs,
+        "blob_promotions": normalized_blobs,
+    }
+    atomic_write_json(prepare_path, payload)
+    for entry in normalized_writes:
+        _stage_write_entry(entry)
+    for entry in normalized_blobs:
+        _stage_blob_entry(entry)
+    return prepare_path
+
+
+def write_journal_commit_marker(root: Path, tx_id: str) -> Path:
+    marker_path = journal_commit_path(root, tx_id)
+    _write_bytes_direct(marker_path, b"")
+    return marker_path
+
+
+def _rename_with_fsync(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src.replace(dest)
+    fsync_dir(dest.parent)
+
+
+def _apply_prepared_writes(payload: Mapping[str, Any]) -> None:
+    for entry in payload.get("writes", []):
+        target_path = Path(entry["target_path"])
+        desired_sha = entry.get("content_sha256")
+        if target_path.exists() and desired_sha == _path_sha256(target_path):
+            temp_path = Path(entry["temp_path"])
+            if temp_path.exists():
+                temp_path.unlink()
+            continue
+        temp_path = Path(entry["temp_path"])
+        if not temp_path.exists():
+            _stage_write_entry(entry)
+        _rename_with_fsync(temp_path, target_path)
+
+
+def _apply_prepared_blob_promotions(payload: Mapping[str, Any]) -> None:
+    for entry in payload.get("blob_promotions", []):
+        final_path = Path(entry["final_path"])
+        desired_sha = entry.get("content_sha256")
+        atomic_write_json(Path(entry["meta_path"]), entry.get("metadata", {}))
+        if final_path.exists() and desired_sha == _path_sha256(final_path):
+            staging_path = Path(entry["staging_path"])
+            if staging_path.exists():
+                staging_path.unlink()
+            continue
+        staging_path = Path(entry["staging_path"])
+        if not staging_path.exists():
+            _stage_blob_entry(entry)
+        _rename_with_fsync(staging_path, final_path)
+
+
+def _apply_prepared_event_logs(payload: Mapping[str, Any]) -> None:
+    tx_id = payload["tx_id"]
+    for entry in payload.get("event_logs", []):
+        log_path = Path(entry["path"])
+        committed_ids = set(committed_framed_json_transactions(log_path))
+        if tx_id in committed_ids:
+            continue
+        append_framed_json_transaction(log_path, tx_id, entry.get("records", []))
+
+
+def _cleanup_prepared_transaction(payload: Mapping[str, Any]) -> None:
+    for entry in payload.get("writes", []):
+        temp_path = Path(entry["temp_path"])
+        if temp_path.exists():
+            temp_path.unlink()
+    for entry in payload.get("blob_promotions", []):
+        staging_path = Path(entry["staging_path"])
+        if staging_path.exists():
+            staging_path.unlink()
+    prepare_path = journal_prepare_path(Path(payload["journal_root"]), payload["tx_id"])
+    commit_path = journal_commit_path(Path(payload["journal_root"]), payload["tx_id"])
+    if prepare_path.exists():
+        prepare_path.unlink()
+    if commit_path.exists():
+        commit_path.unlink()
+    fsync_dir(prepare_path.parent)
+
+
+def commit_journal_transaction(root: Path, tx_id: str) -> None:
+    prepare_path = journal_prepare_path(root, tx_id)
+    payload = read_json(prepare_path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Malformed prepare payload at {prepare_path}")
+    payload["journal_root"] = str(root)
+    write_journal_commit_marker(root, tx_id)
+    _apply_prepared_writes(payload)
+    _apply_prepared_blob_promotions(payload)
+    _apply_prepared_event_logs(payload)
+    _cleanup_prepared_transaction(payload)
+
+
+def discard_uncommitted_journal_transaction(root: Path, tx_id: str) -> None:
+    prepare_path = journal_prepare_path(root, tx_id)
+    if not prepare_path.exists():
+        return
+    payload = read_json(prepare_path)
+    if not isinstance(payload, dict):
+        prepare_path.unlink()
+        fsync_dir(prepare_path.parent)
+        return
+    payload["journal_root"] = str(root)
+    _cleanup_prepared_transaction(payload)
+
+
+def scrub_stale_staging_files(root: Path, *, older_than_seconds: int = 3600) -> list[Path]:
+    cutoff = time.time() - older_than_seconds
+    removed: list[Path] = []
+    changed_dirs: set[Path] = set()
+    if not root.exists():
+        return removed
+    for staging_path in root.rglob("*.staging"):
+        try:
+            if staging_path.stat().st_mtime > cutoff:
+                continue
+        except FileNotFoundError:
+            continue
+        staging_path.unlink(missing_ok=True)
+        removed.append(staging_path)
+        changed_dirs.add(staging_path.parent)
+    for directory in sorted(changed_dirs):
+        fsync_dir(directory)
+    return removed
+
+
+def recover_journal(root: Path) -> dict[str, list[str]]:
+    journal_dir = journal_root(root)
+    result = {"replayed": [], "discarded": [], "scrubbed_staging": []}
+    result["scrubbed_staging"] = [str(path) for path in scrub_stale_staging_files(root)]
+    if not journal_dir.exists():
+        return result
+
+    for prepare_path in sorted(journal_dir.glob("tx-*.prepare.json")):
+        match = re.fullmatch(r"tx-(.+)\.prepare\.json", prepare_path.name)
+        if match is None:
+            continue
+        tx_id = match.group(1)
+        if journal_commit_path(root, tx_id).exists():
+            commit_journal_transaction(root, tx_id)
+            result["replayed"].append(tx_id)
+        else:
+            discard_uncommitted_journal_transaction(root, tx_id)
+            result["discarded"].append(tx_id)
+
+    for commit_path in sorted(journal_dir.glob("tx-*.commit")):
+        tx_id = commit_path.name[len("tx-") : -len(".commit")]
+        if not journal_prepare_path(root, tx_id).exists():
+            commit_path.unlink()
+            fsync_dir(journal_dir)
+
+    return result
 
 
 def load_finalize_snapshot(plan_dir: Path) -> dict[str, Any]:
@@ -318,6 +754,101 @@ def megaplan_root(root: Path) -> Path:
 
 def plans_root(root: Path) -> Path:
     return megaplan_root(root) / "plans"
+
+
+def _git_common_dir(root: Path) -> Path | None:
+    git_path = root / ".git"
+    if git_path.is_dir():
+        return git_path.resolve()
+    if not git_path.is_file():
+        return None
+    try:
+        content = git_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "gitdir:"
+    if not content.startswith(prefix):
+        return None
+    gitdir = Path(content[len(prefix):].strip())
+    if not gitdir.is_absolute():
+        gitdir = (root / gitdir).resolve()
+    if gitdir.parent.name == "worktrees":
+        return gitdir.parent.parent.resolve()
+    return gitdir.resolve()
+
+
+def repo_storage_id(root: Path) -> str:
+    resolved = root.resolve()
+    common_dir = _git_common_dir(resolved)
+    identity_source = str(common_dir or resolved)
+    label_source = common_dir.parent.name if common_dir is not None else resolved.name
+    digest = hashlib.sha256(identity_source.encode("utf-8")).hexdigest()[:12]
+    return f"{slugify(label_source or 'repo')}-{digest}"
+
+
+def canonical_megaplan_root(root: Path, *, home: Path | None = None) -> Path:
+    base_home = (home or Path.home()).expanduser().resolve()
+    return base_home / ".megaplan" / repo_storage_id(root)
+
+
+def orphan_plans_root(root: Path, *, home: Path | None = None) -> Path:
+    return canonical_megaplan_root(root, home=home) / "orphan_plans"
+
+
+def plan_search_roots(root: Path, *, home: Path | None = None) -> list[Path]:
+    """Return canonical and legacy plan roots for *root*.
+
+    Canonical orphan plans live under ``~/.megaplan/<repo-id>/orphan_plans``.
+    Legacy plans remain in-place under ``<root>/.megaplan/plans`` until a later
+    migration step intentionally moves runtime writes across.
+    """
+
+    roots = [orphan_plans_root(root, home=home), plans_root(root)]
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in roots:
+        resolved = candidate.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(candidate)
+    return deduped
+
+
+def has_any_plan_root(root: Path, *, home: Path | None = None) -> bool:
+    return any(candidate.is_dir() for candidate in plan_search_roots(root, home=home))
+
+
+def find_plan_dir(start: Path, requested_name: str, *, home: Path | None = None) -> Path | None:
+    """Find ``requested_name`` across canonical and legacy plan roots near *start*."""
+
+    resolved_start = start.resolve()
+    seen_project_roots: set[Path] = set()
+
+    def _check(project_root: Path) -> Path | None:
+        resolved_project = project_root.resolve()
+        if resolved_project in seen_project_roots:
+            return None
+        seen_project_roots.add(resolved_project)
+        for candidate_root in plan_search_roots(resolved_project, home=home):
+            plan_dir = candidate_root / requested_name
+            if (plan_dir / "state.json").exists():
+                return plan_dir
+        return None
+
+    for project_root in (resolved_start, *resolved_start.parents):
+        plan_dir = _check(project_root)
+        if plan_dir is not None:
+            return plan_dir
+
+    for megaplan_dir in sorted(resolved_start.rglob(".megaplan")):
+        if not megaplan_dir.is_dir():
+            continue
+        plan_dir = _check(megaplan_dir.parent)
+        if plan_dir is not None:
+            return plan_dir
+
+    return None
 
 
 def schemas_root(root: Path) -> Path:

@@ -15,6 +15,15 @@ import megaplan._core.io as io_module
 from megaplan.workers import WorkerResult
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--backend",
+        action="store",
+        default=None,
+        help="Optional storage backend selector used by Sprint 1 backend tests.",
+    )
+
+
 def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
