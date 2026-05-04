@@ -22,7 +22,11 @@ import { withEdgeRequest } from "../_shared/edgeHandler.ts";
  * Headers: Authorization: Bearer <service-key or PAT>
  * Body: {
  *   worker_id?: string,        // Optional worker ID for service role
- *   run_type?: 'gpu' | 'api',  // Optional: filter tasks by execution environment
+ *   run_type?: 'gpu' | 'api' | 'banodoco-worker',  // Optional: filter tasks by execution environment
+ *                              // 'banodoco-worker' is only valid when worker_pool === 'banodoco'.
+ *   worker_pool?: string,      // Optional: identifies a dedicated worker pool (e.g. 'banodoco').
+ *                              // When 'banodoco', only banodoco_* task types are claimable.
+ *   task_types?: string[],     // Optional: restrict claimable tasks to these task_type values.
  *   same_model_only?: boolean, // Optional: only claim tasks matching worker's current_model
  *   max_task_wait_minutes?: number, // Optional: max age in minutes for claimable tasks (default 5, must be positive finite number)
  *   debug?: boolean            // Optional: enable verbose logging/analysis on 204 responses
@@ -52,9 +56,21 @@ serve((req) => {
   const workerId = typeof requestBody.worker_id === "string"
     ? requestBody.worker_id
     : `edge_${crypto.randomUUID()}`;
-  const runType = requestBody.run_type === "gpu" || requestBody.run_type === "api"
-    ? requestBody.run_type
+  const workerPool = typeof requestBody.worker_pool === "string" && requestBody.worker_pool.length > 0
+    ? requestBody.worker_pool
     : null;
+  // Accept 'banodoco-worker' run_type only when worker_pool === 'banodoco'.
+  // Existing 'gpu' / 'api' paths are unchanged.
+  const rawRunType = requestBody.run_type;
+  const runType = rawRunType === "gpu" || rawRunType === "api"
+    ? rawRunType
+    : (rawRunType === "banodoco-worker" && workerPool === "banodoco")
+      ? rawRunType
+      : null;
+  const taskTypes = Array.isArray(requestBody.task_types)
+    ? requestBody.task_types.filter((t: unknown): t is string => typeof t === "string" && t.length > 0)
+    : null;
+  const taskTypesFilter = taskTypes && taskTypes.length > 0 ? taskTypes : null;
   const sameModelOnly = requestBody.same_model_only === true;
   const rawMaxWait = requestBody.max_task_wait_minutes;
   const maxTaskWaitMinutes = typeof rawMaxWait === "number" && rawMaxWait > 0 && isFinite(rawMaxWait)
@@ -66,7 +82,11 @@ serve((req) => {
   const callerId = auth!.userId;
 
   if (isServiceRole) {
-    logger.info("Authenticated via service-role key", { worker_id: workerId, run_type: runType });
+    logger.info("Authenticated via service-role key", {
+      worker_id: workerId,
+      run_type: runType,
+      worker_pool: workerPool,
+    });
   } else {
     logger.info("Authenticated via PAT", { user_id: callerId });
   }
@@ -75,23 +95,35 @@ serve((req) => {
     // ═══════════════════════════════════════════════════════════════
     // SERVICE ROLE PATH: Use optimized PostgreSQL function
     // ═══════════════════════════════════════════════════════════════
-    const pathType = runType === 'api' ? 'API' : 'GPU';
+    const pathType = runType === 'api'
+      ? 'API'
+      : runType === 'banodoco-worker'
+        ? 'BANODOCO'
+        : 'GPU';
     logger.info(`Claiming task (service-role, ${pathType} path)`, {
       worker_id: workerId,
       run_type: runType,
+      worker_pool: workerPool,
+      task_types: taskTypesFilter,
       same_model_only: sameModelOnly,
       max_task_wait_minutes: maxTaskWaitMinutes,
     });
 
     let claimResult, claimError;
     try {
+      // For banodoco-worker pool we don't pass run_type into the RPC's
+      // get_task_run_type filter (it only knows about gpu/api). Instead,
+      // filtering is handled by p_worker_pool / p_task_types.
+      const rpcRunType = runType === 'banodoco-worker' ? null : runType;
       const rpcResponse = await supabaseAdmin
         .rpc('claim_next_task_service_role', {
           p_worker_id: workerId,
           p_include_active: false,
-          p_run_type: runType,
+          p_run_type: rpcRunType,
           p_same_model_only: sameModelOnly,
           p_max_task_wait_minutes: maxTaskWaitMinutes,
+          p_worker_pool: workerPool,
+          p_task_types: taskTypesFilter,
         });
 
       claimResult = rpcResponse.data;
