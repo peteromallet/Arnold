@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import get_effective, read_json, schemas_root
-from megaplan.hermes_worker import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
+from megaplan.hermes_worker import (
+    _streaming_run_kwargs,
+    _toolsets_for_phase,
+    clean_parsed_payload,
+    parse_agent_output,
+)
 from megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
 from megaplan.prompts.critique_joke import single_check_critique_joke_prompt
 from megaplan.types import CliError, PlanState
@@ -70,6 +75,10 @@ def _run_check(
         else None
     )
 
+    # Cap output tokens to match the main-line hermes worker (Qwen repetition
+    # mitigation). Drives the Fireworks streaming gate below.
+    agent_max_tokens = 32768
+
     def _make_agent(m: str, kw: dict) -> "AIAgent":
         a = AIAgent(
             model=m,
@@ -79,7 +88,7 @@ def _run_check(
             enabled_toolsets=_toolsets_for_phase("critique"),
             session_id=str(uuid.uuid4()),
             session_db=SessionDB(),
-            max_tokens=32768,
+            max_tokens=agent_max_tokens,
             reasoning_config=_reasoning_off,
             **kw,
         )
@@ -91,8 +100,16 @@ def _run_check(
             return exc.message
         return str(exc) or exc.__class__.__name__
 
-    def _run_attempt(current_agent, current_output_path: Path) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str], float]:
-        current_result = current_agent.run_conversation(user_message=prompt)
+    def _run_attempt(current_agent, current_output_path: Path, *, current_model: str | None = None) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str], float]:
+        # Force streaming for providers that require it at this max_tokens
+        # (Fireworks rejects max_tokens > 4096 unless stream=true).  The
+        # streaming response is reassembled into the same shape non-streaming
+        # would return — downstream code is unchanged.
+        run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens)
+        current_result = current_agent.run_conversation(
+            user_message=prompt,
+            **run_kwargs,
+        )
         payload, raw_output = parse_agent_output(
             current_agent,
             current_result,
@@ -101,6 +118,7 @@ def _run_check(
             step="critique",
             project_dir=project_dir,
             plan_dir=plan_dir,
+            run_kwargs=run_kwargs,
         )
         clean_parsed_payload(payload, schema, "critique")
         payload_checks = payload.get("checks")
