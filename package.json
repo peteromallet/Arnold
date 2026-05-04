@@ -45,10 +45,10 @@
     "quality:check": "npm run check:no-smoke-tests && npm run check:shots-shim-usage && npm run check:core-shim-usage && npm run check:error-runtime-alias-usage && npm run check:fat-contexts && npm run check:contracts && npm run check:contract-surface-map && npm run lint && npm run typecheck:strict-probe"
   },
   "dependencies": {
-    "@banodoco/timeline-composition": "file:../../banodoco-workspace/packages/timeline-composition",
-    "@banodoco/timeline-ops": "file:../../banodoco-workspace/packages/timeline-ops",
-    "@banodoco/timeline-schema": "file:../../banodoco-workspace/packages/timeline-schema",
-    "@banodoco/timeline-theme-2rp": "file:../../banodoco-workspace/packages/timeline-theme-2rp",
+    "@banodoco/timeline-composition": "file:vendor/timeline-composition",
+    "@banodoco/timeline-ops": "file:vendor/timeline-ops",
+    "@banodoco/timeline-schema": "file:vendor/timeline-schema",
+    "@banodoco/timeline-theme-2rp": "file:vendor/timeline-theme-2rp",
     "@base-ui/react": "^1.2.0",
     "@dnd-kit/core": "^6.3.0",
     "@dnd-kit/sortable": "^10.0.0",

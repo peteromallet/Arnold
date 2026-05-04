@@ -1,0 +1,103 @@
+{
+  "id": "2rp",
+  "visual": {
+    "color": {
+      "fg": "#ffffff",
+      "bg": "#000000",
+      "accent": "#fde68a"
+    },
+    "type": {
+      "families": {
+        "heading": "'Sixtyfour', 'Sixtyfour Variable', monospace",
+        "body": "'Inter', system-ui, -apple-system, Helvetica, Arial, sans-serif",
+        "mono": "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
+      },
+      "size": {
+        "base": 56,
+        "small": 32,
+        "large": 128
+      },
+      "weight": {
+        "normal": 300,
+        "bold": 500
+      },
+      "lineHeight": 1.1
+    },
+    "motion": {
+      "fadeMs": 500
+    },
+    "canvas": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 30
+    }
+  },
+  "generation": {
+    "style_prompt": "cinematic 2nd-Renaissance aesthetic, monumental painterly compositions fusing classical Renaissance grandeur with near-future ambition, golden-hour amber light on cathedrals frescoes and orbital structures, soft volumetric god-rays, warm cream and sepia midtones over deep velvet-black shadow, oil-painting brushwork meets photoreal scale, hopeful and reverent, cinematic anamorphic framing",
+    "negative_prompt": "neon, glitch art, low-budget CGI, harsh saturation, modern UI elements, oversharpened, plasticky, meme aesthetic, cheap stock footage",
+    "image_model": "flux-1.1-pro",
+    "video_model": "veo-3",
+    "aspect": "16:9",
+    "references": [
+      {
+        "id": "hero-flipped",
+        "file": "references/hero-poster-flipped.jpg",
+        "description": "Banodoco 2RP hero poster: dark cinematic scene with warm highlights, dark scrim treatment",
+        "use_for": "mood"
+      },
+      {
+        "id": "the-creation",
+        "file": "references/the-creation-still.jpg",
+        "description": "Still from the page's centerpiece video: painterly Renaissance-meets-future creation scene",
+        "use_for": "ip-adapter"
+      }
+    ],
+    "assets": [
+      {
+        "id": "2rp-logo",
+        "file": "assets/2rp-logo.png",
+        "description": "2RP wordmark, white on transparent",
+        "always_include": false
+      }
+    ]
+  },
+  "voice": {
+    "tone": "visionary, philosophical, reverent but hopeful — speaks like a manifesto for a future Renaissance",
+    "lexicon_prefer": [
+      "renaissance",
+      "agency",
+      "ambition",
+      "beauty",
+      "craft",
+      "patron",
+      "transcendent",
+      "leverage",
+      "imagine",
+      "create"
+    ],
+    "lexicon_avoid": [
+      "viral",
+      "epic",
+      "insane",
+      "unlock",
+      "level up",
+      "disrupt",
+      "hack",
+      "grind"
+    ],
+    "overlay_copy_style": "sentence case, light serif, short clauses; highlight a single italic phrase per card for emphasis"
+  },
+  "audio": {
+    "music_style": "cinematic orchestral with renaissance choral undertones — sweeping strings, hopeful brass swells, restrained piano motif, builds slowly",
+    "sfx": [
+      "low-brass-swell",
+      "soft-string-rise",
+      "paper-rustle",
+      "single-bell-toll"
+    ]
+  },
+  "pacing": {
+    "default_clip_sec": 6.0,
+    "cut_tempo": "calm"
+  }
+}

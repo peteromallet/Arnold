@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"durationFrames":{"type":"number","minimum":0},"durationFraction":{"type":"number","minimum":0,"maximum":1},"startFrame":{"type":"number","minimum":0},"showCaret":{"type":"boolean"},"phase":{"type":"string","enum":["entrance"]}}}

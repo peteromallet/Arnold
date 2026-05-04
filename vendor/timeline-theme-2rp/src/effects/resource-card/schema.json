@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "label": {"type": "string"},
+    "title": {"type": "string"},
+    "detail": {"type": "string"},
+    "metric": {"type": "string"},
+    "previews": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 0,
+      "maxItems": 3
+    },
+    "entrance": {},
+    "exit": {}
+  }
+}

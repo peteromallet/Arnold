@@ -12,7 +12,7 @@ WORKDIR /app
 # is "file:vendor/fake-indexeddb" — npm ci needs it present at install time.
 COPY package.json package-lock.json ./
 COPY vendor ./vendor
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --legacy-peer-deps
 
 COPY . .
 

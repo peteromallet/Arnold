@@ -1,0 +1,35 @@
+{
+  "name": "@banodoco/timeline-schema",
+  "version": "0.0.2",
+  "private": true,
+  "description": "Canonical TimelineConfig schema shared by Banodoco CLI and Reigh editor.",
+  "type": "module",
+  "main": "./typescript/dist/src/index.js",
+  "types": "./typescript/dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./typescript/dist/src/index.d.ts",
+      "import": "./typescript/dist/src/index.js"
+    }
+  },
+  "files": [
+    "typescript/dist",
+    "typescript/src"
+  ],
+  "scripts": {
+    "build": "tsc -p typescript/tsconfig.json && node typescript/dist/scripts/emit-json-schema.js",
+    "build:ts": "tsc -p typescript/tsconfig.json",
+    "emit:schema": "node typescript/dist/scripts/emit-json-schema.js",
+    "gen:python": "python scripts/gen_python_types.py",
+    "check:codegen": "bash scripts/check-codegen.sh",
+    "test": "node --test typescript/dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.0"
+  }
+}

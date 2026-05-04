@@ -1,0 +1,6 @@
+{
+  "id": "text-card",
+  "name": "Text Card",
+  "description": "A theme-aware full-frame text or quote card for generative visual beats.",
+  "whenToUse": "Use for pull quotes, title cards, section breaks, or visual emphasis when source footage is unavailable or secondary to the rant audio."
+}

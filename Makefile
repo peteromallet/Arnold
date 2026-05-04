@@ -6,20 +6,22 @@ PUBLIC_VITE_ENV := \
 	VITE_API_TARGET_URL=https://example.com \
 	VITE_APP_ENV=web
 
-.PHONY: help install-hooks dockerfile-check build docker-build quality test release-check prepush ci
+.PHONY: help install-hooks dockerfile-check build-context-check build docker-build deploy-check quality test release-check prepush ci
 
 help:
 	@printf '%s\n' \
 		'Targets:' \
-		'  make dockerfile-check  Run Docker build checks, including ARG/ENV secret linting.' \
-		'  make build             Run the production Vite build with dummy public client config.' \
-		'  make docker-build      Run a Docker image build with dummy public client config.' \
-		'  make quality           Run architecture, lint, and strict type checks.' \
-		'  make test              Run the Vitest suite.' \
-		'  make release-check     Run the full release gate before cutting a deployment.' \
-		'  make prepush           Run the lightweight gate before pushing.' \
-		'  make install-hooks     Install repo-managed git hooks.' \
-		'  make ci                Alias for release-check.'
+		'  make dockerfile-check     Run Docker build checks, including ARG/ENV secret linting.' \
+		'  make build-context-check  Verify package.json file: deps and config aliases stay inside the build context.' \
+		'  make build                Run the production Vite build with dummy public client config.' \
+		'  make docker-build         Run a Docker image build with dummy public client config.' \
+		'  make deploy-check         Reproduce the Railway build end-to-end (catches the breakage that --check misses).' \
+		'  make quality              Run architecture, lint, and strict type checks.' \
+		'  make test                 Run the Vitest suite.' \
+		'  make release-check        Run the full release gate before cutting a deployment.' \
+		'  make prepush              Run the lightweight gate before pushing.' \
+		'  make install-hooks        Install repo-managed git hooks.' \
+		'  make ci                   Alias for release-check.'
 
 install-hooks:
 	git config core.hooksPath scripts/git-hooks
@@ -32,6 +34,14 @@ dockerfile-check:
 	docker build --check .
 	node scripts/quality/check-dockerfile-sensitive-env.mjs
 
+# Static guard against the class of bug that took prod down on commit c99e760ec:
+# the Railway build context is the repo root, so any file: dependency in
+# package.json or any vite/vitest alias pointing outside the repo silently breaks
+# `npm ci` and the bundler with misleading errors. Catches the issue in <1s,
+# without spinning up Docker.
+build-context-check:
+	node scripts/quality/check-build-context.mjs
+
 build:
 	$(PUBLIC_VITE_ENV) npm run build
 
@@ -43,14 +53,19 @@ docker-build:
 		--build-arg VITE_APP_ENV=web \
 		.
 
+# Real Railway-equivalent build (Dockerfile + npm ci + vite build). Run before
+# pushing changes that touch the Dockerfile, package.json deps, or vite config —
+# this is the gate that would have caught the c99e760ec breakage.
+deploy-check: build-context-check docker-build
+
 quality:
 	npm run quality:check
 
 test:
 	npm test
 
-release-check: dockerfile-check docker-build build quality test
+release-check: dockerfile-check build-context-check docker-build build quality test
 
-prepush: dockerfile-check
+prepush: dockerfile-check build-context-check
 
 ci: release-check

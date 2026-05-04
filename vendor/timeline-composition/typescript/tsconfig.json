@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "outDir": "./dist",
+    "declaration": false,
+    "sourceMap": false,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@workspace-effects/*": ["../../../effects/*"],
+      "@workspace-animations/*": ["../../../animations/*"],
+      "@workspace-transitions/*": ["../../../transitions/*"],
+      "@theme-effects/*": ["../../../tools/remotion/_active_theme/effects/*"],
+      "@theme-animations/*": ["../../../tools/remotion/_active_theme/animations/*"],
+      "@theme-transitions/*": ["../../../tools/remotion/_active_theme/transitions/*"]
+    }
+  },
+  "include": ["src/theme-api.ts", "src/index.ts"]
+}

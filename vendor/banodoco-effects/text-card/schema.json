@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "content": {
+      "type": "string"
+    },
+    "align": {
+      "type": "string",
+      "enum": ["left", "center", "right"]
+    },
+    "bold": {
+      "type": "boolean"
+    },
+    "italic": {
+      "type": "boolean"
+    },
+    "fontSizeOverride": {
+      "type": ["number", "null"]
+    },
+    "colorOverride": {
+      "type": ["string", "null"]
+    },
+    "typewriter": {
+      "type": "boolean"
+    },
+    "typewriterDurationFraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "entrance": {
+      "anyOf": [
+        {"type": "string", "enum": ["fade-up", "fade", "slide-left", "scale-in", "type-on", "none"]},
+        {"$ref": "#/$defs/animationRef"},
+        {"type": "array", "items": {"$ref": "#/$defs/animationRef"}, "minItems": 1}
+      ]
+    },
+    "sustain": {
+      "anyOf": [
+        {"$ref": "#/$defs/animationRef"},
+        {"type": "array", "items": {"$ref": "#/$defs/animationRef"}, "minItems": 1}
+      ]
+    },
+    "exit": {
+      "anyOf": [
+        {"type": "string", "enum": ["fade", "slide-up", "none"]},
+        {"$ref": "#/$defs/animationRef"},
+        {"type": "array", "items": {"$ref": "#/$defs/animationRef"}, "minItems": 1}
+      ]
+    }
+  },
+  "$defs": {
+    "animationRef": {
+      "anyOf": [
+        {"type": "string"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {"type": "string"},
+            "durationFrames": {"type": "number", "minimum": 0},
+            "easing": {"type": "string"},
+            "params": {"type": "object"}
+          },
+          "required": ["id"]
+        }
+      ]
+    }
+  },
+  "required": ["content"]
+}

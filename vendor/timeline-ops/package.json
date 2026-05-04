@@ -1,0 +1,31 @@
+{
+  "name": "@banodoco/timeline-ops",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Pure surgical CRUD operations on TimelineConfig. Shared between Banodoco CLI and Reigh agent. No I/O, no Supabase, no async — operates on a TimelineConfig and returns a new TimelineConfig.",
+  "type": "module",
+  "main": "./typescript/dist/src/index.js",
+  "types": "./typescript/dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./typescript/dist/src/index.d.ts",
+      "import": "./typescript/dist/src/index.js"
+    }
+  },
+  "files": [
+    "typescript/dist",
+    "typescript/src"
+  ],
+  "scripts": {
+    "build": "tsc -p typescript/tsconfig.json",
+    "build:ts": "tsc -p typescript/tsconfig.json",
+    "test": "node --test typescript/dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "@banodoco/timeline-schema": "file:../timeline-schema"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.0"
+  }
+}

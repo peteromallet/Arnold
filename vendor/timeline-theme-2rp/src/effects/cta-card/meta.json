@@ -1,0 +1,6 @@
+{
+  "id": "cta-card",
+  "name": "2RP CTA Card",
+  "description": "Closing call-to-action card for 2RP videos.",
+  "whenToUse": "Use for the final closing beat — the 'banodoco.ai/2rp' or equivalent CTA. There should be exactly one cta-card per video, and it should be the last clip."
+}

@@ -1,0 +1,46 @@
+{
+  "name": "@banodoco/timeline-theme-2rp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "2RP (Second Renaissance Patrons) theme package for @banodoco/timeline-composition. Ships effect components, theme.json metadata, and per-effect schema/defaults/meta files.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "remotion": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./theme.json": "./theme.json",
+    "./src/effects/*": {
+      "types": "./src/effects/*.tsx",
+      "remotion": "./src/effects/*.tsx",
+      "import": "./src/effects/*.tsx",
+      "require": "./src/effects/*.tsx",
+      "default": "./src/effects/*.tsx"
+    }
+  },
+  "files": [
+    "src",
+    "theme.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@banodoco/timeline-composition": "*",
+    "react": ">=18",
+    "remotion": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "@banodoco/timeline-composition": {"optional": false},
+    "react": {"optional": false},
+    "remotion": {"optional": false}
+  },
+  "devDependencies": {
+    "react": "^18.3.1",
+    "@types/react": "^18.3.0",
+    "remotion": "^4.0.434",
+    "@remotion/layout-utils": "^4.0.434",
+    "@banodoco/timeline-composition": "file:../timeline-composition"
+  }
+}

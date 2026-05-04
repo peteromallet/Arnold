@@ -26,9 +26,9 @@ export default defineConfig({
       // The composition package's animations.generated / transitions.generated
       // / effects.generated import via these aliases. Reigh's bundler needs
       // them to resolve; Banodoco's webpack already does the same.
-      '@workspace-effects': path.resolve(projectRoot, '../../banodoco-workspace/effects'),
-      '@workspace-animations': path.resolve(projectRoot, '../../banodoco-workspace/animations'),
-      '@workspace-transitions': path.resolve(projectRoot, '../../banodoco-workspace/transitions'),
+      '@workspace-effects': path.resolve(projectRoot, 'vendor/banodoco-effects'),
+      '@workspace-animations': path.resolve(projectRoot, 'vendor/banodoco-animations'),
+      '@workspace-transitions': path.resolve(projectRoot, 'vendor/banodoco-transitions'),
     },
     dedupe: [
       'react',

@@ -56,9 +56,11 @@ export default defineConfig(() => {
         ),
         "@banodoco/timeline-composition": path.resolve(__dirname, "../../node_modules/@banodoco/timeline-composition"),
         // Workspace-primitive aliases (mirrors banodoco shell webpack-alias.mjs).
-        "@workspace-effects": path.resolve(__dirname, "../../../../banodoco-workspace/effects"),
-        "@workspace-animations": path.resolve(__dirname, "../../../../banodoco-workspace/animations"),
-        "@workspace-transitions": path.resolve(__dirname, "../../../../banodoco-workspace/transitions"),
+        // Vendored into reigh-app/vendor/ so the Docker build context can resolve them
+        // — the original ../../../../banodoco-workspace paths sit outside the build context.
+        "@workspace-effects": path.resolve(__dirname, "../../vendor/banodoco-effects"),
+        "@workspace-animations": path.resolve(__dirname, "../../vendor/banodoco-animations"),
+        "@workspace-transitions": path.resolve(__dirname, "../../vendor/banodoco-transitions"),
       },
       dedupe: ['react', 'react-dom', 'react-reconciler', 'remotion', '@banodoco/timeline-composition', '@banodoco/timeline-theme-2rp'],
     },

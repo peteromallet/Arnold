@@ -1,0 +1,6 @@
+{
+  "id": "section-hook",
+  "name": "2RP Section Hook",
+  "description": "Large manifesto section title for 2RP videos.",
+  "whenToUse": "Use for opening hooks, major section transitions, and statements of premise (e.g. 'See art from across the community', 'Resources that push cutting-edge models'). Prefer this over text-card for any beat that introduces a new thematic block."
+}

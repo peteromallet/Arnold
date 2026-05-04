@@ -1,0 +1,6 @@
+{
+  "id": "art-card",
+  "name": "2RP Art Card",
+  "description": "Framed art beat with Renaissance-inspired captioning.",
+  "whenToUse": "Use for every individual art-piece reveal — fields are title (work name) + creator (handle). Always use this for art showcase beats; never use text-card for art reveals."
+}

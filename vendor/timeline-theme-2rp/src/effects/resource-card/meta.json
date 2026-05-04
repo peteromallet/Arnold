@@ -1,0 +1,6 @@
+{
+  "id": "resource-card",
+  "name": "2RP Resource Card",
+  "description": "Metric and resource beat for 2RP videos.",
+  "whenToUse": "Use for every individual resource reveal — fields are name (resource title) + description (5-8 word blurb) + creator (handle). Always use this for resource showcase beats; never use text-card for resource reveals."
+}

@@ -1,0 +1,68 @@
+{
+  "name": "@banodoco/timeline-composition",
+  "version": "0.0.2",
+  "private": true,
+  "description": "Banodoco timeline Remotion composition. Sprint 5: physical lift of TimelineComposition + theme-api + codegen plugin registry. Theme packages are external peer-dep `@banodoco/timeline-theme-<id>` packages.",
+  "type": "module",
+  "main": "./typescript/src/index.ts",
+  "types": "./typescript/src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./typescript/src/index.ts",
+      "remotion": "./typescript/src/index.ts",
+      "import": "./typescript/src/index.ts",
+      "require": "./typescript/src/index.ts",
+      "default": "./typescript/src/index.ts"
+    },
+    "./theme-api": {
+      "types": "./typescript/src/theme-api.ts",
+      "remotion": "./typescript/src/theme-api.ts",
+      "import": "./typescript/src/theme-api.ts",
+      "require": "./typescript/src/theme-api.ts",
+      "default": "./typescript/src/theme-api.ts"
+    },
+    "./registry.generated": {
+      "types": "./typescript/src/registry.generated.ts",
+      "remotion": "./typescript/src/registry.generated.ts",
+      "import": "./typescript/src/registry.generated.ts",
+      "require": "./typescript/src/registry.generated.ts",
+      "default": "./typescript/src/registry.generated.ts"
+    },
+    "./typescript/src/effects.generated": "./typescript/src/effects.generated.ts",
+    "./typescript/src/animations.generated": "./typescript/src/animations.generated.ts",
+    "./typescript/src/transitions.generated": "./typescript/src/transitions.generated.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "typescript/dist",
+    "typescript/src",
+    "scripts"
+  ],
+  "scripts": {
+    "build": "tsc -p typescript/tsconfig.json || true",
+    "build:ts": "tsc -p typescript/tsconfig.json || true",
+    "build:test": "tsc -p typescript/tsconfig.test.json",
+    "gen-registry": "tsx scripts/gen-registry.ts",
+    "gen-registry:check": "tsx scripts/gen-registry.ts --check",
+    "test": "npm run build:test && node --test typescript/dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "@banodoco/timeline-schema": "file:../timeline-schema"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "remotion": ">=4"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "tsx": "^4.20.3",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.448",
+    "@remotion/media": "4.0.448",
+    "@remotion/layout-utils": "4.0.448",
+    "@banodoco/timeline-theme-2rp": "file:../timeline-theme-2rp"
+  }
+}
