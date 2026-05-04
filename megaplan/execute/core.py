@@ -731,10 +731,29 @@ def handle_execute_one_batch(
         )
 
     tasks = finalize_data.get("tasks", [])
+    # In per-batch execute mode, finalize.json is only rewritten after the
+    # final batch — between batches the per-task status overlay lives in
+    # execution_batch_<n>.json. Apply that overlay so prerequisite checks
+    # see the most recent on-disk truth.
+    batch_status_overlay: dict[str, str] = {}
+    for batch_path in list_batch_artifacts(plan_dir):
+        try:
+            batch_data = read_json(batch_path)
+        except Exception:
+            continue
+        for update in batch_data.get("task_updates", []) or []:
+            if not isinstance(update, dict):
+                continue
+            tid = update.get("task_id")
+            status = update.get("status")
+            if isinstance(tid, str) and isinstance(status, str) and status:
+                batch_status_overlay[tid] = status
     completed_ids = {
         task["id"]
         for task in tasks
-        if task.get("status") in {"done", "skipped"} and isinstance(task.get("id"), str)
+        if isinstance(task.get("id"), str)
+        and batch_status_overlay.get(task["id"], task.get("status"))
+        in {"done", "skipped"}
     }
     for prior_idx in range(batch_number - 1):
         prior_batch = global_batches[prior_idx]
