@@ -326,7 +326,7 @@ export function ClipPanel({
 
         {visibleTabs.includes('effects') && (
           <TabsContent value="effects" className="space-y-3">
-            {clipTypeResolution.status === 'unknown' && clip.clipType ? (
+            {!clipDescriptor && clip.clipType ? (
               <div className="rounded-xl border border-dashed border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-100">
                 {clip.clipType} is not registered in the clip-type registry for this editor build.
               </div>
