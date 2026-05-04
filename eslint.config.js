@@ -21,7 +21,7 @@ const strictRefreshFiles = [
 ];
 
 export default tseslint.config(
-  { ignores: ["dist", "eslint-rules/__fixtures__/**"] },
+  { ignores: ["dist", "eslint-rules/__fixtures__/**", "vendor/**"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
