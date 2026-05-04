@@ -6,6 +6,7 @@ import { jsonResponse } from "../_shared/http.ts";
 import { ensureUserAuth } from "../_shared/requestGuards.ts";
 
 const LOG_PREFIX = "[REIGH-DATA-FETCH]";
+const FUNCTION_VERSION = "2026-05-04.config-version";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROJECT_SELECT = "id, name, user_id, aspect_ratio, settings, created_at";
 const SHOTS_SELECT = "id, project_id, name, position, aspect_ratio, settings, created_at, updated_at";
@@ -77,7 +78,7 @@ const TASKS_SELECT = `
   updated_at,
   worker_id
 `;
-const TIMELINES_SELECT = "id, project_id, user_id, name, config, asset_registry, created_at, updated_at";
+const TIMELINES_SELECT = "id, project_id, user_id, name, config, config_version, asset_registry, created_at, updated_at";
 const PROJECT_MEDIA_LIMIT = 100;
 const LOCAL_GENERATION_MEDIA_SENTINEL_URL = "local://pending-materialization";
 
@@ -737,6 +738,7 @@ serve((req) => {
     }
 
     logger.info("Request authorized", {
+      function_version: FUNCTION_VERSION,
       project_id: projectId,
       shot_id: shotId,
       task_id: taskId,
