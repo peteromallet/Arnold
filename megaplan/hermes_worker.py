@@ -547,6 +547,17 @@ def run_hermes_step(
     # The JSON template in the prompt is sufficient; _parse_json_response
     # handles code fences and markdown wrapping.
 
+    # Install the project_dir sandbox whenever a toolset is active.  This
+    # pins TERMINAL_CWD and wraps the terminal/write_file/patch handlers so
+    # the model can't escape the worktree even if its prompt context tells
+    # it to (see megaplan/sandbox.py).  Phases without tools (no toolsets)
+    # don't need it.
+    from contextlib import ExitStack
+    _sandbox_stack = ExitStack()
+    if toolsets:
+        from megaplan.sandbox import install_sandbox
+        _sandbox_stack.enter_context(install_sandbox(project_dir))
+
     # Run — with fallback to OpenRouter for MiniMax if primary API fails
     started = time.monotonic()
     try:
@@ -618,6 +629,7 @@ def run_hermes_step(
     finally:
         sys.stdout = real_stdout
         sys.stderr = real_stderr
+        _sandbox_stack.close()
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     cost_usd = result.get("estimated_cost_usd", 0.0) or 0.0
