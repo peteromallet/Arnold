@@ -27,6 +27,90 @@ vi.mock('remotion', async () => {
   };
 });
 
+vi.mock('@banodoco/timeline-composition/theme-api', async () => {
+  const reactModule = await import('react');
+  const runtimeThemeValue = {
+    color: {
+      accent: '#ffffff',
+      bg: '#000000',
+      fg: '#ffffff',
+    },
+    type: {
+      families: {
+        heading: 'Georgia, serif',
+        body: 'Inter, system-ui, sans-serif',
+        mono: 'JetBrains Mono, ui-monospace, monospace',
+      },
+      size: {
+        base: 56,
+        small: 32,
+        large: 128,
+      },
+      weight: {
+        normal: 300,
+        bold: 500,
+      },
+      lineHeight: 1.1,
+    },
+    motion: {
+      fadeMs: 500,
+    },
+    canvas: {
+      width: 1920,
+      height: 1080,
+      fps: 30,
+    },
+  };
+
+  const DEFAULT_THEME = {
+    id: 'default',
+    visual: runtimeThemeValue,
+  };
+
+  const toRuntimeTheme = (value: unknown) => {
+    if (
+      value
+      && typeof value === 'object'
+      && 'visual' in value
+      && value.visual
+      && typeof value.visual === 'object'
+    ) {
+      return {
+        ...runtimeThemeValue,
+        ...value.visual,
+        color: {
+          ...runtimeThemeValue.color,
+          ...(typeof value.visual.color === 'object' ? value.visual.color : {}),
+        },
+        type: {
+          ...runtimeThemeValue.type,
+          ...(typeof value.visual.type === 'object' ? value.visual.type : {}),
+          families: {
+            ...runtimeThemeValue.type.families,
+            ...(typeof value.visual.type === 'object' && typeof value.visual.type.families === 'object'
+              ? value.visual.type.families
+              : {}),
+          },
+        },
+      };
+    }
+    return runtimeThemeValue;
+  };
+
+  const ThemeContext = reactModule.createContext(runtimeThemeValue);
+
+  return {
+    DEFAULT_THEME,
+    ThemeProvider: ({
+      children,
+      value,
+    }: PropsWithChildren<{ value: typeof DEFAULT_THEME }>) => (
+      <ThemeContext.Provider value={toRuntimeTheme(value)}>{children}</ThemeContext.Provider>
+    ),
+    useTheme: () => reactModule.useContext(ThemeContext),
+  };
+});
+
 vi.mock('@/tools/video-editor/compositions/AudioAnalysisProvider', async () => {
   return {
     AudioAnalysisProvider: ({ children }: PropsWithChildren) => (
@@ -48,6 +132,37 @@ vi.mock('@/tools/video-editor/compositions/TextClip', () => ({
     return <div data-testid="text-clip-sequence" />;
   },
 }));
+
+vi.mock('@banodoco/timeline-composition/theme-api', async () => {
+  const React = await import('react');
+  const DEFAULT_THEME = {
+    id: 'default',
+    visual: {
+      color: {
+        accent: '#ffffff',
+        bg: '#000000',
+      },
+      type: {
+        families: {
+          heading: 'Georgia, serif',
+        },
+      },
+    },
+  };
+  const ThemeContext = React.createContext(DEFAULT_THEME.visual);
+  return {
+    DEFAULT_THEME,
+    ThemeProvider: ({
+      children,
+      value,
+    }: PropsWithChildren<{ value: unknown }>) => (
+      <ThemeContext.Provider value={(value as typeof DEFAULT_THEME)?.visual ?? DEFAULT_THEME.visual}>
+        {children}
+      </ThemeContext.Provider>
+    ),
+    useTheme: () => React.useContext(ThemeContext),
+  };
+});
 
 vi.mock('@banodoco/timeline-composition/registry.generated', async () => {
   const React = await import('react');
@@ -147,6 +262,31 @@ describe('TimelineRenderer registered sequences', () => {
     });
   });
 
+  it('uses shared duration helpers for speed-adjusted registered sequence clips', () => {
+    render(<TimelineRenderer config={{
+      ...buildConfig({ theme: '2rp' }),
+      clips: [
+        {
+          id: 'clip-speed-adjusted',
+          clipType: 'section-hook',
+          track: 'V1',
+          at: 0,
+          from: 0,
+          to: 6,
+          speed: 2,
+          params: {
+            title: 'Speed adjusted',
+          },
+        },
+      ],
+    }} />);
+
+    expect(sequenceProps[0]).toMatchObject({
+      from: 0,
+      durationInFrames: 90,
+    });
+  });
+
   it('deep-merges timeline theme_overrides onto the installed theme', () => {
     render(<TimelineRenderer config={buildConfig({
       theme: '2rp',
@@ -202,6 +342,31 @@ describe('TimelineRenderer registered sequences', () => {
     const sequence = screen.getByTestId('registered-sequence');
     expect(sequence).toHaveAttribute('data-previews', JSON.stringify(['https://cdn.example.com/asset-a.png']));
     expect(sequence).toHaveAttribute('data-preview-asset-keys', JSON.stringify(['asset-a']));
+  });
+
+  it('renders locally-registered title-card clips through the same registry-backed sequence route', () => {
+    render(<TimelineRenderer config={{
+      ...buildConfig({ theme: '2rp' }),
+      clips: [
+        {
+          id: 'clip-title-card',
+          clipType: 'title-card',
+          track: 'V1',
+          at: 0,
+          hold: 3,
+          params: {
+            kicker: 'INTRO',
+            title: 'Registry Title',
+            subtitle: 'Local example component',
+          },
+        },
+      ],
+    }} />);
+
+    const sequence = screen.getByTestId('title-card-sequence');
+    expect(sequence).toHaveAttribute('data-kicker', 'INTRO');
+    expect(sequence).toHaveAttribute('data-title', 'Registry Title');
+    expect(sequence).toHaveAttribute('data-subtitle', 'Local example component');
   });
 
   it('renders remotion_module clips as safe placeholders before registered, native, or unknown clipType dispatch', () => {
@@ -297,5 +462,25 @@ describe('TimelineRenderer registered sequences', () => {
     expect(screen.queryByTestId('generated-module-placeholder')).not.toBeInTheDocument();
     expect(screen.getByTestId('registered-sequence')).toHaveAttribute('data-clip-id', 'clip-trusted');
     expect(visualClipMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back loudly when a trusted sequence clip is unavailable in the installed registry', () => {
+    render(<TimelineRenderer config={{
+      ...buildConfig({ theme: '2rp' }),
+      clips: [
+        {
+          id: 'clip-unavailable',
+          clipType: 'cta-card',
+          track: 'V1',
+          at: 0,
+          hold: 2,
+        },
+      ],
+    }} />);
+
+    expect(screen.getByTestId('unknown-clip-placeholder')).toBeInTheDocument();
+    expect(screen.queryByTestId('registered-sequence')).not.toBeInTheDocument();
+    expect(visualClipMock).not.toHaveBeenCalled();
+    expect(textClipMock).not.toHaveBeenCalled();
   });
 });

@@ -3248,6 +3248,142 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-192",
+      "subsystem": "are-the-proposed-changes-technically-correct",
+      "concern": "are the proposed changes technically correct?: checked the newly expanded `complete_task` placement scope against actual code. both `supabase/functions/complete_task/placement.ts:77-86,199-226` and the inline placement path in `supabase/functions/complete_task/handler.ts:57-92` build fresh asset-registry entries from url/type/generation metadata only, without `duration`, while `supabase/functions/ai-timeline-agent/tools/timeline.ts:458-467` derives inserted video clip length from `registry.duration ?? 5`. the revised plan says touched split-write paths become canonical-aware, but it still does not state how video completion placements obtain real duration on these paths, so canonicalization alone cannot guarantee editor-equivalent timing there.",
+      "flag_ids": [
+        "correctness"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260502-2351"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T00:13:18Z",
+      "updated_at": "2026-05-03T00:13:18Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-193",
+      "subsystem": "search-for-related-code-that-handles-the-same-concept-is-the-reported-issue-a-symptom-of-something-broader",
+      "concern": "search for related code that handles the same concept. is the reported issue a symptom of something broader?: looked for whether the remaining risk is isolated to one helper or broader. the duration gap is not limited to `executeplacement()`: there are two completion-placement entry points, `supabase/functions/complete_task/placement.ts` and `supabase/functions/complete_task/handler.ts`, and both synthesize registry entries without duration before calling `addmediaclip()`. that means any sprint 1 parity claim for completion-time video insertion needs to cover both paths or explicitly narrow them out of the canonical-duration goal.",
+      "flag_ids": [
+        "scope"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260502-2351"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T00:13:18Z",
+      "updated_at": "2026-05-03T00:13:18Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-194",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the supporting test infrastructure for the remaining `complete_task` duration risk. the revised plan correctly adds `placement.test.ts` and `handler.test.ts`, but the existing placement cases in `supabase/functions/complete_task/placement.test.ts:26-215` and `supabase/functions/complete_task/handler.test.ts:540-790` are image-only and mock `addmediaclip()`, so they do not exercise the real video branch where `addmediaclip()` falls back to `registry.duration ?? 5`. if `complete_task` video placement stays in sprint 1 scope, the validation plan still needs a direct video-duration assertion or an explicit non-goal.",
+      "flag_ids": [
+        "all_locations"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260502-2351"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T00:13:18Z",
+      "updated_at": "2026-05-03T00:13:18Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-195",
+      "subsystem": "find-the-callers-of-the-changed-function-what-arguments-do-they-actually-pass-does-the-fix-handle-all-of-them",
+      "concern": "find the callers of the changed function. what arguments do they actually pass? does the fix handle all of them?: checked the actual `addmediaclip()` callers in the newly in-scope completion flows. both `executeplacement()` and `applycompletedgenerationtimelineplacement()` pass a just-created `assetentry` built from `completionassetref` or url metadata, and those caller-built entries omit `duration`; for video completions, the callee therefore receives the exact no-duration case that triggers the 5-second fallback in `addmediaclip()`. the revised plan fixes the earlier provider caller-contract gap, but these completion-placement caller arguments still need an explicit handling strategy.",
+      "flag_ids": [
+        "callers"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260502-2351"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T00:13:18Z",
+      "updated_at": "2026-05-03T00:13:18Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-196",
+      "subsystem": "complete-task-placement",
+      "concern": "complete_task placement: video completion placements still lack a duration source, so pair-aware canonicalization cannot produce editor-equivalent timing on those paths.",
+      "flag_ids": [
+        "FLAG-006"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260502-2351"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T00:13:18Z",
+      "updated_at": "2026-05-03T00:13:18Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-197",
+      "subsystem": "host-dependency-inventory",
+      "concern": "host dependency inventory: recurring debt: the revised plan fixes the earlier omitted core modules, but the concrete inventory and adapter mapping still do not name `src/tools/video-editor/hooks/useaddvariantasgeneration.ts`, even though that hook currently depends on project context, direct supabase access, and toast ui while also being one of the planned command-facade consumers.",
+      "flag_ids": [
+        "FLAG-002"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260503-0101"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T01:46:33Z",
+      "updated_at": "2026-05-03T01:46:33Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-198",
+      "subsystem": "did-the-work-fully-address-the-issue-hints-user-notes-and-approved-plan-requirements",
+      "concern": "did the work fully address the issue hints, user notes, and approved plan requirements?: checked the concrete inventory and adapter mapping against `src/tools/video-editor/hooks/useaddvariantasgeneration.ts:1-118`. that hook is still a live host-coupled consumer with direct `useprojectselectioncontext`, `getsupabaseclient`, and `toast` dependencies, but it is not named in step 1's inventory list or step 8's adapter groups even though step 11 expects it to migrate as a command-facade consumer. the revised plan therefore still leaves one real host-coupled module outside the explicit inventory it claims will name every dependency.",
+      "flag_ids": [
+        "issue_hints"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260503-0101"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T01:46:33Z",
+      "updated_at": "2026-05-03T01:46:33Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-199",
+      "subsystem": "does-the-change-touch-all-locations-and-supporting-infrastructure",
+      "concern": "does the change touch all locations and supporting infrastructure?: checked the remaining migration lists against `src/tools/video-editor/hooks/useaddvariantasgeneration.ts:1-118`. even after the revision, that hook is still absent from the concrete step 1 inventory and step 8 adapter grouping despite being both host-coupled and one of the step 11 command-facade consumers. if the executor follows the named inventory and adapter mapping literally, this file can still remain as an untracked direct host reader outside the stated allowlist process.",
+      "flag_ids": [
+        "all_locations"
+      ],
+      "plan_ids": [
+        "video-editor-developer-20260503-0101"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-05-03T01:46:33Z",
+      "updated_at": "2026-05-03T01:46:33Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

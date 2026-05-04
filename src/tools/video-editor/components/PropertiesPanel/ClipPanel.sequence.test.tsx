@@ -53,6 +53,48 @@ vi.mock('@/tools/video-editor/components/EffectCreatorPanel', () => ({
   EffectCreatorPanel: () => null,
 }));
 
+vi.mock('@banodoco/timeline-composition/registry.generated', () => ({
+  THEME_PACKAGE_REGISTRY: {},
+}), { virtual: true });
+
+vi.mock('@/tools/video-editor/sequences/registry', () => {
+  const sequenceMetadata = (clipType: string) => {
+    if (clipType === 'resource-card') {
+      return {
+        clipType: 'resource-card' as const,
+        label: '2RP Resource Card',
+        hold: { defaultSeconds: 5, minSeconds: 0.1, stepSeconds: 0.1 },
+      };
+    }
+    if (clipType === 'image-jump') {
+      return {
+        clipType: 'image-jump' as const,
+        label: 'Image Jump',
+        hold: { defaultSeconds: 5, minSeconds: 0.1, stepSeconds: 0.1 },
+      };
+    }
+    return undefined;
+  };
+  const isAvailable = (clipType: string) => clipType === 'resource-card' || clipType === 'image-jump';
+  return {
+    isAvailableSequenceClipType: isAvailable,
+    getAvailableSequenceMetadata: sequenceMetadata,
+    // Match the production tagged-result shape so the inspector can branch
+    // between available/unavailable/unknown render-component states.
+    resolveAvailableClipType: (clipType: string) => {
+      const metadata = sequenceMetadata(clipType);
+      if (isAvailable(clipType) && metadata) {
+        return { status: 'available' as const, metadata };
+      }
+      if (metadata) {
+        return { status: 'unavailable' as const, metadata };
+      }
+      return { status: 'unknown' as const, clipType };
+    },
+    getAvailableClipTypeDescriptor: (clipType: string) => sequenceMetadata(clipType),
+  };
+});
+
 const visualTrack: TrackDefinition = {
   id: 'visual-1',
   kind: 'visual',

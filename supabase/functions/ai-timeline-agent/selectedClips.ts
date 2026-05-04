@@ -1,5 +1,5 @@
 import { isRecord } from "./llm/messages.ts";
-import { getClipTimelineDuration } from "../../../src/tools/video-editor/lib/config-utils.ts";
+import { getPairTimelineClipDuration } from "../../../src/tools/video-editor/index.ts";
 import type { TimelinePlacement } from "../create-task/resolvers/shared/lineage.ts";
 import type {
   ResolvedSelectionContext,
@@ -112,7 +112,7 @@ export function resolveSelectionContext(
         ...(clip.variant_id ? { variant_id: clip.variant_id } : {}),
         track_id: liveClip.track,
         at: liveClip.at,
-        duration: getClipTimelineDuration(liveClip),
+        duration: getPairTimelineClipDuration(liveClip, timelineState.registry),
         ...(clip.shot_id ? { shot_id: clip.shot_id } : {}),
         ...(clip.shot_name ? { shot_name: clip.shot_name } : {}),
         source: "timeline" as const,

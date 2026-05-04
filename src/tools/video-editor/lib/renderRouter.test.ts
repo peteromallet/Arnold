@@ -8,6 +8,7 @@ import {
   decideRenderRoute,
   enqueueBanodocoRenderTimeline,
 } from '@/tools/video-editor/lib/renderRouter';
+import { executeRenderPipeline } from '@/tools/video-editor/render/renderPipeline';
 
 describe('Sprint 8 render-button router (decideRenderRoute)', () => {
   it('routes a pure-media timeline to the client renderer', () => {
@@ -18,7 +19,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
         { clipType: 'effect-layer' },
       ],
     });
-    expect(decision.route).toBe('client');
+    expect(decision.route).toBe('browser-remotion');
     expect(decision.hasThemedClip).toBe(false);
     expect(decision.hasMediaClip).toBe(true);
     expect(decision.reason).toBe('pure_native_clips');
@@ -26,9 +27,19 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
 
   it('routes a themed-only timeline to banodoco_render_timeline', () => {
     const decision = decideRenderRoute({
-      clips: [{ clipType: 'art-card' }, { clipType: 'cta-card' }],
+      clips: [{ clipType: 'image-jump' }],
     });
-    expect(decision.route).toBe('banodoco');
+    expect(decision.route).toBe('worker-banodoco');
+    expect(decision.hasThemedClip).toBe(true);
+    expect(decision.hasMediaClip).toBe(false);
+    expect(decision.reason).toBe('themed_only');
+  });
+
+  it('routes locally-registered title-card timelines to banodoco_render_timeline', () => {
+    const decision = decideRenderRoute({
+      clips: [{ clipType: 'title-card' }],
+    });
+    expect(decision.route).toBe('worker-banodoco');
     expect(decision.hasThemedClip).toBe(true);
     expect(decision.hasMediaClip).toBe(false);
     expect(decision.reason).toBe('themed_only');
@@ -38,10 +49,23 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
     const decision = decideRenderRoute({
       clips: [
         { clipType: 'media' },
-        { clipType: 'art-card' },
+        { clipType: 'image-jump' },
       ],
     });
-    expect(decision.route).toBe('banodoco');
+    expect(decision.route).toBe('worker-banodoco');
+    expect(decision.hasThemedClip).toBe(true);
+    expect(decision.hasMediaClip).toBe(true);
+    expect(decision.reason).toBe('mixed_themed_and_media');
+  });
+
+  it('routes mixed local-sequence and media timelines to banodoco_render_timeline', () => {
+    const decision = decideRenderRoute({
+      clips: [
+        { clipType: 'media' },
+        { clipType: 'title-card' },
+      ],
+    });
+    expect(decision.route).toBe('worker-banodoco');
     expect(decision.hasThemedClip).toBe(true);
     expect(decision.hasMediaClip).toBe(true);
     expect(decision.reason).toBe('mixed_themed_and_media');
@@ -51,7 +75,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
     const decision = decideRenderRoute({
       clips: [{}, { clipType: undefined }],
     });
-    expect(decision.route).toBe('client');
+    expect(decision.route).toBe('browser-remotion');
     expect(decision.hasThemedClip).toBe(false);
     expect(decision.hasMediaClip).toBe(true);
   });
@@ -60,7 +84,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
     const decision = decideRenderRoute({
       clips: [{ clipType: 'theme-package-not-yet-installed' }],
     });
-    expect(decision.route).toBe('client');
+    expect(decision.route).toBe('browser-remotion');
     expect(decision.hasThemedClip).toBe(false);
   });
 
@@ -75,7 +99,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
       }],
     });
 
-    expect(decision.route).toBe('banodoco');
+    expect(decision.route).toBe('worker-banodoco');
     expect(decision.reason).toBe('generated_remotion_module');
   });
 
@@ -90,7 +114,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
       }],
     });
 
-    expect(decision.route).toBe('banodoco');
+    expect(decision.route).toBe('worker-banodoco');
     expect(decision.reason).toBe('generated_remotion_module');
   });
 
@@ -99,7 +123,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
       clips: [
         { clipType: 'media' },
         {
-          clipType: 'art-card',
+          clipType: 'image-jump',
           generation: {
             sequence_lane: 'remotion_module',
             artifact_id: 'artifact-1',
@@ -108,7 +132,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
       ],
     });
 
-    expect(decision.route).toBe('banodoco');
+    expect(decision.route).toBe('worker-banodoco');
     expect(decision.reason).toBe('mixed_generated_module_and_other');
     expect(decision.hasMediaClip).toBe(true);
   });
@@ -117,21 +141,21 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
     expect(decideRenderRoute({
       clips: [{ clipType: 'media', generation: { sequence_lane: 'remotion_module' } }],
     })).toMatchObject({
-      route: 'blocked',
+      route: 'preview-only',
       reason: 'remotion_module_missing_artifact',
     });
 
     expect(decideRenderRoute({
-      clips: [{ clipType: 'art-card', generation: { sequence_lane: 'remotion_module', artifact_id: '' } }],
+      clips: [{ clipType: 'image-jump', generation: { sequence_lane: 'remotion_module', artifact_id: '' } }],
     })).toMatchObject({
-      route: 'blocked',
+      route: 'preview-only',
       reason: 'remotion_module_invalid_artifact',
     });
 
     expect(decideRenderRoute({
       clips: [{ clipType: 'unknown', generation: { sequence_lane: 'remotion_module', artifact_id: 42 } }],
     })).toMatchObject({
-      route: 'blocked',
+      route: 'preview-only',
       reason: 'remotion_module_invalid_artifact',
     });
   });
@@ -144,7 +168,7 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
           generation: { sequence_lane, artifact_id: 'artifact-1' },
         }],
       })).toMatchObject({
-        route: 'client',
+        route: 'browser-remotion',
         reason: 'pure_native_clips',
       });
     }
@@ -159,13 +183,21 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
 
 describe('Sprint 8 buildRenderTimelinePayload', () => {
   const baseInput = {
-    timelineId: '11111111-1111-1111-1111-111111111111',
-    projectId: '22222222-2222-2222-2222-222222222222',
-    resolvedConfig: {
-      theme: '2rp',
-      clips: [{ clipType: 'art-card' }],
+    request: {
+      timelineId: '11111111-1111-1111-1111-111111111111',
+      assetRegistry: { assets: { a: { url: 'https://cdn/a.mp4' } } },
+      resolvedConfig: {
+        theme: '2rp',
+        clips: [{ clipType: 'art-card' }],
+      },
+      renderMetadata: null,
+      renderRuntime: {
+        projectId: '22222222-2222-2222-2222-222222222222',
+        orchestratorBaseUrl: 'https://orchestrator.example.com',
+        getSupabaseSession: vi.fn(async () => null),
+        getWorkerJwt: vi.fn(async () => null),
+      },
     },
-    assetRegistry: { assets: { a: { url: 'https://cdn/a.mp4' } } },
     userJwt: 'user.jwt.token',
     correlationId: '33333333-3333-3333-3333-333333333333',
   };
@@ -174,18 +206,63 @@ describe('Sprint 8 buildRenderTimelinePayload', () => {
     const { payload, error } = buildRenderTimelinePayload(baseInput);
     expect(error).toBeUndefined();
     expect(payload).toBeDefined();
-    expect(payload!.timeline_id).toBe(baseInput.timelineId);
-    expect(payload!.project_id).toBe(baseInput.projectId);
+    expect(payload!.timeline_id).toBe(baseInput.request.timelineId);
+    expect(payload!.project_id).toBe(baseInput.request.renderRuntime.projectId);
     expect(payload!.user_jwt).toBe(baseInput.userJwt);
     expect(payload!.correlation_id).toBe(baseInput.correlationId);
     expect(payload!.theme_id).toBe('2rp');
-    expect(payload!.output_filename).toContain(baseInput.timelineId);
+    expect(payload!.output_filename).toContain(baseInput.request.timelineId);
+  });
+
+  it('keeps explicit caller-owned request inputs for local fixture renders', () => {
+    const request = {
+      ...baseInput.request,
+      timelineId: 'fixture-local-timeline',
+      assetRegistry: {
+        assets: {
+          'fixture-video': {
+            file: 'fixtures/local.mp4',
+            src: 'file:///tmp/fixtures/local.mp4',
+            type: 'video/mp4',
+          },
+        },
+      },
+      resolvedConfig: {
+        theme: '2rp',
+        output: { resolution: '1920x1080', fps: 30, file: 'fixture.mp4' },
+        tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+        clips: [{ id: 'clip-fixture', clipType: 'image-jump', track: 'V1', at: 0, hold: 2 }],
+        registry: {
+          'fixture-video': {
+            file: 'fixtures/local.mp4',
+            src: 'file:///tmp/fixtures/local.mp4',
+            type: 'video/mp4',
+          },
+        },
+      },
+    };
+
+    const { payload, error } = buildRenderTimelinePayload({
+      ...baseInput,
+      request,
+      correlationId: 'fixture-correlation',
+    });
+
+    expect(error).toBeUndefined();
+    expect(payload).toBeDefined();
+    expect(payload!.timeline_id).toBe('fixture-local-timeline');
+    expect(payload!.project_id).toBe(request.renderRuntime.projectId);
+    expect(payload!.correlation_id).toBe('fixture-correlation');
+    expect(payload!.assets).toBe(request.assetRegistry);
   });
 
   it('falls back to 2rp theme when config has no theme field', () => {
     const { payload } = buildRenderTimelinePayload({
       ...baseInput,
-      resolvedConfig: { clips: [{ clipType: 'art-card' }] },
+      request: {
+        ...baseInput.request,
+        resolvedConfig: { clips: [{ clipType: 'art-card' }] },
+      },
     });
     expect(payload!.theme_id).toBe('2rp');
   });
@@ -197,8 +274,23 @@ describe('Sprint 8 buildRenderTimelinePayload', () => {
   });
 
   it('rejects empty timelineId / projectId', () => {
-    expect(buildRenderTimelinePayload({ ...baseInput, timelineId: '' }).error).toBeTruthy();
-    expect(buildRenderTimelinePayload({ ...baseInput, projectId: '' }).error).toBeTruthy();
+    expect(buildRenderTimelinePayload({
+      ...baseInput,
+      request: {
+        ...baseInput.request,
+        timelineId: '',
+      },
+    }).error).toBeTruthy();
+    expect(buildRenderTimelinePayload({
+      ...baseInput,
+      request: {
+        ...baseInput.request,
+        renderRuntime: {
+          ...baseInput.request.renderRuntime,
+          projectId: '',
+        },
+      },
+    }).error).toBeTruthy();
   });
 
   it('materializes sequence asset keys for the render payload without mutating persisted params', () => {
@@ -230,7 +322,10 @@ describe('Sprint 8 buildRenderTimelinePayload', () => {
 
     const { payload } = buildRenderTimelinePayload({
       ...baseInput,
-      resolvedConfig,
+      request: {
+        ...baseInput.request,
+        resolvedConfig,
+      },
     });
 
     const clip = (payload!.timeline as typeof resolvedConfig).clips[0];
@@ -307,19 +402,27 @@ describe('Sprint 8 router → enqueue integration', () => {
   it('themed timeline decision drives a banodoco-pool enqueue', async () => {
     const config = {
       theme: '2rp',
-      clips: [{ clipType: 'art-card' }, { clipType: 'media' }],
+      clips: [{ clipType: 'image-jump' }, { clipType: 'media' }],
     };
 
     // Step 1: router decides banodoco.
     const decision = decideRenderRoute(config);
-    expect(decision.route).toBe('banodoco');
+    expect(decision.route).toBe('worker-banodoco');
 
     // Step 2: build payload + enqueue.
     const { payload } = buildRenderTimelinePayload({
-      timelineId: 't',
-      projectId: 'p',
-      resolvedConfig: config,
-      assetRegistry: { assets: {} },
+      request: {
+        timelineId: 't',
+        assetRegistry: { assets: {} },
+        resolvedConfig: config,
+        renderMetadata: null,
+        renderRuntime: {
+          projectId: 'p',
+          orchestratorBaseUrl: 'https://orchestrator.example.com',
+          getSupabaseSession: vi.fn(async () => null),
+          getWorkerJwt: vi.fn(async () => null),
+        },
+      },
       userJwt: 'jwt',
       correlationId: 'corr-x',
     });
@@ -343,10 +446,246 @@ describe('Sprint 8 router → enqueue integration', () => {
   it('pure-media timeline decision skips the orchestrator entirely', () => {
     const config = { clips: [{ clipType: 'media' }, { clipType: 'text' }] };
     const decision = decideRenderRoute(config);
-    expect(decision.route).toBe('client');
+    expect(decision.route).toBe('browser-remotion');
     // The integration assertion: no fetch is made for client-route timelines.
     // Caller should branch on `decision.route` and call useClientRender;
     // we don't test that wiring here (it lives in useClientRender), but
     // make the router contract explicit so future regressions are loud.
+  });
+});
+
+describe('Sprint 8 render pipeline middleware', () => {
+  const runtime = {
+    projectId: 'project-1',
+    orchestratorBaseUrl: 'https://orchestrator.example.com',
+    getSupabaseSession: vi.fn(async () => null),
+    getWorkerJwt: vi.fn(async () => null),
+  };
+
+  it('renders supported local fixture timelines in the browser path without Supabase auth', async () => {
+    const events: Array<{ type: string; request?: unknown; assetCount?: number; providerId?: string }> = [];
+    const request = {
+      timelineId: 'fixture-browser',
+      assetRegistry: {
+        assets: {
+          'asset-1': {
+            src: 'file:///tmp/fixture-browser.mp4',
+            file: 'fixture-browser.mp4',
+            type: 'video/mp4',
+          },
+        },
+      },
+      resolvedConfig: {
+        output: { resolution: '1920x1080', fps: 30, file: 'fixture-browser.mp4' },
+        tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+        clips: [{ id: 'clip-1', track: 'V1', at: 0, from: 0, to: 2, clipType: 'media', asset: 'asset-1' }],
+        registry: {
+          'asset-1': {
+            src: 'file:///tmp/fixture-browser.mp4',
+            file: 'fixture-browser.mp4',
+            type: 'video/mp4',
+          },
+        },
+      },
+      renderMetadata: null,
+      renderRuntime: {
+        projectId: 'project-1',
+        orchestratorBaseUrl: 'https://orchestrator.example.com',
+        getSupabaseSession: vi.fn(async () => null),
+        getWorkerJwt: vi.fn(async () => null),
+      },
+    };
+    const startBrowserRender = vi.fn(async () => ({
+      status: 'done' as const,
+      message: 'Saved fixture-browser.mp4',
+    }));
+
+    const result = await executeRenderPipeline({
+      decision: decideRenderRoute(request.resolvedConfig),
+      request,
+      startBrowserRender,
+      middlewares: [async (event) => {
+        events.push(event);
+      }],
+    });
+
+    expect(result).toMatchObject({
+      status: 'done',
+      providerId: 'browser-remotion',
+    });
+    expect(startBrowserRender).toHaveBeenCalledTimes(1);
+    expect(request.renderRuntime.getSupabaseSession).not.toHaveBeenCalled();
+    expect(request.renderRuntime.getWorkerJwt).not.toHaveBeenCalled();
+    expect(events).toMatchObject([
+      { type: 'beforeRender', request },
+      { type: 'assetMaterialized', request, assetCount: 1 },
+      { type: 'afterRender', request, providerId: 'browser-remotion' },
+    ]);
+  });
+
+  it('emits beforeRender, assetMaterialized, and afterRender through one shared middleware path', async () => {
+    const events: string[] = [];
+    const middleware = vi.fn(async (event: { type: string }) => {
+      events.push(event.type);
+    });
+    const startBrowserRender = vi.fn(async () => ({
+      status: 'done' as const,
+      message: 'Saved output.mp4',
+    }));
+
+    const result = await executeRenderPipeline({
+      decision: decideRenderRoute({ clips: [{ clipType: 'media' }] }),
+      request: {
+        timelineId: 'timeline-1',
+        assetRegistry: { assets: { 'asset-1': { src: 'https://cdn.example.com/asset-1.mp4', file: 'asset-1.mp4', type: 'video/mp4' } } },
+        resolvedConfig: {
+          output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+          tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+          clips: [{ id: 'clip-1', track: 'V1', at: 0, hold: 1, clipType: 'media' }],
+          registry: { 'asset-1': { src: 'https://cdn.example.com/asset-1.mp4', file: 'asset-1.mp4', type: 'video/mp4' } },
+        },
+        renderMetadata: null,
+        renderRuntime: runtime,
+      },
+      startBrowserRender,
+      middlewares: [middleware],
+    });
+
+    expect(result).toMatchObject({
+      status: 'done',
+      providerId: 'browser-remotion',
+    });
+    expect(startBrowserRender).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(['beforeRender', 'assetMaterialized', 'afterRender']);
+  });
+
+  it('emits renderFailed for preview-only routes without falling back to the browser renderer', async () => {
+    const previewEvents: string[] = [];
+    const previewResult = await executeRenderPipeline({
+      decision: decideRenderRoute({
+        clips: [{ clipType: 'media', generation: { sequence_lane: 'remotion_module' } }],
+      }),
+      request: {
+        timelineId: 'timeline-1',
+        assetRegistry: null,
+        resolvedConfig: null,
+        renderMetadata: null,
+        renderRuntime: runtime,
+      },
+      startBrowserRender: vi.fn(async () => ({ status: 'done' as const, message: 'unexpected' })),
+      middlewares: [async (event) => {
+        previewEvents.push(event.type);
+      }],
+    });
+
+    expect(previewResult).toMatchObject({
+      status: 'error',
+      providerId: 'preview-only',
+    });
+    expect(previewEvents).toEqual(['beforeRender', 'assetMaterialized', 'renderFailed']);
+  });
+
+  it('queues worker-capable routes through the banodoco provider without falling back to the browser renderer', async () => {
+    const workerEvents: string[] = [];
+    const startBrowserRender = vi.fn(async () => ({ status: 'done' as const, message: 'unexpected' }));
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ task_id: 'task-1' }), { status: 200 }),
+    );
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+    const workerRuntime = {
+      ...runtime,
+      getSupabaseSession: vi.fn(async () => {
+        throw new Error('getSupabaseSession should not be called for worker dispatch');
+      }),
+      getWorkerJwt: vi.fn(async () => 'worker-jwt-123'),
+    };
+    const request = {
+      timelineId: 'timeline-fixture-worker',
+      assetRegistry: {
+        assets: {
+          'asset-1': {
+            file: 'asset-1.png',
+            src: 'file:///tmp/asset-1.png',
+            type: 'image/png',
+          },
+        },
+      },
+      resolvedConfig: {
+        theme: '2rp',
+        output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+        tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+        clips: [{ id: 'clip-1', track: 'V1', at: 0, hold: 1, clipType: 'image-jump' }],
+        registry: {
+          'asset-1': {
+            file: 'asset-1.png',
+            src: 'file:///tmp/asset-1.png',
+            type: 'image/png',
+          },
+        },
+      },
+      renderMetadata: null,
+      renderRuntime: workerRuntime,
+    };
+
+    const workerResult = await executeRenderPipeline({
+      decision: decideRenderRoute({ clips: [{ clipType: 'image-jump' }] }),
+      request,
+      startBrowserRender,
+      middlewares: [async (event) => {
+        workerEvents.push(event.type);
+      }],
+    });
+
+    expect(workerResult).toMatchObject({
+      status: 'queued',
+      providerId: 'worker-banodoco',
+      taskId: 'task-1',
+      correlationId: expect.any(String),
+    });
+    expect(startBrowserRender).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(workerRuntime.getWorkerJwt).toHaveBeenCalledTimes(1);
+    expect(workerRuntime.getSupabaseSession).not.toHaveBeenCalled();
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body as string);
+    expect(body.params.timeline_id).toBe('timeline-fixture-worker');
+    expect(body.params.project_id).toBe('project-1');
+    expect(body.params.assets).toEqual(request.assetRegistry);
+    expect(workerEvents).toEqual(['beforeRender', 'assetMaterialized', 'afterRender']);
+
+    vi.stubGlobal('fetch', originalFetch);
+  });
+
+  it('emits renderFailed for worker routes when no worker session token is available', async () => {
+    const workerEvents: string[] = [];
+    const startBrowserRender = vi.fn(async () => ({ status: 'done' as const, message: 'unexpected' }));
+    const workerResult = await executeRenderPipeline({
+      decision: decideRenderRoute({ clips: [{ clipType: 'image-jump' }] }),
+      request: {
+        timelineId: 'timeline-1',
+        assetRegistry: null,
+        resolvedConfig: {
+          theme: '2rp',
+          output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+          tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+          clips: [{ id: 'clip-1', track: 'V1', at: 0, hold: 1, clipType: 'image-jump' }],
+          registry: {},
+        },
+        renderMetadata: null,
+        renderRuntime: runtime,
+      },
+      startBrowserRender,
+      middlewares: [async (event) => {
+        workerEvents.push(event.type);
+      }],
+    });
+
+    expect(workerResult).toMatchObject({
+      status: 'error',
+      providerId: 'worker-banodoco',
+    });
+    expect(workerResult.message).toContain('missing worker session token');
+    expect(startBrowserRender).not.toHaveBeenCalled();
+    expect(workerEvents).toEqual(['beforeRender', 'assetMaterialized', 'renderFailed']);
   });
 });

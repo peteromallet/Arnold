@@ -49,6 +49,14 @@ export const INSTALLED_TIMELINE_THEMES: ThemeRegistry = {
   '2rp': THEME_2RP,
 };
 
+export const AVAILABLE_TIMELINE_THEME_IDS = Object.keys(
+  INSTALLED_TIMELINE_THEMES,
+) as readonly string[];
+
+export const isInstalledTimelineThemeId = (value: unknown): value is (typeof AVAILABLE_TIMELINE_THEME_IDS)[number] => {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(INSTALLED_TIMELINE_THEMES, value);
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 };

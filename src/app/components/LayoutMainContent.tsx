@@ -15,7 +15,7 @@ interface LayoutMainContentProps {
 
 export function LayoutMainContent(props: LayoutMainContentProps) {
   const { isMobileSplitView, onOpenSettings } = props;
-  const { isVideoEditorShellActive } = useVideoEditorRouteState();
+  const { isEditorRoute, isVideoEditorShellActive } = useVideoEditorRouteState();
   const isEditorPaneLocked = usePanesStore((state) => state.isEditorPaneLocked);
   const effectiveEditorPaneHeight = usePanesStore((state) => state.effectiveEditorPaneHeight);
   const isTasksPaneLocked = usePanesStore((state) => state.isTasksPaneLocked);
@@ -63,6 +63,8 @@ export function LayoutMainContent(props: LayoutMainContentProps) {
             ? 'h-screen overflow-hidden transition-[margin,padding] duration-300 ease-smooth'
             : 'transition-[margin,padding] duration-300 ease-smooth',
         )}
+        data-video-editor-route={isEditorRoute ? 'true' : 'false'}
+        data-video-editor-shell-active={isVideoEditorShellActive ? 'true' : 'false'}
         style={contentStyle}
       >
         {!isVideoEditorShellActive && <GlobalProcessingWarning onOpenSettings={onOpenSettings} />}

@@ -8,8 +8,12 @@ import { bootstrapEdgeHandler, NO_SESSION_RUNTIME_OPTIONS } from "../_shared/edg
 import { toErrorMessage } from "../_shared/errorMessage.ts";
 import { resolveTaskStorageActor } from "../_shared/taskActorPolicy.ts";
 import { ensureTaskActor } from "../_shared/requestGuards.ts";
-import type { AssetRegistryEntry } from "../../../src/tools/video-editor/types/index.ts";
-import { loadTimelineState, saveTimelineConfigVersioned } from "../ai-timeline-agent/db.ts";
+import type { AssetRegistryEntry } from "../../../src/tools/video-editor/index.ts";
+import {
+  loadTimelineState,
+  prepareTimelineConfigForPersistence,
+  saveTimelineConfigVersioned,
+} from "../ai-timeline-agent/db.ts";
 import { addMediaClip } from "../ai-timeline-agent/tools/timeline.ts";
 import type { SupabaseAdmin as TimelineSupabaseAdmin } from "../ai-timeline-agent/types.ts";
 
@@ -95,11 +99,13 @@ async function applyCompletedGenerationTimelinePlacement(
     throw new Error(insertionResult.result);
   }
 
+  const configToSave = prepareTimelineConfigForPersistence(insertionResult.config, nextRegistry);
+
   const nextVersion = await saveTimelineConfigVersioned(
     supabaseAdmin,
     placement.timeline_id,
     timelineState.configVersion,
-    insertionResult.config,
+    configToSave,
   );
   if (nextVersion === null) {
     throw new Error(`Failed to save timeline ${placement.timeline_id}: version conflict.`);

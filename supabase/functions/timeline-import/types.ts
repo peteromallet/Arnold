@@ -23,7 +23,7 @@ export interface TimelineImportConflict {
 export interface TimelineImportError {
   ok: false;
   error: string;
-  details?: string;
+  details?: unknown;
 }
 
 export type TimelineImportResponseBody =

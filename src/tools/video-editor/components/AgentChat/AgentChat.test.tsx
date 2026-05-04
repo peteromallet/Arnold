@@ -7,6 +7,7 @@ import { AgentChatPanel } from './AgentChat';
 const mocks = vi.hoisted(() => ({
   useAgentChatBridge: vi.fn(),
   useAgentChatActionsRegistry: vi.fn(),
+  useVideoEditorRuntime: vi.fn(),
   useAgentSessions: vi.fn(),
   useCreateSession: vi.fn(),
   useAgentSession: vi.fn(),
@@ -25,6 +26,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/shared/contexts/AgentChatContext', () => ({
   useAgentChatBridge: (...args: unknown[]) => mocks.useAgentChatBridge(...args),
   useAgentChatActionsRegistry: (...args: unknown[]) => mocks.useAgentChatActionsRegistry(...args),
+}));
+
+vi.mock('@/tools/video-editor/contexts/DataProviderContext', () => ({
+  useVideoEditorRuntime: (...args: unknown[]) => mocks.useVideoEditorRuntime(...args),
 }));
 
 vi.mock('@/tools/video-editor/hooks/useAgentSession', () => ({
@@ -157,6 +162,12 @@ function createState() {
 }
 
 function mockFromState(state: ReturnType<typeof createState>) {
+  mocks.useVideoEditorRuntime.mockImplementation(() => ({
+    mediaLightbox: {
+      loadGenerationForLightbox: mocks.loadGenerationForLightbox,
+      Lightbox: ({ media }: { media: { id: string } }) => <div data-testid="media-lightbox">{media.id}</div>,
+    },
+  }));
   mocks.useAgentChatBridge.mockImplementation(() => ({
     timelineId: state.timelineId,
   }));

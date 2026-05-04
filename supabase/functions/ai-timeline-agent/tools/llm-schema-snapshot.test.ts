@@ -18,7 +18,139 @@
  * update the snapshot deliberately.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("@banodoco/timeline-ops", () => ({
+  moveClip: vi.fn((config: { clips: Array<Record<string, unknown>> }, clipId: string, at: number) => {
+    const clip = config.clips.find((candidate) => candidate.id === clipId);
+    if (!clip) {
+      return { changed: false, config, detail: { reason: "not_found" } };
+    }
+
+    return {
+      changed: true,
+      config: {
+        ...config,
+        clips: config.clips.map((candidate) => (
+          candidate.id === clipId
+            ? { ...candidate, at }
+            : candidate
+        )),
+      },
+      detail: { previousAt: clip.at },
+    };
+  }),
+  setClipParams: vi.fn((config: { clips: Array<Record<string, unknown>> }, clipId: string, params: Record<string, unknown>) => {
+    const clip = config.clips.find((candidate) => candidate.id === clipId);
+    if (!clip) {
+      return { changed: false, config, detail: { reason: "not_found" } };
+    }
+    if (!params || typeof params !== "object" || Array.isArray(params)) {
+      return { changed: false, config, detail: { reason: "invalid_value" } };
+    }
+    const appliedKeys = Object.keys(params);
+    if (appliedKeys.length === 0) {
+      return { changed: false, config, detail: { reason: "empty_patch" } };
+    }
+
+    const nextParams = { ...((clip.params as Record<string, unknown> | undefined) ?? {}) };
+    for (const [key, value] of Object.entries(params)) {
+      if (value === null) {
+        delete nextParams[key];
+      } else {
+        nextParams[key] = value;
+      }
+    }
+
+    return {
+      changed: true,
+      config: {
+        ...config,
+        clips: config.clips.map((candidate) => (
+          candidate.id === clipId
+            ? { ...candidate, params: nextParams }
+            : candidate
+        )),
+      },
+      detail: { appliedKeys },
+    };
+  }),
+  setClipProperty: vi.fn((config: { clips: Array<Record<string, unknown>> }, clipId: string, property: string, value: number) => {
+    const allowed = new Set(["volume", "speed", "opacity", "x", "y", "width", "height"]);
+    if (!allowed.has(property)) {
+      return { changed: false, config, detail: { reason: "property_not_allowed" } };
+    }
+    const clip = config.clips.find((candidate) => candidate.id === clipId);
+    if (!clip) {
+      return { changed: false, config, detail: { reason: "not_found" } };
+    }
+
+    return {
+      changed: true,
+      config: {
+        ...config,
+        clips: config.clips.map((candidate) => (
+          candidate.id === clipId
+            ? { ...candidate, [property]: value }
+            : candidate
+        )),
+      },
+      detail: { previousValue: clip[property] },
+    };
+  }),
+  setThemeOverrides: vi.fn((config: Record<string, unknown>, overrides: Record<string, unknown>) => {
+    if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+      return { changed: false, config, detail: { reason: "invalid_value" } };
+    }
+    const appliedKeys = Object.keys(overrides);
+    if (appliedKeys.length === 0) {
+      return { changed: false, config, detail: { reason: "empty_patch" } };
+    }
+
+    const merge = (base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> => {
+      const next = { ...base };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === null) {
+          delete next[key];
+        } else if (
+          typeof value === "object"
+          && value !== null
+          && !Array.isArray(value)
+          && typeof next[key] === "object"
+          && next[key] !== null
+          && !Array.isArray(next[key])
+        ) {
+          next[key] = merge(next[key] as Record<string, unknown>, value as Record<string, unknown>);
+        } else {
+          next[key] = value;
+        }
+      }
+      return next;
+    };
+
+    return {
+      changed: true,
+      config: {
+        ...config,
+        theme_overrides: merge((config.theme_overrides as Record<string, unknown> | undefined) ?? {}, overrides),
+      },
+      detail: { appliedKeys },
+    };
+  }),
+  setTimelineTheme: vi.fn((config: Record<string, unknown>, themeId: string) => {
+    if (typeof themeId !== "string" || themeId.trim().length === 0) {
+      return { changed: false, config, detail: { reason: "invalid_value" } };
+    }
+    if (config.theme === themeId) {
+      return { changed: false, config, detail: { reason: "unchanged" } };
+    }
+
+    return {
+      changed: true,
+      config: { ...config, theme: themeId },
+      detail: { previousTheme: config.theme },
+    };
+  }),
+}));
 import { TIMELINE_AGENT_TOOLS } from "../tool-schemas.ts";
 import {
   handlers as timelineHandlers,
@@ -29,7 +161,7 @@ import {
   setThemeOverrides,
   timelineTools,
 } from "./timeline.ts";
-import type { AssetRegistry, TimelineConfig } from "../../../../src/tools/video-editor/types/index.ts";
+import type { AssetRegistry, TimelineConfig } from "../../../../src/tools/video-editor/index.ts";
 
 function snapshotSchema(): string {
   const lines: string[] = [];
@@ -49,7 +181,7 @@ function makeConfig(): TimelineConfig {
         id: "clip-x",
         at: 1,
         track: "V1",
-        clipType: "media",
+        clipType: "section-hook",
         asset: "asset-x",
         from: 0,
         to: 5,
@@ -83,6 +215,20 @@ describe("LLM tool schema byte-equivalence (Sprint 3)", () => {
       "set_theme_overrides",
       "transform_image",
     ]);
+  });
+
+  it("direct themed tool descriptions advertise only the installed families", () => {
+    const setParamsTool = TIMELINE_AGENT_TOOLS.find((tool) => tool.function.name === "set_params");
+    const setThemeTool = TIMELINE_AGENT_TOOLS.find((tool) => tool.function.name === "set_theme");
+
+    expect(setParamsTool?.function.description).toContain(
+      "currently: image-jump, section-hook, art-card, resource-card, cta-card",
+    );
+    expect(setThemeTool?.function.description).toContain(
+      'Installed themes in this build: "2rp"',
+    );
+    expect((setThemeTool?.function.parameters.properties as { themeId?: { description?: string } }).themeId?.description)
+      .toContain("Currently: 2rp.");
   });
 
   it("timelineHandlers keys match the closed parsed-command target set + Sprint 4 themed ops", () => {
@@ -120,11 +266,17 @@ describe("LLM tool schema byte-equivalence (Sprint 3)", () => {
     // the parsed commands. If this changes, the LLM's understanding of
     // available verbs has changed.
     expect(run!.function.description).toContain(
-      "Commands: view, move <clipId> <seconds>",
+      "Legacy commands: view, move <clipId> <seconds>",
     );
     expect(run!.function.description).toContain(
       "set <clipId> <property> <value>",
     );
+    expect(run!.function.parameters).toEqual(expect.objectContaining({
+      properties: expect.objectContaining({
+        transaction: expect.any(Object),
+        mode: expect.any(Object),
+      }),
+    }));
   });
 
   it("move_clip output is byte-equivalent post-extraction", () => {
@@ -198,12 +350,21 @@ describe("LLM tool schema byte-equivalence (Sprint 3)", () => {
   });
 
   it("set_theme happy-path result string is stable", () => {
+    const config = makeConfig();
+    const result = setTheme(config, makeRegistry(), { themeId: "2rp" });
+    expect(result.result).toBe(
+      "Switched theme from unset to 2rp. (Note: existing themed clips referencing the old theme's clipType may need remapping.)",
+    );
+    expect((result.config as unknown as { theme: string }).theme).toBe("2rp");
+  });
+
+  it("set_theme rejects themes that are not installed", () => {
     const config = { ...makeConfig(), theme: "2rp" } as unknown as TimelineConfig;
     const result = setTheme(config, makeRegistry(), { themeId: "arca-gidan" });
     expect(result.result).toBe(
-      "Switched theme from 2rp to arca-gidan. (Note: existing themed clips referencing the old theme's clipType may need remapping.)",
+      "Theme arca-gidan is not installed. Available themes: 2rp.",
     );
-    expect((result.config as unknown as { theme: string }).theme).toBe("arca-gidan");
+    expect(result.config).toBeUndefined();
   });
 
   it("set_theme rejects empty themeId", () => {

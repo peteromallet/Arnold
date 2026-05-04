@@ -1,4 +1,5 @@
 import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences';
+import { getBulkVisibleTabs as getRegistryBackedBulkVisibleTabs } from '@/tools/video-editor/lib/clip-inspector';
 import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
 
 export const getSharedValue = <T,>(values: T[]): T | null => {
@@ -52,23 +53,5 @@ export const getBulkVisibleTabs = (
   clips: ResolvedTimelineClip[],
   tracks: TrackDefinition[],
 ): ClipTab[] => {
-  const tabs: ClipTab[] = ['effects', 'timing'];
-  const trackKindById = new Map(tracks.map((track) => [track.id, track.kind]));
-  const hasVisualClip = clips.some((clip) => trackKindById.get(clip.track) === 'visual');
-  const hasNonTextClip = clips.some((clip) => clip.clipType !== 'text');
-  const allTextClips = clips.length > 0 && clips.every((clip) => clip.clipType === 'text');
-
-  if (hasVisualClip) {
-    tabs.push('position');
-  }
-
-  if (hasNonTextClip) {
-    tabs.push('audio');
-  }
-
-  if (allTextClips) {
-    tabs.push('text');
-  }
-
-  return tabs;
+  return getRegistryBackedBulkVisibleTabs(clips, tracks);
 };

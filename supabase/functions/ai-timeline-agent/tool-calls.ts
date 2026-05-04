@@ -11,7 +11,7 @@ export type ExtractedToolCall = {
   parseError: string | null;
 };
 
-const COMMAND_VERBS = /^(?:view|move|split|trim|delete|rm|set|set-text|settext|add-text|addtext|text|swap|duplicate|dup|clone|query|undo|find-issues|findissues|issues|generate|gen)\b/;
+const COMMAND_VERBS = /^(?:view|move|split|trim|delete|rm|set|set-text|settext|add-text|addtext|add-media|addmedia|text|swap|duplicate|dup|clone|query|undo|repeat|find-issues|findissues|issues|generate|gen)\b/;
 const FALLBACK_TOOL_NAMES = new Set([
   "run",
   "create_task",

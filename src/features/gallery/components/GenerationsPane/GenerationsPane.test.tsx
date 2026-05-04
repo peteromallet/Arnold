@@ -206,6 +206,6 @@ describe('GenerationsPane', () => {
     });
 
     expect(setDraggingMock).toHaveBeenCalledWith(false);
-    expect(dropToGenerationMock).toHaveBeenCalledWith([file]);
+    expect(dropToGenerationMock).toHaveBeenCalledWith([file], { items: [] });
   });
 });

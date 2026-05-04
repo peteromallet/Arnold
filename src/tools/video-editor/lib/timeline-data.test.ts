@@ -1,7 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { buildTimelineData, configToRows, rowsToConfig } from '@/tools/video-editor/lib/timeline-data';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  buildTimelineData,
+  buildTimelineDataWithResolver,
+  configToRows,
+  loadTimelineJsonFromProvider,
+  loadTranscript,
+  rowsToConfig,
+} from '@/tools/video-editor/lib/timeline-data';
 import { decideRenderRoute } from '@/tools/video-editor/lib/renderRouter';
 import { serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
+import type { AssetResolver } from '@/tools/video-editor/data/AssetResolver';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
 import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types';
 
 const registry: AssetRegistry = { assets: {} };
@@ -198,8 +207,123 @@ describe('timeline data sequence clip persistence', () => {
     expect(serialized.clips[0]).toEqual(config.clips[0]);
     expect(serialized.clips[0]).not.toHaveProperty('generation');
     expect(decideRenderRoute(serialized)).toMatchObject({
-      route: 'client',
+      route: 'browser-remotion',
       reason: 'pure_native_clips',
     });
+  });
+
+  it('loads timeline data through assetResolver.onResolve and reports missing assets through onMissing', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        { id: 'clip-ok', at: 0, track: 'V1', clipType: 'media', asset: 'asset-ok', from: 0, to: 2 },
+        { id: 'clip-missing', at: 2, track: 'V1', clipType: 'media', asset: 'asset-missing', from: 0, to: 2 },
+      ],
+    };
+    const assetRegistry: AssetRegistry = {
+      assets: {
+        'asset-ok': { file: 'asset-ok.mp4', type: 'video/mp4' },
+      },
+    };
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(async () => ({ config, configVersion: 4 })),
+      saveTimeline: vi.fn(async () => 4),
+      loadAssetRegistry: vi.fn(async () => assetRegistry),
+      resolveAssetUrl: vi.fn(async () => {
+        throw new Error('legacy resolveAssetUrl should not be called');
+      }),
+    };
+    const assetResolver: AssetResolver = {
+      resolveAssetUrl: vi.fn(async (file: string) => `legacy:${file}`),
+      onResolve: vi.fn(async ({ file }: { file: string }) => `resolver:${file}`),
+      onMissing: vi.fn(async () => {}),
+    };
+
+    const data = await loadTimelineJsonFromProvider(provider, assetResolver, 'timeline-1');
+
+    expect(data.configVersion).toBe(4);
+    expect(assetResolver.onResolve).toHaveBeenCalledWith({
+      file: 'asset-ok.mp4',
+      timelineId: 'timeline-1',
+    });
+    expect(assetResolver.onMissing).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: 'asset-missing',
+      clipId: 'clip-missing',
+      timelineId: 'timeline-1',
+      reason: 'missing_asset',
+    }));
+    expect(data.resolvedConfig.registry['asset-ok']?.src).toBe('resolver:asset-ok.mp4');
+  });
+
+  it('rebuilds timeline data through assetResolver.onResolve for refresh paths', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        { id: 'clip-refresh', at: 0, track: 'V1', clipType: 'media', asset: 'asset-refresh', from: 0, to: 2 },
+      ],
+    };
+    const assetRegistry: AssetRegistry = {
+      assets: {
+        'asset-refresh': { file: 'asset-refresh.mp4', type: 'video/mp4' },
+      },
+    };
+    const assetResolver: AssetResolver = {
+      resolveAssetUrl: vi.fn(async () => {
+        throw new Error('legacy resolveAssetUrl should not be called');
+      }),
+      onResolve: vi.fn(async ({ file }: { file: string }) => `refresh:${file}`),
+    };
+
+    const data = await buildTimelineDataWithResolver(
+      config,
+      assetRegistry,
+      assetResolver,
+      7,
+      'timeline-refresh',
+    );
+
+    expect(assetResolver.onResolve).toHaveBeenCalledWith({
+      file: 'asset-refresh.mp4',
+      timelineId: 'timeline-refresh',
+    });
+    expect(data.configVersion).toBe(7);
+    expect(data.resolvedConfig.registry['asset-refresh']?.src).toBe('refresh:asset-refresh.mp4');
+  });
+
+  it('loads transcripts through assetResolver.onProfileLoad when available', async () => {
+    const assetResolver: AssetResolver = {
+      resolveAssetUrl: vi.fn(async (file: string) => file),
+      onProfileLoad: vi.fn(async ({ assetId }: { assetId: string }) => ({
+        transcript: {
+          segments: [{ start: 0, end: 1, text: `segment:${assetId}` }],
+        },
+      })),
+    };
+
+    await expect(loadTranscript(assetResolver, 'asset-1', 'timeline-1')).resolves.toEqual([
+      { start: 0, end: 1, text: 'segment:asset-1' },
+    ]);
+    expect(assetResolver.onProfileLoad).toHaveBeenCalledWith({
+      assetId: 'asset-1',
+      timelineId: 'timeline-1',
+    });
+  });
+
+  it('falls back to legacy loadAssetProfile when no profile hook is installed', async () => {
+    const assetResolver: AssetResolver = {
+      resolveAssetUrl: vi.fn(async (file: string) => file),
+      loadAssetProfile: vi.fn(async (assetId: string) => ({
+        transcript: {
+          segments: [{ start: 1, end: 2, text: `legacy:${assetId}` }],
+        },
+      })),
+    };
+
+    await expect(loadTranscript(assetResolver, 'asset-2', 'timeline-legacy')).resolves.toEqual([
+      { start: 1, end: 2, text: 'legacy:asset-2' },
+    ]);
+    expect(assetResolver.loadAssetProfile).toHaveBeenCalledWith('asset-2');
   });
 });

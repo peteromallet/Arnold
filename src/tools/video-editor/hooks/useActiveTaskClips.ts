@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
 import { taskReferencesGeneration } from '@/shared/hooks/tasks/usePendingGenerationTasks';
 import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor';
 import { TASK_STATUS } from '@/types/tasks';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types';
 
 interface UseActiveTaskClipsArgs {
@@ -143,7 +143,7 @@ async function fetchActiveTasks(projectId: string): Promise<ActiveTaskRow[]> {
 }
 
 export function useActiveTaskClips({ registry }: UseActiveTaskClipsArgs): UseActiveTaskClipsReturn {
-  const { selectedProjectId } = useProjectSelectionContext();
+  const selectedProjectId = useVideoEditorRuntime().project.projectId;
   const queryClient = useQueryClient();
   const optimisticActiveAssetKeys = useSyncExternalStore(
     subscribeOptimisticActive,

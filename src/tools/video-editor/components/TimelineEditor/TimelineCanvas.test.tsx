@@ -54,7 +54,6 @@ const pinnedShotGroup: NonNullable<React.ComponentProps<typeof TimelineCanvas>['
   ],
   color: '#22c55e',
 };
-const MIN_GROUP_RESIZE_DURATION = 0.05;
 const setGestureOwner = vi.fn();
 const setInputModalityFromPointerType = vi.fn(() => 'mouse');
 
@@ -225,7 +224,7 @@ function renderStatefulPinnedGroupCanvas(params: {
 
 function renderCanvas(params?: {
   interactionStateRef?: React.MutableRefObject<{ drag: boolean; resize: boolean }>;
-  dataRef?: { current: any };
+  dataRef?: { current: unknown };
   onActionResizeStart?: ReturnType<typeof vi.fn>;
   onClipEdgeResizeEnd?: ReturnType<typeof vi.fn>;
   getActionRender?: ReturnType<typeof vi.fn>;
@@ -665,7 +664,7 @@ describe('TimelineCanvas resize pending ops', () => {
       clientX: 400,
     });
 
-    expect(actionElement.className).toContain('ring-amber-400/80');
+    expect(actionElement.className).toContain('ring-[var(--video-editor-warning-ring)]');
 
     fireEvent.pointerUp(rightHandle, {
       pointerId: 9,
@@ -679,7 +678,7 @@ describe('TimelineCanvas resize pending ops', () => {
         expect.objectContaining({ clipId: 'clip-1', start: 0, end: 2.5 }),
       ]),
     }));
-    expect(actionElement.className).not.toContain('ring-amber-400/80');
+    expect(actionElement.className).not.toContain('ring-[var(--video-editor-warning-ring)]');
   });
 
   it('clamps left-edge audio resize preview before source time zero', () => {
@@ -722,7 +721,7 @@ describe('TimelineCanvas resize pending ops', () => {
       clientX: -100,
     });
 
-    expect(actionElement.className).toContain('ring-amber-400/80');
+    expect(actionElement.className).toContain('ring-[var(--video-editor-warning-ring)]');
 
     fireEvent.pointerUp(leftHandle, {
       pointerId: 10,
@@ -736,7 +735,7 @@ describe('TimelineCanvas resize pending ops', () => {
         expect.objectContaining({ clipId: 'clip-1', start: 1, end: 4 }),
       ]),
     }));
-    expect(actionElement.className).not.toContain('ring-amber-400/80');
+    expect(actionElement.className).not.toContain('ring-[var(--video-editor-warning-ring)]');
   });
 
   it('anchors free clip preview to the real boundary pixel when the handle is grabbed off-center', () => {

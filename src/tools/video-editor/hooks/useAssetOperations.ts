@@ -1,24 +1,33 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useCallback, type MutableRefObject } from 'react';
 import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import {
+  transcodeAssetWithResolver,
+  uploadAssetWithResolver,
+  type AssetResolver,
+} from '@/tools/video-editor/data/AssetResolver';
 import type { AssetRegistryEntry } from '@/tools/video-editor/types';
 
 export function useAssetOperations(
-  provider: DataProvider,
+  provider: AssetResolver,
   timelineId: string,
   userId: string | null,
   queryClient: QueryClient,
   pendingOpsRef: MutableRefObject<number>,
 ) {
   const uploadAsset = useCallback(async (file: File) => {
-    if (!provider.uploadAsset) {
-      throw new Error('This editor backend does not support asset uploads');
-    }
-
     pendingOpsRef.current += 1;
     try {
-      return await provider.uploadAsset(file, { timelineId, userId: userId! });
+      const preparedFile = await transcodeAssetWithResolver(provider, {
+        file,
+        timelineId,
+        userId: userId!,
+        intent: 'asset-upload',
+      });
+      return await uploadAssetWithResolver(provider, {
+        file: preparedFile,
+        options: { timelineId, userId: userId! },
+      });
     } finally {
       pendingOpsRef.current -= 1;
     }

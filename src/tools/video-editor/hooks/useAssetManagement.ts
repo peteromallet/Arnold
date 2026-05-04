@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { toast } from '@/shared/components/ui/runtime/sonner';
 import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers';
@@ -10,14 +9,18 @@ import { extractVideoPosterFrame } from '@/shared/lib/media/videoPosterExtractor
 import { generateClientThumbnail, uploadImageWithThumbnail } from '@/shared/media/clientThumbnailGenerator';
 import type { SelectClipOptions } from '@/shared/state/selectionStore';
 import { createExternalUploadGeneration } from '@/integrations/supabase/repositories/generationMutationsRepository';
-import { generateUUID } from '@/shared/lib/taskCreation/ids';
-import { findNearestFreeTrack, getCompatibleTrackId, trySnapToEdge, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import {
-  getNextClipId,
-  type ClipMeta,
   type TimelineData,
 } from '@/tools/video-editor/lib/timeline-data';
+import {
+  buildAssetDropEdit,
+  estimateAssetDuration,
+  executeGenerationAssetRegistrationPlan,
+  getPlayableAssetKind,
+  planAssetDropTarget,
+  planGenerationAssetRegistration,
+} from '@/tools/video-editor/lib/timeline-asset-plans';
 import type {
   TimelineApplyEdit,
   TimelineInvalidateAssetRegistry,
@@ -26,37 +29,10 @@ import type {
   TimelineUnpatchRegistry,
   TimelineUploadAsset,
 } from '@/tools/video-editor/hooks/timeline-state-types';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
-import type { AssetRegistryEntry, ClipType } from '@/tools/video-editor/types';
 import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
 
-function estimateAssetDuration(
-  assetEntry: AssetRegistryEntry | undefined,
-  assetKind: 'audio' | 'visual',
-): number {
-  if (assetKind === 'audio') return assetEntry?.duration ?? 10;
-  if (assetEntry?.type?.startsWith('image')) return 5;
-  return assetEntry?.duration ?? 5;
-}
-
-function getPlayableAssetKind(assetEntry: AssetRegistryEntry | undefined): 'image' | 'video' | 'audio' | null {
-  const mimeType = assetEntry?.type?.toLowerCase() ?? '';
-  const file = (assetEntry?.file ?? assetEntry?.src ?? '').toLowerCase();
-
-  if (mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(file)) {
-    return 'image';
-  }
-  if (mimeType.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file)) {
-    return 'video';
-  }
-  if (mimeType.startsWith('audio/') || /\.(mp3|wav|aac|m4a|ogg|flac)$/i.test(file)) {
-    return 'audio';
-  }
-
-  return null;
-}
-
 type UploadedGenerationData = GenerationDropData & {
+  assetId?: string;
   durationSeconds?: number;
 };
 
@@ -107,14 +83,8 @@ export interface AssetDropTargetResolution {
   trackId: string;
   snappedTime?: number;
 }
-
-export interface BuildAssetDropEditResult {
-  clipId: string;
-  duration: number;
-  rows: TimelineData['rows'];
-  metaUpdates: Record<string, ClipMeta>;
-  clipOrderOverride: TimelineData['clipOrder'];
-}
+export { buildAssetDropEdit };
+export type { BuildAssetDropEditResult } from '@/tools/video-editor/lib/timeline-asset-plans';
 
 export function resolveAssetDropTarget({
   dataRef,
@@ -135,158 +105,25 @@ export function resolveAssetDropTarget({
   time?: number;
   duration?: number;
 }): AssetDropTargetResolution | null {
-  let current = dataRef.current;
-  if (!current) {
-    return null;
-  }
-
-  let resolvedTrackId = forceNewTrack
-    ? null
-    : getCompatibleTrackId(current.tracks, trackId, assetKind, selectedTrackId);
-
-  // When time/duration are provided, find the nearest free track (above or below)
-  if (resolvedTrackId && time != null && duration != null) {
-    const snapResult = trySnapToEdge(current.rows, resolvedTrackId, time, duration);
-    if (snapResult.snapped) {
-      return { current, trackId: resolvedTrackId, snappedTime: snapResult.time };
-    }
-    resolvedTrackId = findNearestFreeTrack(
-      current.tracks, current.rows, resolvedTrackId, assetKind, time, duration,
-    );
-  }
-
-  if (!resolvedTrackId) {
-    const latest = dataRef.current;
-    if (!latest) {
-      return null;
-    }
-
-    // When overlap search exhausted all tracks, skip re-check and create a new track
-    const existingTrackId = (forceNewTrack || (time != null && duration != null))
-      ? null
-      : getCompatibleTrackId(latest.tracks, trackId, assetKind, selectedTrackId);
-    if (existingTrackId) {
-      current = latest;
-      resolvedTrackId = existingTrackId;
-    } else {
-      const prefix = assetKind === 'audio' ? 'A' : 'V';
-      const nextNumber = getTrackIndex(latest.tracks, prefix) + 1;
-      resolvedTrackId = `${prefix}${nextNumber}`;
-      const newTrack = {
-        id: resolvedTrackId,
-        kind: assetKind,
-        label: `${prefix}${nextNumber}`,
-      };
-      current = {
-        ...latest,
-        tracks: insertAtTop ? [newTrack, ...latest.tracks] : [...latest.tracks, newTrack],
-        rows: insertAtTop ? [{ id: resolvedTrackId, actions: [] }, ...latest.rows] : [...latest.rows, { id: resolvedTrackId, actions: [] }],
-      };
-      dataRef.current = current;
-    }
-  }
-
-  return resolvedTrackId
-    ? { current, trackId: resolvedTrackId }
-    : null;
-}
-
-export function buildAssetDropEdit({
-  current,
-  assetKey,
-  trackId,
-  time,
-}: {
-  current: TimelineData;
-  assetKey: string;
-  trackId: string;
-  time: number;
-}): BuildAssetDropEditResult | null {
-  const assetEntry = current.registry.assets[assetKey];
-  const playableKind = getPlayableAssetKind(assetEntry);
-  if (!assetEntry || !playableKind) {
-    return null;
-  }
-  const track = current.tracks.find((candidate) => candidate.id === trackId);
-  if (!track) {
-    return null;
-  }
-  if (track.kind === 'visual' && playableKind === 'audio') {
-    return null;
-  }
-  if (track.kind === 'audio' && playableKind === 'image') {
-    return null;
-  }
-
-  const clipId = getNextClipId(current.meta);
-  const isImage = playableKind === 'image';
-  const isVideo = playableKind === 'video';
-  const isManual = track.fit === 'manual';
-  const clipType: ClipType = isImage ? 'hold' : 'media';
-  const baseDuration = isVideo
-    ? (assetEntry?.duration ?? 5)
-    : isImage
-      ? 5
-      : Math.max(1, assetEntry?.duration ?? 5);
-
-  let clipMeta: ClipMeta;
-  let duration: number;
-
-  if (track.kind === 'audio') {
-    duration = assetEntry?.duration ?? 10;
-    clipMeta = {
-      asset: assetKey,
-      track: trackId,
-      clipType: 'media',
-      from: 0,
-      to: duration,
-      speed: 1,
-      volume: 1,
-    };
-  } else if (isImage) {
-    duration = 5;
-    clipMeta = {
-      asset: assetKey,
-      track: trackId,
-      clipType,
-      hold: duration,
-      opacity: 1,
-      x: isManual ? 100 : undefined,
-      y: isManual ? 100 : undefined,
-      width: isManual ? 320 : undefined,
-      height: isManual ? 240 : undefined,
-    };
-  } else {
-    duration = baseDuration;
-    clipMeta = {
-      asset: assetKey,
-      track: trackId,
-      clipType,
-      from: 0,
-      to: duration,
-      speed: 1,
-      volume: 1,
-      opacity: 1,
-      x: isManual ? 100 : undefined,
-      y: isManual ? 100 : undefined,
-      width: isManual ? 320 : undefined,
-      height: isManual ? 240 : undefined,
-    };
-  }
-
-  const action: TimelineAction = {
-    id: clipId,
-    start: time,
-    end: time + duration,
-    effectId: `effect-${clipId}`,
-  };
-
-  return {
-    clipId,
+  const plan = planAssetDropTarget({
+    current: dataRef.current,
+    assetKind,
+    trackId,
+    selectedTrackId,
+    forceNewTrack,
+    insertAtTop,
+    time,
     duration,
-    rows: current.rows.map((row) => (row.id === trackId ? { ...row, actions: [...row.actions, action] } : row)),
-    metaUpdates: { [clipId]: clipMeta },
-    clipOrderOverride: updateClipOrder(current.clipOrder, trackId, (ids) => [...ids, clipId]),
+  });
+  if (!plan.ok) {
+    return null;
+  }
+
+  dataRef.current = plan.preparedCurrent;
+  return {
+    current: plan.preparedCurrent,
+    trackId: plan.trackId,
+    ...(plan.snappedTime !== undefined ? { snappedTime: plan.snappedTime } : {}),
   };
 }
 
@@ -302,6 +139,7 @@ export function useAssetManagement({
   unpatchRegistry,
   registerAsset,
 }: UseAssetManagementArgs): UseAssetManagementResult {
+  const runtime = useVideoEditorRuntime();
   const getDataRef = useCallback(() => {
     const storeDataRef = store?.getState().data.dataRef;
     return storeDataRef && storeDataRef.current !== null ? storeDataRef : dataRef;
@@ -333,8 +171,17 @@ export function useAssetManagement({
       return null;
     }
 
-    const imageUrl = getMediaUrl(generationData);
-    if (!imageUrl) {
+    const plan = planGenerationAssetRegistration({
+      generationId: generationData.generationId,
+      assetId: generationData.assetId,
+      variantId: generationData.variantId,
+      variantType: generationData.variantType,
+      imageUrl: getMediaUrl(generationData),
+      thumbUrl: getThumbnailUrl(generationData),
+      assetDurationSeconds: generationData.durationSeconds,
+      metadata: generationData.metadata,
+    });
+    if (!plan.ok) {
       console.warn('[video-editor] Skipping generation asset registration because media URL is empty', {
         generationId: generationData.generationId,
         variantId: generationData.variantId,
@@ -342,51 +189,20 @@ export function useAssetManagement({
       });
       return null;
     }
-    const thumbnailUrl = getThumbnailUrl(generationData) ?? imageUrl;
-    const lowerImageUrl = imageUrl.toLowerCase();
 
-    const mimeType = (() => {
-      const metadataContentType = typeof generationData.metadata?.content_type === 'string'
-        ? generationData.metadata.content_type.toLowerCase()
-        : null;
-      if (metadataContentType?.includes('/')) {
-        return metadataContentType;
-      }
-      if (metadataContentType === 'video' || generationData.variantType === 'video' || /\.(mp4|mov|webm|m4v)$/i.test(lowerImageUrl)) {
-        return 'video/mp4';
-      }
-      if (metadataContentType === 'audio' || /\.(mp3|wav|aac|m4a|ogg|flac)$/i.test(lowerImageUrl)) {
-        return 'audio/mpeg';
-      }
-      if (/\.(txt|json|md|csv|vtt|srt|pdf)$/i.test(lowerImageUrl)) {
-        return metadataContentType?.includes('/') ? metadataContentType : 'application/octet-stream';
-      }
-      return 'image/png';
-    })();
-
-    const assetId = generateUUID();
-    const entry: AssetRegistryEntry = {
-      file: imageUrl,
-      type: mimeType,
-      ...(typeof generationData.durationSeconds === 'number'
-        ? { duration: generationData.durationSeconds }
-        : {}),
-      generationId: generationData.generationId,
-      variantId: generationData.variantId,
-      ...(thumbnailUrl !== imageUrl
-        ? { thumbnailUrl }
-        : {}),
-    };
-
-    getPatchRegistry()(assetId, entry, imageUrl);
-    void getRegisterAsset()(assetId, entry).catch((error) => {
+    const { assetKey, persistPromise } = executeGenerationAssetRegistrationPlan({
+      plan,
+      patchRegistry: getPatchRegistry(),
+      registerAsset: getRegisterAsset(),
+    });
+    void persistPromise.catch((error) => {
       console.error('[video-editor] Failed to persist generation asset:', error);
-      getUnpatchRegistry()(assetId);
-      toast.error('Failed to save asset');
+      getUnpatchRegistry()(assetKey);
+      runtime.toast.error('Failed to save asset');
     });
 
-    return assetId;
-  }, [getPatchRegistry, getRegisterAsset, getUnpatchRegistry]);
+    return assetKey;
+  }, [getPatchRegistry, getRegisterAsset, getUnpatchRegistry, runtime.toast]);
 
   const uploadImageGeneration = useCallback(async (file: File) => {
     if (!selectedProjectId) {
@@ -493,13 +309,13 @@ export function useAssetManagement({
     const assetEntry = current?.registry.assets[assetKey];
     const playableKind = getPlayableAssetKind(assetEntry);
     if (!assetEntry || !playableKind) {
-      toast.error('Only image, video, and audio assets can be added to the timeline');
+      runtime.toast.error('Only image, video, and audio assets can be added to the timeline');
       return;
     }
     const assetKind = playableKind === 'audio' ? 'audio' : 'visual';
     const duration = estimateAssetDuration(assetEntry, assetKind);
-    const resolvedTarget = resolveAssetDropTarget({
-      dataRef: latestDataRef,
+    const targetPlan = planAssetDropTarget({
+      current,
       assetKind,
       trackId,
       selectedTrackId: getSelectedTrackId(),
@@ -508,9 +324,14 @@ export function useAssetManagement({
       time,
       duration,
     });
-    if (!resolvedTarget) {
+    if (!targetPlan.ok) {
       return;
     }
+    const resolvedTarget = {
+      current: targetPlan.preparedCurrent,
+      trackId: targetPlan.trackId,
+      snappedTime: targetPlan.snappedTime,
+    };
     const nextEdit = buildAssetDropEdit({
       current: resolvedTarget.current,
       assetKey,
@@ -520,6 +341,7 @@ export function useAssetManagement({
     if (!nextEdit) {
       return;
     }
+    latestDataRef.current = resolvedTarget.current;
     getApplyEdit()({
       type: 'rows',
       rows: nextEdit.rows,
@@ -528,7 +350,7 @@ export function useAssetManagement({
     });
     getSelectClip()(nextEdit.clipId);
     getSetSelectedTrackId()(resolvedTarget.trackId);
-  }, [getApplyEdit, getDataRef, getSelectedTrackId, getSelectClip, getSetSelectedTrackId]);
+  }, [getApplyEdit, getDataRef, getSelectedTrackId, getSelectClip, getSetSelectedTrackId, runtime.toast]);
 
   return {
     registerGenerationAsset,

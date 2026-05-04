@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import { renderHook } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { shouldAcceptPolledData } from '@/tools/video-editor/lib/timeline-save-utils';
-import { getTimelinePollRejectionReason, isTimelinePollIdle } from '@/tools/video-editor/hooks/usePollSync';
+import { createInteractionState } from '@/tools/video-editor/lib/interaction-state';
+import { getTimelinePollRejectionReason, isTimelinePollIdle, usePollSync } from '@/tools/video-editor/hooks/usePollSync';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
 
 function getLegacyPollRejectionReason(input: {
   editSeq: number;
@@ -152,5 +157,53 @@ describe('usePollSync helpers', () => {
       polledStableSignature: 'remote-sig',
       lastSavedStableSignature: 'saved-sig',
     })).toBeNull();
+  });
+
+  it('keeps configVersionRef pinned to the accepted local base version while a remote payload is still deferred', async () => {
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(async (file: string) => file),
+    };
+    const interactionState = createInteractionState();
+    interactionState.drag = true;
+    const interactionStateRef = { current: interactionState };
+    const configVersionRef = { current: 3 };
+    const commitData = vi.fn();
+    const polledData = {
+      configVersion: 7,
+      stableSignature: 'remote-sig',
+      signature: 'remote-sig',
+    } as unknown as TimelineData;
+
+    renderHook(() => usePollSync({
+      queries: {
+        timelineQuery: {
+          data: polledData,
+          isLoading: false,
+        },
+        assetRegistryQuery: {
+          data: undefined,
+        },
+      },
+      provider,
+      commitData,
+      dataRef: { current: null },
+      selectedClipIdRef: { current: null },
+      selectedTrackIdRef: { current: null },
+      editSeqRef: { current: 4 },
+      pendingOpsRef: { current: 0 },
+      savedSeqRef: { current: 4 },
+      configVersionRef,
+      lastSavedSignatureRef: { current: 'saved-sig' },
+      isSavingRef: { current: false },
+      interactionStateRef,
+    }));
+
+    await Promise.resolve();
+
+    expect(configVersionRef.current).toBe(3);
+    expect(commitData).not.toHaveBeenCalled();
   });
 });

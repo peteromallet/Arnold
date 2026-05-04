@@ -2,9 +2,9 @@ import type {
   AgentSession,
   AgentSessionStatus,
   AgentTurn,
-} from "../../../src/tools/video-editor/types/agent-session.ts";
+} from "../../../src/tools/video-editor/index.ts";
 import type { TimelinePlacement } from "../create-task/resolvers/shared/lineage.ts";
-import type { AssetRegistry, TimelineConfig } from "../../../src/tools/video-editor/types/index.ts";
+import type { AssetRegistry, TimelineConfig } from "../../../src/tools/video-editor/index.ts";
 
 export type { AgentSession, AgentSessionStatus, AgentTurn };
 

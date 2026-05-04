@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import type { Shot } from '@/domains/generation/types';
 import type { LightboxNavigationProps } from '@/domains/media-lightbox/types';
+import { getClipTypeOverlayBehavior, getRegisteredClipTypeDescriptor } from '@/tools/video-editor/clip-types';
 import { getShotColor } from '@/tools/video-editor/hooks/useShotGroups';
 import { isOpenableAssetType } from '@/tools/video-editor/lib/editor-utils';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
@@ -86,7 +87,10 @@ function buildNavigationModel(
 
   const buildItem = (clipId: string): NavigableItem | null => {
     const meta = data.meta[clipId];
-    if (!meta?.asset || meta.clipType === 'effect-layer' || meta.clipType === 'text') {
+    const overlayBehavior = getClipTypeOverlayBehavior(
+      getRegisteredClipTypeDescriptor(meta?.clipType),
+    );
+    if (!meta?.asset || !overlayBehavior.lightboxEnabled) {
       return null;
     }
 

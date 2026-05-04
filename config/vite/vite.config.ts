@@ -1,3 +1,4 @@
+import fs from "fs";
 import { defineConfig, createLogger } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
@@ -16,6 +17,30 @@ logger.warn = (msg, options) => {
 
 export default defineConfig(() => {
   const port = resolveVitePort(process.env.PORT);
+  const generatedRegistryPath = path.resolve(
+    __dirname,
+    "../../node_modules/@banodoco/timeline-composition/typescript/src/registry.generated.ts",
+  );
+  const generatedRegistryFallbackPath = path.resolve(
+    __dirname,
+    "../../src/tools/video-editor/lib/registry.generated.fallback.ts",
+  );
+  const themeApiPath = path.resolve(
+    __dirname,
+    "../../node_modules/@banodoco/timeline-composition/typescript/src/theme-api.ts",
+  );
+  const themeApiFallbackPath = path.resolve(
+    __dirname,
+    "../../src/tools/video-editor/lib/theme-api.fallback.tsx",
+  );
+  const timelineSchemaPath = path.resolve(
+    __dirname,
+    "../../node_modules/@banodoco/timeline-schema/dist/index.js",
+  );
+  const timelineSchemaFallbackPath = path.resolve(
+    __dirname,
+    "../../src/tools/video-editor/lib/timeline-schema.fallback.ts",
+  );
 
   return {
     customLogger: logger,
@@ -46,14 +71,15 @@ export default defineConfig(() => {
         "react-dom": path.resolve(__dirname, "../../node_modules/react-dom"),
         "remotion": path.resolve(__dirname, "../../node_modules/remotion"),
         "@remotion/layout-utils": path.resolve(__dirname, "../../node_modules/@remotion/layout-utils"),
-        "@banodoco/timeline-composition/registry.generated": path.resolve(
-          __dirname,
-          "../../node_modules/@banodoco/timeline-composition/typescript/src/registry.generated.ts",
-        ),
-        "@banodoco/timeline-composition/theme-api": path.resolve(
-          __dirname,
-          "../../node_modules/@banodoco/timeline-composition/typescript/src/theme-api.ts",
-        ),
+        "@banodoco/timeline-composition/registry.generated": fs.existsSync(generatedRegistryPath)
+          ? generatedRegistryPath
+          : generatedRegistryFallbackPath,
+        "@banodoco/timeline-composition/theme-api": fs.existsSync(themeApiPath)
+          ? themeApiPath
+          : themeApiFallbackPath,
+        "@banodoco/timeline-schema": fs.existsSync(timelineSchemaPath)
+          ? timelineSchemaPath
+          : timelineSchemaFallbackPath,
         "@banodoco/timeline-composition": path.resolve(__dirname, "../../node_modules/@banodoco/timeline-composition"),
         // Workspace-primitive aliases (mirrors banodoco shell webpack-alias.mjs).
         // Vendored into reigh-app/vendor/ so the Docker build context can resolve them

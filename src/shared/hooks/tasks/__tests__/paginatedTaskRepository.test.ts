@@ -11,7 +11,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 vi.mock('@/shared/lib/tasks/taskConfig', () => ({
-  filterVisibleTasks: <T>(tasks: T[]): T[] => tasks,
+  filterVisibleTasks: <T,>(tasks: T[]): T[] => tasks,
 }));
 
 interface QueryCapture {

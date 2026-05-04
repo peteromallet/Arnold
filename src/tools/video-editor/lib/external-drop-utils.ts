@@ -1,11 +1,24 @@
 import type { DragEvent, MutableRefObject } from 'react';
 import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop';
 import { getDragType } from '@/shared/lib/dnd/dragDrop';
+import {
+  resolveAssetUrlWithResolver,
+  type AssetResolver,
+} from '@/tools/video-editor/data/AssetResolver';
 import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll';
 import { getCompatibleTrackId, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
 import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils';
 import { inferDragKind } from '@/tools/video-editor/lib/drop-position';
 import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps';
+import {
+  getDroppedGenerationDurationContract,
+} from '@/tools/video-editor/lib/timeline-asset-durations';
+import {
+  buildAssetDropEdit,
+  getPlayableAssetKind,
+  planAssetDropTarget,
+  planGenerationAssetRegistration,
+} from '@/tools/video-editor/lib/timeline-asset-plans';
 import {
   createEffectLayerClipMeta,
   getNextClipId,
@@ -27,31 +40,6 @@ export type TimelineDropPosition = NonNullable<ReturnType<DragCoordinator['updat
 
 export function isGenerationDragType(dragType: ReturnType<typeof getDragType>) {
   return dragType === 'generation' || dragType === 'generation-multi';
-}
-
-export function isVideoGeneration(data: GenerationDropData): boolean {
-  const contentType = typeof data.metadata?.content_type === 'string'
-    ? data.metadata.content_type
-    : null;
-
-  return contentType?.startsWith('video/')
-    || data.variantType === 'video'
-    || /\.(mp4|mov|webm|m4v)$/i.test(data.imageUrl);
-}
-
-export function readPositiveNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-export function getDroppedGenerationDuration(data: GenerationDropData): number {
-  if (!isVideoGeneration(data)) {
-    return 5;
-  }
-
-  return readPositiveNumber(data.metadata?.duration)
-    ?? readPositiveNumber(data.metadata?.duration_seconds)
-    ?? readPositiveNumber(data.metadata?.original_duration)
-    ?? 5;
 }
 
 export function createTrack(
@@ -226,6 +214,7 @@ export function handleEffectLayerDrop({
 export async function handleFileDrop({
   files,
   dataRef,
+  timelineId,
   pendingOpsRef,
   dropPosition,
   insertAtTop,
@@ -234,7 +223,7 @@ export async function handleFileDrop({
   patchRegistry,
   uploadAsset,
   invalidateAssetRegistry,
-  resolveAssetUrl,
+  assetResolver,
   registerGenerationAsset,
   uploadImageGeneration,
   uploadVideoGeneration,
@@ -242,6 +231,7 @@ export async function handleFileDrop({
 }: {
   files: File[];
   dataRef: MutableRefObject<TimelineData | null>;
+  timelineId: string;
   pendingOpsRef: MutableRefObject<number>;
   dropPosition: TimelineDropPosition;
   insertAtTop: boolean;
@@ -250,7 +240,7 @@ export async function handleFileDrop({
   patchRegistry: TimelinePatchRegistry;
   uploadAsset: TimelineUploadAsset;
   invalidateAssetRegistry: TimelineInvalidateAssetRegistry;
-  resolveAssetUrl: (file: string) => Promise<string>;
+  assetResolver: AssetResolver;
   registerGenerationAsset: UseAssetManagementResult['registerGenerationAsset'];
   uploadImageGeneration: UseAssetManagementResult['uploadImageGeneration'];
   uploadVideoGeneration: UseAssetManagementResult['uploadVideoGeneration'];
@@ -349,7 +339,12 @@ export async function handleFileDrop({
         }
 
         const result = await uploadAsset(file);
-        const sourceUrl = await resolveAssetUrl(result.entry.file);
+        const sourceUrl = await resolveAssetUrlWithResolver(assetResolver, {
+          file: result.entry.file,
+          assetId: result.assetId,
+          entry: result.entry,
+          timelineId,
+        });
         patchRegistry(result.assetId, result.entry, sourceUrl);
 
         const current = dataRef.current;
@@ -391,7 +386,7 @@ export function handleMultiGenerationDrop({
   dropPosition,
   insertAtTop,
   registerGenerationAsset,
-  patchRegistry,
+  selectedTrackId,
   dropAsset,
 }: {
   generationItems: GenerationDropData[];
@@ -399,7 +394,7 @@ export function handleMultiGenerationDrop({
   dropPosition: TimelineDropPosition;
   insertAtTop: boolean;
   registerGenerationAsset: UseAssetManagementResult['registerGenerationAsset'];
-  patchRegistry: TimelinePatchRegistry;
+  selectedTrackId: string | null;
   dropAsset: UseAssetManagementResult['handleAssetDrop'];
 }): boolean {
   if (!generationItems.length || !dataRef.current) {
@@ -411,21 +406,61 @@ export function handleMultiGenerationDrop({
   let timeOffset = 0;
 
   for (const generationData of generationItems) {
-    const trackIdsBeforeDrop = new Set(dataRef.current.tracks.map((track) => track.id));
-    const assetId = registerGenerationAsset(generationData);
-
-    if (!assetId) {
+    const durationContract = getDroppedGenerationDurationContract(generationData);
+    const assetDurationSeconds = durationContract.assetDurationSeconds;
+    const clipSpanSeconds = durationContract.clipSpanSeconds ?? 5;
+    const registrationPlan = planGenerationAssetRegistration({
+      generationId: generationData.generationId,
+      variantId: generationData.variantId,
+      variantType: generationData.variantType,
+      imageUrl: generationData.imageUrl,
+      thumbUrl: generationData.thumbUrl,
+      assetDurationSeconds,
+      metadata: generationData.metadata,
+    });
+    if (!registrationPlan.ok) {
       continue;
     }
 
-    if (isVideoGeneration(generationData)) {
-      const existingEntry = dataRef.current.registry.assets[assetId];
-      if (existingEntry) {
-        patchRegistry(assetId, {
-          ...existingEntry,
-          duration: getDroppedGenerationDuration(generationData),
-        }, generationData.imageUrl);
-      }
+    const playableKind = getPlayableAssetKind(registrationPlan.assetEntry);
+    if (!playableKind) {
+      continue;
+    }
+    const assetKind = playableKind === 'audio' ? 'audio' : 'visual';
+    const targetPlan = planAssetDropTarget({
+      current: dataRef.current,
+      assetKind,
+      trackId: targetTrackId,
+      selectedTrackId,
+      forceNewTrack,
+      insertAtTop: forceNewTrack ? insertAtTop : false,
+      time: dropPosition.time + timeOffset,
+      duration: clipSpanSeconds,
+    });
+    if (!targetPlan.ok) {
+      continue;
+    }
+    const previewEdit = buildAssetDropEdit({
+      current: targetPlan.preparedCurrent,
+      assetKey: registrationPlan.assetId,
+      assetEntry: registrationPlan.assetEntry,
+      trackId: targetPlan.trackId,
+      time: targetPlan.snappedTime ?? (dropPosition.time + timeOffset),
+      clipSpanSeconds,
+    });
+    if (!previewEdit) {
+      continue;
+    }
+
+    const trackIdsBeforeDrop = new Set(dataRef.current.tracks.map((track) => track.id));
+    const assetId = registerGenerationAsset({
+      ...generationData,
+      assetId: registrationPlan.assetId,
+      ...(assetDurationSeconds !== null ? { durationSeconds: assetDurationSeconds } : {}),
+    });
+
+    if (!assetId) {
+      continue;
     }
 
     dropAsset(
@@ -436,7 +471,7 @@ export function handleMultiGenerationDrop({
       forceNewTrack ? insertAtTop : false,
     );
 
-    timeOffset += getDroppedGenerationDuration(generationData);
+    timeOffset += previewEdit.duration;
 
     if (!forceNewTrack || !dataRef.current) {
       continue;
@@ -459,6 +494,7 @@ export function handleSingleGenerationDrop({
   dropPosition,
   insertAtTop,
   registerGenerationAsset,
+  selectedTrackId,
   dropAsset,
 }: {
   generationData: GenerationDropData;
@@ -466,13 +502,63 @@ export function handleSingleGenerationDrop({
   dropPosition: TimelineDropPosition;
   insertAtTop: boolean;
   registerGenerationAsset: UseAssetManagementResult['registerGenerationAsset'];
+  selectedTrackId: string | null;
   dropAsset: UseAssetManagementResult['handleAssetDrop'];
 }): boolean {
   if (!dataRef.current) {
     return false;
   }
 
-  const assetId = registerGenerationAsset(generationData);
+  const durationContract = getDroppedGenerationDurationContract(generationData);
+  const assetDurationSeconds = durationContract.assetDurationSeconds;
+  const clipSpanSeconds = durationContract.clipSpanSeconds ?? 5;
+  const registrationPlan = planGenerationAssetRegistration({
+    generationId: generationData.generationId,
+    variantId: generationData.variantId,
+    variantType: generationData.variantType,
+    imageUrl: generationData.imageUrl,
+    thumbUrl: generationData.thumbUrl,
+    assetDurationSeconds,
+    metadata: generationData.metadata,
+  });
+  if (!registrationPlan.ok) {
+    return true;
+  }
+  const playableKind = getPlayableAssetKind(registrationPlan.assetEntry);
+  if (!playableKind) {
+    return true;
+  }
+  const assetKind = playableKind === 'audio' ? 'audio' : 'visual';
+  const targetPlan = planAssetDropTarget({
+    current: dataRef.current,
+    assetKind,
+    trackId: dropPosition.isNewTrack ? undefined : dropPosition.trackId,
+    selectedTrackId,
+    forceNewTrack: dropPosition.isNewTrack,
+    insertAtTop,
+    time: dropPosition.time,
+    duration: clipSpanSeconds,
+  });
+  if (!targetPlan.ok) {
+    return true;
+  }
+  const previewEdit = buildAssetDropEdit({
+    current: targetPlan.preparedCurrent,
+    assetKey: registrationPlan.assetId,
+    assetEntry: registrationPlan.assetEntry,
+    trackId: targetPlan.trackId,
+    time: targetPlan.snappedTime ?? dropPosition.time,
+    clipSpanSeconds,
+  });
+  if (!previewEdit) {
+    return true;
+  }
+
+  const assetId = registerGenerationAsset({
+    ...generationData,
+    assetId: registrationPlan.assetId,
+    ...(assetDurationSeconds !== null ? { durationSeconds: assetDurationSeconds } : {}),
+  });
   if (!assetId) {
     return true;
   }

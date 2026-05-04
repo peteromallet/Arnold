@@ -1,7 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { Button } from '@/shared/components/ui/button';
-import AssetPanel from '@/tools/video-editor/components/PropertiesPanel/AssetPanel';
 import { BulkClipPanel } from '@/tools/video-editor/components/PropertiesPanel/BulkClipPanel';
 import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/components/PropertiesPanel/ClipPanel';
 import {
@@ -11,7 +9,36 @@ import {
 import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants';
 import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
+import { getFallbackClipTab, getSelectionDefaultClipTab } from '@/tools/video-editor/lib/clip-inspector';
 import { getBulkVisibleTabs, getSharedNestedValue, getSharedValue } from '@/tools/video-editor/lib/bulk-utils';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
+import {
+  useVideoEditorInspectorSections,
+  useVideoEditorRenderContext,
+} from '@/tools/video-editor/runtime/useVideoEditorRenderContext';
+
+function InspectorRegistrySections({
+  placement,
+}: {
+  placement: 'before-default' | 'after-default';
+}) {
+  const renderContext = useVideoEditorRenderContext();
+  const sections = useVideoEditorInspectorSections(placement);
+
+  if (sections.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {sections.map((section) => (
+        <div key={section.id} data-video-editor-inspector-section-id={section.id}>
+          {section.render(renderContext)}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function PropertiesPanelComponent() {
   useRenderDiagnostic('PropertiesPanel');
@@ -58,9 +85,8 @@ function PropertiesPanelComponent() {
     registerAsset,
   });
   const { addVariantAsGenerationAfterClip, isPending: isAddingVariantAsGenerationPending } = useAddVariantAsGeneration();
-  const [assetsExpanded, setAssetsExpanded] = useState(false);
   const prevClipIdRef = useRef(selectedClip?.id);
-  const selectedClipIdsList = [...selectedClipIds];
+  const selectedClipIdsList = useMemo(() => [...selectedClipIds], [selectedClipIds]);
   const inspectorSelectionTarget = useMemo(() => {
     if (selectedClipIdsList.length > 1) {
       return { kind: 'selection' as const, clipIds: selectedClipIdsList };
@@ -108,10 +134,10 @@ function PropertiesPanelComponent() {
     const nextVisibleTabs = getVisibleClipTabs(selectedClip, selectedTrack);
     const isClipChange = selectedClip?.id !== prevClipIdRef.current;
 
-    if (isClipChange && selectedClip?.clipType === 'text') {
-      setActiveClipTab('text');
+    if (isClipChange && selectedClip) {
+      setActiveClipTab(getSelectionDefaultClipTab(selectedClip, selectedTrack));
     } else if (!nextVisibleTabs.includes(preferences.activeClipTab)) {
-      setActiveClipTab('effects');
+      setActiveClipTab(getFallbackClipTab(preferences.activeClipTab, nextVisibleTabs));
     }
 
     prevClipIdRef.current = selectedClip?.id;
@@ -139,37 +165,9 @@ function PropertiesPanelComponent() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      {/* Assets panel — commented out for now
-      <div className="overflow-hidden rounded-xl border border-border bg-card/80">
-        <button
-          type="button"
-          className="flex w-full items-center gap-1.5 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          onClick={() => setAssetsExpanded((value) => !value)}
-        >
-          {assetsExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          Assets
-        </button>
-        {assetsExpanded && (
-          <div className="border-t border-border px-3 pb-3">
-            <AssetPanel
-              assetMap={data.assetMap}
-              rows={data.rows}
-              meta={data.meta}
-              backgroundAsset={data.output.background ?? undefined}
-              showAll={preferences.assetPanel.showAll}
-              showHidden={preferences.assetPanel.showHidden}
-              hidden={preferences.assetPanel.hidden}
-              setPanelState={setAssetPanelState}
-              onUploadFiles={uploadFiles}
-              registry={data.registry.assets}
-            />
-          </div>
-        )}
-      </div>
-      */}
+    <div className="flex h-full min-h-0 flex-col gap-3" style={VIDEO_EDITOR_THEME_VARS}>
       {showInspectorActions && (
-        <div className="rounded-xl border border-sky-400/40 bg-sky-500/10 p-3">
+        <div className="rounded-xl border border-[color:var(--video-editor-accent-border)] bg-[var(--video-editor-accent-bg)] p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-foreground">Selection actions</div>
@@ -177,7 +175,7 @@ function PropertiesPanelComponent() {
                 Use explicit inspector controls for touch editing instead of relying on timeline gestures.
               </div>
             </div>
-            <div className="text-[11px] uppercase tracking-[0.12em] text-sky-100">
+            <div className="text-[11px] uppercase tracking-[0.12em] text-[color:var(--video-editor-accent-text)]">
               {interactionMode}
               {precisionEnabled ? ' + precision' : ''}
             </div>
@@ -220,7 +218,8 @@ function PropertiesPanelComponent() {
           </div>
         </div>
       )}
-      <div className={`min-h-0 flex-1 overflow-auto rounded-xl border bg-card/80 p-3 transition-colors ${hasSelection ? 'border-sky-400 ring-1 ring-sky-400/30' : 'border-border'}`}>
+      <InspectorRegistrySections placement="before-default" />
+      <div className={`min-h-0 flex-1 overflow-auto rounded-xl border bg-card/80 p-3 transition-colors ${hasSelection ? 'border-[color:var(--video-editor-accent-border)] ring-1 ring-[var(--video-editor-accent-ring)]' : 'border-border'}`}>
         {selectedClipIds.size > 1 ? (
           <BulkClipPanel
             clips={bulkSelectedClips}
@@ -299,6 +298,7 @@ function PropertiesPanelComponent() {
           />
         )}
       </div>
+      <InspectorRegistrySections placement="after-default" />
     </div>
   );
 }

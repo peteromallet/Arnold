@@ -2,6 +2,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { Maximize2, RotateCcw } from 'lucide-react';
 import {
+  getClipTypeOverlayBehavior,
+  getRegisteredClipTypeDescriptor,
+  type ClipTypeOverlayBehavior,
+} from '@/tools/video-editor/clip-types';
+import {
   hasRenderableBounds,
 } from '@/tools/video-editor/lib/render-bounds';
 import { useEffectDiagnostic, useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
@@ -30,6 +35,7 @@ import {
   type OverlayBounds,
   type OverlayLayout,
 } from '@/tools/video-editor/lib/overlay-bounds';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
 
 interface OverlayEditorProps {
   rows: TimelineRow[];
@@ -71,7 +77,7 @@ type OverlayViewModel = {
   bounds: OverlayBounds;
   fullBounds: OverlayBounds;
   cropValues: CropValues;
-  isText: boolean;
+  behavior: ClipTypeOverlayBehavior;
 };
 
 function OverlayEditorComponent({
@@ -141,14 +147,8 @@ function OverlayEditorComponent({
   }, [compositionHeight, compositionWidth, trackScaleMap]);
 
   const getClipBounds = useCallback((clipMeta: ClipMeta, trackId: string): OverlayBounds => {
-    if (clipMeta.clipType === 'text') {
-      return {
-        x: clipMeta.x ?? 0,
-        y: clipMeta.y ?? 0,
-        width: clipMeta.width ?? 640,
-        height: clipMeta.height ?? 180,
-      };
-    }
+    const descriptor = getRegisteredClipTypeDescriptor(clipMeta.clipType);
+    const overlayBehavior = getClipTypeOverlayBehavior(descriptor);
 
     // Must match VisualClip's hasPositionOverride check (includes crop fields).
     // When any of these are set, Remotion renders with absolute positioning at
@@ -171,6 +171,10 @@ function OverlayEditorComponent({
         width: clipMeta.width ?? compositionWidth,
         height: clipMeta.height ?? compositionHeight,
       };
+    }
+
+    if (overlayBehavior.defaultBounds) {
+      return overlayBehavior.defaultBounds;
     }
 
     return getTrackDefaultBounds(trackId);
@@ -206,11 +210,13 @@ function OverlayEditorComponent({
         if (!clipMeta || clipMeta.track !== row.id) {
           continue;
         }
-        if (clipMeta.clipType === 'effect-layer') {
+        const descriptor = getRegisteredClipTypeDescriptor(clipMeta.clipType);
+        const behavior = getClipTypeOverlayBehavior(descriptor);
+        if (behavior.excluded) {
           continue;
         }
 
-        const hasPositionOverride = clipMeta.clipType === 'text'
+        const hasPositionOverride = behavior.alwaysVisible
           || clipMeta.x !== undefined
           || clipMeta.y !== undefined
           || clipMeta.width !== undefined
@@ -234,11 +240,11 @@ function OverlayEditorComponent({
         overlays.push({
           actionId: action.id,
           track: row.id,
-          label: clipMeta.text?.content || clipMeta.asset || action.id,
+          label: clipMeta.text?.content || clipMeta.asset || descriptor?.label || action.id,
           bounds: visibleBounds,
           fullBounds,
           cropValues,
-          isText: clipMeta.clipType === 'text',
+          behavior,
         });
       }
     }
@@ -555,7 +561,10 @@ function OverlayEditorComponent({
 
   const beginTextEdit = useCallback((actionId: string) => {
     const clipMeta = meta[actionId];
-    if (clipMeta?.clipType !== 'text') {
+    const behavior = getClipTypeOverlayBehavior(
+      getRegisteredClipTypeDescriptor(clipMeta?.clipType),
+    );
+    if (!behavior.supportsInlineTextEdit) {
       return;
     }
 
@@ -569,7 +578,10 @@ function OverlayEditorComponent({
     }
 
     const clipMeta = meta[editingClipId];
-    if (clipMeta?.clipType === 'text') {
+    const behavior = getClipTypeOverlayBehavior(
+      getRegisteredClipTypeDescriptor(clipMeta?.clipType),
+    );
+    if (behavior.supportsInlineTextEdit) {
       onOverlayChange(editingClipId, {
         text: {
           ...(clipMeta.text ?? { content: '' }),
@@ -591,7 +603,7 @@ function OverlayEditorComponent({
   return (
     <div
       className="pointer-events-none absolute"
-      style={{ left: layout.left, top: layout.top, width: layout.width, height: layout.height, touchAction: previewTouchAction }}
+      style={{ ...VIDEO_EDITOR_THEME_VARS, left: layout.left, top: layout.top, width: layout.width, height: layout.height, touchAction: previewTouchAction }}
     >
       {/* Dim entire composition during crop drag, with a hole for the visible crop area */}
       {isCropDrag && (() => {
@@ -609,8 +621,9 @@ function OverlayEditorComponent({
         const cb = Math.max(0, Math.min(100, vb));
         return (
           <div
-            className="absolute inset-0 bg-black/50"
+            className="absolute inset-0"
             style={{
+              backgroundColor: 'var(--video-editor-stage-dim)',
               clipPath: `polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% ${ct}%, ${cl}% ${ct}%, ${cl}% ${cb}%, ${cr}% ${cb}%, ${cr}% ${ct}%, 0% ${ct}%)`,
             }}
           />
@@ -664,18 +677,18 @@ function OverlayEditorComponent({
               {ghostStyle && (
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute rounded border border-dashed border-white/35 bg-white/5 opacity-80"
+                  className="pointer-events-none absolute rounded border border-dashed border-[color:var(--video-editor-stage-ghost-border)] bg-[var(--video-editor-stage-ghost-bg)] opacity-80"
                   style={ghostStyle}
                 />
               )}
-              {editingClipId === overlay.actionId && overlay.isText ? (
+              {editingClipId === overlay.actionId && overlay.behavior.supportsInlineTextEdit ? (
               <textarea
                 data-inline-text-editor="true"
-                className="h-full w-full resize-none rounded border border-sky-400 bg-black/80 p-2 text-white outline-none"
+                className="h-full w-full resize-none rounded border border-[color:var(--video-editor-accent-border-strong)] bg-[var(--video-editor-stage-control-bg-strong)] p-2 text-[color:var(--video-editor-stage-fg)] outline-none"
                 value={editText}
                 style={{
                   fontSize: scaledFontSize,
-                  color: clipMeta?.text?.color ?? '#ffffff',
+                  color: clipMeta?.text?.color ?? 'var(--video-editor-stage-fg)',
                   textAlign: clipMeta?.text?.align ?? 'left',
                 }}
                 onChange={(event) => setEditText(event.target.value)}
@@ -691,15 +704,15 @@ function OverlayEditorComponent({
               <div
                 role="button"
                 tabIndex={0}
-                className={`group relative h-full w-full rounded text-left transition motion-reduce:transition-none ${isSelected ? 'border border-sky-400 bg-sky-400/10 shadow-[0_0_0_1px_rgba(56,189,248,0.4)]' : 'border border-transparent hover:border-white/40'}`}
+                className={`group relative h-full w-full rounded text-left transition motion-reduce:transition-none ${isSelected ? 'border border-[color:var(--video-editor-accent-border-strong)] bg-[var(--video-editor-accent-bg)] shadow-[0_0_0_1px_var(--video-editor-accent-border)]' : 'border border-transparent hover:border-[color:var(--video-editor-stage-hover-border)]'}`}
                 style={{ touchAction: previewTouchAction }}
                 aria-label={isSelected ? `Selected overlay ${overlay.label}` : `Select overlay ${overlay.label}`}
                 aria-pressed={isSelected}
                 onPointerDown={(event) => startDrag(event, overlay, 'move')}
                 onDoubleClick={() => {
-                  if (clipMeta?.clipType === 'text') {
+                  if (overlay.behavior.doubleClickAction === 'inline-text-edit') {
                     beginTextEdit(overlay.actionId);
-                  } else if (clipMeta?.asset) {
+                  } else if (overlay.behavior.doubleClickAction === 'lightbox' && clipMeta?.asset) {
                     onDoubleClickAsset?.(clipMeta.asset, overlay.actionId);
                   }
                 }}
@@ -716,7 +729,7 @@ function OverlayEditorComponent({
                   onSelectClip(overlay.actionId);
                 }}
               >
-                {isSelected && allowsDirectManipulationControls && (['resize-nw', 'resize-ne', 'resize-sw', 'resize-se'] as const).map((mode) => {
+                {isSelected && allowsDirectManipulationControls && overlay.behavior.allowsBoundsEditing && (['resize-nw', 'resize-ne', 'resize-sw', 'resize-se'] as const).map((mode) => {
                   const pos = {
                     'resize-nw': 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize',
                     'resize-ne': 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize',
@@ -727,13 +740,13 @@ function OverlayEditorComponent({
                     <span
                       key={mode}
                       aria-hidden="true"
-                      className={`absolute rounded-full border border-white/60 bg-sky-400 ${touchPreviewInput ? 'h-11 w-11' : 'h-3 w-3'} ${pos}`}
+                      className={`absolute rounded-full border border-[color:var(--video-editor-stage-handle-border)] bg-[var(--video-editor-accent-border-strong)] ${touchPreviewInput ? 'h-11 w-11' : 'h-3 w-3'} ${pos}`}
                       style={{ touchAction: previewTouchAction }}
                       onPointerDown={(event) => startDrag(event, overlay, mode)}
                     />
                   );
                 })}
-                {isSelected && allowsDirectManipulationControls && !overlay.isText && ([
+                {isSelected && allowsDirectManipulationControls && overlay.behavior.allowsCrop && ([
                   {
                     mode: 'crop-n',
                     hitClassName: 'left-1.5 right-1.5 top-0 h-3 -translate-y-1/2 cursor-ns-resize',
@@ -763,7 +776,7 @@ function OverlayEditorComponent({
                     onPointerDown={(event) => startDrag(event, overlay, mode)}
                   >
                     <span
-                      className={`pointer-events-none absolute rounded-full transition motion-reduce:transition-none ${lineClassName} ${isSelected || touchPreviewInput ? 'bg-sky-300/70' : 'bg-white/0 group-hover:bg-white/50'}`}
+                      className={`pointer-events-none absolute rounded-full transition motion-reduce:transition-none ${lineClassName} ${isSelected || touchPreviewInput ? 'bg-[var(--video-editor-accent-text-soft)]' : 'bg-transparent group-hover:bg-[var(--video-editor-stage-guide-hover)]'}`}
                     />
                   </span>
                 ))}
@@ -781,7 +794,7 @@ function OverlayEditorComponent({
                         type="button"
                         title="Reset to original size"
                         aria-label="Reset overlay to original size"
-                        className={`flex items-center justify-center rounded bg-black/70 text-white/80 transition motion-reduce:transition-none hover:bg-black/90 hover:text-white ${touchPreviewInput ? 'h-11 w-11' : 'h-6 w-6'}`}
+                        className={`flex items-center justify-center rounded bg-[var(--video-editor-stage-control-bg-strong)] text-[color:var(--video-editor-stage-fg-muted)] transition motion-reduce:transition-none hover:bg-[var(--video-editor-stage-control-bg-hover-strong)] hover:text-[color:var(--video-editor-stage-fg)] ${touchPreviewInput ? 'h-11 w-11' : 'h-6 w-6'}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           // Keep current position (x/y), reset size to composition
@@ -803,7 +816,7 @@ function OverlayEditorComponent({
                       type="button"
                       title="Fill composition"
                       aria-label="Fill overlay to composition"
-                      className={`flex items-center justify-center rounded bg-black/70 text-white/80 transition motion-reduce:transition-none hover:bg-black/90 hover:text-white ${touchPreviewInput ? 'h-11 w-11' : 'h-6 w-6'}`}
+                      className={`flex items-center justify-center rounded bg-[var(--video-editor-stage-control-bg-strong)] text-[color:var(--video-editor-stage-fg-muted)] transition motion-reduce:transition-none hover:bg-[var(--video-editor-stage-control-bg-hover-strong)] hover:text-[color:var(--video-editor-stage-fg)] ${touchPreviewInput ? 'h-11 w-11' : 'h-6 w-6'}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onOverlayChange(overlay.actionId, {

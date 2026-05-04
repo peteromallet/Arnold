@@ -1,5 +1,14 @@
-import type { AssetRegistryEntry, TimelineClip, TimelineConfig } from "../../../src/tools/video-editor/types/index.ts";
-import { loadTimelineState, saveTimelineConfigVersioned } from "../ai-timeline-agent/db.ts";
+import {
+  getPairTimelineClipDuration,
+  type AssetRegistryEntry,
+  type TimelineClip,
+  type TimelineConfig,
+} from "../../../src/tools/video-editor/index.ts";
+import {
+  loadTimelineState,
+  prepareTimelineConfigForPersistence,
+  saveTimelineConfigVersioned,
+} from "../ai-timeline-agent/db.ts";
 import { addMediaClip } from "../ai-timeline-agent/tools/timeline.ts";
 import type { PlacementIntent, SupabaseAdmin as TimelineSupabaseAdmin } from "../ai-timeline-agent/types.ts";
 import type { CompletionFollowUpIssue } from "./completionHelpers.ts";
@@ -39,20 +48,6 @@ function trackExists(config: TimelineConfig, trackId: string): boolean {
 
 function findClip(config: TimelineConfig, clipId: string): TimelineClip | null {
   return config.clips.find((clip) => clip.id === clipId) ?? null;
-}
-
-function getClipTimelineDuration(clip: TimelineClip): number {
-  if (typeof clip.hold === "number" && Number.isFinite(clip.hold)) {
-    return clip.hold;
-  }
-
-  const from = typeof clip.from === "number" && Number.isFinite(clip.from) ? clip.from : 0;
-  const to = typeof clip.to === "number" && Number.isFinite(clip.to) ? clip.to : from;
-  const speed = typeof clip.speed === "number" && Number.isFinite(clip.speed) && clip.speed > 0
-    ? clip.speed
-    : 1;
-
-  return Math.max(0, to - from) / speed;
 }
 
 function normalizeMediaType(mediaType: string): "image" | "video" | null {
@@ -181,7 +176,7 @@ export async function executePlacement(
     }
 
     targetTrackId = placementIntent.preferred_track_id;
-    targetAt = anchorClip.at + getClipTimelineDuration(anchorClip);
+    targetAt = anchorClip.at + getPairTimelineClipDuration(anchorClip, timelineState.registry);
   } else if (trackExists(timelineState.config, placementIntent.fallback_track_id)) {
     targetTrackId = placementIntent.fallback_track_id;
     targetAt = placementIntent.fallback_at;
@@ -235,11 +230,13 @@ export async function executePlacement(
     };
   }
 
+  const configToSave = prepareTimelineConfigForPersistence(insertionResult.config, nextRegistry);
+
   const nextVersion = await saveTimelineConfigVersioned(
     supabaseAdmin,
     placementIntent.timeline_id,
     timelineState.configVersion,
-    insertionResult.config,
+    configToSave,
   );
 
   if (nextVersion === null) {
@@ -252,7 +249,7 @@ export async function executePlacement(
     };
   }
 
-  const placedClip = insertionResult.config.clips.find((clip) => clip.asset === assetKey);
+  const placedClip = configToSave.clips.find((clip) => clip.asset === assetKey);
 
   return {
     status: "placed",

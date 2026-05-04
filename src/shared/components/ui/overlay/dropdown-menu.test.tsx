@@ -31,7 +31,7 @@ describe('DropdownMenu overlay bridge', () => {
 
     expect(overlay?.type).toBe('menu');
     expect(overlay?.elements).toContain(popup);
-    expect(popup.parentElement?.style.zIndex).toBe('1011');
+    expect(popup.parentElement?.style.zIndex).toBe('110011');
     expect(popup.className).not.toContain('z-50');
   });
 
@@ -61,6 +61,6 @@ describe('DropdownMenu overlay bridge', () => {
     expect(overlays.map((overlay) => overlay.type)).toEqual(['menu', 'menu-submenu']);
     expect(overlays.at(-1)?.elements).toContain(popup);
     expect(popup.className).not.toContain('z-50');
-    expect(popup.parentElement?.style.zIndex).toBe('1021');
+    expect(popup.parentElement?.style.zIndex).toBe('110021');
   });
 });

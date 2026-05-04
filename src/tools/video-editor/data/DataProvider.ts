@@ -1,21 +1,12 @@
-import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types';
+import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types';
 import type { Checkpoint } from '@/tools/video-editor/types/history';
-
-export interface SilenceRegion {
-  start: number;
-  end: number;
-}
-
-export interface AssetProfile {
-  transcript?: { segments?: Array<{ start: number; end: number; text: string }> };
-  [key: string]: unknown;
-}
-
-export interface UploadAssetOptions {
-  timelineId: string;
-  userId: string;
-  filename?: string;
-}
+import type { AssetResolver } from '@/tools/video-editor/data/AssetResolver';
+export type {
+  AssetProfile,
+  SilenceRegion,
+  UploadedAssetResult,
+  UploadAssetOptions,
+} from '@/tools/video-editor/data/AssetResolver';
 
 export interface LoadedTimeline {
   config: TimelineConfig;
@@ -50,7 +41,7 @@ export function isTimelineNotFoundError(error: unknown): error is TimelineNotFou
     || (error instanceof Error && error.name === 'TimelineNotFoundError');
 }
 
-export interface DataProvider {
+export interface DataProvider extends AssetResolver {
   loadTimeline(timelineId: string): Promise<LoadedTimeline>;
   saveTimeline(
     timelineId: string,
@@ -61,12 +52,9 @@ export interface DataProvider {
   saveCheckpoint?(timelineId: string, checkpoint: Omit<Checkpoint, 'id'>): Promise<string>;
   loadCheckpoints?(timelineId: string): Promise<Checkpoint[]>;
   loadAssetRegistry(timelineId: string): Promise<AssetRegistry>;
-  resolveAssetUrl(file: string): Promise<string>;
-  registerAsset?(timelineId: string, assetId: string, entry: AssetRegistryEntry): Promise<void>;
-  uploadAsset?(
-    file: File,
-    options: UploadAssetOptions,
-  ): Promise<{ assetId: string; entry: AssetRegistryEntry }>;
-  loadWaveform?(assetId: string): Promise<SilenceRegion[] | null>;
-  loadAssetProfile?(assetId: string): Promise<AssetProfile | null>;
 }
+
+// The persistence boundary for the headless editor core remains the existing
+// data provider contract. Core/runtime ports can rename or regroup host inputs,
+// but persistence should continue to flow through this canonical interface.
+export type VideoEditorPersistencePort = DataProvider;

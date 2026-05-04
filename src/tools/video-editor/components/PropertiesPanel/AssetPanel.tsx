@@ -1,14 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { getGenerationDropData, getDragType } from '@/shared/lib/dnd/dragDrop';
 import { Button } from '@/shared/components/ui/button';
 import { Input } from '@/shared/components/ui/input';
 import { ScrollArea } from '@/shared/components/ui/scroll-area';
 import { ExternalLink, Film, ImageIcon, Music2, Upload } from 'lucide-react';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import { useTimelineEditorOps } from '@/tools/video-editor/hooks/timelineStore';
-import { loadGenerationForLightbox } from '@/tools/video-editor/lib/generation-utils';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
 import type { AssetRegistryEntry } from '@/tools/video-editor/types';
 
@@ -52,6 +51,7 @@ export default function AssetPanel({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isGenerationDragOver, setIsGenerationDragOver] = useState(false);
   const [lightboxAssetId, setLightboxAssetId] = useState<string | null>(null);
+  const { mediaLightbox } = useVideoEditorRuntime();
   const { registerGenerationAsset } = useTimelineEditorOps();
 
   const usedAssets = useMemo(() => {
@@ -108,7 +108,7 @@ export default function AssetPanel({
   const generationQueries = useQueries({
     queries: uniqueGenerationAssets.map(({ generationId }) => ({
       queryKey: ['video-editor', 'generation-lightbox', generationId],
-      queryFn: () => loadGenerationForLightbox(generationId),
+      queryFn: () => mediaLightbox.loadGenerationForLightbox(generationId),
       staleTime: 60_000,
     })),
   });
@@ -275,7 +275,7 @@ export default function AssetPanel({
       </div>
 
       {lightboxAssetId && lightboxQuery?.data && (
-        <MediaLightbox
+        <mediaLightbox.Lightbox
           media={lightboxQuery.data}
           initialVariantId={lightboxAsset?.variantId ?? lightboxQuery.data.primary_variant_id ?? undefined}
           onClose={() => setLightboxAssetId(null)}

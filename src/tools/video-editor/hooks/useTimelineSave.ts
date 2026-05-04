@@ -23,7 +23,14 @@ export function useTimelineSave(
   interactionStateRef: InteractionStateRef,
   store: TimelineStoreApi,
 ) {
-  const { timelineId } = useVideoEditorRuntime();
+  const { timelineId, assetResolver } = useVideoEditorRuntime();
+  const resolveAssetUrl = (file: string) => {
+    if (assetResolver) {
+      return Promise.resolve(assetResolver.resolveAssetUrl(file));
+    }
+
+    return provider.resolveAssetUrl(file);
+  };
   const lastSavedSignatureRef = useRef('');
   const savedSeqRef = useRef(0);
   const configVersionRef = useRef(1);
@@ -36,6 +43,7 @@ export function useTimelineSave(
     store,
     provider,
     timelineId,
+    resolveAssetUrl,
     eventBus: eventBusRef.current,
     dataRef: commit.dataRef,
     commitData: commit.commitData,
@@ -56,6 +64,7 @@ export function useTimelineSave(
     store,
     queries,
     provider,
+    resolveAssetUrl,
     commitData: commit.commitData,
     dataRef: commit.dataRef,
     selectedClipIdRef: commit.selectedClipIdRef,

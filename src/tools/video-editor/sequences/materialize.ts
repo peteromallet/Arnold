@@ -1,7 +1,7 @@
 import {
-  getTrustedSequenceMetadata,
-  type SequenceParamMetadata,
-} from '@/tools/video-editor/sequences/metadata';
+  getTrustedSequenceParamDefinitions,
+} from '@/tools/video-editor/clip-types/registry';
+import type { ClipTypeSequenceParamDefinition as SequenceParamMetadata } from '@/tools/video-editor/clip-types/defineClipType';
 import type {
   ResolvedAssetRegistryEntry,
   ResolvedTimelineClip,
@@ -36,11 +36,9 @@ const materializeAssetListParam = (
 const assetListParamsForClipType = (
   clipType: string | undefined,
 ): readonly SequenceParamMetadata[] => {
-  if (!clipType) return [];
-  const metadata = getTrustedSequenceMetadata(clipType);
-  return metadata?.params.filter((param) => (
+  return getTrustedSequenceParamDefinitions(clipType).filter((param) => (
     param.kind === 'asset-list' && typeof param.componentParam === 'string'
-  )) ?? [];
+  ));
 };
 
 export const materializeSequenceParams = (

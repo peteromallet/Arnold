@@ -26,12 +26,22 @@ import {
   type ClipOrderMap,
   type TimelineData,
 } from '@/tools/video-editor/lib/timeline-data';
+import type {
+  TimelineCommandHistoryMetadata,
+  TimelineCommandTransaction,
+} from '@/tools/video-editor/commands';
 import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+
+export type CommandHistoryCommitMetadata = {
+  transaction: TimelineCommandTransaction;
+  history: TimelineCommandHistoryMetadata;
+};
 
 export type CommitHistoryOptions = {
   transactionId?: string;
   semantic?: boolean;
+  commandHistory?: CommandHistoryCommitMetadata;
 };
 
 export type CommitDataOptions = {
@@ -42,6 +52,7 @@ export type CommitDataOptions = {
   transactionId?: string;
   semantic?: boolean;
   skipHistory?: boolean;
+  commandHistory?: CommandHistoryCommitMetadata;
 };
 
 export type ScheduleSaveFn = (
@@ -74,6 +85,7 @@ export type ApplyEditOptions = {
   selectedTrackId?: string | null;
   transactionId?: string;
   semantic?: boolean;
+  commandHistory?: CommandHistoryCommitMetadata;
 };
 
 interface UseTimelineCommitOptions {
@@ -177,6 +189,7 @@ export function useTimelineCommit({
       eventBus.emit('beforeCommit', currentData, {
         transactionId: options?.transactionId,
         semantic: options?.semantic,
+        commandHistory: options?.commandHistory,
       });
     }
 
@@ -245,6 +258,7 @@ export function useTimelineCommit({
           selectedTrackId: options?.selectedTrackId,
           transactionId: options?.transactionId,
           semantic: options?.semantic,
+          commandHistory: options?.commandHistory,
         },
       );
       return;
@@ -291,6 +305,7 @@ export function useTimelineCommit({
           selectedTrackId: options?.selectedTrackId,
           transactionId: options?.transactionId,
           semantic: options?.semantic,
+          commandHistory: options?.commandHistory,
         },
       );
       return;
@@ -313,6 +328,7 @@ export function useTimelineCommit({
         selectedTrackId: options?.selectedTrackId,
         transactionId: options?.transactionId,
         semantic: options?.semantic,
+        commandHistory: options?.commandHistory,
       },
     );
   }, [commitData, materializeData, withPinnedShotGroups]);

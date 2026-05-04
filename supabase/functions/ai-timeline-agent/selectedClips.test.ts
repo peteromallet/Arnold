@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getPairTimelineClipDuration } from '../../../src/tools/video-editor/lib/timeline-domain.ts';
+import { prepareTimelineConfigForPersistence } from './db.ts';
 import {
   enrichClipsWithPrompts,
   normalizeSelectedClips,
   resolveSelectionContext,
   resolveTimelinePlacement,
 } from './selectedClips.ts';
+
+function makeTimelineState(clips: unknown[], assets: Record<string, unknown> = {}) {
+  return {
+    config: { clips },
+    registry: { assets },
+  } as unknown as import('./types.ts').TimelineState;
+}
 
 function createSupabaseAdmin(rows: unknown, error: { message: string } | null = null) {
   const inMock = vi.fn().mockResolvedValue({ data: rows, error });
@@ -123,16 +132,12 @@ describe('normalizeSelectedClips', () => {
 
 describe('resolveTimelinePlacement', () => {
   it('returns an after_source placement for a timeline-backed clip that still exists on the loaded timeline', () => {
-    const timelineState = {
-      config: {
-        clips: [{
-          id: 'clip-1',
-          at: 8,
-          track: 'V1',
-          hold: 2.5,
-        }],
-      },
-    } as unknown as import('./types.ts').TimelineState;
+    const timelineState = makeTimelineState([{
+      id: 'clip-1',
+      at: 8,
+      track: 'V1',
+      hold: 2.5,
+    }]);
 
     expect(resolveTimelinePlacement({
       clip_id: 'clip-1',
@@ -149,16 +154,12 @@ describe('resolveTimelinePlacement', () => {
   });
 
   it('returns null for gallery-only clips with no timeline backing', () => {
-    const timelineState = {
-      config: {
-        clips: [{
-          id: 'clip-1',
-          at: 8,
-          track: 'V1',
-          hold: 2.5,
-        }],
-      },
-    } as unknown as import('./types.ts').TimelineState;
+    const timelineState = makeTimelineState([{
+      id: 'clip-1',
+      at: 8,
+      track: 'V1',
+      hold: 2.5,
+    }]);
 
     expect(resolveTimelinePlacement({
       clip_id: 'gallery-gen-1',
@@ -169,16 +170,12 @@ describe('resolveTimelinePlacement', () => {
   });
 
   it('does not treat gallery clip ids as timeline anchors even when variant_id is present', () => {
-    const timelineState = {
-      config: {
-        clips: [{
-          id: 'clip-1',
-          at: 8,
-          track: 'V1',
-          hold: 2.5,
-        }],
-      },
-    } as unknown as import('./types.ts').TimelineState;
+    const timelineState = makeTimelineState([{
+      id: 'clip-1',
+      at: 8,
+      track: 'V1',
+      hold: 2.5,
+    }]);
 
     const [galleryClip] = normalizeSelectedClips([{
       clip_id: '',
@@ -203,16 +200,12 @@ describe('resolveTimelinePlacement', () => {
 
 describe('resolveSelectionContext', () => {
   it('resolves timeline clips from the live timeline config with track, at, and duration', () => {
-    const timelineState = {
-      config: {
-        clips: [{
-          id: 'clip-1',
-          at: 3.5,
-          track: 'V2',
-          hold: 1.25,
-        }],
-      },
-    } as unknown as import('./types.ts').TimelineState;
+    const timelineState = makeTimelineState([{
+      id: 'clip-1',
+      at: 3.5,
+      track: 'V2',
+      hold: 1.25,
+    }]);
 
     expect(resolveSelectionContext([{
       clip_id: 'clip-1',
@@ -240,17 +233,51 @@ describe('resolveSelectionContext', () => {
     }]);
   });
 
-  it('treats gallery-prefixed or missing clip ids as non-timeline selections', () => {
-    const timelineState = {
-      config: {
-        clips: [{
-          id: 'clip-1',
-          at: 3.5,
-          track: 'V2',
-          hold: 1.25,
-        }],
+  it('uses pair-aware registry duration semantics for malformed non-hold clips', () => {
+    const timelineState = makeTimelineState(
+      [{
+        id: 'clip-video',
+        at: 6,
+        track: 'V3',
+        clipType: 'media',
+        asset: 'asset-video',
+        speed: 2,
+      }],
+      {
+        'asset-video': {
+          file: 'video.mp4',
+          duration: 10,
+        },
       },
-    } as unknown as import('./types.ts').TimelineState;
+    );
+    const expectedDuration = getPairTimelineClipDuration(
+      timelineState.config.clips[0] as Parameters<typeof getPairTimelineClipDuration>[0],
+      timelineState.registry as Parameters<typeof getPairTimelineClipDuration>[1],
+    );
+
+    expect(resolveSelectionContext([{
+      clip_id: 'clip-video',
+      url: 'https://example.com/video.mp4',
+      media_type: 'video',
+    }], timelineState, 'timeline-1')).toEqual([{
+      timeline_id: 'timeline-1',
+      clip_id: 'clip-video',
+      track_id: 'V3',
+      at: 6,
+      duration: expectedDuration,
+      source: 'timeline',
+      is_on_timeline: true,
+    }]);
+    expect(expectedDuration).toBe(5);
+  });
+
+  it('treats gallery-prefixed or missing clip ids as non-timeline selections', () => {
+    const timelineState = makeTimelineState([{
+      id: 'clip-1',
+      at: 3.5,
+      track: 'V2',
+      hold: 1.25,
+    }]);
 
     expect(resolveSelectionContext([
       {
@@ -393,5 +420,62 @@ describe('enrichClipsWithPrompts', () => {
       { clip_id: 'clip-1', generation_id: 'gen-1', url: 'https://example.com/1.png', media_type: 'image', prompt: 'orchestrator prompt' },
       { clip_id: 'clip-2', generation_id: 'gen-2', url: 'https://example.com/2.png', media_type: 'image', prompt: 'metadata only prompt' },
     ]);
+  });
+});
+
+describe('prepareTimelineConfigForPersistence', () => {
+  it('reconciles stale pinned shot group clipIds and trackId before pair-aware canonicalization', () => {
+    const nextConfig = prepareTimelineConfigForPersistence({
+      output: {
+        file: 'out.mp4',
+        fps: 30,
+        resolution: '1920x1080',
+      },
+      tracks: [{ id: 'V2', kind: 'visual', label: 'Visual 2' }],
+      clips: [
+        {
+          id: 'clip-b',
+          at: 3,
+          track: 'V2',
+          clipType: 'media',
+          asset: 'asset-b',
+        },
+        {
+          id: 'clip-a',
+          at: 1,
+          track: 'V2',
+          clipType: 'media',
+          asset: 'asset-a',
+        },
+      ],
+      pinnedShotGroups: [{
+        shotId: 'shot-1',
+        trackId: 'stale-track',
+        clipIds: ['missing-clip', 'clip-b', 'clip-a'],
+        mode: 'images',
+      }],
+    }, {
+      assets: {
+        'asset-a': { file: 'a.mp4', type: 'video/mp4', duration: 8 },
+        'asset-b': { file: 'b.mp4', type: 'video/mp4', duration: 6 },
+      },
+    });
+
+    expect(nextConfig.pinnedShotGroups).toEqual([{
+      shotId: 'shot-1',
+      trackId: 'V2',
+      clipIds: ['clip-a', 'clip-b'],
+      mode: 'images',
+    }]);
+    expect(nextConfig.clips[0]).toEqual(expect.objectContaining({
+      id: 'clip-b',
+      from: 0,
+      to: 6,
+    }));
+    expect(nextConfig.clips[1]).toEqual(expect.objectContaining({
+      id: 'clip-a',
+      from: 0,
+      to: 8,
+    }));
   });
 });

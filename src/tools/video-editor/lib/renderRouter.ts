@@ -25,10 +25,8 @@
 // client renderer can still handle that. The trigger is the clipType
 // dispatch, not theme presence.
 
-import {
-  THEME_PACKAGE_REGISTRY,
-  type ThemePackageClipType,
-} from '@banodoco/timeline-composition/registry.generated';
+import type { TimelineRenderRequest } from '@/tools/video-editor/hooks/timeline-state-types';
+import { getRegisteredClipTypeDescriptor } from '@/tools/video-editor/clip-types/runtime';
 import {
   getGeneratedRemotionModuleStatus,
   type GeneratedRemotionModuleBlockReason,
@@ -46,7 +44,35 @@ export interface RouterTimelineShape {
   clips?: ReadonlyArray<RouterClipShape> | null;
 }
 
-export type RenderRoute = 'client' | 'banodoco' | 'blocked';
+/**
+ * Sprint 8 (final): provider-id taxonomy used by the render pipeline +
+ * `renderPipeline.ts`. Each route maps 1:1 onto a provider id so middleware
+ * can dispatch on the route without a separate lookup table.
+ *
+ *   * `browser-remotion`  — client-side WebCodecs / Remotion path
+ *                          (`useClientRender`, native + media clips).
+ *   * `worker-banodoco`   — orchestrator `banodoco_render_timeline`
+ *                          (themed + generated-remotion-module clips).
+ *   * `preview-only`      — generated remotion_module clips with invalid /
+ *                          missing artifact metadata. Cannot be rendered;
+ *                          surfaces a hard "render blocked" message.
+ *   * `external`          — reserved for future external render providers.
+ *                          Currently unreachable from `decideRenderRoute`.
+ */
+export type RenderRoute =
+  | 'browser-remotion'
+  | 'worker-banodoco'
+  | 'preview-only'
+  | 'external';
+
+export type RenderProviderId = RenderRoute;
+
+export const RENDER_PROVIDER_REGISTRY: Readonly<Record<RenderRoute, RenderProviderId>> = {
+  'browser-remotion': 'browser-remotion',
+  'worker-banodoco': 'worker-banodoco',
+  'preview-only': 'preview-only',
+  external: 'external',
+};
 
 export interface RenderRouteDecision {
   route: RenderRoute;
@@ -64,11 +90,6 @@ export interface RenderRouteDecision {
     | GeneratedRemotionModuleBlockReason;
 }
 
-const isThemePackageClipType = (value: unknown): value is ThemePackageClipType => {
-  if (typeof value !== 'string') return false;
-  return Object.prototype.hasOwnProperty.call(THEME_PACKAGE_REGISTRY, value);
-};
-
 const NATIVE_BUILTIN_CLIP_TYPES: ReadonlySet<string> = new Set([
   'media',
   'text',
@@ -83,6 +104,14 @@ const isNativeBuiltinClipType = (value: unknown): boolean => {
   return NATIVE_BUILTIN_CLIP_TYPES.has(value);
 };
 
+const isCustomRenderClipType = (value: unknown): boolean => {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const descriptor = getRegisteredClipTypeDescriptor(value);
+  return descriptor?.renderCapabilities.exportRoute === 'custom';
+};
+
 /** Pure-decision routing — call this from a hook or test. */
 export function decideRenderRoute(
   timeline: RouterTimelineShape | null | undefined,
@@ -91,7 +120,7 @@ export function decideRenderRoute(
 
   if (clips.length === 0) {
     return {
-      route: 'client',
+      route: 'browser-remotion',
       hasThemedClip: false,
       hasMediaClip: false,
       reason: 'no_clips',
@@ -106,7 +135,7 @@ export function decideRenderRoute(
     const moduleStatus = getGeneratedRemotionModuleStatus(clip);
     if (moduleStatus.kind === 'blocked_module') {
       return {
-        route: 'blocked',
+        route: 'preview-only',
         hasThemedClip: false,
         hasMediaClip: false,
         reason: moduleStatus.reason,
@@ -118,7 +147,7 @@ export function decideRenderRoute(
     }
 
     hasOtherClip = true;
-    if (isThemePackageClipType(clip?.clipType)) {
+    if (isCustomRenderClipType(clip?.clipType)) {
       hasThemedClip = true;
     } else if (isNativeBuiltinClipType(clip?.clipType)) {
       hasMediaClip = true;
@@ -134,7 +163,7 @@ export function decideRenderRoute(
 
   if (hasGeneratedModuleClip) {
     return {
-      route: 'banodoco',
+      route: 'worker-banodoco',
       hasThemedClip,
       hasMediaClip,
       reason: hasOtherClip ? 'mixed_generated_module_and_other' : 'generated_remotion_module',
@@ -143,7 +172,7 @@ export function decideRenderRoute(
 
   if (hasThemedClip && hasMediaClip) {
     return {
-      route: 'banodoco',
+      route: 'worker-banodoco',
       hasThemedClip,
       hasMediaClip,
       reason: 'mixed_themed_and_media',
@@ -151,14 +180,14 @@ export function decideRenderRoute(
   }
   if (hasThemedClip) {
     return {
-      route: 'banodoco',
+      route: 'worker-banodoco',
       hasThemedClip,
       hasMediaClip,
       reason: 'themed_only',
     };
   }
   return {
-    route: 'client',
+    route: 'browser-remotion',
     hasThemedClip,
     hasMediaClip,
     reason: 'pure_native_clips',
@@ -181,11 +210,14 @@ export interface BanodocoRenderTimelinePayload {
 }
 
 export interface BuildRenderPayloadInput {
-  timelineId: string;
-  projectId: string;
-  resolvedConfig: { theme?: string; clips?: ReadonlyArray<RouterClipShape> } & Record<string, unknown>;
-  assetRegistry: Record<string, unknown> | null | undefined;
-  outputFilename?: string;
+  /**
+   * The TimelineRenderRequest the UI/hook composed for this render.
+   * `renderRuntime.projectId` and `assetRegistry` are read from here,
+   * keeping caller call-sites aligned with the rest of the pipeline.
+   */
+  request: Pick<TimelineRenderRequest, 'timelineId' | 'assetRegistry' | 'resolvedConfig' | 'renderRuntime'> & {
+    outputFilename?: string;
+  };
   userJwt: string;
   /** Tests inject a deterministic UUID; production uses crypto.randomUUID. */
   correlationId?: string;
@@ -215,20 +247,21 @@ function newCorrelationId(): string {
 export function buildRenderTimelinePayload(
   input: BuildRenderPayloadInput,
 ): { payload?: BanodocoRenderTimelinePayload; error?: string } {
-  if (!input.timelineId) return { error: 'timelineId is required' };
-  if (!input.projectId) return { error: 'projectId is required' };
+  const { request } = input;
+  if (!request?.timelineId) return { error: 'timelineId is required' };
+  if (!request?.renderRuntime?.projectId) return { error: 'projectId is required' };
   if (!input.userJwt) return { error: 'user JWT is required (SD-022)' };
-  if (!input.resolvedConfig) return { error: 'resolved timeline config is required' };
+  if (!request.resolvedConfig) return { error: 'resolved timeline config is required' };
 
   return {
     payload: {
-      timeline_id: input.timelineId,
-      timeline: materializeSequenceConfig(input.resolvedConfig as Parameters<typeof materializeSequenceConfig>[0]),
-      assets: input.assetRegistry ?? { assets: {} },
-      theme_id: defaultThemeId(input.resolvedConfig),
-      output_filename: input.outputFilename ?? defaultOutputFilename(input.timelineId),
+      timeline_id: request.timelineId,
+      timeline: materializeSequenceConfig(request.resolvedConfig as Parameters<typeof materializeSequenceConfig>[0]),
+      assets: request.assetRegistry ?? { assets: {} },
+      theme_id: defaultThemeId(request.resolvedConfig),
+      output_filename: request.outputFilename ?? defaultOutputFilename(request.timelineId),
       user_jwt: input.userJwt,
-      project_id: input.projectId,
+      project_id: request.renderRuntime.projectId,
       correlation_id: input.correlationId ?? newCorrelationId(),
     },
   };

@@ -14,6 +14,14 @@ const mocks = vi.hoisted(() => ({
   saveTimelineConfigVersioned: vi.fn(),
 }));
 
+vi.mock("@banodoco/timeline-ops", () => ({
+  moveClip: vi.fn(),
+  setClipParams: vi.fn(),
+  setClipProperty: vi.fn(),
+  setThemeOverrides: vi.fn(),
+  setTimelineTheme: vi.fn(),
+}));
+
 vi.mock("./tools/registry.ts", () => ({
   executeCommand: (...args: unknown[]) => mocks.executeCommand(...args),
 }));
@@ -44,11 +52,9 @@ vi.mock("./tools/delegateToBanodocoAgent.ts", () => ({
   summariseTaskStatusForChat: (...args: unknown[]) => mocks.summariseTaskStatusForChat(...args),
 }));
 
-// Sprint 4: integration tests for set_params/set_theme/set_theme_overrides
-// pass through the real timeline.ts handlers but stub the DB save so the
-// loop's versioned-save path is exercised without Supabase. We mock just
-// `saveTimelineConfigVersioned` (other db.ts exports are unused by the
-// new code paths).
+// The DB module stays mocked because other loop helpers import it, but
+// themed timeline edits now route through executeCommand's shared
+// transaction path instead of saving directly from loop.ts.
 vi.mock("./db.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./db.ts")>();
   return {
@@ -113,7 +119,12 @@ describe("loop helpers", () => {
       args: { command: "view" },
       parseError: null,
     }, timelineState, supabaseAdmin, "timeline-1", selectedClips)).resolves.toEqual({ result: "ran" });
-    expect(mocks.executeCommand).toHaveBeenCalledWith("view", timelineState, "timeline-1", supabaseAdmin);
+    expect(mocks.executeCommand).toHaveBeenCalledWith(
+      { command: "view" },
+      timelineState,
+      "timeline-1",
+      supabaseAdmin,
+    );
 
     await expect(executeToolCall({
       id: "task",
@@ -213,22 +224,16 @@ describe("loop helpers", () => {
 
   // ── Sprint 4 (SD-018): set_params / set_theme / set_theme_overrides ──
 
-  it("dispatches set_params and persists via saveTimelineConfigVersioned", async () => {
-    const initialConfig = {
-      theme: "2rp",
-      clips: [
-        { id: "clip-section-hook", at: 0, track: "V1", clipType: "section-hook" },
-      ],
-    };
+  it("routes set_params through executeCommand as a typed transaction", async () => {
     const timelineState = {
-      config: initialConfig,
+      config: { theme: "2rp", clips: [] },
       configVersion: 7,
       registry: { assets: {} },
       projectId: "project-1",
     } as unknown as import("./types.ts").TimelineState;
     const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
 
-    mocks.saveTimelineConfigVersioned.mockResolvedValue(8);
+    mocks.executeCommand.mockResolvedValue({ result: "Set params on clip clip-section-hook: kicker, title." });
 
     const result = await executeToolCall({
       id: "set-params-1",
@@ -238,19 +243,21 @@ describe("loop helpers", () => {
     }, timelineState, supabaseAdmin, "timeline-1");
 
     expect(result.result).toBe("Set params on clip clip-section-hook: kicker, title.");
-    expect(timelineState.configVersion).toBe(8);
-    const updated = (timelineState.config.clips[0] as Record<string, unknown>).params as Record<string, unknown>;
-    expect(updated.kicker).toBe("Spring 2RP");
-    expect(updated.title).toBe("A new renaissance");
-    expect(mocks.saveTimelineConfigVersioned).toHaveBeenCalledWith(
-      supabaseAdmin,
-      "timeline-1",
-      7,
-      expect.objectContaining({ clips: expect.any(Array) }),
-    );
+    expect(mocks.executeCommand).toHaveBeenCalledWith({
+      transaction: {
+        commands: [{
+          type: "set-params",
+          payload: {
+            clipId: "clip-section-hook",
+            params: { kicker: "Spring 2RP", title: "A new renaissance" },
+          },
+        }],
+      },
+      mode: "apply",
+    }, timelineState, "timeline-1", supabaseAdmin);
   });
 
-  it("dispatches set_theme and persists via saveTimelineConfigVersioned", async () => {
+  it("routes set_theme through executeCommand as a typed transaction", async () => {
     const timelineState = {
       config: { theme: "2rp", clips: [] },
       configVersion: 1,
@@ -258,7 +265,9 @@ describe("loop helpers", () => {
       projectId: "project-1",
     } as unknown as import("./types.ts").TimelineState;
     const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
-    mocks.saveTimelineConfigVersioned.mockResolvedValue(2);
+    mocks.executeCommand.mockResolvedValue({
+      result: "Switched theme from 2rp to arca-gidan. (Note: existing themed clips referencing the old theme's clipType may need remapping.)",
+    });
 
     const result = await executeToolCall({
       id: "set-theme-1",
@@ -267,14 +276,21 @@ describe("loop helpers", () => {
       parseError: null,
     }, timelineState, supabaseAdmin, "timeline-1");
 
-    expect(result.result).toBe(
-      "Switched theme from 2rp to arca-gidan. (Note: existing themed clips referencing the old theme's clipType may need remapping.)",
-    );
-    expect(timelineState.config.theme).toBe("arca-gidan");
-    expect(timelineState.configVersion).toBe(2);
+    expect(result.result).toBe("Switched theme from 2rp to arca-gidan. (Note: existing themed clips referencing the old theme's clipType may need remapping.)");
+    expect(mocks.executeCommand).toHaveBeenCalledWith({
+      transaction: {
+        commands: [{
+          type: "set-theme",
+          payload: {
+            themeId: "arca-gidan",
+          },
+        }],
+      },
+      mode: "apply",
+    }, timelineState, "timeline-1", supabaseAdmin);
   });
 
-  it("dispatches set_theme_overrides and persists via saveTimelineConfigVersioned", async () => {
+  it("routes set_theme_overrides through executeCommand as a typed transaction", async () => {
     const timelineState = {
       config: { theme: "2rp", clips: [] },
       configVersion: 5,
@@ -282,7 +298,7 @@ describe("loop helpers", () => {
       projectId: "project-1",
     } as unknown as import("./types.ts").TimelineState;
     const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
-    mocks.saveTimelineConfigVersioned.mockResolvedValue(6);
+    mocks.executeCommand.mockResolvedValue({ result: "Updated theme_overrides keys: visual." });
 
     const result = await executeToolCall({
       id: "set-theme-overrides-1",
@@ -292,14 +308,20 @@ describe("loop helpers", () => {
     }, timelineState, supabaseAdmin, "timeline-1");
 
     expect(result.result).toBe("Updated theme_overrides keys: visual.");
-    expect(
-      (timelineState.config as unknown as { theme_overrides: { visual: { canvas: { fps: number } } } })
-        .theme_overrides.visual.canvas.fps,
-    ).toBe(60);
-    expect(timelineState.configVersion).toBe(6);
+    expect(mocks.executeCommand).toHaveBeenCalledWith({
+      transaction: {
+        commands: [{
+          type: "set-theme-overrides",
+          payload: {
+            overrides: { visual: { canvas: { fps: 60 } } },
+          },
+        }],
+      },
+      mode: "apply",
+    }, timelineState, "timeline-1", supabaseAdmin);
   });
 
-  it("set_params surfaces handler not-found without calling save", async () => {
+  it("set_params returns executeCommand failures unchanged", async () => {
     const timelineState = {
       config: { theme: "2rp", clips: [{ id: "clip-a", at: 0, track: "V1" }] },
       configVersion: 1,
@@ -307,7 +329,7 @@ describe("loop helpers", () => {
       projectId: "project-1",
     } as unknown as import("./types.ts").TimelineState;
     const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
-    mocks.saveTimelineConfigVersioned.mockResolvedValue(2);
+    mocks.executeCommand.mockResolvedValue({ result: "Clip missing was not found." });
 
     const result = await executeToolCall({
       id: "set-params-missing",
@@ -317,10 +339,9 @@ describe("loop helpers", () => {
     }, timelineState, supabaseAdmin, "timeline-1");
 
     expect(result.result).toBe("Clip missing was not found.");
-    expect(mocks.saveTimelineConfigVersioned).not.toHaveBeenCalled();
   });
 
-  it("set_theme returns version-conflict message when save returns null", async () => {
+  it("set_theme returns executeCommand conflict results unchanged", async () => {
     const timelineState = {
       config: { theme: "2rp", clips: [] },
       configVersion: 1,
@@ -328,7 +349,7 @@ describe("loop helpers", () => {
       projectId: "project-1",
     } as unknown as import("./types.ts").TimelineState;
     const supabaseAdmin = {} as import("./types.ts").SupabaseAdmin;
-    mocks.saveTimelineConfigVersioned.mockResolvedValue(null);
+    mocks.executeCommand.mockResolvedValue({ result: "Version conflict. Please retry." });
 
     const result = await executeToolCall({
       id: "set-theme-conflict",
@@ -492,6 +513,22 @@ describe("loop helpers", () => {
     expect(systemPrompt).toContain("do not fall back to plain text-to-image without a reference");
   });
 
+  it("surfaces the installed themed command families in the system prompt", () => {
+    const systemPrompt = buildTimelineAgentSystemPrompt({
+      projectId: "project-1",
+      timelineSummary: "- id=clip-1 track=V1",
+      selectedClips: [{
+        clip_id: "clip-1",
+        url: "https://example.com/reference.png",
+        media_type: "image",
+      }],
+    });
+
+    expect(systemPrompt).toContain("Installed themed command families in this build:");
+    expect(systemPrompt).toContain("set_params supports trusted sequence clip types: image-jump, section-hook, art-card, resource-card, cta-card");
+    expect(systemPrompt).toContain("set_theme supports installed themes: 2rp");
+  });
+
   it("extracts text-formatted create_task blocks from assistant text", () => {
     const toolCalls = extractToolCalls({
       role: "assistant",
@@ -513,6 +550,40 @@ describe("loop helpers", () => {
           model: "z-image",
           prompt: "Orbital satellite perspective directly overhead",
           task_type: "text-to-image",
+        },
+        parseError: null,
+      },
+    ]);
+  });
+
+  it("extracts typed run transactions from assistant text", () => {
+    const toolCalls = extractToolCalls({
+      role: "assistant",
+      content: `run({
+  "transaction": {
+    "transactionId": "tx-1",
+    "commands": [
+      { "type": "move", "payload": { "clipId": "clip-1", "at": 5 } },
+      { "type": "trim", "payload": { "clipId": "clip-1", "duration": 2 } }
+    ]
+  },
+  "mode": "dry_run"
+})`,
+    });
+
+    expect(toolCalls).toEqual([
+      {
+        id: expect.any(String),
+        name: "run",
+        args: {
+          transaction: {
+            transactionId: "tx-1",
+            commands: [
+              { type: "move", payload: { clipId: "clip-1", at: 5 } },
+              { type: "trim", payload: { clipId: "clip-1", duration: 2 } },
+            ],
+          },
+          mode: "dry_run",
         },
         parseError: null,
       },

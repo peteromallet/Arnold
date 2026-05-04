@@ -23,7 +23,7 @@ import type {
   TaskSnapshotRow,
   TimelineModifiedRow,
 } from "./snapshot.ts";
-import type { TimelineClip } from "../../../../src/tools/video-editor/types/index.ts";
+import type { TimelineClip } from "../../../../src/tools/video-editor/index.ts";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -1,10 +1,16 @@
+/**
+ * Internal Reigh persistence adapter backed by Supabase.
+ * Not part of the supported public SDK surface.
+ */
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { generateUUID } from '@/shared/lib/taskCreation/ids';
-import { validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
 import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults';
 import { extractAssetRegistryEntry } from '@/tools/video-editor/lib/mediaMetadata';
 import {
-  TimelineNotFoundError,
+  serializeTimelineConfigSnapshot,
+  serializeTimelinePair,
+} from '@/tools/video-editor/lib/timeline-domain';
+import {
   TimelineVersionConflictError,
   type DataProvider,
   type LoadedTimeline,
@@ -49,7 +55,7 @@ export class SupabaseDataProvider implements DataProvider {
   ) {}
 
   async loadTimeline(timelineId: string): Promise<LoadedTimeline> {
-    const supabase = getSupabaseClient() as any;
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('timelines')
       .select('config, config_version')
@@ -61,10 +67,10 @@ export class SupabaseDataProvider implements DataProvider {
     }
 
     const config = (data?.config ?? createDefaultTimelineConfig()) as TimelineConfig;
-    validateSerializedConfig(config);
+    const serialized = serializeTimelineConfigSnapshot(config);
 
     return {
-      config,
+      config: serialized.config,
       configVersion: typeof (data as { config_version?: unknown } | null)?.config_version === 'number'
         ? (data as { config_version: number }).config_version
         : 1,
@@ -77,23 +83,23 @@ export class SupabaseDataProvider implements DataProvider {
     expectedVersion: number,
     registry?: AssetRegistry,
   ): Promise<number> {
-    validateSerializedConfig(config);
-
-    const supabase = getSupabaseClient() as any;
-    const rpcName = registry !== undefined
+    const supabase = getSupabaseClient();
+    const pairSerialized = registry !== undefined ? serializeTimelinePair(config, registry) : null;
+    const configSerialized = pairSerialized ?? serializeTimelineConfigSnapshot(config);
+    const rpcName = pairSerialized
       ? 'update_timeline_versioned'
       : 'update_timeline_config_versioned';
-    const rpcParams = registry !== undefined
+    const rpcParams = pairSerialized
       ? {
           p_timeline_id: timelineId,
           p_expected_version: expectedVersion,
-          p_config: config,
-          p_asset_registry: registry,
+          p_config: pairSerialized.config,
+          p_asset_registry: pairSerialized.registry,
         }
       : {
           p_timeline_id: timelineId,
           p_expected_version: expectedVersion,
-          p_config: config,
+          p_config: configSerialized.config,
         };
     const { data, error } = await supabase.rpc(rpcName as never, rpcParams as never);
 
@@ -110,15 +116,15 @@ export class SupabaseDataProvider implements DataProvider {
   }
 
   async saveCheckpoint(timelineId: string, checkpoint: Omit<Checkpoint, 'id'>): Promise<string> {
-    validateSerializedConfig(checkpoint.config);
+    const serialized = serializeTimelineConfigSnapshot(checkpoint.config);
 
-    const supabase = getSupabaseClient() as any;
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('timeline_checkpoints')
       .insert({
         timeline_id: timelineId,
         user_id: this.options.userId,
-        config: checkpoint.config,
+        config: serialized.config,
         trigger_type: checkpoint.triggerType,
         label: checkpoint.label,
         edits_since_last_checkpoint: checkpoint.editsSinceLastCheckpoint,
@@ -162,7 +168,7 @@ export class SupabaseDataProvider implements DataProvider {
   }
 
   async loadCheckpoints(timelineId: string): Promise<Checkpoint[]> {
-    const supabase = getSupabaseClient() as any;
+    const supabase = getSupabaseClient();
     const retentionCutoff = new Date(Date.now() - TIMELINE_CHECKPOINT_RETENTION_MS).toISOString();
 
     const { error: cleanupError } = await supabase
@@ -190,7 +196,7 @@ export class SupabaseDataProvider implements DataProvider {
   }
 
   async loadAssetRegistry(timelineId: string): Promise<AssetRegistry> {
-    const supabase = getSupabaseClient() as any;
+    const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('timelines')
       .select('asset_registry')
@@ -214,7 +220,7 @@ export class SupabaseDataProvider implements DataProvider {
       return sanitizedFile;
     }
 
-    const supabase = getSupabaseClient() as any;
+    const supabase = getSupabaseClient();
     const { data } = supabase
       .storage
       .from(TIMELINE_ASSETS_BUCKET)
@@ -228,7 +234,7 @@ export class SupabaseDataProvider implements DataProvider {
     assetId: string,
     entry: AssetRegistryEntry,
   ): Promise<void> {
-    const supabase = getSupabaseClient() as any;
+    const supabase = getSupabaseClient();
     const { error } = await supabase
       .rpc('upsert_asset_registry_entry' as never, {
         p_timeline_id: timelineId,
@@ -250,7 +256,7 @@ export class SupabaseDataProvider implements DataProvider {
       .replace(/[^a-zA-Z0-9._-]/g, '');
     const storagePath = `${options.userId}/${options.timelineId}/${Date.now()}-${safeFilename}`;
 
-    const supabase = getSupabaseClient() as any;
+    const supabase = getSupabaseClient();
     const { error: uploadError } = await supabase
       .storage
       .from(TIMELINE_ASSETS_BUCKET)

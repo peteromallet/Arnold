@@ -38,7 +38,7 @@ function createSupabaseAdmin({
 }
 
 function makeTimelineState(
-  config: Partial<import('../../../../src/tools/video-editor/types/index.ts').TimelineConfig> = {},
+  config: Partial<import('../../../../src/tools/video-editor/index.ts').TimelineConfig> = {},
 ) {
   return {
     config: {

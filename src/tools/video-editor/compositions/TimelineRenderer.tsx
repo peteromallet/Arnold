@@ -1,7 +1,7 @@
 import { AbsoluteFill, Sequence } from 'remotion';
 import { memo, useMemo, type FC, type ReactNode } from 'react';
 import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils';
-import { getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils';
+import { getClipDurationInFrames, getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils';
 import { BUILTIN_CLIP_TYPES, type ResolvedTimelineClip, type ResolvedTimelineConfig, type TrackDefinition } from '@/tools/video-editor/types';
 import { AudioTrack } from '@/tools/video-editor/compositions/AudioTrack';
 import { AudioAnalysisProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider';
@@ -21,7 +21,11 @@ import {
   type RuntimeTheme,
   type Theme,
 } from '@banodoco/timeline-composition/theme-api';
-import { SEQUENCE_COMPONENT_REGISTRY } from '@/tools/video-editor/sequences/registry';
+import {
+  describeClipCapability,
+  getClipCapabilityDescriptor,
+  SEQUENCE_COMPONENT_REGISTRY,
+} from '@/tools/video-editor/sequences/registry';
 
 // Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
 //
@@ -46,7 +50,12 @@ const isSequenceComponentClipType = (
   value: string | undefined,
 ): value is keyof typeof SEQUENCE_COMPONENT_REGISTRY => {
   if (typeof value !== 'string') return false;
-  return Object.prototype.hasOwnProperty.call(SEQUENCE_COMPONENT_REGISTRY, value);
+  const descriptor = getClipCapabilityDescriptor(value);
+  return Boolean(
+    descriptor?.registryEntry
+    && descriptor.capabilities.preview === 'browser'
+    && Object.prototype.hasOwnProperty.call(SEQUENCE_COMPONENT_REGISTRY, value),
+  );
 };
 
 const sortClipsByAt = (clips: ResolvedTimelineClip[]): ResolvedTimelineClip[] => {
@@ -74,7 +83,9 @@ const ThemePackageComponent: FC<{
 };
 
 const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps, theme }) => {
-  const entry = SEQUENCE_COMPONENT_REGISTRY[clip.clipType as keyof typeof SEQUENCE_COMPONENT_REGISTRY];
+  const descriptor = getClipCapabilityDescriptor(clip.clipType);
+  const entry = descriptor?.registryEntry
+    ?? SEQUENCE_COMPONENT_REGISTRY[clip.clipType as keyof typeof SEQUENCE_COMPONENT_REGISTRY];
   // Defensive: if the registry lookup somehow returned no entry, fall back
   // to the loud placeholder. This is the second layer of the SD-025
   // "loud placeholder" safety net for clipTypes that *are* in the
@@ -88,7 +99,7 @@ const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps, theme })
     theme: RuntimeTheme;
     fps: number;
   }>;
-  const durationInFrames = Math.max(1, Math.round(((clip.hold ?? 0) + ((clip.to ?? 0) - (clip.from ?? 0))) * fps)) || Math.max(1, Math.round((clip.hold ?? 1) * fps));
+  const durationInFrames = getClipDurationInFrames(clip, fps);
   return (
     <Sequence
       key={clip.id}
@@ -107,7 +118,7 @@ const GeneratedModulePlaceholderSequence: FC<{
   fps: number;
 }> = ({ clip, fps }) => {
   const moduleStatus = getGeneratedRemotionModuleStatus(clip);
-  const durationInFrames = Math.max(1, Math.round(((clip.hold ?? 0) + ((clip.to ?? 0) - (clip.from ?? 0))) * fps)) || Math.max(1, Math.round((clip.hold ?? 1) * fps));
+  const durationInFrames = getClipDurationInFrames(clip, fps);
   const artifactId = moduleStatus.kind === 'valid_module' ? moduleStatus.artifactId : null;
   const reason = moduleStatus.kind === 'blocked_module' ? moduleStatus.reason : 'worker_only';
   return (
@@ -172,7 +183,9 @@ const renderVisualTrack = (
       }}
     >
       {sortedClips.map((clip, index) => {
-        if (isGeneratedRemotionModuleClip(clip)) {
+        const descriptor = describeClipCapability(clip);
+
+        if (descriptor?.source === 'generated-module' || isGeneratedRemotionModuleClip(clip)) {
           return <GeneratedModulePlaceholderSequence key={clip.id} clip={clip} fps={fps} />;
         }
 
@@ -189,6 +202,17 @@ const renderVisualTrack = (
         // codegenned registry entry. Mirrors HypeComposition.tsx:58-64.
         if (isSequenceComponentClipType(clip.clipType)) {
           return <ThemeEffectSequence key={clip.id} clip={clip} fps={fps} theme={theme} />;
+        }
+
+        if (descriptor?.capabilities.preview === 'placeholder') {
+          return (
+            <UnknownClipPlaceholderSequence
+              key={clip.id}
+              clip={clip}
+              fps={fps}
+              reason="unsupported"
+            />
+          );
         }
 
         // SD-025 (Sprint 3): loud placeholder for unknown clipTypes that

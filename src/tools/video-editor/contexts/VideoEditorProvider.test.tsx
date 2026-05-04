@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { useAddToVideoEditor } from '@/domains/media-lightbox/hooks/useAddToVideoEditor';
@@ -14,7 +17,16 @@ import {
   systemResetSelectionForProjectChange,
   userSelectGalleryItem,
 } from '@/shared/state/selectionStore';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import { buildVideoEditorLightboxMedia, VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
+import {
+  INTERNAL_GESTURE_TIMELINE_MUTATIONS,
+  PUBLIC_TIMELINE_COMMAND_NAMES,
+  PUBLIC_TIMELINE_COMMAND_SCOPE,
+  isPublicTimelineCommandName,
+  useTimelineCommands,
+  useTimelineCommandsSafe,
+} from '@/tools/video-editor/hooks/useTimelineCommands';
 import {
   createTimelineStore,
   TimelineStoreProvider,
@@ -31,9 +43,14 @@ import {
   shouldPreserveTouchSelectionForMove,
   shouldToggleTouchSelection,
 } from '@/tools/video-editor/lib/mobile-interaction-model';
+import { configToRows, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import { VIDEO_EDITOR_HOST_PORT_NAMES } from '@/tools/video-editor/runtime/ports';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import { createVideoEditorEffectCatalog } from '@/tools/video-editor/lib/effect-catalog';
 
 const navigateMock = vi.fn();
+const useEffectsMock = vi.fn();
+const useResolvedEffectCatalogMock = vi.fn();
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -56,16 +73,21 @@ const mocks = {
 };
 
 vi.mock('@/tools/video-editor/hooks/useEffects', () => ({
-  useEffects: () => ({ data: [] }),
+  useEffects: (...args: unknown[]) => useEffectsMock(...args),
 }));
 
 vi.mock('@/tools/video-editor/hooks/useEffectRegistry', () => ({
   useEffectRegistry: vi.fn(),
 }));
 
-vi.mock('@/tools/video-editor/hooks/useEffectResources', () => ({
-  useEffectResources: () => ({ effects: [] }),
-}));
+vi.mock('@/tools/video-editor/hooks/useEffectResources', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/tools/video-editor/hooks/useEffectResources')>();
+  return {
+    ...actual,
+    EffectCatalogProvider: ({ children }: { children: any }) => children,
+    useResolvedEffectCatalog: (...args: unknown[]) => useResolvedEffectCatalogMock(...args),
+  };
+});
 
 vi.mock('@/tools/video-editor/hooks/useTimelineClipsForAttachments', () => ({
   useTimelineClipsForAttachments: () => [
@@ -95,6 +117,13 @@ vi.mock('@/shared/hooks/settings/useToolSettings', () => ({
     settings: {
       lastTimelineId: 'timeline-staged',
     },
+  }),
+}));
+
+vi.mock('@/tools/travel-between-images/hooks/video/useShotFinalVideos', () => ({
+  useShotFinalVideos: () => ({
+    finalVideoMap: new Map(),
+    isLoading: false,
   }),
 }));
 
@@ -246,6 +275,7 @@ vi.mock('@/tools/video-editor/hooks/useTimelineState', () => ({
 }));
 
 function Consumer() {
+  const runtime = useVideoEditorRuntime();
   const editorData = useTimelineEditorData();
   const editorOps = useTimelineEditorOps();
   const chrome = useTimelineChromeContext();
@@ -270,6 +300,10 @@ function Consumer() {
       <span>{chrome.saveStatus}</span>
       <span>{playback.currentTime}</span>
       <span data-testid="agent-chat-timeline-id">{agentChatBridge.timelineId}</span>
+      <span data-testid="runtime-project-id">{runtime.project.projectId}</span>
+      <span data-testid="runtime-user-id">{runtime.auth.userId}</span>
+      <span data-testid="runtime-shots-count">{runtime.shots.shots?.length ?? 0}</span>
+      <span data-testid="runtime-resolver-type">{typeof runtime.assetResolver.resolveAssetUrl}</span>
       <button
         type="button"
         onClick={() => {
@@ -286,6 +320,143 @@ function Consumer() {
       </button>
     </div>
   );
+}
+
+function buildCommandTimelineData(): TimelineData {
+  const config = {
+    output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+    tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 2 }],
+  } as const;
+  const rowData = configToRows(config);
+  const resolvedConfig = {
+    output: { ...config.output },
+    tracks: config.tracks.map((track) => ({ ...track })),
+    clips: config.clips.map((clip) => ({ ...clip, assetEntry: undefined })),
+    registry: {},
+  };
+
+  return {
+    config: {
+      ...config,
+      tracks: config.tracks.map((track) => ({ ...track })),
+      clips: config.clips.map((clip) => ({ ...clip })),
+    },
+    configVersion: 1,
+    registry: { assets: {} },
+    resolvedConfig,
+    rows: rowData.rows,
+    meta: rowData.meta,
+    effects: rowData.effects,
+    assetMap: {},
+    output: { ...config.output },
+    tracks: config.tracks.map((track) => ({ ...track })),
+    clipOrder: rowData.clipOrder,
+    signature: 'signature',
+    stableSignature: 'stable-signature',
+  };
+}
+
+function buildDuplicateCommandTimelineData(): TimelineData {
+  const config = {
+    output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+    tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    clips: [
+      {
+        id: 'clip-1',
+        at: 0,
+        track: 'V1',
+        clipType: 'media',
+        asset: 'asset-source',
+        from: 0,
+        to: 2,
+        speed: 1,
+        volume: 1,
+      },
+      {
+        id: 'clip-2',
+        at: 2,
+        track: 'V1',
+        clipType: 'hold',
+        hold: 1,
+      },
+    ],
+  } as const;
+  const rowData = configToRows(config);
+  const resolvedConfig = {
+    output: { ...config.output },
+    tracks: config.tracks.map((track) => ({ ...track })),
+    clips: config.clips.map((clip) => ({ ...clip, assetEntry: undefined })),
+    registry: {},
+  };
+
+  return {
+    config: {
+      ...config,
+      tracks: config.tracks.map((track) => ({ ...track })),
+      clips: config.clips.map((clip) => ({ ...clip })),
+    },
+    configVersion: 1,
+    registry: {
+      assets: {
+        'asset-source': {
+          file: 'https://example.com/source.mp4',
+          type: 'video/mp4',
+          duration: 2,
+          generationId: 'generation-source',
+        },
+        'asset-dup': {
+          file: 'https://example.com/dup.mp4',
+          type: 'video/mp4',
+          duration: 2,
+          generationId: 'generation-dup',
+        },
+      },
+    },
+    resolvedConfig,
+    rows: rowData.rows,
+    meta: rowData.meta,
+    effects: rowData.effects,
+    assetMap: {},
+    output: { ...config.output },
+    tracks: config.tracks.map((track) => ({ ...track })),
+    clipOrder: rowData.clipOrder,
+    signature: 'signature-dup',
+    stableSignature: 'stable-signature-dup',
+  };
+}
+
+function buildCommandTestStore(overrides?: {
+  applyEdit?: (...args: unknown[]) => void;
+  registerAsset?: (...args: unknown[]) => Promise<unknown>;
+  patchRegistry?: (...args: unknown[]) => void;
+  unpatchRegistry?: (...args: unknown[]) => void;
+  data?: TimelineData;
+  mounted?: boolean;
+}) {
+  const baseStore = createTimelineStore();
+  const current = overrides?.data ?? buildCommandTimelineData();
+  const store = createTimelineStore({
+    data: {
+      ...baseStore.getState().data,
+      data: current,
+      resolvedConfig: current.resolvedConfig,
+      selectedTrackId: 'V1',
+      dataRef: { current },
+      pendingOpsRef: { current: 0 },
+    },
+    ops: {
+      ...baseStore.getState().ops,
+      applyEdit: overrides?.applyEdit ?? vi.fn(),
+      registerAsset: overrides?.registerAsset ?? vi.fn(async () => undefined),
+      patchRegistry: overrides?.patchRegistry ?? vi.fn(),
+      unpatchRegistry: overrides?.unpatchRegistry ?? vi.fn(),
+    },
+  });
+  if (overrides?.mounted === false) {
+    store.getState().setMounted(false);
+  }
+  return store;
 }
 
 const media = {
@@ -318,6 +489,10 @@ describe('VideoEditorProvider', () => {
     systemResetSelectionForProjectChange();
     localStorage.clear();
     Object.values(mocks).forEach((mock) => mock.mockClear());
+    useEffectsMock.mockReset();
+    useEffectsMock.mockReturnValue({ data: [] });
+    useResolvedEffectCatalogMock.mockReset();
+    useResolvedEffectCatalogMock.mockReturnValue(createVideoEditorEffectCatalog());
   });
 
   it('builds fallback lightbox media for raw video assets without a generation id', () => {
@@ -354,7 +529,7 @@ describe('VideoEditorProvider', () => {
       <MemoryRouter>
         <QueryClientProvider client={queryClient}>
           <AgentChatProvider>
-            <VideoEditorProvider dataProvider={provider} timelineId="timeline-1" userId="user-1">
+            <VideoEditorProvider dataProvider={provider} projectId="project-1" timelineId="timeline-1" userId="user-1">
               <Consumer />
             </VideoEditorProvider>
           </AgentChatProvider>
@@ -378,10 +553,14 @@ describe('VideoEditorProvider', () => {
     }));
     expect(screen.getByText('false')).toBeInTheDocument();
     expect(screen.getByText('boolean')).toBeInTheDocument();
-    expect(screen.getAllByText('function')).toHaveLength(2);
+    expect(screen.getAllByText('function')).toHaveLength(3);
     expect(screen.getByText('saved')).toBeInTheDocument();
     expect(screen.getByText('12.5')).toBeInTheDocument();
     expect(screen.getByTestId('agent-chat-timeline-id')).toHaveTextContent('timeline-1');
+    expect(screen.getByTestId('runtime-project-id')).toHaveTextContent('project-1');
+    expect(screen.getByTestId('runtime-user-id')).toHaveTextContent('user-1');
+    expect(screen.getByTestId('runtime-shots-count')).toHaveTextContent('0');
+    expect(screen.getByTestId('runtime-resolver-type')).toHaveTextContent('function');
 
     fireEvent.click(screen.getByRole('button', { name: 'update interaction' }));
 
@@ -396,6 +575,55 @@ describe('VideoEditorProvider', () => {
       clipId: 'clip-1',
       url: 'https://example.com/image.png',
     }));
+  });
+
+  it('uses an injected effect catalog without enabling the legacy effect query', () => {
+    const provider: DataProvider = {
+      loadTimeline: vi.fn(),
+      saveTimeline: vi.fn(),
+      loadAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    const injectedCatalog = createVideoEditorEffectCatalog({
+      effects: [{
+        id: 'effect-1',
+        type: 'effect',
+        name: 'Standalone Fade',
+        slug: 'standalone-fade',
+        code: 'export default function Effect() { return null; }',
+        category: 'entrance',
+        description: 'Standalone effect',
+        created_by: { is_you: true },
+        is_public: false,
+      }],
+    });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <AgentChatProvider>
+            <VideoEditorProvider
+              dataProvider={provider}
+              timelineId="timeline-1"
+              userId="user-1"
+              effectCatalog={injectedCatalog}
+            >
+              <Consumer />
+            </VideoEditorProvider>
+          </AgentChatProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(useEffectsMock).toHaveBeenCalledWith('user-1', { enabled: false });
+    expect(useResolvedEffectCatalogMock).toHaveBeenCalledWith('user-1', injectedCatalog);
   });
 
   it('lets editor timeline replacement update selection while preserving gallery attachments', () => {
@@ -469,8 +697,12 @@ describe('VideoEditorProvider', () => {
   });
 
   it('drops immediately when the mounted timeline store is available', () => {
-    const registerGenerationAsset = vi.fn(() => 'asset-1');
-    const handleAssetDrop = vi.fn();
+    const current = buildCommandTimelineData();
+    const patchRegistry = vi.fn((assetId: string, entry: Record<string, unknown>) => {
+      current.registry.assets[assetId] = entry as never;
+    });
+    const registerAsset = vi.fn(async () => undefined);
+    const applyEdit = vi.fn();
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: {
@@ -478,20 +710,11 @@ describe('VideoEditorProvider', () => {
         },
       },
     });
-    const store = createTimelineStore({
-      data: {
-        ...createTimelineStore().getState().data,
-        resolvedConfig: {
-          clips: [
-            { id: 'clip-1', at: 3, from: 0, to: 2 },
-          ],
-        } as never,
-      },
-      ops: {
-        ...createTimelineStore().getState().ops,
-        registerGenerationAsset,
-        handleAssetDrop,
-      },
+    const store = buildCommandTestStore({
+      data: current,
+      patchRegistry,
+      registerAsset,
+      applyEdit,
     });
 
     render(
@@ -508,13 +731,31 @@ describe('VideoEditorProvider', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
 
-    expect(registerGenerationAsset).toHaveBeenCalledWith({
-      generationId: 'generation-1',
-      variantType: 'image',
-      imageUrl: 'https://example.com/image.png',
-      thumbUrl: 'https://example.com/image-thumb.png',
-    });
-    expect(handleAssetDrop).toHaveBeenCalledWith('asset-1', undefined, 5, false, false);
+    expect(patchRegistry).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        generationId: 'generation-1',
+        file: 'https://example.com/image.png',
+        type: 'image/png',
+      }),
+      'https://example.com/image.png',
+    );
+    expect(registerAsset).toHaveBeenCalledTimes(1);
+    expect(applyEdit).toHaveBeenCalledTimes(1);
+    const insertedAssetId = patchRegistry.mock.calls[0]?.[0] as string;
+    const mutation = applyEdit.mock.calls[0]?.[0] as {
+      type: string;
+      rows: Array<{ actions: Array<{ start: number; end: number }> }>;
+      metaUpdates: Record<string, { asset: string }>;
+    };
+    expect(mutation.type).toBe('rows');
+    expect(mutation.rows[0]?.actions.at(-1)).toEqual(expect.objectContaining({
+      start: 2,
+      end: 7,
+    }));
+    expect(Object.values(mutation.metaUpdates)).toContainEqual(expect.objectContaining({
+      asset: insertedAssetId,
+    }));
     expect(readPendingAdds()).toEqual([]);
     expect(navigateMock).not.toHaveBeenCalled();
   });
@@ -543,5 +784,247 @@ describe('VideoEditorProvider', () => {
     expect(navigateMock).toHaveBeenCalledWith(
       `/tools/video-editor?timeline=timeline-staged&${ADD_GENERATION_QUERY_PARAM}=generation-1`,
     );
+  });
+
+  it('keeps staged add-to-editor behavior when a timeline provider exists but the mounted store is unavailable', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    const store = buildCommandTestStore({ mounted: false });
+
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+          <TimelineStoreProvider store={store}>
+            <AddToVideoEditorConsumer />
+          </TimelineStoreProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('timeline-mounted')).toHaveTextContent('false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'add to video editor' }));
+
+    expect(readPendingAdds()).toEqual(['generation-1']);
+    expect(screen.getByTestId('add-phase')).toHaveTextContent('staged');
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it('exposes the mounted timeline command facade and keeps the safe hook nullable outside a mounted editor', () => {
+    const store = buildCommandTestStore();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TimelineStoreProvider store={store}>{children}</TimelineStoreProvider>
+    );
+
+    const outside = renderHook(() => useTimelineCommandsSafe());
+    expect(outside.result.current).toBeNull();
+
+    const inside = renderHook(() => ({
+      commands: useTimelineCommands(),
+      safeCommands: useTimelineCommandsSafe(),
+    }), { wrapper });
+
+    const commandNames = Object.keys(inside.result.current.commands).sort();
+    expect(commandNames).toEqual([...PUBLIC_TIMELINE_COMMAND_NAMES].sort());
+    expect(commandNames.every(isPublicTimelineCommandName)).toBe(true);
+    expect(PUBLIC_TIMELINE_COMMAND_SCOPE).toBe('non-gesture');
+    expect(inside.result.current.safeCommands).not.toBeNull();
+  });
+
+  it('returns structured public-command failures for missing assets', () => {
+    const store = buildCommandTestStore();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TimelineStoreProvider store={store}>{children}</TimelineStoreProvider>
+    );
+
+    const { result } = renderHook(() => useTimelineCommands(), { wrapper });
+    const response = result.current.addClip({ assetId: 'missing-asset', time: 0 });
+
+    expect(response).toEqual({
+      ok: false,
+      error: {
+        code: 'asset_not_found',
+        message: "Asset 'missing-asset' is not registered in the timeline registry.",
+      },
+    });
+  });
+
+  it('returns structured addClip failures without mutating timeline state', () => {
+    const applyEdit = vi.fn();
+    const store = buildCommandTestStore({
+      data: buildDuplicateCommandTimelineData(),
+      applyEdit,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TimelineStoreProvider store={store}>{children}</TimelineStoreProvider>
+    );
+
+    const { result } = renderHook(() => useTimelineCommands(), { wrapper });
+    const response = result.current.addClip({ assetId: 'asset-dup' });
+
+    expect(response).toEqual({
+      ok: false,
+      error: {
+        code: 'invalid_argument',
+        message: 'addClip requires a target time unless `afterClipId` is provided.',
+      },
+    });
+    expect(applyEdit).not.toHaveBeenCalled();
+  });
+
+  it('returns structured registerAsset failures without patching the registry for invalid generation inputs', async () => {
+    const patchRegistry = vi.fn();
+    const registerAsset = vi.fn(async () => undefined);
+    const store = buildCommandTestStore({
+      patchRegistry,
+      registerAsset,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TimelineStoreProvider store={store}>{children}</TimelineStoreProvider>
+    );
+
+    const { result } = renderHook(() => useTimelineCommands(), { wrapper });
+    const response = await result.current.registerAsset({
+      generationId: 'generation-1',
+      imageUrl: '',
+      variantType: 'image',
+    });
+
+    expect(response).toEqual({
+      ok: false,
+      error: {
+        code: 'invalid_argument',
+        message: 'registerAsset requires a non-empty media URL.',
+      },
+    });
+    expect(patchRegistry).not.toHaveBeenCalled();
+    expect(registerAsset).not.toHaveBeenCalled();
+  });
+
+  it('supports duplicate-style addClip insertion after an existing clip through the public facade', () => {
+    const applyEdit = vi.fn();
+    const store = buildCommandTestStore({
+      data: buildDuplicateCommandTimelineData(),
+      applyEdit,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TimelineStoreProvider store={store}>{children}</TimelineStoreProvider>
+    );
+
+    const { result } = renderHook(() => useTimelineCommands(), { wrapper });
+    const response = result.current.addClip({
+      assetId: 'asset-dup',
+      afterClipId: 'clip-1',
+    });
+
+    expect(response.ok).toBe(true);
+    if (!response.ok) {
+      throw new Error('Expected duplicate insertion to succeed');
+    }
+
+    expect(applyEdit).toHaveBeenCalledTimes(1);
+    const mutation = applyEdit.mock.calls[0]?.[0] as {
+      type: string;
+      rows: Array<{ id: string; actions: Array<{ id: string; start: number; end: number }> }>;
+      metaUpdates: Record<string, { asset: string; track: string }>;
+      clipOrderOverride: Record<string, string[]>;
+    };
+    const options = applyEdit.mock.calls[0]?.[1] as {
+      selectedClipId: string;
+      selectedTrackId: string;
+      semantic: boolean;
+    };
+
+    expect(mutation.type).toBe('rows');
+    expect(mutation.rows[0]?.actions.map((action) => ({
+      id: action.id,
+      start: action.start,
+      end: action.end,
+    }))).toEqual([
+      { id: 'clip-1', start: 0, end: 2 },
+      { id: response.data.clipId, start: 2, end: 4 },
+      { id: 'clip-2', start: 4, end: 5 },
+    ]);
+    expect(mutation.metaUpdates[response.data.clipId]).toMatchObject({
+      asset: 'asset-dup',
+      track: 'V1',
+    });
+    expect(mutation.clipOrderOverride).toEqual({
+      V1: ['clip-1', response.data.clipId, 'clip-2'],
+    });
+    expect(options).toEqual({
+      selectedClipId: response.data.clipId,
+      selectedTrackId: 'V1',
+      semantic: true,
+    });
+  });
+
+  it('rolls back optimistic registry patches when public registerAsset persistence fails', async () => {
+    const patchRegistry = vi.fn();
+    const unpatchRegistry = vi.fn();
+    const registerAsset = vi.fn(async () => {
+      throw new Error('persist failed');
+    });
+    const store = buildCommandTestStore({
+      patchRegistry,
+      registerAsset,
+      unpatchRegistry,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TimelineStoreProvider store={store}>{children}</TimelineStoreProvider>
+    );
+
+    const { result } = renderHook(() => useTimelineCommands(), { wrapper });
+    const response = await result.current.registerAsset({
+      generationId: 'generation-1',
+      imageUrl: 'https://example.com/image.png',
+      variantType: 'image',
+    });
+
+    expect(response).toEqual({
+      ok: false,
+      error: {
+        code: 'asset_registration_failed',
+        message: 'persist failed',
+        cause: expect.any(Error),
+      },
+    });
+    expect(patchRegistry).toHaveBeenCalledTimes(1);
+    expect(registerAsset).toHaveBeenCalledTimes(1);
+    expect(unpatchRegistry).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the sprint 2 governance inventory markers in the checklist and allowlist', () => {
+    const checklist = readFileSync(
+      join(process.cwd(), 'tasks/2026-05-03-video-editor-sprint2-ports-and-commands-checklist.md'),
+      'utf8',
+    );
+    const allowlist = readFileSync(
+      join(process.cwd(), 'eslint.supabase-facade-allowlist.js'),
+      'utf8',
+    );
+
+    expect(checklist).toContain('useTimelineCommandsSafe()');
+    expect(checklist).toContain('### Command-facade caller set');
+    expect(checklist).toContain('VIDEO_EDITOR_HOST_PORT_NAMES');
+    expect(checklist).toContain('src/domains/media-lightbox/hooks/useAddToVideoEditor.ts');
+    expect(checklist).toContain('src/tools/video-editor/hooks/useAddVariantAsGeneration.ts');
+    expect(checklist).toContain('src/tools/video-editor/hooks/useSwitchToFinalVideo.ts');
+    expect(checklist).toContain('src/tools/video-editor/hooks/useExternalDrop.ts');
+    expect(checklist).toContain('non-gesture facade');
+    for (const portName of VIDEO_EDITOR_HOST_PORT_NAMES) {
+      expect(checklist).toContain(`\`${portName}\``);
+    }
+    for (const gestureOnlyHook of INTERNAL_GESTURE_TIMELINE_MUTATIONS) {
+      expect(checklist).toContain(gestureOnlyHook);
+    }
+    expect(allowlist).toContain('src/tools/video-editor/adapters/reigh/generationLookup.ts');
+    expect(allowlist).toContain('src/tools/video-editor/adapters/reigh/useReighEffectsCatalog.ts');
+    expect(allowlist).toContain('src/tools/video-editor/adapters/reigh/variantPromotionLookup.ts');
   });
 });

@@ -1,6 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
 import type { ApplyEditOptions, TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit';
+import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline';
+import type { RenderRuntime } from '@/tools/video-editor/render/renderRuntime';
 import type { AssetRegistryEntry, TrackDefinition } from '@/tools/video-editor/types';
+import type { AssetRegistry } from '@/tools/video-editor/types';
 import type { Checkpoint } from '@/tools/video-editor/types/history';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
 
@@ -13,6 +16,19 @@ export type TimelineRenderProgress = {
   percent: number;
   phase: string;
 } | null;
+export type TimelineQueuedRender = {
+  providerId: string;
+  taskId: string | null;
+  correlationId: string | null;
+  message: string;
+} | null;
+export type TimelineRenderRequest = {
+  timelineId: string;
+  assetRegistry: AssetRegistry | null;
+  resolvedConfig: TimelineResolvedConfig;
+  renderMetadata: CompositionMetadata | null;
+  renderRuntime: RenderRuntime;
+};
 
 export type TimelineDataRef = React.MutableRefObject<TimelineData | null>;
 export type TimelinePendingOpsRef = React.MutableRefObject<number>;

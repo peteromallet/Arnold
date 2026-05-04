@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __getSelectionStateForTests,
   __resetSelectionStoreForTests,
 } from '@/shared/state/selectionStore';
+import { applyTimelineMutation, previewTimelineMutation } from '@/tools/video-editor/lib/timeline-mutation-engine';
 import { useTimelineCommit } from './useTimelineCommit';
 import { TimelineEventBus } from './useTimelineEventBus';
 import { configToRows, type TimelineData } from '../lib/timeline-data';
@@ -343,5 +344,145 @@ describe('useTimelineCommit — delete-shot / auto-restore regression', () => {
     expect(result.current.selectedTrackIdRef.current).toBe('V2');
     expect(__getSelectionStateForTests().timeline.selectedClipId).toBe('clip-new');
     expect(__getSelectionStateForTests().timeline.selectedTrackId).toBe('V2');
+  });
+
+  it('the extracted mutation engine returns pure preview/apply results without mutating the input snapshot', () => {
+    const initial = makeSelectionForwardingData();
+    const rowsWithReplacement = initial.rows.map((row) => {
+      if (row.id === 'V1') {
+        return { ...row, actions: [] };
+      }
+      if (row.id === 'V2') {
+        return {
+          ...row,
+          actions: [{
+            id: 'clip-new',
+            start: 0,
+            end: 3,
+            effectId: 'effect-clip-new',
+          }],
+        };
+      }
+      return row;
+    });
+
+    const mutation = {
+      type: 'rows' as const,
+      rows: rowsWithReplacement,
+      metaDeletes: ['clip-old'],
+      metaUpdates: {
+        'clip-new': {
+          track: 'V2',
+          clipType: 'section-hook',
+          hold: 3,
+          params: { title: 'Replacement' },
+        },
+      },
+      clipOrderOverride: {
+        V1: [],
+        V2: ['clip-new'],
+      },
+    };
+
+    const preview = previewTimelineMutation(initial, mutation);
+    const applied = applyTimelineMutation(initial, mutation);
+
+    expect(preview.ok).toBe(true);
+    expect(applied.ok).toBe(true);
+    if (!preview.ok || !applied.ok) {
+      throw new Error('Expected pure mutation results to succeed');
+    }
+
+    expect(initial.meta['clip-old']).toBeDefined();
+    expect(initial.meta['clip-new']).toBeUndefined();
+    expect(initial.config.clips.map((clip) => clip.id)).toEqual(['clip-old']);
+
+    expect(preview.nextData.config.clips.map((clip) => clip.id)).toEqual(['clip-new']);
+    expect(preview.nextMeta['clip-new']).toMatchObject({ track: 'V2' });
+    expect(preview.nextClipOrder).toEqual({ V1: [], V2: ['clip-new'] });
+    expect(applied.nextData).toEqual(preview.nextData);
+  });
+
+  it('useTimelineCommit still owns commit-side effects while the pure engine stays side-effect free', () => {
+    const eventBus = new TimelineEventBus();
+    const lastSavedSignatureRef = { current: '' };
+    const beforeCommit = vi.fn();
+    const pruneSelection = vi.fn();
+    const scheduleSave = vi.fn();
+
+    eventBus.on('beforeCommit', beforeCommit);
+    eventBus.on('pruneSelection', pruneSelection);
+    eventBus.on('scheduleSave', scheduleSave);
+
+    const initial = makeSelectionForwardingData();
+    const rowsWithReplacement = initial.rows.map((row) => {
+      if (row.id === 'V1') {
+        return { ...row, actions: [] };
+      }
+      if (row.id === 'V2') {
+        return {
+          ...row,
+          actions: [{
+            id: 'clip-new',
+            start: 0,
+            end: 3,
+            effectId: 'effect-clip-new',
+          }],
+        };
+      }
+      return row;
+    });
+
+    const mutation = {
+      type: 'rows' as const,
+      rows: rowsWithReplacement,
+      metaDeletes: ['clip-old'],
+      metaUpdates: {
+        'clip-new': {
+          track: 'V2',
+          clipType: 'section-hook',
+          hold: 3,
+        },
+      },
+      clipOrderOverride: {
+        V1: [],
+        V2: ['clip-new'],
+      },
+    };
+
+    const preview = previewTimelineMutation(initial, mutation);
+    expect(preview.ok).toBe(true);
+    expect(beforeCommit).not.toHaveBeenCalled();
+    expect(pruneSelection).not.toHaveBeenCalled();
+    expect(scheduleSave).not.toHaveBeenCalled();
+
+    const { result } = renderHook(() => useTimelineCommit({
+      eventBus,
+      lastSavedSignatureRef,
+    }));
+
+    act(() => {
+      result.current.commitData(initial, {
+        save: false,
+        selectedClipId: 'clip-old',
+        selectedTrackId: 'V1',
+      });
+    });
+    beforeCommit.mockClear();
+    pruneSelection.mockClear();
+    scheduleSave.mockClear();
+
+    act(() => {
+      result.current.applyEdit(mutation, {
+        selectedClipId: 'clip-new',
+        selectedTrackId: 'V2',
+      });
+    });
+
+    expect(beforeCommit).toHaveBeenCalledTimes(1);
+    expect(pruneSelection).toHaveBeenCalledTimes(1);
+    expect(scheduleSave).toHaveBeenCalledTimes(1);
+    expect(result.current.selectedClipId).toBe('clip-new');
+    expect(result.current.selectedTrackId).toBe('V2');
   });
 });

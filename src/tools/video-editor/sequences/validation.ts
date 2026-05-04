@@ -1,9 +1,9 @@
 import {
-  TRUSTED_SEQUENCE_METADATA,
-  type SequenceParamMetadata,
-  type TrustedSequenceClipType,
-  type TrustedSequenceMetadata,
-} from './metadata';
+  TRUSTED_CLIP_TYPE_METADATA,
+  getTrustedClipTypeRegistration,
+} from '@/tools/video-editor/clip-types/registry';
+import type { TrustedSequenceClipType, TrustedSequenceMetadata } from './metadata';
+import type { ClipTypeSequenceParamDefinition as SequenceParamMetadata } from '@/tools/video-editor/clip-types/defineClipType';
 
 export type SequenceDraftParams = Record<string, string | readonly string[]>;
 
@@ -160,7 +160,7 @@ export const validateSequenceDraft = (
   options: ValidateSequenceDraftOptions = {},
 ): SequenceDraftValidationResult => {
   const errors: SequenceDraftValidationError[] = [];
-  const metadata = options.metadata ?? TRUSTED_SEQUENCE_METADATA;
+  const metadata = options.metadata ?? TRUSTED_CLIP_TYPE_METADATA;
   const allowedClipTypes = new Set(options.allowedClipTypes ?? metadata.map((entry) => entry.clipType));
   const allowedAssetKeys = new Set(options.allowedAssetKeys ?? []);
 
@@ -187,7 +187,9 @@ export const validateSequenceDraft = (
   }
 
   const sequenceMetadata = typeof clipType === 'string'
-    ? findMetadata(metadata, clipType)
+    ? (options.metadata
+      ? findMetadata(metadata, clipType)
+      : getTrustedClipTypeRegistration(clipType)?.metadata)
     : undefined;
   if (typeof clipType === 'string' && !sequenceMetadata) {
     addError(errors, '$.clipType', 'unknown_clip_type', 'clipType is not a trusted sequence type.');

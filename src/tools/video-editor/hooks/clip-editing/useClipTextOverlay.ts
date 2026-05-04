@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { createClipMetaFromDescriptor } from '@/tools/video-editor/clip-types/runtime';
 import { getVisualTracks } from '@/tools/video-editor/lib/editor-utils';
 import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
 import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps';
@@ -47,23 +48,16 @@ export function useClipTextOverlay(ctx: ClipEditingContext) {
       rowsWithClip, visualTrack.id, clipId, current.meta,
     );
     const nextClipOrder = updateClipOrder(current.clipOrder, visualTrack.id, (ids) => [...ids, clipId]);
+    const clipMeta = createClipMetaFromDescriptor({
+      clipType: 'text',
+      trackId: visualTrack.id,
+    });
+    if (!clipMeta) {
+      return;
+    }
     applyRowsEdit(nextRows, {
       ...metaPatches,
-      [clipId]: {
-        track: visualTrack.id,
-        clipType: 'text',
-        text: {
-          content: 'Double-click to edit',
-          fontSize: 64,
-          color: '#ffffff',
-          align: 'center',
-        },
-        x: 120,
-        y: 120,
-        width: 640,
-        height: 180,
-        opacity: 1,
-      },
+      [clipId]: clipMeta,
     }, undefined, nextClipOrder);
     selectClip(clipId);
     setSelectedTrackId(visualTrack.id);
@@ -101,23 +95,16 @@ export function useClipTextOverlay(ctx: ClipEditingContext) {
       rowsWithClip, visualTrack.id, clipId, current.meta,
     );
     const nextClipOrder = updateClipOrder(current.clipOrder, visualTrack.id, (ids) => [...ids, clipId]);
+    const clipMeta = createClipMetaFromDescriptor({
+      clipType: 'text',
+      trackId: visualTrack.id,
+    });
+    if (!clipMeta) {
+      return;
+    }
     applyRowsEdit(nextRows, {
       ...metaPatches,
-      [clipId]: {
-        track: visualTrack.id,
-        clipType: 'text',
-        text: {
-          content: 'Double-click to edit',
-          fontSize: 64,
-          color: '#ffffff',
-          align: 'center',
-        },
-        x: 120,
-        y: 120,
-        width: 640,
-        height: 180,
-        opacity: 1,
-      },
+      [clipId]: clipMeta,
     }, undefined, nextClipOrder);
     selectClip(clipId);
     setSelectedTrackId(visualTrack.id);

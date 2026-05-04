@@ -1,5 +1,5 @@
 import type { Json } from "../../../../src/integrations/supabase/types.ts";
-import type { TimelineClip, TimelineConfig } from "../../../../src/tools/video-editor/types/index.ts";
+import type { TimelineClip, TimelineConfig } from "../../../../src/tools/video-editor/index.ts";
 import { getAdminSupabaseClient } from "./client.ts";
 
 type RowMap<Row> = Record<string, Row>;

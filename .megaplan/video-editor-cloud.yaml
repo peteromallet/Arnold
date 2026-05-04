@@ -1,0 +1,30 @@
+provider: railway
+
+repo:
+  url: https://github.com/banodoco/reigh-app.git
+  branch: main
+  workspace: /workspace/reigh-app
+
+agents:
+  default: codex
+
+codex:
+  model: gpt-5.4
+  reasoning: high
+
+mode: idle
+
+megaplan:
+  ref: 20681671dae1d135f0feca199cd63d780bd36632
+
+resources:
+  volume: agent-volume
+  port: 8080
+
+railway:
+  project: a7a58c3f-b57c-4141-9058-73f529273ebd
+  environment: 8c7147e3-3f2c-4950-ac1b-966ab0c839dc
+  service: agent
+  session: agent
+
+secrets: []

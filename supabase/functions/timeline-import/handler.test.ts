@@ -121,9 +121,98 @@ describe("handleTimelineImport", () => {
     expect(mocks.rpc).toHaveBeenCalledWith(
       "update_timeline_versioned",
       expect.objectContaining({
-        p_config: timeline,
+        p_config: expect.objectContaining({
+          clips: [],
+          generation_defaults: timeline.generation_defaults,
+          tracks: expect.any(Array),
+        }),
       }),
     );
+  });
+
+  it("canonicalizes malformed non-hold trims against the provided asset registry before persistence", async () => {
+    const { supabaseAdmin, mocks } = createSupabaseAdminMock({
+      existing: { id: TIMELINE_ID, project_id: PROJECT_ID, config_version: 5 },
+      rpcResult: { data: [{ config_version: 6 }], error: null },
+    });
+    const timeline = {
+      clips: [{
+        id: "clip-video",
+        at: 0,
+        track: "v1",
+        clipType: "media",
+        asset: "asset-video",
+      }],
+    };
+    const asset_registry = {
+      assets: {
+        "asset-video": {
+          file: "video.mp4",
+          duration: 12,
+        },
+      },
+    };
+
+    const result = await handleTimelineImport({
+      body: makeBody({ timeline, asset_registry, expected_version: 5 }),
+      userId: USER_ID,
+      supabaseAdmin,
+      logger: baseLogger,
+      verifyOwnership: vi.fn().mockResolvedValue({ success: true }),
+    });
+
+    expect(result.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "update_timeline_versioned",
+      expect.objectContaining({
+        p_config: expect.objectContaining({
+          clips: [expect.objectContaining({
+            id: "clip-video",
+            from: 0,
+            to: 12,
+          })],
+        }),
+        p_asset_registry: asset_registry,
+      }),
+    );
+  });
+
+  it("returns structured domain validation details for stale serialized shapes", async () => {
+    const { supabaseAdmin } = createSupabaseAdminMock({});
+    const result = await handleTimelineImport({
+      body: makeBody({
+        timeline: {
+          clips: [{
+            id: "clip-1",
+            at: 0,
+            track: "v1",
+            clipType: "hold",
+            hold: 2,
+            unexpected_clip_key: true,
+          }],
+        },
+      }),
+      userId: USER_ID,
+      supabaseAdmin,
+      logger: baseLogger,
+      verifyOwnership: vi.fn().mockResolvedValue({ success: true }),
+    });
+
+    expect(result.status).toBe(400);
+    if (result.body.ok === false) {
+      expect(result.body.error).toBe("timeline payload failed canonical validation");
+      expect(result.body.details).toEqual(expect.objectContaining({
+        level: "pair-aware",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "unexpected_clip_key",
+            path: expect.stringContaining("unexpected_clip_key"),
+          }),
+        ]),
+      }));
+    } else {
+      throw new Error("expected domain validation failure");
+    }
   });
 
   it("returns 403 when ownership verification fails", async () => {

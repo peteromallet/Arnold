@@ -7,7 +7,7 @@ import type {
   LlmMessage,
   TimelineRow,
 } from "../types.ts";
-import type { AssetRegistry, TimelineConfig } from "../../../../src/tools/video-editor/types/index.ts";
+import type { AssetRegistry, TimelineConfig } from "../../../../src/tools/video-editor/index.ts";
 export { isRecord } from "../utils.ts";
 
 export function isSessionStatus(value: unknown): value is AgentSessionStatus {

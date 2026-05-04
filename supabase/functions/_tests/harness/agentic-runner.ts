@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TimelineConfig } from "../../../../src/tools/video-editor/types/index.ts";
+import type { TimelineConfig } from "../../../../src/tools/video-editor/index.ts";
 import { getAdminSupabaseClient } from "./client.ts";
 import { getReighAppRoot } from "./env.ts";
 import { TestHarness } from "./index.ts";

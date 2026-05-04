@@ -1222,3 +1222,19 @@ Trigger for revisit:
 | `reigh-app/src/tools/video-editor/pages/VideoEditorPage.tsx` | Route-level auth/project shell and adapter construction. |
 | `reigh-app/src/tools/video-editor/registration.test.ts` | Reigh registration seam that stays in app. |
 | `reigh-app/package.json` | Current dependency versions to align during extraction. |
+
+## Sprint 5 command-bus scope note
+
+The current Sprint 5 command-bus rollout limits command-backed sequence and theme editing to the installed built-in families that this checkout can actually render:
+
+- Installed timeline themes exposed to command-backed theme edits: `2rp`
+- Installed trusted sequence clip types exposed to command-backed sequence tooling: `image-jump`, `section-hook`, `art-card`, `resource-card`, `cta-card`
+
+The editor-side sequence registry filters trusted sequence metadata through both the generated sequence component registry and the installed timeline theme registry so the command-backed surface stays aligned with real installed packages rather than metadata alone.
+
+The following paths are still intentionally outside Sprint 5 scope and remain direct row/config mutation flows:
+
+- Shot-group and final-video helpers
+- Duplicate/promote-generation insertion helpers
+- Drag, resize, and track-move interactions
+- Pinned-group restructuring helpers

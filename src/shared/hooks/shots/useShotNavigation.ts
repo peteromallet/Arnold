@@ -44,13 +44,18 @@ const DEFAULT_OPTIONS: Required<ShotNavigationOptions> = {
 function performScroll(options: Required<ShotNavigationOptions>) {
   if (options.scrollToTop) {
     const scrollFn = () => {
+      const browserWindow = typeof window === 'undefined' ? null : window;
+      if (!browserWindow) {
+        return;
+      }
+
       const scheduleScroll =
-        typeof window.requestAnimationFrame === 'function'
-          ? window.requestAnimationFrame.bind(window)
-          : (callback: FrameRequestCallback) => window.setTimeout(callback, 0);
+        typeof browserWindow.requestAnimationFrame === 'function'
+          ? browserWindow.requestAnimationFrame.bind(browserWindow)
+          : (callback: FrameRequestCallback) => browserWindow.setTimeout(callback, 0);
 
       scheduleScroll(() => {
-        window.scrollTo({ top: 0, behavior: options.scrollBehavior });
+        browserWindow.scrollTo({ top: 0, behavior: options.scrollBehavior });
         dispatchAppEvent('app:scrollToTop', { behavior: options.scrollBehavior });
       });
     };

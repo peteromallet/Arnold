@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { createContext, createElement, useContext, useMemo } from 'react';
 import type { UseMutationOptions, UseMutationResult } from '@tanstack/react-query';
 import {
   type CreateResourceArgs,
@@ -11,27 +11,25 @@ import {
   type EffectMetadata,
   type Resource,
 } from '@/features/resources/hooks/useResources';
+import {
+  createVideoEditorEffectCatalog,
+  type EffectCategory,
+  type EffectResource,
+  type VideoEditorEffectCatalog,
+} from '@/tools/video-editor/lib/effect-catalog';
 
-export type EffectCategory = EffectMetadata['category'];
+export type {
+  CreateVideoEditorEffectInput,
+  DeleteVideoEditorEffectInput,
+  EffectCategory,
+  EffectResource,
+  EffectResourcesByCategory,
+  UpdateVideoEditorEffectInput,
+  VideoEditorEffectCatalog,
+  VideoEditorEffectCatalogOptions,
+} from '@/tools/video-editor/lib/effect-catalog';
 
-export type EffectResource = EffectMetadata & {
-  id: string;
-  type: 'effect';
-  userId?: string;
-  user_id?: string;
-  isPublic?: boolean;
-  is_public?: boolean;
-  createdAt?: string;
-  created_at?: string;
-};
-
-export type EffectResourcesByCategory = Record<EffectCategory, EffectResource[]>;
-
-const EMPTY_EFFECT_GROUPS: EffectResourcesByCategory = {
-  entrance: [],
-  exit: [],
-  continuous: [],
-};
+export { createVideoEditorEffectCatalog } from '@/tools/video-editor/lib/effect-catalog';
 
 function toEffectResource(resource: Resource): EffectResource {
   const metadata = resource.metadata as EffectMetadata;
@@ -48,61 +46,84 @@ function toEffectResource(resource: Resource): EffectResource {
   };
 }
 
-function dedupeEffectResources(resources: Resource[]): EffectResource[] {
-  const deduped = new Map<string, EffectResource>();
+const EffectCatalogContext = createContext<VideoEditorEffectCatalog | null>(null);
 
-  for (const resource of resources) {
-    deduped.set(resource.id, toEffectResource(resource));
-  }
-
-  return [...deduped.values()];
+export function EffectCatalogProvider({
+  value,
+  children,
+}: {
+  value: VideoEditorEffectCatalog;
+  children: React.ReactNode;
+}) {
+  return createElement(EffectCatalogContext.Provider, { value }, children);
 }
 
-function groupEffectResources(resources: EffectResource[]): EffectResourcesByCategory {
-  return resources.reduce<EffectResourcesByCategory>((groups, resource) => {
-    groups[resource.category].push(resource);
-    return groups;
-  }, {
-    entrance: [],
-    exit: [],
-    continuous: [],
-  });
-}
-
-export function useEffectResources(userId: string | null | undefined) {
-  const privateEffectsQuery = useListResources('effect');
-  const publicEffectsQuery = useListPublicResources('effect');
+function useSupabaseEffectCatalog(
+  userId: string | null | undefined,
+  options?: { enabled?: boolean },
+): VideoEditorEffectCatalog {
+  const enabled = options?.enabled ?? true;
+  const privateEffectsQuery = useListResources('effect', { enabled: enabled && Boolean(userId) });
+  const publicEffectsQuery = useListPublicResources('effect', { enabled });
+  const createEffect = useCreateEffectResource();
+  const updateEffect = useUpdateEffectResource();
+  const deleteEffect = useDeleteEffectResource();
 
   const effects = useMemo(() => {
     const privateResources = userId ? privateEffectsQuery.data ?? [] : [];
     const publicResources = publicEffectsQuery.data ?? [];
-    return dedupeEffectResources([...privateResources, ...publicResources]);
-  }, [privateEffectsQuery.data, publicEffectsQuery.data, userId]);
+    const deduped = new Map<string, EffectResource>();
 
-  const byCategory = useMemo(() => {
-    if (effects.length === 0) {
-      return EMPTY_EFFECT_GROUPS;
+    for (const resource of [...privateResources, ...publicResources]) {
+      deduped.set(resource.id, toEffectResource(resource));
     }
 
-    return groupEffectResources(effects);
-  }, [effects]);
+    return [...deduped.values()];
+  }, [privateEffectsQuery.data, publicEffectsQuery.data, userId]);
 
-  return {
-    data: byCategory,
+  return useMemo(() => createVideoEditorEffectCatalog({
     effects,
-    entrance: byCategory.entrance,
-    exit: byCategory.exit,
-    continuous: byCategory.continuous,
     isLoading: privateEffectsQuery.isLoading || publicEffectsQuery.isLoading,
     isFetching: privateEffectsQuery.isFetching || publicEffectsQuery.isFetching,
     error: privateEffectsQuery.error ?? publicEffectsQuery.error ?? null,
-    refetch: async () => {
-      const results = await Promise.all([privateEffectsQuery.refetch(), publicEffectsQuery.refetch()]);
-      return results;
+    refetch: async () => Promise.all([privateEffectsQuery.refetch(), publicEffectsQuery.refetch()]),
+    createEffect: async (variables) => {
+      const resource = await createEffect.mutateAsync(variables);
+      return { id: resource.id };
     },
-    privateEffectsQuery,
-    publicEffectsQuery,
-  };
+    updateEffect: async (variables) => {
+      const resource = await updateEffect.mutateAsync(variables);
+      return { id: resource.id };
+    },
+    deleteEffect: async (variables) => deleteEffect.mutateAsync(variables),
+  }), [
+    createEffect,
+    deleteEffect,
+    effects,
+    privateEffectsQuery.error,
+    privateEffectsQuery.isFetching,
+    privateEffectsQuery.isLoading,
+    privateEffectsQuery.refetch,
+    publicEffectsQuery.error,
+    publicEffectsQuery.isFetching,
+    publicEffectsQuery.isLoading,
+    publicEffectsQuery.refetch,
+    updateEffect,
+  ]);
+}
+
+export function useResolvedEffectCatalog(
+  userId: string | null | undefined,
+  injectedCatalog?: VideoEditorEffectCatalog | null,
+): VideoEditorEffectCatalog {
+  const fallbackCatalog = useSupabaseEffectCatalog(userId, { enabled: !injectedCatalog });
+  return injectedCatalog ?? fallbackCatalog;
+}
+
+export function useEffectResources(userId?: string | null | undefined) {
+  const injectedCatalog = useContext(EffectCatalogContext);
+  const fallbackCatalog = useSupabaseEffectCatalog(userId, { enabled: !injectedCatalog });
+  return injectedCatalog ?? fallbackCatalog;
 }
 
 export function useCreateEffectResource(): Omit<

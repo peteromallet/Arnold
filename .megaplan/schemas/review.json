@@ -9,7 +9,10 @@
       ]
     },
     "checks": {
-      "type": "array",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "object",
         "properties": {
@@ -84,7 +87,10 @@
       }
     },
     "pre_check_flags": {
-      "type": "array",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "object",
         "properties": {
@@ -115,13 +121,19 @@
       }
     },
     "verified_flag_ids": {
-      "type": "array",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "string"
       }
     },
     "disputed_flag_ids": {
-      "type": "array",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "string"
       }

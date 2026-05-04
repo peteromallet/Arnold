@@ -35,7 +35,7 @@ vi.mock('@/shared/lib/errorHandling/runtimeError', () => ({
 }));
 
 vi.mock('@dnd-kit/sortable', () => ({
-  arrayMove: <T>(arr: T[], from: number, to: number): T[] => {
+  arrayMove: <T,>(arr: T[], from: number, to: number): T[] => {
     const result = [...arr];
     const [removed] = result.splice(from, 1);
     result.splice(to, 0, removed);

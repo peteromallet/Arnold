@@ -4,13 +4,20 @@ import { toast } from '@/shared/components/ui/runtime/sonner';
 import type { GenerationRow } from '@/domains/generation/types';
 import { getGenerationId } from '@/shared/lib/media/mediaTypeHelpers';
 import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
-import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults';
+import { getClipTimelineDuration } from '@/tools/video-editor';
 import { videoEditorPathWithTimeline } from '@/tools/video-editor/lib/video-editor-path';
-import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils';
+import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults';
 import {
+  executeGenerationAssetRegistrationPlan,
+  planGenerationAssetRegistration,
+} from '@/tools/video-editor/lib/timeline-asset-plans';
+import {
+  hasMountedTimelineAvailability,
+  useTimelineAvailabilityState,
   useTimelineEditorDataSafe,
   useTimelineEditorOpsSafe,
 } from '@/tools/video-editor/hooks/timelineStore';
+import { useTimelineCommandsSafe } from '@/tools/video-editor/hooks/useTimelineCommands';
 import {
   ADD_GENERATION_QUERY_PARAM,
   readPendingAdds,
@@ -40,8 +47,11 @@ interface UseAddToVideoEditorResult {
 export function useAddToVideoEditor(media: GenerationRow | undefined): UseAddToVideoEditorResult {
   const ops = useTimelineEditorOpsSafe();
   const data = useTimelineEditorDataSafe();
+  const commands = useTimelineCommandsSafe();
+  const availability = useTimelineAvailabilityState();
   const navigate = useNavigate();
   const { settings: videoSettings } = useToolSettings(videoEditorSettings.id);
+  const hasMountedEditor = hasMountedTimelineAvailability(availability);
 
   const generationId = media ? (getGenerationId(media) ?? media.id) : null;
 
@@ -69,26 +79,49 @@ export function useAddToVideoEditor(media: GenerationRow | undefined): UseAddToV
   }, [generationId]);
 
   const onClick = useCallback(() => {
-    if (!media) return;
-    if (!generationId) return;
+    if (!media || !generationId) return;
 
-    if (ops && data) {
-      const assetKey = ops.registerGenerationAsset({
+    const hasMountedCommandSurface = hasMountedEditor
+      && commands !== null
+      && ops !== null
+      && data !== null;
+
+    if (hasMountedCommandSurface && commands && ops && data) {
+      const registrationPlan = planGenerationAssetRegistration({
         generationId,
         variantType: media.type === 'video' ? 'video' : 'image',
         imageUrl: media.location ?? media.imageUrl ?? '',
         thumbUrl: media.thumbUrl ?? media.imageUrl ?? media.location ?? '',
       });
-      if (!assetKey) {
+      if (!registrationPlan.ok) {
         toast.error('Could not register asset');
         return;
       }
+
+      const { assetKey, persistPromise } = executeGenerationAssetRegistrationPlan({
+        plan: registrationPlan,
+        patchRegistry: ops.patchRegistry,
+        registerAsset: ops.registerAsset,
+      });
+      void persistPromise.catch((error) => {
+        console.error('[video-editor] Failed to persist add-to-editor asset:', error);
+        ops.unpatchRegistry(assetKey);
+        toast.error('Failed to save asset');
+      });
+
       const clips = data.resolvedConfig?.clips ?? [];
       const timelineEnd = clips.reduce(
         (max, clip) => Math.max(max, clip.at + getClipTimelineDuration(clip)),
         0,
       );
-      ops.handleAssetDrop(assetKey, undefined, timelineEnd, false, false);
+      const insertResult = commands.addClip({
+        assetId: assetKey,
+        time: timelineEnd,
+      });
+      if (!insertResult.ok) {
+        ops.unpatchRegistry(assetKey);
+        toast.error(insertResult.error.message);
+      }
       return;
     }
 
@@ -104,7 +137,7 @@ export function useAddToVideoEditor(media: GenerationRow | undefined): UseAddToV
       writePendingAdds([...current, generationId]);
     }
     setPhase('staged');
-  }, [media, generationId, ops, data, navigate, videoSettings?.lastTimelineId, phase]);
+  }, [commands, data, generationId, hasMountedEditor, media, navigate, ops, phase, videoSettings?.lastTimelineId]);
 
   return { onClick, phase };
 }

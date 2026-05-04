@@ -25,6 +25,11 @@ interface UseClientRenderOptions {
   setRenderResult: Dispatch<SetStateAction<RenderResult>>;
 }
 
+export interface ClientRenderExecutionResult {
+  status: 'done' | 'error';
+  message: string;
+}
+
 interface CanRenderIssue {
   message?: string;
 }
@@ -194,8 +199,9 @@ export function useClientRender({
 }: UseClientRenderOptions) {
   return useCallback(async () => {
     if (!resolvedConfig || !metadata) {
-      toast.error('Timeline is not ready to render yet');
-      return;
+      const message = 'Timeline is not ready to render yet';
+      toast.error(message);
+      return { status: 'error', message } satisfies ClientRenderExecutionResult;
     }
 
     if (typeof VideoEncoder === 'undefined') {
@@ -203,7 +209,7 @@ export function useClientRender({
       setRenderStatus('error');
       appendLogLine(setRenderLog, message);
       toast.error(message);
-      return;
+      return { status: 'error', message } satisfies ClientRenderExecutionResult;
     }
 
     setRenderStatus('rendering');
@@ -281,11 +287,13 @@ export function useClientRender({
       setRenderStatus('done');
       appendLogLine(setRenderLog, `Saved ${filename}`);
       toast.success('Render complete');
+      return { status: 'done', message: `Saved ${filename}` } satisfies ClientRenderExecutionResult;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown render error';
       setRenderStatus('error');
       appendLogLine(setRenderLog, message);
       toast.error('Render failed', { description: message });
+      return { status: 'error', message } satisfies ClientRenderExecutionResult;
     }
   }, [
     metadata,

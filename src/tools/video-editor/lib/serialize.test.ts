@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { repairConfig } from '@/tools/video-editor/lib/migrate';
 import { serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
+import { TimelineDomainError, serializeTimelineConfigSnapshot, serializeTimelinePair } from '@/tools/video-editor/lib/timeline-domain';
 import type { ResolvedTimelineConfig, TimelineConfig, TimelineClip } from '@/tools/video-editor/types';
 
 describe('video-editor serialization', () => {
@@ -305,5 +306,32 @@ describe('video-editor serialization', () => {
     expect(serialized.pinnedShotGroups).toEqual(repaired.pinnedShotGroups);
     expect(serialized.pinnedShotGroups?.[0]).not.toHaveProperty('start');
     expect(serialized.pinnedShotGroups?.[0]).not.toHaveProperty('children');
+  });
+
+  it('throws a structured TimelineDomainError for unexpected serialized keys', () => {
+    expect(() => validateSerializedConfig({
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1', extra: 'nope' }],
+      clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 1 }],
+    } as TimelineConfig)).toThrow(TimelineDomainError);
+  });
+
+  it('serializes config-only and pair-aware contracts through the shared domain serializer', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      clips: [{ id: 'clip-1', at: 0, track: 'video', asset: 'asset-1' }],
+    };
+
+    const configOnly = serializeTimelineConfigSnapshot(config);
+    expect(configOnly.level).toBe('config-only');
+    expect(configOnly.config.tracks?.map((track) => track.id)).toEqual(['V1', 'V2', 'V3', 'A1']);
+    expect(configOnly.issues.map((issue) => issue.code)).toContain('malformed_non_hold_trim_zero_duration');
+
+    const pairAware = serializeTimelinePair(config, {
+      assets: { 'asset-1': { file: 'video.mp4', duration: 3.5 } },
+    });
+    expect(pairAware.level).toBe('pair-aware');
+    expect(pairAware.config.clips[0]).toMatchObject({ from: 0, to: 3.5 });
+    expect(pairAware.registry.assets['asset-1']).toEqual({ file: 'video.mp4', duration: 3.5 });
   });
 });

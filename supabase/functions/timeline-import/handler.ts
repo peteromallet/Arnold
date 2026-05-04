@@ -1,6 +1,13 @@
 // deno-lint-ignore-file
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { TimelineConfig as TimelineConfigSchema } from "@banodoco/timeline-schema";
+import {
+  serializeTimelineConfigSnapshot,
+  serializeTimelinePair,
+  TimelineDomainError,
+  type AssetRegistry,
+  type TimelineConfig,
+} from "../../../src/tools/video-editor/index.ts";
 import { validateTimelinePayload } from "./validate.ts";
 import type {
   TimelineImportBody,
@@ -19,6 +26,30 @@ interface OwnershipVerifier {
     error?: string;
     statusCode?: number;
   }>;
+}
+
+function canonicalizeImportPayload(
+  timeline: Record<string, unknown>,
+  assetRegistry: Record<string, unknown> | null,
+): { config: TimelineConfig; assetRegistry: AssetRegistry | null } {
+  const typedTimeline = timeline as TimelineConfig;
+
+  if (assetRegistry === null) {
+    const serialized = serializeTimelineConfigSnapshot(typedTimeline);
+    return {
+      config: serialized.config,
+      assetRegistry: null,
+    };
+  }
+
+  const serialized = serializeTimelinePair(
+    typedTimeline,
+    assetRegistry as AssetRegistry,
+  );
+  return {
+    config: serialized.config,
+    assetRegistry: serialized.registry,
+  };
 }
 
 export interface HandleTimelineImportInput {
@@ -84,6 +115,26 @@ export async function handleTimelineImport(
     };
   }
 
+  let canonicalized: ReturnType<typeof canonicalizeImportPayload>;
+  try {
+    canonicalized = canonicalizeImportPayload(validated.timeline, validated.assetRegistry);
+  } catch (error) {
+    if (error instanceof TimelineDomainError) {
+      return {
+        status: 400,
+        body: {
+          ok: false,
+          error: "timeline payload failed canonical validation",
+          details: {
+            level: error.level,
+            issues: error.issues,
+          },
+        },
+      };
+    }
+    throw error;
+  }
+
   // Ownership check: the JWT subject must own the project. SD-022: the user
   // JWT authorizes intent; the service-role key is then used for the actual
   // DB write below. authenticateRequest() already verified the JWT and gave
@@ -127,8 +178,8 @@ export async function handleTimelineImport(
       logger,
       projectId,
       timelineId,
-      timelineConfig: validated.timeline,
-      assetRegistry: validated.assetRegistry,
+      timelineConfig: canonicalized.config,
+      assetRegistry: canonicalized.assetRegistry,
     });
   }
 
@@ -150,8 +201,8 @@ export async function handleTimelineImport(
     supabaseAdmin,
     logger,
     timelineId,
-    timelineConfig: validated.timeline,
-    assetRegistry: validated.assetRegistry,
+    timelineConfig: canonicalized.config,
+    assetRegistry: canonicalized.assetRegistry,
     expectedVersion: versionToSend,
     currentVersion: existing.config_version,
   });
@@ -162,8 +213,8 @@ interface InsertNewTimelineInput {
   logger: Logger;
   projectId: string;
   timelineId: string;
-  timelineConfig: Record<string, unknown>;
-  assetRegistry: Record<string, unknown> | null;
+  timelineConfig: TimelineConfig;
+  assetRegistry: AssetRegistry | null;
 }
 
 async function insertNewTimeline(
@@ -202,8 +253,8 @@ interface CallVersionedRpcInput {
   supabaseAdmin: SupabaseClient;
   logger: Logger;
   timelineId: string;
-  timelineConfig: Record<string, unknown>;
-  assetRegistry: Record<string, unknown> | null;
+  timelineConfig: TimelineConfig;
+  assetRegistry: AssetRegistry | null;
   expectedVersion: number;
   currentVersion: number;
 }

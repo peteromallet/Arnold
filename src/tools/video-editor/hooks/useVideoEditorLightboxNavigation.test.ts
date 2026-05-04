@@ -68,6 +68,8 @@ describe('useVideoEditorLightboxNavigation', () => {
       { id: 'clip-1', at: 0, track: 'V1', clipType: 'media', asset: 'asset-1', from: 0, to: 2 },
       { id: 'clip-2', at: 4, track: 'V1', clipType: 'media', asset: 'asset-2', from: 0, to: 2 },
       { id: 'clip-3', at: 8, track: 'V1', clipType: 'media', asset: 'asset-3', from: 0, to: 2 },
+      { id: 'clip-text', at: 10, track: 'V1', clipType: 'text', hold: 2, text: { content: 'Inline text' } },
+      { id: 'clip-effect', at: 12, track: 'V1', clipType: 'effect-layer', hold: 2, asset: 'asset-4' },
       { id: 'clip-4', at: 1, track: 'V2', clipType: 'media', asset: 'asset-2', from: 0, to: 2 },
       { id: 'clip-5', at: 3, track: 'V2', clipType: 'media', asset: 'asset-4', from: 0, to: 2 },
       { id: 'clip-6', at: 0, track: 'A1', clipType: 'media', asset: 'asset-audio', from: 0, to: 2 },

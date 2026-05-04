@@ -1,4 +1,9 @@
-import type { TimelineConfig } from "../../../src/tools/video-editor/types/index.ts";
+import {
+  canonicalizeTimelinePair,
+  type AssetRegistry,
+  type TimelineClip,
+  type TimelineConfig,
+} from "../../../src/tools/video-editor/index.ts";
 import { isRecord, isSessionStatus, normalizeTimelineRow } from "./llm/messages.ts";
 import type {
   AgentProjectImageSettings,
@@ -302,6 +307,88 @@ function buildResolvedReference(
   };
 }
 
+function reconcilePinnedShotGroupsForPersistence(
+  config: TimelineConfig,
+): TimelineConfig["pinnedShotGroups"] {
+  if (!config.pinnedShotGroups?.length) {
+    return config.pinnedShotGroups;
+  }
+
+  const clipById = new Map<string, TimelineClip>();
+  for (const clip of config.clips) {
+    clipById.set(clip.id, clip);
+  }
+
+  let changed = false;
+  const nextGroups = config.pinnedShotGroups.flatMap((group) => {
+    const seenClipIds = new Set<string>();
+    const existingClips = group.clipIds.flatMap((clipId) => {
+      if (seenClipIds.has(clipId)) {
+        changed = true;
+        return [];
+      }
+
+      seenClipIds.add(clipId);
+      const clip = clipById.get(clipId);
+      if (!clip) {
+        changed = true;
+        return [];
+      }
+
+      return [clip];
+    });
+
+    if (existingClips.length === 0) {
+      changed = true;
+      return [];
+    }
+
+    const orderedClipIds = [...existingClips]
+      .sort((left, right) => {
+        if (left.at !== right.at) {
+          return left.at - right.at;
+        }
+        return left.id.localeCompare(right.id);
+      })
+      .map((clip) => clip.id);
+    if (
+      orderedClipIds.length !== group.clipIds.length
+      || orderedClipIds.some((clipId, index) => clipId !== group.clipIds[index])
+    ) {
+      changed = true;
+    }
+
+    const candidateTrackIds = Array.from(new Set(existingClips.map((clip) => clip.track).filter((trackId) => trackId.trim().length > 0)));
+    const nextTrackId = candidateTrackIds.length === 1 ? candidateTrackIds[0] : group.trackId;
+    if (nextTrackId !== group.trackId) {
+      changed = true;
+    }
+
+    return [{
+      ...group,
+      trackId: nextTrackId,
+      clipIds: orderedClipIds,
+    }];
+  });
+
+  return changed ? nextGroups : config.pinnedShotGroups;
+}
+
+export function prepareTimelineConfigForPersistence(
+  config: TimelineConfig,
+  registry: AssetRegistry,
+): TimelineConfig {
+  const reconciledPinnedShotGroups = reconcilePinnedShotGroupsForPersistence(config);
+  const reconciledConfig = reconciledPinnedShotGroups === config.pinnedShotGroups
+    ? config
+    : {
+        ...config,
+        pinnedShotGroups: reconciledPinnedShotGroups,
+      };
+
+  return canonicalizeTimelinePair(reconciledConfig, registry).config;
+}
+
 export async function loadTimelineState(
   supabaseAdmin: SupabaseAdmin,
   timelineId: string,
@@ -321,8 +408,9 @@ export async function loadTimelineState(
   }
 
   const normalized = normalizeTimelineRow(data);
+  const canonical = canonicalizeTimelinePair(normalized.config, normalized.asset_registry);
   const pinnedShotIds = Array.from(new Set(
-    (normalized.config.pinnedShotGroups ?? [])
+    (canonical.config.pinnedShotGroups ?? [])
       .map((group) => asTrimmedString(group.shotId))
       .filter((shotId): shotId is string => shotId !== null),
   ));
@@ -352,9 +440,9 @@ export async function loadTimelineState(
   }
 
   return {
-    config: normalized.config,
+    config: canonical.config,
     configVersion: normalized.config_version,
-    registry: normalized.asset_registry,
+    registry: canonical.registry,
     projectId: normalized.project_id,
     shotNamesById,
   };

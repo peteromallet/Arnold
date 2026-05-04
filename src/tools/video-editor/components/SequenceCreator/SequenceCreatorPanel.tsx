@@ -43,6 +43,7 @@ import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequence
 import {
   AVAILABLE_SEQUENCE_CLIP_TYPES,
   AVAILABLE_SEQUENCE_METADATA,
+  getAvailableClipTypeDescriptor,
   getAvailableSequenceMetadata,
 } from '@/tools/video-editor/sequences/registry';
 import {
@@ -160,6 +161,9 @@ export function SequenceCreatorPanel({
     selectedDraft ? validateEditableSequenceDraft(selectedDraft, allowedAssetKeys) : null
   ), [allowedAssetKeys, selectedDraft]);
   const validatedDraft = selectedValidation?.ok ? selectedValidation.draft : null;
+  const selectedDescriptor = selectedDraft
+    ? getAvailableClipTypeDescriptor(selectedDraft.clipType)
+    : undefined;
   const selectedMetadata = selectedDraft ? getAvailableSequenceMetadata(selectedDraft.clipType) : undefined;
 
   const previewConfig = useMemo(() => {
@@ -568,8 +572,12 @@ export function SequenceCreatorPanel({
                       <div className="space-y-4">
                         <div className="grid grid-cols-[1fr_140px] items-end gap-3">
                           <div>
-                            <div className="text-sm font-medium text-foreground">{selectedMetadata.label}</div>
-                            <div className="text-xs text-muted-foreground">{selectedMetadata.description}</div>
+                            <div className="text-sm font-medium text-foreground">
+                              {selectedDescriptor?.label ?? selectedMetadata.label}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {selectedDescriptor?.description ?? selectedMetadata.description}
+                            </div>
                           </div>
                           <div className="space-y-1.5">
                             <div className="text-xs font-medium text-muted-foreground">Duration</div>
@@ -584,6 +592,7 @@ export function SequenceCreatorPanel({
                         </div>
 
                         <SequenceParamEditor
+                          clipType={selectedDraft.clipType}
                           metadata={selectedMetadata}
                           params={selectedDraft.params}
                           registry={allowedRegistry}

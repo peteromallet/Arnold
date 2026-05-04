@@ -1,0 +1,108 @@
+import {
+  TimelineNotFoundError,
+  TimelineVersionConflictError,
+  type DataProvider,
+  type LoadedTimeline,
+} from '@/tools/video-editor/data/DataProvider';
+import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults';
+import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types';
+
+type TimelineSeed = {
+  config?: TimelineConfig;
+  configVersion?: number;
+  registry?: AssetRegistry;
+};
+
+type InMemoryTimelineRecord = {
+  config: TimelineConfig;
+  configVersion: number;
+  registry: AssetRegistry;
+};
+
+const clone = <T,>(value: T): T => {
+  return JSON.parse(JSON.stringify(value)) as T;
+};
+
+const normalizeTimelineSeed = (seed?: TimelineSeed): InMemoryTimelineRecord => {
+  return {
+    config: clone(seed?.config ?? createDefaultTimelineConfig()),
+    configVersion: seed?.configVersion ?? 1,
+    registry: clone(seed?.registry ?? { assets: {} }),
+  };
+};
+
+export class InMemoryDataProvider implements DataProvider {
+  private readonly timelines = new Map<string, InMemoryTimelineRecord>();
+
+  constructor(seed: Record<string, TimelineSeed> = {}) {
+    for (const [timelineId, value] of Object.entries(seed)) {
+      this.timelines.set(timelineId, normalizeTimelineSeed(value));
+    }
+  }
+
+  seedTimeline(timelineId: string, seed?: TimelineSeed) {
+    this.timelines.set(timelineId, normalizeTimelineSeed(seed));
+  }
+
+  async loadTimeline(timelineId: string): Promise<LoadedTimeline> {
+    const existing = this.timelines.get(timelineId);
+    if (!existing) {
+      throw new TimelineNotFoundError(timelineId);
+    }
+
+    return {
+      config: clone(existing.config),
+      configVersion: existing.configVersion,
+    };
+  }
+
+  async saveTimeline(
+    timelineId: string,
+    config: TimelineConfig,
+    expectedVersion: number,
+    registry?: AssetRegistry,
+  ): Promise<number> {
+    const existing = this.timelines.get(timelineId);
+    if (!existing) {
+      throw new TimelineNotFoundError(timelineId);
+    }
+    if (existing.configVersion !== expectedVersion) {
+      throw new TimelineVersionConflictError();
+    }
+
+    const nextVersion = expectedVersion + 1;
+    this.timelines.set(timelineId, {
+      config: clone(config),
+      configVersion: nextVersion,
+      registry: clone(registry ?? existing.registry),
+    });
+    return nextVersion;
+  }
+
+  async loadAssetRegistry(timelineId: string): Promise<AssetRegistry> {
+    const existing = this.timelines.get(timelineId);
+    if (!existing) {
+      throw new TimelineNotFoundError(timelineId);
+    }
+    return clone(existing.registry);
+  }
+
+  async resolveAssetUrl(file: string): Promise<string> {
+    return file.startsWith('http://') || file.startsWith('https://')
+      ? file
+      : `memory://${file}`;
+  }
+
+  async registerAsset(timelineId: string, assetId: string, entry: AssetRegistryEntry): Promise<void> {
+    const existing = this.timelines.get(timelineId);
+    if (!existing) {
+      throw new TimelineNotFoundError(timelineId);
+    }
+    existing.registry = {
+      assets: {
+        ...existing.registry.assets,
+        [assetId]: clone(entry),
+      },
+    };
+  }
+}

@@ -42,6 +42,10 @@ GPU task processing requires **[Reigh-Worker](https://github.com/banodoco/Reigh-
 | UI button primitive (base-only) | `src/shared/components/ui/contracts/button.tsx` | Canonical primitive contract behind `ui/button` | N/A |
 | UI themed button wrapper | `src/shared/components/ui/theme/button.tsx` | App layer wrapper over base primitive | N/A |
 | UI class merge primitive | `src/shared/components/ui/contracts/cn.ts` | Stable canonical | N/A |
+| Video editor core SDK | `src/tools/video-editor/index.ts` | Stable edge-safe contract | N/A |
+| Video editor browser helpers | `src/tools/video-editor/browser.ts` | Stable browser-only contract | N/A |
+| Video editor browser provider | `src/tools/video-editor/browser-provider.ts` | Stable custom-shell browser contract | N/A |
+| Video editor testing helpers | `src/tools/video-editor/testing.ts` | Stable testing contract | N/A |
 
 Compatibility shims that remain for legacy imports:
 
@@ -59,9 +63,9 @@ Run these in CI and before merging facade/contract changes:
 
 | Gate | Required Surface Coverage | Expected Assertion |
 |---|---|---|
-| `npm run test:contracts` | `src/shared/components/ui/button.tsx`, `src/shared/components/ui/contracts/button.tsx`, `src/shared/components/ui/contracts/cn.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/domains/generation/types/index.ts` | Public contract API shape and behavior stays stable |
-| `npm run test:arch` | `src/shared/lib/errorHandling/runtimeError.ts`, `src/integrations/supabase/client.ts`, contract shim policy docs/scripts | Contract and shim usage rules are enforced |
-| `npm run quality:check` | `src/integrations/supabase/client.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/shared/components/ui/contracts/*` | Integrated lint/typecheck/governance checks pass for touched contract surfaces |
+| `npm run test:contracts` | `src/tools/video-editor/index.ts`, `src/tools/video-editor/browser.ts`, `src/tools/video-editor/browser-provider.ts`, `src/tools/video-editor/testing.ts`, `src/shared/components/ui/button.tsx`, `src/shared/components/ui/contracts/button.tsx`, `src/shared/components/ui/contracts/cn.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/domains/generation/types/index.ts` | Public contract API shape and behavior stays stable |
+| `npm run test:arch` | `scripts/quality/check-video-editor-sdk-imports.mjs`, `config/governance/video-editor-sdk-import-allowlist.json`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/integrations/supabase/client.ts`, contract shim policy docs/scripts | Contract and shim usage rules are enforced |
+| `npm run quality:check` | `src/tools/video-editor/index.ts`, `src/tools/video-editor/browser.ts`, `src/tools/video-editor/browser-provider.ts`, `src/tools/video-editor/testing.ts`, `scripts/quality/check-video-editor-sdk-imports.mjs`, `config/governance/video-editor-sdk-import-allowlist.json`, `src/integrations/supabase/client.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/shared/components/ui/contracts/*` | Integrated lint/typecheck/governance checks pass for touched contract surfaces |
 
 ## Code Health
 
@@ -73,5 +77,6 @@ Run these in CI and before merging facade/contract changes:
 |-----|---------|
 | **[structure.md](structure.md)** | Architecture overview, directory map, links to all sub-docs |
 | **[docs/code_quality_audit.md](docs/code_quality_audit.md)** | Quality standards, anti-patterns, metrics, known exceptions |
+| **[docs/video-editor-sdk/](docs/video-editor-sdk/README.md)** | Supported public SDK guide, recipes, and standalone embed demo references |
 | **[CLAUDE.md](CLAUDE.md)** | AI agent instructions — working rules, routing table, conventions (symlinked to `.cursorrules`) |
 | **[docs/structure_detail/](docs/structure_detail/)** | 24 focused sub-docs covering every system (settings, data fetching, realtime, tasks, etc.) |

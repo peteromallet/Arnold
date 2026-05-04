@@ -6,6 +6,7 @@ import { Button } from '@/shared/components/ui/button';
 import { TimelineRenderer } from '@/tools/video-editor/compositions/TimelineRenderer';
 import { useEffectDiagnostic, useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
 import { getClipDurationInFrames, parseResolution, secondsToFrames } from '@/tools/video-editor/lib/config-utils';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 
 export interface PreviewHandle {
@@ -123,6 +124,7 @@ const RemotionPreviewComponent = forwardRef<PreviewHandle, RemotionPreviewProps>
     <div
       ref={playerContainerRef}
       className="relative flex h-full min-h-[220px] w-full items-center justify-center overflow-hidden rounded-xl bg-background"
+      style={VIDEO_EDITOR_THEME_VARS}
     >
       <Player
         ref={playerRef}
@@ -148,8 +150,8 @@ const RemotionPreviewComponent = forwardRef<PreviewHandle, RemotionPreviewProps>
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: 'black',
-              color: 'rgba(255,255,255,0.5)',
+              backgroundColor: 'var(--video-editor-stage-bg)',
+              color: 'var(--video-editor-stage-fg-subtle)',
               fontSize: 13,
               fontFamily: 'monospace',
             }}
@@ -159,12 +161,15 @@ const RemotionPreviewComponent = forwardRef<PreviewHandle, RemotionPreviewProps>
         )}
         style={{ width: '100%', height: '100%' }}
       />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-center gap-2 bg-gradient-to-t from-black/60 to-transparent px-3 py-3">
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-center gap-2 px-3 py-3"
+        style={{ backgroundImage: 'linear-gradient(to top, var(--video-editor-stage-gradient-start), transparent)' }}
+      >
         <Button
           type="button"
           variant="outline"
           size="icon"
-          className="pointer-events-auto h-8 w-8 rounded-full border-white/20 bg-black/40 text-white hover:bg-black/60"
+          className="pointer-events-auto h-8 w-8 rounded-full border-[color:var(--video-editor-stage-control-border)] bg-[var(--video-editor-stage-control-bg)] text-[color:var(--video-editor-stage-fg)] hover:bg-[var(--video-editor-stage-control-bg-hover)]"
           onClick={() => playerRef.current?.seekTo(0)}
           title="Jump to beginning"
         >
@@ -174,7 +179,7 @@ const RemotionPreviewComponent = forwardRef<PreviewHandle, RemotionPreviewProps>
           type="button"
           variant="outline"
           size="icon"
-          className="pointer-events-auto h-10 w-10 rounded-full border-white/20 bg-black/40 text-white hover:bg-black/60"
+          className="pointer-events-auto h-10 w-10 rounded-full border-[color:var(--video-editor-stage-control-border)] bg-[var(--video-editor-stage-control-bg)] text-[color:var(--video-editor-stage-fg)] hover:bg-[var(--video-editor-stage-control-bg-hover)]"
           onClick={() => playerRef.current?.toggle()}
           title={isPlaying ? 'Pause' : 'Play'}
         >

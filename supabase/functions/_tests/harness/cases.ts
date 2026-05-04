@@ -1,4 +1,4 @@
-import type { AssetRegistry, TimelineClip } from "../../../../src/tools/video-editor/types/index.ts";
+import type { AssetRegistry, TimelineClip } from "../../../../src/tools/video-editor/index.ts";
 import type { SelectedClipPayload } from "../../ai-timeline-agent/types.ts";
 import {
   expectClipDeleted,

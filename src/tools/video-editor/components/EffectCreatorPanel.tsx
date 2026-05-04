@@ -29,10 +29,9 @@ import { tryCompileEffectAsync, type CompileResult } from '@/tools/video-editor/
 import { wrapWithEffect } from '@/tools/video-editor/effects';
 import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances';
 import {
-  useCreateEffectResource,
-  useUpdateEffectResource,
   type EffectCategory,
   type EffectResource,
+  useEffectResources,
 } from '@/tools/video-editor/hooks/useEffectResources';
 import type { ParameterSchema } from '@/tools/video-editor/types';
 
@@ -215,11 +214,12 @@ export function EffectCreatorPanel({
   const [showCode, setShowCode] = useState(false);
   const [previewParams, setPreviewParams] = useState<PreviewParams>(DEFAULT_PREVIEW_PARAMS);
   const [agentMessage, setAgentMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Mutations
-  const createEffect = useCreateEffectResource();
-  const updateEffect = useUpdateEffectResource();
-  const isSaving = createEffect.isPending || updateEffect.isPending;
+  const effectCatalog = useEffectResources();
+  const canSaveEffect = isEditing
+    ? effectCatalog.canUpdateEffect
+    : effectCatalog.canCreateEffect;
 
   // Track abort for generation requests
   const abortRef = useRef<AbortController | null>(null);
@@ -384,19 +384,28 @@ export function EffectCreatorPanel({
     const defaultParams = getDefaultValues(parameterSchema);
 
     try {
+      setIsSaving(true);
       if (isEditing && editingEffect) {
-        await updateEffect.mutateAsync({ id: editingEffect.id, metadata });
+        if (!effectCatalog.updateEffect) {
+          throw new Error('This editor host does not support updating custom effects.');
+        }
+        await effectCatalog.updateEffect({ id: editingEffect.id, metadata });
         onSaved?.(editingEffect.id, category, defaultParams);
       } else {
-        const resource = await createEffect.mutateAsync({ metadata });
+        if (!effectCatalog.createEffect) {
+          throw new Error('This editor host does not support creating custom effects.');
+        }
+        const resource = await effectCatalog.createEffect({ metadata });
         onSaved?.(resource.id, category, defaultParams);
       }
       onOpenChange(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Save failed';
       toast({ title: 'Save failed', description: message, variant: 'destructive' });
+    } finally {
+      setIsSaving(false);
     }
-  }, [name, code, category, generatedDescription, parameterSchema, prompt, isPublic, compileStatus, compileCode, isEditing, editingEffect, createEffect, updateEffect, onSaved, onOpenChange]);
+  }, [name, code, category, generatedDescription, parameterSchema, prompt, isPublic, compileStatus, compileCode, isEditing, editingEffect, effectCatalog, onSaved, onOpenChange]);
 
   // Preview composition memoized on the component ref
   const previewDurationFrames = Math.max(1, Math.round(previewParams.durationSeconds * previewFps));
@@ -674,13 +683,18 @@ export function EffectCreatorPanel({
               </span>
             </div>
             <div className="flex gap-2">
+              {!canSaveEffect && (
+                <div className="self-center text-right text-xs text-muted-foreground">
+                  This host is read-only for custom effect publishing.
+                </div>
+              )}
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
               <Button
                 type="button"
                 onClick={handleSave}
-                disabled={isSaving || !name.trim() || !code.trim()}
+                disabled={isSaving || !name.trim() || !code.trim() || !canSaveEffect}
                 className="gap-1.5"
               >
                 {isSaving ? (

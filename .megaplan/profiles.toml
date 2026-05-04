@@ -1,0 +1,17 @@
+[profiles.all-codex]
+prep                  = "codex"
+plan                  = "codex"
+critique              = "codex"
+gate                  = "codex"
+revise                = "codex"
+finalize              = "codex"
+execute               = "codex"
+loop_plan             = "codex"
+loop_execute          = "codex"
+review                = "codex"
+tiebreaker_researcher = "codex"
+tiebreaker_challenger = "codex"
+
+# Legacy fallback CLI phase names.
+clarify               = "codex"
+integrate             = "codex"

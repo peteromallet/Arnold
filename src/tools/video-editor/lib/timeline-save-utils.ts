@@ -1,5 +1,5 @@
 import { assembleTimelineData, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import { migrateToFlatTracks, repairConfig } from '@/tools/video-editor/lib/migrate';
+import { canonicalizeTimelinePair } from '@/tools/video-editor/lib/timeline-domain';
 import type {
   AssetRegistry,
   ResolvedAssetRegistryEntry,
@@ -28,32 +28,31 @@ export function buildDataFromCurrentRegistry(
   config: TimelineConfig,
   current: TimelineData,
 ): TimelineData {
-  // Repair before migration so saved/snapshotted configs keep the canonical shape.
-  const migratedConfig = migrateToFlatTracks(repairConfig(config));
-  migratedConfig.tracks = migratedConfig.tracks ?? [];
+  const canonical = canonicalizeTimelinePair(config, current.registry);
+  const canonicalConfig = canonical.config;
 
   const resolvedConfig = {
-    output: { ...migratedConfig.output },
-    tracks: migratedConfig.tracks,
-    clips: migratedConfig.clips.map((clip) => ({
+    output: { ...canonicalConfig.output },
+    tracks: canonicalConfig.tracks ?? [],
+    clips: canonicalConfig.clips.map((clip) => ({
       ...clip,
       assetEntry: clip.asset ? current.resolvedConfig.registry[clip.asset] : undefined,
     })),
     registry: current.resolvedConfig.registry,
-    ...(migratedConfig.theme !== undefined ? { theme: migratedConfig.theme } : {}),
-    ...(migratedConfig.theme_overrides !== undefined ? { theme_overrides: migratedConfig.theme_overrides } : {}),
-    ...(migratedConfig.generation_defaults !== undefined ? { generation_defaults: migratedConfig.generation_defaults } : {}),
+    ...(canonicalConfig.theme !== undefined ? { theme: canonicalConfig.theme } : {}),
+    ...(canonicalConfig.theme_overrides !== undefined ? { theme_overrides: canonicalConfig.theme_overrides } : {}),
+    ...(canonicalConfig.generation_defaults !== undefined ? { generation_defaults: canonicalConfig.generation_defaults } : {}),
   };
 
   return assembleTimelineData({
-    config: migratedConfig,
+    config: canonicalConfig,
     configVersion: current.configVersion,
     registry: current.registry,
     resolvedConfig,
     assetMap: Object.fromEntries(
       Object.entries(current.registry.assets ?? {}).map(([assetId, entry]) => [assetId, entry.file]),
     ),
-    output: { ...migratedConfig.output },
+    output: { ...canonicalConfig.output },
   });
 }
 
@@ -62,8 +61,8 @@ export function buildDataFromSnapshot(
   registry: AssetRegistry,
   current: TimelineData,
 ): TimelineData {
-  const migratedConfig = migrateToFlatTracks(repairConfig(config));
-  migratedConfig.tracks = migratedConfig.tracks ?? [];
+  const canonical = canonicalizeTimelinePair(config, registry);
+  const canonicalConfig = canonical.config;
 
   const snapshotResolvedRegistry: Record<string, ResolvedAssetRegistryEntry> = Object.fromEntries(
     Object.entries(registry.assets ?? {}).map(([assetId, entry]) => [
@@ -79,26 +78,26 @@ export function buildDataFromSnapshot(
     ...current.resolvedConfig.registry,
   };
   const resolvedConfig = {
-    output: { ...migratedConfig.output },
-    tracks: migratedConfig.tracks,
-    clips: migratedConfig.clips.map((clip) => ({
+    output: { ...canonicalConfig.output },
+    tracks: canonicalConfig.tracks ?? [],
+    clips: canonicalConfig.clips.map((clip) => ({
       ...clip,
       assetEntry: clip.asset ? mergedResolvedRegistry[clip.asset] : undefined,
     })),
     registry: mergedResolvedRegistry,
-    ...(migratedConfig.theme !== undefined ? { theme: migratedConfig.theme } : {}),
-    ...(migratedConfig.theme_overrides !== undefined ? { theme_overrides: migratedConfig.theme_overrides } : {}),
-    ...(migratedConfig.generation_defaults !== undefined ? { generation_defaults: migratedConfig.generation_defaults } : {}),
+    ...(canonicalConfig.theme !== undefined ? { theme: canonicalConfig.theme } : {}),
+    ...(canonicalConfig.theme_overrides !== undefined ? { theme_overrides: canonicalConfig.theme_overrides } : {}),
+    ...(canonicalConfig.generation_defaults !== undefined ? { generation_defaults: canonicalConfig.generation_defaults } : {}),
   };
 
   return assembleTimelineData({
-    config: migratedConfig,
+    config: canonicalConfig,
     configVersion: current.configVersion,
     registry,
     resolvedConfig,
     assetMap: Object.fromEntries(
       Object.entries(registry.assets ?? {}).map(([assetId, entry]) => [assetId, entry.file]),
     ),
-    output: { ...migratedConfig.output },
+    output: { ...canonicalConfig.output },
   });
 }

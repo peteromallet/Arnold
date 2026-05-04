@@ -1,3 +1,7 @@
+/**
+ * Internal bridge between the app shell and editor state contexts.
+ * Not part of the supported public SDK surface.
+ */
 import {
   createContext,
   createElement,
@@ -31,11 +35,37 @@ export interface TimelineAvailabilityState {
   mounted: boolean;
 }
 
+export const UNMOUNTED_TIMELINE_AVAILABILITY: TimelineAvailabilityState = Object.freeze({ mounted: false });
+export const MOUNTED_TIMELINE_AVAILABILITY: TimelineAvailabilityState = Object.freeze({ mounted: true });
+
+export function hasMountedTimelineAvailability(
+  availability: Pick<TimelineAvailabilityState, 'mounted'> & { hasProvider?: boolean },
+): boolean {
+  return availability.mounted && availability.hasProvider !== false;
+}
+
+function getTimelineAvailabilityState(mounted: boolean): TimelineAvailabilityState {
+  return mounted ? MOUNTED_TIMELINE_AVAILABILITY : UNMOUNTED_TIMELINE_AVAILABILITY;
+}
+
 export interface TimelineStoreBootstrap {
   data: TimelineEditorDataContextValue;
   ops: TimelineEditorOpsContextValue;
   chrome: TimelineChromeContextValue;
   playback: TimelinePlaybackContextValue;
+}
+
+export interface TimelineMutableAdapters {
+  dataRef: TimelineEditorDataContextValue['dataRef'];
+  pendingOpsRef: TimelineEditorDataContextValue['pendingOpsRef'];
+  interactionStateRef: TimelineEditorDataContextValue['interactionStateRef'];
+  selectedClipIdsRef: TimelineEditorDataContextValue['selectedClipIdsRef'];
+  additiveSelectionRef: TimelineEditorDataContextValue['additiveSelectionRef'];
+  timelineRef: TimelineEditorDataContextValue['timelineRef'];
+  timelineWrapperRef: TimelineEditorDataContextValue['timelineWrapperRef'];
+  previewRef: TimelinePlaybackContextValue['previewRef'];
+  playerContainerRef: TimelinePlaybackContextValue['playerContainerRef'];
+  ops: TimelineEditorOpsContextValue;
 }
 
 export interface TimelineStoreState extends TimelineStoreBootstrap {
@@ -189,6 +219,19 @@ function createInitialOpsSlice(): TimelineEditorOpsContextValue {
   const createTrackAndMoveClip: TimelineEditorOpsContextValue['createTrackAndMoveClip'] = noop;
   const uploadFiles: TimelineEditorOpsContextValue['uploadFiles'] = noopAsync;
   const applyEdit: TimelineEditorOpsContextValue['applyEdit'] = noop;
+  const commands: TimelineEditorOpsContextValue['commands'] = {
+    buildAddMediaCommand: () => null,
+    buildSwapCommand: () => null,
+    validate: () => {
+      throw new Error('Timeline commands are unavailable before the editor is mounted.');
+    },
+    dryRun: () => {
+      throw new Error('Timeline commands are unavailable before the editor is mounted.');
+    },
+    apply: () => {
+      throw new Error('Timeline commands are unavailable before the editor is mounted.');
+    },
+  };
   const patchRegistry: TimelineEditorOpsContextValue['patchRegistry'] = noop;
   const unpatchRegistry: TimelineEditorOpsContextValue['unpatchRegistry'] = noop;
   const registerAsset: TimelineEditorOpsContextValue['registerAsset'] = noopAsync;
@@ -241,6 +284,7 @@ function createInitialOpsSlice(): TimelineEditorOpsContextValue {
     createTrackAndMoveClip,
     uploadFiles,
     applyEdit,
+    commands,
     patchRegistry,
     unpatchRegistry,
     registerAsset,
@@ -256,8 +300,21 @@ function createInitialChromeSlice(): TimelineChromeContextValue {
     renderLog: '',
     renderDirty: false,
     renderProgress: null,
+    queuedRender: null,
     renderResultUrl: null,
     renderResultFilename: null,
+    renderRequest: {
+      timelineId: '',
+      assetRegistry: null,
+      resolvedConfig: null,
+      renderMetadata: null,
+      renderRuntime: {
+        projectId: '',
+        orchestratorBaseUrl: '',
+        getSupabaseSession: async () => null,
+        getWorkerJwt: async () => null,
+      },
+    },
     undo: noop,
     redo: noop,
     canUndo: false,
@@ -307,13 +364,13 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
   const initialMounted = bootstrap !== undefined;
 
   return createStore<TimelineStoreState>((set) => ({
-    availability: { mounted: initialMounted },
+    availability: getTimelineAvailabilityState(initialMounted),
     ...seededSlices,
     setMounted: (mounted) => {
       set((state) => (
         state.availability.mounted === mounted
           ? state
-          : { availability: { mounted } }
+          : { availability: getTimelineAvailabilityState(mounted) }
       ));
     },
     syncDataSlice: (data) => {
@@ -321,7 +378,7 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
         state.data === data && state.availability.mounted
           ? state
           : {
-              availability: state.availability.mounted ? state.availability : { mounted: true },
+              availability: state.availability.mounted ? state.availability : MOUNTED_TIMELINE_AVAILABILITY,
               data,
             }
       ));
@@ -331,7 +388,7 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
         state.ops === ops && state.availability.mounted
           ? state
           : {
-              availability: state.availability.mounted ? state.availability : { mounted: true },
+              availability: state.availability.mounted ? state.availability : MOUNTED_TIMELINE_AVAILABILITY,
               ops,
             }
       ));
@@ -341,7 +398,7 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
         state.chrome === chrome && state.availability.mounted
           ? state
           : {
-              availability: state.availability.mounted ? state.availability : { mounted: true },
+              availability: state.availability.mounted ? state.availability : MOUNTED_TIMELINE_AVAILABILITY,
               chrome,
             }
       ));
@@ -351,7 +408,7 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
         state.playback === playback && state.availability.mounted
           ? state
           : {
-              availability: state.availability.mounted ? state.availability : { mounted: true },
+              availability: state.availability.mounted ? state.availability : MOUNTED_TIMELINE_AVAILABILITY,
               playback,
             }
       ));
@@ -375,7 +432,7 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
         }
 
         return {
-          availability: { mounted: nextMounted },
+          availability: MOUNTED_TIMELINE_AVAILABILITY,
           data: nextData,
           ops: nextOps,
           chrome: nextChrome,
@@ -385,11 +442,23 @@ export function createTimelineStore(bootstrap?: Partial<TimelineStoreBootstrap>)
     },
     resetSlices: () => {
       set(() => ({
-        availability: { mounted: false },
+        availability: UNMOUNTED_TIMELINE_AVAILABILITY,
         ...createInitialSlices(),
       }));
     },
   }));
+}
+
+export function seedTimelineStoreBeforeRender(
+  store: TimelineStoreApi,
+  bootstrap: TimelineStoreBootstrap,
+) {
+  const state = store.getState();
+  if (state.availability.mounted) {
+    return;
+  }
+
+  store.getState().syncSlices(bootstrap);
 }
 
 const TimelineStoreContext = createContext<TimelineStoreApi | null>(null);
@@ -430,6 +499,8 @@ function useSafeTimelineStoreValue<T>(
   const store = providedStore ?? fallbackTimelineStore;
   const mounted = useStoreWithEqualityFn(store, (state) => state.availability.mounted);
   const value = useStoreWithEqualityFn(store, selector, equalityFn);
+  // Preserve the mounted-only safe-hook contract: a provider without a mounted
+  // editor still behaves like "no editor" for staged add-to-editor callers.
   return providedStore && mounted ? value : null;
 }
 
@@ -487,6 +558,14 @@ export function useTimelineOpsSliceSafe(): TimelineEditorOpsContextValue | null 
   return useSafeTimelineStoreValue((state) => state.ops, shallow);
 }
 
+export function useTimelineCommands() {
+  return useTimelineOpsSelector((ops) => ops.commands);
+}
+
+export function useTimelineCommandsSafe() {
+  return useSafeTimelineStoreValue((state) => state.ops.commands, shallow);
+}
+
 export function useTimelineChromeSlice(): TimelineChromeContextValue {
   return useBoundTimelineStore((state) => state.chrome, shallow);
 }
@@ -518,22 +597,32 @@ export function useTimelinePlaybackSliceSafe(): TimelinePlaybackContextValue | n
 }
 
 export function useTimelineMutableAdapters() {
-  return useBoundTimelineStore((state) => ({
+  return useBoundTimelineStore<TimelineMutableAdapters>((state) => ({
     dataRef: state.data.dataRef,
     pendingOpsRef: state.data.pendingOpsRef,
     interactionStateRef: state.data.interactionStateRef,
     selectedClipIdsRef: state.data.selectedClipIdsRef,
     additiveSelectionRef: state.data.additiveSelectionRef,
+    timelineRef: state.data.timelineRef,
+    timelineWrapperRef: state.data.timelineWrapperRef,
+    previewRef: state.playback.previewRef,
+    playerContainerRef: state.playback.playerContainerRef,
+    ops: state.ops,
   }), shallow);
 }
 
 export function useTimelineMutableAdaptersSafe() {
-  return useSafeTimelineStoreValue((state) => ({
+  return useSafeTimelineStoreValue<TimelineMutableAdapters>((state) => ({
     dataRef: state.data.dataRef,
     pendingOpsRef: state.data.pendingOpsRef,
     interactionStateRef: state.data.interactionStateRef,
     selectedClipIdsRef: state.data.selectedClipIdsRef,
     additiveSelectionRef: state.data.additiveSelectionRef,
+    timelineRef: state.data.timelineRef,
+    timelineWrapperRef: state.data.timelineWrapperRef,
+    previewRef: state.playback.previewRef,
+    playerContainerRef: state.playback.playerContainerRef,
+    ops: state.ops,
   }), shallow);
 }
 
@@ -541,6 +630,8 @@ export const useTimelineEditorData = useTimelineDataSlice;
 export const useTimelineEditorDataSafe = useTimelineDataSliceSafe;
 export const useTimelineEditorOps = useTimelineOpsSlice;
 export const useTimelineEditorOpsSafe = useTimelineOpsSliceSafe;
+export const useTimelineCommandsContext = useTimelineCommands;
+export const useTimelineCommandsContextSafe = useTimelineCommandsSafe;
 export const useTimelineChromeContext = useTimelineChromeSlice;
 export const useTimelineChromeContextSafe = useTimelineChromeSliceSafe;
 export const useTimelinePlaybackContext = useTimelinePlaybackSlice;

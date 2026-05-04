@@ -1,4 +1,4 @@
-import type { AssetRegistry, AssetRegistryEntry, TimelineConfig, TimelineClip } from "../../../../src/tools/video-editor/types/index.ts";
+import type { AssetRegistry, AssetRegistryEntry, TimelineConfig, TimelineClip } from "../../../../src/tools/video-editor/index.ts";
 import { getAdminSupabaseClient, signInHarnessUser, type TestUserAuth } from "./client.ts";
 
 const TEST_IMAGE_URLS = [

@@ -10,7 +10,7 @@ import { toJson } from '@/shared/lib/supabaseTypeHelpers';
 import type { VideoMetadata } from '@/shared/lib/media/videoUploader';
 import { QUERY_PRESETS } from '@/shared/lib/query/queryDefaults';
 import { resourceQueryKeys } from '@/shared/lib/queryKeys/resources';
-import type { ParameterSchema } from '@/tools/video-editor/types';
+import type { ParameterSchema } from '@/tools/video-editor';
 
 export interface PhaseConfigMetadata {
     name: string;
@@ -126,9 +126,13 @@ function mapResourceRow(row: ResourceRow, fallbackType?: ResourceType): Resource
 }
 
 // List public resources (available to all users)
-export const useListPublicResources = (type: ResourceType) => {
+export const useListPublicResources = (
+    type: ResourceType,
+    options?: { enabled?: boolean },
+) => {
     return useQuery<Resource[], Error>({
         queryKey: resourceQueryKeys.publicByType(type),
+        enabled: options?.enabled ?? true,
         queryFn: async () => {
             
             // Manual pagination to bypass 1000 limit
@@ -176,10 +180,14 @@ export const useListPublicResources = (type: ResourceType) => {
 };
 
 // List resources
-export const useListResources = (type: ResourceType) => {
+export const useListResources = (
+    type: ResourceType,
+    options?: { enabled?: boolean },
+) => {
     return useQuery<Resource[], Error>({
         // Note: Using ['resources', type] pattern for user resources (no projectId needed)
         queryKey: resourceQueryKeys.listByType(type),
+        enabled: options?.enabled ?? true,
         queryFn: async () => {
             const { data: { user } } = await supabase().auth.getUser();
             if (!user) throw new Error('Not authenticated');

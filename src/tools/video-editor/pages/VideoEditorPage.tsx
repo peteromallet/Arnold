@@ -1,3 +1,7 @@
+/**
+ * Internal Reigh route adapter for the in-app video editor page.
+ * Not part of the supported public SDK surface.
+ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Clapperboard, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -12,8 +16,8 @@ import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
 import { toast } from '@/shared/components/ui/toast';
 import { SupabaseDataProvider } from '@/tools/video-editor/data/SupabaseDataProvider';
 import { VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
+import { ReighVideoEditorShell } from '@/tools/video-editor/components/ReighVideoEditorShell';
 import { useTimelinesList } from '@/tools/video-editor/hooks/useTimelinesList';
-import { VideoEditorShell } from '@/tools/video-editor/components/VideoEditorShell';
 import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults';
 
 function TimelineList({ onSelect }: { onSelect: (timelineId: string) => void }) {
@@ -182,8 +186,8 @@ function TimelineList({ onSelect }: { onSelect: (timelineId: string) => void }) 
 export default function VideoEditorPage() {
   const { selectedProjectId } = useProjectSelectionContext();
   const { userId } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const creatingRef = useRef(false);
   const timelineId = searchParams.get('timeline');
   const provider = useMemo(() => {
@@ -322,8 +326,14 @@ export default function VideoEditorPage() {
 
   return (
     <div className={cn('h-full w-full overflow-hidden bg-background')}>
-      <VideoEditorProvider dataProvider={provider} timelineId={timelineId} timelineName={timelineName} userId={userId}>
-        <VideoEditorShell
+      <VideoEditorProvider
+        dataProvider={provider}
+        projectId={selectedProjectId}
+        timelineId={timelineId}
+        timelineName={timelineName}
+        userId={userId}
+      >
+        <ReighVideoEditorShell
           mode="full"
           timelineId={timelineId}
           onCreateTimeline={() => navigate('/')}

@@ -1,7 +1,8 @@
-import { beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 import type { GeneratedImageWithMetadata } from '../../types';
 import type { GenerationRow } from '@/domains/generation/types';
+import { MediaGalleryLightbox } from '../MediaGalleryLightbox';
 
 const mediaLightboxSpy = vi.fn();
 const useLocalMediaUrlMock = vi.fn();
@@ -24,8 +25,6 @@ vi.mock('@/shared/components/TaskDetails/TaskDetailsModal', () => ({
 vi.mock('@/domains/generation/components/GenerationDetails', () => ({
   GenerationDetails: () => null,
 }));
-
-let MediaGalleryLightbox: typeof import('../MediaGalleryLightbox').MediaGalleryLightbox;
 
 function buildMedia(overrides: Partial<GeneratedImageWithMetadata>): GeneratedImageWithMetadata {
   return {
@@ -92,10 +91,6 @@ function renderLightbox({
 }
 
 describe('MediaGalleryLightbox', () => {
-  beforeAll(async () => {
-    ({ MediaGalleryLightbox } = await import('../MediaGalleryLightbox'));
-  });
-
   beforeEach(() => {
     mediaLightboxSpy.mockClear();
     useLocalMediaUrlMock.mockReturnValue({

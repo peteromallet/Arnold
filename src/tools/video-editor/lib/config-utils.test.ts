@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getClipTimelineDuration,
   getSanitizedAssetFile,
   getSanitizedMediaSrc,
   getSanitizedMediaTrimProps,
@@ -7,6 +8,12 @@ import {
   getSanitizedVolume,
   resolveTimelineConfig,
 } from '@/tools/video-editor/lib/config-utils';
+import {
+  canonicalizeTimelineConfigSnapshot,
+  canonicalizeTimelinePair,
+  getConfigTimelineClipDuration,
+  getPairTimelineClipDuration,
+} from '@/tools/video-editor/lib/timeline-domain';
 
 describe('config-utils media sanitizers', () => {
   it('omits trimAfter when source out is not greater than source in', () => {
@@ -89,5 +96,61 @@ describe('config-utils media sanitizers', () => {
     expect(resolved.theme).toBe('2rp');
     expect(resolved.theme_overrides).toEqual({ visual: { canvas: { fps: 24 } } });
     expect(resolved.generation_defaults).toEqual({ model: 'sequence-v1' });
+  });
+
+  it('keeps config-only malformed non-hold trims at zero duration but repairs pair-aware trims from registry duration', () => {
+    const malformedClip = {
+      id: 'clip-1',
+      at: 0,
+      track: 'V1',
+      clipType: 'media' as const,
+      asset: 'asset-1',
+    };
+
+    expect(getClipTimelineDuration(malformedClip)).toBe(0);
+    expect(getConfigTimelineClipDuration(malformedClip)).toBe(0);
+    expect(getPairTimelineClipDuration(malformedClip, {
+      assets: { 'asset-1': { file: 'video.mp4', duration: 2.25 } },
+    })).toBe(2.25);
+
+    const configOnly = canonicalizeTimelineConfigSnapshot({
+      output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [malformedClip],
+    });
+    expect(configOnly.config.clips[0]).toEqual(malformedClip);
+    expect(configOnly.issues.map((issue) => issue.code)).toContain('malformed_non_hold_trim_zero_duration');
+
+    const pairAware = canonicalizeTimelinePair(configOnly.config, {
+      assets: { 'asset-1': { file: 'video.mp4', duration: 2.25 } },
+    });
+    expect(pairAware.config.clips[0]).toMatchObject({ from: 0, to: 2.25 });
+    expect(pairAware.issues.map((issue) => issue.code)).toContain('malformed_non_hold_trim_repaired');
+  });
+
+  it('emits a structured zero-duration issue when malformed non-hold trims have no registry duration', () => {
+    const pairAware = canonicalizeTimelinePair({
+      output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{
+        id: 'clip-1',
+        at: 0,
+        track: 'V1',
+        clipType: 'media',
+        asset: 'asset-1',
+      }],
+    }, {
+      assets: { 'asset-1': { file: 'video.mp4' } },
+    });
+
+    expect(pairAware.config.clips[0]).not.toHaveProperty('from');
+    expect(pairAware.config.clips[0]).not.toHaveProperty('to');
+    expect(getPairTimelineClipDuration(pairAware.config.clips[0], pairAware.registry)).toBe(0);
+    expect(pairAware.issues).toContainEqual(expect.objectContaining({
+      code: 'malformed_non_hold_trim_zero_duration',
+      clipId: 'clip-1',
+      level: 'pair-aware',
+      repairApplied: false,
+    }));
   });
 });

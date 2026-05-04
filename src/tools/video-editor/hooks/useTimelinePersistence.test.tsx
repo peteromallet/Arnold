@@ -9,6 +9,7 @@ import { createInteractionState, notifyInteractionEndIfIdle, type InteractionSta
 import { configToRows, type TimelineData } from '../lib/timeline-data';
 import { getConfigSignature, getStableConfigSignature } from '../lib/config-utils';
 import { createDefaultTimelineConfig } from '../lib/defaults';
+import type { AssetResolver } from '../data/AssetResolver';
 import { TimelineVersionConflictError, type DataProvider } from '../data/DataProvider';
 import type { AssetRegistry } from '../types';
 
@@ -71,12 +72,14 @@ function makeTimelineData(label: string, registry: AssetRegistry = { assets: {} 
 
 interface TestHarness {
   provider: DataProvider;
+  assetResolver: AssetResolver;
   saveTimeline: ReturnType<typeof vi.fn>;
   loadTimeline: ReturnType<typeof vi.fn>;
   loadAssetRegistry: ReturnType<typeof vi.fn>;
   interactionStateRef: InteractionStateRef;
   dataRef: { current: TimelineData | null };
   scheduleSave: (data: TimelineData) => void;
+  reloadFromServer: () => Promise<void>;
 }
 
 interface SetupOptions {
@@ -107,6 +110,9 @@ function setup(options?: SetupOptions): TestHarness {
     loadAssetRegistry,
     resolveAssetUrl: vi.fn((file: string) => file),
   };
+  const assetResolver: AssetResolver = {
+    resolveAssetUrl: vi.fn((file: string) => Promise.resolve(file)),
+  };
 
   const eventBus = new TimelineEventBus();
   const dataRef = { current: options?.initialData ?? makeTimelineData('initial') };
@@ -128,6 +134,7 @@ function setup(options?: SetupOptions): TestHarness {
   const hook = renderHook(
     () => useTimelinePersistence({
       provider,
+      assetResolver,
       timelineId: 'timeline-1',
       eventBus,
       dataRef,
@@ -145,6 +152,7 @@ function setup(options?: SetupOptions): TestHarness {
 
   return {
     provider,
+    assetResolver,
     saveTimeline,
     loadTimeline,
     loadAssetRegistry,
@@ -156,6 +164,7 @@ function setup(options?: SetupOptions): TestHarness {
         hook.result.current.scheduleSave(data);
       });
     },
+    reloadFromServer: () => hook.result.current.reloadFromServer(),
   };
 }
 
@@ -322,5 +331,40 @@ describe('useTimelinePersistence — interaction gating', () => {
     expect(harness.saveTimeline.mock.calls[0]?.[3]).toEqual(staleRegistry);
     expect(harness.saveTimeline.mock.calls[1]?.[3]).toEqual(freshRegistry);
     expect(harness.dataRef.current?.registry).toEqual(freshRegistry);
+  });
+
+  it('reloadFromServer rebuilds timeline data through the asset resolver', async () => {
+    const registry = makeRegistry('reload');
+    const base = createDefaultTimelineConfig();
+    const loadedConfig = {
+      ...base,
+      output: { ...base.output, file: 'output-reload.mp4' },
+      tracks: (base.tracks ?? []).map((track) => ({ ...track })),
+      clips: [{
+        id: 'clip-reload',
+        at: 0,
+        track: 'V1' as const,
+        clipType: 'media' as const,
+        asset: 'asset-reload',
+        from: 0,
+        to: 2,
+      }],
+    };
+    const harness = setup({
+      initialData: makeTimelineData('reload-initial', registry),
+      loadTimelineImpl: async () => ({ config: loadedConfig, configVersion: 3 }),
+      loadAssetRegistryImpl: async () => registry,
+    });
+
+    harness.assetResolver.onResolve = vi.fn(async ({ file }) => `resolved:${file}`);
+
+    await act(async () => {
+      await harness.reloadFromServer();
+    });
+
+    expect(harness.assetResolver.onResolve).toHaveBeenCalledWith({
+      file: 'media/reload.mp4',
+      timelineId: 'timeline-1',
+    });
   });
 });

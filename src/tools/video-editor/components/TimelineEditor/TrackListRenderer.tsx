@@ -159,7 +159,7 @@ function RowActionLayer({
         key={action.id}
         className={cn(
           'group absolute',
-          clampedActionId === action.id && 'rounded-md ring-2 ring-amber-400/80 ring-offset-1 ring-offset-background',
+          clampedActionId === action.id && 'rounded-md ring-2 ring-[var(--video-editor-warning-ring)] ring-offset-1 ring-offset-background',
         )}
         data-action-id={action.id}
         data-row-id={row.id}
@@ -172,14 +172,14 @@ function RowActionLayer({
       >
         {getActionRender?.(renderedAction, row, width)}
         <div
-          className="absolute inset-y-0 left-0 z-10 cursor-ew-resize rounded-l-sm border-l border-sky-300/10 bg-sky-300/0 transition-colors group-hover:bg-sky-300/10"
+          className="absolute inset-y-0 left-0 z-10 cursor-ew-resize rounded-l-sm border-l border-[color:var(--video-editor-accent-ring)] bg-transparent transition-colors group-hover:bg-[var(--video-editor-accent-bg)]"
           style={{ width: resizeHandleWidth }}
           data-resize-edge="left"
           data-clip-id={action.id}
           data-row-id={row.id}
         />
         <div
-          className="absolute inset-y-0 right-0 z-10 cursor-ew-resize rounded-r-sm border-r border-sky-300/10 bg-sky-300/0 transition-colors group-hover:bg-sky-300/10"
+          className="absolute inset-y-0 right-0 z-10 cursor-ew-resize rounded-r-sm border-r border-[color:var(--video-editor-accent-ring)] bg-transparent transition-colors group-hover:bg-[var(--video-editor-accent-bg)]"
           style={{ width: resizeHandleWidth }}
           data-resize-edge="right"
           data-clip-id={action.id}

@@ -12,14 +12,14 @@ import {
   useTimelinePlaybackContext,
 } from '@/tools/video-editor/hooks/timelineStore';
 
-interface CompactPreviewProps {
+interface CompactPreviewCoreProps {
   timelineId?: string | null;
   onCreateTimeline?: () => void;
+  onOpenEditor?: (timelineId: string | null | undefined) => void;
 }
 
-export function CompactPreview({ timelineId, onCreateTimeline }: CompactPreviewProps) {
-  useRenderDiagnostic('CompactPreview');
-  const navigate = useNavigate();
+export function CompactPreviewCore({ timelineId, onCreateTimeline, onOpenEditor }: CompactPreviewCoreProps) {
+  useRenderDiagnostic('CompactPreviewCore');
   const { resolvedConfig } = useTimelineEditorData();
   const { saveStatus } = useTimelineChromeContext();
   const { previewRef, playerContainerRef, currentTime, onPreviewTimeUpdate } = useTimelinePlaybackContext();
@@ -43,7 +43,7 @@ export function CompactPreview({ timelineId, onCreateTimeline }: CompactPreviewP
               <Plus className="mr-1 h-4 w-4" />
               Create timeline
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => navigate('/tools/video-editor')}>
+            <Button type="button" size="sm" variant="outline" onClick={() => onOpenEditor?.(timelineId)}>
               Open editor
             </Button>
           </div>
@@ -59,12 +59,12 @@ export function CompactPreview({ timelineId, onCreateTimeline }: CompactPreviewP
           <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Editor pane</div>
           <div className="text-sm text-foreground">Timeline {timelineId.slice(0, 8)} · {saveStatus}</div>
         </div>
-        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={() => navigate(`/tools/video-editor?timeline=${timelineId}`)}>
+        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={() => onOpenEditor?.(timelineId)}>
           <ExternalLink className="h-3.5 w-3.5" />
           Open in editor
         </Button>
       </div>
-      <div className="min-h-0 flex-1 p-3">
+      <section role="region" aria-label="Preview panel" className="min-h-0 flex-1 p-3">
         <div className="h-full overflow-hidden rounded-xl border border-border">
           <RemotionPreview
             ref={previewRef}
@@ -74,7 +74,7 @@ export function CompactPreview({ timelineId, onCreateTimeline }: CompactPreviewP
             playerContainerRef={playerContainerRef}
           />
         </div>
-      </div>
+      </section>
       <div className="border-t border-border px-3 py-3">
         <Slider
           value={[currentTime]}
@@ -85,5 +85,23 @@ export function CompactPreview({ timelineId, onCreateTimeline }: CompactPreviewP
         />
       </div>
     </div>
+  );
+}
+
+interface CompactPreviewProps {
+  timelineId?: string | null;
+  onCreateTimeline?: () => void;
+}
+
+export function CompactPreview({ timelineId, onCreateTimeline }: CompactPreviewProps) {
+  useRenderDiagnostic('CompactPreview');
+  const navigate = useNavigate();
+
+  return (
+    <CompactPreviewCore
+      timelineId={timelineId}
+      onCreateTimeline={onCreateTimeline}
+      onOpenEditor={(nextTimelineId) => navigate(nextTimelineId ? `/tools/video-editor?timeline=${nextTimelineId}` : '/tools/video-editor')}
+    />
   );
 }

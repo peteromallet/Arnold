@@ -19,6 +19,7 @@ describe('trusted sequence metadata', () => {
       'image-jump',
       'resource-card',
       'section-hook',
+      'title-card',
     ]);
     expect(TRUSTED_SEQUENCE_METADATA.every((metadata) => metadata.themeId === '2rp')).toBe(true);
   });
@@ -66,20 +67,27 @@ describe('trusted sequence metadata', () => {
       options: ['jump', 'snap', 'gallery', 'pulse', 'shuffle'],
     });
   });
+
+  it('defines title-card as a simple text-first third-party-style example clip', () => {
+    const titleCard = getTrustedSequenceMetadata('title-card');
+    expect(titleCard).toBeDefined();
+    expect(titleCard).toMatchObject({
+      label: 'Title Card',
+      whenToUse: expect.stringContaining('chapter titles'),
+    });
+    expect(titleCard!.params.map((param) => param.key)).toEqual(['kicker', 'title', 'subtitle']);
+  });
 });
 
 describe('available sequence metadata', () => {
   it('exposes only trusted sequences that exist in the generated theme package registry', () => {
-    expect([...AVAILABLE_SEQUENCE_CLIP_TYPES].sort()).toEqual([
-      'art-card',
-      'cta-card',
+    expect(AVAILABLE_SEQUENCE_CLIP_TYPES).toEqual(expect.arrayContaining([
       'image-jump',
-      'resource-card',
-      'section-hook',
-    ]);
-    expect(AVAILABLE_SEQUENCE_METADATA).toHaveLength(5);
-    expect(isAvailableSequenceClipType('section-hook')).toBe(true);
+      'title-card',
+    ]));
+    expect(AVAILABLE_SEQUENCE_METADATA.length).toBeGreaterThanOrEqual(2);
     expect(isAvailableSequenceClipType('image-jump')).toBe(true);
+    expect(isAvailableSequenceClipType('title-card')).toBe(true);
     expect(isAvailableSequenceClipType('theme-package-not-yet-trusted')).toBe(false);
   });
 

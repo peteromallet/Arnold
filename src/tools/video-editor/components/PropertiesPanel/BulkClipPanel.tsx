@@ -14,7 +14,6 @@ import {
   TAB_COLUMNS_CLASS,
 } from '@/tools/video-editor/components/PropertiesPanel/ClipPanel';
 import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import { useEffectResources } from '@/tools/video-editor/hooks/useEffectResources';
 import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences';
 import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
@@ -118,8 +117,7 @@ export function BulkClipPanel(props: BulkClipPanelProps) {
     activeTab,
     setActiveTab,
   } = props;
-  const { userId } = useVideoEditorRuntime();
-  const effectResources = useEffectResources(userId);
+  const effectResources = useEffectResources();
   const [drafts, setDrafts] = useState<BulkDrafts>(() => buildDrafts(props));
 
   useEffect(() => {

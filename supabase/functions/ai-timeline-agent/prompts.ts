@@ -154,7 +154,7 @@ Use search_loras to find LoRAs and set_lora to add/remove them.`
     ].filter((line): line is string => Boolean(line)).join(" ")
     : "";
 
-  return `Timeline editor. Use run(command="...") for edits. Plain text for conversation.
+  return `Timeline editor. Use run(command="...") for legacy single-command edits, or run({transaction:{...}, mode:"validate"|"dry_run"|"apply"}) for typed batches. Plain text for conversation.
 
 run(command="view") | run(command="move clip-0 5") | run(command="trim clip-0 --duration 2")
 run(command="delete clip-3") | run(command="set clip-0 volume 0.5") | run(command="find-issues")
@@ -165,6 +165,12 @@ run(command="swap clip-0 gen-def https://example.com/new.mp4 --type video")
 run(command="query") | run(command="undo")
 run(command="duplicate clip-0 5")
 run(command="repeat 50 add-text V8 0.1 hello --start 2.74 --gap 0.1")
+run({"transaction":{"transactionId":"tx-1","commands":[{"type":"move","payload":{"clipId":"clip-0","at":5}},{"type":"trim","payload":{"clipId":"clip-0","duration":2}}]},"mode":"dry_run"})
+run({"transaction":{"transactionId":"tx-2","commands":[{"type":"set-params","payload":{"clipId":"clip-section-hook","params":{"title":"Hello"}}},{"type":"set-theme-overrides","payload":{"overrides":{"visual":{"canvas":{"fps":60}}}}}]}})
+
+Installed themed command families in this build:
+- set_params supports trusted sequence clip types: image-jump, section-hook, art-card, resource-card, cta-card
+- set_theme supports installed themes: 2rp
 
 Use create_task({...}) for generation tasks. Copy selected clip URLs exactly into reference_image_urls or video_url.
 If a selected clip line includes placement_anchor={...} and the user explicitly asks to insert the generated result after or in place of that source clip, copy that exact object into create_task.timeline_placement.

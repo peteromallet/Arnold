@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { getTrackById } from '@/tools/video-editor/lib/editor-utils';
-import { getClipDurationInFrames, parseResolution, secondsToFrames } from '@/tools/video-editor/lib/config-utils';
+import { getTimelineDurationInFrames, parseResolution } from '@/tools/video-editor/lib/config-utils';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
 import type { TrackDefinition } from '@/tools/video-editor/types';
 
@@ -65,10 +65,7 @@ export function useDerivedTimeline(
 
     return {
       fps,
-      durationInFrames: Math.max(
-        1,
-        ...resolvedConfig.clips.map((clip) => secondsToFrames(clip.at, fps) + getClipDurationInFrames(clip, fps)),
-      ),
+      durationInFrames: getTimelineDurationInFrames(resolvedConfig, fps),
       compositionWidth: Math.max(1, width),
       compositionHeight: Math.max(1, height),
     };

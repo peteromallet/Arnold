@@ -7,6 +7,13 @@ import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore'
 import type { useTimelinePlayback } from '@/tools/video-editor/hooks/useTimelinePlayback';
 import type { useTimelineTrackManagement } from '@/tools/video-editor/hooks/useTimelineTrackManagement';
 import type {
+  AddMediaCommand,
+  SwapMediaCommand,
+  TimelineCommandExecutionResult,
+  TimelineCommandInput,
+  TimelineCommandRunOptions,
+} from '@/tools/video-editor/commands';
+import type {
   TimelineApplyEdit,
   TimelineCheckpoints,
   TimelineCreateManualCheckpoint,
@@ -14,7 +21,9 @@ import type {
   TimelineJumpToCheckpoint,
   TimelinePatchRegistry,
   TimelinePendingOpsRef,
+  TimelineQueuedRender,
   TimelineRegisterAsset,
+  TimelineRenderRequest,
   TimelineReloadFromServer,
   TimelineRenderProgress,
   TimelineResolvedConfig,
@@ -52,6 +61,30 @@ type TimelineSetActiveClipTab = (tab: ClipTab) => void;
 type TimelineSetAssetPanelState = (patch: Partial<EditorPreferences['assetPanel']>) => void;
 export type TimelineActionResizeStart = ClipResizeHook['onActionResizeStart'];
 export type TimelineClipEdgeResizeEnd = ClipResizeHook['onClipEdgeResizeEnd'];
+export type TimelineEditorCommand = AddMediaCommand | SwapMediaCommand;
+export type TimelineEditorCommandInput = TimelineCommandInput<TimelineEditorCommand>;
+export type TimelineEditorCommandResult = TimelineCommandExecutionResult<TimelineEditorCommand>;
+export type TimelineEditorCommandApplyOptions = TimelineCommandRunOptions & {
+  save?: boolean;
+  selectedClipId?: string | null;
+  selectedTrackId?: string | null;
+};
+export type TimelineEditorCommands = {
+  buildAddMediaCommand: (input: { trackId: string; at: number; assetKey: string }) => AddMediaCommand | null;
+  buildSwapCommand: (input: { clipId: string; assetKey: string }) => SwapMediaCommand | null;
+  validate: (
+    input: TimelineEditorCommandInput | unknown,
+    options?: TimelineCommandRunOptions,
+  ) => TimelineEditorCommandResult;
+  dryRun: (
+    input: TimelineEditorCommandInput | unknown,
+    options?: TimelineCommandRunOptions,
+  ) => TimelineEditorCommandResult;
+  apply: (
+    input: TimelineEditorCommandInput | unknown,
+    options?: TimelineEditorCommandApplyOptions,
+  ) => TimelineEditorCommandResult;
+};
 
 export interface TimelineEditorDataContextValue {
   data: TimelineData | null;
@@ -137,6 +170,7 @@ export interface TimelineEditorOpsContextValue {
   createTrackAndMoveClip: TimelineTrackManagementHook['createTrackAndMoveClip'];
   uploadFiles: TimelineUploadFiles;
   applyEdit: TimelineApplyEdit;
+  commands: TimelineEditorCommands;
   patchRegistry: TimelinePatchRegistry;
   unpatchRegistry: TimelineUnpatchRegistry;
   registerAsset: TimelineRegisterAsset;
@@ -157,8 +191,10 @@ export interface TimelineChromeContextValue {
   renderLog: string;
   renderDirty: boolean;
   renderProgress: TimelineRenderProgress;
+  queuedRender: TimelineQueuedRender;
   renderResultUrl: string | null;
   renderResultFilename: string | null;
+  renderRequest: TimelineRenderRequest;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;

@@ -1,9 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createVideoEditorEffectCatalog,
+  EffectCatalogProvider,
   useCreateEffectResource,
   useDeleteEffectResource,
   useEffectResources,
+  useResolvedEffectCatalog,
   useUpdateEffectResource,
 } from './useEffectResources';
 
@@ -44,6 +47,18 @@ describe('useEffectResources', () => {
       isFetching: false,
       error: null,
       refetch: vi.fn(),
+    });
+    mocks.useCreateResource.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn().mockResolvedValue({ id: 'created' }),
+    });
+    mocks.useUpdateResource.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn().mockResolvedValue({ id: 'updated' }),
+    });
+    mocks.useDeleteResource.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
     });
   });
 
@@ -129,6 +144,60 @@ describe('useEffectResources', () => {
       name: 'Fade Out Public',
       category: 'exit',
     });
+    expect(result.current.canCreateEffect).toBe(true);
+    expect(result.current.canUpdateEffect).toBe(true);
+  });
+
+  it('uses an injected catalog and disables the Supabase resource queries', () => {
+    const injectedCatalog = createVideoEditorEffectCatalog({
+      effects: [{
+        id: 'effect-1',
+        type: 'effect',
+        name: 'Injected Effect',
+        slug: 'injected-effect',
+        code: 'code-1',
+        category: 'continuous',
+        description: 'Injected',
+        created_by: { is_you: true },
+        is_public: false,
+      }],
+    });
+
+    const { result } = renderHook(
+      () => useResolvedEffectCatalog('user-1', injectedCatalog),
+    );
+
+    expect(result.current).toBe(injectedCatalog);
+    expect(mocks.useListResources).toHaveBeenCalledWith('effect', { enabled: false });
+    expect(mocks.useListPublicResources).toHaveBeenCalledWith('effect', { enabled: false });
+  });
+
+  it('prefers the injected catalog from context for consumer hooks', () => {
+    const injectedCatalog = createVideoEditorEffectCatalog({
+      effects: [{
+        id: 'effect-1',
+        type: 'effect',
+        name: 'Standalone Fade',
+        slug: 'standalone-fade',
+        code: 'code-1',
+        category: 'entrance',
+        description: 'Standalone',
+        created_by: { is_you: true },
+        is_public: false,
+      }],
+    });
+
+    const wrapper = ({ children }: { children: any }) => (
+      <EffectCatalogProvider value={injectedCatalog}>
+        {children}
+      </EffectCatalogProvider>
+    );
+
+    const { result } = renderHook(() => useEffectResources('user-1'), { wrapper });
+
+    expect(result.current).toBe(injectedCatalog);
+    expect(mocks.useListResources).toHaveBeenCalledWith('effect', { enabled: false });
+    expect(mocks.useListPublicResources).toHaveBeenCalledWith('effect', { enabled: false });
   });
 
   it('wraps create, update, and delete mutations with the fixed effect resource type', async () => {

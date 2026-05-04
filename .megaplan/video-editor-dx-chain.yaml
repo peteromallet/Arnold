@@ -1,0 +1,41 @@
+milestones:
+  - label: sprint-01-canonical-data-model
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-01-idea.md
+    branch: megaplan/video-editor-dx-sprint-01
+  - label: sprint-02-ports-adapters
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-02-idea.md
+    branch: megaplan/video-editor-dx-sprint-02
+  - label: sprint-03-headless-core
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-03-idea.md
+    branch: megaplan/video-editor-dx-sprint-03
+  - label: sprint-04-clip-type-registry
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-04-idea.md
+    branch: megaplan/video-editor-dx-sprint-04
+  - label: sprint-05-command-bus
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-05-idea.md
+    branch: megaplan/video-editor-dx-sprint-05
+  - label: sprint-06-asset-render-hooks
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-06-idea.md
+    branch: megaplan/video-editor-dx-sprint-06
+  - label: sprint-07-ui-slots-theming
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-07-idea.md
+    branch: megaplan/video-editor-dx-sprint-07
+    robustness: light
+  - label: sprint-08-public-api-docs-demo
+    idea: /workspace/reigh-app/.megaplan/video-editor-dx-sprint-08-idea.md
+    branch: megaplan/video-editor-dx-sprint-08
+    robustness: light
+
+on_failure:
+  abort: stop_chain
+
+on_escalate:
+  abort: stop_chain
+
+driver:
+  robustness: standard
+  auto_approve: true
+  stall_threshold: 5
+  max_iterations: 100
+  phase_timeout: 7200
+  on_escalate: abort

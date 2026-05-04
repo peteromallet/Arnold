@@ -2,6 +2,10 @@
 import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createTimelineCommandRunner,
+  MEDIA_COMMAND_DESCRIPTORS,
+} from '@/tools/video-editor/commands';
 import { DataProviderWrapper } from '../contexts/DataProviderContext';
 import type { DataProvider } from '../data/DataProvider';
 import { getConfigSignature, getStableConfigSignature } from '../lib/config-utils';
@@ -21,10 +25,12 @@ type CommitCall = {
     transactionId?: string;
     semantic?: boolean;
     skipHistory?: boolean;
+    commandHistory?: unknown;
   };
 };
 
 const SESSION_IDLE_MS = 5 * 60 * 1000;
+const historyCommandRunner = createTimelineCommandRunner([...MEDIA_COMMAND_DESCRIPTORS]);
 
 function makeConfig(step: number) {
   const base = createDefaultTimelineConfig();
@@ -83,6 +89,73 @@ function makeTimelineData(step: number): TimelineData {
   };
 }
 
+function makeMediaTimelineData(currentAsset: 'asset-old' | 'asset-new' = 'asset-old'): TimelineData {
+  const base = createDefaultTimelineConfig();
+  const config = {
+    ...base,
+    output: {
+      ...base.output,
+      file: `media-${currentAsset}.mp4`,
+    },
+    tracks: (base.tracks ?? []).map((track) => ({ ...track })),
+    clips: [{
+      id: 'clip-1',
+      at: 0,
+      track: 'V1',
+      asset: currentAsset,
+      clipType: 'hold' as const,
+      hold: 1,
+    }],
+  };
+  const registry = {
+    assets: {
+      'asset-old': { file: 'https://example.com/old.png', type: 'image/png' },
+      'asset-new': { file: 'https://example.com/new.png', type: 'image/png' },
+    },
+  };
+  const rowData = configToRows(config);
+  const resolvedRegistry = Object.fromEntries(
+    Object.entries(registry.assets).map(([assetId, entry]) => [
+      assetId,
+      {
+        ...entry,
+        src: entry.file,
+      },
+    ]),
+  );
+  const resolvedConfig = {
+    output: { ...config.output },
+    tracks: (config.tracks ?? []).map((track) => ({ ...track })),
+    clips: config.clips.map((clip) => ({
+      ...clip,
+      assetEntry: clip.asset ? resolvedRegistry[clip.asset] : undefined,
+    })),
+    registry: resolvedRegistry,
+    theme: config.theme,
+    theme_overrides: config.theme_overrides,
+    generation_defaults: config.generation_defaults,
+  };
+
+  return {
+    config,
+    configVersion: 1,
+    registry,
+    resolvedConfig,
+    rows: rowData.rows,
+    meta: rowData.meta,
+    effects: rowData.effects,
+    assetMap: {
+      'asset-old': 'https://example.com/old.png',
+      'asset-new': 'https://example.com/new.png',
+    },
+    output: { ...config.output },
+    tracks: (config.tracks ?? []).map((track) => ({ ...track })),
+    clipOrder: rowData.clipOrder,
+    signature: getConfigSignature(resolvedConfig),
+    stableSignature: getStableConfigSignature(config, registry),
+  };
+}
+
 function makeProvider(overrides: Partial<DataProvider> = {}): DataProvider {
   return {
     loadTimeline: vi.fn(async () => ({ config: makeConfig(0), configVersion: 1 })),
@@ -95,10 +168,11 @@ function makeProvider(overrides: Partial<DataProvider> = {}): DataProvider {
 
 function setup(options: {
   initialStep?: number;
+  initialData?: TimelineData;
   providerOverrides?: Partial<DataProvider>;
 } = {}) {
   const provider = makeProvider(options.providerOverrides);
-  const dataRef = { current: makeTimelineData(options.initialStep ?? 0) };
+  const dataRef = { current: options.initialData ?? makeTimelineData(options.initialStep ?? 0) };
   const interactionStateRef = { current: createInteractionState() };
   const commitCalls: CommitCall[] = [];
   const commitData = vi.fn((nextData: TimelineData, commitOptions?: CommitCall['options']) => {
@@ -186,6 +260,105 @@ describe('useTimelineHistory', () => {
       generation_defaults: { model: 'sequence-v1' },
     });
     expect(result.current.canUndo).toBe(true);
+  });
+
+  it('uses inverse command history to undo and redo migrated edits', () => {
+    const initialData = makeMediaTimelineData('asset-old');
+    const { result, dataRef, commitCalls } = setup({ initialData });
+    const applied = historyCommandRunner.apply(initialData, {
+      transactionId: 'swap-history',
+      commands: [{
+        type: 'swap',
+        payload: {
+          clipId: 'clip-1',
+          asset: {
+            assetKey: 'asset-new',
+            mediaType: 'image',
+            durationSeconds: null,
+            entry: { file: 'https://example.com/new.png', type: 'image/png' },
+            source: 'registered',
+          },
+        },
+      }],
+    });
+
+    expect(applied.status).toBe('ok');
+
+    act(() => {
+      result.current.onBeforeCommit(initialData, {
+        transactionId: applied.transaction.transactionId,
+        commandHistory: {
+          transaction: applied.transaction,
+          history: applied.history,
+        },
+      });
+      dataRef.current = applied.nextData;
+    });
+
+    expect(dataRef.current.config.clips[0]?.asset).toBe('asset-new');
+
+    act(() => {
+      result.current.undo();
+    });
+
+    expect(dataRef.current.config.clips[0]?.asset).toBe('asset-old');
+
+    act(() => {
+      result.current.redo();
+    });
+
+    expect(dataRef.current.config.clips[0]?.asset).toBe('asset-new');
+    expect(commitCalls.at(-1)?.options).toMatchObject({ save: true, skipHistory: true });
+  });
+
+  it('falls back to snapshot history when command metadata cannot invert', () => {
+    const initialData = makeMediaTimelineData('asset-old');
+    const { result, dataRef } = setup({ initialData });
+    const applied = historyCommandRunner.apply(initialData, {
+      transactionId: 'swap-fallback',
+      commands: [{
+        type: 'swap',
+        payload: {
+          clipId: 'clip-1',
+          asset: {
+            assetKey: 'asset-new',
+            mediaType: 'image',
+            durationSeconds: null,
+            entry: { file: 'https://example.com/new.png', type: 'image/png' },
+            source: 'registered',
+          },
+        },
+      }],
+    });
+
+    expect(applied.status).toBe('ok');
+
+    act(() => {
+      result.current.onBeforeCommit(initialData, {
+        transactionId: applied.transaction.transactionId,
+        commandHistory: {
+          transaction: applied.transaction,
+          history: {
+            ...applied.history,
+            strategy: 'snapshot_fallback',
+            inverseTransaction: null,
+          },
+        },
+      });
+      dataRef.current = applied.nextData;
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+
+    expect(dataRef.current.config.clips[0]?.asset).toBe('asset-old');
+
+    act(() => {
+      result.current.redo();
+    });
+
+    expect(dataRef.current.config.clips[0]?.asset).toBe('asset-new');
   });
 
   it('invalidates redo after a new edit following undo', () => {

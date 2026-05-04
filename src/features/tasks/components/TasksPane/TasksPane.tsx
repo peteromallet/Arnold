@@ -151,6 +151,10 @@ const TasksPaneComponent: React.FC<TasksPaneProps> = ({ onOpenSettings }) => {
     isOpen: Boolean(isOpen),
   });
 
+  // Sprint 3 adapter boundary: AgentChatPanel remains app-owned in TasksPane
+  // instead of moving into the editor shell. The core talks to chat through
+  // registration bridges; this pane still owns when chat is mounted and how the
+  // split-button affordance drives it on Reigh routes.
   // Agent chat lives inside the action pane only on tool routes (where a timeline
   // makes sense). On other routes the pane is task-only.
   const { pathname } = useLocation();
@@ -158,6 +162,7 @@ const TasksPaneComponent: React.FC<TasksPaneProps> = ({ onOpenSettings }) => {
   // null until AgentChatPanel mounts and registers; the split button stays hidden
   // until then so it can't be clicked before its handlers exist.
   const agentChatActions = useAgentChatActions();
+  const readyAgentChatActions = isToolRoute ? agentChatActions : null;
 
   // Expand state: which half (if any) is currently filling the entire pane.
   // null = 50/50 split. Resets to null when the pane closes so reopening always
@@ -201,7 +206,7 @@ const TasksPaneComponent: React.FC<TasksPaneProps> = ({ onOpenSettings }) => {
             content: <span className="text-xs font-light">{cancellableTaskCount}</span>,
             tooltip: `${cancellableTaskCount} active task${cancellableTaskCount === 1 ? '' : 's'}`,
           },
-          splitButton: agentChatActions && isToolRoute
+          splitButton: readyAgentChatActions
             ? (() => {
                 const messageAction = {
                   onClick: () => {
@@ -209,11 +214,11 @@ const TasksPaneComponent: React.FC<TasksPaneProps> = ({ onOpenSettings }) => {
                     // markEngaged signals the auto-create-session gate inside the
                     // panel WITHOUT writing to panesStore.isTasksPaneOpen (which
                     // would short-circuit useSlidingPane.setOpen(false)).
-                    agentChatActions.markEngaged();
+                    readyAgentChatActions.markEngaged();
                     openPane();
                     // focusComposer is ref-backed, so even if the panel unmounts
                     // before the next frame the call is a safe no-op.
-                    requestAnimationFrame(() => agentChatActions.focusComposer());
+                    requestAnimationFrame(() => readyAgentChatActions.focusComposer());
                   },
                   ariaLabel: 'Open message composer',
                   tooltip: 'Open message',
@@ -222,11 +227,11 @@ const TasksPaneComponent: React.FC<TasksPaneProps> = ({ onOpenSettings }) => {
                 const voiceAction = {
                   onClick: () => {
                     setLastAgentAction('voice');
-                    agentChatActions.toggleRecording();
+                    readyAgentChatActions.toggleRecording();
                   },
-                  ariaLabel: agentChatActions.isRecording ? 'Stop recording' : 'Start voice recording',
-                  tooltip: agentChatActions.isRecording ? 'Stop' : 'Voice (⌘⇧R)',
-                  content: agentChatActions.isRecording
+                  ariaLabel: readyAgentChatActions.isRecording ? 'Stop recording' : 'Start voice recording',
+                  tooltip: readyAgentChatActions.isRecording ? 'Stop' : 'Voice (⌘⇧R)',
+                  content: readyAgentChatActions.isRecording
                     ? <Square className="h-4 w-4" />
                     : <Mic className="h-4 w-4" />,
                 };

@@ -1,10 +1,12 @@
 import { Input } from '@/shared/components/ui/input';
 import { Textarea } from '@/shared/components/ui/textarea';
+import { getRegisteredClipTypeDescriptor, getSequenceDescriptorParams } from '@/tools/video-editor/clip-types/runtime';
 import type { AvailableSequenceMetadata } from '@/tools/video-editor/sequences/registry';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 
 type SequenceParamEditorProps = {
-  metadata: AvailableSequenceMetadata;
+  clipType?: string;
+  metadata?: AvailableSequenceMetadata;
   params: Record<string, unknown> | undefined;
   registry: ResolvedTimelineConfig['registry'];
   onChange: (params: Record<string, unknown>) => void;
@@ -55,19 +57,37 @@ const parseAssetKeysInput = (
 );
 
 export function SequenceParamEditor({
+  clipType,
   metadata,
   params,
   registry,
   onChange,
 }: SequenceParamEditorProps) {
+  const resolvedClipType = clipType ?? metadata?.clipType;
+  const descriptor = resolvedClipType
+    ? getRegisteredClipTypeDescriptor(resolvedClipType)
+    : undefined;
+  const descriptorParams = getSequenceDescriptorParams(descriptor);
+  const sequenceParams = descriptorParams.length > 0 ? descriptorParams : (metadata?.params ?? []);
+  const label = descriptor?.label ?? metadata?.label ?? resolvedClipType ?? 'Sequence';
+  const description = descriptor?.description ?? metadata?.description ?? 'Sequence parameters.';
+
+  if (sequenceParams.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-100">
+        This clip type does not expose editable sequence params in the current registry view.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3 rounded-xl border border-border bg-card/60 p-3">
       <div>
-        <div className="text-sm font-medium text-foreground">{metadata.label}</div>
-        <div className="text-xs text-muted-foreground">{metadata.description}</div>
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        <div className="text-xs text-muted-foreground">{description}</div>
       </div>
 
-      {metadata.params.map((param) => {
+      {sequenceParams.map((param) => {
         const value = params?.[param.key] ?? param.defaultValue ?? (param.kind === 'asset-list' ? [] : '');
 
         if (param.kind === 'asset-list') {

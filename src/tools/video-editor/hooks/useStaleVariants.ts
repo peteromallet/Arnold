@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getSupabaseClient } from '@/integrations/supabase/client';
-import { toast } from '@/shared/components/ui/runtime/sonner';
 import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor';
+import {
+  fetchCurrentPrimaryVariant,
+  fetchPrimaryVariantLocations,
+  type PrimaryVariantInfo,
+} from '@/tools/video-editor/adapters/reigh/staleVariantRepository';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import type { AssetRegistryEntry, ResolvedAssetRegistryEntry } from '@/tools/video-editor/types';
 import type {
   TimelinePatchRegistry,
   TimelineRegisterAsset,
 } from '@/tools/video-editor/hooks/timeline-state-types';
-
-interface PrimaryVariantInfo {
-  location: string;
-  variant_id: string;
-}
 
 interface UseStaleVariantsArgs {
   registry: Record<string, ResolvedAssetRegistryEntry> | undefined;
@@ -27,6 +26,7 @@ const POLL_INTERVAL_MS = 15_000;
  * subscription (no React Query) for predictable, immediate updates.
  */
 export function useStaleVariants({ registry, patchRegistry, registerAsset }: UseStaleVariantsArgs) {
+  const runtime = useVideoEditorRuntime();
   const [primaryLocationMap, setPrimaryLocationMap] = useState<Record<string, PrimaryVariantInfo | null>>({});
   const [dismissedAssetKeys, setDismissedAssetKeys] = useState<Set<string>>(() => new Set());
   const fetchCounterRef = useRef(0);
@@ -69,31 +69,16 @@ export function useStaleVariants({ registry, patchRegistry, registerAsset }: Use
     }
 
     const fetchId = ++fetchCounterRef.current;
-
-    const { data, error } = await getSupabaseClient()
-      .from('generations')
-      .select(`
-        id,
-        primary_variant:generation_variants!generations_primary_variant_id_fkey (
-          id,
-          location
-        )
-      `)
-      .in('id', generationIds);
-
-    if (error) {
+    let map: Record<string, PrimaryVariantInfo | null>;
+    try {
+      map = await fetchPrimaryVariantLocations(generationIds);
+    } catch (error) {
       console.error('[StaleVariants] fetch error:', error);
       return;
     }
 
     // Discard if a newer fetch has started
     if (fetchId !== fetchCounterRef.current) return;
-
-    const map: Record<string, PrimaryVariantInfo | null> = {};
-    for (const row of data ?? []) {
-      const pv = row.primary_variant as { id: string; location: string } | null;
-      map[row.id] = pv ? { location: pv.location, variant_id: pv.id } : null;
-    }
 
     setPrimaryLocationMap(map);
   }, []);
@@ -189,7 +174,7 @@ export function useStaleVariants({ registry, patchRegistry, registerAsset }: Use
     void registerAsset(assetKey, updatedEntry).catch((err) => {
       console.error('[StaleVariants] Failed to persist variant update:', err);
       patchRegistry(assetKey, previousEntry, previousFile);
-      toast.error('Failed to update variant');
+      runtime.toast.error('Failed to update variant');
     });
 
     setDismissedAssetKeys((prev) => {
@@ -198,7 +183,7 @@ export function useStaleVariants({ registry, patchRegistry, registerAsset }: Use
       next.delete(assetKey);
       return next;
     });
-  }, [registry, patchRegistry, registerAsset]);
+  }, [patchRegistry, registerAsset, registry, runtime.toast]);
 
   // Update a single asset to the current primary variant
   const updateAssetToCurrentVariant = useCallback(async (assetKey: string) => {
@@ -207,22 +192,8 @@ export function useStaleVariants({ registry, patchRegistry, registerAsset }: Use
     if (!entry?.generationId) return;
 
     // Fetch the current primary variant's data
-    const { data, error } = await getSupabaseClient()
-      .from('generations')
-      .select(`
-        primary_variant_id,
-        primary_variant:generation_variants!generations_primary_variant_id_fkey (
-          id,
-          location,
-          thumbnail_url
-        )
-      `)
-      .eq('id', entry.generationId)
-      .single();
-
-    if (error || !data?.primary_variant) return;
-
-    const newVariant = data.primary_variant as { id: string; location: string; thumbnail_url: string | null };
+    const newVariant = await fetchCurrentPrimaryVariant(entry.generationId);
+    if (!newVariant) return;
     await applyVariantToAsset(assetKey, newVariant);
   }, [registry, applyVariantToAsset]);
 

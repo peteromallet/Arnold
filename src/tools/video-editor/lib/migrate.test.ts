@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { repairConfig } from '@/tools/video-editor/lib/migrate';
+import { canonicalizeTimelineConfigSnapshot, canonicalizeTimelinePair } from '@/tools/video-editor/lib/timeline-domain';
 import { configToRows, rowsToConfig } from '@/tools/video-editor/lib/timeline-data';
 import type { TimelineConfig } from '@/tools/video-editor/types';
 
@@ -130,5 +131,33 @@ describe('repairConfig — legacy pinnedShotGroups migration', () => {
     };
     const repaired = repairConfig(config);
     expect(repaired.pinnedShotGroups).toBe(config.pinnedShotGroups);
+  });
+
+  it('exposes explicit config-only and pair-aware canonicalization contracts', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      clips: [
+        { id: 'clip-1', at: 0, track: 'video', asset: 'asset-1' },
+      ],
+    };
+
+    const configOnly = canonicalizeTimelineConfigSnapshot(config);
+    expect(configOnly.level).toBe('config-only');
+    expect(configOnly.config.tracks?.map((track) => track.id)).toEqual(['V1', 'V2', 'V3', 'A1']);
+    expect(configOnly.config.clips[0]).toMatchObject({ track: 'V2', clipType: 'media' });
+    expect(configOnly.issues.map((issue) => issue.code)).toContain('legacy_tracks_migrated');
+    expect(configOnly.issues.map((issue) => issue.code)).toContain('malformed_non_hold_trim_zero_duration');
+
+    const pairAware = canonicalizeTimelinePair(config, {
+      assets: { 'asset-1': { file: 'video.mp4', duration: 4 } },
+    });
+    expect(pairAware.level).toBe('pair-aware');
+    expect(pairAware.config.clips[0]).toMatchObject({
+      track: 'V2',
+      clipType: 'media',
+      from: 0,
+      to: 4,
+    });
+    expect(pairAware.issues.map((issue) => issue.code)).toContain('malformed_non_hold_trim_repaired');
   });
 });

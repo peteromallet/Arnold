@@ -13,6 +13,7 @@ import {
 } from "./templates.ts";
 import {
   TRUSTED_SEQUENCE_METADATA,
+  TRUSTED_SEQUENCE_CLIP_TYPES,
   validateSequenceDraft,
   type SequenceDraftValidationError,
 } from "./sequence-validation.ts";
@@ -186,7 +187,7 @@ serve(async (req) => {
     return jsonResponse({ error: "prompt is required" }, 400);
   }
 
-  const trustedClipTypes = TRUSTED_SEQUENCE_METADATA.map((entry) => entry.clipType);
+  const trustedClipTypes = [...TRUSTED_SEQUENCE_CLIP_TYPES];
   const requestedClipTypes = asStringArray(body.allowed_clip_types);
   const allowedClipTypes = requestedClipTypes.length > 0
     ? requestedClipTypes.filter((clipType) => (trustedClipTypes as readonly string[]).includes(clipType))

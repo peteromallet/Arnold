@@ -1,0 +1,58 @@
+{
+  "publicEntrypoints": [
+    "src/tools/video-editor/index.ts",
+    "src/tools/video-editor/browser.ts",
+    "src/tools/video-editor/browser-provider.ts",
+    "src/tools/video-editor/sequence.ts",
+    "src/tools/video-editor/testing.ts"
+  ],
+  "allowlist": {
+    "src/app/routes.tsx": [
+      "src/tools/video-editor/pages/VideoEditorPage.tsx"
+    ],
+    "src/domains/media-lightbox/hooks/useAddToVideoEditor.ts": [
+      "src/tools/video-editor/hooks/timelineStore.ts",
+      "src/tools/video-editor/hooks/useTimelineCommands.ts",
+      "src/tools/video-editor/lib/timeline-asset-plans.ts",
+      "src/tools/video-editor/lib/video-editor-path.ts",
+      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+    ],
+    "src/features/tasks/components/TasksPane/TasksPane.tsx": [
+      "src/tools/video-editor/components/AgentChat/index.ts"
+    ],
+    "src/app/hooks/useGlobalPaneShortcuts.ts": [
+      "src/tools/video-editor/lib/video-editor-path.ts"
+    ],
+    "src/shared/components/ToolsPane/ToolsPane.tsx": [
+      "src/tools/video-editor/lib/video-editor-path.ts",
+      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+    ],
+    "src/shared/contexts/AgentChatContext.tsx": [
+      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+    ],
+    "src/shared/hooks/useHomeNavigation.ts": [
+      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+    ],
+    "src/shared/lib/tooling/homeNavigation.ts": [
+      "src/tools/video-editor/lib/video-editor-path.ts"
+    ],
+    "src/shared/lib/tooling/toolManifest.ts": [
+      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+    ],
+    "src/shared/state/selectionStore.ts": [
+      "src/tools/video-editor/hooks/useSelectedMediaClips.ts"
+    ],
+    "src/shared/state/currentAttachmentSet.ts": [
+      "src/tools/video-editor/hooks/useSelectedMediaClips.ts"
+    ],
+    "src/tooling/toolDefaultsRegistry.ts": [
+      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+    ],
+    "src/tools/index.ts": [
+      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+    ],
+    "src/tools/travel-between-images/hooks/video/useShotFinalVideos.ts": [
+      "src/tools/video-editor/lib/finalVideoAssets.ts"
+    ]
+  }
+}

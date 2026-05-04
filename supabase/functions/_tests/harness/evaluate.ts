@@ -1,4 +1,4 @@
-import type { TimelineClip } from "../../../../src/tools/video-editor/types/index.ts";
+import type { TimelineClip } from "../../../../src/tools/video-editor/index.ts";
 import type {
   HarnessSnapshot,
   SessionSnapshotRow,

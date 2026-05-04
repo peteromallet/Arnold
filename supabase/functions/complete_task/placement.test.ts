@@ -6,10 +6,14 @@ const mocks = vi.hoisted(() => ({
   addMediaClip: vi.fn(),
 }));
 
-vi.mock("../ai-timeline-agent/db.ts", () => ({
-  loadTimelineState: (...args: unknown[]) => mocks.loadTimelineState(...args),
-  saveTimelineConfigVersioned: (...args: unknown[]) => mocks.saveTimelineConfigVersioned(...args),
-}));
+vi.mock("../ai-timeline-agent/db.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ai-timeline-agent/db.ts")>();
+  return {
+    ...actual,
+    loadTimelineState: (...args: unknown[]) => mocks.loadTimelineState(...args),
+    saveTimelineConfigVersioned: (...args: unknown[]) => mocks.saveTimelineConfigVersioned(...args),
+  };
+});
 
 vi.mock("../ai-timeline-agent/tools/timeline.ts", () => ({
   addMediaClip: (...args: unknown[]) => mocks.addMediaClip(...args),
@@ -29,7 +33,9 @@ describe("complete_task/placement", () => {
     mocks.saveTimelineConfigVersioned.mockResolvedValue(2);
     mocks.addMediaClip.mockReturnValue({
       config: {
+        output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
         clips: [{ id: "clip-added", track: "V1", at: 10.5, asset: "asset-added", clipType: "hold", hold: 5 }],
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual 1' }],
       },
       result: "Added media clip clip-added on track V1 at 10.5s.",
     });
@@ -212,5 +218,76 @@ describe("complete_task/placement", () => {
     expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
     expect(mocks.addMediaClip).not.toHaveBeenCalled();
     expect(mocks.saveTimelineConfigVersioned).not.toHaveBeenCalled();
+  });
+
+  it("reconciles stale pinned shot group metadata before persisting the split config write", async () => {
+    const supabaseAdmin = createSupabaseAdmin();
+    mocks.loadTimelineState.mockResolvedValue({
+      config: {
+        output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+        clips: [{ id: "clip-source-1", at: 8, track: "V1", clipType: "hold", hold: 2.5 }],
+        tracks: [{ id: "V1", kind: "visual", label: "Visual 1" }],
+        pinnedShotGroups: [{
+          shotId: 'shot-1',
+          trackId: 'stale-track',
+          clipIds: ['missing-clip', 'clip-source-1'],
+          mode: 'images',
+        }],
+      },
+      configVersion: 1,
+      registry: { assets: {} },
+      projectId: "project-1",
+      shotNamesById: {},
+    });
+    mocks.addMediaClip.mockReturnValue({
+      config: {
+        output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+        clips: [
+          { id: "clip-source-1", at: 8, track: "V1", clipType: "hold", hold: 2.5 },
+          { id: "clip-added", at: 10.5, track: "V1", clipType: "media", asset: "asset-added" },
+        ],
+        tracks: [{ id: "V1", kind: "visual", label: "Visual 1" }],
+        pinnedShotGroups: [{
+          shotId: 'shot-1',
+          trackId: 'stale-track',
+          clipIds: ['missing-clip', 'clip-source-1'],
+          mode: 'images',
+        }],
+      },
+      result: "Added media clip clip-added on track V1 at 10.5s.",
+    });
+
+    await executePlacement(
+      supabaseAdmin as never,
+      {
+        timeline_id: "timeline-1",
+        anchor_clip_id: "clip-source-1",
+        relation: "after",
+        preferred_track_id: "V1",
+        fallback_at: 22.25,
+        fallback_track_id: "V1",
+      },
+      {
+        generation_id: "gen-placed-1",
+        variant_id: "variant-placed-1",
+        location: "https://cdn.example.com/tasks/task-1/out.png",
+        media_type: "image",
+        created_as: "variant",
+      },
+    );
+
+    expect(mocks.saveTimelineConfigVersioned).toHaveBeenCalledWith(
+      supabaseAdmin,
+      'timeline-1',
+      1,
+      expect.objectContaining({
+        pinnedShotGroups: [{
+          shotId: 'shot-1',
+          trackId: 'V1',
+          clipIds: ['clip-source-1'],
+          mode: 'images',
+        }],
+      }),
+    );
   });
 });

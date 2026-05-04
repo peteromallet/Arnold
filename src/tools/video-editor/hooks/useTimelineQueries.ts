@@ -3,11 +3,15 @@ import { loadTimelineJsonFromProvider } from '@/tools/video-editor/lib/timeline-
 import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
 
-export function useTimelineQueries(provider: DataProvider, timelineId: string) {
+export function useTimelineQueries(
+  provider: DataProvider,
+  timelineId: string,
+  resolveAssetUrl?: (file: string) => Promise<string>,
+) {
   const timelineQuery = useQuery({
     queryKey: timelineQueryKey(timelineId),
     enabled: Boolean(timelineId),
-    queryFn: () => loadTimelineJsonFromProvider(provider, timelineId),
+    queryFn: () => loadTimelineJsonFromProvider(provider, timelineId, resolveAssetUrl),
     refetchInterval: 30_000,
   });
 

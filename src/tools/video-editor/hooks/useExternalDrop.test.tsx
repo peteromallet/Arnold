@@ -200,6 +200,7 @@ describe('useExternalDrop', () => {
 
     const { result } = renderHook(() => useExternalDrop({
       dataRef,
+      timelineId: 'timeline-1',
       pendingOpsRef,
       scale: 1,
       scaleWidth: 1,
@@ -209,12 +210,14 @@ describe('useExternalDrop', () => {
       registerAsset: vi.fn(),
       uploadAsset: vi.fn(),
       invalidateAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
       coordinator,
       registerGenerationAsset: vi.fn(),
       uploadImageGeneration: vi.fn(),
       uploadVideoGeneration: vi.fn(),
       handleAssetDrop: vi.fn(),
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
     }));
 
     result.current.onTimelineDragOver(event);
@@ -237,12 +240,13 @@ describe('useExternalDrop', () => {
     const patchRegistry = vi.fn((assetId: string, entry: { file: string; type?: string; duration?: number }) => {
       dataRef.current.registry.assets[assetId] = entry;
     });
-    const registerGenerationAsset = vi.fn((generation: GenerationDropData) => {
-      const assetId = `asset-${generation.generationId}`;
+    const registerGenerationAsset = vi.fn((generation: GenerationDropData & { durationSeconds?: number; assetId?: string }) => {
+      const assetId = generation.assetId ?? `asset-${generation.generationId}`;
       const type = generation.variantType === 'video' ? 'video/mp4' : 'image/png';
       dataRef.current.registry.assets[assetId] = {
         file: generation.imageUrl,
         type,
+        ...(typeof generation.durationSeconds === 'number' ? { duration: generation.durationSeconds } : {}),
       };
       return assetId;
     });
@@ -306,6 +310,7 @@ describe('useExternalDrop', () => {
 
     const { result } = renderHook(() => useExternalDrop({
       dataRef,
+      timelineId: 'timeline-1',
       pendingOpsRef,
       scale: 1,
       scaleWidth: 1,
@@ -315,12 +320,14 @@ describe('useExternalDrop', () => {
       registerAsset: vi.fn(),
       uploadAsset: vi.fn(),
       invalidateAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
       coordinator,
       registerGenerationAsset,
       uploadImageGeneration: vi.fn(),
       uploadVideoGeneration: vi.fn(),
       handleAssetDrop,
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
     }));
 
     const multiItems: GenerationDropData[] = [
@@ -348,13 +355,19 @@ describe('useExternalDrop', () => {
     await result.current.onTimelineDrop(event);
 
     expect(registerGenerationAsset).toHaveBeenCalledTimes(2);
-    expect(handleAssetDrop).toHaveBeenNthCalledWith(1, 'asset-gen-video', undefined, 12, true, false);
-    expect(handleAssetDrop).toHaveBeenNthCalledWith(2, 'asset-gen-image', 'V2', 20, false, false);
-    expect(patchRegistry).toHaveBeenCalledWith('asset-gen-video', {
+    expect(registerGenerationAsset).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      generationId: 'gen-video',
+      durationSeconds: 8,
+    }));
+    const firstRegisteredAssetId = registerGenerationAsset.mock.calls[0]?.[0]?.assetId as string;
+    const secondRegisteredAssetId = registerGenerationAsset.mock.calls[1]?.[0]?.assetId as string;
+    expect(handleAssetDrop).toHaveBeenNthCalledWith(1, firstRegisteredAssetId, undefined, 12, true, false);
+    expect(handleAssetDrop).toHaveBeenNthCalledWith(2, secondRegisteredAssetId, 'V2', 20, false, false);
+    expect(dataRef.current.registry.assets[firstRegisteredAssetId]).toEqual({
       file: 'https://example.com/video.mp4',
       type: 'video/mp4',
       duration: 8,
-    }, 'https://example.com/video.mp4');
+    });
   });
 
   it('tracks pending uploads per file until each async upload settles', async () => {
@@ -443,6 +456,7 @@ describe('useExternalDrop', () => {
 
     const { result } = renderHook(() => useExternalDrop({
       dataRef,
+      timelineId: 'timeline-1',
       pendingOpsRef,
       scale: 1,
       scaleWidth: 1,
@@ -452,12 +466,14 @@ describe('useExternalDrop', () => {
       registerAsset: vi.fn(),
       uploadAsset: vi.fn(),
       invalidateAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(async (file: string) => `https://cdn.example/${file}`),
+      assetResolver: { resolveAssetUrl: vi.fn(async (file: string) => `https://cdn.example/${file}`) },
       coordinator,
       registerGenerationAsset: vi.fn(),
       uploadImageGeneration: vi.fn(),
       uploadVideoGeneration,
       handleAssetDrop: vi.fn(),
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
     }));
 
     const event = createFileDropEvent([
@@ -555,6 +571,7 @@ describe('useExternalDrop', () => {
 
     const { result } = renderHook(() => useExternalDrop({
       dataRef,
+      timelineId: 'timeline-1',
       pendingOpsRef,
       scale: 1,
       scaleWidth: 1,
@@ -564,12 +581,14 @@ describe('useExternalDrop', () => {
       registerAsset: vi.fn(),
       uploadAsset: vi.fn(),
       invalidateAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
       coordinator,
       registerGenerationAsset,
       uploadImageGeneration: vi.fn(),
       uploadVideoGeneration: vi.fn(),
       handleAssetDrop,
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
     }));
 
     const event = createDropEvent(
@@ -686,6 +705,7 @@ describe('useExternalDrop', () => {
 
     const { result } = renderHook(() => useExternalDrop({
       dataRef,
+      timelineId: 'timeline-1',
       pendingOpsRef,
       scale: 1,
       scaleWidth: 1,
@@ -695,12 +715,14 @@ describe('useExternalDrop', () => {
       registerAsset: vi.fn(),
       uploadAsset: vi.fn(),
       invalidateAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
       coordinator,
       registerGenerationAsset,
       uploadImageGeneration: vi.fn(),
       uploadVideoGeneration: vi.fn(),
       handleAssetDrop,
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
     }));
 
     const event = createDropEvent(
@@ -823,6 +845,7 @@ describe('useExternalDrop', () => {
 
     const { result } = renderHook(() => useExternalDrop({
       dataRef,
+      timelineId: 'timeline-1',
       pendingOpsRef,
       scale: 1,
       scaleWidth: 1,
@@ -832,12 +855,14 @@ describe('useExternalDrop', () => {
       registerAsset: vi.fn(),
       uploadAsset: vi.fn(),
       invalidateAssetRegistry: vi.fn(),
-      resolveAssetUrl: vi.fn(),
+      assetResolver: { resolveAssetUrl: vi.fn() },
       coordinator,
       registerGenerationAsset,
       uploadImageGeneration: vi.fn(),
       uploadVideoGeneration: vi.fn(),
       handleAssetDrop: vi.fn(),
+      shots: mockUseShots().shots,
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
     }));
 
     const event = createDropEvent(
@@ -859,5 +884,212 @@ describe('useExternalDrop', () => {
       start: 12,
       end: 15.5,
     }));
+  });
+
+  it('keeps the registry duration unset but inserts a five-second clip when final video duration stays unresolved', async () => {
+    mockUseShots.mockReturnValue({
+      shots: [{
+        id: 'shot-1',
+        name: 'Shot 1',
+        images: [
+          { generation_id: 'gen-1', imageUrl: 'https://example.com/1.png', thumbUrl: 'https://example.com/1-thumb.png', contentType: 'image/png', type: 'image' },
+        ],
+      }],
+      isLoading: false,
+      error: null,
+      refetchShots: vi.fn(),
+    });
+    mockUseFinalVideoAvailable.mockReturnValue({
+      finalVideoMap: new Map([[
+        'shot-1',
+        {
+          id: 'final-1',
+          location: 'https://example.com/final.mp4',
+          thumbnailUrl: 'https://example.com/final-thumb.jpg',
+        },
+      ]]),
+      dismissFinalVideo: vi.fn(),
+    });
+    mockExtractVideoMetadataFromUrl
+      .mockResolvedValueOnce({ duration_seconds: undefined })
+      .mockResolvedValueOnce({ duration_seconds: undefined });
+
+    const dataRef = {
+      current: makeDropTestData(),
+    } as React.MutableRefObject<DropTestData>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const applyEdit = vi.fn();
+    const registerGenerationAsset = vi.fn((generation: GenerationDropData & { durationSeconds?: number; assetId?: string }) => {
+      const assetId = generation.assetId ?? `asset-${generation.generationId}`;
+      dataRef.current.registry.assets[assetId] = {
+        file: generation.imageUrl,
+        type: 'video/mp4',
+        ...(typeof generation.durationSeconds === 'number' ? { duration: generation.durationSeconds } : {}),
+      };
+      return assetId;
+    });
+
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: {
+        time: 12,
+        rowIndex: 0,
+        trackId: 'V1',
+        trackKind: 'visual',
+        trackName: 'V1',
+        isNewTrack: false,
+        isNewTrackTop: false,
+        isReject: false,
+        newTrackKind: null,
+        screenCoords: {
+          rowTop: 0,
+          rowLeft: 0,
+          rowWidth: 0,
+          rowHeight: 0,
+          clipLeft: 0,
+          clipWidth: 0,
+          ghostCenter: 0,
+        },
+      },
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit,
+      patchRegistry: vi.fn(),
+      registerAsset: vi.fn(),
+      uploadAsset: vi.fn(),
+      invalidateAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+      coordinator,
+      registerGenerationAsset,
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop: vi.fn(),
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const event = createDropEvent(
+      createStoredShotPayload({
+        shotId: 'shot-1',
+        shotName: 'Shot 1',
+        imageGenerationIds: ['gen-1'],
+      }),
+      ['application/x-shot', 'text/plain'],
+    );
+
+    await result.current.onTimelineDrop(event);
+
+    expect(mockExtractVideoMetadataFromUrl).toHaveBeenCalledTimes(2);
+    expect(registerGenerationAsset).toHaveBeenCalledWith(expect.not.objectContaining({
+      durationSeconds: expect.any(Number),
+    }));
+    expect(applyEdit.mock.calls[0][0].rows[0].actions[0]).toEqual(expect.objectContaining({
+      start: 12,
+      end: 17,
+    }));
+  });
+
+  it('does not create a new track or patch assets when final video registration planning fails', async () => {
+    mockUseShots.mockReturnValue({
+      shots: [{
+        id: 'shot-1',
+        name: 'Shot 1',
+        images: [
+          { generation_id: 'gen-1', imageUrl: 'https://example.com/1.png', thumbUrl: 'https://example.com/1-thumb.png', contentType: 'image/png', type: 'image' },
+        ],
+      }],
+      isLoading: false,
+      error: null,
+      refetchShots: vi.fn(),
+    });
+    mockUseFinalVideoAvailable.mockReturnValue({
+      finalVideoMap: new Map([[
+        'shot-1',
+        {
+          id: 'final-1',
+          location: '',
+          thumbnailUrl: null,
+        },
+      ]]),
+      dismissFinalVideo: vi.fn(),
+    });
+    mockExtractVideoMetadataFromUrl.mockResolvedValue({ duration_seconds: 4 });
+
+    const dataRef = {
+      current: makeDropTestData(),
+    } as React.MutableRefObject<DropTestData>;
+    const pendingOpsRef = { current: 0 } as React.MutableRefObject<number>;
+    const applyEdit = vi.fn();
+    const registerGenerationAsset = vi.fn();
+    const coordinator = {
+      update: vi.fn(),
+      showSecondaryGhosts: vi.fn(),
+      end: vi.fn(),
+      lastPosition: {
+        time: 12,
+        rowIndex: 0,
+        trackId: 'V1',
+        trackKind: 'visual',
+        trackName: 'V1',
+        isNewTrack: true,
+        isNewTrackTop: false,
+        isReject: false,
+        newTrackKind: 'visual',
+        screenCoords: {
+          rowTop: 0,
+          rowLeft: 0,
+          rowWidth: 0,
+          rowHeight: 0,
+          clipLeft: 0,
+          clipWidth: 0,
+          ghostCenter: 0,
+        },
+      },
+      editAreaRef: { current: null },
+    };
+
+    const { result } = renderHook(() => useExternalDrop({
+      dataRef,
+      pendingOpsRef,
+      scale: 1,
+      scaleWidth: 1,
+      selectedTrackId: null,
+      applyEdit,
+      patchRegistry: vi.fn(),
+      registerAsset: vi.fn(),
+      uploadAsset: vi.fn(),
+      invalidateAssetRegistry: vi.fn(),
+      resolveAssetUrl: vi.fn(),
+      coordinator,
+      registerGenerationAsset,
+      uploadImageGeneration: vi.fn(),
+      uploadVideoGeneration: vi.fn(),
+      handleAssetDrop: vi.fn(),
+      finalVideoMap: mockUseFinalVideoAvailable().finalVideoMap,
+    }));
+
+    const event = createDropEvent(
+      createStoredShotPayload({
+        shotId: 'shot-1',
+        shotName: 'Shot 1',
+        imageGenerationIds: ['gen-1'],
+      }),
+      ['application/x-shot', 'text/plain'],
+    );
+
+    await result.current.onTimelineDrop(event);
+
+    expect(registerGenerationAsset).not.toHaveBeenCalled();
+    expect(applyEdit).not.toHaveBeenCalled();
+    expect(dataRef.current.tracks).toEqual([{ id: 'V1', kind: 'visual', label: 'V1' }]);
+    expect(dataRef.current.rows).toEqual([{ id: 'V1', actions: [] }]);
   });
 });

@@ -5,6 +5,12 @@ import type {
   TimelineClip,
   TimelineConfig,
 } from '@/tools/video-editor/types';
+import {
+  getCanonicalClipPlaybackRate,
+  getConfigTimelineClipDuration,
+  getConfigTimelineClipSourceDuration,
+  getConfigTimelineDuration,
+} from './timeline-domain';
 
 export const parseResolution = (resolution: string): { width: number; height: number } => {
   const [width, height] = resolution.toLowerCase().split('x');
@@ -15,16 +21,11 @@ export const parseResolution = (resolution: string): { width: number; height: nu
 };
 
 export const getClipSourceDuration = (clip: TimelineClip): number => {
-  if (typeof clip.hold === 'number') {
-    return clip.hold;
-  }
-
-  return (clip.to ?? 0) - (clip.from ?? 0);
+  return getConfigTimelineClipSourceDuration(clip);
 };
 
 export const getClipTimelineDuration = (clip: TimelineClip): number => {
-  const speed = clip.speed ?? 1;
-  return getClipSourceDuration(clip) / speed;
+  return getConfigTimelineClipDuration(clip);
 };
 
 export const secondsToFrames = (seconds: number, fps: number): number => {
@@ -49,7 +50,7 @@ export const getSanitizedMediaTrimProps = (
 };
 
 export const getSanitizedPlaybackRate = (speed: TimelineClip['speed']): number => {
-  return typeof speed === 'number' && Number.isFinite(speed) && speed > 0 ? speed : 1;
+  return getCanonicalClipPlaybackRate(speed);
 };
 
 export const getSanitizedVolume = (volume: number | undefined, fallback = 1): number => {
@@ -91,12 +92,7 @@ export const getClipDurationInFrames = (clip: TimelineClip, fps: number): number
 };
 
 export const getTimelineDurationInFrames = (config: ResolvedTimelineConfig, fps: number): number => {
-  return Math.max(
-    1,
-    ...config.clips.map((clip) => {
-      return secondsToFrames(clip.at, fps) + getClipDurationInFrames(clip, fps);
-    }),
-  );
+  return Math.max(1, secondsToFrames(getConfigTimelineDuration(config.clips), fps));
 };
 
 export const getEffectValue = (

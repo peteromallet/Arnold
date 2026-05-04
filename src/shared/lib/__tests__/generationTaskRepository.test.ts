@@ -47,7 +47,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 
 vi.mock('@/shared/lib/tasks/orchestratorReference', () => ({
-  applyRootTaskFilter: <T>(query: T) => query,
+  applyRootTaskFilter: <T,>(query: T) => query,
 }));
 
 import {

@@ -82,10 +82,14 @@ vi.mock('./generation.ts', () => ({
   createGenerationFromTask: (...args: unknown[]) => mocks.createGenerationFromTask(...args),
 }));
 
-vi.mock('../ai-timeline-agent/db.ts', () => ({
-  loadTimelineState: (...args: unknown[]) => mocks.loadTimelineState(...args),
-  saveTimelineConfigVersioned: (...args: unknown[]) => mocks.saveTimelineConfigVersioned(...args),
-}));
+vi.mock('../ai-timeline-agent/db.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ai-timeline-agent/db.ts')>();
+  return {
+    ...actual,
+    loadTimelineState: (...args: unknown[]) => mocks.loadTimelineState(...args),
+    saveTimelineConfigVersioned: (...args: unknown[]) => mocks.saveTimelineConfigVersioned(...args),
+  };
+});
 
 vi.mock('../ai-timeline-agent/tools/timeline.ts', () => ({
   addMediaClip: (...args: unknown[]) => mocks.addMediaClip(...args),
@@ -196,14 +200,22 @@ describe('completeTaskHandler', () => {
     mocks.triggerCostCalculationIfNotSubTask.mockResolvedValue({ ok: true });
     mocks.persistCompletionFollowUpIssues.mockResolvedValue({ ok: true });
     mocks.loadTimelineState.mockResolvedValue({
-      config: { clips: [] },
+      config: {
+        output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+        clips: [],
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual 1' }],
+      },
       configVersion: 1,
       registry: { assets: {} },
       projectId: 'project-1',
       shotNamesById: {},
     });
     mocks.addMediaClip.mockReturnValue({
-      config: { clips: [{ id: 'clip-added', track: 'V1', at: 12.5, asset: 'asset-added', clipType: 'hold', hold: 5 }] },
+      config: {
+        output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+        clips: [{ id: 'clip-added', track: 'V1', at: 12.5, asset: 'asset-added', clipType: 'hold', hold: 5 }],
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual 1' }],
+      },
       result: 'Added media clip clip-added on track V1 at 12.5s.',
     });
     mocks.saveTimelineConfigVersioned.mockResolvedValue(2);
@@ -396,6 +408,37 @@ describe('completeTaskHandler', () => {
       variant_type: null,
     });
     mocks.extractTimelinePlacement.mockReturnValue(timelinePlacement);
+    mocks.loadTimelineState.mockResolvedValue({
+      config: {
+        output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+        clips: [],
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual 1' }],
+        pinnedShotGroups: [{
+          shotId: 'shot-1',
+          trackId: 'stale-track',
+          clipIds: ['missing-clip'],
+          mode: 'images',
+        }],
+      },
+      configVersion: 1,
+      registry: { assets: {} },
+      projectId: 'project-1',
+      shotNamesById: {},
+    });
+    mocks.addMediaClip.mockReturnValue({
+      config: {
+        output: { file: 'out.mp4', fps: 30, resolution: '1920x1080' },
+        clips: [{ id: 'clip-added', track: 'V1', at: 12.5, asset: 'asset-added', clipType: 'media' }],
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual 1' }],
+        pinnedShotGroups: [{
+          shotId: 'shot-1',
+          trackId: 'stale-track',
+          clipIds: ['missing-clip'],
+          mode: 'images',
+        }],
+      },
+      result: 'Added media clip clip-added on track V1 at 12.5s.',
+    });
 
     const response = await completeTaskHandler(
       new Request('https://edge.test/complete-task', { method: 'POST' }),
@@ -415,7 +458,10 @@ describe('completeTaskHandler', () => {
 
     const rpcArgs = supabaseAdmin.rpc.mock.calls[0]?.[1] as { p_asset_id: string };
     expect(mocks.addMediaClip).toHaveBeenCalledWith(
-      { clips: [] },
+      expect.objectContaining({
+        clips: [],
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual 1' }],
+      }),
       expect.objectContaining({
         assets: expect.objectContaining({
           [rpcArgs.p_asset_id]: expect.objectContaining({
@@ -437,6 +483,7 @@ describe('completeTaskHandler', () => {
       1,
       expect.objectContaining({
         clips: expect.any(Array),
+        pinnedShotGroups: [],
       }),
     );
     expect(mocks.persistCompletionFollowUpIssues).not.toHaveBeenCalled();

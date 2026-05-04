@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TestHarness } from "./index.ts";
 import type { HarnessSnapshot, SnapshotDiff, TimelineModifiedRow } from "./snapshot.ts";
-import type { TimelineClip } from "../../../../src/tools/video-editor/types/index.ts";
+import type { TimelineClip } from "../../../../src/tools/video-editor/index.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers

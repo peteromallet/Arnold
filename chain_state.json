@@ -1,0 +1,21 @@
+{
+  "current_milestone_index": 2,
+  "current_plan_name": null,
+  "last_state": "done",
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [
+    {
+      "label": "sprint-01-canonical-data-model",
+      "plan": "video-editor-developer-20260502-2351",
+      "status": "done"
+    },
+    {
+      "label": "sprint-02-ports-adapters",
+      "plan": "video-editor-developer-20260503-0101",
+      "status": "done",
+      "pr_number": null,
+      "pr_state": "open"
+    }
+  ]
+}

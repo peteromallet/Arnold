@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import {
+  createTimelineCommandRunner,
+  MEDIA_COMMAND_DESCRIPTORS,
+  type TimelineCommandHistoryMetadata,
+} from '@/tools/video-editor/commands';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
+import type {
+  CommandHistoryCommitMetadata,
+  CommitDataOptions,
+  CommitHistoryOptions,
+} from '@/tools/video-editor/hooks/useTimelineCommit';
 import {
   isInteractionActive,
   type InteractionStateRef,
@@ -23,21 +33,7 @@ const CHECKPOINT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = 5 * 60 * 1000;
 const EDIT_DISTANCE_CHECKPOINT_THRESHOLD = 30;
 const UNTRANSACTED_COLLAPSE_WINDOW_MS = 300;
-
-type CommitHistoryOptions = {
-  transactionId?: string;
-  semantic?: boolean;
-};
-
-type CommitDataOptions = {
-  save?: boolean;
-  selectedClipId?: string | null;
-  selectedTrackId?: string | null;
-  updateLastSavedSignature?: boolean;
-  transactionId?: string;
-  semantic?: boolean;
-  skipHistory?: boolean;
-};
+const historyCommandRunner = createTimelineCommandRunner([...MEDIA_COMMAND_DESCRIPTORS]);
 
 export interface UseTimelineHistoryArgs {
   dataRef: MutableRefObject<TimelineData | null>;
@@ -95,6 +91,86 @@ function defaultCheckpointLabel(triggerType: CheckpointTriggerType): string {
       return 'Manual checkpoint';
   }
 }
+
+const buildCommandHistoryEntry = (
+  commandHistory: CommandHistoryCommitMetadata | undefined,
+) => {
+  if (
+    !commandHistory
+    || commandHistory.history.strategy !== 'inverse_transaction'
+    || commandHistory.history.inverseTransaction === null
+    || commandHistory.history.inverseTransaction.commands.length === 0
+    || commandHistory.transaction.commands.length === 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    history: {
+      ...commandHistory.history,
+      inverseTransaction: structuredClone(commandHistory.history.inverseTransaction),
+    },
+    undoTransaction: structuredClone(commandHistory.history.inverseTransaction),
+    redoTransaction: structuredClone(commandHistory.transaction),
+  };
+};
+
+const mergeCommandHistoryMetadata = (
+  previous: TimelineCommandHistoryMetadata,
+  next: TimelineCommandHistoryMetadata,
+  undoTransaction: NonNullable<UndoEntry['command']>['undoTransaction'],
+): TimelineCommandHistoryMetadata => ({
+  ...next,
+  commandTypes: [...previous.commandTypes, ...next.commandTypes],
+  commandIds: [...previous.commandIds, ...next.commandIds],
+  inverseTransaction: structuredClone(undoTransaction),
+  appliedCount: previous.appliedCount + next.appliedCount,
+  failedCount: previous.failedCount + next.failedCount,
+  partial: previous.partial || next.partial,
+});
+
+const mergeCollapsedEntry = (
+  previous: UndoEntry,
+  next: UndoEntry,
+): UndoEntry => {
+  if (!previous.command || !next.command) {
+    return previous.command
+      ? { ...previous, command: undefined }
+      : previous;
+  }
+
+  const undoTransaction = {
+    ...(next.command.undoTransaction.transactionId
+      ? { transactionId: next.command.undoTransaction.transactionId }
+      : previous.command.undoTransaction.transactionId
+        ? { transactionId: previous.command.undoTransaction.transactionId }
+        : {}),
+    commands: [
+      ...next.command.undoTransaction.commands,
+      ...previous.command.undoTransaction.commands,
+    ],
+  };
+  const redoTransaction = {
+    ...(previous.command.redoTransaction.transactionId
+      ? { transactionId: previous.command.redoTransaction.transactionId }
+      : next.command.redoTransaction.transactionId
+        ? { transactionId: next.command.redoTransaction.transactionId }
+        : {}),
+    commands: [
+      ...previous.command.redoTransaction.commands,
+      ...next.command.redoTransaction.commands,
+    ],
+  };
+
+  return {
+    ...previous,
+    command: {
+      history: mergeCommandHistoryMetadata(previous.command.history, next.command.history, undoTransaction),
+      undoTransaction,
+      redoTransaction,
+    },
+  };
+};
 
 export function useTimelineHistory({
   dataRef,
@@ -165,22 +241,42 @@ export function useTimelineHistory({
     }
   }, [appendCheckpoint, provider, timelineId]);
 
-  const restoreSnapshot = useCallback((snapshot: UndoSnapshot) => {
-    const current = dataRef.current;
-    if (!current) {
-      return;
+  const applyHistoryEntry = useCallback((
+    current: TimelineData,
+    entry: UndoEntry,
+    direction: 'undo' | 'redo',
+  ) => {
+    if (entry.command) {
+      const transaction = direction === 'undo'
+        ? entry.command.undoTransaction
+        : entry.command.redoTransaction;
+      const result = historyCommandRunner.apply(current, transaction);
+      if (result.status === 'ok') {
+        return result.nextData;
+      }
     }
 
-    const nextConfig = cloneConfig(snapshot.config);
+    const nextConfig = cloneConfig(entry.snapshot.config);
+    return entry.snapshot.registry
+      ? buildDataFromSnapshot(nextConfig, entry.snapshot.registry, current)
+      : buildDataFromCurrentRegistry(nextConfig, current);
+  }, []);
+
+  const restoreHistoryEntry = useCallback((entry: UndoEntry, direction: 'undo' | 'redo') => {
+    const current = dataRef.current;
+    if (!current) {
+      return false;
+    }
+
+    const nextData = applyHistoryEntry(current, entry, direction);
     commitData(
-      snapshot.registry
-        ? buildDataFromSnapshot(nextConfig, snapshot.registry, current)
-        : buildDataFromCurrentRegistry(nextConfig, current),
+      nextData,
       { save: true, skipHistory: true },
     );
     lastEditTimestampRef.current = Date.now();
     lastUntransactedEditAtRef.current = null;
-  }, [commitData, dataRef]);
+    return true;
+  }, [applyHistoryEntry, commitData, dataRef]);
 
   const pushUndoEntry = useCallback((entry: UndoEntry) => {
     undoStackRef.current = [...undoStackRef.current, entry].slice(-UNDO_STACK_LIMIT);
@@ -230,12 +326,22 @@ export function useTimelineHistory({
 
     clearRedoStack();
 
-    if (!hasMatchingTransaction && !isDebouncedUntransactedEdit) {
-      pushUndoEntry({
-        snapshot: buildSnapshot(currentData),
-        timestamp: new Date(now).toISOString(),
-        transactionId: options.transactionId,
-      });
+    const nextEntry: UndoEntry = {
+      snapshot: buildSnapshot(currentData),
+      timestamp: new Date(now).toISOString(),
+      transactionId: options.transactionId,
+      command: buildCommandHistoryEntry(options.commandHistory),
+    };
+
+    if (hasMatchingTransaction || isDebouncedUntransactedEdit) {
+      if (topUndoEntry) {
+        undoStackRef.current = [
+          ...undoStackRef.current.slice(0, -1),
+          mergeCollapsedEntry(topUndoEntry, nextEntry),
+        ];
+      }
+    } else {
+      pushUndoEntry(nextEntry);
     }
 
     lastEditTimestampRef.current = now;
@@ -253,17 +359,21 @@ export function useTimelineHistory({
       return;
     }
 
+    if (!restoreHistoryEntry(entry, 'undo')) {
+      return;
+    }
+
     undoStackRef.current = undoStackRef.current.slice(0, -1);
     redoStackRef.current = [
       ...redoStackRef.current,
       {
+        ...entry,
         snapshot: buildSnapshot(current),
         timestamp: new Date().toISOString(),
       },
     ].slice(-UNDO_STACK_LIMIT);
     syncHistoryState();
-    restoreSnapshot(entry.snapshot);
-  }, [dataRef, interactionStateRef, restoreSnapshot, syncHistoryState]);
+  }, [dataRef, interactionStateRef, restoreHistoryEntry, syncHistoryState]);
 
   const redo = useCallback(() => {
     const current = dataRef.current;
@@ -272,17 +382,21 @@ export function useTimelineHistory({
       return;
     }
 
+    if (!restoreHistoryEntry(entry, 'redo')) {
+      return;
+    }
+
     redoStackRef.current = redoStackRef.current.slice(0, -1);
     undoStackRef.current = [
       ...undoStackRef.current,
       {
+        ...entry,
         snapshot: buildSnapshot(current),
         timestamp: new Date().toISOString(),
       },
     ].slice(-UNDO_STACK_LIMIT);
     syncHistoryState();
-    restoreSnapshot(entry.snapshot);
-  }, [dataRef, interactionStateRef, restoreSnapshot, syncHistoryState]);
+  }, [dataRef, interactionStateRef, restoreHistoryEntry, syncHistoryState]);
 
   const jumpToCheckpoint = useCallback((checkpointId: string) => {
     const current = dataRef.current;
@@ -294,12 +408,15 @@ export function useTimelineHistory({
     undoStackRef.current = [];
     redoStackRef.current = [];
     syncHistoryState();
-    restoreSnapshot({
-      config: cloneConfig(checkpoint.config),
-      signature: checkpoint.id,
-    });
+    restoreHistoryEntry({
+      snapshot: {
+        config: cloneConfig(checkpoint.config),
+        signature: checkpoint.id,
+      },
+      timestamp: new Date().toISOString(),
+    }, 'undo');
     editsSinceLastCheckpointRef.current = 0;
-  }, [checkpoints, dataRef, restoreSnapshot, syncHistoryState]);
+  }, [checkpoints, dataRef, restoreHistoryEntry, syncHistoryState]);
 
   const createManualCheckpoint = useCallback(async (label?: string) => {
     const current = dataRef.current;

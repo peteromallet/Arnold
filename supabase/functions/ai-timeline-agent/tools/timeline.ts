@@ -4,8 +4,19 @@ import type {
   TimelineClip,
   TimelineConfig,
   TrackDefinition,
-} from "../../../../src/tools/video-editor/types/index.ts";
+} from "../../../../src/tools/video-editor/index.ts";
+import {
+  getPairTimelineClipDuration,
+  getPairTimelineDuration,
+} from "../../../../src/tools/video-editor/index.ts";
 import type { ToolHandler, ToolResult } from "../types.ts";
+import {
+  applyProvisionedMediaCommandToConfig,
+  provisionRegisteredTimelineMedia,
+  type AddMediaCommand,
+  type SwapMediaCommand,
+  type TimelineProvisionedAsset,
+} from "../../../../src/tools/video-editor/index.ts";
 // Sprint 3 (SD-018): surgical CRUD ops moved to @banodoco/timeline-ops.
 // `moveClip` and `setClipProperty` here delegate to the shared package; the
 // handler-level result strings remain byte-equivalent so the LLM tool
@@ -19,6 +30,9 @@ import {
   type MutableClipProperty,
 } from "@banodoco/timeline-ops";
 import type { TimelineConfigT } from "@banodoco/timeline-schema";
+import {
+  TRUSTED_SEQUENCE_CLIP_TYPES,
+} from "../../../../src/tools/video-editor/index.ts";
 
 export type TimelineToolResult = ToolResult;
 
@@ -33,6 +47,26 @@ const MUTABLE_CLIP_PROPERTIES: ClipProperty[] = [
   "width",
   "height",
 ];
+
+const INSTALLED_TIMELINE_THEME_IDS = ["2rp"] as const;
+
+const SUPPORTED_SET_PARAMS_CLIP_TYPES = [...TRUSTED_SEQUENCE_CLIP_TYPES] as readonly string[];
+
+function formatAvailableThemeIds(): string {
+  return INSTALLED_TIMELINE_THEME_IDS.join(", ");
+}
+
+function formatSupportedSetParamsClipTypes(): string {
+  return SUPPORTED_SET_PARAMS_CLIP_TYPES.join(", ");
+}
+
+function isInstalledTimelineThemeId(value: string): boolean {
+  return (INSTALLED_TIMELINE_THEME_IDS as readonly string[]).includes(value);
+}
+
+function supportsSetParamsClipType(value: unknown): boolean {
+  return typeof value === "string" && (SUPPORTED_SET_PARAMS_CLIP_TYPES as readonly string[]).includes(value);
+}
 
 function roundSeconds(value: number): number {
   return Math.round(value * 1000) / 1000;
@@ -49,23 +83,6 @@ function getAssetDuration(registry: AssetRegistry, assetId?: string): number | n
 
   const duration = registry.assets?.[assetId]?.duration;
   return typeof duration === "number" ? duration : null;
-}
-
-function getClipSourceDuration(clip: TimelineClip, registry: AssetRegistry): number {
-  if (typeof clip.hold === "number") {
-    return clip.hold;
-  }
-
-  if (typeof clip.from === "number" && typeof clip.to === "number") {
-    return clip.to - clip.from;
-  }
-
-  return getAssetDuration(registry, clip.asset) ?? 0;
-}
-
-function getClipTimelineDuration(clip: TimelineClip, registry: AssetRegistry): number {
-  const speed = clip.speed ?? 1;
-  return getClipSourceDuration(clip, registry) / speed;
 }
 
 function getShotLabel(shotId: string, shotNamesById: Record<string, string>): string {
@@ -88,7 +105,7 @@ function formatClipLine(
   shotGroupByClipId: Map<string, PinnedShotGroup>,
   shotNamesById: Record<string, string>,
 ): string {
-  const duration = roundSeconds(getClipTimelineDuration(clip, registry));
+  const duration = roundSeconds(getPairTimelineClipDuration(clip, registry));
   const parts = [
     `id=${clip.id}`,
     `track=${clip.track}`,
@@ -141,9 +158,7 @@ function describeTimeline(
   const tracks = getTrackDefinitions(config);
   const shotGroupByClipId = buildShotGroupByClipId(config);
   const shotGroups = config.pinnedShotGroups ?? [];
-  const totalDuration = config.clips.reduce((maxDuration, clip) => {
-    return Math.max(maxDuration, clip.at + getClipTimelineDuration(clip, registry));
-  }, 0);
+  const totalDuration = getPairTimelineDuration(config.clips, registry);
 
   const lines = [
     `Timeline summary: ${tracks.length} track(s), ${config.clips.length} clip(s), total duration ${roundSeconds(totalDuration)}s.`,
@@ -211,7 +226,7 @@ export function splitClip(
   }
 
   const clip = nextConfig.clips[clipIndex];
-  const clipEnd = clip.at + getClipTimelineDuration(clip, registry);
+  const clipEnd = clip.at + getPairTimelineClipDuration(clip, registry);
   if (!(args.time > clip.at && args.time < clipEnd)) {
     return { result: `Split time ${roundSeconds(args.time)}s must be inside clip ${clip.id}.` };
   }
@@ -437,108 +452,65 @@ export function addTextClip(
 export function addMediaClip(
   config: TimelineConfig,
   registry: AssetRegistry,
-  args: { track?: string; at?: number; assetKey?: string; mediaType?: "image" | "video" },
+  args: {
+    track?: string;
+    at?: number;
+    assetKey?: string;
+    mediaType?: "image" | "video";
+    asset?: TimelineProvisionedAsset;
+  },
 ): TimelineToolResult {
-  if (
-    typeof args.track !== "string"
-    || typeof args.at !== "number"
-    || typeof args.assetKey !== "string"
-    || (args.mediaType !== "image" && args.mediaType !== "video")
-  ) {
+  if (typeof args.track !== "string" || typeof args.at !== "number") {
+    return { result: "add_media_clip requires track, at, assetKey, and mediaType." };
+  }
+  const provisionedAsset = args.asset ?? (
+    typeof args.assetKey === "string"
+      ? provisionRegisteredTimelineMedia(args.assetKey, registry.assets?.[args.assetKey], args.mediaType)
+      : null
+  );
+  if (!provisionedAsset) {
     return { result: "add_media_clip requires track, at, assetKey, and mediaType." };
   }
 
-  const tracks = getTrackDefinitions(config);
-  if (tracks.length > 0 && !tracks.some((track) => track.id === args.track)) {
-    return { result: `Track ${args.track} does not exist.` };
-  }
-
-  const nextConfig = cloneConfig(config);
-  const clipId = `clip-${crypto.randomUUID().slice(0, 6)}`;
-  const clip = args.mediaType === "video"
-    ? {
-      id: clipId,
+  return applyProvisionedMediaCommandToConfig(config, registry, {
+    type: "add-media",
+    payload: {
+      trackId: args.track,
       at: roundSeconds(args.at),
-      track: args.track,
-      asset: args.assetKey,
-      clipType: "media" as const,
-      from: 0,
-      to: roundSeconds(getAssetDuration(registry, args.assetKey) ?? 5),
-      speed: 1,
-      volume: 1,
-      opacity: 1,
-    }
-    : {
-      id: clipId,
-      at: roundSeconds(args.at),
-      track: args.track,
-      asset: args.assetKey,
-      clipType: "hold" as const,
-      hold: 5,
-      opacity: 1,
-    };
-  nextConfig.clips.push(clip);
-
-  return {
-    config: nextConfig,
-    result: `Added media clip ${clipId} on track ${args.track} at ${roundSeconds(args.at)}s using asset ${args.assetKey}.`,
-  };
+      asset: provisionedAsset,
+    },
+  } satisfies AddMediaCommand);
 }
 
 export function swapClipAsset(
   config: TimelineConfig,
   registry: AssetRegistry,
-  args: { clipId?: string; assetKey?: string; mediaType?: "image" | "video" },
+  args: {
+    clipId?: string;
+    assetKey?: string;
+    mediaType?: "image" | "video";
+    asset?: TimelineProvisionedAsset;
+  },
 ): TimelineToolResult {
-  if (
-    typeof args.clipId !== "string"
-    || typeof args.assetKey !== "string"
-    || (args.mediaType !== "image" && args.mediaType !== "video")
-  ) {
+  if (typeof args.clipId !== "string") {
+    return { result: "swap_clip_asset requires clipId, assetKey, and mediaType." };
+  }
+  const provisionedAsset = args.asset ?? (
+    typeof args.assetKey === "string"
+      ? provisionRegisteredTimelineMedia(args.assetKey, registry.assets?.[args.assetKey], args.mediaType)
+      : null
+  );
+  if (!provisionedAsset) {
     return { result: "swap_clip_asset requires clipId, assetKey, and mediaType." };
   }
 
-  const nextConfig = cloneConfig(config);
-  const clipIndex = getClipIndex(nextConfig, args.clipId);
-  if (clipIndex < 0) {
-    return { result: `Clip ${args.clipId} was not found.` };
-  }
-
-  const clip = nextConfig.clips[clipIndex];
-  if (clip.clipType === "text" || clip.clipType === "effect-layer") {
-    return { result: `Clip ${clip.id} cannot swap media assets.` };
-  }
-
-  const currentMediaType = clip.clipType === "hold" ? "image" : "video";
-  clip.asset = args.assetKey;
-
-  if (currentMediaType === args.mediaType) {
-    return {
-      config: nextConfig,
-      result: `Swapped asset on clip ${clip.id} to ${args.assetKey}.`,
-    };
-  }
-
-  if (args.mediaType === "video") {
-    clip.clipType = "media";
-    clip.from = 0;
-    clip.to = roundSeconds(getAssetDuration(registry, args.assetKey) ?? 5);
-    clip.speed = 1;
-    clip.volume = 1;
-    delete clip.hold;
-  } else {
-    clip.clipType = "hold";
-    clip.hold = 5;
-    delete clip.from;
-    delete clip.to;
-    delete clip.speed;
-    delete clip.volume;
-  }
-
-  return {
-    config: nextConfig,
-    result: `Swapped clip ${clip.id} to ${args.mediaType} asset ${args.assetKey}.`,
-  };
+  return applyProvisionedMediaCommandToConfig(config, registry, {
+    type: "swap",
+    payload: {
+      clipId: args.clipId,
+      asset: provisionedAsset,
+    },
+  } satisfies SwapMediaCommand);
 }
 
 export function queryTimeline(config: TimelineConfig, registry: AssetRegistry): TimelineToolResult {
@@ -556,7 +528,7 @@ export function queryTimeline(config: TimelineConfig, registry: AssetRegistry): 
   }
 
   for (const clip of nextConfig.clips) {
-    const duration = roundSeconds(getClipTimelineDuration(clip, registry));
+    const duration = roundSeconds(getPairTimelineClipDuration(clip, registry));
     totalDuration = Math.max(totalDuration, roundSeconds(clip.at + duration));
 
     if (!longest || duration > longest.duration) {
@@ -576,7 +548,7 @@ export function queryTimeline(config: TimelineConfig, registry: AssetRegistry): 
     for (let index = 1; index < sortedClips.length; index += 1) {
       const previousClip = sortedClips[index - 1];
       const currentClip = sortedClips[index];
-      const previousEnd = previousClip.at + getClipTimelineDuration(previousClip, registry);
+      const previousEnd = previousClip.at + getPairTimelineClipDuration(previousClip, registry);
 
       if (currentClip.at - previousEnd > 0.01) {
         gapCount += 1;
@@ -632,7 +604,7 @@ export function findIssues(config: TimelineConfig, registry: AssetRegistry): Tim
     for (let index = 1; index < sortedClips.length; index += 1) {
       const previousClip = sortedClips[index - 1];
       const currentClip = sortedClips[index];
-      const previousEnd = previousClip.at + getClipTimelineDuration(previousClip, registry);
+      const previousEnd = previousClip.at + getPairTimelineClipDuration(previousClip, registry);
 
       if (currentClip.at - previousEnd > 0.01) {
         issues.push(
@@ -688,7 +660,7 @@ export function duplicateClip(
   if (!sourceClip) return { result: `Clip ${args.clipId} was not found.` };
 
   const count = typeof args.count === "number" ? Math.max(1, Math.round(args.count)) : 1;
-  const duration = getClipTimelineDuration(sourceClip, registry);
+  const duration = getPairTimelineClipDuration(sourceClip, registry);
 
   const nextConfig = cloneConfig(config);
   const newIds: string[] = [];
@@ -762,6 +734,15 @@ export function setClipParams(
       || typeof args.params !== "object" || Array.isArray(args.params)) {
     return { result: "set_params requires clipId and a params object." };
   }
+  const targetClip = config.clips.find((clip) => clip.id === args.clipId);
+  if (!targetClip) {
+    return { result: `Clip ${args.clipId} was not found.` };
+  }
+  if (!supportsSetParamsClipType(targetClip.clipType)) {
+    return {
+      result: `Clip ${args.clipId} does not support set_params. Installed sequence clip types: ${formatSupportedSetParamsClipTypes()}.`,
+    };
+  }
   const opResult = opsSetClipParams(
     config as unknown as TimelineConfigT,
     args.clipId,
@@ -793,18 +774,25 @@ export function setTheme(
   if (typeof args.themeId !== "string") {
     return { result: "set_theme requires themeId." };
   }
-  const opResult = opsSetTimelineTheme(config as unknown as TimelineConfigT, args.themeId);
+  const themeId = args.themeId.trim();
+  if (themeId.length === 0) {
+    return { result: "set_theme requires a non-empty themeId." };
+  }
+  if (!isInstalledTimelineThemeId(themeId)) {
+    return { result: `Theme ${themeId} is not installed. Available themes: ${formatAvailableThemeIds()}.` };
+  }
+  const opResult = opsSetTimelineTheme(config as unknown as TimelineConfigT, themeId);
   if (!opResult.changed) {
     if (opResult.detail?.reason === "invalid_value") {
       return { result: "set_theme requires a non-empty themeId." };
     }
     // Theme already matches; return identity update so loop can no-op.
-    return { result: `Theme is already ${args.themeId}.` };
+    return { result: `Theme is already ${themeId}.` };
   }
   const previous = opResult.detail?.previousTheme as string | undefined;
   return {
     config: opResult.config as unknown as TimelineConfig,
-    result: `Switched theme from ${previous ?? "unset"} to ${args.themeId}. (Note: existing themed clips referencing the old theme's clipType may need remapping.)`,
+    result: `Switched theme from ${previous ?? "unset"} to ${themeId}. (Note: existing themed clips referencing the old theme's clipType may need remapping.)`,
   };
 }
 

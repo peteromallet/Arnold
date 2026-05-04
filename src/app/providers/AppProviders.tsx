@@ -102,6 +102,12 @@ function SelectionStoreBoundary({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Sprint 3 adapter boundary: these app-level providers remain part of the
+// Reigh host shell. The headless video-editor core must not depend on this
+// provider tree directly; it should receive any required host behavior through
+// adapter props/ports instead. `AgentChatProvider` intentionally stays here so
+// `useAgentChatActions()` remains `null` until the TasksPane-mounted
+// `AgentChatPanel` registers its handlers.
 const AppProviderTree = composeProviders([
   AuthProvider,
   AuthGate,

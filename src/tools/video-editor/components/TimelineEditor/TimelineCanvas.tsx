@@ -49,6 +49,7 @@ import {
   TIMELINE_CENTER_CLIP_EVENT,
   type TimelineCenterClipEventDetail,
 } from '@/tools/video-editor/lib/timeline-viewport-events';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
 import type { TrackDefinition } from '@/tools/video-editor/types';
 import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
 import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag';
@@ -445,7 +446,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
   };
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-background/70">
+    <div className="relative flex h-full min-h-0 flex-col bg-background/70" style={VIDEO_EDITOR_THEME_VARS}>
       <TimelineRulerAndGrid
         scale={scale}
         scaleWidth={scaleWidth}
@@ -488,7 +489,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
         >
           {marqueeRect && (
             <div
-              className="pointer-events-none absolute z-30 border border-sky-400 bg-sky-400/10"
+              className="pointer-events-none absolute z-30 border border-[color:var(--video-editor-accent-border-strong)] bg-[var(--video-editor-accent-bg)]"
               style={{
                 left: marqueeRect.x,
                 top: marqueeRect.y,
@@ -498,7 +499,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
             />
           )}
           {newTrackDropLabel?.includes('at top') && (
-            <div className="pointer-events-none absolute left-0 right-0 top-0 z-10 h-1 bg-sky-400/60" style={{ marginLeft: LABEL_WIDTH }} />
+            <div className="pointer-events-none absolute left-0 right-0 top-0 z-10 h-1 bg-[var(--video-editor-accent-text-soft)]" style={{ marginLeft: LABEL_WIDTH }} />
           )}
           <ShotGroupBorders
             positionedShotGroups={positionedShotGroups}
@@ -562,14 +563,14 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
           </div>
           <div className="flex flex-1 items-center gap-2 px-2" style={{ position: 'sticky', left: LABEL_WIDTH }}>
             {newTrackDropLabel && newTrackDropLabel.includes('at bottom') ? (
-              <div className="flex-1 h-1 rounded-full bg-sky-400/60 pointer-events-none" />
+              <div className="pointer-events-none h-1 flex-1 rounded-full bg-[var(--video-editor-accent-text-soft)]" />
             ) : null}
           </div>
         </div>
         <div
           ref={cursorRef}
           data-testid="timeline-playhead"
-          className="pointer-events-none absolute left-0 top-0 z-[5] bg-sky-400/95 shadow-[0_0_10px_rgba(56,189,248,0.5)]"
+          className="pointer-events-none absolute left-0 top-0 z-[5] bg-[var(--video-editor-accent-border-strong)] shadow-[0_0_10px_var(--video-editor-accent-shadow)]"
           style={{
             width: CURSOR_WIDTH,
             height: scrollContentHeight,
@@ -588,7 +589,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
                   event.dataTransfer.setData('text-tool', 'true');
                   event.dataTransfer.effectAllowed = 'copy';
                 }}
-                className="group/tool pointer-events-auto relative flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-sky-500/15 text-sky-400 ring-1 ring-sky-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-sky-500/25 hover:shadow-[0_6px_18px_rgba(56,189,248,0.28)] hover:ring-sky-400/60 active:translate-y-0 active:scale-100 active:cursor-grabbing"
+                className="group/tool pointer-events-auto relative flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-[var(--video-editor-accent-bg-strong)] text-[color:var(--video-editor-accent-border-strong)] ring-1 ring-[var(--video-editor-accent-ring)] transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-[var(--video-editor-accent-bg-hover)] hover:shadow-[0_6px_18px_var(--video-editor-accent-shadow-soft)] hover:ring-[var(--video-editor-accent-border)] active:translate-y-0 active:scale-100 active:cursor-grabbing"
                 title="Drag onto timeline to add text"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
@@ -602,7 +603,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
                   event.dataTransfer.setData('effect-layer', 'true');
                   event.dataTransfer.effectAllowed = 'copy';
                 }}
-                className="group/tool pointer-events-auto relative flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-violet-500/15 text-violet-400 ring-1 ring-violet-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-violet-500/25 hover:shadow-[0_6px_18px_rgba(167,139,250,0.28)] hover:ring-violet-400/60 active:translate-y-0 active:scale-100 active:cursor-grabbing"
+                className="group/tool pointer-events-auto relative flex h-6 w-6 cursor-grab items-center justify-center rounded-full bg-[var(--video-editor-effect-bg)] text-[color:var(--video-editor-effect-text)] ring-1 ring-[var(--video-editor-effect-ring)] transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-[var(--video-editor-effect-bg-hover)] hover:shadow-[0_6px_18px_var(--video-editor-effect-shadow-soft)] hover:ring-[var(--video-editor-effect-ring-strong)] active:translate-y-0 active:scale-100 active:cursor-grabbing"
                 title="Drag onto timeline to add an effect layer"
               >
                 <Layers className="h-3 w-3" />
@@ -615,7 +616,7 @@ export const TimelineCanvas = forwardRef<TimelineCanvasHandle, TimelineCanvasPro
           {onOpenSequenceCreator && (
             <button
               type="button"
-              className="group/tool pointer-events-auto relative flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-400/30 transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-emerald-500/25 hover:shadow-[0_6px_18px_rgba(52,211,153,0.28)] hover:ring-emerald-400/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/70 active:translate-y-0 active:scale-100"
+              className="group/tool pointer-events-auto relative flex h-6 w-6 items-center justify-center rounded-full bg-[var(--video-editor-success-bg)] text-[color:var(--video-editor-success-text)] ring-1 ring-[var(--video-editor-success-ring)] transition-all duration-150 hover:-translate-y-0.5 hover:scale-105 hover:bg-[var(--video-editor-success-bg-hover)] hover:shadow-[0_6px_18px_var(--video-editor-success-shadow-soft)] hover:ring-[var(--video-editor-success-ring-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--video-editor-success-focus-ring)] active:translate-y-0 active:scale-100"
               title="Create animation sequence"
               aria-label="Create animation sequence"
               onClick={onOpenSequenceCreator}

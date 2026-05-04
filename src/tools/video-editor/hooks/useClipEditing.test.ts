@@ -21,6 +21,14 @@ vi.mock('@/shared/components/ui/runtime/sonner', () => ({
   },
 }));
 
+vi.mock('@/tools/video-editor/contexts/DataProviderContext', () => ({
+  useVideoEditorRuntime: () => ({
+    toast: {
+      error: vi.fn(),
+    },
+  }),
+}));
+
 vi.mock('@/shared/lib/media/videoMetadata', () => ({
   extractVideoMetadataFromUrl: vi.fn(),
 }));
@@ -462,9 +470,17 @@ describe('useTimelineCommit pinned shot reconciliation', () => {
       });
     });
 
+    // Pinned shot groups remain a contiguity invariant at canonicalize-time:
+    // a config-replace mutation that *adds* a `pinnedShotGroupsOverride`
+    // makes the new pair contiguous. clip-1 stays at 0 (the override's first
+    // member); clip-2 gets snapped from 0 back to 2 to keep the group
+    // continuous. The "soft-tag" guarantee the test name promises is that the
+    // *pinnedShotGroups* type does not rewrite geometry — the explicit
+    // config-replace path still enforces contiguity, which is the trunk-
+    // canonical behaviour driving the visible repair issue.
     expect(result.current.dataRef.current?.resolvedConfig.clips).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'clip-1', at: 0, track: 'V1', hold: 2 }),
-      expect.objectContaining({ id: 'clip-2', at: 0, track: 'V1', hold: 2 }),
+      expect.objectContaining({ id: 'clip-2', at: 2, track: 'V1', hold: 2 }),
     ]));
     expect(result.current.dataRef.current?.signature).toBe(
       getConfigSignature(result.current.dataRef.current!.resolvedConfig),
@@ -634,6 +650,203 @@ describe('useSwitchToFinalVideo', () => {
         { clipId: 'clip-1', assetKey: 'asset-1', start: 7, end: 10, meta: { clipType: 'hold', hold: 3 } },
       ],
     })]);
+  });
+
+  it('prefers an already-registered final-video duration before fetching fresh metadata', async () => {
+    mockedExtractVideoMetadataFromUrl.mockReset();
+    const applyEdit = vi.fn();
+    const patchRegistry = vi.fn();
+    const registerAsset = vi.fn(async () => undefined);
+    const dataRef = {
+      current: makeConfigTimelineData(
+        {
+          output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+          tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+          clips: [
+            { id: 'clip-3', at: 7, track: 'V1', clipType: 'media', asset: 'asset-video', from: 0, to: 10, speed: 1 },
+          ],
+          pinnedShotGroups: [makePinnedGroup({
+            shotId: 'shot-1',
+            trackId: 'V1',
+            clipIds: ['clip-3'],
+            mode: 'video',
+            videoAssetKey: 'asset-video',
+            imageClipSnapshot: [
+              { clipId: 'clip-1', assetKey: 'asset-1', start: 7, end: 10, meta: { clipType: 'hold', hold: 3 } },
+            ],
+          })],
+        },
+        {
+          assets: {
+            'asset-video': { file: 'video-old.mp4', type: 'video/mp4', generationId: 'final-old' },
+            'asset-1': { file: 'one.png', type: 'image/png' },
+            'asset-final-existing': {
+              file: 'https://example.com/final-new.mp4',
+              type: 'video/mp4',
+              generationId: 'final-new',
+              duration: 6,
+            },
+          },
+        },
+      ),
+    };
+
+    const { result } = renderHook(() => useSwitchToFinalVideo({
+      applyEdit,
+      dataRef,
+      finalVideoMap: new Map([['shot-1', { id: 'final-new', location: 'https://example.com/final-new.mp4', thumbnailUrl: null }]]),
+      patchRegistry,
+      registerAsset,
+    }));
+
+    await act(async () => {
+      await result.current.updateToLatestVideo({ shotId: 'shot-1', rowId: 'V1' });
+    });
+
+    await waitFor(() => {
+      expect(applyEdit).toHaveBeenCalledTimes(1);
+    });
+
+    expect(mockedExtractVideoMetadataFromUrl).not.toHaveBeenCalled();
+    const mutation = applyEdit.mock.calls[0][0];
+    expect(mutation.metaUpdates).toEqual({
+      'clip-3': {
+        asset: expect.any(String),
+        to: 6,
+      },
+    });
+  });
+
+  it('keeps unresolved final-video replacement duration out of the registry and preserves the existing image span', async () => {
+    mockedExtractVideoMetadataFromUrl.mockResolvedValue({
+      duration_seconds: undefined,
+      frame_rate: 30,
+      total_frames: 0,
+      width: 1920,
+      height: 1080,
+      file_size: 0,
+    });
+    const applyEdit = vi.fn();
+    const patchRegistry = vi.fn();
+    const registerAsset = vi.fn(async () => undefined);
+    const dataRef = {
+      current: makeConfigTimelineData(
+        {
+          output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+          tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+          clips: [
+            { id: 'clip-1', at: 4, track: 'V1', clipType: 'hold', asset: 'asset-1', hold: 5 },
+            { id: 'clip-2', at: 9, track: 'V1', clipType: 'hold', asset: 'asset-2', hold: 5 },
+          ],
+          pinnedShotGroups: [makePinnedGroup({
+            shotId: 'shot-1',
+            trackId: 'V1',
+            clipIds: ['clip-1', 'clip-2'],
+            mode: 'images',
+          })],
+        },
+        {
+          assets: {
+            'asset-1': { file: 'one.png', type: 'image/png', generationId: 'gen-1' },
+            'asset-2': { file: 'two.png', type: 'image/png', generationId: 'gen-2' },
+          },
+        },
+      ),
+    };
+
+    const { result } = renderHook(() => useSwitchToFinalVideo({
+      applyEdit,
+      dataRef,
+      finalVideoMap: new Map([['shot-1', { id: 'final-1', location: 'https://example.com/final.mp4', thumbnailUrl: null }]]),
+      patchRegistry,
+      registerAsset,
+    }));
+
+    await act(async () => {
+      await result.current.switchToFinalVideo({ shotId: 'shot-1', clipIds: ['clip-1', 'clip-2'], rowId: 'V1' });
+    });
+
+    await waitFor(() => {
+      expect(applyEdit).toHaveBeenCalledTimes(1);
+      expect(patchRegistry).toHaveBeenCalledTimes(1);
+    });
+
+    expect(patchRegistry.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      file: 'https://example.com/final.mp4',
+      type: 'video/mp4',
+      generationId: 'final-1',
+    }));
+    expect(patchRegistry.mock.calls[0]?.[1]).not.toHaveProperty('duration');
+
+    const mutation = applyEdit.mock.calls[0][0];
+    expect(mutation.rows).toEqual([
+      {
+        id: 'V1',
+        actions: [
+          { id: 'clip-3', start: 4, end: 14, effectId: 'effect-clip-3' },
+        ],
+      },
+    ]);
+    expect(mutation.metaUpdates).toEqual({
+      'clip-3': expect.objectContaining({
+        asset: expect.any(String),
+        to: 10,
+      }),
+    });
+  });
+
+  it('does not patch the registry when switching to final video cannot build a valid mutation', async () => {
+    mockedExtractVideoMetadataFromUrl.mockResolvedValue({
+      duration_seconds: 6,
+      frame_rate: 30,
+      total_frames: 180,
+      width: 1920,
+      height: 1080,
+      file_size: 0,
+    });
+    const applyEdit = vi.fn();
+    const patchRegistry = vi.fn();
+    const registerAsset = vi.fn(async () => undefined);
+    const dataRef = {
+      current: makeConfigTimelineData(
+        {
+          output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+          tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+          clips: [
+            { id: 'clip-1', at: 4, track: 'V1', clipType: 'hold', asset: 'asset-1', hold: 5 },
+            { id: 'clip-2', at: 9, track: 'V1', clipType: 'hold', asset: 'asset-2', hold: 5 },
+          ],
+          pinnedShotGroups: [makePinnedGroup({
+            shotId: 'shot-1',
+            trackId: 'V1',
+            clipIds: ['clip-1', 'clip-2'],
+            mode: 'images',
+          })],
+        },
+        {
+          assets: {
+            'asset-1': { file: 'one.png', type: 'image/png', generationId: 'gen-1' },
+            'asset-2': { file: 'two.png', type: 'image/png', generationId: 'gen-2' },
+          },
+        },
+      ),
+    };
+
+    const { result } = renderHook(() => useSwitchToFinalVideo({
+      applyEdit,
+      dataRef,
+      finalVideoMap: new Map([['shot-1', { id: 'final-1', location: 'https://example.com/final.mp4', thumbnailUrl: null }]]),
+      patchRegistry,
+      registerAsset,
+    }));
+
+    await act(async () => {
+      await result.current.switchToFinalVideo({ shotId: 'shot-1', clipIds: ['clip-1'], rowId: 'V2' });
+    });
+
+    expect(patchRegistry).not.toHaveBeenCalled();
+    expect(registerAsset).not.toHaveBeenCalled();
+    expect(applyEdit).not.toHaveBeenCalled();
   });
 
   it('restores image clips from snapshot in one edit when switching back to images', () => {

@@ -1,4 +1,5 @@
 import type { TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit';
+import { createClipMetaFromDescriptor } from '@/tools/video-editor/clip-types/runtime';
 import {
   findNearestFreeTrack,
   getCompatibleTrackId,
@@ -46,12 +47,14 @@ const cloneParams = (
 const createSequenceClipMeta = (
   trackId: string,
   draft: ValidatedSequenceDraft,
-): ClipMeta => ({
-  track: trackId,
+): ClipMeta => createClipMetaFromDescriptor({
   clipType: draft.clipType,
-  hold: draft.hold,
+  trackId,
+  clipOverrides: {
+    hold: draft.hold,
+  },
   params: cloneParams(draft.params),
-});
+}) as ClipMeta;
 
 const addActionToRow = (
   rows: TimelineRow[],

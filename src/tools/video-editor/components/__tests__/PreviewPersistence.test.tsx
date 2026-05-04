@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { forwardRef, useImperativeHandle } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { VideoEditorShell } from '@/tools/video-editor/components/VideoEditorShell';
 
 const useTimelineEditorDataMock = vi.fn();
 const useTimelineEditorOpsMock = vi.fn();
@@ -12,9 +12,55 @@ const useTimelineChromeContextMock = vi.fn();
 const usePanesStoreMock = vi.fn();
 const useTimelineRealtimeMock = vi.fn();
 const useKeyboardShortcutsMock = vi.fn();
+const useVideoEditorRenderContextMock = vi.fn();
+const useVideoEditorSlotRenderersMock = vi.fn();
+const useVideoEditorAssetPanelsMock = vi.fn();
 let editorDataValue: any;
 let editorOpsValue: any;
+let chromeValue: any;
+let playbackValue: any;
+let slotRenderersValue: any;
 let overlayEditorProps: any;
+let CompactPreviewComponent: any;
+let CustomTwoPaneVideoEditorShellComponent: any;
+let VideoEditorShellComponent: any;
+
+vi.mock('@banodoco/timeline-schema', () => ({
+  resolveTheme: vi.fn(() => null),
+}), { virtual: true });
+
+vi.mock('@banodoco/timeline-composition/theme-api', () => ({
+  ThemeProvider: ({ children }: any) => <>{children}</>,
+  useTheme: () => null,
+}), { virtual: true });
+
+vi.mock('@banodoco/timeline-composition/registry.generated', () => ({
+  THEME_PACKAGE_REGISTRY: {},
+}), { virtual: true });
+
+vi.mock('@banodoco/timeline-composition/theme-api', () => ({
+  DEFAULT_THEME: {
+    id: 'default',
+    visual: {
+      canvas: {
+        width: 1280,
+        height: 720,
+        fps: 30,
+      },
+    },
+  },
+  ThemeProvider: ({ children }: any) => <>{children}</>,
+  useTheme: () => ({
+    id: 'default',
+    visual: {
+      canvas: {
+        width: 1280,
+        height: 720,
+        fps: 30,
+      },
+    },
+  }),
+}), { virtual: true });
 
 vi.mock('@/tools/video-editor/hooks/timelineStore', async () => {
   const actual = await vi.importActual<typeof import('@/tools/video-editor/hooks/timelineStore')>(
@@ -82,8 +128,58 @@ vi.mock('@/tools/video-editor/components/TimelineEditor/TimelineEditor', () => (
   TimelineEditor: () => <div data-testid="timeline-editor" />,
 }));
 
+vi.mock('@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel', () => ({
+  SequenceCreatorPanel: () => <div data-testid="sequence-creator-panel" />,
+}));
+
+vi.mock('@/tools/video-editor/components/ThemeChip', () => ({
+  ThemeChip: () => <div data-testid="theme-chip" />,
+}));
+
+vi.mock('@/tools/video-editor/components/PreviewPanel/RemotionPreview', () => ({
+  RemotionPreview: forwardRef(function MockRemotionPreview({ compact = false, config }: any, ref) {
+    const api = {
+      seek: vi.fn(),
+      play: vi.fn(),
+      pause: vi.fn(),
+      togglePlayPause: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      seekTo: vi.fn(),
+      toggle: vi.fn(),
+      isPlaying: vi.fn(() => false),
+      get isPlayingProp() {
+        return false;
+      },
+    };
+
+    useImperativeHandle(ref, () => api, []);
+
+    return (
+      <div data-testid="mock-preview">
+        <div data-testid="mock-player" data-compact={compact ? 'true' : 'false'} />
+        {!compact && config?.output?.resolution ? <div>{config.output.resolution}</div> : null}
+      </div>
+    );
+  }),
+}));
+
 vi.mock('@/tools/video-editor/components/PropertiesPanel/PropertiesPanel', () => ({
   PropertiesPanel: () => <div data-testid="properties-panel" />,
+}));
+
+vi.mock('@/tools/video-editor/components/PropertiesPanel/VideoEditorAssetPanelSurface', () => ({
+  VideoEditorAssetPanelSurface: ({ includeBuiltIn }: { includeBuiltIn?: boolean }) => (
+    <div data-testid="asset-panel-surface" data-include-built-in={String(Boolean(includeBuiltIn))} />
+  ),
+}));
+
+vi.mock('@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel', () => ({
+  SequenceCreatorPanel: () => <div data-testid="sequence-creator-panel" />,
+}));
+
+vi.mock('@/tools/video-editor/components/ThemeChip', () => ({
+  ThemeChip: () => <div data-testid="theme-chip" />,
 }));
 
 vi.mock('@/tools/video-editor/components/PreviewPanel/OverlayEditor', () => ({
@@ -145,23 +241,18 @@ vi.mock('@/shared/components/ui/alert-dialog', () => ({
   AlertDialogTitle: ({ children }: any) => <div>{children}</div>,
 }));
 
-vi.mock('@remotion/player', () => ({
-  Player: forwardRef(function MockPlayer(_props: any, ref) {
-    const api = {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      seekTo: vi.fn(),
-      play: vi.fn(),
-      pause: vi.fn(),
-      toggle: vi.fn(),
-      isPlaying: vi.fn(() => false),
-    };
+vi.mock('@/tools/video-editor/runtime/useVideoEditorRenderContext', async () => {
+  const actual = await vi.importActual<typeof import('@/tools/video-editor/runtime/useVideoEditorRenderContext')>(
+    '@/tools/video-editor/runtime/useVideoEditorRenderContext',
+  );
 
-    useImperativeHandle(ref, () => api, []);
-
-    return <div data-testid="mock-player" />;
-  }),
-}));
+  return {
+    ...actual,
+    useVideoEditorRenderContext: () => useVideoEditorRenderContextMock(),
+    useVideoEditorSlotRenderers: () => useVideoEditorSlotRenderersMock(),
+    useVideoEditorAssetPanels: () => useVideoEditorAssetPanelsMock(),
+  };
+});
 
 function renderShell(mode: 'compact' | 'full') {
   return render(
@@ -169,13 +260,16 @@ function renderShell(mode: 'compact' | 'full') {
       initialEntries={['/tools/video-editor?timeline=timeline-1']}
       future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
     >
-      <VideoEditorShell mode={mode} timelineId="timeline-1" />
+      <VideoEditorShellComponent mode={mode} timelineId="timeline-1" />
     </MemoryRouter>,
   );
 }
 
 beforeEach(() => {
   overlayEditorProps = null;
+  slotRenderersValue = {};
+  useVideoEditorAssetPanelsMock.mockReset();
+  useVideoEditorAssetPanelsMock.mockReturnValue([]);
   useKeyboardShortcutsMock.mockReset();
   const selectedClipIds = new Set<string>();
   const previewRef = { current: null };
@@ -241,42 +335,64 @@ beforeEach(() => {
   useTimelineEditorOpsMock.mockReturnValue(editorOpsValue);
 
   useTimelinePlaybackContextMock.mockReturnValue({
-    currentTime: 0,
-    previewRef,
-    playerContainerRef,
-    onPreviewTimeUpdate: vi.fn(),
-    formatTime: vi.fn(() => '0:00'),
+    ...(playbackValue = {
+      currentTime: 0,
+      previewRef,
+      playerContainerRef,
+      onPreviewTimeUpdate: vi.fn(),
+      formatTime: vi.fn(() => '0:00'),
+    }),
   });
 
   useTimelineChromeContextMock.mockReturnValue({
-    timelineName: 'Persistence Test',
-    saveStatus: 'saved',
-    isConflictExhausted: false,
-    renderStatus: 'idle',
-    renderLog: '',
-    renderDirty: false,
-    renderProgress: null,
-    renderResultUrl: null,
-    renderResultFilename: null,
-    undo: vi.fn(),
-    redo: vi.fn(),
-    canUndo: false,
-    canRedo: false,
-    checkpoints: [],
-    jumpToCheckpoint: vi.fn(),
-    createManualCheckpoint: vi.fn(),
-    setScaleWidth: vi.fn(),
-    handleAddTrack: vi.fn(),
-    handleClearUnusedTracks: vi.fn(),
-    unusedTrackCount: 0,
-    handleAddText: vi.fn(),
-    handleAddTextAt: vi.fn(),
-    reloadFromServer: vi.fn(),
-    retrySaveAfterConflict: vi.fn(),
-    startRender: vi.fn(),
+    ...(chromeValue = {
+      timelineName: 'Persistence Test',
+      saveStatus: 'saved',
+      isConflictExhausted: false,
+      renderStatus: 'idle',
+      renderLog: '',
+      renderDirty: false,
+      renderProgress: null,
+      renderResultUrl: null,
+      renderResultFilename: null,
+      undo: vi.fn(),
+      redo: vi.fn(),
+      canUndo: false,
+      canRedo: false,
+      checkpoints: [],
+      jumpToCheckpoint: vi.fn(),
+      createManualCheckpoint: vi.fn(),
+      setScaleWidth: vi.fn(),
+      handleAddTrack: vi.fn(),
+      handleClearUnusedTracks: vi.fn(),
+      unusedTrackCount: 0,
+      handleAddText: vi.fn(),
+      handleAddTextAt: vi.fn(),
+      reloadFromServer: vi.fn(),
+      retrySaveAfterConflict: vi.fn(),
+      startRender: vi.fn(),
+    }),
   });
 
+  useVideoEditorSlotRenderersMock.mockImplementation(() => slotRenderersValue);
+  useVideoEditorRenderContextMock.mockImplementation(() => ({
+    provider: {} as any,
+    timelineId: 'timeline-1',
+    timelineName: chromeValue.timelineName,
+    userId: 'user-1',
+    extensions: {
+      slots: slotRenderersValue,
+      dialogHost: { dialogs: [] },
+      registry: { panels: [], inspectorSections: [] },
+    },
+    data: editorDataValue,
+    ops: editorOpsValue,
+    chrome: chromeValue,
+    playback: playbackValue,
+  }));
+
   usePanesStoreMock.mockReturnValue({
+    isEditorPaneLocked: false,
     isGenerationsPaneLocked: false,
     setIsGenerationsPaneLocked: vi.fn(),
   });
@@ -287,6 +403,12 @@ beforeEach(() => {
     keepLocalChanges: vi.fn(),
     discardAndReload: vi.fn(),
   });
+});
+
+beforeEach(async () => {
+  ({ CompactPreview: CompactPreviewComponent } = await import('@/tools/video-editor/components/CompactPreview'));
+  ({ CustomTwoPaneVideoEditorShell: CustomTwoPaneVideoEditorShellComponent } = await import('@/tools/video-editor/examples/CustomTwoPaneVideoEditorExample'));
+  ({ VideoEditorShell: VideoEditorShellComponent } = await import('@/tools/video-editor/components/VideoEditorShell'));
 });
 
 describe('VideoEditorShell preview persistence', () => {
@@ -306,11 +428,10 @@ describe('VideoEditorShell preview persistence', () => {
     });
   });
 
-  it('keeps the same preview DOM node mounted across compact/full transitions', () => {
+  it('keeps one shared preview player active across compact/full transitions', () => {
     const view = renderShell('compact');
 
-    const initialNode = screen.getByTestId('mock-player');
-    expect(screen.getAllByTestId('mock-player')).toHaveLength(1);
+    expect(screen.getByTestId('mock-player')).toHaveAttribute('data-compact', 'true');
     expect(screen.queryByText('1280x720')).not.toBeInTheDocument();
 
     view.rerender(
@@ -318,14 +439,53 @@ describe('VideoEditorShell preview persistence', () => {
         initialEntries={['/tools/video-editor?timeline=timeline-1']}
         future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
       >
-        <VideoEditorShell mode="full" timelineId="timeline-1" />
+        <VideoEditorShellComponent mode="full" timelineId="timeline-1" />
       </MemoryRouter>,
     );
 
-    const sameNode = screen.getByTestId('mock-player');
     expect(screen.getAllByTestId('mock-player')).toHaveLength(1);
-    expect(sameNode).toBe(initialNode);
-    expect(screen.getByText('1280x720')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-player')).toHaveAttribute('data-compact', 'false');
+    expect(screen.getByTitle('Settings')).toBeInTheDocument();
+  });
+
+  it('preserves the default shell fallbacks when no slot overrides are provided', () => {
+    renderShell('full');
+
+    expect(screen.getByRole('region', { name: 'Preview panel' })).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-editor')).toBeInTheDocument();
+    expect(screen.getByTestId('properties-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('asset-panel-surface')).not.toBeInTheDocument();
+    expect(screen.queryByText('Custom header')).not.toBeInTheDocument();
+  });
+
+  it('renders slot-backed fallbacks and shell section overrides through the shared runtime slot hooks', () => {
+    slotRenderersValue = {
+      header: () => <div>Custom header</div>,
+      toolbar: () => <div>Custom toolbar</div>,
+      assetPanel: () => <div>Custom asset panel</div>,
+      inspectorPanel: () => <div>Custom inspector panel</div>,
+      timelineFooter: () => <div>Custom timeline footer</div>,
+      statusBar: () => <div>Custom status bar</div>,
+    };
+
+    renderShell('full');
+
+    expect(screen.getByText('Custom header')).toBeInTheDocument();
+    expect(screen.getByText('Custom toolbar')).toBeInTheDocument();
+    expect(screen.getByText('Custom asset panel')).toBeInTheDocument();
+    expect(screen.getByText('Custom inspector panel')).toBeInTheDocument();
+    expect(screen.getByText('Custom timeline footer')).toBeInTheDocument();
+    expect(screen.getByText('Custom status bar')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Preview panel' })).toBeInTheDocument();
+  });
+
+  it('falls back to the registry-backed asset panel surface when asset panels are contributed without a slot override', () => {
+    useVideoEditorAssetPanelsMock.mockReturnValue([{ id: 'asset-panel-extra' }]);
+
+    renderShell('full');
+
+    expect(screen.getByTestId('asset-panel-surface')).toHaveAttribute('data-include-built-in', 'false');
+    expect(screen.getByTestId('properties-panel')).toBeInTheDocument();
   });
 
   it('shows the phone mode bar and routes mode changes through editor ops', () => {
@@ -423,5 +583,33 @@ describe('VideoEditorShell preview persistence', () => {
     expect(screen.getByTestId('overlay-editor')).toHaveAttribute('data-interaction-mode', 'trim');
     expect(overlayEditorProps.setGestureOwner).toBe(editorOpsValue.setGestureOwner);
     expect(overlayEditorProps.setInputModalityFromPointerType).toBe(editorOpsValue.setInputModalityFromPointerType);
+  });
+
+  it('renders the standalone compact preview through the shared preview surface', () => {
+    render(
+      <MemoryRouter initialEntries={['/']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <CompactPreviewComponent timelineId="timeline-1" />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('region', { name: 'Preview panel' })).toBeInTheDocument();
+    expect(screen.getByTestId('mock-player')).toBeInTheDocument();
+    expect(screen.getByText(/Timeline timeline/i)).toBeInTheDocument();
+  });
+
+  it('renders a custom two-pane shell from the shared preview, timeline, asset, and inspector primitives', () => {
+    render(
+      <MemoryRouter initialEntries={['/tools/video-editor?timeline=timeline-1']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <CustomTwoPaneVideoEditorShellComponent />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('custom-two-pane-shell')).toBeInTheDocument();
+    expect(screen.getByText('Custom two-pane shell')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Preview panel' })).toBeInTheDocument();
+    expect(screen.getByTestId('mock-player')).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-editor')).toBeInTheDocument();
+    expect(screen.getByTestId('asset-panel-surface')).toHaveAttribute('data-include-built-in', 'true');
+    expect(screen.getByTestId('properties-panel')).toBeInTheDocument();
   });
 });

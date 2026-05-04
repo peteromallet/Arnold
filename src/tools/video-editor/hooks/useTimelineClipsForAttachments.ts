@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
-import { useShots } from '@/shared/contexts/ShotsContext';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
 import { useTimelineEditorData } from '@/tools/video-editor/hooks/timelineStore';
 import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils';
 import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips';
 
 export function useTimelineClipsForAttachments(): SelectedMediaClip[] {
   const { data, resolvedConfig } = useTimelineEditorData();
-  const { shots } = useShots();
+  const { shots } = useVideoEditorRuntime().shots;
 
   return useMemo(() => {
     if (!resolvedConfig) {
