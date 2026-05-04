@@ -10,6 +10,11 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# Vendored packages ship pre-built dist/ because Railway's build context can't
+# build them from source the way the workspace does. Whitelist them so the
+# top-level `dist` rule above doesn't strip them out of the deploy artifact.
+!vendor/**/dist
+!vendor/**/dist/**
 
 # Editor directories and files
 .vscode/*
