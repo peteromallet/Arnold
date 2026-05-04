@@ -48,9 +48,17 @@ def compute_scope_drift(
     files_missing = sorted(files_claimed - files_in_diff)
     loc_added = sum(loc_by_file.values())
     loc_added_outside_claimed = sum(loc_by_file.get(path, 0) for path in files_added)
+    # ``files_missing`` means the executor claimed it changed a file that
+    # isn't in the diff — i.e. fabricated work, or work that landed in the
+    # wrong tree (sandbox escape).  Treat this at least as seriously as
+    # writes-without-claims: low for any miss, high once the count is
+    # comparable to a real-but-noisy diff (>3 files claimed-but-missing
+    # is well past "model forgot to list one").
     if files_added and loc_added_outside_claimed > 20:
         severity: Literal["none", "low", "high"] = "high"
-    elif files_added or loc_added_outside_claimed > 0:
+    elif len(files_missing) > 3:
+        severity = "high"
+    elif files_added or loc_added_outside_claimed > 0 or files_missing:
         severity = "low"
     else:
         severity = "none"
