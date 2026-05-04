@@ -22,6 +22,7 @@ export const EDGE_UNIT_INCLUDE = [
   'supabase/functions/update-worker-model/**/*.test.ts',
   'supabase/functions/huggingface-upload/**/*.test.ts',
   'supabase/functions/timeline-import/**/*.test.ts',
+  'supabase/functions/task-status/**/*.test.ts',
 ] as const;
 
 export const EDGE_UNIT_EXCLUDE = [

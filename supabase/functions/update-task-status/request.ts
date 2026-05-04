@@ -122,6 +122,19 @@ export async function parseAndValidateRequest(
     );
   }
 
+  const resultData = requestBody.result_data;
+  if (
+    resultData !== undefined &&
+    (typeof resultData !== 'object' || resultData === null || Array.isArray(resultData))
+  ) {
+    return rejectValidation(
+      logger,
+      'Invalid result_data value',
+      jsonResponse({ success: false, message: 'result_data must be a JSON object' }, 400),
+      { result_data: resultData },
+    );
+  }
+
   return {
     ok: true,
     data: {
@@ -132,6 +145,7 @@ export async function parseAndValidateRequest(
       error_details: errorDetails as string | undefined,
       clear_worker: clearWorker as boolean | undefined,
       reset_generation_started_at: resetGenerationStartedAt as boolean | undefined,
+      result_data: resultData as Record<string, unknown> | undefined,
     },
   };
 }

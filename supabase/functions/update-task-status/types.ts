@@ -10,6 +10,14 @@ export interface UpdateTaskStatusRequest {
   error_details?: string;
   clear_worker?: boolean;
   reset_generation_started_at?: boolean;
+  /**
+   * Optional worker-supplied envelope persisted to `tasks.result_data`. The
+   * banodoco worker uses this to surface `correlation_id`, `config_version`,
+   * `failure_code`, etc.; the new `task-status` GET reader projects these
+   * values into the poller-facing response (see Bug 2 in the cross-repo
+   * contract notes). When omitted, `result_data` is left untouched.
+   */
+  result_data?: Record<string, unknown>;
 }
 
 export interface TaskStatusRow {

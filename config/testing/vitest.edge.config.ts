@@ -26,6 +26,8 @@ const EDGE_UNIT_INCLUDE = [
   'supabase/functions/get-completed-segments/**/*.test.ts',
   'supabase/functions/get-task-output/**/*.test.ts',
   'supabase/functions/get-task-status/**/*.test.ts',
+  'supabase/functions/task-status/**/*.test.ts',
+  'supabase/functions/timeline-import/**/*.test.ts',
   'supabase/functions/get-orchestrator-children/**/*.test.ts',
   'supabase/functions/get-predecessor-output/**/*.test.ts',
   'supabase/functions/huggingface-upload/**/*.test.ts',

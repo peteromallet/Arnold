@@ -35,5 +35,14 @@ export function buildTaskUpdatePayload(request: UpdateTaskStatusRequest): Record
     payload.generation_started_at = null;
   }
 
+  // Worker-supplied result envelope. We only write the column when the
+  // request includes it explicitly, so the existing "leave it alone"
+  // behaviour for callers that don't know about result_data is preserved.
+  // Bug 2 (cross-repo contract): the new `task-status` GET reader projects
+  // the well-known fields out of this column.
+  if (request.result_data !== undefined) {
+    payload.result_data = request.result_data;
+  }
+
   return payload;
 }
