@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,7 @@ DEFAULT_STALL_THRESHOLD = 5
 DEFAULT_MAX_ITERATIONS = 200
 DEFAULT_POLL_SLEEP_SECONDS = 1.0
 DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
+DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS = 900
 DEFAULT_STATUS_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_CONTEXT_RETRIES = 2
 CONTEXT_EXHAUSTION_FRAGMENT = "ran out of room in the model's context"
@@ -129,6 +131,7 @@ def _run_megaplan(
     *,
     cwd: Path | None = None,
     timeout: float | None = None,
+    idle_timeout: float | None = None,
     progress_env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
     """Run a megaplan sub-command in its own process.
@@ -143,26 +146,92 @@ def _run_megaplan(
     The subprocess is killed; any grandchildren it spawned (e.g. codex) may
     need a moment to settle but will exit when their parent's pipes close.
     """
+    env = None
+    if progress_env:
+        env = os.environ.copy()
+        env.update(progress_env)
+    if idle_timeout is None:
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "megaplan", *args],
+                cwd=str(cwd) if cwd else None,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+            return proc.returncode, proc.stdout, proc.stderr
+        except subprocess.TimeoutExpired as error:
+            out = error.output or ""
+            err = error.stderr or ""
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", errors="replace")
+            if isinstance(err, bytes):
+                err = err.decode("utf-8", errors="replace")
+            marker = f"\n[megaplan auto] subprocess timed out after {timeout}s"
+            return PHASE_TIMEOUT_EXIT_CODE, out, (err + marker).strip()
+        except FileNotFoundError as error:
+            return 127, "", str(error)
     try:
-        env = None
-        if progress_env:
-            env = os.environ.copy()
-            env.update(progress_env)
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [sys.executable, "-m", "megaplan", *args],
             cwd=str(cwd) if cwd else None,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=env,
         )
-        return proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as expired:
-        stdout = expired.stdout if isinstance(expired.stdout, str) else ""
-        stderr = expired.stderr if isinstance(expired.stderr, str) else ""
-        marker = f"\n[megaplan auto] subprocess timed out after {timeout}s"
+    except FileNotFoundError as error:
+        return 127, "", str(error)
+
+    stdout_parts: list[bytes] = []
+    stderr_parts: list[bytes] = []
+    last_activity = time.monotonic()
+
+    def _reader(stream: Any, parts: list[bytes]) -> None:
+        nonlocal last_activity
+        if stream is None:
+            return
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                break
+            parts.append(chunk)
+            last_activity = time.monotonic()
+
+    threads = [
+        threading.Thread(target=_reader, args=(proc.stdout, stdout_parts), daemon=True),
+        threading.Thread(target=_reader, args=(proc.stderr, stderr_parts), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    started = time.monotonic()
+    timed_out_reason: str | None = None
+    while proc.poll() is None:
+        now = time.monotonic()
+        if timeout is not None and now - started >= timeout:
+            timed_out_reason = f"subprocess timed out after {timeout}s"
+            break
+        if idle_timeout is not None and now - last_activity >= idle_timeout:
+            timed_out_reason = f"subprocess idle timed out after {idle_timeout}s without output"
+            break
+        time.sleep(0.2)
+
+    if timed_out_reason is not None:
+        proc.kill()
+        proc.wait()
+        for thread in threads:
+            thread.join(timeout=1)
+        stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
+        stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
+        marker = f"\n[megaplan auto] {timed_out_reason}"
         return PHASE_TIMEOUT_EXIT_CODE, stdout, (stderr + marker).strip()
+
+    for thread in threads:
+        thread.join(timeout=1)
+    stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
+    stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
+    return int(proc.returncode or 0), stdout, stderr
 
 
 def _status(
@@ -380,6 +449,7 @@ def drive(
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
+    phase_idle_timeout: float = DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     progress_env: dict[str, str] | None = None,
@@ -419,6 +489,24 @@ def drive(
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
         writer(f"[auto {plan}] {msg}\n")
+
+    def _run_phase(cmd: list[str]) -> tuple[int, str, str]:
+        run_kwargs: dict[str, Any] = {
+            "cwd": cwd,
+            "timeout": phase_timeout,
+            "idle_timeout": phase_idle_timeout,
+        }
+        if progress_env:
+            run_kwargs["progress_env"] = progress_env
+        try:
+            return _run_megaplan(cmd, **run_kwargs)
+        except TypeError as error:
+            # Several unit tests monkeypatch _run_megaplan with the pre-idle-timeout
+            # signature. Keep that surface compatible without weakening the real path.
+            if "idle_timeout" not in str(error):
+                raise
+            run_kwargs.pop("idle_timeout", None)
+            return _run_megaplan(cmd, **run_kwargs)
 
     def _outcome(
         status: str,
@@ -809,10 +897,7 @@ def drive(
         cmd = _phase_command(next_step) + ["--plan", plan]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         last_phase = next_step
-        run_kwargs = {"cwd": cwd, "timeout": phase_timeout}
-        if progress_env:
-            run_kwargs["progress_env"] = progress_env
-        code, out, err = _run_megaplan(cmd, **run_kwargs)
+        code, out, err = _run_phase(cmd)
         if max_context_retries > 0:
             while (
                 next_step == "execute"
@@ -856,22 +941,24 @@ def drive(
                 context_retry_count += 1
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
-                run_kwargs = {"cwd": cwd, "timeout": phase_timeout}
-                if progress_env:
-                    run_kwargs["progress_env"] = progress_env
-                code, out, err = _run_megaplan(cmd, **run_kwargs)
+                code, out, err = _run_phase(cmd)
         if code == PHASE_TIMEOUT_EXIT_CODE:
-            log(f"phase '{next_step}' timed out after {phase_timeout}s — stall detection will enforce the cap")
+            timeout_kind = "idle timeout" if "idle timed out" in (err or "") else "timeout"
+            log(f"phase '{next_step}' hit {timeout_kind} — stall detection will enforce the cap")
             _record_failure(
                 plan_dir=plan_dir,
-                kind="phase_timeout",
-                message=f"phase '{next_step}' timed out after {phase_timeout}s",
+                kind="phase_idle_timeout" if timeout_kind == "idle timeout" else "phase_timeout",
+                message=(
+                    f"phase '{next_step}' idle timed out after {phase_idle_timeout}s"
+                    if timeout_kind == "idle timeout"
+                    else f"phase '{next_step}' timed out after {phase_timeout}s"
+                ),
                 current_state=STATE_FAILED,
                 phase=next_step,
                 resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                 last_artifact=_latest_artifact_name(plan_dir),
                 suggested_action="Investigate the timed-out phase and resume from the phase cursor.",
-                metadata={"timeout_seconds": phase_timeout, "iteration": iteration},
+                metadata={"timeout_seconds": phase_timeout, "idle_timeout_seconds": phase_idle_timeout, "iteration": iteration},
             )
         elif code != 0:
             # Don't bail immediately — megaplan often records a partial failure
@@ -1081,6 +1168,15 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
+        "--phase-idle-timeout",
+        type=float,
+        default=DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
+        help=(
+            f"Seconds without stdout/stderr from a phase subprocess before auto kills it "
+            f"as idle (default {DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS}s; set 0 to disable)."
+        ),
+    )
+    auto_parser.add_argument(
         "--work-dir",
         default=None,
         help=(
@@ -1128,6 +1224,11 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
 
     progress_context = ProgressContext.from_env()
     progress_env = progress_context.to_env() if progress_context is not None else None
+    raw_phase_idle_timeout = getattr(
+        args,
+        "phase_idle_timeout",
+        DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
+    )
     outcome = drive(
         args.plan,
         cwd=root,
@@ -1140,6 +1241,7 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
+        phase_idle_timeout=(None if raw_phase_idle_timeout == 0 else raw_phase_idle_timeout),
         status_timeout=args.status_timeout,
         progress_env=progress_env,
     )

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ from megaplan._core import (
     now_utc,
     read_json,
     schemas_root,
+    touch_active_step,
 )
 from megaplan.prompts import (
     create_claude_prompt,
@@ -227,45 +229,134 @@ def run_command(
     stdin_text: str | None = None,
     env: dict[str, str] | None = None,
     timeout: int | None = None,
+    activity_callback: Callable[[str, str], None] | None = None,
 ) -> CommandResult:
     started = time.monotonic()
     timeout = timeout or get_effective("execution", "worker_timeout_seconds")
+    if activity_callback is None:
+        try:
+            process = subprocess.run(
+                command,
+                input=stdin_text,
+                text=True,
+                cwd=str(cwd),
+                capture_output=True,
+                timeout=timeout,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            def _coerce_timeout_output(value: str | bytes | None) -> str:
+                if value is None:
+                    return ""
+                if isinstance(value, bytes):
+                    return value.decode("utf-8", errors="replace")
+                return value
+
+            raise CliError(
+                "worker_timeout",
+                f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
+                extra={
+                    "raw_output": _coerce_timeout_output(exc.output)
+                    + _coerce_timeout_output(exc.stderr)
+                },
+            ) from exc
+        except FileNotFoundError as exc:
+            raise CliError(
+                "agent_not_found",
+                f"Command not found: {command[0]}",
+            ) from exc
+        return CommandResult(
+            command=command,
+            cwd=cwd,
+            returncode=process.returncode,
+            stdout=process.stdout or "",
+            stderr=process.stderr or "",
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
     try:
-        process = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=str(cwd),
-            input=stdin_text,
-            text=True,
-            capture_output=True,
+            stdin=subprocess.PIPE if stdin_text is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=env,
-            timeout=timeout,
         )
+        stdout_parts: list[bytes] = []
+        stderr_parts: list[bytes] = []
+
+        def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
+            if stream is None:
+                return
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    break
+                parts.append(chunk)
+                if activity_callback is not None:
+                    activity_callback(kind, chunk.decode("utf-8", errors="replace"))
+
+        threads = [
+            threading.Thread(target=_reader, args=(process.stdout, stdout_parts, "stdout"), daemon=True),
+            threading.Thread(target=_reader, args=(process.stderr, stderr_parts, "stderr"), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        if process.stdin is not None and stdin_text is not None:
+            process.stdin.write(stdin_text.encode("utf-8"))
+            process.stdin.close()
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            returncode = process.wait()
+            for thread in threads:
+                thread.join(timeout=1)
+
+            def _coerce_timeout_output(parts: list[bytes]) -> str:
+                return b"".join(parts).decode("utf-8", errors="replace")
+
+            raise CliError(
+                "worker_timeout",
+                f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
+                extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
+            ) from exc
+        for thread in threads:
+            thread.join(timeout=1)
     except FileNotFoundError as exc:
         raise CliError(
             "agent_not_found",
             f"Command not found: {command[0]}",
         ) from exc
-    except subprocess.TimeoutExpired as exc:
-        def _coerce_timeout_output(value: Any) -> str:
-            if value is None:
-                return ""
-            if isinstance(value, bytes):
-                return value.decode("utf-8", errors="replace")
-            return str(value)
-
-        raise CliError(
-            "worker_timeout",
-            f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
-            extra={"raw_output": _coerce_timeout_output(exc.stdout) + _coerce_timeout_output(exc.stderr)},
-        ) from exc
     return CommandResult(
         command=command,
         cwd=cwd,
-        returncode=process.returncode,
-        stdout=process.stdout,
-        stderr=process.stderr,
+        returncode=returncode,
+        stdout=b"".join(stdout_parts).decode("utf-8", errors="replace"),
+        stderr=b"".join(stderr_parts).decode("utf-8", errors="replace"),
         duration_ms=int((time.monotonic() - started) * 1000),
     )
+
+
+def _activity_callback_for_state(state: PlanState, plan_dir: Path) -> Callable[[str, str], None] | None:
+    active_step = state.get("active_step")
+    if not isinstance(active_step, dict):
+        return None
+    run_id = active_step.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    last_touch = 0.0
+
+    def _callback(kind: str, detail: str) -> None:
+        nonlocal last_touch
+        now = time.monotonic()
+        if now - last_touch < 2.0:
+            return
+        last_touch = now
+        touch_active_step(plan_dir, run_id=run_id, kind=kind, detail=detail.strip())
+
+    return _callback
 
 
 _CODEX_ERROR_PATTERNS: list[tuple[str, str, str]] = [
@@ -1458,7 +1549,13 @@ def run_claude_step(
         **(prompt_kwargs or {}),
     )
     try:
-        result = run_command(command, cwd=work_dir, stdin_text=prompt, env=_external_worker_env())
+        result = run_command(
+            command,
+            cwd=work_dir,
+            stdin_text=prompt,
+            env=_external_worker_env(),
+            activity_callback=_activity_callback_for_state(state, plan_dir),
+        )
     except CliError as error:
         if error.code == "worker_timeout":
             error.extra["session_id"] = session_id
@@ -1654,6 +1751,7 @@ def run_codex_step(
             stdin_text=prompt,
             env=_codex_child_env(),
             timeout=timeout_seconds,
+            activity_callback=_activity_callback_for_state(state, plan_dir),
         )
     except CliError as error:
         error.extra["raw_output"] = _merge_partial_output(
