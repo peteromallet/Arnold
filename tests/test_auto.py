@@ -964,6 +964,82 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     assert outcome.blocked_retries_used == 0
 
 
+def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step(tmp_path: Path) -> None:
+    plan = "callback-reconcile"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "finalized",
+                "active_step": {"step": "execute", "run_id": "stale"},
+                "config": {"mode": "code"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"id": "T1", "status": "pending", "executor_notes": ""},
+                ],
+                "sense_checks": [
+                    {"id": "SC1", "executor_note": ""},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "id": "T1",
+                        "status": "completed",
+                        "executor_notes": "Completed before callback failure.",
+                        "files_changed": ["app.py"],
+                        "commands_run": ["pytest"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"id": "SC1", "executor_note": "Confirmed before callback failure."}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None):
+        return 0, "execute ok", ""
+
+    def failing_callback(step: str, code: int, out: str, err: str) -> None:
+        raise RuntimeError("nested publish failed")
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            poll_sleep=0,
+            on_phase_complete=failing_callback,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "failed"
+    finalize_data = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    assert finalize_data["tasks"][0]["status"] == "done"
+    assert finalize_data["tasks"][0]["files_changed"] == ["app.py"]
+    assert finalize_data["sense_checks"][0]["executor_note"] == "Confirmed before callback failure."
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert "active_step" not in state_data
+    assert state_data["latest_failure"]["metadata"]["checkpoint_reconciliation"]["reconciled"] is True
+
+
 def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -> None:
     """When force-proceed is rejected by strict-notes, the auto driver should
     surface a `human_required` outcome rather than a generic `failed`."""

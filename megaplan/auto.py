@@ -557,6 +557,21 @@ def _record_lifecycle_failure(
             progress_emitter.plan_failed(summary=message, **failure_details)
 
 
+def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] | None:
+    if plan_dir is None:
+        return None
+    try:
+        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
+            state_data = json.load(handle)
+        if not isinstance(state_data, dict):
+            return {"reconciled": False, "reason": "state payload was not an object"}
+        from megaplan.execute.core import reconcile_latest_execution_batch
+
+        return reconcile_latest_execution_batch(plan_dir, state_data)
+    except Exception as error:
+        return {"reconciled": False, "reason": str(error)}
+
+
 def drive(
     plan: str,
     *,
@@ -1156,6 +1171,11 @@ def drive(
                 on_phase_complete(next_step, int(code or 0), out, err)
             except Exception as error:  # pragma: no cover - defensive callback boundary
                 log(f"phase-complete callback failed after '{next_step}': {error}")
+                reconciliation = (
+                    _reconcile_latest_execution_batch(plan_dir)
+                    if next_step == "execute"
+                    else None
+                )
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="phase_callback_failed",
@@ -1165,7 +1185,7 @@ def drive(
                     resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                     last_artifact=_latest_artifact_name(plan_dir),
                     suggested_action="Fix the phase-complete callback and resume this phase.",
-                    metadata={"iteration": iteration},
+                    metadata={"iteration": iteration, "checkpoint_reconciliation": reconciliation},
                 )
                 return _outcome(
                     "failed",
