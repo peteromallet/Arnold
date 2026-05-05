@@ -47,14 +47,26 @@ const cloneParams = (
 const createSequenceClipMeta = (
   trackId: string,
   draft: ValidatedSequenceDraft,
-): ClipMeta => createClipMetaFromDescriptor({
-  clipType: draft.clipType,
-  trackId,
-  clipOverrides: {
+): ClipMeta => {
+  // Try the descriptor-driven path first (handles built-in/trusted clip
+  // types and applies their defaults). For brand-new code-path components
+  // whose unique clipType isn't yet in the static registry, fall back to a
+  // minimal meta so the inserted clip preserves its clipType + params
+  // instead of silently downgrading to the 'hold' fallback.
+  const descriptorMeta = createClipMetaFromDescriptor({
+    clipType: draft.clipType,
+    trackId,
+    clipOverrides: { hold: draft.hold },
+    params: cloneParams(draft.params),
+  }) as ClipMeta | null;
+  if (descriptorMeta) return descriptorMeta;
+  return {
+    clipType: draft.clipType,
+    track: trackId,
     hold: draft.hold,
-  },
-  params: cloneParams(draft.params),
-}) as ClipMeta;
+    params: cloneParams(draft.params),
+  } as unknown as ClipMeta;
+};
 
 const addActionToRow = (
   rows: TimelineRow[],
