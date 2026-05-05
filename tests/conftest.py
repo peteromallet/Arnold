@@ -150,6 +150,28 @@ def db_store_factory(request: pytest.FixtureRequest):
 
 
 @pytest.fixture
+def editorial_store(request: pytest.FixtureRequest, tmp_path: Path):
+    """Store fixture for editorial tests.
+
+    `--backend db` must exercise real DBStore persistence or skip through
+    db_store_factory; it must not silently fall back to FileStore.
+    """
+    backend = request.config.getoption("--backend", default=None)
+    if backend == "db":
+        db_store_factory = request.getfixturevalue("db_store_factory")
+        return db_store_factory()
+    from megaplan.store import FileStore
+
+    return FileStore(tmp_path / "store")
+
+
+@pytest.fixture
+def editorial_backend_name(request: pytest.FixtureRequest) -> str:
+    backend = request.config.getoption("--backend", default=None)
+    return "db" if backend == "db" else "file"
+
+
+@pytest.fixture
 def plan_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PlanFixture:
     return _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="standard")
 

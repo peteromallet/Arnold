@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+from megaplan.store import ChecklistItemInput
 from megaplan.tests.store_contract import run_store_contract
 
 
@@ -64,6 +65,112 @@ def test_db_idempotency_private_sets_include_sprint3_migration_mutators() -> Non
     }
 
     assert required.issubset(db_module._IDEMPOTENT_MUTATORS)
+
+
+def test_db_plan_columns_include_resume_cursor() -> None:
+    import megaplan.store.db as db_module
+
+    assert "resume_cursor" in db_module._PLAN_COLUMNS
+    assert "resume_cursor" in db_module._PLAN_JSONB
+    assert "resume_cursor" in db_module._COPY_TABLE_COLUMNS["plans"]
+
+
+def test_db_store_normalizes_checklist_positions_across_mutations(db_store_factory) -> None:
+    store = db_store_factory()
+    try:
+        epic = store.create_epic(title="Epic", goal="Goal", body="Body", idempotency_key="db-checklist-epic")
+        items = store.add_checklist_items(
+            epic.id,
+            [
+                ChecklistItemInput(content="First", position=10),
+                ChecklistItemInput(content="Second", position=10),
+                ChecklistItemInput(content="Third"),
+            ],
+            idempotency_key="db-checklist-add",
+        )
+        assert [item.position for item in store.list_checklist_items(epic.id)] == [1, 2, 3]
+
+        done = store.update_checklist_item(items[2].id, status="done", position=1, idempotency_key="db-checklist-update")
+        ordered = store.list_checklist_items(epic.id)
+        assert [item.id for item in ordered][0] == items[2].id
+        assert [item.position for item in ordered] == [1, 2, 3]
+        assert done.completed_at is not None
+
+        store.delete_checklist_items([items[0].id], idempotency_key="db-checklist-delete")
+        assert [item.position for item in store.list_checklist_items(epic.id)] == [1, 2]
+
+        replaced = store.replace_checklist(
+            epic.id,
+            [
+                ChecklistItemInput(content="Done", status="done", position=3, completed_at=done.completed_at),
+                ChecklistItemInput(content="Open", position=3),
+            ],
+            idempotency_key="db-checklist-replace",
+        )
+        assert [item.position for item in replaced] == [1, 2]
+        assert replaced[0].completed_at == done.completed_at
+    finally:
+        store.close()
+
+
+def test_db_store_set_sprint_queue_validates_and_cleans_stale_state(db_store_factory) -> None:
+    store = db_store_factory()
+    try:
+        epic = store.create_epic(title="Epic", goal="Goal", body="Body", idempotency_key="db-queue-epic")
+        first = store.create_sprint(epic_id=epic.id, sprint_number=1, name="One", goal="One", idempotency_key="db-queue-one")
+        second = store.create_sprint(epic_id=epic.id, sprint_number=2, name="Two", goal="Two", idempotency_key="db-queue-two")
+        third = store.create_sprint(epic_id=epic.id, sprint_number=3, name="Three", goal="Three", idempotency_key="db-queue-three")
+
+        store.set_sprint_queue(epic.id, [first.id, second.id], {third.id: "blocked"}, idempotency_key="db-queue-set")
+        cleaned = store.set_sprint_queue(epic.id, [second.id], {}, idempotency_key="db-queue-clean")
+        by_id = {row.id: row for row in cleaned}
+        assert by_id[second.id].status == "queued"
+        assert by_id[second.id].queue_position == 1
+        assert by_id[first.id].status == "proposed"
+        assert by_id[first.id].queue_position is None
+        assert by_id[third.id].status == "proposed"
+        assert by_id[third.id].pending_reason is None
+
+        with pytest.raises(ValueError, match="Duplicate queued"):
+            store.set_sprint_queue(epic.id, [second.id, second.id], {}, idempotency_key="db-queue-dupe")
+        with pytest.raises(ValueError, match="both queued and pending"):
+            store.set_sprint_queue(epic.id, [second.id], {second.id: "also"}, idempotency_key="db-queue-overlap")
+        with pytest.raises(FileNotFoundError, match="Unknown sprint"):
+            store.set_sprint_queue(epic.id, ["missing"], {}, idempotency_key="db-queue-missing")
+        with pytest.raises(ValueError, match="Pending sprints require"):
+            store.set_sprint_queue(epic.id, [], {first.id: ""}, idempotency_key="db-queue-reason")
+    finally:
+        store.close()
+
+
+def test_db_store_plan_lifecycle_fields_round_trip(db_store_factory) -> None:
+    store = db_store_factory()
+    try:
+        plan = store.create_plan(
+            sprint_id=None,
+            epic_id=None,
+            name="db-plan-lifecycle",
+            idea="idea",
+            latest_failure={"kind": "blocked", "message": "needs input"},
+            resume_cursor={"phase": "execute", "batch_index": 2},
+            idempotency_key="db-plan-life-create",
+        )
+        loaded = store.load_plan(plan.id)
+        assert loaded.latest_failure == {"kind": "blocked", "message": "needs input"}
+        assert loaded.resume_cursor == {"phase": "execute", "batch_index": 2}
+
+        updated = store.update_plan(
+            plan.id,
+            expected_revision=loaded.revision,
+            current_state="blocked",
+            latest_failure={"kind": "worker_blocked"},
+            resume_cursor={"phase": "review"},
+            idempotency_key="db-plan-life-update",
+        )
+        assert updated.current_state == "blocked"
+        assert store.load_plan(plan.id).resume_cursor == {"phase": "review"}
+    finally:
+        store.close()
 
 
 def test_db_copy_helpers_keep_plan_artifacts_off_generic_path() -> None:

@@ -769,7 +769,9 @@ class FileStore(Store):
                 )
                 self._save_model(self._checklist_path(epic_id, item.id), item, journal_root=journal_root)
                 created.append(item)
-        return sorted(created, key=lambda item: (item.position, item.id))
+        self._normalize_checklist_positions(epic_id, moved=[(item.id, item.position) for item in created])
+        by_id = {item.id: item for item in self._checklist_items(epic_id)}
+        return [by_id[item.id] for item in created if item.id in by_id]
 
     def update_checklist_item(self, item_id: str, *, idempotency_key: str | None = None,
         **changes: Any) -> ChecklistItem:
@@ -779,21 +781,32 @@ class FileStore(Store):
         item = self._load_model(path, ChecklistItem)
         assert item is not None
         data = item.model_dump()
+        moved_position = changes.get("position")
         data.update(changes)
         if data.get("status") == "done" and not data.get("completed_at"):
             data["completed_at"] = utc_now()
         updated = ChecklistItem.model_validate(data)
         self._save_model(path, updated, journal_root=self._journal_root_for_epic(updated.epic_id))
-        return updated
+        self._normalize_checklist_positions(
+            updated.epic_id,
+            moved=[(updated.id, int(moved_position))] if moved_position is not None else None,
+        )
+        return self._load_model(path, ChecklistItem) or updated
 
     def delete_checklist_items(self, item_ids: Sequence[str],
         *,
         idempotency_key: str | None = None,
     ) -> None:
+        affected_epics: set[str] = set()
         for item_id in item_ids:
             path = self._find_checklist_path(item_id)
             if path is not None:
+                item = self._load_model(path, ChecklistItem)
+                if item is not None:
+                    affected_epics.add(item.epic_id)
                 self._delete_file(path)
+        for epic_id in affected_epics:
+            self._normalize_checklist_positions(epic_id)
 
     def replace_checklist(self, epic_id: str, items: Sequence[ChecklistItemInput],
         *,
@@ -802,6 +815,39 @@ class FileStore(Store):
         for existing in self._checklist_items(epic_id):
             self._delete_file(self._checklist_path(epic_id, existing.id))
         return self.add_checklist_items(epic_id, items)
+
+    def _normalize_checklist_positions(
+        self,
+        epic_id: str,
+        *,
+        moved: Sequence[tuple[str, int]] | None = None,
+    ) -> list[ChecklistItem]:
+        items = self._checklist_items(epic_id)
+        by_id = {item.id: item for item in items}
+        ordered = [item for item in sorted(items, key=lambda row: (row.position, row.created_at, row.id))]
+        if moved:
+            for item_id, requested_position in moved:
+                item = by_id.get(item_id)
+                if item is None:
+                    continue
+                ordered = [row for row in ordered if row.id != item_id]
+                index = max(0, min(int(requested_position) - 1, len(ordered)))
+                ordered.insert(index, item)
+        normalized: list[ChecklistItem] = []
+        for position, item in enumerate(ordered, start=1):
+            if item.position == position:
+                normalized.append(item)
+                continue
+            data = item.model_dump()
+            data["position"] = position
+            updated = ChecklistItem.model_validate(data)
+            self._save_model(
+                self._checklist_path(epic_id, updated.id),
+                updated,
+                journal_root=self._journal_root_for_epic(epic_id),
+            )
+            normalized.append(updated)
+        return normalized
 
     # ------------------------------------------------------------------
     # Sprints
@@ -929,22 +975,39 @@ class FileStore(Store):
         *,
         idempotency_key: str | None = None,
     ) -> list[Sprint]:
+        ordered_ids = [str(sprint_id) for sprint_id in ordered_sprint_ids]
+        pending_map = {str(sprint_id): str(reason) for sprint_id, reason in pending.items()}
+        if len(set(ordered_ids)) != len(ordered_ids):
+            raise ValueError("Duplicate queued sprint IDs are not allowed")
+        overlap = set(ordered_ids) & set(pending_map)
+        if overlap:
+            raise ValueError(f"Sprints cannot be both queued and pending: {sorted(overlap)}")
+        sprints = self.list_sprints(epic_id)
+        known_ids = {sprint.id for sprint in sprints}
+        unknown = sorted((set(ordered_ids) | set(pending_map)) - known_ids)
+        if unknown:
+            raise FileNotFoundError(f"Unknown sprint IDs for epic {epic_id!r}: {unknown}")
+        missing_reason_ids = sorted(sprint_id for sprint_id, reason in pending_map.items() if not reason.strip())
+        if missing_reason_ids:
+            raise ValueError(f"Pending sprints require a reason: {missing_reason_ids}")
         result: list[Sprint] = []
         with self.transaction(epic_id):
-            for sprint in self.list_sprints(epic_id):
+            for sprint in sprints:
                 data = sprint.model_dump()
-                if sprint.id in ordered_sprint_ids:
+                if sprint.id in ordered_ids:
                     data["status"] = "queued"
-                    data["queue_position"] = ordered_sprint_ids.index(sprint.id) + 1
+                    data["queue_position"] = ordered_ids.index(sprint.id) + 1
                     data["pending_reason"] = None
                     data["queued_at"] = utc_now()
-                elif sprint.id in pending:
+                elif sprint.id in pending_map:
                     data["status"] = "pending"
                     data["queue_position"] = None
-                    data["pending_reason"] = pending[sprint.id]
+                    data["pending_reason"] = pending_map[sprint.id]
+                    data["queued_at"] = None
                 else:
                     data["queue_position"] = None
                     data["pending_reason"] = None
+                    data["queued_at"] = None
                     if data["status"] in {"queued", "pending"}:
                         data["status"] = "proposed"
                 data["revision"] = sprint.revision + 1
@@ -1875,6 +1938,7 @@ class FileStore(Store):
             latest_review=fields.pop("latest_review", None),
             latest_execution=fields.pop("latest_execution", None),
             latest_failure=fields.pop("latest_failure", None),
+            resume_cursor=fields.pop("resume_cursor", None),
             artifacts=list(fields.pop("artifacts", [])),
             created_at=_parse_datetime(fields.pop("created_at", now_dt)) or now_dt,
             updated_at=_parse_datetime(fields.pop("updated_at", now_dt)) or now_dt,

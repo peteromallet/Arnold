@@ -181,6 +181,7 @@ class Plan(StorageModel):
     latest_review: dict[str, Any] | None = None
     latest_execution: dict[str, Any] | None = None
     latest_failure: dict[str, Any] | None = None
+    resume_cursor: dict[str, Any] | None = None
     artifacts: list[PlanArtifact] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -199,6 +200,7 @@ class Plan(StorageModel):
         latest_review: dict[str, Any] | None = None,
         latest_execution: dict[str, Any] | None = None,
         latest_failure: dict[str, Any] | None = None,
+        resume_cursor: dict[str, Any] | None = None,
         updated_at: datetime | None = None,
     ) -> Plan:
         raw = deepcopy(dict(state))
@@ -223,7 +225,8 @@ class Plan(StorageModel):
             latest_finalize=latest_finalize,
             latest_review=latest_review,
             latest_execution=latest_execution,
-            latest_failure=latest_failure,
+            latest_failure=latest_failure if latest_failure is not None else raw.get("latest_failure"),
+            resume_cursor=resume_cursor if resume_cursor is not None else raw.get("resume_cursor"),
             artifacts=artifacts or [],
             created_at=created_at,
             updated_at=updated_at or created_at,
@@ -252,4 +255,8 @@ class Plan(StorageModel):
             state["active_step"] = cast(ActiveStep, deepcopy(self.active_step))
         if self.clarification is not None:
             state["clarification"] = cast(ClarificationRecord, deepcopy(self.clarification))
+        if self.latest_failure is not None:
+            state["latest_failure"] = deepcopy(self.latest_failure)
+        if self.resume_cursor is not None:
+            state["resume_cursor"] = deepcopy(self.resume_cursor)
         return state

@@ -11,6 +11,7 @@ import megaplan
 import megaplan._core
 import megaplan.execute.core
 import megaplan.handlers
+import megaplan.handlers.execute as execute_handler
 import megaplan.workers
 from megaplan._core import load_plan
 from megaplan.execute.quality import (
@@ -1095,6 +1096,56 @@ def test_execute_deduplicates_task_updates_and_blocks_incomplete_coverage(
     assert (plan_fixture.plan_dir / "execution_audit.json").exists()
     assert "## Coverage Gaps" in final_md
     assert "Tasks without executor updates: 1" in final_md
+
+
+def test_handle_execute_persists_blocked_lifecycle_after_direct_blocked_response(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    def blocked_dispatch(*, plan_dir: Path, **kwargs: object) -> dict[str, object]:
+        (plan_dir / "execution_batch_1.json").write_text(
+            json.dumps({"result": "blocked"}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "success": False,
+            "result": "blocked",
+            "state": megaplan.STATE_FINALIZED,
+            "next_step": "execute",
+            "next_step_runtime": "execute",
+            "artifacts": ["execution_batch_1.json"],
+            "summary": "blocked by quality gates",
+        }
+
+    monkeypatch.setattr(execute_handler, "dispatch_execute_auto_loop", blocked_dispatch)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    assert response["state"] == megaplan.STATE_BLOCKED
+    assert response["next_step"] is None
+    assert "next_step_runtime" not in response
+    assert state["current_state"] == response["state"]
+    assert "active_step" not in state
+    assert state["latest_failure"]["kind"] == "execution_blocked"
+    assert state["latest_failure"]["last_artifact"] == "execution_batch_1.json"
+    assert state["resume_cursor"] == {
+        "phase": "execute",
+        "batch_index": None,
+        "retry_strategy": "fresh_session",
+    }
 
 
 def test_execute_blocks_done_task_without_any_per_task_evidence(

@@ -105,6 +105,80 @@ def test_multi_store_exported_from_package() -> None:
     assert ExportedMultiStore is MultiStore
 
 
+def test_multi_store_preserves_backend_checklist_normalization(tmp_path: Path) -> None:
+    store, _, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="DB", goal="g", body="body", home_backend="db")
+
+    created = store.add_checklist_items(
+        epic.id,
+        [
+            ChecklistItemInput(content="First", position=5),
+            ChecklistItemInput(content="Second", position=5),
+            ChecklistItemInput(content="Third"),
+        ],
+    )
+    assert [item.position for item in created] == [1, 2, 3]
+
+    store.update_checklist_item(created[2].id, position=1, status="done")
+    assert [item.id for item in db_store.list_checklist_items(epic.id)][0] == created[2].id
+    assert [item.position for item in db_store.list_checklist_items(epic.id)] == [1, 2, 3]
+
+    store.delete_checklist_items([created[0].id])
+    assert [item.position for item in db_store.list_checklist_items(epic.id)] == [1, 2]
+
+    replaced = store.replace_checklist(
+        epic.id,
+        [ChecklistItemInput(content="A", position=7), ChecklistItemInput(content="B", position=7)],
+    )
+    assert [item.position for item in replaced] == [1, 2]
+
+
+def test_multi_store_preserves_backend_sprint_queue_cleanup(tmp_path: Path) -> None:
+    store, _, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="DB", goal="g", body="body", home_backend="db")
+    first = store.create_sprint(epic_id=epic.id, sprint_number=1, name="One", goal="One")
+    second = store.create_sprint(epic_id=epic.id, sprint_number=2, name="Two", goal="Two")
+    third = store.create_sprint(epic_id=epic.id, sprint_number=3, name="Three", goal="Three")
+
+    store.set_sprint_queue(epic.id, [first.id, second.id], {third.id: "blocked"})
+    cleaned = store.set_sprint_queue(epic.id, [second.id], {})
+    by_id = {row.id: row for row in cleaned}
+    assert by_id[second.id].status == "queued"
+    assert by_id[second.id].queue_position == 1
+    assert by_id[first.id].status == "proposed"
+    assert by_id[third.id].status == "proposed"
+    assert {row.id: row for row in db_store.list_sprints(epic.id)}[third.id].pending_reason is None
+
+
+def test_multi_store_plan_lifecycle_fields_round_trip_on_routed_backend(tmp_path: Path) -> None:
+    store, _, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="DB", goal="g", body="body", home_backend="db")
+    plan = store.create_plan(
+        sprint_id=None,
+        epic_id=epic.id,
+        name="db-plan",
+        idea="idea",
+        latest_failure={"kind": "blocked"},
+        resume_cursor={"phase": "execute", "batch_index": 4},
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "plan-lifecycle"),
+    )
+
+    loaded = store.load_plan(plan.id)
+    assert loaded.latest_failure == {"kind": "blocked"}
+    assert loaded.resume_cursor == {"phase": "execute", "batch_index": 4}
+    assert db_store.load_plan(plan.id).resume_cursor == {"phase": "execute", "batch_index": 4}
+
+    updated = store.update_plan(
+        plan.id,
+        expected_revision=loaded.revision,
+        latest_failure={"kind": "failed"},
+        resume_cursor={"phase": "review"},
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "plan-lifecycle-update"),
+    )
+    assert updated.resume_cursor == {"phase": "review"}
+    assert db_store.load_plan(plan.id).latest_failure == {"kind": "failed"}
+
+
 def test_migrate_epic_runs_seven_phases_and_tombstones_source(tmp_path: Path) -> None:
     store, file_store, db_store = _multi(tmp_path)
     epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
