@@ -50,9 +50,18 @@ def test_sprint_crud_items_queue_and_events(editorial_store) -> None:
 
     sprints.delete_sprint(store=store, epic_id=epic.id, actor_id="actor", sprint_id=second.id)
     assert [row.id for row in sprints.list_sprints(store=store, epic_id=epic.id)] == [first.id]
-    event_types = [event.event_type for event in store.list_epic_events(epic.id)]
+    events = store.list_epic_events(epic.id)
+    event_types = [event.event_type for event in events]
     assert event_types.count("sprints_change") == 5
     assert event_types.count("sprint_status_change") == 1
+    queue_event = next(event for event in events if event.event_type == "sprint_status_change")
+    assert queue_event.pre_state is not None
+    assert queue_event.post_state is not None
+    by_id = {row["id"]: row for row in queue_event.post_state["sprints"]}
+    assert by_id[first.id]["queue_position"] == 1
+    assert by_id[second.id]["pending_reason"] == "blocked externally"
+    assert queue_event.post_state_canonical_json is not None
+    assert queue_event.post_state_sha256 is not None
 
 
 def test_sprint_queue_validation_and_stale_cleanup(editorial_store) -> None:

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from megaplan.editorial.body import update_body
 from megaplan.store import FileStore, LocalDirBlobStore, deterministic_idempotency_key
-from megaplan.store import ChecklistItemInput
+from megaplan.store import ChecklistItemInput, RevisionConflict, StoreError
+from megaplan.store.snapshot import canonical_sha256
 from megaplan.tests.store_contract import run_arnold_adapter_contract, run_store_contract
 
 
@@ -151,3 +155,150 @@ def test_file_store_plan_lifecycle_fields_round_trip(tmp_path: Path) -> None:
     )
     assert updated.current_state == "blocked"
     assert store.load_plan(plan.id).resume_cursor == {"phase": "review"}
+
+
+def test_file_store_snapshot_reads_staged_transaction_writes(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Before")
+
+    with store.transaction(epic.id):
+        updated = store.update_body(epic.id, "After", expected_revision=epic.revision)
+        snapshot = store.capture_epic_snapshot(epic.id)
+
+    assert updated.revision == epic.revision + 1
+    assert snapshot.body == "After"
+    assert snapshot.epic["revision"] == updated.revision
+
+
+def test_file_store_replay_events_are_ascending_while_public_list_is_descending(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Body")
+
+    first = store.record_epic_event(
+        epic_id=epic.id,
+        transaction_id="tx_1",
+        event_type="body_edit",
+        summary="first",
+        prior_state={},
+        turn_id=None,
+    )
+    second = store.record_epic_event(
+        epic_id=epic.id,
+        transaction_id="tx_2",
+        event_type="body_edit",
+        summary="second",
+        prior_state={},
+        turn_id=None,
+    )
+
+    assert [event.id for event in store.list_epic_events(epic.id)] == [second.id, first.id]
+    assert [event.id for event in store.list_epic_events_for_replay(epic.id)] == [first.id, second.id]
+    assert store.latest_transaction_id(epic.id) == "tx_2"
+
+
+def test_canonical_snapshot_hash_matches_for_semantically_identical_file_stores(tmp_path: Path) -> None:
+    left = FileStore(tmp_path / "left")
+    right = FileStore(tmp_path / "right")
+    epic = left.create_epic(title="Epic", goal="Goal", body="Body")
+    right._save_model(right._epic_path(epic.id), epic, journal_root=right._journal_root_for_epic(epic.id))
+    right._commit_write(right._body_path(epic.id), b"Body", journal_root=right._journal_root_for_epic(epic.id))
+
+    assert canonical_sha256(left.capture_epic_snapshot(epic.id)) == canonical_sha256(right.capture_epic_snapshot(epic.id))
+
+
+def test_file_store_fts_search_top_results_stable_after_reindex(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epics = [
+        store.create_epic(title="Alpha launch", goal="needle", body="body needle"),
+        store.create_epic(title="Beta", goal="needle goal", body="body"),
+        store.create_epic(title="Gamma", goal="other", body="needle body"),
+        store.create_epic(title="Delta", goal="other", body="needle body"),
+    ]
+
+    first = [row.id for row in store.search_epics(query="needle", limit=3)]
+    store.rebuild_search_index()
+    second = [row.id for row in store.search_epics(query="needle", limit=3)]
+
+    assert first == second
+    assert first[:2] == [epics[0].id, epics[1].id]
+    assert set(first[2:]).issubset({epics[2].id, epics[3].id})
+    assert all(row.match_tier is not None for row in store.search_epics(query="needle", limit=3))
+
+
+def test_file_store_revert_restores_target_pre_state_and_keeps_revision_monotonic(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Original")
+    first = update_body(
+        store=store,
+        epic_id=epic.id,
+        actor_id="actor",
+        body="First",
+        expected_revision=epic.revision,
+    )
+    first_event = store.list_epic_events(epic.id)[0]
+    second = update_body(
+        store=store,
+        epic_id=epic.id,
+        actor_id="actor",
+        body="Second",
+        expected_revision=first.revision,
+    )
+
+    reverted = store.revert(epic.id, first_event.transaction_id, expected_revision=second.revision)
+
+    assert reverted.revision == second.revision + 1
+    assert store.load_body(epic.id) == "Original"
+    events = store.list_epic_events(epic.id)
+    assert events[0].event_type == "reverted_to"
+    assert events[0].prior_state["reverted_to_transaction_id"] == first_event.transaction_id
+    assert events[0].pre_state["body"] == "Second"
+    assert events[0].post_state["body"] == "Original"
+    assert events[0].post_state["epic"]["revision"] == reverted.revision
+
+    with pytest.raises(RevisionConflict):
+        store.revert(epic.id, first_event.transaction_id, expected_revision=second.revision)
+    assert store.load_body(epic.id) == "Original"
+
+
+def test_file_store_revert_rejects_legacy_event_without_full_snapshot(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Original")
+    event = store.record_epic_event(
+        epic_id=epic.id,
+        transaction_id="legacy-tx",
+        event_type="body_edit",
+        summary="legacy",
+        prior_state={},
+    )
+
+    with pytest.raises(StoreError, match="lacks pre_state snapshot"):
+        store.revert(epic.id, event.transaction_id, expected_revision=epic.revision)
+
+
+def test_file_store_get_epic_at_time_uses_post_state_with_replay_ties(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Original")
+    first = update_body(
+        store=store,
+        epic_id=epic.id,
+        actor_id="actor",
+        body="First",
+        expected_revision=epic.revision,
+    )
+    second = update_body(
+        store=store,
+        epic_id=epic.id,
+        actor_id="actor",
+        body="Second",
+        expected_revision=first.revision,
+    )
+    events = store.list_epic_events_for_replay(epic.id)
+
+    at_first = store.get_epic_at_time(epic.id, events[0].occurred_at)
+    at_second = store.get_epic_at_time(epic.id, events[1].occurred_at)
+
+    assert at_first is not None
+    assert at_first.body == "First"
+    assert at_second is not None
+    assert at_second.body == "Second"
+    assert at_second.epic["revision"] == second.revision

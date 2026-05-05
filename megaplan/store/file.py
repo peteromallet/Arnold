@@ -6,9 +6,11 @@ from collections import defaultdict
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 import json
+import re
 import shutil
+import sqlite3
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 from megaplan._core.io import (
@@ -19,7 +21,6 @@ from megaplan._core.io import (
     journal_event_log,
     json_dump,
     normalize_text,
-    now_utc,
     prepare_journal_transaction,
     read_committed_framed_json_records,
     recover_journal,
@@ -34,6 +35,7 @@ from megaplan.schemas import (
     Epic,
     EpicEvent,
     EpicLock,
+    EpicSnapshot,
     ExecutionLease,
     ExternalRequest,
     Feedback,
@@ -65,9 +67,11 @@ from .base import (
     SprintItemInput,
     SprintWithItems,
     Store,
+    StoreError,
     Transaction,
 )
 from .blob import LocalDirBlobStore
+from .snapshot import canonical_json_dumps, canonical_sha256, capture_epic_snapshot
 
 _ACTIVE_EPIC_STATES = {"shaping", "sprinting", "planned", "paused"}
 _TERMINAL_TURN_STATUSES = {"completed", "failed", "abandoned"}
@@ -152,6 +156,26 @@ class _FileStoreTransaction(AbstractContextManager["_FileStoreTransaction"]):
 
     def add_write(self, path: Path, data: bytes) -> None:
         self._writes.append(journal_bytes_write(path, data, tx_id=self.tx_id))
+
+    def staged_bytes(self, path: Path) -> bytes | None:
+        path_str = str(path)
+        for entry in reversed(self._writes):
+            if entry.get("target_path") != path_str:
+                continue
+            content = entry.get("content")
+            if entry.get("content_storage") == "base64":
+                import base64
+
+                return base64.b64decode(str(content).encode("ascii"))
+            if isinstance(content, str):
+                return content.encode("utf-8")
+        return None
+
+    def staged_records(self, path: Path) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for record in self._event_logs.get(str(path), []):
+            records.append(dict(record))
+        return records
 
     def add_blob(self, blob_dir: Path, content: bytes, *, extension: str, metadata: Mapping[str, Any]) -> None:
         self._blobs.append(
@@ -435,16 +459,23 @@ class FileStore(Store):
     # ------------------------------------------------------------------
 
     def _load_model(self, path: Path, model_cls: Any) -> Any | None:
+        staged = self._active_transaction.staged_bytes(path) if self._active_transaction is not None else None
+        if staged is not None:
+            return model_cls.model_validate(json.loads(staged.decode("utf-8")))
         if not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
         return model_cls.model_validate(data)
 
     def _iter_models(self, directory: Path, model_cls: Any) -> list[Any]:
-        if not directory.exists():
-            return []
+        paths = set(sorted(directory.glob("*.json"))) if directory.exists() else set()
+        if self._active_transaction is not None:
+            for entry in self._active_transaction._writes:
+                target_path = Path(str(entry.get("target_path", "")))
+                if target_path.parent == directory and target_path.suffix == ".json":
+                    paths.add(target_path)
         models = []
-        for path in sorted(directory.glob("*.json")):
+        for path in sorted(paths):
             model = self._load_model(path, model_cls)
             if model is not None:
                 models.append(model)
@@ -692,28 +723,228 @@ class FileStore(Store):
         return summaries
 
     def search_epics(self, *, query: str, active_only: bool = True, limit: int = 20) -> list[EpicSummary]:
-        needle = normalize_text(query)
-        matches: list[tuple[int, Epic]] = []
-        for epic in self._epics():
+        terms = [term for term in re.findall(r"[\w-]+", normalize_text(query)) if term]
+        if not terms:
+            return []
+        self.rebuild_search_index()
+        fts_query = " ".join(f'"{term}"' for term in terms)
+        conn = sqlite3.connect(self._search_index_path())
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                """
+                SELECT e.id,
+                       bm25(epic_search) AS fts_rank,
+                       CASE
+                           WHEN lower(e.title) LIKE ? THEN 3
+                           WHEN lower(e.goal) LIKE ? THEN 2
+                           ELSE 1
+                       END AS match_tier
+                FROM epic_search
+                JOIN epics e ON e.id = epic_search.id
+                WHERE epic_search MATCH ?
+                ORDER BY match_tier DESC, fts_rank ASC, e.last_edited_at DESC, e.id DESC
+                LIMIT ?
+                """,
+                [f"%{normalize_text(query)}%", f"%{normalize_text(query)}%", fts_query, limit],
+            ).fetchall()
+        finally:
+            conn.close()
+        by_id = {epic.id: epic for epic in self._epics()}
+        results: list[EpicSummary] = []
+        for row in rows:
+            epic = by_id.get(str(row["id"]))
+            if epic is None or epic.migrated_to is not None:
+                continue
             if active_only and epic.state not in _ACTIVE_EPIC_STATES:
                 continue
-            haystack = normalize_text(f"{epic.title} {epic.goal} {epic.body}")
-            if needle in haystack:
-                matches.append((haystack.count(needle), epic))
-        matches.sort(key=lambda item: (-item[0], item[1].id))
-        return [
-            EpicSummary.model_validate({**epic.model_dump(mode="json"), "rank": score})
-            for score, epic in matches[:limit]
-        ]
+            results.append(
+                EpicSummary.model_validate(
+                    {
+                        **epic.model_dump(mode="json"),
+                        "rank": float(row["fts_rank"]),
+                        "match_tier": int(row["match_tier"]),
+                        "backend": "file",
+                    }
+                )
+            )
+        return results[:limit]
+
+    def _search_index_path(self) -> Path:
+        return self.root / "search.sqlite"
+
+    def rebuild_search_index(self) -> None:
+        conn = sqlite3.connect(self._search_index_path())
+        try:
+            conn.execute("DROP TABLE IF EXISTS epics")
+            conn.execute("CREATE TABLE epics (id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL, last_edited_at TEXT NOT NULL)")
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS epic_search USING fts5(id UNINDEXED, title, goal, body)")
+            conn.execute("DELETE FROM epic_search")
+            conn.execute("DELETE FROM epics")
+            for epic in sorted(self._epics(), key=lambda row: row.id):
+                if epic.migrated_to is not None:
+                    continue
+                conn.execute(
+                    "INSERT INTO epics (id, title, goal, last_edited_at) VALUES (?, ?, ?, ?)",
+                    [epic.id, epic.title, epic.goal, epic.last_edited_at.astimezone(UTC).isoformat()],
+                )
+                conn.execute(
+                    "INSERT INTO epic_search (id, title, goal, body) VALUES (?, ?, ?, ?)",
+                    [epic.id, epic.title, epic.goal, self.load_body(epic.id)],
+                )
+            conn.commit()
+        finally:
+            conn.close()
 
     def load_body(self, epic_id: str) -> str:
         body_path = self._body_path(epic_id)
+        staged = self._active_transaction.staged_bytes(body_path) if self._active_transaction is not None else None
+        if staged is not None:
+            return staged.decode("utf-8")
         if body_path.exists():
             return body_path.read_text(encoding="utf-8")
         epic = self.load_epic(epic_id)
         if epic is None:
             raise FileNotFoundError(epic_id)
         return epic.body
+
+    def capture_epic_snapshot(self, epic_id: str) -> EpicSnapshot:
+        return capture_epic_snapshot(self, epic_id)
+
+    def _delete_epic_owned_file_models(self, epic_id: str, *, model_name: str) -> None:
+        if model_name == "images":
+            for row in self._images():
+                if row.epic_id == epic_id:
+                    self._delete_file(self._image_path(row.id))
+            return
+        if model_name == "second_opinions":
+            for row in self._second_opinions():
+                if row.epic_id == epic_id:
+                    self._delete_file(self._second_opinion_path(row.id))
+            return
+        raise ValueError(f"Unsupported model collection {model_name!r}")
+
+    def _restore_epic_snapshot(self, snapshot: EpicSnapshot, *, new_revision: int) -> Epic:
+        now = utc_now()
+        epic_data = dict(snapshot.epic)
+        epic_data.update(
+            {
+                "id": snapshot.epic_id,
+                "body": snapshot.body,
+                "revision": new_revision,
+                "last_edited_at": now,
+            }
+        )
+        restored_epic = Epic.model_validate(epic_data)
+        journal_root = self._journal_root_for_epic(snapshot.epic_id)
+        self._save_model(self._epic_path(snapshot.epic_id), restored_epic, journal_root=journal_root)
+        self._commit_write(self._body_path(snapshot.epic_id), snapshot.body.encode("utf-8"), journal_root=journal_root)
+
+        self._delete_tree(self._checklist_dir(snapshot.epic_id))
+        for raw in snapshot.checklist_items:
+            item = ChecklistItem.model_validate(raw)
+            self._save_model(self._checklist_path(snapshot.epic_id, item.id), item, journal_root=journal_root)
+
+        sprints_root = self._epic_dir(snapshot.epic_id) / "sprints"
+        self._delete_tree(sprints_root)
+        for raw in snapshot.sprints:
+            sprint = Sprint.model_validate(raw)
+            self._save_model(self._sprint_path(snapshot.epic_id, sprint.id), sprint, journal_root=journal_root)
+        for raw in snapshot.sprint_items:
+            item = SprintItem.model_validate(raw)
+            sprint = self.load_sprint(item.sprint_id)
+            if sprint is None:
+                raise StoreError(f"Snapshot sprint item {item.id!r} references missing sprint {item.sprint_id!r}")
+            self._save_model(
+                self._sprint_items_dir(snapshot.epic_id, item.sprint_id) / f"{item.id}.json",
+                item,
+                journal_root=journal_root,
+            )
+
+        self._delete_epic_owned_file_models(snapshot.epic_id, model_name="images")
+        for raw in snapshot.images:
+            image = Image.model_validate(raw)
+            self._save_model(self._image_path(image.id), image, journal_root=self.root)
+
+        self._delete_epic_owned_file_models(snapshot.epic_id, model_name="second_opinions")
+        for raw in snapshot.second_opinions:
+            opinion = SecondOpinion.model_validate(raw)
+            self._save_model(self._second_opinion_path(opinion.id), opinion, journal_root=self.root)
+
+        return restored_epic
+
+    def _event_snapshot(self, event: EpicEvent, *, field: str) -> EpicSnapshot:
+        payload = event.pre_state if field == "pre" else event.post_state
+        if payload is None:
+            raise StoreError(
+                f"Event {event.id!r} from transaction {event.transaction_id!r} lacks {field}_state snapshot"
+            )
+        return EpicSnapshot.model_validate(payload)
+
+    def revert(
+        self,
+        epic_id: str,
+        to_transaction_id: str,
+        *,
+        expected_revision: int,
+        idempotency_key: str | None = None,
+    ) -> Epic:
+        current = self.load_epic(epic_id)
+        if current is None:
+            raise FileNotFoundError(epic_id)
+        self._require_expected_revision(current.revision, expected_revision)
+        target_events = [
+            event
+            for event in self.list_epic_events_for_replay(epic_id)
+            if event.transaction_id == to_transaction_id
+        ]
+        if not target_events:
+            raise FileNotFoundError(to_transaction_id)
+        target = target_events[0]
+        restore_snapshot = self._event_snapshot(target, field="pre")
+        if restore_snapshot.epic_id != epic_id:
+            raise StoreError(f"Snapshot epic_id {restore_snapshot.epic_id!r} does not match {epic_id!r}")
+
+        pre_snapshot = self.capture_epic_snapshot(epic_id)
+        with self.transaction(epic_id):
+            restored = self._restore_epic_snapshot(restore_snapshot, new_revision=current.revision + 1)
+            post_snapshot = self.capture_epic_snapshot(epic_id)
+            self.record_epic_event(
+                epic_id=epic_id,
+                transaction_id=_new_id("tx"),
+                event_type="reverted_to",
+                summary=f"Reverted to transaction {to_transaction_id}",
+                prior_state={
+                    "reverted_to_transaction_id": to_transaction_id,
+                    "target_event_id": target.id,
+                    "from_revision": current.revision,
+                    "to_revision": restored.revision,
+                },
+                pre_state=pre_snapshot.model_dump(mode="json"),
+                post_state=post_snapshot.model_dump(mode="json"),
+                pre_state_canonical_json=canonical_json_dumps(pre_snapshot),
+                post_state_canonical_json=canonical_json_dumps(post_snapshot),
+                pre_state_sha256=canonical_sha256(pre_snapshot),
+                post_state_sha256=canonical_sha256(post_snapshot),
+                idempotency_key=idempotency_key,
+            )
+        return restored
+
+    def get_epic_at_time(self, epic_id: str, when: datetime | str) -> EpicSnapshot | None:
+        cutoff = _parse_datetime(when)
+        if cutoff is None:
+            raise ValueError("when is required")
+        matching = [
+            event
+            for event in self.list_epic_events_for_replay(epic_id)
+            if event.occurred_at <= cutoff
+        ]
+        if not matching:
+            current = self.load_epic(epic_id)
+            if current is not None and current.created_at <= cutoff:
+                return self.capture_epic_snapshot(epic_id)
+            return None
+        return self._event_snapshot(matching[-1], field="post")
 
     def update_body(self, epic_id: str, body: str, *, expected_revision: int, idempotency_key: str | None = None) -> Epic:
         return self.update_epic(epic_id, expected_revision=expected_revision, body=body)
@@ -1029,7 +1260,13 @@ class FileStore(Store):
         event_type: str,
         summary: str,
         prior_state: dict[str, Any] | None,
-        turn_id: str | None,
+        pre_state: dict[str, Any] | None = None,
+        post_state: dict[str, Any] | None = None,
+        pre_state_canonical_json: str | None = None,
+        post_state_canonical_json: str | None = None,
+        pre_state_sha256: str | None = None,
+        post_state_sha256: str | None = None,
+        turn_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> EpicEvent:
         event = EpicEvent(
@@ -1039,6 +1276,12 @@ class FileStore(Store):
             event_type=event_type,
             summary=summary,
             prior_state=prior_state,
+            pre_state=pre_state,
+            post_state=post_state,
+            pre_state_canonical_json=pre_state_canonical_json,
+            post_state_canonical_json=post_state_canonical_json,
+            pre_state_sha256=pre_state_sha256,
+            post_state_sha256=post_state_sha256,
             turn_id=turn_id,
             occurred_at=utc_now(),
         )
@@ -1059,6 +1302,11 @@ class FileStore(Store):
             EpicEvent.model_validate({key: value for key, value in record.items() if key != "tx_id"})
             for record in read_committed_framed_json_records(events_path)
         ]
+        if self._active_transaction is not None:
+            events.extend(
+                EpicEvent.model_validate(record)
+                for record in self._active_transaction.staged_records(events_path)
+            )
         since_dt = _parse_datetime(since)
         until_dt = _parse_datetime(until)
         filtered: list[EpicEvent] = []
@@ -1070,23 +1318,27 @@ class FileStore(Store):
             if until_dt and event.occurred_at > until_dt:
                 continue
             filtered.append(event)
-        filtered.sort(key=lambda event: (event.occurred_at, event.id))
+        filtered.sort(key=lambda event: (event.occurred_at, event.id), reverse=True)
         if limit is not None:
             return filtered[:limit]
         return filtered
+
+    def list_epic_events_for_replay(self, epic_id: str) -> list[EpicEvent]:
+        events = self.list_epic_events(epic_id, limit=None)
+        return sorted(events, key=lambda event: (event.occurred_at, event.id))
 
     def latest_transaction_id(self, epic_id: str) -> str | None:
         events = self.list_epic_events(epic_id)
         if not events:
             return None
-        return events[-1].transaction_id
+        return events[0].transaction_id
 
     def events_by_transaction(self, transaction_id: str) -> list[EpicEvent]:
         results: list[EpicEvent] = []
         for epic in self._epics():
             results.extend(
                 event
-                for event in self.list_epic_events(epic.id)
+                for event in self.list_epic_events_for_replay(epic.id)
                 if event.transaction_id == transaction_id
             )
         results.sort(key=lambda event: (event.occurred_at, event.id))
@@ -1449,6 +1701,11 @@ class FileStore(Store):
         in_body: bool = False,
         active: bool = True,
         discord_attachment_id: str | None = None,
+        blob_backend: str | None = None,
+        blob_id: str | None = None,
+        blob_sha256: str | None = None,
+        blob_size_bytes: int | None = None,
+        content_type: str | None = None,
         idempotency_key: str | None = None,
     ) -> Image:
         ref = reference_key or self._next_image_reference(source)
@@ -1469,6 +1726,11 @@ class FileStore(Store):
             in_body=in_body,
             active=active,
             discord_attachment_id=discord_attachment_id,
+            blob_backend=blob_backend,
+            blob_id=blob_id,
+            blob_sha256=blob_sha256,
+            blob_size_bytes=blob_size_bytes,
+            content_type=content_type,
         )
         self._save_model(self._image_path(image.id), image, journal_root=self.root)
         return image

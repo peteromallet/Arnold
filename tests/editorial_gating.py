@@ -51,6 +51,10 @@ def test_transition_shaping_to_sprinting_records_state_change_event(editorial_st
     assert [event.event_type for event in events] == ["state_change"]
     assert events[0].prior_state is not None
     assert events[0].prior_state["epic"]["state"] == "shaping"
+    assert events[0].pre_state["epic"]["state"] == "shaping"
+    assert events[0].post_state["epic"]["state"] == "sprinting"
+    assert events[0].post_state_canonical_json is not None
+    assert events[0].post_state_sha256 is not None
     assert events[0].turn_id == "turn-1"
 
 

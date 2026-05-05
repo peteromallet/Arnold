@@ -70,10 +70,26 @@ def test_multi_store_merged_epic_lists_are_deterministic(tmp_path: Path) -> None
         epic.id
         for epic in sorted(
             searched,
-            key=lambda epic: (float(epic.rank or 0), epic.last_edited_at, epic.id),
+            key=lambda epic: (int(epic.match_tier or 0), epic.last_edited_at, epic.id),
             reverse=True,
         )
     ]
+
+
+def test_multi_store_search_merge_ignores_raw_cross_backend_rank(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    file_epic = store.create_epic(title="Needle title", goal="g", body="needle", home_backend="file")
+    db_epic = store.create_epic(title="Plain", goal="g", body="needle needle needle", home_backend="db")
+
+    file_rows = file_store.search_epics(query="needle", limit=10)
+    db_rows = db_store.search_epics(query="needle", limit=10)
+    assert file_rows and db_rows
+    # The body-heavy DB row can have a backend-specific raw rank, but MultiStore
+    # merges by normalized tier first so title matches remain stable.
+    merged = store.search_epics(query="needle", limit=10)
+
+    assert merged[0].id == file_epic.id
+    assert {file_epic.id, db_epic.id}.issubset({row.id for row in merged})
 
 
 def test_multi_store_acquire_execution_lease_derives_epic_id(tmp_path: Path) -> None:

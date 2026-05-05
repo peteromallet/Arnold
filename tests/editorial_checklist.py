@@ -43,6 +43,13 @@ def test_checklist_crud_status_helpers_and_events(editorial_store) -> None:
         "checklist_change",
         "checklist_change",
     ]
+    latest = store.list_epic_events(epic.id)[0]
+    assert latest.pre_state is not None
+    assert latest.post_state is not None
+    assert [item["id"] for item in latest.post_state["checklist_items"]] == [items[1].id]
+    assert [item["position"] for item in latest.post_state["checklist_items"]] == [1]
+    assert latest.post_state_canonical_json is not None
+    assert latest.post_state_sha256 is not None
 
 
 def test_checklist_update_and_supersession_preserve_status_metadata(editorial_store) -> None:

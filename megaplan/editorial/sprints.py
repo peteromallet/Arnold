@@ -6,7 +6,7 @@ from typing import Any, Mapping, Sequence
 
 from megaplan.store import SprintItemInput, Store, deterministic_idempotency_key
 
-from ._events import dump_record, get_field, record_event, require_epic, transaction_id
+from ._events import capture_snapshot, dump_record, get_field, record_event, require_epic, transaction_id
 from .errors import EditorialNotFound, EditorialValidationError
 from .lockdown import ensure_unlocked_for_edit
 
@@ -26,6 +26,7 @@ def _record_sprint_event(
     idem: str,
     action: str,
     prior_sprints: list[Any],
+    pre_snapshot: Any,
     event_type: str = "sprints_change",
     turn_id: str | None,
 ) -> None:
@@ -36,6 +37,7 @@ def _record_sprint_event(
         event_type=event_type,
         summary=f"{actor_id} {action} sprints",
         prior_state={"sprints": [dump_record(sprint) for sprint in prior_sprints]},
+        pre_snapshot=pre_snapshot,
         turn_id=turn_id,
         idempotency_key=idem,
     )
@@ -65,24 +67,27 @@ def create_sprint(
         raise EditorialValidationError("Sprint number and target weeks must be positive")
     prior = store.list_sprints_with_items(epic_id)
     idem = idempotency_key or deterministic_idempotency_key("editorial-sprint-create", epic_id, actor_id, sprint_number, name)
-    sprint = store.create_sprint(
-        epic_id=epic_id,
-        sprint_number=sprint_number,
-        name=_validate_text(name, "name"),
-        goal=_validate_text(goal, "goal"),
-        target_weeks=target_weeks,
-        idempotency_key=idem,
-    )
-    _record_sprint_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="created",
-        prior_sprints=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        sprint = store.create_sprint(
+            epic_id=epic_id,
+            sprint_number=sprint_number,
+            name=_validate_text(name, "name"),
+            goal=_validate_text(goal, "goal"),
+            target_weeks=target_weeks,
+            idempotency_key=idem,
+        )
+        _record_sprint_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="created",
+            prior_sprints=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
     return sprint
 
 
@@ -114,17 +119,20 @@ def update_sprint(
     if "goal" in changes:
         changes["goal"] = _validate_text(str(changes["goal"]), "goal")
     idem = idempotency_key or deterministic_idempotency_key("editorial-sprint-update", epic_id, actor_id, sprint_id, sorted(changes))
-    sprint = store.update_sprint(sprint_id, expected_revision=expected_revision, idempotency_key=idem, **changes)
-    _record_sprint_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="updated",
-        prior_sprints=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        sprint = store.update_sprint(sprint_id, expected_revision=expected_revision, idempotency_key=idem, **changes)
+        _record_sprint_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="updated",
+            prior_sprints=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
     return sprint
 
 
@@ -142,17 +150,20 @@ def delete_sprint(
     if sprint_id not in {get_field(sprint, "id") for sprint in prior}:
         raise EditorialNotFound(f"Sprint not found: {sprint_id}", details={"sprint_id": sprint_id})
     idem = idempotency_key or deterministic_idempotency_key("editorial-sprint-delete", epic_id, actor_id, sprint_id)
-    store.delete_sprint(sprint_id, idempotency_key=idem)
-    _record_sprint_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="deleted from",
-        prior_sprints=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        store.delete_sprint(sprint_id, idempotency_key=idem)
+        _record_sprint_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="deleted from",
+            prior_sprints=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
 
 
 def replace_sprint_items(
@@ -172,17 +183,20 @@ def replace_sprint_items(
     if any(not item.content.strip() for item in items):
         raise EditorialValidationError("Sprint item content cannot be empty")
     idem = idempotency_key or deterministic_idempotency_key("editorial-sprint-items", epic_id, actor_id, sprint_id, len(items))
-    created = store.replace_sprint_items(sprint_id, items, idempotency_key=idem)
-    _record_sprint_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="replaced items for",
-        prior_sprints=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        created = store.replace_sprint_items(sprint_id, items, idempotency_key=idem)
+        _record_sprint_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="replaced items for",
+            prior_sprints=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
     return created
 
 
@@ -217,16 +231,19 @@ def set_sprint_queue(
     if missing_reasons:
         raise EditorialValidationError("Pending sprints require a reason", details={"sprint_ids": missing_reasons})
     idem = idempotency_key or deterministic_idempotency_key("editorial-sprint-queue", epic_id, actor_id, *ordered, *pending_map)
-    queued = store.set_sprint_queue(epic_id, ordered, pending_map, idempotency_key=idem)
-    _record_sprint_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="queued",
-        prior_sprints=prior,
-        event_type="sprint_status_change",
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        queued = store.set_sprint_queue(epic_id, ordered, pending_map, idempotency_key=idem)
+        _record_sprint_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="queued",
+            prior_sprints=prior,
+            pre_snapshot=pre_snapshot,
+            event_type="sprint_status_change",
+            turn_id=turn_id,
+        )
     return queued

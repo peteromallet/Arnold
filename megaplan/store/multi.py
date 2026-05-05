@@ -23,6 +23,7 @@ from megaplan.schemas import (
     Epic,
     EpicEvent,
     EpicLock,
+    EpicSnapshot,
     ExecutionLease,
     ExternalRequest,
     Feedback,
@@ -290,8 +291,29 @@ class MultiStore(Store):
         rows = self.file.search_epics(query=query, active_only=active_only, limit=limit)
         rows.extend(self.db.search_epics(query=query, active_only=active_only, limit=limit))
         rows = [row for row in rows if row.home_backend in {"file", "db"} and getattr(row, "migrated_to", None) is None]
-        rows.sort(key=lambda epic: (float(epic.rank or 0), epic.last_edited_at, epic.id), reverse=True)
+        rows.sort(key=lambda epic: (int(epic.match_tier or 0), epic.last_edited_at, epic.id), reverse=True)
         return rows[:limit]
+
+    def capture_epic_snapshot(self, epic_id: str) -> EpicSnapshot:
+        return self._route_for_epic(epic_id).capture_epic_snapshot(epic_id)
+
+    def revert(
+        self,
+        epic_id: str,
+        to_transaction_id: str,
+        *,
+        expected_revision: int,
+        idempotency_key: str | None = None,
+    ) -> Epic:
+        return self._route_for_epic(epic_id).revert(
+            epic_id,
+            to_transaction_id,
+            expected_revision=expected_revision,
+            idempotency_key=idempotency_key,
+        )
+
+    def get_epic_at_time(self, epic_id: str, when: datetime | str) -> EpicSnapshot | None:
+        return self._route_for_epic(epic_id).get_epic_at_time(epic_id, when)
 
     def load_body(self, epic_id: str) -> str:
         return self._route_for_epic(epic_id).load_body(epic_id)
@@ -430,7 +452,13 @@ class MultiStore(Store):
         event_type: str,
         summary: str,
         prior_state: dict[str, Any] | None,
-        turn_id: str | None,
+        pre_state: dict[str, Any] | None = None,
+        post_state: dict[str, Any] | None = None,
+        pre_state_canonical_json: str | None = None,
+        post_state_canonical_json: str | None = None,
+        pre_state_sha256: str | None = None,
+        post_state_sha256: str | None = None,
+        turn_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> EpicEvent:
         return self._route_for_epic(epic_id).record_epic_event(
@@ -439,12 +467,21 @@ class MultiStore(Store):
             event_type=event_type,
             summary=summary,
             prior_state=prior_state,
+            pre_state=pre_state,
+            post_state=post_state,
+            pre_state_canonical_json=pre_state_canonical_json,
+            post_state_canonical_json=post_state_canonical_json,
+            pre_state_sha256=pre_state_sha256,
+            post_state_sha256=post_state_sha256,
             turn_id=turn_id,
             idempotency_key=idempotency_key,
         )
 
     def list_epic_events(self, epic_id: str, *, since: str | None = None, until: str | None = None, kinds: Sequence[str] | None = None, limit: int | None = None) -> list[EpicEvent]:
         return self._route_for_epic(epic_id).list_epic_events(epic_id, since=since, until=until, kinds=kinds, limit=limit)
+
+    def list_epic_events_for_replay(self, epic_id: str) -> list[EpicEvent]:
+        return self._route_for_epic(epic_id).list_epic_events_for_replay(epic_id)
 
     def latest_transaction_id(self, epic_id: str) -> str | None:
         return self._route_for_epic(epic_id).latest_transaction_id(epic_id)
@@ -609,8 +646,8 @@ class MultiStore(Store):
     def mark_orphaned(self, request_id: str, *, error_details: dict[str, Any], idempotency_key: str | None = None) -> ExternalRequest:
         return self.db.mark_orphaned(request_id, error_details=error_details, idempotency_key=idempotency_key)
 
-    def create_image(self, *, epic_id: str, source: str, storage_url: str, prompt: str | None = None, quality: str | None = None, size: str | None = None, reference_key: str | None = None, description: str | None = None, caption: str | None = None, in_body: bool = False, active: bool = True, discord_attachment_id: str | None = None, idempotency_key: str | None = None) -> Image:
-        return self._route_for_epic(epic_id).create_image(epic_id=epic_id, source=source, storage_url=storage_url, prompt=prompt, quality=quality, size=size, reference_key=reference_key, description=description, caption=caption, in_body=in_body, active=active, discord_attachment_id=discord_attachment_id, idempotency_key=idempotency_key)
+    def create_image(self, *, epic_id: str, source: str, storage_url: str, prompt: str | None = None, quality: str | None = None, size: str | None = None, reference_key: str | None = None, description: str | None = None, caption: str | None = None, in_body: bool = False, active: bool = True, discord_attachment_id: str | None = None, blob_backend: str | None = None, blob_id: str | None = None, blob_sha256: str | None = None, blob_size_bytes: int | None = None, content_type: str | None = None, idempotency_key: str | None = None) -> Image:
+        return self._route_for_epic(epic_id).create_image(epic_id=epic_id, source=source, storage_url=storage_url, prompt=prompt, quality=quality, size=size, reference_key=reference_key, description=description, caption=caption, in_body=in_body, active=active, discord_attachment_id=discord_attachment_id, blob_backend=blob_backend, blob_id=blob_id, blob_sha256=blob_sha256, blob_size_bytes=blob_size_bytes, content_type=content_type, idempotency_key=idempotency_key)
 
     def load_image(self, image_id: str) -> Image | None:
         return self._load_from_backends("load_image", image_id)

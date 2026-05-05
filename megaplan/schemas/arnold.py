@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -195,6 +195,11 @@ class Image(StorageModel):
     in_body: bool = False
     active: bool = True
     discord_attachment_id: str | None = None
+    blob_backend: str | None = None
+    blob_id: str | None = None
+    blob_sha256: str | None = None
+    blob_size_bytes: int | None = Field(default=None, ge=0)
+    content_type: str | None = None
 
 
 class ChecklistItem(StorageModel):
@@ -217,8 +222,34 @@ class EpicEvent(StorageModel):
     event_type: EpicEventType | None = None
     summary: str
     prior_state: NormalizedDict | None = None
+    pre_state: NormalizedDict | None = None
+    post_state: NormalizedDict | None = None
+    pre_state_canonical_json: str | None = None
+    post_state_canonical_json: str | None = None
+    pre_state_sha256: str | None = None
+    post_state_sha256: str | None = None
     turn_id: str | None = None
     occurred_at: datetime = Field(default_factory=utc_now)
+
+
+class EpicSnapshot(StorageModel):
+    epic_id: str
+    revision: int
+    epic: NormalizedDict
+    body: str
+    checklist_items: NormalizedList = Field(default_factory=list)
+    sprints: NormalizedList = Field(default_factory=list)
+    sprint_items: NormalizedList = Field(default_factory=list)
+    images: NormalizedList = Field(default_factory=list)
+    second_opinions: NormalizedList = Field(default_factory=list)
+    search_document: str | None = None
+
+
+class EpicSearchSummary(Epic):
+    snippet: str | None = None
+    rank: float | int | None = None
+    match_tier: int | None = None
+    backend: HomeBackend | None = None
 
 
 class Feedback(StorageModel):
