@@ -337,6 +337,53 @@ def test_recover_codex_payload_handles_stderr_bleed_in_output_file(tmp_path: Pat
     assert recovered == valid_payload
 
 
+def test_recover_codex_payload_prefers_valid_output_file_over_raw_transcript(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "critique_output.json"
+    file_payload = {
+        "checks": [],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "The plan should revise the RunPod disk defaults.",
+                "evidence": "runpod-lifecycle config still contains stale defaults.",
+                "severity": "medium",
+                "category": "correctness",
+            }
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    raw_payload = {
+        "checks": [
+            {
+                "id": "disk-defaults",
+                "question": "Are disk defaults aligned?",
+                "findings": [
+                    {
+                        "detail": "Intermediate transcript JSON should not outrank the output file.",
+                        "flagged": True,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    output_path.write_text(json.dumps(file_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=f"thinking...\n{json.dumps(raw_payload)}\n",
+    )
+
+    assert recovered == file_payload
+
+
 def test_recover_codex_payload_accepts_review_without_checks_and_trailing_telemetry(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
