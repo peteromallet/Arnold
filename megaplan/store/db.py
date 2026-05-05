@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import functools
+import json
 import os
 import uuid
 from collections import OrderedDict
@@ -66,6 +68,95 @@ from megaplan.store.base import (
     SprintItemInput,
     SprintWithItems,
 )
+
+
+_BOOTSTRAP_ACTOR_ID = "__bootstrap__"
+_BOOTSTRAP_IDEMPOTENT_MUTATORS = frozenset({"create_automation_actor"})
+_IDEMPOTENT_MUTATORS = frozenset({
+    "create_epic",
+    "update_epic",
+    "update_body",
+    "seed_checklist",
+    "add_checklist_items",
+    "update_checklist_item",
+    "delete_checklist_items",
+    "replace_checklist",
+    "create_sprint",
+    "update_sprint",
+    "delete_sprint",
+    "replace_sprint_items",
+    "set_sprint_queue",
+    "insert_pending",
+    "mark_confirmed",
+    "mark_failed",
+    "mark_orphaned",
+    "create_image",
+    "update_image",
+    "deactivate_active_image_reference",
+    "create_second_opinion",
+    "set_second_opinion_checklist_items",
+    "record_tool_call",
+    "log_system_event",
+    "create_codebase",
+    "upsert_codebase",
+    "update_codebase",
+    "remove_codebase",
+    "touch_codebase_accessed",
+    "mark_codebase_verified",
+    "create_code_artifact",
+    "update_code_artifact",
+    "delete_code_artifact",
+    "touch_code_artifact_used",
+    "upsert_api_cache",
+    "cleanup_expired_api_cache",
+    "create_feedback",
+    "update_feedback",
+    "record_epic_event",
+    "create_message",
+    "update_message",
+    "create_turn",
+    "update_turn",
+    "create_plan",
+    "update_plan",
+    "write_plan_artifact",
+    "acquire_execution_lease",
+    "heartbeat_lease",
+    "release_lease",
+    "acquire_lock",
+    "release_lock",
+    "put_control_message",
+    "claim_pending_control_messages",
+    "mark_control_message_processed",
+    "append_progress_event",
+    "update_automation_actor",
+})
+_REPLAY_MODEL_TYPES = {
+    model.__name__: model
+    for model in (
+        AutomationActor,
+        BotTurn,
+        ChecklistItem,
+        CodeArtifact,
+        Codebase,
+        ControlMessage,
+        Epic,
+        EpicEvent,
+        EpicLock,
+        ExecutionLease,
+        ExternalRequest,
+        Feedback,
+        Image,
+        Message,
+        Plan,
+        PlanArtifact,
+        ProgressEvent,
+        SecondOpinion,
+        Sprint,
+        SprintItem,
+        SystemLog,
+        ToolCall,
+    )
+}
 
 
 def _jb(value: Any) -> Any:
@@ -134,6 +225,8 @@ class DBStore:
         actor_id: str | None = None,
         dsn: str | None = None,
     ) -> None:
+        if actor_id == _BOOTSTRAP_ACTOR_ID:
+            raise ValueError(f"actor_id {_BOOTSTRAP_ACTOR_ID!r} is reserved for bootstrap idempotency")
         # Use .get() (not []) so DBStore() without SUPABASE_DB_URL doesn't raise
         # at instantiation time; the error is deferred to _get_conn().
         self._actor_id = actor_id
@@ -170,6 +263,140 @@ class DBStore:
                 "Pass actor_id= to DBStore() or set MEGAPLAN_ACTOR_ID."
             )
         return self._actor_id
+
+    def __getattribute__(self, name: str) -> Any:
+        attr = object.__getattribute__(self, name)
+        if name in _IDEMPOTENT_MUTATORS or name in _BOOTSTRAP_IDEMPOTENT_MUTATORS:
+            if not callable(attr):
+                return attr
+
+            @functools.wraps(attr)
+            def _wrapped(*args: Any, **kwargs: Any) -> Any:
+                return self._run_idempotent_mutation(name, attr, args, kwargs)
+
+            return _wrapped
+        return attr
+
+    def _request_hash(self, operation: str, args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> str:
+        payload = {
+            "operation": operation,
+            "args": args,
+            "kwargs": kwargs,
+        }
+        encoded = json.dumps(payload, default=self._json_default, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _json_default(self, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, (set, tuple)):
+            return list(value)
+        return str(value)
+
+    def _encode_idempotent_response(self, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return {
+                "kind": "model",
+                "model": value.__class__.__name__,
+                "data": value.model_dump(mode="json"),
+            }
+        if isinstance(value, list):
+            return {
+                "kind": "list",
+                "items": [self._encode_idempotent_response(item) for item in value],
+            }
+        if isinstance(value, tuple):
+            return {
+                "kind": "tuple",
+                "items": [self._encode_idempotent_response(item) for item in value],
+            }
+        return {"kind": "plain", "data": value}
+
+    def _decode_idempotent_response(self, payload: Any) -> Any:
+        if payload is None:
+            return None
+        kind = payload.get("kind") if isinstance(payload, Mapping) else None
+        if kind == "model":
+            model_cls = _REPLAY_MODEL_TYPES.get(str(payload.get("model")))
+            data = payload.get("data")
+            return model_cls.model_validate(data) if model_cls is not None else data
+        if kind in {"list", "tuple"}:
+            items = [self._decode_idempotent_response(item) for item in payload.get("items", [])]
+            return tuple(items) if kind == "tuple" else items
+        if kind == "plain":
+            return payload.get("data")
+        return payload
+
+    def _run_idempotent_mutation(
+        self,
+        operation: str,
+        func: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        ledger_actor_id = _BOOTSTRAP_ACTOR_ID if operation in _BOOTSTRAP_IDEMPOTENT_MUTATORS else self._require_actor()
+        idempotency_key = kwargs.get("idempotency_key")
+        if not idempotency_key:
+            raise ValueError(f"idempotency_key is required for DBStore.{operation}")
+        target_actor_id = kwargs.get("actor_id") if "actor_id" in kwargs else (args[0] if args else None)
+        if operation in {"create_automation_actor", "update_automation_actor"} and target_actor_id == _BOOTSTRAP_ACTOR_ID:
+            raise ValueError(f"automation actor ID {_BOOTSTRAP_ACTOR_ID!r} is reserved")
+
+        request_kwargs = dict(kwargs)
+        request_kwargs.pop("idempotency_key", None)
+        request_hash = self._request_hash(operation, args, request_kwargs)
+        conn = self._get_conn()
+
+        with conn.transaction():
+            row = conn.execute(
+                """
+                SELECT actor_id, operation, request_hash, response_json, status
+                FROM db_idempotency_keys
+                WHERE idempotency_key = %s
+                FOR UPDATE
+                """,
+                [idempotency_key],
+            ).fetchone()
+            if row is not None:
+                if (
+                    row["actor_id"] != ledger_actor_id
+                    or row["operation"] != operation
+                    or row["request_hash"] != request_hash
+                ):
+                    raise ValueError(f"idempotency_key {idempotency_key!r} was reused with a different request")
+                if row["status"] == "complete":
+                    return self._decode_idempotent_response(row["response_json"])
+                raise RuntimeError(f"idempotency_key {idempotency_key!r} has incomplete status {row['status']!r}")
+
+            conn.execute(
+                """
+                INSERT INTO db_idempotency_keys
+                    (idempotency_key, actor_id, operation, request_hash, status)
+                VALUES (%s, %s, %s, %s, 'in_progress')
+                """,
+                [idempotency_key, ledger_actor_id, operation, request_hash],
+            )
+            try:
+                result = func(*args, **kwargs)
+            except Exception:
+                conn.execute(
+                    """
+                    UPDATE db_idempotency_keys
+                    SET status = 'failed', updated_at = now()
+                    WHERE idempotency_key = %s
+                    """,
+                    [idempotency_key],
+                )
+                raise
+            conn.execute(
+                """
+                UPDATE db_idempotency_keys
+                SET status = 'complete', response_json = %s, updated_at = now()
+                WHERE idempotency_key = %s
+                """,
+                [_jb(self._encode_idempotent_response(result)), idempotency_key],
+            )
+            return result
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -220,6 +447,7 @@ class DBStore:
         body: str,
         state: str = "shaping",
         home_backend: str = "file",
+        idempotency_key: str | None = None,
     ) -> Epic:
         self._require_actor()
         conn = self._get_conn()
@@ -244,7 +472,8 @@ class DBStore:
         self,
         epic_id: str,
         *,
-        expected_revision: int | None = None,
+        expected_revision: int,
+        idempotency_key: str | None = None,
         **changes: Any,
     ) -> Epic:
         conn = self._get_conn()
@@ -330,7 +559,7 @@ class DBStore:
             raise KeyError(f"Epic {epic_id!r} not found")
         return row["body"]
 
-    def update_body(self, epic_id: str, body: str, *, expected_revision: int) -> Epic:
+    def update_body(self, epic_id: str, body: str, *, expected_revision: int, idempotency_key: str | None = None) -> Epic:
         self._require_actor()
         conn = self._get_conn()
         row = conn.execute(
@@ -350,7 +579,10 @@ class DBStore:
     # T5: Checklist
     # ------------------------------------------------------------------
 
-    def seed_checklist(self, epic_id: str, items: Sequence[str]) -> list[ChecklistItem]:
+    def seed_checklist(self, epic_id: str, items: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[ChecklistItem]:
         self._require_actor()
         conn = self._get_conn()
         result = []
@@ -390,6 +622,8 @@ class DBStore:
         self,
         epic_id: str,
         items: Sequence[ChecklistItemInput],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[ChecklistItem]:
         self._require_actor()
         conn = self._get_conn()
@@ -424,7 +658,8 @@ class DBStore:
             result.append(ChecklistItem(**row))
         return result
 
-    def update_checklist_item(self, item_id: str, **changes: Any) -> ChecklistItem:
+    def update_checklist_item(self, item_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> ChecklistItem:
         conn = self._get_conn()
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values())
@@ -437,7 +672,10 @@ class DBStore:
         ).fetchone()
         return ChecklistItem(**row)
 
-    def delete_checklist_items(self, item_ids: Sequence[str]) -> None:
+    def delete_checklist_items(self, item_ids: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         if not item_ids:
             return
         conn = self._get_conn()
@@ -450,6 +688,8 @@ class DBStore:
         self,
         epic_id: str,
         items: Sequence[ChecklistItemInput],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[ChecklistItem]:
         self._require_actor()
         conn = self._get_conn()
@@ -521,6 +761,7 @@ class DBStore:
         queue_position: int | None = None,
         pending_reason: str | None = None,
         target_weeks: int = 2,
+        idempotency_key: str | None = None,
     ) -> Sprint:
         self._require_actor()
         conn = self._get_conn()
@@ -586,7 +827,8 @@ class DBStore:
         self,
         sprint_id: str,
         *,
-        expected_revision: int | None = None,
+        expected_revision: int,
+        idempotency_key: str | None = None,
         **changes: Any,
     ) -> Sprint:
         conn = self._get_conn()
@@ -613,7 +855,10 @@ class DBStore:
             raise RevisionConflict(f"Revision conflict on sprint {sprint_id!r}")
         return Sprint(**row)
 
-    def delete_sprint(self, sprint_id: str) -> None:
+    def delete_sprint(self, sprint_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         conn = self._get_conn()
         conn.execute("DELETE FROM sprints WHERE id = %s", [sprint_id])
 
@@ -621,6 +866,8 @@ class DBStore:
         self,
         sprint_id: str,
         items: Sequence[SprintItemInput],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[SprintItem]:
         conn = self._get_conn()
         result = []
@@ -660,6 +907,8 @@ class DBStore:
         epic_id: str,
         ordered_sprint_ids: Sequence[str],
         pending: Mapping[str, str],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[Sprint]:
         conn = self._get_conn()
         with conn.transaction():
@@ -730,6 +979,7 @@ class DBStore:
         *,
         provider_request_id: str | None = None,
         provider_response_summary: dict | None = None,
+        idempotency_key: str | None = None,
     ) -> ExternalRequest:
         conn = self._get_conn()
         row = conn.execute(
@@ -746,7 +996,9 @@ class DBStore:
         ).fetchone()
         return ExternalRequest(**row)
 
-    def mark_failed(self, request_id: str, *, error_details: dict) -> ExternalRequest:
+    def mark_failed(self, request_id: str, *, error_details: dict,
+        idempotency_key: str | None = None,
+    ) -> ExternalRequest:
         conn = self._get_conn()
         row = conn.execute(
             """
@@ -774,7 +1026,9 @@ class DBStore:
         ).fetchall()
         return [ExternalRequest(**row) for row in rows]
 
-    def mark_orphaned(self, request_id: str, *, error_details: dict) -> ExternalRequest:
+    def mark_orphaned(self, request_id: str, *, error_details: dict,
+        idempotency_key: str | None = None,
+    ) -> ExternalRequest:
         conn = self._get_conn()
         row = conn.execute(
             """
@@ -806,6 +1060,7 @@ class DBStore:
         in_body: bool = False,
         active: bool = True,
         discord_attachment_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Image:
         conn = self._get_conn()
         img_id = str(uuid.uuid4())
@@ -855,7 +1110,8 @@ class DBStore:
         ).fetchall()
         return [Image(**row) for row in rows]
 
-    def update_image(self, image_id: str, **changes: Any) -> Image:
+    def update_image(self, image_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Image:
         conn = self._get_conn()
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values()) + [image_id]
@@ -894,7 +1150,9 @@ class DBStore:
         return row is not None
 
     def deactivate_active_image_reference(
-        self, epic_id: str, reference_key: str
+        self, epic_id: str, reference_key: str,
+        *,
+        idempotency_key: str | None = None,
     ) -> list[Image]:
         conn = self._get_conn()
         rows = conn.execute(
@@ -923,6 +1181,7 @@ class DBStore:
         verdict: str,
         model_used: str,
         resulting_checklist_item_ids: Sequence[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SecondOpinion:
         conn = self._get_conn()
         row = conn.execute(
@@ -954,7 +1213,9 @@ class DBStore:
         return [SecondOpinion(**row) for row in rows]
 
     def set_second_opinion_checklist_items(
-        self, second_opinion_id: str, checklist_item_ids: Sequence[str]
+        self, second_opinion_id: str, checklist_item_ids: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
     ) -> SecondOpinion:
         conn = self._get_conn()
         row = conn.execute(
@@ -981,6 +1242,7 @@ class DBStore:
         arguments: dict,
         result: dict,
         duration_ms: int,
+        idempotency_key: str | None = None,
     ) -> ToolCall:
         conn = self._get_conn()
         row = conn.execute(
@@ -1046,6 +1308,7 @@ class DBStore:
         details: dict | None = None,
         turn_id: str | None = None,
         epic_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> SystemLog:
         conn = self._get_conn()
         row = conn.execute(
@@ -1079,6 +1342,7 @@ class DBStore:
         verified_accessible_at: str | None = None,
         notes: str | None = None,
         codebase_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         conn = self._get_conn()
         row = conn.execute(
@@ -1109,6 +1373,7 @@ class DBStore:
         added_via: str = "manual",
         verified_accessible_at: str | None = None,
         notes: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         conn = self._get_conn()
         row = conn.execute(
@@ -1183,7 +1448,8 @@ class DBStore:
         ).fetchall()
         return [Codebase(**row) for row in rows]
 
-    def update_codebase(self, codebase_id: str, **changes: Any) -> Codebase:
+    def update_codebase(self, codebase_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Codebase:
         conn = self._get_conn()
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values()) + [codebase_id]
@@ -1193,12 +1459,16 @@ class DBStore:
         ).fetchone()
         return Codebase(**row)
 
-    def remove_codebase(self, codebase_id: str) -> None:
+    def remove_codebase(self, codebase_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         conn = self._get_conn()
         conn.execute("DELETE FROM codebases WHERE id = %s", [codebase_id])
 
     def touch_codebase_accessed(
-        self, codebase_id: str, *, accessed_at: str | None = None
+        self, codebase_id: str, *, accessed_at: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         conn = self._get_conn()
         if accessed_at is not None:
@@ -1219,6 +1489,7 @@ class DBStore:
         *,
         verified_at: str | None = None,
         default_branch: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         conn = self._get_conn()
         set_parts = ["verified_accessible_at = " + ("%s" if verified_at else "now()")]
@@ -1252,6 +1523,7 @@ class DBStore:
         metadata: dict | None = None,
         expires_at: str | None = None,
         artifact_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         conn = self._get_conn()
         row = conn.execute(
@@ -1321,7 +1593,8 @@ class DBStore:
         rows = conn.execute(sql, values).fetchall()
         return [CodeArtifact(**row) for row in rows]
 
-    def update_code_artifact(self, artifact_id: str, **changes: Any) -> CodeArtifact:
+    def update_code_artifact(self, artifact_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> CodeArtifact:
         conn = self._get_conn()
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values()) + [artifact_id]
@@ -1331,12 +1604,16 @@ class DBStore:
         ).fetchone()
         return CodeArtifact(**row)
 
-    def delete_code_artifact(self, artifact_id: str) -> None:
+    def delete_code_artifact(self, artifact_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         conn = self._get_conn()
         conn.execute("DELETE FROM code_artifacts WHERE id = %s", [artifact_id])
 
     def touch_code_artifact_used(
-        self, artifact_id: str, *, used_at: str | None = None
+        self, artifact_id: str, *, used_at: str | None = None,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         conn = self._get_conn()
         if used_at is not None:
@@ -1397,6 +1674,7 @@ class DBStore:
         scope: str | None = None,
         expires_at: str | None = None,
         ttl_seconds: int = 3600,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         conn = self._get_conn()
         full_meta = dict(metadata or {})
@@ -1439,7 +1717,9 @@ class DBStore:
             ).fetchone()
         return CodeArtifact(**row)
 
-    def cleanup_expired_api_cache(self, *, now: str | None = None) -> int:
+    def cleanup_expired_api_cache(self, *, now: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> int:
         conn = self._get_conn()
         now_expr = "%s" if now else "now()"
         values: list[Any] = [now] if now else []
@@ -1468,6 +1748,7 @@ class DBStore:
         epic_id: str | None = None,
         turn_id: str | None = None,
         context_snapshot: dict | None = None,
+        idempotency_key: str | None = None,
     ) -> Feedback:
         conn = self._get_conn()
         row = conn.execute(
@@ -1492,7 +1773,8 @@ class DBStore:
         ).fetchone()
         return Feedback(**row) if row else None
 
-    def update_feedback(self, feedback_id: str, **changes: Any) -> Feedback:
+    def update_feedback(self, feedback_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Feedback:
         conn = self._get_conn()
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values())
@@ -1566,6 +1848,7 @@ class DBStore:
         summary: str,
         prior_state: dict[str, Any] | None,
         turn_id: str | None,
+        idempotency_key: str | None = None,
     ) -> EpicEvent:
         conn = self._get_conn()
         row = conn.execute(
@@ -1644,6 +1927,7 @@ class DBStore:
         audio_storage_url: str | None = None,
         transcription_metadata: dict[str, Any] | None = None,
         synthesize_outbound_id: bool = True,
+        idempotency_key: str | None = None,
     ) -> Message:
         conn = self._get_conn()
         row = conn.execute(
@@ -1679,7 +1963,8 @@ class DBStore:
         ).fetchall()
         return [Message(**row) for row in rows]
 
-    def update_message(self, message_id: str, **changes: Any) -> Message:
+    def update_message(self, message_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Message:
         conn = self._get_conn()
         if not changes:
             row = conn.execute("SELECT * FROM messages WHERE id = %s", [message_id]).fetchone()
@@ -1774,6 +2059,7 @@ class DBStore:
         prompt_version: str | None = None,
         state_at_turn: dict[str, Any] | None = None,
         model_version: str | None = None,
+        idempotency_key: str | None = None,
     ) -> BotTurn:
         conn = self._get_conn()
         row = conn.execute(
@@ -1793,7 +2079,8 @@ class DBStore:
         ).fetchone()
         return BotTurn(**row)
 
-    def update_turn(self, turn_id: str, **changes: Any) -> BotTurn:
+    def update_turn(self, turn_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> BotTurn:
         conn = self._get_conn()
         if not changes:
             row = conn.execute("SELECT * FROM bot_turns WHERE id = %s", [turn_id]).fetchone()
@@ -1968,6 +2255,7 @@ class DBStore:
         epic_id: str | None,
         name: str,
         idea: str,
+        idempotency_key: str | None = None,
         **fields: Any,
     ) -> Plan:
         conn = self._get_conn()
@@ -2010,7 +2298,8 @@ class DBStore:
         self,
         plan_id: str,
         *,
-        expected_revision: int | None = None,
+        expected_revision: int,
+        idempotency_key: str | None = None,
         **changes: Any,
     ) -> Plan:
         conn = self._get_conn()
@@ -2079,6 +2368,7 @@ class DBStore:
         data: bytes,
         *,
         expected_revision: int | None = None,
+        idempotency_key: str | None = None,
     ) -> ArtifactRef:
         conn = self._get_conn()
         sha256 = hashlib.sha256(data).hexdigest()
@@ -2194,8 +2484,14 @@ class DBStore:
         holder_id: str,
         worker_kind: str,
         ttl_seconds: int,
+        *,
+        epic_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> ExecutionLease:
         conn = self._get_conn()
+        if epic_id is None:
+            plan_row = conn.execute("SELECT epic_id FROM plans WHERE id = %s", [plan_id]).fetchone()
+            epic_id = plan_row["epic_id"] if plan_row else None
         try:
             with conn.transaction():
                 conn.execute(
@@ -2204,11 +2500,11 @@ class DBStore:
                 )
                 row = conn.execute(
                     """
-                    INSERT INTO execution_leases (plan_id, holder_id, worker_kind, phase, expires_at)
-                    VALUES (%s, %s, %s, 'active', now() + make_interval(secs => %s))
+                    INSERT INTO execution_leases (plan_id, epic_id, holder_id, worker_kind, phase, expires_at)
+                    VALUES (%s, %s, %s, %s, 'active', now() + make_interval(secs => %s))
                     RETURNING *
                     """,
-                    [plan_id, holder_id, worker_kind, ttl_seconds],
+                    [plan_id, epic_id, holder_id, worker_kind, ttl_seconds],
                 ).fetchone()
         except Exception as exc:
             if getattr(exc, "pgcode", None) == "23505":
@@ -2218,7 +2514,10 @@ class DBStore:
             raise
         return ExecutionLease(**row)
 
-    def heartbeat_lease(self, plan_id: str, holder_id: str) -> ExecutionLease:
+    def heartbeat_lease(self, plan_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ExecutionLease:
         conn = self._get_conn()
         row = conn.execute(
             """
@@ -2234,7 +2533,10 @@ class DBStore:
             raise LeaseConflict(f"No active lease for plan {plan_id!r} holder {holder_id!r}")
         return ExecutionLease(**row)
 
-    def release_lease(self, plan_id: str, holder_id: str) -> None:
+    def release_lease(self, plan_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         conn = self._get_conn()
         conn.execute(
             "DELETE FROM execution_leases WHERE plan_id = %s AND holder_id = %s",
@@ -2249,11 +2551,26 @@ class DBStore:
         ).fetchone()
         return ExecutionLease(**row) if row else None
 
+    def find_active_leases_for_epic(self, epic_id: str) -> list[ExecutionLease]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT * FROM execution_leases
+            WHERE epic_id = %s AND expires_at > now()
+            ORDER BY expires_at, plan_id
+            """,
+            [epic_id],
+        ).fetchall()
+        return [ExecutionLease(**row) for row in rows]
+
     # ------------------------------------------------------------------
     # T11 — Locks
     # ------------------------------------------------------------------
 
-    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int) -> EpicLock:
+    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> EpicLock:
         conn = self._get_conn()
         try:
             row = conn.execute(
@@ -2270,7 +2587,10 @@ class DBStore:
             raise
         return EpicLock(**row)
 
-    def release_lock(self, epic_id: str, holder_id: str) -> None:
+    def release_lock(self, epic_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         conn = self._get_conn()
         conn.execute(
             "DELETE FROM epic_locks WHERE epic_id = %s AND holder_id = %s",
@@ -2281,7 +2601,10 @@ class DBStore:
     # T11 — Control Plane
     # ------------------------------------------------------------------
 
-    def put_control_message(self, msg: ControlMessageInput) -> ControlMessage:
+    def put_control_message(self, msg: ControlMessageInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ControlMessage:
         self._require_actor()
         conn = self._get_conn()
         row = conn.execute(
@@ -2303,6 +2626,7 @@ class DBStore:
         *,
         processor_id: str,
         max: int = 10,
+        idempotency_key: str | None = None,
     ) -> list[ControlMessage]:
         conn = self._get_conn()
         rows = conn.execute(
@@ -2323,7 +2647,9 @@ class DBStore:
         return [ControlMessage(**row) for row in rows]
 
     def mark_control_message_processed(
-        self, msg_id: str, result: dict[str, Any]
+        self, msg_id: str, result: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
     ) -> None:
         conn = self._get_conn()
         conn.execute(
@@ -2335,7 +2661,10 @@ class DBStore:
     # T11 — Progress Events
     # ------------------------------------------------------------------
 
-    def append_progress_event(self, event: ProgressEventInput) -> ProgressEvent:
+    def append_progress_event(self, event: ProgressEventInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ProgressEvent:
         self._require_actor()
         conn = self._get_conn()
         row = conn.execute(
@@ -2388,6 +2717,7 @@ class DBStore:
         name: str,
         granted_epic_ids: str | Sequence[str],
         actor_kind: str,
+        idempotency_key: str | None = None,
     ) -> AutomationActor:
         conn = self._get_conn()
         gei: Any = list(granted_epic_ids) if not isinstance(granted_epic_ids, str) else granted_epic_ids
@@ -2408,7 +2738,8 @@ class DBStore:
         ).fetchone()
         return AutomationActor(**row) if row else None
 
-    def update_automation_actor(self, actor_id: str, **changes: Any) -> AutomationActor:
+    def update_automation_actor(self, actor_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> AutomationActor:
         conn = self._get_conn()
         if not changes:
             row = conn.execute(
