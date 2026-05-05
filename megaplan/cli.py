@@ -277,6 +277,23 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 lock_held=lock_held,
             )
         )
+        last_activity_at = _parse_utc_timestamp(details.get("last_activity_at"))
+        if last_activity_at is not None:
+            idle_seconds = max(0, int((datetime.now(timezone.utc) - last_activity_at).total_seconds()))
+            details["idle_seconds"] = idle_seconds
+            hard_idle_seconds = int(details.get("timeout_budget_seconds") or details.get("escalation_threshold_seconds") or 0)
+            if hard_idle_seconds > 0 and idle_seconds >= hard_idle_seconds:
+                details["idle_stale"] = True
+                details["health"] = "idle_stale" if lock_held else "stale"
+                details["recommended_action"] = "terminate_idle_step" if lock_held else details.get("recommended_action", "rerun_same_step")
+                details["recommended_action_reason"] = (
+                    f"The active step has produced no observed output or artifact activity for "
+                    f"{humanize_seconds(idle_seconds)}."
+                )
+                details["idle_recovery_hint"] = (
+                    "Terminate the idle worker, record the failed attempt, then rerun once; "
+                    "if the same phase/model idles again, reroute the phase to a fallback model."
+                )
         if details.get("stale"):
             orphaned = not lock_held
             details["orphaned"] = orphaned

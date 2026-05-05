@@ -7,6 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import TextIO
 
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan.workers import (
@@ -16,7 +17,7 @@ from megaplan.workers import (
     session_key_for,
     validate_payload,
 )
-from megaplan._core import creative_form_id, read_json, schemas_root
+from megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
 from megaplan.forms.provocations import select_active_checks
 from megaplan.prompts import create_hermes_prompt
 
@@ -53,6 +54,43 @@ def _toolsets_for_phase(phase: str) -> list[str] | None:
 
 _TEMPLATE_FILE_PHASES = {"finalize", "review", "prep"}
 _CUSTOM_TEMPLATE_PHASES = {"critique", "review"}
+
+
+class _ActivityStream:
+    def __init__(self, wrapped: TextIO, *, plan_dir: Path, run_id: str | None) -> None:
+        self._wrapped = wrapped
+        self._plan_dir = plan_dir
+        self._run_id = run_id
+        self._last_touch = 0.0
+
+    def write(self, text: str) -> int:
+        written = self._wrapped.write(text)
+        self._touch("stderr", text)
+        return written
+
+    def flush(self) -> None:
+        self._wrapped.flush()
+
+    def isatty(self) -> bool:
+        return self._wrapped.isatty()
+
+    def fileno(self) -> int:
+        return self._wrapped.fileno()
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._wrapped, name)
+
+    def _touch(self, kind: str, detail: str) -> None:
+        now = time.monotonic()
+        if now - self._last_touch < 2.0:
+            return
+        self._last_touch = now
+        touch_active_step(
+            self._plan_dir,
+            run_id=self._run_id,
+            kind=kind,
+            detail=detail.strip(),
+        )
 
 
 def _template_has_content(payload: dict, step: str) -> bool:
@@ -382,8 +420,13 @@ def run_hermes_step(
     # directly to it (bypassing _print_fn).  By swapping stdout to
     # stderr here, all spinner/progress output flows to stderr while
     # megaplan keeps stdout clean for structured JSON results.
+    active_step = state.get("active_step")
+    run_id = active_step.get("run_id") if isinstance(active_step, dict) else None
     real_stdout = sys.stdout
-    sys.stdout = sys.stderr
+    real_stderr = sys.stderr
+    activity_stderr = _ActivityStream(real_stderr, plan_dir=plan_dir, run_id=run_id if isinstance(run_id, str) else None)
+    sys.stderr = activity_stderr
+    sys.stdout = activity_stderr
 
     # Resolve model provider — support direct API providers via prefix
     # e.g. "zhipu:glm-5.1" → base_url=Zhipu API, model="glm-5.1"
@@ -574,6 +617,7 @@ def run_hermes_step(
                 ) from exc
     finally:
         sys.stdout = real_stdout
+        sys.stderr = real_stderr
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     cost_usd = result.get("estimated_cost_usd", 0.0) or 0.0

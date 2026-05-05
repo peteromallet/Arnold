@@ -84,6 +84,10 @@ class ActiveStep(TypedDict, total=False):
     run_id: str
     session_id: str
     started_at: str
+    attempt: int
+    last_activity_at: str
+    last_activity_kind: str
+    last_activity_detail: str
 
 
 class PlanVersionRecord(TypedDict, total=False):

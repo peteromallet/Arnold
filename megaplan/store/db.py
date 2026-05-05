@@ -260,6 +260,11 @@ _COPY_JSONB_COLUMNS = frozenset({
     "resulting_checklist_item_ids", "sessions", "state_at_turn",
     "transcription_metadata", "triggered_by_message_ids", "warnings_issued",
 })
+_SOURCE_REFERENCE_PREFIX = {
+    "user_uploaded": "img_user_upload",
+    "caller_uploaded": "img_caller_upload",
+    "agent_generated": "img_agent_generated",
+}
 
 
 class _DBTransaction:
@@ -1395,6 +1400,15 @@ class DBStore:
     # T8: Images
     # ------------------------------------------------------------------
 
+    def _next_image_reference(self, epic_id: str, source: str) -> str:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT count(*) AS count FROM images WHERE epic_id = %s AND source = %s",
+            [epic_id, source],
+        ).fetchone()
+        prefix = _SOURCE_REFERENCE_PREFIX.get(source, f"img_{source}")
+        return f"{prefix}_{int(row['count']) + 1}"
+
     def create_image(
         self,
         *,
@@ -1419,9 +1433,9 @@ class DBStore:
     ) -> Image:
         conn = self._get_conn()
         img_id = str(uuid.uuid4())
-        ref_key = reference_key or img_id
+        ref_key = reference_key or self._next_image_reference(epic_id, source)
         if active:
-            self.deactivate_active_image_reference(epic_id, ref_key)
+            DBStore.deactivate_active_image_reference(self, epic_id, ref_key)
         row = conn.execute(
             """
             INSERT INTO images
@@ -2347,6 +2361,18 @@ class DBStore:
     # T7 — Messages
     # ------------------------------------------------------------------
 
+    def _next_invocation_message_id(self, turn_id: str) -> str:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            SELECT count(*) AS count
+            FROM messages
+            WHERE bot_turn_id = %s AND direction = 'outbound'
+            """,
+            [turn_id],
+        ).fetchone()
+        return f"inv_{turn_id}_{int(row['count']) + 1}"
+
     def create_message(
         self,
         *,
@@ -2365,6 +2391,8 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> Message:
         conn = self._get_conn()
+        if synthesize_outbound_id and direction == "outbound" and discord_message_id is None and bot_turn_id:
+            discord_message_id = self._next_invocation_message_id(bot_turn_id)
         row = conn.execute(
             """
             INSERT INTO messages (
@@ -2393,8 +2421,8 @@ class DBStore:
         if not message_ids:
             return []
         rows = conn.execute(
-            "SELECT * FROM messages WHERE id = ANY(%s::text[]) ORDER BY sent_at",
-            [list(message_ids)],
+            "SELECT * FROM messages WHERE id = ANY(%s::text[]) ORDER BY array_position(%s::text[], id)",
+            [list(message_ids), list(message_ids)],
         ).fetchall()
         return [Message(**row) for row in rows]
 
@@ -2437,13 +2465,16 @@ class DBStore:
         limit: int = 20,
     ) -> list[MessageSearchHit]:
         conn = self._get_conn()
-        conditions = ["m.content @@ websearch_to_tsquery('english', %s)"]
-        values: list[Any] = [query]
+        conditions = [
+            "(to_tsvector('english', m.content) @@ websearch_to_tsquery('english', %s) "
+            "OR lower(m.content) LIKE lower(%s))"
+        ]
+        values: list[Any] = [query, f"%{query}%"]
         if epic_id is not None:
             conditions.append("m.epic_id = %s")
             values.append(epic_id)
         where = " AND ".join(conditions)
-        values.extend([query, query, limit])
+        values = [query, query, *values, limit]
         rows = conn.execute(
             f"""
             SELECT m.*,
@@ -2469,13 +2500,11 @@ class DBStore:
             """
             SELECT * FROM messages m
             WHERE m.epic_id = %s
+              AND m.direction = 'inbound'
+              AND m.bot_turn_id IS NULL
               AND m.sent_at >= %s::timestamptz
               AND NOT (m.id = ANY(%s::text[]))
-              AND NOT EXISTS (
-                  SELECT 1 FROM bot_turns bt
-                  WHERE bt.triggered_by_message_ids @> jsonb_build_array(m.id)
-              )
-            ORDER BY m.sent_at
+            ORDER BY m.sent_at, m.id
             """,
             [epic_id, started_at, list(exclude_ids)],
         ).fetchall()
@@ -2527,6 +2556,8 @@ class DBStore:
             "warnings_issued",
         })
         set_parts = [f"{k} = %s" for k in changes]
+        if changes.get("status") in {"completed", "failed", "abandoned"} and "completed_at" not in changes:
+            set_parts.append("completed_at = now()")
         values = [_jb(v) if k in jsonb_turn_cols else v for k, v in changes.items()]
         values.append(turn_id)
         row = conn.execute(
