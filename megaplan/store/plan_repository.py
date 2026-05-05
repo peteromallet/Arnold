@@ -384,6 +384,7 @@ class PlanRepository:
             "metadata": metadata or {},
         }
         state["current_state"] = current_state
+        state.pop("active_step", None)
         state["latest_failure"] = failure
         if resume_cursor is None:
             state.pop("resume_cursor", None)
