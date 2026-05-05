@@ -394,6 +394,7 @@ class PlanRepository:
         epic_id = state.get("epic_id") or (state.get("meta") or {}).get("epic_id")
         if self.store is not None and isinstance(epic_id, str) and epic_id:
             event_kind = "execution_blocked" if current_state == "blocked" else "plan_failed"
+            idempotency_key = f"plan-lifecycle:{self.plan_name}:{event_kind}:{phase or 'unknown'}:{kind}"
             self.store.append_progress_event(
                 ProgressEventInput(
                     epic_id=epic_id,
@@ -401,7 +402,8 @@ class PlanRepository:
                     kind=event_kind,
                     summary=message,
                     details=failure,
+                    idempotency_key=idempotency_key,
                 ),
-                idempotency_key=f"plan-lifecycle:{self.plan_name}:{event_kind}:{phase or 'unknown'}:{failure['recorded_at']}",
+                idempotency_key=idempotency_key,
             )
         return failure

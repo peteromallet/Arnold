@@ -2570,11 +2570,17 @@ class FileStore(Store):
         *,
         idempotency_key: str | None = None,
     ) -> ProgressEvent:
+        effective_idempotency_key = idempotency_key or event.idempotency_key
+        if effective_idempotency_key is not None:
+            for existing in self._progress_events():
+                if existing.idempotency_key == effective_idempotency_key:
+                    return existing
         progress = ProgressEvent(
             id=_new_id("prog"),
             epic_id=event.epic_id,
             plan_id=event.plan_id,
             sprint_id=event.sprint_id,
+            idempotency_key=effective_idempotency_key,
             kind=event.kind,
             summary=event.summary,
             details=event.details,

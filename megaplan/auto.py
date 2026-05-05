@@ -129,6 +129,7 @@ def _run_megaplan(
     *,
     cwd: Path | None = None,
     timeout: float | None = None,
+    progress_env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
     """Run a megaplan sub-command in its own process.
 
@@ -143,6 +144,10 @@ def _run_megaplan(
     need a moment to settle but will exit when their parent's pipes close.
     """
     try:
+        env = None
+        if progress_env:
+            env = os.environ.copy()
+            env.update(progress_env)
         proc = subprocess.run(
             [sys.executable, "-m", "megaplan", *args],
             cwd=str(cwd) if cwd else None,
@@ -150,6 +155,7 @@ def _run_megaplan(
             text=True,
             check=False,
             timeout=timeout,
+            env=env,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as expired:
@@ -164,8 +170,12 @@ def _status(
     cwd: Path | None = None,
     *,
     timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
+    progress_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    code, out, err = _run_megaplan(["status", "--plan", plan], cwd=cwd, timeout=timeout)
+    kwargs: dict[str, Any] = {"cwd": cwd, "timeout": timeout}
+    if progress_env:
+        kwargs["progress_env"] = progress_env
+    code, out, err = _run_megaplan(["status", "--plan", plan], **kwargs)
     if code != 0:
         raise RuntimeError(f"megaplan status failed (exit {code}): {err.strip() or out.strip()}")
     return json.loads(out)
@@ -332,11 +342,13 @@ def _record_lifecycle_failure(
     last_artifact: str | None = None,
     suggested_action: str | None = None,
     metadata: dict[str, Any] | None = None,
+    progress_emitter: Any | None = None,
 ) -> None:
     if plan_dir is None:
         return
+    failure_details: dict[str, Any] | None = None
     try:
-        PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
+        failure_details = PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
             kind=kind,
             message=message,
             current_state=current_state,
@@ -348,6 +360,11 @@ def _record_lifecycle_failure(
         )
     except (OSError, RuntimeError, ValueError):
         return
+    if progress_emitter is not None and failure_details is not None:
+        if current_state == STATE_BLOCKED:
+            progress_emitter.execution_blocked(summary=message, **failure_details)
+        else:
+            progress_emitter.plan_failed(summary=message, **failure_details)
 
 
 def drive(
@@ -365,6 +382,7 @@ def drive(
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
+    progress_env: dict[str, str] | None = None,
     writer=sys.stdout.write,
 ) -> DriverOutcome:
     """Drive ``plan`` to completion.
@@ -390,8 +408,13 @@ def drive(
     # reliable "forward progress" marker — each advance means a real
     # review cycle finished since we last observed the state.
     plan_dir = _resolve_plan_dir(plan, cwd)
+    from megaplan.progress import ProgressEmitter
+    progress_emitter = ProgressEmitter.from_env(progress_env)
     last_review_marker = _get_review_marker(plan_dir)
     rework_cycles_observed = 0
+
+    def _record_failure(**kwargs: Any) -> None:
+        _record_lifecycle_failure(**kwargs, progress_emitter=progress_emitter)
 
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
@@ -425,10 +448,13 @@ def drive(
 
     for iteration in range(1, max_iterations + 1):
         try:
-            status = _status(plan, cwd=cwd, timeout=status_timeout)
+            status_kwargs: dict[str, Any] = {"cwd": cwd, "timeout": status_timeout}
+            if progress_env:
+                status_kwargs["progress_env"] = progress_env
+            status = _status(plan, **status_kwargs)
         except (RuntimeError, json.JSONDecodeError) as error:
             log(f"status lookup failed: {error}")
-            _record_lifecycle_failure(
+            _record_failure(
                 plan_dir=plan_dir,
                 kind="status_lookup_failed",
                 message=str(error),
@@ -457,7 +483,7 @@ def drive(
                     total_cost_usd=cumulative,
                     cost_cap_usd=max_cost_usd,
                 )
-                _record_lifecycle_failure(
+                _record_failure(
                     plan_dir=plan_dir,
                     kind="cost_cap_exceeded",
                     message=f"Cost cap exceeded: {cumulative} > {max_cost_usd}",
@@ -603,7 +629,7 @@ def drive(
                         f"all pending tasks reported status=blocked "
                         f"({tasks_blocked} blocked) — treating as poisoned outcome"
                     )
-                    _record_lifecycle_failure(
+                    _record_failure(
                         plan_dir=plan_dir,
                         kind="tasks_blocked",
                         message="all pending tasks reported blocked",
@@ -625,7 +651,7 @@ def drive(
                         last_phase=last_phase,
                     )
                 log(f"stalled at state={state} for {stall_count} iterations")
-                _record_lifecycle_failure(
+                _record_failure(
                     plan_dir=plan_dir,
                     kind="stalled",
                     message=f"stalled at '{state}' for {stall_count} iterations",
@@ -654,6 +680,9 @@ def drive(
             if _has_valid_next(status, "override force-proceed"):
                 if on_escalate == "force-proceed":
                     log("gate escalated — force-proceeding (per on_escalate=force-proceed)")
+                    run_kwargs: dict[str, Any] = {"cwd": cwd, "timeout": status_timeout}
+                    if progress_env:
+                        run_kwargs["progress_env"] = progress_env
                     code, out, err = _run_megaplan(
                         [
                             "override",
@@ -663,8 +692,7 @@ def drive(
                             "--reason",
                             "megaplan auto: escalate → force-proceed",
                         ],
-                        cwd=cwd,
-                        timeout=status_timeout,
+                        **run_kwargs,
                     )
                     if code != 0:
                         log(f"force-proceed failed (exit {code}): {err.strip() or out.strip()}")
@@ -678,7 +706,7 @@ def drive(
                             "escalate_requires_user_approval",
                         )
                         if any(signal in combined_text for signal in strict_signals):
-                            _record_lifecycle_failure(
+                            _record_failure(
                                 plan_dir=plan_dir,
                                 kind="human_required",
                                 message="force-proceed blocked by strict-notes",
@@ -698,7 +726,7 @@ def drive(
                                 ),
                                 last_phase=last_phase,
                             )
-                        _record_lifecycle_failure(
+                        _record_failure(
                             plan_dir=plan_dir,
                             kind="override_failed",
                             message=f"override force-proceed exited {code}",
@@ -718,6 +746,9 @@ def drive(
                     continue
                 if on_escalate == "abort":
                     log("gate escalated — aborting (per on_escalate=abort)")
+                    run_kwargs = {"cwd": cwd, "timeout": status_timeout}
+                    if progress_env:
+                        run_kwargs["progress_env"] = progress_env
                     _run_megaplan(
                         [
                             "override",
@@ -727,8 +758,7 @@ def drive(
                             "--reason",
                             "megaplan auto: escalate → abort",
                         ],
-                        cwd=cwd,
-                        timeout=status_timeout,
+                        **run_kwargs,
                     )
                     return _outcome(
                         "aborted",
@@ -739,7 +769,7 @@ def drive(
                     )
                 # on_escalate == "fail"
                 log("gate escalated — failing (per on_escalate=fail)")
-                _record_lifecycle_failure(
+                _record_failure(
                     plan_dir=plan_dir,
                     kind="gate_escalated",
                     message="gate escalated and on_escalate=fail",
@@ -757,7 +787,7 @@ def drive(
                     last_phase=last_phase,
                 )
             log(f"no next_step and no override available (valid_next={valid_next})")
-            _record_lifecycle_failure(
+            _record_failure(
                 plan_dir=plan_dir,
                 kind="no_next_step",
                 message="no next_step and no override available",
@@ -779,7 +809,10 @@ def drive(
         cmd = _phase_command(next_step) + ["--plan", plan]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         last_phase = next_step
-        code, out, err = _run_megaplan(cmd, cwd=cwd, timeout=phase_timeout)
+        run_kwargs = {"cwd": cwd, "timeout": phase_timeout}
+        if progress_env:
+            run_kwargs["progress_env"] = progress_env
+        code, out, err = _run_megaplan(cmd, **run_kwargs)
         if max_context_retries > 0:
             while (
                 next_step == "execute"
@@ -792,7 +825,7 @@ def drive(
                         context_retries_used=context_retry_count,
                         max_context_retries=max_context_retries,
                     )
-                    _record_lifecycle_failure(
+                    _record_failure(
                         plan_dir=plan_dir,
                         kind="context_retry_exhausted",
                         message=f"context exhaustion retry cap reached ({context_retry_count}/{max_context_retries})",
@@ -823,10 +856,13 @@ def drive(
                 context_retry_count += 1
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
-                code, out, err = _run_megaplan(cmd, cwd=cwd, timeout=phase_timeout)
+                run_kwargs = {"cwd": cwd, "timeout": phase_timeout}
+                if progress_env:
+                    run_kwargs["progress_env"] = progress_env
+                code, out, err = _run_megaplan(cmd, **run_kwargs)
         if code == PHASE_TIMEOUT_EXIT_CODE:
             log(f"phase '{next_step}' timed out after {phase_timeout}s — stall detection will enforce the cap")
-            _record_lifecycle_failure(
+            _record_failure(
                 plan_dir=plan_dir,
                 kind="phase_timeout",
                 message=f"phase '{next_step}' timed out after {phase_timeout}s",
@@ -842,7 +878,7 @@ def drive(
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
             log(f"phase '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
-            _record_lifecycle_failure(
+            _record_failure(
                 plan_dir=plan_dir,
                 kind="phase_failed",
                 message=f"phase '{next_step}' exited {code}",
@@ -859,7 +895,7 @@ def drive(
                 on_phase_complete(next_step, int(code or 0), out, err)
             except Exception as error:  # pragma: no cover - defensive callback boundary
                 log(f"phase-complete callback failed after '{next_step}': {error}")
-                _record_lifecycle_failure(
+                _record_failure(
                     plan_dir=plan_dir,
                     kind="phase_callback_failed",
                     message=f"phase-complete callback failed after '{next_step}': {error}",
@@ -895,7 +931,7 @@ def drive(
                         max_blocked_retries=max_blocked_retries,
                         blocking_reasons=deviations,
                     )
-                    _record_lifecycle_failure(
+                    _record_failure(
                         plan_dir=plan_dir,
                         kind="execution_blocked",
                         message="execute returned result=blocked from quality gates",
@@ -940,7 +976,7 @@ def drive(
 
     # Hit iteration cap.
     log(f"hit max_iterations={max_iterations}")
-    _record_lifecycle_failure(
+    _record_failure(
         plan_dir=plan_dir,
         kind="iteration_cap",
         message=f"exceeded max_iterations={max_iterations}",
@@ -1088,6 +1124,10 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 def run_auto(root: Path, args: argparse.Namespace) -> int:
     """CLI entry point. Returns a POSIX exit code suitable for ``sys.exit``."""
+    from megaplan.progress import ProgressContext
+
+    progress_context = ProgressContext.from_env()
+    progress_env = progress_context.to_env() if progress_context is not None else None
     outcome = drive(
         args.plan,
         cwd=root,
@@ -1101,6 +1141,7 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
         status_timeout=args.status_timeout,
+        progress_env=progress_env,
     )
     outcome_json = outcome.to_json()
     if args.outcome_file:

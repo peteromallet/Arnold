@@ -15,7 +15,9 @@ from megaplan._core import PHASE_RUNTIME_POLICY
 from megaplan.types import CliError
 from megaplan.workers import (
     _build_mock_payload,
+    _codex_child_env,
     _codex_timeout_for_step,
+    _external_worker_env,
     _merge_partial_output,
     WorkerResult,
     extract_session_id,
@@ -48,6 +50,26 @@ def test_parse_claude_envelope_prefers_structured_output() -> None:
     envelope, payload = parse_claude_envelope(raw)
     assert envelope["total_cost_usd"] == 0.01
     assert payload == {"plan": "x"}
+
+
+def test_external_worker_env_strips_progress_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEGAPLAN_PROGRESS_ENABLED", "1")
+    monkeypatch.setenv("MEGAPLAN_PROGRESS_EPIC_ID", "epic-1")
+    monkeypatch.setenv("CODEX_THREAD_ID", "outer-thread")
+    monkeypatch.setenv("CODEX_CI", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+
+    claude_env = _external_worker_env()
+    codex_env = _codex_child_env()
+
+    assert "MEGAPLAN_PROGRESS_ENABLED" not in claude_env
+    assert "MEGAPLAN_PROGRESS_EPIC_ID" not in claude_env
+    assert claude_env["OPENAI_API_KEY"] == "secret"
+    assert "MEGAPLAN_PROGRESS_ENABLED" not in codex_env
+    assert "MEGAPLAN_PROGRESS_EPIC_ID" not in codex_env
+    assert "CODEX_THREAD_ID" not in codex_env
+    assert "CODEX_CI" not in codex_env
+    assert codex_env["OPENAI_API_KEY"] == "secret"
 
 
 def test_parse_claude_envelope_rejects_invalid_json() -> None:
