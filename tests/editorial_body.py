@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from megaplan.editorial.body import edit_section, read_body, update_body
 from megaplan.editorial.errors import EditorialValidationError, EditorialWorkflowError
-from megaplan.store import FileStore, RevisionConflict
-
-
-def _store(tmp_path: Path) -> FileStore:
-    return FileStore(tmp_path / "store")
+from megaplan.store import RevisionConflict
 
 
 def _body() -> str:
@@ -25,8 +19,8 @@ def _body() -> str:
     )
 
 
-def test_body_update_uses_store_body_api_and_records_event(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_body_update_uses_store_body_api_and_records_event(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body=_body())
 
     updated = update_body(
@@ -46,8 +40,8 @@ def test_body_update_uses_store_body_api_and_records_event(tmp_path: Path) -> No
     assert events[0].turn_id == "turn-1"
 
 
-def test_body_update_rejects_empty_body_and_lockdown_state(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_body_update_rejects_empty_body_and_lockdown_state(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body=_body())
 
     with pytest.raises(EditorialValidationError, match="cannot be empty"):
@@ -58,8 +52,8 @@ def test_body_update_rejects_empty_body_and_lockdown_state(tmp_path: Path) -> No
         update_body(store=store, epic_id=epic.id, actor_id="actor", body=_body(), expected_revision=planned.revision)
 
 
-def test_section_edits_validate_missing_duplicate_and_malformed_sections(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_section_edits_validate_missing_duplicate_and_malformed_sections(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body=_body())
 
     with pytest.raises(EditorialValidationError, match="Unsupported section edit mode"):
@@ -106,8 +100,8 @@ def test_section_edits_validate_missing_duplicate_and_malformed_sections(tmp_pat
         )
 
 
-def test_section_replace_append_prepend_and_delete(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_section_replace_append_prepend_and_delete(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body=_body())
 
     epic = edit_section(
@@ -153,8 +147,8 @@ def test_section_replace_append_prepend_and_delete(tmp_path: Path) -> None:
     assert store.load_body(epic.id).endswith("# Deliverable\n")
 
 
-def test_body_update_surfaces_revision_conflicts(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_body_update_surfaces_revision_conflicts(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body=_body())
     store.update_body(epic.id, _body() + "\nextra", expected_revision=epic.revision)
 

@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from megaplan.editorial import sprints
 from megaplan.editorial.errors import EditorialNotFound, EditorialValidationError, EditorialWorkflowError
-from megaplan.store import FileStore, RevisionConflict, SprintItemInput
+from megaplan.store import RevisionConflict, SprintItemInput
 
 
-def _store(tmp_path: Path) -> FileStore:
-    return FileStore(tmp_path / "store")
-
-
-def test_sprint_crud_items_queue_and_events(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_sprint_crud_items_queue_and_events(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
 
     first = sprints.create_sprint(store=store, epic_id=epic.id, actor_id="actor", sprint_number=1, name="One", goal="First")
@@ -61,8 +55,8 @@ def test_sprint_crud_items_queue_and_events(tmp_path: Path) -> None:
     assert event_types.count("sprint_status_change") == 1
 
 
-def test_sprint_queue_validation_and_stale_cleanup(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_sprint_queue_validation_and_stale_cleanup(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
     first = sprints.create_sprint(store=store, epic_id=epic.id, actor_id="actor", sprint_number=1, name="One", goal="First")
     second = sprints.create_sprint(store=store, epic_id=epic.id, actor_id="actor", sprint_number=2, name="Two", goal="Second")
@@ -84,8 +78,8 @@ def test_sprint_queue_validation_and_stale_cleanup(tmp_path: Path) -> None:
         sprints.set_sprint_queue(store=store, epic_id=epic.id, actor_id="actor", ordered_sprint_ids=[], pending={first.id: ""})
 
 
-def test_sprint_editorial_validates_empty_text_and_missing_sprint_ids(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_sprint_editorial_validates_empty_text_and_missing_sprint_ids(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
 
     with pytest.raises(EditorialValidationError, match="name cannot be empty"):
@@ -104,8 +98,8 @@ def test_sprint_editorial_validates_empty_text_and_missing_sprint_ids(tmp_path: 
         sprints.delete_sprint(store=store, epic_id=epic.id, actor_id="actor", sprint_id="missing")
 
 
-def test_sprint_revision_conflict_and_lockdown(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_sprint_revision_conflict_and_lockdown(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
     sprint = sprints.create_sprint(store=store, epic_id=epic.id, actor_id="actor", sprint_number=1, name="One", goal="First")
     store.update_sprint(sprint.id, expected_revision=sprint.revision, goal="External")

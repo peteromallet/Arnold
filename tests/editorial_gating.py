@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from megaplan.editorial.gating import evaluate_state_transition, transition_epic_state
 from megaplan.editorial.lockdown import ensure_unlocked_for_edit, scan_lockdown_phrases
 from megaplan.editorial.errors import EditorialWorkflowError
-from megaplan.store import ChecklistItemInput, FileStore, RevisionConflict, SprintItemInput
+from megaplan.store import ChecklistItemInput, RevisionConflict, SprintItemInput
 
 
 def _body(*, lockdown_phrase: str | None = None) -> str:
@@ -27,12 +25,8 @@ def _body(*, lockdown_phrase: str | None = None) -> str:
     )
 
 
-def _store(tmp_path: Path) -> FileStore:
-    return FileStore(tmp_path / "store")
-
-
-def test_transition_shaping_to_sprinting_records_state_change_event(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_transition_shaping_to_sprinting_records_state_change_event(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Editorial", goal="Port Arnold", body=_body())
     store.add_checklist_items(
         epic.id,
@@ -60,8 +54,8 @@ def test_transition_shaping_to_sprinting_records_state_change_event(tmp_path: Pa
     assert events[0].turn_id == "turn-1"
 
 
-def test_transition_blocks_missing_prerequisites_and_invalid_transitions(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_transition_blocks_missing_prerequisites_and_invalid_transitions(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Editorial", goal="Port Arnold", body="# Goal\nToo short")
 
     with pytest.raises(EditorialWorkflowError, match="Transition blocked") as exc_info:
@@ -86,8 +80,8 @@ def test_transition_blocks_missing_prerequisites_and_invalid_transitions(tmp_pat
     assert "Unsupported transition: shaping -> planned" in invalid.value.details["blockers"]
 
 
-def test_transition_rejects_stale_revisions(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_transition_rejects_stale_revisions(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Editorial", goal="Port Arnold", body=_body())
     store.update_epic(epic.id, expected_revision=epic.revision, title="Updated")
 
@@ -101,8 +95,8 @@ def test_transition_rejects_stale_revisions(tmp_path: Path) -> None:
         )
 
 
-def test_transition_blocks_paused_and_archived_sources(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_transition_blocks_paused_and_archived_sources(editorial_store) -> None:
+    store = editorial_store
     for state in ("paused", "archived"):
         epic = store.create_epic(title=f"Editorial {state}", goal="Port Arnold", body=_body(), state=state)
         result = evaluate_state_transition(epic=epic, target_state="sprinting")
@@ -110,8 +104,8 @@ def test_transition_blocks_paused_and_archived_sources(tmp_path: Path) -> None:
         assert any(state in blocker for blocker in result.blockers)
 
 
-def test_planned_transition_enforces_lockdown_and_sprint_prerequisites(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_planned_transition_enforces_lockdown_and_sprint_prerequisites(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(
         title="Editorial",
         goal="Port Arnold",

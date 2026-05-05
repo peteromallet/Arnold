@@ -4,6 +4,7 @@ import inspect
 
 import megaplan.auto as auto
 from megaplan.editorial.reads import load_hot_context
+from megaplan.store import FileStore
 from megaplan.store.base import HotContext
 
 
@@ -34,3 +35,16 @@ def test_auto_has_no_active_manual_hot_context_composition_call_site() -> None:
     assert "load_hot_context(" not in source
     assert "recent_messages=" not in source
     assert "active_feedback=" not in source
+
+
+def test_editorial_backend_fixture_does_not_masquerade_db_as_file_store(
+    editorial_store,
+    editorial_backend_name: str,
+) -> None:
+    if editorial_backend_name == "db":
+        from megaplan.store import DBStore
+
+        assert isinstance(editorial_store, DBStore)
+        assert not isinstance(editorial_store, FileStore)
+    else:
+        assert isinstance(editorial_store, FileStore)

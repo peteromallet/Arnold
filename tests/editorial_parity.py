@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from megaplan.editorial import checklist, sprints
 from megaplan.editorial.body import edit_section, read_body, update_body
 from megaplan.editorial.gating import transition_epic_state
-from megaplan.store import FileStore, SprintItemInput
+from megaplan.store import SprintItemInput
 
 
 MANUAL_PARITY_NOTES = (
     "Generated IDs, transaction IDs, revisions, and timestamps are intentionally excluded from "
     "the automated Arnold parity comparison. Stable semantic fields are compared directly."
 )
-
-
-def _store(tmp_path: Path) -> FileStore:
-    return FileStore(tmp_path / "store")
 
 
 def _handoff_body() -> str:
@@ -73,8 +68,8 @@ def _normalize_sprints(rows: list[Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def test_arnold_editorial_flow_parity_compares_stable_semantics(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_arnold_editorial_flow_parity_compares_stable_semantics(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Editorial transplant", goal="Port Arnold", body="# Draft\nRough notes")
 
     epic = update_body(

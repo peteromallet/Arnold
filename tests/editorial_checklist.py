@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from megaplan.editorial import checklist
 from megaplan.editorial.errors import EditorialNotFound, EditorialValidationError, EditorialWorkflowError
-from megaplan.store import ChecklistItemInput, FileStore
+from megaplan.store import ChecklistItemInput
 
 
-def _store(tmp_path: Path) -> FileStore:
-    return FileStore(tmp_path / "store")
-
-
-def test_checklist_crud_status_helpers_and_events(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_checklist_crud_status_helpers_and_events(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
 
     items = checklist.add_items(store=store, epic_id=epic.id, actor_id="actor", contents=["One", "Two"])
@@ -51,8 +45,8 @@ def test_checklist_crud_status_helpers_and_events(tmp_path: Path) -> None:
     ]
 
 
-def test_checklist_update_and_supersession_preserve_status_metadata(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_checklist_update_and_supersession_preserve_status_metadata(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
     first, second = checklist.add_items(store=store, epic_id=epic.id, actor_id="actor", contents=["One", "Two"])
 
@@ -80,8 +74,8 @@ def test_checklist_update_and_supersession_preserve_status_metadata(tmp_path: Pa
     assert reopened.superseded_by_item_id is None
 
 
-def test_checklist_reorder_and_single_move_rely_on_store_normalization(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_checklist_reorder_and_single_move_rely_on_store_normalization(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
     items = checklist.add_items(store=store, epic_id=epic.id, actor_id="actor", contents=["One", "Two", "Three"])
 
@@ -99,8 +93,8 @@ def test_checklist_reorder_and_single_move_rely_on_store_normalization(tmp_path:
     assert [item.position for item in reordered] == [1, 2, 3]
 
 
-def test_checklist_replace_preserves_status_metadata(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_checklist_replace_preserves_status_metadata(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
     replacement = [
         ChecklistItemInput(content="Done", status="done"),
@@ -114,8 +108,8 @@ def test_checklist_replace_preserves_status_metadata(tmp_path: Path) -> None:
     assert items[1].skip_reason == "No longer needed"
 
 
-def test_checklist_validates_status_specific_fields_and_ids(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_checklist_validates_status_specific_fields_and_ids(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
     item = checklist.add_items(store=store, epic_id=epic.id, actor_id="actor", contents=["One"])[0]
 
@@ -136,8 +130,8 @@ def test_checklist_validates_status_specific_fields_and_ids(tmp_path: Path) -> N
         checklist.reorder_items(store=store, epic_id=epic.id, actor_id="actor", ordered_item_ids=[])
 
 
-def test_checklist_rejects_review_lockdown(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_checklist_rejects_review_lockdown(editorial_store) -> None:
+    store = editorial_store
     epic = store.create_epic(title="Epic", goal="Goal", body="Body", state="planned")
 
     with pytest.raises(EditorialWorkflowError, match="checklist_change is locked"):
