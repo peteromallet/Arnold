@@ -384,6 +384,47 @@ def test_recover_codex_payload_prefers_valid_output_file_over_raw_transcript(tmp
     assert recovered == file_payload
 
 
+def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "execute_output.json"
+    output_path.write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "id": "T3",
+                        "status": "completed",
+                        "executor_notes": "Generated the template index.",
+                        "files_changed": ["vibecomfy/template_index.json"],
+                        "commands_run": ["python -m json.tool template_index.json"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {
+                        "id": "SC3",
+                        "executor_note": "Template index count is 51.",
+                        "verdict": "",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recovered = _recover_codex_payload(
+        "execute",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered is not None
+    assert recovered["task_updates"][0]["task_id"] == "T3"
+    assert recovered["task_updates"][0]["status"] == "done"
+    assert recovered["sense_check_acknowledgments"][0]["sense_check_id"] == "SC3"
+
+
 def test_recover_codex_payload_accepts_review_without_checks_and_trailing_telemetry(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()

@@ -943,6 +943,35 @@ def _extract_json_from_raw(raw: str) -> dict[str, Any] | None:
 
 
 def _normalize_worker_payload(step: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if step == "execute":
+        normalized = dict(payload)
+        task_updates = normalized.get("task_updates")
+        if isinstance(task_updates, list):
+            normalized_updates: list[Any] = []
+            for update in task_updates:
+                if not isinstance(update, dict):
+                    normalized_updates.append(update)
+                    continue
+                item = dict(update)
+                if "task_id" not in item and isinstance(item.get("id"), str):
+                    item["task_id"] = item["id"]
+                if item.get("status") == "completed":
+                    item["status"] = "done"
+                normalized_updates.append(item)
+            normalized["task_updates"] = normalized_updates
+        acknowledgments = normalized.get("sense_check_acknowledgments")
+        if isinstance(acknowledgments, list):
+            normalized_acknowledgments: list[Any] = []
+            for acknowledgment in acknowledgments:
+                if not isinstance(acknowledgment, dict):
+                    normalized_acknowledgments.append(acknowledgment)
+                    continue
+                item = dict(acknowledgment)
+                if "sense_check_id" not in item and isinstance(item.get("id"), str):
+                    item["sense_check_id"] = item["id"]
+                normalized_acknowledgments.append(item)
+            normalized["sense_check_acknowledgments"] = normalized_acknowledgments
+        return normalized
     if step == "revise" and "changes_summary" not in payload:
         normalized = dict(payload)
         flags_addressed = normalized.get("flags_addressed", [])
