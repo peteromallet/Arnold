@@ -45,6 +45,44 @@ def test_file_store_places_orphan_plans_under_orphan_root(tmp_path: Path) -> Non
     assert (tmp_path / "store" / "messages" / f"{message.id}.json").exists()
 
 
+def test_file_store_plan_artifacts_are_recursive_and_path_safe(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    plan = store.create_plan(
+        sprint_id=None,
+        epic_id=None,
+        name="legacy-plan",
+        idea="legacy",
+        idempotency_key=deterministic_idempotency_key("file-test", "nested-artifact-plan"),
+    )
+
+    nested = store.write_plan_artifact(
+        plan.id,
+        "nested/state.bin",
+        b"\x00\xffnested\n",
+        idempotency_key=deterministic_idempotency_key("file-test", plan.id, "nested-artifact"),
+    )
+    root = store.write_plan_artifact(
+        plan.id,
+        "state.json",
+        b"{\"ok\": true}\n",
+        idempotency_key=deterministic_idempotency_key("file-test", plan.id, "root-artifact"),
+    )
+
+    assert nested.name == "nested/state.bin"
+    assert root.name == "state.json"
+    assert [ref.name for ref in store.list_plan_artifacts(plan.id)] == ["nested/state.bin", "state.json"]
+    assert store.read_plan_artifact(plan.id, "nested/state.bin") == b"\x00\xffnested\n"
+    assert store.stat_plan_artifact(plan.id, "nested/state.bin").size_bytes == len(b"\x00\xffnested\n")
+
+    for unsafe in ["/absolute.bin", "../escape.bin", "nested/../escape.bin", "nested//state.bin", "nested\\state.bin"]:
+        with pytest.raises(ValueError, match="Unsafe|non-empty"):
+            store.write_plan_artifact(plan.id, unsafe, b"bad")
+        with pytest.raises(ValueError, match="Unsafe|non-empty"):
+            store.read_plan_artifact(plan.id, unsafe)
+        with pytest.raises(ValueError, match="Unsafe|non-empty"):
+            store.stat_plan_artifact(plan.id, unsafe)
+
+
 def test_local_dir_blob_store_round_trip(tmp_path: Path) -> None:
     store = LocalDirBlobStore(tmp_path / "blobs")
 

@@ -120,6 +120,7 @@ class PlanArtifact(StorageModel):
     phase: str | None = None
     content_text: str | None = None
     content_json: dict[str, Any] | list[Any] | None = None
+    content_base64: str | None = None
     sha256: str
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
