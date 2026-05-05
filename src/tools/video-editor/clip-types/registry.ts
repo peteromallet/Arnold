@@ -4,12 +4,12 @@ import {
   type ClipTypeDescriptor,
   type ClipTypeHoldSupport,
   type ClipTypeSequenceParamDefinition,
-} from './defineClipType';
+} from './defineClipType.ts';
 import {
   TRUSTED_SEQUENCE_METADATA,
   type TrustedSequenceClipType,
   type TrustedSequenceMetadata,
-} from '@/tools/video-editor/sequences/metadata';
+} from '../sequences/metadata.ts';
 
 export type TrustedClipTypeMetadata = TrustedSequenceMetadata;
 

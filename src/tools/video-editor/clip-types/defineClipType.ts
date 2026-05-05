@@ -5,7 +5,7 @@ import type {
   ResolvedTimelineConfig,
   TimelineClip,
   TrackKind,
-} from '@/tools/video-editor/types';
+} from '../types/index.ts';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };

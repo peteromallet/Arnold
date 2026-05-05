@@ -2,7 +2,7 @@ import type {
   ClipTypeHoldTiming,
   ClipTypeSequenceParamDefinition,
   ClipTypeSequenceParamKind,
-} from '@/tools/video-editor/clip-types/defineClipType';
+} from '../clip-types/defineClipType.ts';
 
 export const TRUSTED_SEQUENCE_THEME_ID = '2rp' as const;
 

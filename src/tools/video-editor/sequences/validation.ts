@@ -1,9 +1,9 @@
 import {
   TRUSTED_CLIP_TYPE_METADATA,
   getTrustedClipTypeRegistration,
-} from '@/tools/video-editor/clip-types/registry';
-import type { TrustedSequenceClipType, TrustedSequenceMetadata } from './metadata';
-import type { ClipTypeSequenceParamDefinition as SequenceParamMetadata } from '@/tools/video-editor/clip-types/defineClipType';
+} from '../clip-types/registry.ts';
+import type { TrustedSequenceClipType, TrustedSequenceMetadata } from './metadata.ts';
+import type { ClipTypeSequenceParamDefinition as SequenceParamMetadata } from '../clip-types/defineClipType.ts';
 
 export type SequenceDraftParams = Record<string, string | readonly string[]>;
 
