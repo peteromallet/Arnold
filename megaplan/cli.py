@@ -45,6 +45,7 @@ from megaplan._core import (
     read_json,
     resolve_debt,
     resolve_plan_dir,
+    resume_plan,
     save_debt_registry,
     save_config,
     subsystem_occurrence_total,
@@ -450,7 +451,7 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
     include_done = getattr(args, "include_done", False)
     show_summary = getattr(args, "summary", False)
     search_all = getattr(args, "all", False)
-    # Default: tree=True (parent+child), active-only (exclude done/aborted)
+    # Default: tree=True (parent+child), active-only (exclude terminal plans)
     # --status overrides the active filter (explicit filter = show exactly that)
     search_tree = not no_tree and not search_all
     filter_active = not include_done and not filter_status
@@ -522,7 +523,7 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
     hidden_done = total_scanned - len(items) if filter_active else 0
     hints: list[str] = []
     if hidden_done > 0:
-        hints.append(f"{hidden_done} completed plans hidden (use --include-done to show)")
+        hints.append(f"{hidden_done} terminal plans hidden (use --include-done to show)")
     if not search_all:
         hints.append("Use --all to search all plans system-wide")
     if hints:
@@ -997,6 +998,18 @@ def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
     raise CliError("invalid_args", f"Unknown epic action: {action}")
 
 
+def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
+    store = None
+    if getattr(args, "actor", None) or getattr(args, "backend", None) == "db" or os.environ.get("MEGAPLAN_ACTOR_ID"):
+        store = build_epic_store(root, actor_id=getattr(args, "actor", None) or os.environ.get("MEGAPLAN_ACTOR_ID"))
+    try:
+        return resume_plan(root, args.plan, store=store)
+    finally:
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+
+
 # ---------------------------------------------------------------------------
 # Parser and dispatch
 # ---------------------------------------------------------------------------
@@ -1078,7 +1091,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--no-tree", action="store_true",
                              help="Only show plans from the current directory (default includes parent + child)")
     list_parser.add_argument("--include-done", action="store_true",
-                             help="Include terminal plans (done/aborted); excluded by default")
+                             help="Include terminal plans; excluded by default")
     list_parser.add_argument("--status", dest="filter_status",
                              help="Filter by state (e.g. 'done', 'finalized', 'executed', or comma-separated 'planned,critiqued')")
     list_parser.add_argument("--summary", action="store_true",
@@ -1104,6 +1117,9 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "status":
             step_parser.add_argument("--pending-human", action="store_true",
                                      help="List plans awaiting human verification")
+
+    resume_parser = subparsers.add_parser("resume", help="Resume a failed or blocked plan from its stored cursor")
+    resume_parser.add_argument("--plan", required=True)
 
     audit_parser = subparsers.add_parser("audit")
     audit_parser.add_argument("--plan")
@@ -1329,6 +1345,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "audit": handle_audit,
     "progress": handle_progress,
     "watch": handle_watch,
+    "resume": handle_resume,
     "list": handle_list,
     "loop-init": handle_loop_init,
     "loop-run": handle_loop_run,

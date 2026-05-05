@@ -18,6 +18,7 @@ from megaplan._core.io import (
     read_json,
 )
 from megaplan.schemas import Plan, PlanArtifact
+from megaplan.store.base import ProgressEventInput
 
 from .base import Store
 
@@ -327,12 +328,15 @@ class PlanRepository:
         finalize = self.read_artifact_json("finalize.json")
         execution = self.read_artifact_json("execution.json")
         latest_failure = None
+        resume_cursor = state.get("resume_cursor") if isinstance(state.get("resume_cursor"), dict) else None
         history = state.get("history") or []
         if isinstance(history, list):
             for entry in reversed(history):
                 if isinstance(entry, dict) and entry.get("result") == "failed":
                     latest_failure = dict(entry)
                     break
+        if latest_failure is None and isinstance(state.get("latest_failure"), dict):
+            latest_failure = dict(state["latest_failure"])
         timestamps = [path.stat().st_mtime for path in self.list_artifact_paths()]
         updated_at = (
             datetime.fromtimestamp(max(timestamps), tz=UTC)
@@ -347,8 +351,57 @@ class PlanRepository:
             latest_review=review if isinstance(review, dict) else None,
             latest_execution=execution if isinstance(execution, dict) else None,
             latest_failure=latest_failure,
+            resume_cursor=resume_cursor,
             updated_at=updated_at,
         )
 
     def save_plan(self, plan: Plan) -> None:
         self.save_state(plan.to_plan_state())
+
+    def record_lifecycle_failure(
+        self,
+        *,
+        kind: str,
+        message: str,
+        current_state: str,
+        phase: str | None,
+        resume_cursor: dict[str, Any] | None,
+        last_artifact: str | None = None,
+        suggested_action: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Persist a queryable failure record and optional resume cursor."""
+
+        state = self.load_state()
+        failure: dict[str, Any] = {
+            "kind": kind,
+            "message": message,
+            "phase": phase,
+            "state": current_state,
+            "recorded_at": now_utc(),
+            "last_artifact": last_artifact,
+            "suggested_action": suggested_action,
+            "metadata": metadata or {},
+        }
+        state["current_state"] = current_state
+        state["latest_failure"] = failure
+        if resume_cursor is None:
+            state.pop("resume_cursor", None)
+        else:
+            state["resume_cursor"] = dict(resume_cursor)
+        self.save_state(state)
+
+        epic_id = state.get("epic_id") or (state.get("meta") or {}).get("epic_id")
+        if self.store is not None and isinstance(epic_id, str) and epic_id:
+            event_kind = "execution_blocked" if current_state == "blocked" else "plan_failed"
+            self.store.append_progress_event(
+                ProgressEventInput(
+                    epic_id=epic_id,
+                    plan_id=self.plan_name,
+                    kind=event_kind,
+                    summary=message,
+                    details=failure,
+                ),
+                idempotency_key=f"plan-lifecycle:{self.plan_name}:{event_kind}:{phase or 'unknown'}:{failure['recorded_at']}",
+            )
+        return failure

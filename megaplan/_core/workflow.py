@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from megaplan.types import (
@@ -22,7 +25,9 @@ from megaplan.types import (
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
+from megaplan.store import ProgressEventInput, RevisionConflict, Store
 from .modes import is_creative_mode
+from .io import find_plan_dir
 
 
 @dataclass(frozen=True)
@@ -266,6 +271,97 @@ def workflow_next(state: PlanState) -> list[str]:
 
 
 infer_next_steps = workflow_next
+
+
+def _resume_phase_args(phase: str, cursor: dict[str, Any], plan: str) -> list[str]:
+    args = [phase, "--plan", plan]
+    if phase == "execute":
+        args.extend(["--confirm-destructive", "--user-approved"])
+        batch_index = cursor.get("batch_index")
+        if isinstance(batch_index, int) and batch_index > 0:
+            args.extend(["--batch", str(batch_index)])
+    return args
+
+
+def _default_resume_runner(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        [sys.executable, "-m", "megaplan", *args],
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def resume_plan(
+    root: Path,
+    plan: str,
+    *,
+    store: Store | None = None,
+    runner: Any | None = None,
+) -> dict[str, Any]:
+    """Resume a failed/blocked plan from its stored resume cursor."""
+
+    from megaplan.store import PlanRepository
+
+    plan_dir = find_plan_dir(root, plan)
+    if plan_dir is None:
+        raise CliError("missing_plan", f"Plan '{plan}' does not exist")
+    repo = PlanRepository.from_plan_dir(plan_dir, store=store)
+    loaded = repo.load_plan()
+    cursor = loaded.resume_cursor
+    if not isinstance(cursor, dict):
+        raise CliError("missing_resume_cursor", f"Plan '{plan}' has no resume cursor")
+    phase = cursor.get("phase")
+    if not isinstance(phase, str) or not phase:
+        raise CliError("invalid_resume_cursor", f"Plan '{plan}' has an invalid resume cursor", extra={"resume_cursor": cursor})
+    args = _resume_phase_args(phase, cursor, plan)
+    runner_fn = runner or _default_resume_runner
+    try:
+        code, stdout, stderr = runner_fn(args, cwd=root)
+    except RevisionConflict as error:
+        state = repo.load_state()
+        epic_id = state.get("epic_id") or (state.get("meta") or {}).get("epic_id")
+        details = {"phase": phase, "message": str(error), "resume_cursor": cursor}
+        if store is not None and isinstance(epic_id, str) and epic_id:
+            store.append_progress_event(
+                ProgressEventInput(
+                    epic_id=epic_id,
+                    plan_id=plan,
+                    kind="execution_blocked",
+                    summary=f"Resume blocked by revision conflict in phase '{phase}'",
+                    details=details,
+                )
+            )
+        raise CliError(
+            "revision_conflict",
+            f"Resume blocked by revision conflict while running '{phase}': {error}",
+            extra=details,
+        ) from error
+    if code != 0:
+        return {
+            "success": False,
+            "step": "resume",
+            "plan": plan,
+            "phase": phase,
+            "resume_cursor": cursor,
+            "exit_code": code,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+    state = repo.load_state()
+    state.pop("latest_failure", None)
+    state.pop("resume_cursor", None)
+    repo.save_state(state)
+    return {
+        "success": True,
+        "step": "resume",
+        "plan": plan,
+        "phase": phase,
+        "command": args,
+        "state": state.get("current_state"),
+    }
 
 
 def require_state(state: PlanState, step: str, allowed: set[str]) -> None:

@@ -83,6 +83,19 @@ def _done_status(plan: str) -> dict:
     }
 
 
+def _terminal_status(plan: str, state: str) -> dict:
+    return {
+        "success": True,
+        "step": "status",
+        "plan": plan,
+        "state": state,
+        "iteration": 1,
+        "summary": f"Plan is in state '{state}'.",
+        "next_step": None,
+        "valid_next": [],
+    }
+
+
 def _write_history(plan_dir: Path, costs: list[object]) -> None:
     (plan_dir / "state.json").write_text(
         json.dumps(
@@ -345,6 +358,41 @@ def test_run_auto_without_outcome_file_preserves_stdout_only_behavior(
     stdout = capsys.readouterr().out
     assert rc == 2
     assert stdout == outcome.to_json() + "\n"
+
+
+def test_auto_driver_stops_on_lifecycle_terminal_states_without_phase_runs(tmp_path: Path) -> None:
+    expected = {
+        "failed": "failed",
+        "blocked": "blocked",
+        "cancelled": "cancelled",
+        "paused": "paused",
+    }
+    for state, status in expected.items():
+        plan = f"auto-{state}"
+        _make_plan_dir(tmp_path, plan)
+        calls: list[list[str]] = []
+
+        with patch.object(auto, "_status", return_value=_terminal_status(plan, state)), \
+             patch.object(auto, "_run_megaplan", side_effect=lambda *args, **kwargs: calls.append(list(args[0])) or (0, "", "")):
+            outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+        assert outcome.status == status
+        assert outcome.final_state == state
+        assert calls == []
+
+
+def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> None:
+    outcomes = {
+        "failed": 1,
+        "blocked": 5,
+        "cancelled": 0,
+        "paused": 0,
+    }
+    for status, expected_rc in outcomes.items():
+        outcome = DriverOutcome(status=status, plan=f"demo-{status}", final_state=status, iterations=1)
+        with patch.object(auto, "drive", return_value=outcome):
+            assert auto.run_auto(tmp_path, _auto_args(f"demo-{status}")) == expected_rc
+        capsys.readouterr()
 def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> None:
     plan = "context-retry-success"
     _make_plan_dir(tmp_path, plan)
@@ -460,6 +508,34 @@ def test_generic_execute_failure_uses_stall_path_not_fresh_retry(tmp_path: Path)
     assert outcome.context_retries_used == 0
     assert len(calls) == 1
     assert all("--fresh" not in call for call in calls)
+    state_data = json.loads((tmp_path / ".megaplan" / "plans" / plan / "state.json").read_text(encoding="utf-8"))
+    assert state_data["current_state"] == "blocked"
+    assert state_data["latest_failure"]["kind"] == "stalled"
+    assert state_data["resume_cursor"]["phase"] == "execute"
+
+
+def test_phase_failure_persists_failure_before_next_status(tmp_path: Path) -> None:
+    plan = "phase-failure-persists"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    statuses = [_phase_status(plan, state="planning", next_step="prep"), _terminal_status(plan, "failed")]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 7, "", "prep exploded"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert outcome.status == "failed"
+    assert state_data["current_state"] == "failed"
+    assert state_data["latest_failure"]["kind"] == "phase_failed"
+    assert state_data["latest_failure"]["phase"] == "prep"
+    assert state_data["latest_failure"]["metadata"]["exit_code"] == 7
+    assert state_data["resume_cursor"] == {"phase": "prep", "retry_strategy": "rerun_phase"}
 
 
 def test_cli_rejects_negative_max_context_retries() -> None:
@@ -722,6 +798,11 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
     # Only the BLOCKING deviations surface, not the FLAG-006 advisory.
     assert any("missing both files_changed" in r for r in outcome.blocking_reasons)
     assert not any("FLAG-006 softening" in r for r in outcome.blocking_reasons)
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state_data["current_state"] == "blocked"
+    assert state_data["latest_failure"]["kind"] == "execution_blocked"
+    assert state_data["latest_failure"]["last_artifact"] == "execution_batch_1.json"
+    assert state_data["resume_cursor"]["phase"] == "execute"
 
 
 def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:

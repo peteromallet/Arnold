@@ -6,6 +6,7 @@ from pathlib import Path
 import megaplan.cli
 from megaplan.store import MultiStore, deterministic_idempotency_key
 from megaplan.store.file import FileStore
+from megaplan.types import CliError
 
 
 def _project(tmp_path: Path) -> Path:
@@ -120,3 +121,51 @@ def test_epic_migrate_and_resume_print_final_state(
     assert resume_response["action"] == "resume"
     assert resume_response["phase"] == "complete"
     assert resume_response["migration_id"] == migrate_response["migration_id"]
+
+
+def test_resume_command_uses_actor_store_for_epic_backed_plan(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    project = _project(tmp_path)
+    store = _store(tmp_path)
+    epic = store.create_epic(title="Epic", goal="g", body="body")
+    plan_dir = project / ".megaplan" / "plans" / "blocked-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "blocked-plan",
+                "idea": "idea",
+                "epic_id": epic.id,
+                "current_state": "blocked",
+                "iteration": 1,
+                "created_at": "2026-05-05T00:00:00Z",
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [],
+                "meta": {},
+                "last_gate": {},
+                "latest_failure": {"kind": "execution_blocked"},
+                "resume_cursor": {"phase": "execute", "batch_index": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("MEGAPLAN_ACTOR_ID", "actor")
+    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+
+    def fail_resume(root: Path, plan: str, *, store=None):
+        assert store is not None
+        raise CliError("revision_conflict", "expected revision 1, found 2")
+
+    monkeypatch.setattr(megaplan.cli, "resume_plan", fail_resume)
+
+    exit_code = megaplan.cli.main(["resume", "--plan", "blocked-plan"])
+    response = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert response["error"] == "revision_conflict"

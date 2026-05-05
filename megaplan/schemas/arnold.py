@@ -17,6 +17,16 @@ from .base import (
 )
 
 EpicState = Literal["shaping", "sprinting", "planned", "paused", "archived"]
+ARNOLD_EPIC_STATES: tuple[str, ...] = ("shaping", "sprinting", "planned", "paused", "archived")
+ARNOLD_TO_MEGAPLAN_EPIC_STATE: dict[str, str] = {state: state for state in ARNOLD_EPIC_STATES}
+
+
+def map_arnold_epic_state(state: str) -> EpicState:
+    """Return the Megaplan epic state for an Arnold editorial state."""
+    try:
+        return ARNOLD_TO_MEGAPLAN_EPIC_STATE[state]  # type: ignore[return-value]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported Arnold epic state: {state}") from exc
 BotTurnStatus = Literal["in_progress", "completed", "failed", "abandoned"]
 MessageDirection = Literal["inbound", "outbound"]
 ToolOperationKind = Literal["read", "write"]
