@@ -1,0 +1,277 @@
+{
+  "generated_from": {
+    "generated_at": "2026-05-05T23:08:58+00:00",
+    "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' | sort",
+    "models_root": "models",
+    "template_count": 51,
+    "template_root": "ready_templates"
+  },
+  "models": [
+    {
+      "consuming_templates": [
+        "ready_templates/video/wan_i2v.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "clip_vision_h.safetensors",
+      "subdir": "clip_vision",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/audio/ace_step_1_5_t2a_song.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "acestep_v1.5_turbo.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "flux-2-klein-4b-fp8.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/image/flux2_klein_4b_t2i.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "flux-2-klein-4b.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/flux2-klein/resolve/main/split_files/diffusion_models/flux-2-klein-4b.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_9b_image_edit_distilled.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "flux-2-klein-9b-fp8.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_4b_image_edit_base.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "flux-2-klein-base-4b-fp8.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4b-fp8/resolve/main/flux-2-klein-base-4b-fp8.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/image/flux2_klein_4b_t2i.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "flux-2-klein-base-4b.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/flux2-klein/resolve/main/split_files/diffusion_models/flux-2-klein-base-4b.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_9b_image_edit_base.py",
+        "ready_templates/image/flux2_klein_9b_t2i.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "flux-2-klein-base-9b-fp8.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/image/qwen_image_2512.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_image_2512_fp8_e4m3fn.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/qwen_image_edit.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_image_edit_fp8_e4m3fn.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/video/wan_i2v.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "wan2.1_i2v_480p_14B_fp16.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/video/wan_t2v.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "wan2.1_t2v_1.3B_fp16.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/image/z_image.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "z_image_bf16.safetensors",
+      "subdir": "diffusion_models",
+      "url": "https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/diffusion_models/z_image_bf16.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/image/qwen_image_2512.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
+      "subdir": "loras",
+      "url": "https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/qwen_image_edit.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
+      "subdir": "loras",
+      "url": "https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/audio/ace_step_1_5_t2a_song.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_0.6b_ace15.safetensors",
+      "subdir": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_0.6b_ace15.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/qwen_image_edit.py",
+        "ready_templates/image/qwen_image_2512.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "subdir": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/image/flux2_klein_4b_t2i.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_3_4b.safetensors",
+      "subdir": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/flux2-klein/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_4b_image_edit_base.py",
+        "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py",
+        "ready_templates/image/z_image.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_3_4b.safetensors",
+      "subdir": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_9b_image_edit_base.py",
+        "ready_templates/edit/flux2_klein_9b_image_edit_distilled.py",
+        "ready_templates/image/flux2_klein_9b_gguf_t2i.py",
+        "ready_templates/image/flux2_klein_9b_t2i.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_3_8b_fp8mixed.safetensors",
+      "subdir": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/audio/ace_step_1_5_t2a_song.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_4b_ace15.safetensors",
+      "subdir": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/video/wan_i2v.py",
+        "ready_templates/video/wan_t2v.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "subdir": "text_encoders",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/audio/ace_step_1_5_t2a_song.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "ace_1.5_vae.safetensors",
+      "subdir": "vae",
+      "url": "https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/image/z_image.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "ae.safetensors",
+      "subdir": "vae",
+      "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py",
+        "ready_templates/image/flux2_klein_4b_t2i.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "flux2-vae.safetensors",
+      "subdir": "vae",
+      "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/flux2_klein_4b_image_edit_base.py",
+        "ready_templates/edit/flux2_klein_9b_image_edit_base.py",
+        "ready_templates/edit/flux2_klein_9b_image_edit_distilled.py",
+        "ready_templates/image/flux2_klein_9b_t2i.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "full_encoder_small_decoder.safetensors",
+      "subdir": "vae",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/edit/qwen_image_edit.py",
+        "ready_templates/image/qwen_image_2512.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "qwen_image_vae.safetensors",
+      "subdir": "vae",
+      "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors"
+    },
+    {
+      "consuming_templates": [
+        "ready_templates/video/wan_i2v.py",
+        "ready_templates/video/wan_t2v.py"
+      ],
+      "hash_status": "pending_first_download",
+      "name": "wan_2.1_vae.safetensors",
+      "subdir": "vae",
+      "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+    }
+  ]
+}

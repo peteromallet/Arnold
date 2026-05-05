@@ -1,0 +1,575 @@
+{
+  "generated_at": "2026-05-05T23:21:53+00:00",
+  "generated_from": "runtime ready template discovery",
+  "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' | sort",
+  "exclude_rule": "exclude __init__.py and files whose basename starts with '_' to match vibecomfy.registry.ready._template_paths",
+  "template_count": 51,
+  "templates": [
+    {
+      "id": "audio/ace_step_1_5_t2a_song",
+      "path": "ready_templates/audio/ace_step_1_5_t2a_song.py",
+      "capability": "text_to_audio_song",
+      "coverage_tier": "required",
+      "custom_nodes": [
+        "EmptyAceStep1",
+        "TextEncodeAceStepAudio1"
+      ],
+      "model_count": 4
+    },
+    {
+      "id": "audio/qwen3_tts_custom_voice",
+      "path": "ready_templates/audio/qwen3_tts_custom_voice.py",
+      "capability": "text_to_speech_custom_voice",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-QwenTTS"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "audio/qwen3_tts_voice_clone",
+      "path": "ready_templates/audio/qwen3_tts_voice_clone.py",
+      "capability": "text_to_speech_voice_clone",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-QwenTTS"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "audio/qwen3_tts_voice_design",
+      "path": "ready_templates/audio/qwen3_tts_voice_design.py",
+      "capability": "text_to_speech_voice_design",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-QwenTTS"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "edit/flux2_klein_4b_image_edit_base",
+      "path": "ready_templates/edit/flux2_klein_4b_image_edit_base.py",
+      "capability": "image_edit",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [],
+      "model_count": 3
+    },
+    {
+      "id": "edit/flux2_klein_4b_image_edit_distilled",
+      "path": "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py",
+      "capability": "image_edit",
+      "coverage_tier": "required",
+      "custom_nodes": [],
+      "model_count": 3
+    },
+    {
+      "id": "edit/flux2_klein_9b_image_edit_base",
+      "path": "ready_templates/edit/flux2_klein_9b_image_edit_base.py",
+      "capability": "image_edit",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [],
+      "model_count": 3
+    },
+    {
+      "id": "edit/flux2_klein_9b_image_edit_distilled",
+      "path": "ready_templates/edit/flux2_klein_9b_image_edit_distilled.py",
+      "capability": "image_edit",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [],
+      "model_count": 3
+    },
+    {
+      "id": "edit/qwen_image_edit",
+      "path": "ready_templates/edit/qwen_image_edit.py",
+      "capability": "image_edit",
+      "coverage_tier": "required",
+      "custom_nodes": [],
+      "model_count": 4
+    },
+    {
+      "id": "image/flux2_klein_4b_t2i",
+      "path": "ready_templates/image/flux2_klein_4b_t2i.py",
+      "capability": "text_to_image",
+      "coverage_tier": "required",
+      "custom_nodes": [],
+      "model_count": 4
+    },
+    {
+      "id": "image/flux2_klein_9b_gguf_t2i",
+      "path": "ready_templates/image/flux2_klein_9b_gguf_t2i.py",
+      "capability": "text_to_image",
+      "coverage_tier": "required",
+      "custom_nodes": [
+        "ComfyUI-GGUF"
+      ],
+      "model_count": 1
+    },
+    {
+      "id": "image/flux2_klein_9b_t2i",
+      "path": "ready_templates/image/flux2_klein_9b_t2i.py",
+      "capability": "text_to_image",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [],
+      "model_count": 3
+    },
+    {
+      "id": "image/qwen_image_2512",
+      "path": "ready_templates/image/qwen_image_2512.py",
+      "capability": "text_to_image",
+      "coverage_tier": "required",
+      "custom_nodes": [],
+      "model_count": 4
+    },
+    {
+      "id": "image/z_image",
+      "path": "ready_templates/image/z_image.py",
+      "capability": "text_to_image",
+      "coverage_tier": "required",
+      "custom_nodes": [],
+      "model_count": 3
+    },
+    {
+      "id": "smoke/empty_image_red",
+      "path": "ready_templates/smoke/empty_image_red.py",
+      "capability": "runtime_smoke",
+      "coverage_tier": "smoke",
+      "custom_nodes": [],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_i2v",
+      "path": "ready_templates/video/ltx2_3_i2v.py",
+      "capability": "image_to_video",
+      "coverage_tier": "required",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_iamccs_audio_extend_low_ram",
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "capability": "audio_extended_multisegment_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_iamccs_audio_image_to_video",
+      "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "capability": "audio_image_to_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_iamccs_long_i2v",
+      "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "capability": "long_image_to_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_lightricks_iclora_hdr",
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_hdr.py",
+      "capability": "video_guided_hdr",
+      "coverage_tier": "required",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "capability": "motion_track_control",
+      "coverage_tier": "required",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_lightricks_iclora_union_control",
+      "path": "ready_templates/video/ltx2_3_lightricks_iclora_union_control.py",
+      "capability": "union_control_video_guided_i2v",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-DepthAnythingV2",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "comfyui_controlnet_aux"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_lightricks_two_stage",
+      "path": "ready_templates/video/ltx2_3_lightricks_two_stage.py",
+      "capability": "text_or_image_to_video_upscale",
+      "coverage_tier": "required",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_custom_audio",
+      "path": "ready_templates/video/ltx2_3_runexx_custom_audio.py",
+      "capability": "custom_audio_to_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_first_last_frame",
+      "path": "ready_templates/video/ltx2_3_runexx_first_last_frame.py",
+      "capability": "first_last_frame_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_first_middle_last_frame",
+      "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "capability": "first_middle_last_frame_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_lipsync_custom_audio",
+      "path": "ready_templates/video/ltx2_3_runexx_lipsync_custom_audio.py",
+      "capability": "voice_to_lipsync_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_motion_transfer_dwpose",
+      "path": "ready_templates/video/ltx2_3_runexx_motion_transfer_dwpose.py",
+      "capability": "dwpose_motion_transfer",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite",
+        "comfyui_controlnet_aux"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_music_video_low_ram",
+      "path": "ready_templates/video/ltx2_3_runexx_music_video_low_ram.py",
+      "capability": "music_video_multiscene",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "path": "ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py",
+      "capability": "tts_talking_avatar",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-QwenTTS",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_runexx_video_to_video_extend",
+      "path": "ready_templates/video/ltx2_3_runexx_video_to_video_extend.py",
+      "capability": "video_to_video_extend",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo",
+        "ComfyUI-VideoHelperSuite"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_t2v",
+      "path": "ready_templates/video/ltx2_3_t2v.py",
+      "capability": "text_to_video",
+      "coverage_tier": "required",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wan_i2v",
+      "path": "ready_templates/video/wan_i2v.py",
+      "capability": "image_to_video",
+      "coverage_tier": "required",
+      "custom_nodes": [],
+      "model_count": 4
+    },
+    {
+      "id": "video/wan_t2v",
+      "path": "ready_templates/video/wan_t2v.py",
+      "capability": "text_to_video",
+      "coverage_tier": "required",
+      "custom_nodes": [],
+      "model_count": 3
+    },
+    {
+      "id": "video/wanvideo_wrapper_13b_control_lora",
+      "path": "ready_templates/video/wanvideo_wrapper_13b_control_lora.py",
+      "capability": "control_lora_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_13b_recammaster",
+      "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "capability": "camera_control_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_13b_vace",
+      "path": "ready_templates/video/wanvideo_wrapper_13b_vace.py",
+      "capability": "vace_video_control",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-DepthAnythingV2",
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_flf2v",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_flf2v.py",
+      "capability": "first_last_frame_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_fun_control",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control.py",
+      "capability": "fun_control_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-DepthAnythingV2",
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
+      "capability": "camera_control_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_i2v",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_i2v.py",
+      "capability": "image_to_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_t2v",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_t2v.py",
+      "capability": "text_to_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "capability": "video_to_video_talking_avatar",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "capability": "motion_track_i2v",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_22_5b_i2v",
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v.py",
+      "capability": "image_to_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v_controlnet.py",
+      "capability": "image_to_video_controlnet",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v",
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_ovi_audio_i2v.py",
+      "capability": "audio_image_to_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_22_5b_t2v_controlnet",
+      "path": "ready_templates/video/wanvideo_wrapper_22_5b_t2v_controlnet.py",
+      "capability": "text_to_video_controlnet",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_22_s2v_context_window",
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "capability": "speech_to_video_context_window",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
+      "path": "ready_templates/video/wanvideo_wrapper_22_s2v_framepack_pose.py",
+      "capability": "speech_to_video_pose_control",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper",
+        "comfyui_controlnet_aux"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/wanvideo_wrapper_wan_animate",
+      "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "capability": "animate_reference_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper",
+        "comfyui_controlnet_aux"
+      ],
+      "model_count": 0
+    }
+  ]
+}

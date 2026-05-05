@@ -42,6 +42,8 @@ DEFAULT_UPLOAD_EXCLUDES: set[str] = {
 
 DEFAULT_UPLOAD_PROGRESS_SECONDS = 10.0
 DEFAULT_UPLOAD_PROGRESS_FILES = 250
+VIBECOMFY_RUNPOD_DISK_SIZE_ENV = "VIBECOMFY_RUNPOD_DISK_SIZE_GB"
+VIBECOMFY_RUNPOD_CONTAINER_DISK_ENV = "VIBECOMFY_RUNPOD_CONTAINER_DISK_GB"
 
 
 def runpod_lifecycle_root() -> Path:
@@ -115,16 +117,7 @@ class PodGuard:
     async def launch(self):
         load_dotenv, runpod_config, launch = _runpod_lifecycle()
         load_dotenv(runpod_lifecycle_root() / ".env")
-        config_kwargs = {
-            "storage_name": os.getenv("VIBECOMFY_RUNPOD_STORAGE", "Peter"),
-            "storage_volumes": (),
-            "gpu_type": os.getenv("VIBECOMFY_RUNPOD_GPU", "NVIDIA GeForce RTX 4090"),
-            "ram_tiers": (32, 16),
-        }
-        if os.getenv("VIBECOMFY_RUNPOD_CONTAINER_DISK_GB"):
-            config_kwargs["container_disk_gb"] = int(os.environ["VIBECOMFY_RUNPOD_CONTAINER_DISK_GB"])
-        if os.getenv("VIBECOMFY_RUNPOD_DISK_SIZE_GB"):
-            config_kwargs["disk_size_gb"] = int(os.environ["VIBECOMFY_RUNPOD_DISK_SIZE_GB"])
+        config_kwargs = _runpod_config_kwargs()
         self.pod = await launch(runpod_config.from_env(**config_kwargs), name=f"{self.name_prefix}-{int(time.time())}")
         self._start_watchdog()
         return self.pod
@@ -154,6 +147,22 @@ class PodGuard:
                 await self.pod.terminate()
         except asyncio.CancelledError:
             return
+
+
+def _runpod_config_kwargs() -> dict[str, Any]:
+    config_kwargs: dict[str, Any] = {
+        "storage_name": os.getenv("VIBECOMFY_RUNPOD_STORAGE", "Peter"),
+        "storage_volumes": (),
+        "gpu_type": os.getenv("VIBECOMFY_RUNPOD_GPU", "NVIDIA GeForce RTX 4090"),
+        "ram_tiers": (32, 16),
+    }
+    # Disk sizing is intentionally delegated to the shared RunPodConfig.from_env()
+    # defaults unless VibeComfy-specific override env vars are set.
+    if os.getenv(VIBECOMFY_RUNPOD_CONTAINER_DISK_ENV):
+        config_kwargs["container_disk_gb"] = int(os.environ[VIBECOMFY_RUNPOD_CONTAINER_DISK_ENV])
+    if os.getenv(VIBECOMFY_RUNPOD_DISK_SIZE_ENV):
+        config_kwargs["disk_size_gb"] = int(os.environ[VIBECOMFY_RUNPOD_DISK_SIZE_ENV])
+    return config_kwargs
 
 
 def should_skip(path: Path, root: Path, exclude_set: set[str]) -> bool:

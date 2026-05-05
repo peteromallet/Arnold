@@ -68,6 +68,26 @@ def test_upload_disk_preflight_fails_early_with_actionable_message(
         runpod_runner._preflight_upload_disk(tmp_path, estimated_bytes=10 * 1024 * 1024)
 
 
+def test_runpod_config_kwargs_delegates_disk_defaults_to_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("VIBECOMFY_RUNPOD_DISK_SIZE_GB", raising=False)
+    monkeypatch.delenv("VIBECOMFY_RUNPOD_CONTAINER_DISK_GB", raising=False)
+
+    config_kwargs = runpod_runner._runpod_config_kwargs()
+
+    assert "disk_size_gb" not in config_kwargs
+    assert "container_disk_gb" not in config_kwargs
+
+
+def test_runpod_config_kwargs_preserves_vibecomfy_disk_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIBECOMFY_RUNPOD_DISK_SIZE_GB", "50")
+    monkeypatch.setenv("VIBECOMFY_RUNPOD_CONTAINER_DISK_GB", "50")
+
+    config_kwargs = runpod_runner._runpod_config_kwargs()
+
+    assert config_kwargs["disk_size_gb"] == 50
+    assert config_kwargs["container_disk_gb"] == 50
+
+
 def test_parse_tsv_returns_structured_rows(tmp_path: Path) -> None:
     results = tmp_path / "results.tsv"
     results.write_text("id\tstatus\tseconds\nred\tok\t3\nblue\tfail\t9\n", encoding="utf-8")
