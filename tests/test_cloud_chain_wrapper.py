@@ -125,6 +125,55 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
             assert _persistent_deploy_dir(_cloud_spec("local")).exists()
 
 
+def test_cloud_chain_three_sprint_smoke_dispatches_trusted_container_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = _parser()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    spec_path = tmp_path / "cloud-chain-smoke.yaml"
+    _write_chain_spec(
+        spec_path,
+        [
+            {"label": "sprint-1", "idea": "/workspace/app/ideas/sprint-1.md"},
+            {"label": "sprint-2", "idea": "/workspace/app/ideas/sprint-2.md"},
+            {"label": "sprint-3", "idea": "/workspace/app/ideas/sprint-3.md"},
+        ],
+    )
+    idea_dir = tmp_path / "smoke-ideas"
+    (idea_dir / "ideas").mkdir(parents=True)
+    for index in range(1, 4):
+        (idea_dir / "ideas" / f"sprint-{index}.md").write_text(f"sprint {index}\n", encoding="utf-8")
+    cloud_yaml_path = tmp_path / "cloud.yaml"
+    cloud_yaml_path.write_text("provider: railway\n", encoding="utf-8")
+    commands: list[str] = []
+
+    class StubProvider:
+        supports_session = False
+
+        def upload_file(self, src: Path, dest: str) -> None:
+            return None
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="started\n", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+
+    args = parser.parse_args(
+        ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
+    )
+    assert run_cloud_cli(tmp_path, args) == 0
+
+    assert len(yaml.safe_load(spec_path.read_text(encoding="utf-8"))["milestones"]) == 3
+    assert len(commands) == 1
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml" in commands[0]
+
+
 def test_cloud_chain_missing_local_idea_reports_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import inspect
 import os
 import uuid
 
@@ -228,6 +230,80 @@ def test_db_copy_helpers_keep_plan_artifacts_off_generic_path() -> None:
     source = inspect.getsource(DBStore.copy_plan_artifacts_idempotent)
     assert "ON CONFLICT (plan_id, name) DO NOTHING" in source
     assert '"plan_id": plan_id' in source
+
+
+def test_db_plan_artifact_binary_helpers_preserve_bytes_and_legacy_text() -> None:
+    from megaplan.store import DBStore
+    from megaplan.store.base import ArtifactRef
+    from megaplan.store.multi import MultiStore
+
+    binary = b"\x00\xffbinary\x80\n"
+    text = "{\"ok\": true}\n"
+    store = DBStore(actor_id="actor-without-dsn")
+
+    assert store._plan_artifact_bytes({"content_bytes": memoryview(binary), "content_text": None}) == binary
+    assert store._plan_artifact_bytes({"content_bytes": None, "content_text": text}) == text.encode("utf-8")
+
+    ref = ArtifactRef(
+        plan_id="plan_1",
+        name="state.bin",
+        kind="raw_text",
+        role="execution",
+        sha256=hashlib.sha256(binary).hexdigest(),
+        size_bytes=len(binary),
+        updated_at=None,
+    )
+    artifact = MultiStore.__new__(MultiStore)._artifact_model(ref, binary)
+    assert artifact.content_text is None
+    assert artifact.content_base64 is not None
+    assert artifact.sha256 == hashlib.sha256(binary).hexdigest()
+
+    copy_source = inspect.getsource(DBStore.copy_plan_artifacts_idempotent)
+    write_source = inspect.getsource(DBStore.write_plan_artifact)
+    assert "content_bytes" in copy_source
+    assert "base64.b64decode" in copy_source
+    assert "content_bytes" in write_source
+    assert "UnicodeDecodeError" in write_source
+
+
+def test_db_plan_artifact_paths_are_sorted_relative_and_path_safe() -> None:
+    from megaplan.store import DBStore
+    from megaplan.store.base import validate_plan_artifact_name
+
+    store = DBStore(actor_id="actor-without-dsn")
+    for unsafe in ["/absolute.bin", "../escape.bin", "nested/../escape.bin", "nested//state.bin", "nested\\state.bin", ""]:
+        with pytest.raises(ValueError, match="Unsafe|non-empty"):
+            validate_plan_artifact_name(unsafe)
+
+    assert validate_plan_artifact_name("nested/state.bin") == "nested/state.bin"
+    assert validate_plan_artifact_name("state.json") == "state.json"
+
+    write_source = inspect.getsource(DBStore.write_plan_artifact)
+    read_source = inspect.getsource(DBStore.read_plan_artifact)
+    stat_source = inspect.getsource(DBStore.stat_plan_artifact)
+    list_source = inspect.getsource(DBStore.list_plan_artifacts)
+    copy_source = inspect.getsource(DBStore.copy_plan_artifacts_idempotent)
+
+    assert "validate_plan_artifact_name(name)" in write_source
+    assert "validate_plan_artifact_name(name)" in read_source
+    assert "validate_plan_artifact_name(name)" in stat_source
+    assert "ORDER BY name" in list_source
+    assert "validate_plan_artifact_name(data[\"name\"])" in copy_source
+    assert store._plan_artifact_bytes({"content_text": "legacy"}) == b"legacy"
+
+
+def test_sprint7_supabase_migration_declares_plan_artifact_binary_column() -> None:
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "supabase"
+        / "migrations"
+        / "202605050003_plan_artifact_binary_content.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "content_bytes bytea" in migration
+    assert "IF NOT EXISTS" in migration
 
 
 def test_db_write_without_actor_raises() -> None:

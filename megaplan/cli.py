@@ -1023,7 +1023,61 @@ def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
             "migration": run.model_dump(mode="json"),
             "warnings": warnings,
         }
+    if action == "export":
+        from megaplan.store.export import collect_epic_export, write_epic_export_tar
+
+        store = build_epic_store(root)
+        try:
+            try:
+                collected = collect_epic_export(
+                    store,
+                    args.epic_id,
+                    allow_missing_blobs=bool(args.allow_missing_blobs),
+                )
+            except FileNotFoundError as exc:
+                raise CliError("not_found", f"Epic {args.epic_id!r} not found") from exc
+            if collected["errors"]:
+                raise CliError(
+                    "export_failed",
+                    f"Epic {args.epic_id!r} export has missing or corrupt blobs",
+                    extra={"errors": collected["errors"]},
+                )
+            output = write_epic_export_tar(collected, args.output, gzip_output=bool(args.gzip))
+        finally:
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
+        return {
+            "success": True,
+            "step": "epic",
+            "action": "export",
+            "epic_id": args.epic_id,
+            "path": output["path"],
+            "gzip": output["gzip"],
+            "size_bytes": output["size_bytes"],
+            "sha256": output["sha256"],
+            "member_count": output["member_count"],
+            "warnings": collected["warnings"],
+            "errors": collected["errors"],
+        }
     raise CliError("invalid_args", f"Unknown epic action: {action}")
+
+
+def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResponse:
+    del root
+    from megaplan.store.legacy_migration import migrate_local_plans
+
+    try:
+        return migrate_local_plans(
+            source_home=Path(args.source_home).expanduser(),
+            source_project=args.source_project,
+            all_projects=bool(args.all_projects),
+            target_project_dir=Path(args.target_project_dir).expanduser(),
+            mode=args.mode,
+            dry_run=bool(args.dry_run),
+        )
+    except ValueError as exc:
+        raise CliError("invalid_args", str(exc)) from exc
 
 
 def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -1138,6 +1192,20 @@ def build_parser() -> argparse.ArgumentParser:
     epic_migrate_parser.add_argument("--actor", default=None, metavar="ID", help="Actor ID for migration writes")
     epic_migrate_parser.add_argument("--ttl", type=int, default=300)
     epic_migrate_parser.add_argument("--project-dir", default=None)
+    epic_export_parser = epic_subparsers.add_parser("export", help="Write a deterministic tar backup for an epic")
+    epic_export_parser.add_argument("epic_id")
+    epic_export_parser.add_argument("--output", required=True)
+    epic_export_parser.add_argument("--gzip", action="store_true")
+    epic_export_parser.add_argument("--allow-missing-blobs", action="store_true")
+    epic_export_parser.add_argument("--project-dir", default=None)
+
+    migrate_local_parser = subparsers.add_parser("migrate-local-plans", help="Import legacy ~/.megaplan/<project>/plans trees")
+    migrate_local_parser.add_argument("--source-home", default=str(Path.home()))
+    migrate_local_parser.add_argument("--source-project", default=None)
+    migrate_local_parser.add_argument("--all-projects", action="store_true")
+    migrate_local_parser.add_argument("--target-project-dir", required=True)
+    migrate_local_parser.add_argument("--mode", choices=["orphan", "legacy-epic"], default="orphan")
+    migrate_local_parser.add_argument("--dry-run", action="store_true")
 
     for name in ["status", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
@@ -1381,6 +1449,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "loop-pause": handle_loop_pause,
     "debt": handle_debt,
     "epic": handle_epic,
+    "migrate-local-plans": handle_migrate_local_plans,
     "step": handle_step,
     "override": handle_override,
     "verify-human": handle_verify_human,
