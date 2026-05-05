@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from megaplan.schemas import StorageModel
 
-from .base import ChecklistItemInput, JSONDict, LockConflict, SprintItemInput, Store
+from .base import ChecklistItemInput, JSONDict, LockConflict, SprintItemInput, Store, deterministic_idempotency_key
 from .blob import BlobRef as StoreBlobRef
 from .blob import BlobStore
 
@@ -30,6 +30,68 @@ def _dump(value: Any) -> Any:
 class ArnoldStoreAdapter:
     """Expose the live Arnold dict-based store API on top of the new Store seam."""
 
+    _IDEMPOTENT_METHODS = frozenset(
+        {
+            "create_epic",
+            "update_epic",
+            "update_body",
+            "seed_checklist",
+            "add_checklist_items",
+            "update_checklist_item",
+            "delete_checklist_items",
+            "replace_checklist",
+            "create_sprint",
+            "update_sprint",
+            "delete_sprint",
+            "replace_sprint_items",
+            "set_sprint_queue",
+            "record_epic_event",
+            "create_message",
+            "update_message",
+            "create_turn",
+            "update_turn",
+            "record_tool_call",
+            "log_system_event",
+            "insert_pending",
+            "mark_confirmed",
+            "mark_failed",
+            "mark_orphaned",
+            "create_image",
+            "update_image",
+            "deactivate_active_image_reference",
+            "create_second_opinion",
+            "set_second_opinion_checklist_items",
+            "create_codebase",
+            "upsert_codebase",
+            "update_codebase",
+            "remove_codebase",
+            "touch_codebase_accessed",
+            "mark_codebase_verified",
+            "create_code_artifact",
+            "update_code_artifact",
+            "delete_code_artifact",
+            "touch_code_artifact_used",
+            "upsert_api_cache",
+            "cleanup_expired_api_cache",
+            "create_feedback",
+            "update_feedback",
+            "create_plan",
+            "update_plan",
+            "write_plan_artifact",
+            "acquire_execution_lease",
+            "heartbeat_lease",
+            "release_lease",
+            "acquire_lock",
+            "release_lock",
+            "put_control_message",
+            "claim_pending_control_messages",
+            "mark_control_message_processed",
+            "append_progress_event",
+            "create_automation_actor",
+            "update_automation_actor",
+        }
+    )
+
     def __init__(self, store: Store) -> None:
         self._store = store
 
@@ -37,6 +99,8 @@ class ArnoldStoreAdapter:
         return getattr(self._store, name)
 
     def _call(self, method_name: str, /, *args: Any, **kwargs: Any) -> Any:
+        if method_name in self._IDEMPOTENT_METHODS and kwargs.get("idempotency_key") is None:
+            kwargs["idempotency_key"] = deterministic_idempotency_key("arnold-adapter", method_name, *args, kwargs)
         method = getattr(self._store, method_name)
         return _dump(method(*args, **kwargs))
 
@@ -85,13 +149,18 @@ class ArnoldStoreAdapter:
                 epic_id=epic_id,
                 holder_id=holder_id,
                 ttl_seconds=timeout_seconds,
+                idempotency_key=deterministic_idempotency_key("arnold-adapter", "acquire_lock", epic_id, holder_id),
             )
         except LockConflict:
             return False
         return bool(acquired)
 
     def release_epic_lock(self, epic_id: str, *, holder_id: str) -> None:
-        self._store.release_lock(epic_id, holder_id)
+        self._store.release_lock(
+            epic_id,
+            holder_id,
+            idempotency_key=deterministic_idempotency_key("arnold-adapter", "release_lock", epic_id, holder_id),
+        )
 
     def load_hot_context(self, epic_id: str | None) -> JSONDict:
         return self._call("load_hot_context", epic_id)
@@ -184,7 +253,7 @@ class ArnoldStoreAdapter:
         return self._call("update_codebase", codebase_id, **changes)
 
     def remove_codebase(self, codebase_id: str) -> None:
-        self._store.remove_codebase(codebase_id)
+        self._call("remove_codebase", codebase_id)
 
     def touch_codebase_accessed(self, codebase_id: str, **changes: Any) -> JSONDict:
         return self._call("touch_codebase_accessed", codebase_id, **changes)
@@ -205,7 +274,7 @@ class ArnoldStoreAdapter:
         return self._call("update_code_artifact", artifact_id, **changes)
 
     def delete_code_artifact(self, artifact_id: str) -> None:
-        self._store.delete_code_artifact(artifact_id)
+        self._call("delete_code_artifact", artifact_id)
 
     def touch_code_artifact_used(self, artifact_id: str, **changes: Any) -> JSONDict:
         return self._call("touch_code_artifact_used", artifact_id, **changes)
@@ -217,7 +286,7 @@ class ArnoldStoreAdapter:
         return self._call("upsert_api_cache", **fields)
 
     def cleanup_expired_api_cache(self, **filters: Any) -> int:
-        return self._store.cleanup_expired_api_cache(**filters)
+        return self._call("cleanup_expired_api_cache", **filters)
 
     def create_epic(self, **fields: Any) -> JSONDict:
         return self._call("create_epic", **fields)
@@ -237,7 +306,7 @@ class ArnoldStoreAdapter:
     def update_epic(self, epic_id: str, **changes: Any) -> JSONDict:
         return self._call("update_epic", epic_id, **changes)
 
-    def seed_checklist(self, epic_id: str, items: Sequence[str]) -> list[JSONDict]:
+    def seed_checklist(self, epic_id: str, items: Sequence[str], *, idempotency_key: str | None = None) -> list[JSONDict]:
         seeded = [
             ChecklistItemInput(
                 content=content,
@@ -247,7 +316,7 @@ class ArnoldStoreAdapter:
             )
             for position, content in enumerate(items, start=1)
         ]
-        return self._call("add_checklist_items", epic_id, seeded)
+        return self._call("add_checklist_items", epic_id, seeded, idempotency_key=idempotency_key)
 
     def list_checklist_items(self, epic_id: str, *, status: str | None = None) -> list[JSONDict]:
         return self._call("list_checklist_items", epic_id, status=status)
@@ -263,7 +332,7 @@ class ArnoldStoreAdapter:
         )
 
     def delete_checklist_items(self, item_ids: Sequence[str]) -> None:
-        self._store.delete_checklist_items(item_ids)
+        self._call("delete_checklist_items", item_ids)
 
     def replace_checklist(self, epic_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
         return self._call(
@@ -318,7 +387,7 @@ class ArnoldStoreAdapter:
         return self._call("update_sprint", sprint_id, **changes)
 
     def delete_sprint(self, sprint_id: str) -> None:
-        self._store.delete_sprint(sprint_id)
+        self._call("delete_sprint", sprint_id)
 
     def replace_sprint_items(self, sprint_id: str, items: Sequence[JSONDict]) -> list[JSONDict]:
         return self._call(

@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from megaplan.schemas import BotTurn, ChecklistItem, Epic, EpicLock, Message, SystemLog, ToolCall, utc_now
-from megaplan.store import ArnoldStoreAdapter, BlobStore, HotContext, LockConflict, Store
+from megaplan.store import ArnoldStoreAdapter, BlobStore, HotContext, LockConflict, Store, deterministic_idempotency_key
 
 
 def _public_methods(cls: type[object]) -> set[str]:
@@ -66,7 +66,7 @@ class _FakeStore:
             prompt_snapshot=fields.get("prompt_snapshot"),
         )
 
-    def add_checklist_items(self, epic_id: str, items: object) -> list[ChecklistItem]:
+    def add_checklist_items(self, epic_id: str, items: object, **_: object) -> list[ChecklistItem]:
         return [
             ChecklistItem(
                 id=f"check_{index}",
@@ -88,7 +88,7 @@ class _FakeStore:
             state=str(changes.get("state") or "shaping"),
         )
 
-    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int) -> EpicLock:
+    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int, **_: object) -> EpicLock:
         if holder_id == "blocked":
             raise LockConflict("held elsewhere")
         return EpicLock(
@@ -97,7 +97,7 @@ class _FakeStore:
             expires_at=utc_now() + timedelta(seconds=ttl_seconds),
         )
 
-    def release_lock(self, epic_id: str, holder_id: str) -> None:
+    def release_lock(self, epic_id: str, holder_id: str, **_: object) -> None:
         return None
 
     def record_tool_call(self, **fields: object) -> ToolCall:
@@ -172,22 +172,39 @@ def test_arnold_store_adapter_covers_live_arnold_store_surface() -> None:
 
 def test_arnold_store_adapter_preserves_bootstrap_seed_and_lock_compatibility() -> None:
     adapter = ArnoldStoreAdapter(_FakeStore())
+    idem = deterministic_idempotency_key
 
     with adapter.transaction():
         pass
     assert adapter._store.transaction_epic_ids == [None]
 
-    message = adapter.create_message(epic_id=None, direction="inbound", content="bootstrap")
+    message = adapter.create_message(
+        epic_id=None,
+        direction="inbound",
+        content="bootstrap",
+        idempotency_key=idem("adapter-test", "bootstrap-message"),
+    )
     assert message["epic_id"] is None
     assert adapter.load_message(message["id"])["content"] == "bootstrap"
 
-    turn = adapter.create_turn(epic_id=None, triggered_by_message_ids=[], prompt_snapshot={"phase": "bootstrap"})
+    turn = adapter.create_turn(
+        epic_id=None,
+        triggered_by_message_ids=[],
+        prompt_snapshot={"phase": "bootstrap"},
+        idempotency_key=idem("adapter-test", "bootstrap-turn"),
+    )
     assert turn["epic_id"] is None
 
-    updated = adapter.update_epic("epic_1", body="# Body", title="Body Title", goal="Body Goal")
+    updated = adapter.update_epic(
+        "epic_1",
+        body="# Body",
+        title="Body Title",
+        goal="Body Goal",
+        idempotency_key=idem("adapter-test", "update-epic"),
+    )
     assert updated["body"] == "# Body"
 
-    seeded = adapter.seed_checklist("epic_1", ["First", "Second"])
+    seeded = adapter.seed_checklist("epic_1", ["First", "Second"], idempotency_key=idem("adapter-test", "seed"))
     assert [item["position"] for item in seeded] == [1, 2]
     assert [item["source"] for item in seeded] == ["default_seed", "default_seed"]
 
@@ -198,6 +215,7 @@ def test_arnold_store_adapter_preserves_bootstrap_seed_and_lock_compatibility() 
         arguments={"body": "# Body"},
         result={"ok": True},
         duration_ms=1,
+        idempotency_key=idem("adapter-test", "tool-call"),
     )
     assert tool_call["arguments"]["body"] == "# Body"
 
@@ -208,6 +226,7 @@ def test_arnold_store_adapter_preserves_bootstrap_seed_and_lock_compatibility() 
         message="ok",
         details={"ok": True},
         epic_id=None,
+        idempotency_key=idem("adapter-test", "log"),
     )
     assert log["details"]["ok"] is True
 

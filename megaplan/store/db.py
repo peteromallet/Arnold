@@ -44,6 +44,7 @@ from megaplan.schemas import (
     Feedback,
     Image,
     Message,
+    MigrationRun,
     Plan,
     PlanArtifact,
     ProgressEvent,
@@ -129,6 +130,10 @@ _IDEMPOTENT_MUTATORS = frozenset({
     "mark_control_message_processed",
     "append_progress_event",
     "update_automation_actor",
+    "create_migration_run",
+    "update_migration_run",
+    "heartbeat_migration",
+    "claim_expired_migration",
 })
 _REPLAY_MODEL_TYPES = {
     model.__name__: model
@@ -155,6 +160,7 @@ _REPLAY_MODEL_TYPES = {
         SprintItem,
         SystemLog,
         ToolCall,
+        MigrationRun,
     )
 }
 
@@ -182,6 +188,46 @@ _PLAN_JSONB = frozenset({
 _ARTIFACT_VALID_FIELDS = frozenset({
     "name", "kind", "role", "version", "batch", "phase",
     "content_text", "sha256", "created_at", "updated_at",
+})
+
+_MIGRATION_RUN_COLUMNS = (
+    "id", "epic_id", "source_backend", "target_backend", "phase", "manifest",
+    "copied_ids", "blob_copy_progress", "started_at", "updated_at",
+    "completed_at", "holder_id", "expires_at",
+)
+_MIGRATION_RUN_JSONB = frozenset({"manifest", "copied_ids", "blob_copy_progress"})
+
+_COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
+    "automation_actors": frozenset({"id", "name", "granted_epic_ids", "actor_kind", "created_at", "last_active_at"}),
+    "bot_turns": frozenset({"id", "epic_id", "triggered_by_message_ids", "prompt_snapshot", "prompt_version", "state_at_turn", "status", "started_at", "completed_at", "model_version", "warnings_issued"}),
+    "checklist_items": frozenset({"id", "epic_id", "content", "status", "position", "source", "skip_reason", "superseded_by_item_id", "created_at", "completed_at"}),
+    "code_artifacts": frozenset({"id", "codebase_id", "epic_id", "kind", "source", "file_path", "line_range", "scope", "content", "content_summary", "metadata", "created_at", "last_used_at", "expires_at"}),
+    "codebases": frozenset({"id", "owner", "name", "default_branch", "scope", "group_name", "associated_epic_id", "added_at", "added_via", "last_accessed_at", "verified_accessible_at", "notes"}),
+    "control_messages": frozenset({"id", "epic_id", "actor_id", "intent", "target_id", "payload", "idempotency_key", "created_at", "processor_id", "claimed_at", "processed_at", "result"}),
+    "epic_events": frozenset({"id", "epic_id", "transaction_id", "event_type", "summary", "prior_state", "turn_id", "occurred_at"}),
+    "epics": frozenset({"id", "title", "goal", "body", "state", "home_backend", "migrated_to", "revision", "created_at", "last_edited_at"}),
+    "external_requests": frozenset({"id", "idempotency_key", "provider", "endpoint", "tool_call_id", "turn_id", "request_summary", "request_body", "status", "provider_request_id", "provider_response_summary", "attempt_count", "first_attempted_at", "last_attempted_at", "completed_at", "error_details"}),
+    "feedback": frozenset({"id", "kind", "content", "source", "source_message_id", "epic_id", "turn_id", "context_snapshot", "active", "deactivation_reason", "resolved", "resolution_note", "resolved_at", "created_at", "last_referenced_at", "last_applied_at"}),
+    "images": frozenset({"id", "epic_id", "source", "prompt", "storage_url", "quality", "size", "created_at", "reference_key", "description", "caption", "in_body", "active", "discord_attachment_id"}),
+    "messages": frozenset({"id", "epic_id", "direction", "content", "discord_message_id", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
+    "plans": frozenset(_PLAN_COLUMNS),
+    "progress_events": frozenset({"id", "epic_id", "plan_id", "sprint_id", "kind", "summary", "details", "occurred_at"}),
+    "second_opinions": frozenset({"id", "epic_id", "requested_at", "requested_by", "focus_areas", "raw_response", "score", "summary", "verdict", "resulting_checklist_item_ids", "model_used"}),
+    "sprint_items": frozenset({"id", "sprint_id", "content", "estimated_complexity", "status", "source_section", "position", "created_at"}),
+    "sprints": frozenset({"id", "epic_id", "sprint_number", "name", "goal", "status", "queue_position", "pending_reason", "target_weeks", "revision", "created_at", "updated_at", "queued_at"}),
+    "system_logs": frozenset({"id", "level", "category", "event_type", "message", "details", "turn_id", "epic_id", "occurred_at"}),
+    "tool_calls": frozenset({"id", "turn_id", "tool_name", "operation_kind", "arguments", "result", "duration_ms", "called_at"}),
+}
+_COPY_JSONB_COLUMNS = frozenset({
+    "active_step", "arguments", "blob_copy_progress", "clarification", "config",
+    "context_snapshot", "copied_ids", "details", "error_details", "focus_areas",
+    "granted_epic_ids", "history", "in_burst_with", "last_gate",
+    "latest_execution", "latest_failure", "latest_finalize", "latest_review",
+    "line_range", "manifest", "meta", "metadata", "payload",
+    "plan_versions", "prior_state", "prompt_snapshot",
+    "provider_response_summary", "request_body", "request_summary", "result",
+    "resulting_checklist_item_ids", "sessions", "state_at_turn",
+    "transcription_metadata", "triggered_by_message_ids", "warnings_issued",
 })
 
 
@@ -512,6 +558,7 @@ class DBStore:
         values: list[Any] = []
         if active_only:
             conditions.append("state != 'archived'")
+        conditions.append("migrated_to IS NULL")
         if home_backend is not None:
             conditions.append("home_backend = %s")
             values.append(home_backend)
@@ -542,6 +589,7 @@ class DBStore:
             FROM epics
             WHERE to_tsvector('english', title || ' ' || goal || ' ' || body)
                   @@ plainto_tsquery('english', %s)
+              AND migrated_to IS NULL
               {state_filter}
             ORDER BY rank DESC
             LIMIT %s
@@ -2572,19 +2620,22 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> EpicLock:
         conn = self._get_conn()
-        try:
-            row = conn.execute(
-                """
-                INSERT INTO epic_locks (epic_id, holder_id, expires_at)
-                VALUES (%s, %s, now() + make_interval(secs => %s))
-                RETURNING *
-                """,
-                [epic_id, holder_id, ttl_seconds],
-            ).fetchone()
-        except Exception as exc:
-            if getattr(exc, "pgcode", None) == "23505":
-                raise LockConflict(f"Epic lock already held for epic {epic_id!r}") from exc
-            raise
+        row = conn.execute(
+            """
+            INSERT INTO epic_locks (epic_id, holder_id, expires_at)
+            VALUES (%s, %s, now() + make_interval(secs => %s))
+            ON CONFLICT (epic_id) DO UPDATE
+            SET holder_id = EXCLUDED.holder_id,
+                acquired_at = now(),
+                expires_at = EXCLUDED.expires_at
+            WHERE epic_locks.expires_at <= now()
+               OR epic_locks.holder_id = EXCLUDED.holder_id
+            RETURNING *
+            """,
+            [epic_id, holder_id, ttl_seconds],
+        ).fetchone()
+        if row is None:
+            raise LockConflict(f"Epic lock already held for epic {epic_id!r}")
         return EpicLock(**row)
 
     def release_lock(self, epic_id: str, holder_id: str,
@@ -2759,6 +2810,233 @@ class DBStore:
         if row is None:
             raise RevisionConflict(f"AutomationActor {actor_id!r} not found")
         return AutomationActor(**row)
+
+    # ------------------------------------------------------------------
+    # Migration runs and migration-private copy helpers
+    # ------------------------------------------------------------------
+
+    def _migration_run_from_row(self, row: Mapping[str, Any] | None) -> MigrationRun | None:
+        return MigrationRun(**row) if row else None
+
+    def create_migration_run(
+        self,
+        run: MigrationRun,
+        *,
+        idempotency_key: str | None = None,
+    ) -> MigrationRun:
+        self._require_actor()
+        conn = self._get_conn()
+        data = run.model_dump()
+        columns = [column for column in _MIGRATION_RUN_COLUMNS if column in data]
+        values = [_jb(data[column]) if column in _MIGRATION_RUN_JSONB else data[column] for column in columns]
+        row = conn.execute(
+            f"""
+            INSERT INTO migration_runs ({', '.join(columns)})
+            VALUES ({', '.join(['%s'] * len(columns))})
+            RETURNING {', '.join(_MIGRATION_RUN_COLUMNS)}
+            """,
+            values,
+        ).fetchone()
+        return MigrationRun(**row)
+
+    def load_migration_run(self, migration_id: str) -> MigrationRun | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            f"SELECT {', '.join(_MIGRATION_RUN_COLUMNS)} FROM migration_runs WHERE id = %s",
+            [migration_id],
+        ).fetchone()
+        return self._migration_run_from_row(row)
+
+    def update_migration_run(
+        self,
+        migration_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> MigrationRun:
+        self._require_actor()
+        if not changes:
+            current = self.load_migration_run(migration_id)
+            if current is None:
+                raise KeyError(f"Migration run {migration_id!r} not found")
+            return current
+        invalid = set(changes) - set(_MIGRATION_RUN_COLUMNS)
+        if invalid:
+            raise ValueError(f"Invalid migration_run columns: {', '.join(sorted(invalid))}")
+        conn = self._get_conn()
+        set_parts = [f"{column} = %s" for column in changes]
+        set_parts.append("updated_at = now()")
+        values = [
+            _jb(value) if column in _MIGRATION_RUN_JSONB else value
+            for column, value in changes.items()
+        ]
+        values.append(migration_id)
+        row = conn.execute(
+            f"""
+            UPDATE migration_runs
+            SET {', '.join(set_parts)}
+            WHERE id = %s
+            RETURNING {', '.join(_MIGRATION_RUN_COLUMNS)}
+            """,
+            values,
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Migration run {migration_id!r} not found")
+        return MigrationRun(**row)
+
+    def heartbeat_migration(
+        self,
+        migration_id: str,
+        holder_id: str,
+        ttl_seconds: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> MigrationRun:
+        self._require_actor()
+        conn = self._get_conn()
+        row = conn.execute(
+            f"""
+            UPDATE migration_runs
+            SET updated_at = now(),
+                expires_at = now() + make_interval(secs => %s)
+            WHERE id = %s
+              AND holder_id = %s
+              AND completed_at IS NULL
+            RETURNING {', '.join(_MIGRATION_RUN_COLUMNS)}
+            """,
+            [ttl_seconds, migration_id, holder_id],
+        ).fetchone()
+        if row is None:
+            raise LeaseConflict(f"Migration {migration_id!r} is not held by {holder_id!r}")
+        return MigrationRun(**row)
+
+    def find_active_migration_for_epic(self, epic_id: str) -> MigrationRun | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            f"""
+            SELECT {', '.join(_MIGRATION_RUN_COLUMNS)}
+            FROM migration_runs
+            WHERE epic_id = %s
+              AND completed_at IS NULL
+              AND phase NOT IN ('complete', 'aborted')
+              AND expires_at > now()
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            [epic_id],
+        ).fetchone()
+        return self._migration_run_from_row(row)
+
+    def claim_expired_migration(
+        self,
+        migration_id: str,
+        holder_id: str,
+        ttl_seconds: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> MigrationRun:
+        self._require_actor()
+        conn = self._get_conn()
+        row = conn.execute(
+            f"""
+            UPDATE migration_runs
+            SET holder_id = %s,
+                updated_at = now(),
+                expires_at = now() + make_interval(secs => %s)
+            WHERE id = %s
+              AND completed_at IS NULL
+              AND phase NOT IN ('complete', 'aborted')
+              AND expires_at <= now()
+            RETURNING {', '.join(_MIGRATION_RUN_COLUMNS)}
+            """,
+            [holder_id, ttl_seconds, migration_id],
+        ).fetchone()
+        if row is None:
+            raise LeaseConflict(f"Migration {migration_id!r} is still active or does not exist")
+        return MigrationRun(**row)
+
+    def _copy_sql_identifiers(self, names: Sequence[str]) -> Any:
+        if psycopg is None:
+            raise _psycopg_import_error
+        return psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(name) for name in names)
+
+    def copy_rows_idempotent(self, table: str, rows: list[dict[str, Any]]) -> int:
+        """Migration-private copy path for ID-addressed tables.
+
+        Plan artifacts are deliberately excluded because their durable identity is
+        ``(plan_id, name)``; use copy_plan_artifacts_idempotent() for those rows.
+        """
+        self._require_actor()
+        if table == "plan_artifacts":
+            raise ValueError("plan_artifacts must be copied with copy_plan_artifacts_idempotent")
+        allowed_columns = _COPY_TABLE_COLUMNS.get(table)
+        if allowed_columns is None:
+            raise ValueError(f"Table {table!r} is not supported for migration copy")
+        if not rows:
+            return 0
+        if psycopg is None:
+            raise _psycopg_import_error
+        conn = self._get_conn()
+        inserted = 0
+        with conn.transaction():
+            for raw_row in rows:
+                row = dict(raw_row)
+                if "id" not in row:
+                    raise ValueError(f"Cannot copy row for {table!r} without id")
+                columns = [column for column in row if column in allowed_columns]
+                if not columns:
+                    raise ValueError(f"Row for {table!r} has no supported columns")
+                values = [_jb(row[column]) if column in _COPY_JSONB_COLUMNS else row[column] for column in columns]
+                query = psycopg.sql.SQL(
+                    "INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
+                    "ON CONFLICT (id) DO NOTHING"
+                ).format(
+                    table=psycopg.sql.Identifier(table),
+                    columns=self._copy_sql_identifiers(columns),
+                    placeholders=psycopg.sql.SQL(", ").join(psycopg.sql.Placeholder() for _ in columns),
+                )
+                cur = conn.execute(query, values)
+                inserted += cur.rowcount
+        return inserted
+
+    def copy_plan_artifacts_idempotent(
+        self,
+        plan_id: str,
+        artifacts: list[PlanArtifact],
+    ) -> int:
+        self._require_actor()
+        if not artifacts:
+            return 0
+        conn = self._get_conn()
+        inserted = 0
+        with conn.transaction():
+            for artifact in artifacts:
+                data = artifact.model_dump()
+                row = {
+                    "plan_id": plan_id,
+                    "name": data["name"],
+                    "kind": data["kind"],
+                    "role": data["role"],
+                    "version": data.get("version"),
+                    "batch": data.get("batch"),
+                    "phase": data.get("phase"),
+                    "content_text": data.get("content_text"),
+                    "sha256": data["sha256"],
+                    "created_at": data.get("created_at"),
+                    "updated_at": data.get("updated_at"),
+                }
+                columns = [column for column, value in row.items() if value is not None]
+                values = [row[column] for column in columns]
+                query = psycopg.sql.SQL(
+                    "INSERT INTO plan_artifacts ({columns}) VALUES ({placeholders}) "
+                    "ON CONFLICT (plan_id, name) DO NOTHING"
+                ).format(
+                    columns=self._copy_sql_identifiers(columns),
+                    placeholders=psycopg.sql.SQL(", ").join(psycopg.sql.Placeholder() for _ in columns),
+                )
+                cur = conn.execute(query, values)
+                inserted += cur.rowcount
+        return inserted
 
 
 __all__ = ["DBStore"]

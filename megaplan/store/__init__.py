@@ -19,12 +19,14 @@ from .base import (
     Store,
     StoreError,
     Transaction,
+    deterministic_idempotency_key,
 )
 from .blob import BlobMissingError, BlobRef, BlobStat, BlobStore, LocalDirBlobStore
 from .compat import ArnoldBlobAdapter, ArnoldStoreAdapter
 from .db import DBStore
 from .file import FileStore
 from .identity import require_actor_id, resolve_actor_id, validate_actor_exists
+from .multi import MultiStore
 from .plan_repository import PlanRepository
 
 __all__ = [
@@ -40,6 +42,7 @@ __all__ = [
     "ChecklistItemInput",
     "ControlMessageInput",
     "DBStore",
+    "deterministic_idempotency_key",
     "EpicSummary",
     "FileStore",
     "HotContext",
@@ -48,6 +51,7 @@ __all__ = [
     "LockConflict",
     "LocalDirBlobStore",
     "MessageSearchHit",
+    "MultiStore",
     "PlanRepository",
     "ProgressEventInput",
     "require_actor_id",
