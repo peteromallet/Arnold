@@ -20,6 +20,7 @@ VALID_MODES = ("auto", "chain", "idle")
 VALID_PROVIDERS = ("railway", "local", "ssh")
 FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
+VALID_CODEX_REASONING = ("minimal", "low", "medium", "high")
 
 
 @dataclass(frozen=True)
@@ -240,9 +241,14 @@ def load_spec(path: Path) -> CloudSpec:
     )
 
     codex_raw = _mapping(raw.get("codex"), "codex")
+    codex_reasoning = _string(codex_raw.get("reasoning"), "codex.reasoning", default="high")
+    if codex_reasoning not in VALID_CODEX_REASONING:
+        raise _invalid(
+            f"codex.reasoning must be one of {', '.join(VALID_CODEX_REASONING)}; got {codex_reasoning!r}"
+        )
     codex = CodexSpec(
         model=_string(codex_raw.get("model"), "codex.model", default="gpt-5.4"),
-        reasoning=_string(codex_raw.get("reasoning"), "codex.reasoning", default="high"),
+        reasoning=codex_reasoning,
     )
 
     mode = _string(raw.get("mode"), "mode", default="idle")
