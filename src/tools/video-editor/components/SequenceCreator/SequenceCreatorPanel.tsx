@@ -213,14 +213,20 @@ export function SequenceCreatorPanel({
   }, [data, selectedClipId, selectedClipIds, validatedDraft]);
 
   const replaceDisabledReason = useMemo(() => {
-    if (!validatedDraft) {
+    if (!validatedDraft && !generatedComponent) {
       return selectedValidation && !selectedValidation.ok
         ? summarizeValidationErrors(selectedValidation.errors)
-        : 'Generate or select a valid sequence draft first.';
+        : 'Generate or select a sequence first.';
     }
-    if (!replaceProbe) return 'Select a visual clip to replace.';
-    return replaceProbe.ok ? null : formatEditError(replaceProbe.error);
-  }, [replaceProbe, selectedValidation, validatedDraft]);
+    if (!selectedClipId && (!selectedClipIds || selectedClipIds.length === 0)) {
+      return 'Select a visual clip to replace.';
+    }
+    if (validatedDraft) {
+      if (!replaceProbe) return 'Select a visual clip to replace.';
+      return replaceProbe.ok ? null : formatEditError(replaceProbe.error);
+    }
+    return null;
+  }, [generatedComponent, replaceProbe, selectedClipId, selectedClipIds, selectedValidation, validatedDraft]);
 
   const runSequenceGeneration = useCallback(async (rawPrompt: string, options: {
     mode?: SequenceCreatorMode;
@@ -447,44 +453,58 @@ export function SequenceCreatorPanel({
   // The gate catches compile errors + obvious runtime errors via
   // react-dom/server.renderToString — see headlessRender.ts for the
   // FLAG-005 caveat that ThemeProvider/SequenceContext are NOT exercised.
+  // Smoke-render gate + DB persist + emit a synthetic ValidatedSequenceDraft
+  // that downstream Insert/Replace builders can consume. This unifies the
+  // code-path flow with the JSON-path flow (effects pattern: save-on-action,
+  // not save-as-a-separate-button). Returns the draft pointing at the
+  // freshly-saved resource's unique clipType so the timeline edit will
+  // resolve to the correct component via DynamicSequenceRegistry.
   const createSequenceComponent = useCreateSequenceComponentResource();
   const [isSaving, setIsSaving] = useState(false);
-  const handleSaveGeneratedComponent = useCallback(async () => {
-    if (!generatedComponent) return;
-    setIsSaving(true);
-    setActionError(null);
+  const persistGeneratedComponent = useCallback(async ():
+    Promise<{ ok: true; draft: ValidatedSequenceDraft } | { ok: false; error: string }> => {
+    if (!generatedComponent) return { ok: false, error: 'No generated component.' };
+    const smoke = await smokeRenderSequenceComponent({
+      code: generatedComponent.code,
+      schemaJson: generatedComponent.schemaJson,
+      defaultsJson: generatedComponent.defaultsJson,
+      fps: resolvedConfig?.output.fps ?? 30,
+    });
+    if (!smoke.ok) {
+      return { ok: false, error: `Smoke render failed: ${smoke.error}. Component NOT saved.` };
+    }
+    const slug = (generatedComponent.name || 'component')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-');
+    const uniqueClipType = forkPending?.selectedClipType
+      ?? `custom-component:${slug}-${Date.now().toString(36)}`;
+    const metadata = {
+      name: generatedComponent.name || 'Untitled component',
+      slug,
+      code: generatedComponent.code,
+      schemaJson: generatedComponent.schemaJson,
+      defaultsJson: generatedComponent.defaultsJson,
+      clipType: uniqueClipType,
+      themeId: resolvedConfig?.theme ?? '2rp',
+      description: generatedComponent.description,
+      created_by: { is_you: true },
+      is_public: false,
+    };
     try {
-      const smoke = await smokeRenderSequenceComponent({
-        code: generatedComponent.code,
-        schemaJson: generatedComponent.schemaJson,
-        defaultsJson: generatedComponent.defaultsJson,
-        fps: resolvedConfig?.output.fps ?? 30,
-      });
-      if (!smoke.ok) {
-        setActionError(`Smoke render failed: ${smoke.error}. Component NOT saved.`);
-        return;
-      }
-      const metadata = {
-        name: generatedComponent.name || 'Untitled component',
-        slug: (generatedComponent.name || 'component').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-        code: generatedComponent.code,
-        schemaJson: generatedComponent.schemaJson,
-        defaultsJson: generatedComponent.defaultsJson,
-        clipType: forkPending?.selectedClipType ?? 'custom-component',
-        themeId: resolvedConfig?.theme ?? '2rp',
-        description: generatedComponent.description,
-        created_by: { is_you: true },
-        is_public: false,
-      };
       await createSequenceComponent.mutateAsync({ metadata });
-      setGenerationNote('Sequence component saved.');
-      setGeneratedComponent(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Save failed.';
-      setActionError(`Save failed: ${message}. Component NOT saved.`);
-    } finally {
-      setIsSaving(false);
+      return { ok: false, error: `Save failed: ${message}. Component NOT saved.` };
     }
+    const defaultHold = 4;
+    return {
+      ok: true,
+      draft: {
+        clipType: uniqueClipType,
+        hold: defaultHold,
+        params: (generatedComponent.defaultsJson ?? {}) as ValidatedSequenceDraft['params'],
+      },
+    };
   }, [createSequenceComponent, forkPending, generatedComponent, resolvedConfig?.output.fps, resolvedConfig?.theme]);
 
   const handleEditSelected = useCallback(() => {
@@ -519,46 +539,78 @@ export function SequenceCreatorPanel({
     setActionError(null);
   }, [selectedDraftIndex, selectedGroup]);
 
-  const handleInsert = useCallback(() => {
-    if (!data || !validatedDraft) return;
-    const result = buildInsertSequenceDraftEdit(data, validatedDraft, {
-      at: currentTime,
-      selectedTrackId,
-    });
-    if (!result.ok) {
-      setActionError(formatEditError(result.error));
-      return;
-    }
-    applyEdit(attachSequenceGenerationMetadata(
-      result.mutation,
-      result.clipId,
-      buildSequenceGenerationMetadata(selectedGroup, selectedDraftIndex),
-    ), {
-      selectedClipId: result.selectedClipId,
-      selectedTrackId: result.selectedTrackId,
-    });
-    requestCenterTimelineClip(result.selectedClipId);
-    onOpenChange?.(false);
-  }, [applyEdit, currentTime, data, onOpenChange, selectedDraftIndex, selectedGroup, selectedTrackId, validatedDraft]);
+  // Resolve the draft to insert/replace with: prefer an explicit JSON
+  // validated draft; otherwise persist the code-path generatedComponent and
+  // synthesize a draft pointing at its DB resource.
+  const resolveDraftForApply = useCallback(async ():
+    Promise<{ ok: true; draft: ValidatedSequenceDraft } | { ok: false; error: string }> => {
+    if (validatedDraft) return { ok: true, draft: validatedDraft };
+    if (generatedComponent) return persistGeneratedComponent();
+    return { ok: false, error: 'Generate a sequence first.' };
+  }, [generatedComponent, persistGeneratedComponent, validatedDraft]);
 
-  const handleReplace = useCallback(() => {
-    if (!data || !validatedDraft) return;
-    const result = buildReplaceSequenceDraftEdit(data, validatedDraft, { selectedClipId, selectedClipIds });
-    if (!result.ok) {
-      setActionError(formatEditError(result.error));
-      return;
+  const handleInsert = useCallback(async () => {
+    if (!data) return;
+    setIsSaving(true);
+    setActionError(null);
+    try {
+      const resolved = await resolveDraftForApply();
+      if (!resolved.ok) {
+        setActionError(resolved.error);
+        return;
+      }
+      const result = buildInsertSequenceDraftEdit(data, resolved.draft, {
+        at: currentTime,
+        selectedTrackId,
+      });
+      if (!result.ok) {
+        setActionError(formatEditError(result.error));
+        return;
+      }
+      applyEdit(attachSequenceGenerationMetadata(
+        result.mutation,
+        result.clipId,
+        buildSequenceGenerationMetadata(selectedGroup, selectedDraftIndex),
+      ), {
+        selectedClipId: result.selectedClipId,
+        selectedTrackId: result.selectedTrackId,
+      });
+      requestCenterTimelineClip(result.selectedClipId);
+      onOpenChange?.(false);
+    } finally {
+      setIsSaving(false);
     }
-    applyEdit(attachSequenceGenerationMetadata(
-      result.mutation,
-      result.clipId,
-      buildSequenceGenerationMetadata(selectedGroup, selectedDraftIndex),
-    ), {
-      selectedClipId: result.selectedClipId,
-      selectedTrackId: result.selectedTrackId,
-    });
-    requestCenterTimelineClip(result.selectedClipId);
-    onOpenChange?.(false);
-  }, [applyEdit, data, onOpenChange, selectedClipId, selectedClipIds, selectedDraftIndex, selectedGroup, validatedDraft]);
+  }, [applyEdit, currentTime, data, onOpenChange, resolveDraftForApply, selectedDraftIndex, selectedGroup, selectedTrackId]);
+
+  const handleReplace = useCallback(async () => {
+    if (!data) return;
+    setIsSaving(true);
+    setActionError(null);
+    try {
+      const resolved = await resolveDraftForApply();
+      if (!resolved.ok) {
+        setActionError(resolved.error);
+        return;
+      }
+      const result = buildReplaceSequenceDraftEdit(data, resolved.draft, { selectedClipId, selectedClipIds });
+      if (!result.ok) {
+        setActionError(formatEditError(result.error));
+        return;
+      }
+      applyEdit(attachSequenceGenerationMetadata(
+        result.mutation,
+        result.clipId,
+        buildSequenceGenerationMetadata(selectedGroup, selectedDraftIndex),
+      ), {
+        selectedClipId: result.selectedClipId,
+        selectedTrackId: result.selectedTrackId,
+      });
+      requestCenterTimelineClip(result.selectedClipId);
+      onOpenChange?.(false);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [applyEdit, data, onOpenChange, resolveDraftForApply, selectedClipId, selectedClipIds, selectedDraftIndex, selectedGroup]);
 
   const handleRemoveAllowedAsset = useCallback((asset: {
     clipId: string;
@@ -585,10 +637,10 @@ export function SequenceCreatorPanel({
       }));
   }, [allowedAssets]);
 
-  const insertDisabledReason = !validatedDraft
+  const insertDisabledReason = (!validatedDraft && !generatedComponent)
     ? (selectedValidation && !selectedValidation.ok
       ? summarizeValidationErrors(selectedValidation.errors)
-      : 'Generate or select a valid sequence draft first.')
+      : 'Generate or select a sequence first.')
     : (!data ? 'Timeline unavailable.' : null);
 
   return (
@@ -747,39 +799,15 @@ export function SequenceCreatorPanel({
                 {generatedComponent && (
                   <div
                     data-testid="sequence-creator-generated-component"
-                    className="space-y-2 rounded-lg border border-border bg-background p-3 text-xs text-foreground"
+                    className="space-y-1 rounded-lg border border-border bg-background p-3 text-xs text-foreground"
                   >
                     <div className="font-medium">{generatedComponent.name || 'Generated component'}</div>
                     {generatedComponent.description && (
                       <p className="text-muted-foreground">{generatedComponent.description}</p>
                     )}
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => void handleSaveGeneratedComponent()}
-                        disabled={isSaving}
-                      >
-                        {isSaving ? 'Saving…' : 'Save component'}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setGeneratedComponent(null)}
-                        disabled={isSaving}
-                      >
-                        Discard
-                      </Button>
-                    </div>
-                    {actionError && (
-                      <div
-                        data-testid="sequence-creator-save-error"
-                        className="text-destructive"
-                      >
-                        {actionError}
-                      </div>
-                    )}
+                    <p className="text-muted-foreground italic">
+                      Use Insert at playhead or Replace selected — the component is saved to your library on the same click.
+                    </p>
                   </div>
                 )}
 
