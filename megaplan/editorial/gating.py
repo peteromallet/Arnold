@@ -8,7 +8,9 @@ from typing import Any, Mapping
 
 from megaplan.schemas.base import utc_now
 from megaplan.store import Store, deterministic_idempotency_key
+from megaplan.store.snapshot import canonical_json_dumps, canonical_sha256
 
+from ._events import capture_snapshot, snapshot_payload
 from .errors import EditorialNotFound, EditorialWorkflowError
 from .lockdown import scan_lockdown_phrases
 
@@ -198,12 +200,15 @@ def transition_epic_state(
         changes["planned_at"] = utc_now()
 
     with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
         updated = store.update_epic(
             epic_id,
             expected_revision=expected_revision,
             idempotency_key=idem,
             **changes,
         )
+        post_state = snapshot_payload(capture_snapshot(store, epic_id))
+        pre_state = snapshot_payload(pre_snapshot)
         transaction_id = getattr(tx, "tx_id", None) or store.latest_transaction_id(epic_id) or idem
         store.record_epic_event(
             epic_id=epic_id,
@@ -211,6 +216,12 @@ def transition_epic_state(
             event_type="state_change",
             summary=f"{actor_id} changed epic state from {_get(epic, 'state')} to {target_state}",
             prior_state=prior_state,
+            pre_state=pre_state,
+            post_state=post_state,
+            pre_state_canonical_json=canonical_json_dumps(pre_state),
+            post_state_canonical_json=canonical_json_dumps(post_state),
+            pre_state_sha256=canonical_sha256(pre_state),
+            post_state_sha256=canonical_sha256(post_state),
             turn_id=turn_id,
             idempotency_key=deterministic_idempotency_key(idem, "event"),
         )

@@ -67,6 +67,49 @@ def test_db_idempotency_private_sets_include_sprint3_migration_mutators() -> Non
     assert required.issubset(db_module._IDEMPOTENT_MUTATORS)
 
 
+def test_db_sprint5_schema_plumbing_constants_are_registered() -> None:
+    import megaplan.store.db as db_module
+
+    assert {"revert", "attach_image"}.issubset(db_module._IDEMPOTENT_MUTATORS)
+    assert {
+        "pre_state",
+        "post_state",
+        "pre_state_canonical_json",
+        "post_state_canonical_json",
+        "pre_state_sha256",
+        "post_state_sha256",
+    }.issubset(db_module._COPY_TABLE_COLUMNS["epic_events"])
+    assert {
+        "blob_backend",
+        "blob_id",
+        "blob_sha256",
+        "blob_size_bytes",
+        "content_type",
+    }.issubset(db_module._COPY_TABLE_COLUMNS["images"])
+    assert {"pre_state", "post_state"}.issubset(db_module._COPY_JSONB_COLUMNS)
+
+
+def test_sprint5_supabase_migration_declares_snapshot_image_and_search_indexes() -> None:
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "supabase"
+        / "migrations"
+        / "202605050002_sprint5_editorial_schema.sql"
+    ).read_text(encoding="utf-8")
+
+    for expected in [
+        "pre_state_canonical_json",
+        "post_state_canonical_json",
+        "blob_sha256",
+        "images_one_active_reference",
+        "epics_search_tsv_gin",
+        "to_tsvector",
+    ]:
+        assert expected in migration
+
+
 def test_db_plan_columns_include_resume_cursor() -> None:
     import megaplan.store.db as db_module
 

@@ -8,7 +8,7 @@ from typing import Any, Sequence
 from megaplan.schemas.base import utc_now
 from megaplan.store import ChecklistItemInput, Store, deterministic_idempotency_key
 
-from ._events import dump_record, get_field, record_event, require_epic, transaction_id
+from ._events import capture_snapshot, dump_record, get_field, record_event, require_epic, transaction_id
 from .errors import EditorialNotFound, EditorialValidationError
 from .lockdown import ensure_unlocked_for_edit
 
@@ -63,6 +63,7 @@ def _record_checklist_event(
     idem: str,
     action: str,
     prior_items: list[Any],
+    pre_snapshot: Any,
     turn_id: str | None,
 ) -> None:
     record_event(
@@ -72,6 +73,7 @@ def _record_checklist_event(
         event_type="checklist_change",
         summary=f"{actor_id} {action} checklist",
         prior_state={"checklist": [dump_record(item) for item in prior_items]},
+        pre_snapshot=pre_snapshot,
         turn_id=turn_id,
         idempotency_key=idem,
     )
@@ -98,17 +100,20 @@ def add_items(
     prior = store.list_checklist_items(epic_id)
     idem = idempotency_key or deterministic_idempotency_key("editorial-checklist-add", epic_id, actor_id, len(prior), *contents)
     inputs = [ChecklistItemInput(content=content.strip(), status="open", source=source) for content in contents]
-    created = store.add_checklist_items(epic_id, inputs, idempotency_key=idem)
-    _record_checklist_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="added",
-        prior_items=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        created = store.add_checklist_items(epic_id, inputs, idempotency_key=idem)
+        _record_checklist_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="added",
+            prior_items=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
     return created
 
 
@@ -137,17 +142,20 @@ def update_item(
             superseded_by_item_id=changes.get("superseded_by_item_id", get_field(existing, "superseded_by_item_id")),
         )
     idem = idempotency_key or deterministic_idempotency_key("editorial-checklist-update", epic_id, actor_id, item_id, sorted(changes))
-    updated = store.update_checklist_item(item_id, idempotency_key=idem, **changes)
-    _record_checklist_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="updated",
-        prior_items=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        updated = store.update_checklist_item(item_id, idempotency_key=idem, **changes)
+        _record_checklist_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="updated",
+            prior_items=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
     return updated
 
 
@@ -194,17 +202,20 @@ def delete_items(
     if missing:
         raise EditorialNotFound("Checklist item not found", details={"item_ids": missing})
     idem = idempotency_key or deterministic_idempotency_key("editorial-checklist-delete", epic_id, actor_id, *item_ids)
-    store.delete_checklist_items(item_ids, idempotency_key=idem)
-    _record_checklist_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="deleted from",
-        prior_items=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        store.delete_checklist_items(item_ids, idempotency_key=idem)
+        _record_checklist_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="deleted from",
+            prior_items=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
 
 
 def replace_items(
@@ -230,17 +241,20 @@ def replace_items(
         )
     prior = store.list_checklist_items(epic_id)
     idem = idempotency_key or deterministic_idempotency_key("editorial-checklist-replace", epic_id, actor_id, len(items))
-    replaced = store.replace_checklist(epic_id, items, idempotency_key=idem)
-    _record_checklist_event(
-        store=store,
-        epic_id=epic_id,
-        actor_id=actor_id,
-        tx=None,
-        idem=idem,
-        action="replaced",
-        prior_items=prior,
-        turn_id=turn_id,
-    )
+    with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
+        replaced = store.replace_checklist(epic_id, items, idempotency_key=idem)
+        _record_checklist_event(
+            store=store,
+            epic_id=epic_id,
+            actor_id=actor_id,
+            tx=tx,
+            idem=idem,
+            action="replaced",
+            prior_items=prior,
+            pre_snapshot=pre_snapshot,
+            turn_id=turn_id,
+        )
     return replaced
 
 
