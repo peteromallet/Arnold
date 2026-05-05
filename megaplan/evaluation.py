@@ -101,6 +101,78 @@ def _parse_git_status_paths(stdout: str) -> set[str]:
     return paths
 
 
+def _run_git_status_paths(
+    repo_dir: Path,
+    *,
+    untracked_mode: str = "normal",
+) -> tuple[set[str], str | None]:
+    if not (repo_dir / ".git").exists():
+        return set(), "Project directory is not a git repository."
+    command = ["git", "status", "--short"]
+    if untracked_mode == "all":
+        command.append("--untracked-files=all")
+    try:
+        process = subprocess.run(
+            command,
+            cwd=str(repo_dir),
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return set(), "git not found on PATH."
+    except subprocess.TimeoutExpired:
+        return set(), "git status timed out."
+
+    if process.returncode != 0:
+        return set(), f"git status failed: {process.stderr.strip() or process.stdout.strip()}"
+    return _parse_git_status_paths(process.stdout), None
+
+
+def _discover_nested_git_repos(project_dir: Path, claimed_paths: set[str]) -> list[Path]:
+    repos: set[Path] = set()
+    project_abs = project_dir.resolve()
+    for claimed in claimed_paths:
+        candidate = project_dir / claimed
+        try:
+            relative_parts = candidate.resolve().relative_to(project_abs).parts
+        except (OSError, ValueError):
+            continue
+        cursor = project_dir
+        for part in relative_parts[:-1]:
+            cursor = cursor / part
+            if (cursor / ".git").exists():
+                repos.add(cursor)
+                break
+    return sorted(repos, key=lambda path: path.as_posix())
+
+
+def _collect_git_status_paths_with_nested_repos(
+    project_dir: Path,
+    *,
+    claimed_paths: set[str],
+    untracked_mode: str = "normal",
+) -> tuple[set[str], str | None]:
+    paths, error = _run_git_status_paths(project_dir, untracked_mode=untracked_mode)
+    if error is not None:
+        return paths, error
+
+    project_abs = project_dir.resolve()
+    for repo_dir in _discover_nested_git_repos(project_dir, claimed_paths):
+        nested_paths, nested_error = _run_git_status_paths(
+            repo_dir,
+            untracked_mode=untracked_mode,
+        )
+        if nested_error is not None:
+            continue
+        try:
+            prefix = repo_dir.resolve().relative_to(project_abs).as_posix()
+        except (OSError, ValueError):
+            continue
+        paths.update(f"{prefix}/{path}" for path in nested_paths)
+    return paths, None
+
+
 def is_rubber_stamp(text: str, *, strict: bool = False) -> bool:
     stripped = text.strip()
     normalized = normalize_text(text).strip(" .!?,;:")
@@ -226,41 +298,20 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
             "reason": "Project directory is not a git repository.",
         }
 
-    try:
-        process = subprocess.run(
-            ["git", "status", "--short"],
-            cwd=str(project_dir),
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-    except FileNotFoundError:
+    files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
+        project_dir,
+        claimed_paths=set(files_claimed),
+    )
+    if status_error is not None:
         return {
             "findings": findings,
             "files_in_diff": [],
             "files_claimed": files_claimed,
             "skipped": True,
-            "reason": "git not found on PATH.",
-        }
-    except subprocess.TimeoutExpired:
-        return {
-            "findings": findings,
-            "files_in_diff": [],
-            "files_claimed": files_claimed,
-            "skipped": True,
-            "reason": "git status timed out.",
+            "reason": status_error,
         }
 
-    if process.returncode != 0:
-        return {
-            "findings": findings,
-            "files_in_diff": [],
-            "files_claimed": files_claimed,
-            "skipped": True,
-            "reason": f"git status failed: {process.stderr.strip() or process.stdout.strip()}",
-        }
-
-    files_in_diff = sorted(_parse_git_status_paths(process.stdout))
+    files_in_diff = sorted(files_in_diff_set)
     claimed_set = set(files_claimed)
     diff_set = set(files_in_diff)
 

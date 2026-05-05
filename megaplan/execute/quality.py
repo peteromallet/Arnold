@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan.evaluation import _parse_git_status_paths
+from megaplan.evaluation import (
+    _collect_git_status_paths_with_nested_repos,
+    _parse_git_status_paths,
+)
 from megaplan.audits.quality_gates import run_quality_checks
 
 
@@ -165,43 +168,63 @@ def _run_git_status_snapshot(
     project_dir: Path,
     *,
     untracked_mode: str,
+    claimed_paths: set[str] | None = None,
 ) -> tuple[dict[str, str], str | None]:
     if not (project_dir / ".git").exists():
         return {}, "Project directory is not a git repository."
-    command = ["git", "status", "--short"]
-    if untracked_mode == "all":
-        command.append("--untracked-files=all")
-    try:
-        process = subprocess.run(
-            command,
-            cwd=str(project_dir),
-            text=True,
-            capture_output=True,
-            timeout=30,
+    if claimed_paths:
+        paths, error = _collect_git_status_paths_with_nested_repos(
+            project_dir,
+            claimed_paths=claimed_paths,
+            untracked_mode=untracked_mode,
         )
-    except FileNotFoundError:
-        return {}, "git not found on PATH."
-    except subprocess.TimeoutExpired:
-        return {}, "git status timed out."
-    if process.returncode != 0:
-        return (
-            {},
-            f"git status failed: {process.stderr.strip() or process.stdout.strip()}",
-        )
-    paths = _parse_git_status_paths(process.stdout)
+        if error is not None:
+            return {}, error
+    else:
+        command = ["git", "status", "--short"]
+        if untracked_mode == "all":
+            command.append("--untracked-files=all")
+        try:
+            process = subprocess.run(
+                command,
+                cwd=str(project_dir),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+        except FileNotFoundError:
+            return {}, "git not found on PATH."
+        except subprocess.TimeoutExpired:
+            return {}, "git status timed out."
+        if process.returncode != 0:
+            return (
+                {},
+                f"git status failed: {process.stderr.strip() or process.stdout.strip()}",
+            )
+        paths = _parse_git_status_paths(process.stdout)
     return {path: _repo_path_hash(project_dir, path) for path in paths}, None
 
 
 def _capture_git_status_snapshot(
     project_dir: Path,
+    claimed_paths: set[str] | None = None,
 ) -> tuple[dict[str, str], str | None]:
-    return _run_git_status_snapshot(project_dir, untracked_mode="normal")
+    return _run_git_status_snapshot(
+        project_dir,
+        untracked_mode="normal",
+        claimed_paths=claimed_paths,
+    )
 
 
 def _capture_git_status_snapshot_recursive(
     project_dir: Path,
+    claimed_paths: set[str] | None = None,
 ) -> tuple[dict[str, str], str | None]:
-    return _run_git_status_snapshot(project_dir, untracked_mode="all")
+    return _run_git_status_snapshot(
+        project_dir,
+        untracked_mode="all",
+        claimed_paths=claimed_paths,
+    )
 
 
 def _observed_batch_paths(
