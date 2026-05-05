@@ -590,6 +590,120 @@ def test_is_rubber_stamp_allows_short_specific_ack_only_in_loose_mode() -> None:
     assert is_rubber_stamp(note, strict=True) is True
 
 
+def _stub_clean_git_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "megaplan.evaluation.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["git", "status", "--short"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+    )
+
+
+def test_validate_execution_evidence_flags_pending_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".git").mkdir(parents=True)
+    _stub_clean_git_status(monkeypatch)
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": ["src/a.py"], "commands_run": [], "executor_notes": "implemented A"},
+            {"id": "T2", "status": "pending", "files_changed": [], "commands_run": [], "executor_notes": ""},
+            {"id": "T3", "status": "pending", "files_changed": [], "commands_run": [], "executor_notes": ""},
+        ],
+        "sense_checks": [],
+    }
+    result = validate_execution_evidence(finalize_data, project_dir)
+    assert result["skipped"] is False
+    finding = next((f for f in result["findings"] if "pending" in f), None)
+    assert finding is not None
+    assert "T2" in finding and "T3" in finding
+    assert "T1" not in finding
+
+
+def test_validate_execution_evidence_flags_skipped_without_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".git").mkdir(parents=True)
+    _stub_clean_git_status(monkeypatch)
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "skipped", "files_changed": [], "commands_run": [], "executor_notes": ""},
+            {"id": "T2", "status": "skipped", "files_changed": [], "commands_run": [], "executor_notes": "Not needed because the helper was inlined into T1."},
+        ],
+        "sense_checks": [],
+    }
+    result = validate_execution_evidence(finalize_data, project_dir)
+    finding = next((f for f in result["findings"] if "skipped without" in f), None)
+    assert finding is not None
+    assert "T1" in finding
+    assert "T2" not in finding
+
+
+def test_validate_execution_evidence_flags_blocked_without_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".git").mkdir(parents=True)
+    _stub_clean_git_status(monkeypatch)
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "blocked", "files_changed": [], "commands_run": [], "executor_notes": ""},
+            {"id": "T2", "status": "blocked", "files_changed": [], "commands_run": [], "executor_notes": "DB env var missing; awaiting U1."},
+        ],
+        "sense_checks": [],
+    }
+    result = validate_execution_evidence(finalize_data, project_dir)
+    finding = next((f for f in result["findings"] if "blocked without" in f), None)
+    assert finding is not None
+    assert "T1" in finding
+    assert "T2" not in finding
+
+
+def test_validate_execution_evidence_flags_hollow_done_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".git").mkdir(parents=True)
+    _stub_clean_git_status(monkeypatch)
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": [], "commands_run": [], "executor_notes": "all good"},
+            {"id": "T2", "status": "done", "files_changed": [], "commands_run": ["pytest -q"], "executor_notes": "ran the test suite"},
+            {"id": "T3", "status": "done", "files_changed": ["src/x.py"], "commands_run": [], "executor_notes": "patched x"},
+        ],
+        "sense_checks": [],
+    }
+    result = validate_execution_evidence(finalize_data, project_dir)
+    finding = next((f for f in result["findings"] if "neither files_changed nor commands_run" in f), None)
+    assert finding is not None
+    assert "T1" in finding
+    assert "T2" not in finding
+    assert "T3" not in finding
+
+
+def test_validate_execution_evidence_clean_run_produces_no_completion_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".git").mkdir(parents=True)
+    _stub_clean_git_status(monkeypatch)
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": ["src/a.py"], "commands_run": [], "executor_notes": "added A in src/a.py"},
+            {"id": "T2", "status": "skipped", "files_changed": [], "commands_run": [], "executor_notes": "redundant after T1 covered the case"},
+        ],
+        "sense_checks": [],
+    }
+    result = validate_execution_evidence(finalize_data, project_dir)
+    for keyword in ("pending", "skipped without", "blocked without", "neither files_changed"):
+        assert not any(keyword in f for f in result["findings"]), result["findings"]
+
+
 def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
