@@ -29,7 +29,8 @@ export type ClipCapabilitySource =
   | 'trusted-local-sequence'
   | 'installed-sequence'
   | 'registry-discovered'
-  | 'generated-module';
+  | 'generated-module'
+  | 'db-sequence-component';
 
 export interface ClipCapabilityDescriptor {
   clipType: string;
@@ -254,3 +255,128 @@ export const describeClipCapability = (
 
   return getClipCapabilityDescriptor(clip?.clipType);
 };
+
+// ─── Dynamic (DB-stored sequence component) resolvers ────────────────
+//
+// MVP scope notes (FLAG-001/002 wiring + capabilityManifest scope):
+// - DB-stored sequences are stored in the dynamic registry under their
+//   plain clipType (e.g. `my-pulse`); referenced from timeline JSON as
+//   `custom:my-pulse`. The dynamic-aware resolvers below strip the
+//   `custom:` prefix on lookup, mirroring DynamicComponentRegistry's
+//   default normalizeName.
+// - DB entries always emit `{ preview: 'browser', browserRender: true,
+//   workerRender: false, externalRender: false }` because the worker
+//   cannot compile arbitrary user-authored TSX yet (see Section 4 of
+//   the reuse plan: "force `workerRender:false` for DB-stored rows").
+// - capabilityManifest.ts is built at module load and can NOT reflect
+//   DB rows. MVP scope decision: keep that static manifest for built-ins
+//   only; DB-aware capability lookups go through these resolvers in
+//   React-hosted code paths only. If a non-React caller ever needs to
+//   resolve a DB-stored clipType, plumb the dynamic registry through
+//   explicitly rather than mutating the static manifest.
+// - FLAG-003 divergence (intentional): the effects side uses a module-
+//   level singleton + `lookupEffect()` (effects/index.tsx:80-110) but
+//   sequences use a React context with `useSyncExternalStore`. Do NOT
+//   rewrite the effects side to match — keep them divergent for MVP.
+
+import type { FC } from 'react';
+
+export interface DynamicSequenceComponentEntry {
+  clipType: string;
+  component: FC<{
+    clip: ResolvedTimelineClipForDynamic;
+    params?: Record<string, unknown>;
+    theme?: unknown;
+    fps: number;
+  }>;
+  schemaJson?: object;
+  themeId?: string;
+}
+
+// Local type alias to avoid a circular dependency with `@/tools/video-editor/types`.
+type ResolvedTimelineClipForDynamic = {
+  id: string;
+  clipType?: string;
+  params?: Record<string, unknown>;
+} & Record<string, unknown>;
+
+const DB_SEQUENCE_COMPONENT_CAPABILITIES: ClipCapabilityDescriptor['capabilities'] = {
+  preview: 'browser',
+  browserRender: true,
+  workerRender: false,
+  externalRender: false,
+};
+
+const CUSTOM_PREFIX = 'custom:';
+
+function stripCustomPrefix(clipType: string | undefined): string | undefined {
+  if (typeof clipType !== 'string') return undefined;
+  return clipType.startsWith(CUSTOM_PREFIX) ? clipType.slice(CUSTOM_PREFIX.length) : clipType;
+}
+
+/**
+ * Resolve a clipType to a DB-stored dynamic entry, preferring the dynamic
+ * registry when the clipType uses the `custom:` prefix. Returns undefined
+ * if no dynamic entry matches (caller should fall back to the static
+ * SEQUENCE_COMPONENT_REGISTRY lookup).
+ */
+export function resolveSequenceClipEntry(
+  clipType: string | undefined,
+  dynamic: readonly DynamicSequenceComponentEntry[] | undefined,
+): DynamicSequenceComponentEntry | undefined {
+  if (!clipType || !dynamic || dynamic.length === 0) return undefined;
+  const normalized = stripCustomPrefix(clipType);
+  if (!normalized) return undefined;
+  // Only resolve dynamic entries when the clipType actually used the
+  // `custom:` prefix OR matches a dynamic entry's plain clipType. This
+  // keeps built-in clipTypes routed through the static registry.
+  const isCustom = clipType.startsWith(CUSTOM_PREFIX);
+  for (const entry of dynamic) {
+    if (entry.clipType === normalized) {
+      // Prefer the dynamic match for `custom:` lookups; for plain
+      // clipTypes, only return the dynamic entry if no static entry
+      // exists (caller still controls priority via the helpers below).
+      if (isCustom) return entry;
+      if (!Object.prototype.hasOwnProperty.call(SEQUENCE_COMPONENT_REGISTRY, normalized)) {
+        return entry;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Dynamic-aware capability descriptor lookup. DB-stored sequence components
+ * always surface `workerRender: false` per the MVP scope decision.
+ */
+export function resolveClipCapabilityDescriptor(
+  clipType: string | undefined,
+  dynamic: readonly DynamicSequenceComponentEntry[] | undefined,
+): ClipCapabilityDescriptor | undefined {
+  if (typeof clipType !== 'string') return undefined;
+  const dynamicEntry = resolveSequenceClipEntry(clipType, dynamic);
+  if (dynamicEntry) {
+    return {
+      clipType: dynamicEntry.clipType,
+      source: 'db-sequence-component',
+      capabilities: DB_SEQUENCE_COMPONENT_CAPABILITIES,
+    };
+  }
+  return CLIP_CAPABILITY_REGISTRY[clipType];
+}
+
+/**
+ * Dynamic-aware variant of `describeClipCapability`. Generated-module
+ * placeholder takes precedence (worker-only render path), then DB
+ * entries (browser-only), then the static registry.
+ */
+export function describeClipCapabilityWith(
+  clip: GeneratedLaneClipShape & { clipType?: string } | null | undefined,
+  dynamic: readonly DynamicSequenceComponentEntry[] | undefined,
+): ClipCapabilityDescriptor | undefined {
+  const moduleStatus = getGeneratedRemotionModuleStatus(clip);
+  if (moduleStatus.kind !== 'not_module') {
+    return GENERATED_MODULE_CLIP_CAPABILITY;
+  }
+  return resolveClipCapabilityDescriptor(clip?.clipType, dynamic);
+}

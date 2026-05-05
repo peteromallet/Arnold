@@ -48,6 +48,28 @@ vi.mock('@/shared/state/selectionStore', () => ({
   composerRemoveAttachment: mocks.composerRemoveAttachment,
 }));
 
+// T14: panel calls useCreateSequenceComponentResource() at hook-time even
+// when the user never triggers a Save. Mock to a no-op so the test harness
+// does not need to provide a QueryClientProvider.
+vi.mock('@/tools/video-editor/hooks/useSequenceResources', () => ({
+  useCreateSequenceComponentResource: () => ({
+    mutateAsync: vi.fn(),
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    isIdle: true,
+    status: 'idle',
+    data: undefined,
+    error: null,
+    variables: undefined,
+    failureCount: 0,
+    failureReason: null,
+    isPaused: false,
+  }),
+}));
+
 vi.mock('@/tools/video-editor/hooks/timelineStore', () => ({
   useTimelineEditorData: mocks.useTimelineEditorData,
   useTimelineEditorOps: mocks.useTimelineEditorOps,

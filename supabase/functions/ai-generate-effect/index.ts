@@ -7,6 +7,7 @@ import {
 import { bootstrapEdgeHandler, NO_SESSION_RUNTIME_OPTIONS } from "../_shared/edgeHandler.ts";
 import { jsonResponse } from "../_shared/http.ts";
 import { toErrorMessage } from "../_shared/errorMessage.ts";
+import { attemptSelfInvokeRetry } from "../_shared/aiCodegenRetry.ts";
 import {
   buildGenerateEffectMessages,
   extractEffectCodeAndMeta,
@@ -225,41 +226,22 @@ serve(async (req) => {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       logger.info(`[AI-GENERATE-EFFECT] extraction/validation failed: ${parseMsg}`);
 
-      // Self-invoke a new instance to retry with the failed code as edit context
-      if (retryDepth < MAX_RETRY_DEPTH) {
-        logger.info(`[AI-GENERATE-EFFECT] spawning retry invocation (depth ${retryDepth + 1})`);
-        await logger.flush();
-
-        const supabaseUrl = Deno.env.get("SUPABASE_URL");
-        const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-        if (!supabaseUrl || !serviceKey) {
-          return jsonResponse({ error: parseMsg, rawOutput: llmResponse.content.slice(0, 500) }, 422);
-        }
-
-        // Forward the original auth header so the retry is authenticated
-        const authHeader = req.headers.get("Authorization") ?? `Bearer ${serviceKey}`;
-        const retryResponse = await fetch(`${supabaseUrl}/functions/v1/ai-generate-effect`, {
-          method: "POST",
-          headers: {
-            "Authorization": authHeader,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            prompt,
-            name: effectName || undefined,
-            category,
-            _retryDepth: retryDepth + 1,
-            _retryError: parseMsg,
-            _retryFailedCode: llmResponse.content,
-          }),
-        });
-
-        // Pass through the retry response directly
-        const retryBody = await retryResponse.text();
-        return new Response(retryBody, {
-          status: retryResponse.status,
-          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-        });
+      const retryResponse = await attemptSelfInvokeRetry({
+        req,
+        functionName: "ai-generate-effect",
+        retryDepth,
+        maxDepth: MAX_RETRY_DEPTH,
+        payload: {
+          prompt,
+          name: effectName || undefined,
+          category,
+        },
+        parseError: parseMsg,
+        rawOutput: llmResponse.content,
+        logger,
+      });
+      if (retryResponse) {
+        return retryResponse;
       }
 
       logger.info(`[AI-GENERATE-EFFECT] max retry depth reached, returning error`);

@@ -54,7 +54,14 @@ import type {
   ResolvedTimelineClip,
   ResolvedTimelineConfig,
 } from '@/tools/video-editor/types';
-import { runSequenceGenerationRequest } from './sequenceGenerationService';
+import {
+  runSequenceComponentGenerationRequest,
+  runSequenceGenerationRequest,
+} from './sequenceGenerationService';
+import { getBundledComponentSource } from '@/tools/video-editor/sequences/getBundledComponentSource';
+import { getClipCapabilityDescriptor } from '@/tools/video-editor/sequences/registry';
+import { smokeRenderSequenceComponent } from '@/tools/video-editor/sequences/headlessRender';
+import { useCreateSequenceComponentResource } from '@/tools/video-editor/hooks/useSequenceResources';
 
 type SequenceCreatorPanelProps = {
   open?: boolean;
@@ -137,6 +144,34 @@ export function SequenceCreatorPanel({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationNote, setGenerationNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Unified-UX classifier state: tracks what path the most recent
+  // generation took (json|code) so the path/capability badge can render
+  // unconditionally (always visible per CLAUDE.md UI conventions).
+  const [classifierVerdict, setClassifierVerdict] = useState<{ path: 'json' | 'code'; reason: string } | null>(null);
+
+  // Fork-to-DB pending state: when the classifier returns path:'code' AND
+  // the selected clip is theme-bundled (`installed-sequence` source), we
+  // gate the code-path follow-up behind a deliberate "Customize this
+  // sequence for yourself" confirmation. Stores the prompt + classifier
+  // reason so the confirm action can dispatch the follow-up call.
+  const [forkPending, setForkPending] = useState<{
+    prompt: string;
+    reason: string;
+    selectedClipType: string;
+    bundledSource: ReturnType<typeof getBundledComponentSource>;
+  } | null>(null);
+
+  // Latest generated component metadata (when the code path produces a
+  // result). Surfaces in the path badge so the user can see whether
+  // they're editing JSON params or DB-stored component code.
+  const [generatedComponent, setGeneratedComponent] = useState<{
+    code: string;
+    name: string;
+    description: string;
+    schemaJson: object;
+    defaultsJson: object;
+  } | null>(null);
 
   const allowedAssets = useMemo(() => (
     resolvedConfig
@@ -229,7 +264,67 @@ export function SequenceCreatorPanel({
         signal: controller.signal,
       });
       if (result.status === 'aborted') return;
+
+      if (result.status === 'classifier_code') {
+        // Unified-UX (T13): classifier routed this prompt to the code path.
+        // For theme-bundled clips we require deliberate fork-to-DB confirmation
+        // ("Customize this sequence for yourself"); otherwise we dispatch
+        // the follow-up call directly.
+        setClassifierVerdict(result.classifier);
+        // Resolve the clipType of the currently-selected timeline clip via
+        // resolvedConfig — `SelectedMediaClip` doesn't carry clipType.
+        const primaryClipId = selectedClipId ?? selectedClipIds?.values().next().value ?? null;
+        const primaryClip = primaryClipId
+          ? resolvedConfig.clips.find((c) => c.id === primaryClipId) ?? null
+          : null;
+        const selectedClipType = primaryClip?.clipType ?? '';
+        const descriptor = getClipCapabilityDescriptor(selectedClipType);
+        const isThemeBundled = descriptor?.source === 'installed-sequence';
+        if (isThemeBundled && selectedClipType) {
+          const bundled = getBundledComponentSource(selectedClipType);
+          setForkPending({
+            prompt: result.generationPrompt,
+            reason: result.classifier.reason,
+            selectedClipType,
+            bundledSource: bundled,
+          });
+          setGenerationNote(
+            bundled.status === 'cannot-fork'
+              ? bundled.reason
+              : 'This change requires custom component code. Confirm fork-to-DB to proceed.',
+          );
+          return;
+        }
+        // Non-bundled selection (DB-stored sequence or no selection): dispatch
+        // the code-path call directly.
+        const codeResult = await runSequenceComponentGenerationRequest({
+          prompt: result.generationPrompt,
+          resolvedConfig,
+          selectedClips: selectedMedia.clips,
+          attachedClips: attachmentSet.clips,
+          allowedAssets,
+          allowedAssetKeys,
+          signal: controller.signal,
+        });
+        if (codeResult.status === 'aborted') return;
+        if (codeResult.status === 'error') {
+          setActionError(codeResult.error);
+          setGenerationNote(`Code-path generation failed: ${codeResult.error}`);
+          return;
+        }
+        setGeneratedComponent({
+          code: codeResult.code,
+          name: codeResult.name,
+          description: codeResult.description,
+          schemaJson: codeResult.schemaJson,
+          defaultsJson: codeResult.defaultsJson,
+        });
+        setGenerationNote(codeResult.message ?? 'Generated component code (browser-only render).');
+        return;
+      }
+
       if (result.status === 'no_valid_drafts') {
+        setClassifierVerdict(result.classifier ?? null);
         setGenerationNote(result.generationNote);
         return;
       }
@@ -252,6 +347,10 @@ export function SequenceCreatorPanel({
       setSelectedDraftIndex(0);
       setMode('edit');
       setGenerationNote(result.generationNote);
+      setClassifierVerdict(result.classifier ?? null);
+      // Successful JSON-path result: clear any stale generated component.
+      setGeneratedComponent(null);
+      setForkPending(null);
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       const message = err instanceof Error ? err.message : 'Sequence generation failed.';
@@ -265,12 +364,127 @@ export function SequenceCreatorPanel({
     allowedAssets,
     attachmentSet.clips,
     resolvedConfig,
+    selectedClipId,
+    selectedClipIds,
     selectedMedia.clips,
   ]);
 
   const handleGenerate = useCallback(() => {
     void runSequenceGeneration(prompt);
   }, [prompt, runSequenceGeneration]);
+
+  // Fork-to-DB confirmation handler (T13): when the classifier asked for
+  // the code path on a theme-bundled clip, this dispatches the actual
+  // ai-generate-sequence-component call with `existingComponent` derived
+  // from the bundled TSX source. The badge stays visible after either
+  // success or error so the user always knows which path ran.
+  const handleConfirmFork = useCallback(async () => {
+    if (!forkPending || forkPending.bundledSource.status !== 'available' || !resolvedConfig) {
+      return;
+    }
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setIsGenerating(true);
+    setActionError(null);
+    try {
+      const codeResult = await runSequenceComponentGenerationRequest({
+        prompt: forkPending.prompt,
+        existingComponent: {
+          code: forkPending.bundledSource.code,
+          schema: forkPending.bundledSource.schema,
+          defaults: forkPending.bundledSource.defaults,
+        },
+        resolvedConfig,
+        selectedClips: selectedMedia.clips,
+        attachedClips: attachmentSet.clips,
+        allowedAssets,
+        allowedAssetKeys,
+        signal: controller.signal,
+      });
+      if (codeResult.status === 'aborted') return;
+      if (codeResult.status === 'error') {
+        setActionError(codeResult.error);
+        setGenerationNote(`Fork failed: ${codeResult.error}`);
+        return;
+      }
+      setGeneratedComponent({
+        code: codeResult.code,
+        name: codeResult.name,
+        description: codeResult.description,
+        schemaJson: codeResult.schemaJson,
+        defaultsJson: codeResult.defaultsJson,
+      });
+      setGenerationNote(
+        codeResult.message ?? `Forked "${forkPending.selectedClipType}" into a custom DB-stored sequence.`,
+      );
+      setForkPending(null);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      const message = err instanceof Error ? err.message : 'Fork failed.';
+      setActionError(message);
+      setGenerationNote(message);
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [allowedAssetKeys, allowedAssets, attachmentSet.clips, forkPending, resolvedConfig, selectedMedia.clips]);
+
+  const handleCancelFork = useCallback(() => {
+    setForkPending(null);
+    setGenerationNote(null);
+  }, []);
+
+  // T14 — headless smoke-render gate before persisting a generated
+  // sequence component. Save flow:
+  //   1. Run smokeRenderSequenceComponent({code, schema, defaults}). If it
+  //      returns { ok: false }, surface the error inline (NOT a toast — per
+  //      CLAUDE.md UI conventions: errors-only toasts; panel-inline is
+  //      correct for this gate) and DO NOT persist.
+  //   2. On success, call useCreateSequenceComponentResource.mutateAsync
+  //      with the SequenceComponentMetadata derived from the generated
+  //      component.
+  // The gate catches compile errors + obvious runtime errors via
+  // react-dom/server.renderToString — see headlessRender.ts for the
+  // FLAG-005 caveat that ThemeProvider/SequenceContext are NOT exercised.
+  const createSequenceComponent = useCreateSequenceComponentResource();
+  const [isSaving, setIsSaving] = useState(false);
+  const handleSaveGeneratedComponent = useCallback(async () => {
+    if (!generatedComponent) return;
+    setIsSaving(true);
+    setActionError(null);
+    try {
+      const smoke = await smokeRenderSequenceComponent({
+        code: generatedComponent.code,
+        schemaJson: generatedComponent.schemaJson,
+        defaultsJson: generatedComponent.defaultsJson,
+        fps: resolvedConfig?.output.fps ?? 30,
+      });
+      if (!smoke.ok) {
+        setActionError(`Smoke render failed: ${smoke.error}. Component NOT saved.`);
+        return;
+      }
+      const metadata = {
+        name: generatedComponent.name || 'Untitled component',
+        slug: (generatedComponent.name || 'component').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        code: generatedComponent.code,
+        schemaJson: generatedComponent.schemaJson,
+        defaultsJson: generatedComponent.defaultsJson,
+        clipType: forkPending?.selectedClipType ?? 'custom-component',
+        themeId: resolvedConfig?.theme ?? '2rp',
+        description: generatedComponent.description,
+        created_by: { is_you: true },
+        is_public: false,
+      };
+      await createSequenceComponent.mutateAsync({ metadata });
+      setGenerationNote('Sequence component saved.');
+      setGeneratedComponent(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Save failed.';
+      setActionError(`Save failed: ${message}. Component NOT saved.`);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [createSequenceComponent, forkPending, generatedComponent, resolvedConfig?.output.fps, resolvedConfig?.theme]);
 
   const handleEditSelected = useCallback(() => {
     if (!selectedGroup || !selectedDraft) return;
@@ -507,6 +721,99 @@ export function SequenceCreatorPanel({
                     </div>
                   )}
                 </div>
+
+                {/*
+                  Path/capability badge (T13): always visible. Surfaces
+                  whether the classifier ran the JSON path or the code
+                  path so the user knows whether their clip can be
+                  worker-rendered server-side. Uses Tailwind tokens
+                  (bg-background/text-foreground) per CLAUDE.md.
+                */}
+                <div
+                  data-testid="sequence-creator-path-badge"
+                  className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground"
+                >
+                  <span className="font-medium">Mode:</span>
+                  {generatedComponent || classifierVerdict?.path === 'code' ? (
+                    <span>Generated component code · browser-only render (DB-stored)</span>
+                  ) : classifierVerdict?.path === 'json' ? (
+                    <span>Edited params · worker render available</span>
+                  ) : (
+                    <span className="text-muted-foreground">Awaiting generation…</span>
+                  )}
+                </div>
+
+                {generatedComponent && (
+                  <div
+                    data-testid="sequence-creator-generated-component"
+                    className="space-y-2 rounded-lg border border-border bg-background p-3 text-xs text-foreground"
+                  >
+                    <div className="font-medium">{generatedComponent.name || 'Generated component'}</div>
+                    {generatedComponent.description && (
+                      <p className="text-muted-foreground">{generatedComponent.description}</p>
+                    )}
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void handleSaveGeneratedComponent()}
+                        disabled={isSaving}
+                      >
+                        {isSaving ? 'Saving…' : 'Save component'}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setGeneratedComponent(null)}
+                        disabled={isSaving}
+                      >
+                        Discard
+                      </Button>
+                    </div>
+                    {actionError && (
+                      <div
+                        data-testid="sequence-creator-save-error"
+                        className="text-destructive"
+                      >
+                        {actionError}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {forkPending && (
+                  <div
+                    data-testid="sequence-creator-fork-prompt"
+                    className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-xs text-foreground"
+                  >
+                    <div className="font-medium">Customize this sequence for yourself</div>
+                    <p className="text-muted-foreground">
+                      This change requires a custom component. Forking copies "{forkPending.selectedClipType}"
+                      into a per-user DB resource you can edit. The result renders in browser only —
+                      worker-side render isn't supported for custom components yet.
+                    </p>
+                    <p className="text-muted-foreground italic">{forkPending.reason}</p>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void handleConfirmFork()}
+                        disabled={
+                          isGenerating || forkPending.bundledSource.status !== 'available'
+                        }
+                      >
+                        Customize
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={handleCancelFork}>
+                        Cancel
+                      </Button>
+                    </div>
+                    {forkPending.bundledSource.status === 'cannot-fork' && (
+                      <div className="text-destructive">{forkPending.bundledSource.reason}</div>
+                    )}
+                  </div>
+                )}
 
                 {generationNote && (
                   <div className="rounded-lg border border-border bg-muted/50 p-3 text-xs text-muted-foreground">

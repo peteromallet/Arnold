@@ -123,9 +123,31 @@ export const buildGenerateSequenceMessages = (
 
   const systemMsg = `You generate and edit trusted structured timeline sequence drafts for the Reigh video editor.
 
-Rules:
+CLASSIFIER PREAMBLE (always emit first, on its own two lines, before any JSON):
+- Decide whether the user's request can be satisfied by editing the existing
+  trusted sequence params (path=json) OR whether it requires a custom
+  sequence component implemented in code (path=code).
+- The classifier sees the current schema, current params, and the user prompt
+  (all already part of this prompt context).
+- path=json: the request is "param-tweakable" — slower, faster, vertical
+  layout, swap to these images, change a tunable param, etc.
+- path=code: the request is structurally impossible in JSON — pulse on
+  entry, custom easing curve mid-animation, vignette behind title, any
+  visual primitive not covered by the schema.
+- Ambiguous? Prefer path=json and let the user follow up with "go deeper
+  with code".
+- Output format:
+    // PATH: json
+    // REASON: <brief reason, one sentence>
+    {"drafts":[ ... ]}
+  OR
+    // PATH: code
+    // REASON: <brief reason, one sentence>
+  (When path=code, emit ONLY the two preamble lines. Do NOT emit JSON drafts.)
+
+Rules (apply when path=json):
 - Return JSON only, with shape {"drafts":[{"clipType":string,"hold":number,"params":object}]}.
-- Do not include analysis, explanations, Markdown, or text before or after the JSON.
+- Do not include analysis, explanations, Markdown, or text before or after the JSON (the PATH/REASON preamble lines are the only exception).
 - Use only the supplied clipType values and params.
 - In edit mode, preserve the user's existing sequence unless the edit instruction specifically asks to change that part.
 - In edit mode, modify the supplied source draft into an improved draft. Do not ignore it and start over.
@@ -165,4 +187,49 @@ export const extractSequenceDrafts = (content: string): unknown[] => {
     return (parsed as { drafts: unknown[] }).drafts;
   }
   throw new Error("Model response must be a JSON array or an object with drafts.");
+};
+
+const PATH_PATTERN = /^\s*\/\/\s*PATH\s*:\s*(json|code)\s*$/im;
+const REASON_PATTERN = /^\s*\/\/\s*REASON\s*:\s*(.*)$/im;
+
+export interface SequenceClassifierResult {
+  path: "json" | "code";
+  reason: string;
+  /** The model output with the PATH/REASON preamble stripped (for path=json drafts parsing). */
+  rest: string;
+}
+
+/**
+ * Read the `// PATH: json|code` + `// REASON: …` preamble from a model
+ * response. Returns null if no PATH preamble is present (legacy responses
+ * without the classifier — caller should fall back to extractSequenceDrafts).
+ */
+export const extractClassifierPreamble = (
+  content: string,
+): SequenceClassifierResult | null => {
+  const pathMatch = PATH_PATTERN.exec(content);
+  if (!pathMatch || pathMatch.index === undefined) return null;
+
+  const path = (pathMatch[1] ?? "").toLowerCase() as "json" | "code";
+  const pathLineEnd = (() => {
+    const newline = content.indexOf("\n", pathMatch.index);
+    return newline === -1 ? content.length : newline + 1;
+  })();
+
+  const reasonMatch = REASON_PATTERN.exec(content);
+  const reason = reasonMatch?.[1]?.trim() ?? "";
+  const reasonLineEnd = reasonMatch && reasonMatch.index !== undefined
+    ? (() => {
+        const newline = content.indexOf("\n", reasonMatch.index);
+        return newline === -1 ? content.length : newline + 1;
+      })()
+    : pathLineEnd;
+
+  // Strip both preamble lines from the rest so callers can parse the
+  // remaining JSON drafts unchanged.
+  const stripStart = Math.min(pathMatch.index, reasonMatch?.index ?? pathMatch.index);
+  const stripEnd = Math.max(pathLineEnd, reasonLineEnd);
+  const rest = (content.slice(0, stripStart) + content.slice(stripEnd)).trim();
+
+  return { path, reason, rest };
 };

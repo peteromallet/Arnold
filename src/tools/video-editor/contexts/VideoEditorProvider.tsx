@@ -25,6 +25,12 @@ import {
   useResolvedEffectCatalog,
   type VideoEditorEffectCatalog,
 } from '@/tools/video-editor/hooks/useEffectResources';
+import {
+  SequenceComponentCatalogProvider,
+  useResolvedSequenceComponentCatalog,
+  type VideoEditorSequenceComponentCatalog,
+} from '@/tools/video-editor/hooks/useSequenceResources';
+import { SequenceComponentRegistryProvider } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext';
 import { useTimelineClipsForAttachments } from '@/tools/video-editor/hooks/useTimelineClipsForAttachments';
 import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
 import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore';
@@ -101,14 +107,20 @@ function AgentChatBridgeRegistration() {
 function InnerProvider({
   children,
   effectCatalog,
+  sequenceComponentCatalog,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
+  sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
   const effectsQuery = useEffects(runtime.auth.userId, { enabled: !effectCatalog });
   const effectResources = useResolvedEffectCatalog(runtime.auth.userId, effectCatalog);
+  const sequenceComponentResources = useResolvedSequenceComponentCatalog(
+    runtime.auth.userId,
+    sequenceComponentCatalog,
+  );
   useEffectRegistry(
     effectsQuery.data?.map((effect) => ({
       slug: effect.slug,
@@ -361,22 +373,26 @@ function InnerProvider({
 
   return (
     <EffectCatalogProvider value={effectResources}>
-      <TimelineStoreProvider store={store}>
-        <AgentChatBridgeRegistration />
-        {children}
-        {lightboxAssetKey && resolvedLightboxMedia && (
-          <>
-            <runtime.mediaLightbox.Lightbox
-              media={resolvedLightboxMedia}
-              navigation={navResult.navigation}
-              initialVariantId={lightboxInitialVariantId}
-              onClose={lightboxOnClose}
-              features={lightboxFeatures}
-            />
-            {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
-          </>
-        )}
-      </TimelineStoreProvider>
+      <SequenceComponentCatalogProvider value={sequenceComponentResources}>
+        <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
+          <TimelineStoreProvider store={store}>
+            <AgentChatBridgeRegistration />
+            {children}
+            {lightboxAssetKey && resolvedLightboxMedia && (
+              <>
+                <runtime.mediaLightbox.Lightbox
+                  media={resolvedLightboxMedia}
+                  navigation={navResult.navigation}
+                  initialVariantId={lightboxInitialVariantId}
+                  onClose={lightboxOnClose}
+                  features={lightboxFeatures}
+                />
+                {navResult.indicator ? <VideoEditorLightboxOverlay indicator={navResult.indicator} /> : null}
+              </>
+            )}
+          </TimelineStoreProvider>
+        </SequenceComponentRegistryProvider>
+      </SequenceComponentCatalogProvider>
     </EffectCatalogProvider>
   );
 }
@@ -388,6 +404,7 @@ export function VideoEditorProvider({
   timelineName,
   userId,
   effectCatalog,
+  sequenceComponentCatalog,
   children,
 }: {
   dataProvider: DataProvider;
@@ -396,6 +413,7 @@ export function VideoEditorProvider({
   timelineName?: string | null;
   userId: string;
   effectCatalog?: VideoEditorEffectCatalog | null;
+  sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
   children: React.ReactNode;
 }) {
   const shotsHost = useReighShotsHost(projectId);
@@ -439,7 +457,12 @@ export function VideoEditorProvider({
 
   return (
     <DataProviderWrapper value={runtimeValue}>
-      <InnerProvider effectCatalog={effectCatalog}>{children}</InnerProvider>
+      <InnerProvider
+        effectCatalog={effectCatalog}
+        sequenceComponentCatalog={sequenceComponentCatalog}
+      >
+        {children}
+      </InnerProvider>
     </DataProviderWrapper>
   );
 }

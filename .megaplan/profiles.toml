@@ -11,7 +11,3 @@ loop_execute          = "codex"
 review                = "codex"
 tiebreaker_researcher = "codex"
 tiebreaker_challenger = "codex"
-
-# Legacy fallback CLI phase names.
-clarify               = "codex"
-integrate             = "codex"

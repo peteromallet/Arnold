@@ -22,10 +22,12 @@ import {
   type Theme,
 } from '@banodoco/timeline-composition/theme-api';
 import {
-  describeClipCapability,
-  getClipCapabilityDescriptor,
+  describeClipCapabilityWith,
+  resolveSequenceClipEntry,
   SEQUENCE_COMPONENT_REGISTRY,
+  type DynamicSequenceComponentEntry,
 } from '@/tools/video-editor/sequences/registry';
+import { useSequenceComponentRegistrySnapshot } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext';
 
 // Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
 //
@@ -46,16 +48,18 @@ const isBuiltinClipType = (value: string | undefined): boolean => {
   return (BUILTIN_CLIP_TYPES as readonly string[]).includes(value);
 };
 
+// Dynamic-aware sequence-component dispatch check. Built-in entries match
+// SEQUENCE_COMPONENT_REGISTRY directly; DB-stored entries (clipType
+// `custom:<name>`) match via the dynamic resolver. We accept any clipType
+// that has a registry entry on either side and a browser-preview-capable
+// capability descriptor.
 const isSequenceComponentClipType = (
   value: string | undefined,
-): value is keyof typeof SEQUENCE_COMPONENT_REGISTRY => {
+  dynamicEntries: readonly DynamicSequenceComponentEntry[],
+): boolean => {
   if (typeof value !== 'string') return false;
-  const descriptor = getClipCapabilityDescriptor(value);
-  return Boolean(
-    descriptor?.registryEntry
-    && descriptor.capabilities.preview === 'browser'
-    && Object.prototype.hasOwnProperty.call(SEQUENCE_COMPONENT_REGISTRY, value),
-  );
+  if (resolveSequenceClipEntry(value, dynamicEntries)) return true;
+  return Object.prototype.hasOwnProperty.call(SEQUENCE_COMPONENT_REGISTRY, value);
 };
 
 const sortClipsByAt = (clips: ResolvedTimelineClip[]): ResolvedTimelineClip[] => {
@@ -66,6 +70,7 @@ type ThemeEffectSequenceProps = {
   clip: ResolvedTimelineClip;
   fps: number;
   theme: Theme;
+  dynamicEntries: readonly DynamicSequenceComponentEntry[];
 };
 
 const ThemePackageComponent: FC<{
@@ -82,23 +87,21 @@ const ThemePackageComponent: FC<{
   return <Component clip={clip} params={clip.params} theme={theme} fps={fps} />;
 };
 
-const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps, theme }) => {
-  const descriptor = getClipCapabilityDescriptor(clip.clipType);
-  const entry = descriptor?.registryEntry
-    ?? SEQUENCE_COMPONENT_REGISTRY[clip.clipType as keyof typeof SEQUENCE_COMPONENT_REGISTRY];
-  // Defensive: if the registry lookup somehow returned no entry, fall back
-  // to the loud placeholder. This is the second layer of the SD-025
-  // "loud placeholder" safety net for clipTypes that *are* in the
-  // registry but somehow fail to render.
-  if (!entry) {
+const ThemeEffectSequence: FC<ThemeEffectSequenceProps> = ({ clip, fps, theme, dynamicEntries }) => {
+  // Dynamic-aware lookup: prefer DB-stored components for `custom:` clipTypes;
+  // fall back to the static SEQUENCE_COMPONENT_REGISTRY for built-ins.
+  const dynamicEntry = resolveSequenceClipEntry(clip.clipType, dynamicEntries);
+  const staticEntry = SEQUENCE_COMPONENT_REGISTRY[clip.clipType as keyof typeof SEQUENCE_COMPONENT_REGISTRY];
+  const Component = (dynamicEntry?.component ?? staticEntry?.component) as
+    | FC<{ clip: ResolvedTimelineClip; params: unknown; theme: RuntimeTheme; fps: number }>
+    | undefined;
+  // Defensive: if neither registry has the component, fall back to the loud
+  // placeholder. This is the second layer of the SD-025 "loud placeholder"
+  // safety net for clipTypes that *are* in the registry but somehow fail to
+  // render.
+  if (!Component) {
     return <UnknownClipPlaceholderSequence clip={clip} fps={fps} reason="unsupported" />;
   }
-  const Component = entry.component as FC<{
-    clip: ResolvedTimelineClip;
-    params: unknown;
-    theme: RuntimeTheme;
-    fps: number;
-  }>;
   const durationInFrames = getClipDurationInFrames(clip, fps);
   return (
     <Sequence
@@ -163,12 +166,18 @@ const GeneratedModulePlaceholderSequence: FC<{
   );
 };
 
-const renderVisualTrack = (
-  track: TrackDefinition,
-  clips: ResolvedTimelineClip[],
-  fps: number,
-  theme: Theme,
-) => {
+interface VisualTrackProps {
+  track: TrackDefinition;
+  clips: ResolvedTimelineClip[];
+  fps: number;
+  theme: Theme;
+}
+
+// Lifted into a component so we can call useSequenceComponentRegistrySnapshot
+// once per visual track. Keeps the dynamic-registry subscription out of the
+// per-clip dispatch loop.
+const VisualTrack: FC<VisualTrackProps> = ({ track, clips, fps, theme }) => {
+  const { entries: dynamicEntries } = useSequenceComponentRegistrySnapshot();
   const sortedClips = sortClipsByAt(clips);
   if (sortedClips.length === 0) {
     return null;
@@ -183,7 +192,9 @@ const renderVisualTrack = (
       }}
     >
       {sortedClips.map((clip, index) => {
-        const descriptor = describeClipCapability(clip);
+        // Dynamic-aware capability lookup (FLAG-001/002). DB-stored sequence
+        // components surface workerRender:false through this path.
+        const descriptor = describeClipCapabilityWith(clip, dynamicEntries);
 
         if (descriptor?.source === 'generated-module' || isGeneratedRemotionModuleClip(clip)) {
           return <GeneratedModulePlaceholderSequence key={clip.id} clip={clip} fps={fps} />;
@@ -198,10 +209,19 @@ const renderVisualTrack = (
         }
 
         // EFFECT_REGISTRY dispatch (Sprint 5 / SD-026): if the clipType
-        // is provided by an installed theme package, render via the
-        // codegenned registry entry. Mirrors HypeComposition.tsx:58-64.
-        if (isSequenceComponentClipType(clip.clipType)) {
-          return <ThemeEffectSequence key={clip.id} clip={clip} fps={fps} theme={theme} />;
+        // is provided by an installed theme package OR a DB-stored
+        // sequence component, render via the dynamic-aware registry entry.
+        // Mirrors HypeComposition.tsx:58-64 with DB augmentation.
+        if (isSequenceComponentClipType(clip.clipType, dynamicEntries)) {
+          return (
+            <ThemeEffectSequence
+              key={clip.id}
+              clip={clip}
+              fps={fps}
+              theme={theme}
+              dynamicEntries={dynamicEntries}
+            />
+          );
         }
 
         if (descriptor?.capabilities.preview === 'placeholder') {
@@ -324,7 +344,10 @@ export const TimelineRenderer: FC<{ config: ResolvedTimelineConfig }> = memo(({ 
     let accumulated: ReactNode = null;
 
     for (const track of visualTracks) {
-      const trackContent = renderVisualTrack(track, clipsByTrack.regular[track.id] ?? [], fps, theme);
+      const trackClips = clipsByTrack.regular[track.id] ?? [];
+      const trackContent: ReactNode = trackClips.length > 0
+        ? <VisualTrack key={track.id} track={track} clips={trackClips} fps={fps} theme={theme} />
+        : null;
       let lowerTrackContent: ReactNode = accumulated;
       const effectLayers = sortClipsByAt(clipsByTrack.effectLayers[track.id] ?? []);
 

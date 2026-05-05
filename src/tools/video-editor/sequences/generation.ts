@@ -39,12 +39,18 @@ export type SequenceDraftGroup = {
   drafts: EditableSequenceDraft[];
 };
 
+export type SequenceClassifierVerdict = {
+  path: 'json' | 'code';
+  reason: string;
+};
+
 export type GenerateSequenceResponse = {
   drafts?: unknown[];
   invalid_drafts?: Array<{ index: number; errors: unknown[] }>;
   model?: string;
   error?: string;
   details?: string;
+  classifier?: SequenceClassifierVerdict;
 };
 
 export type SequenceGenerationClipPayload = {

@@ -7,6 +7,12 @@ import {
   useResolvedEffectCatalog,
   type VideoEditorEffectCatalog,
 } from '@/tools/video-editor/hooks/useEffectResources';
+import {
+  SequenceComponentCatalogProvider,
+  useResolvedSequenceComponentCatalog,
+  type VideoEditorSequenceComponentCatalog,
+} from '@/tools/video-editor/hooks/useSequenceResources';
+import { SequenceComponentRegistryProvider } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext';
 import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore';
 import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
@@ -21,6 +27,7 @@ export interface EditorRuntimeProviderProps {
   timelineName?: string | null;
   userId?: string | null;
   effectCatalog?: VideoEditorEffectCatalog | null;
+  sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
   runtime?: Pick<VideoEditorRuntimeContextValue, 'assetResolver' | 'exporter' | 'hostContext'>;
   children: ReactNode;
 }
@@ -29,13 +36,19 @@ function EditorRuntimeProviderInner({
   children,
   userId,
   effectCatalog,
+  sequenceComponentCatalog,
 }: {
   children: ReactNode;
   userId: string | null;
   effectCatalog?: VideoEditorEffectCatalog | null;
+  sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
 }) {
   const effectsQuery = useEffects(userId, { enabled: !effectCatalog && Boolean(userId) });
   const effectResources = useResolvedEffectCatalog(userId, effectCatalog);
+  const sequenceComponentResources = useResolvedSequenceComponentCatalog(
+    userId,
+    sequenceComponentCatalog,
+  );
   useEffectRegistry(
     effectsQuery.data?.map((effect) => ({
       slug: effect.slug,
@@ -54,9 +67,13 @@ function EditorRuntimeProviderInner({
 
   return (
     <EffectCatalogProvider value={effectResources}>
-      <TimelineStoreProvider store={store}>
-        {children}
-      </TimelineStoreProvider>
+      <SequenceComponentCatalogProvider value={sequenceComponentResources}>
+        <SequenceComponentRegistryProvider components={sequenceComponentResources.components}>
+          <TimelineStoreProvider store={store}>
+            {children}
+          </TimelineStoreProvider>
+        </SequenceComponentRegistryProvider>
+      </SequenceComponentCatalogProvider>
     </EffectCatalogProvider>
   );
 }
@@ -67,6 +84,7 @@ export function EditorRuntimeProvider({
   timelineName,
   userId = null,
   effectCatalog,
+  sequenceComponentCatalog,
   runtime,
   children,
 }: EditorRuntimeProviderProps) {
@@ -82,7 +100,11 @@ export function EditorRuntimeProvider({
         hostContext: runtime?.hostContext ?? null,
       }}
     >
-      <EditorRuntimeProviderInner userId={userId} effectCatalog={effectCatalog}>
+      <EditorRuntimeProviderInner
+        userId={userId}
+        effectCatalog={effectCatalog}
+        sequenceComponentCatalog={sequenceComponentCatalog}
+      >
         {children}
       </EditorRuntimeProviderInner>
     </DataProviderWrapper>

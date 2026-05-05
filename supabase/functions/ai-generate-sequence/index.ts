@@ -9,10 +9,10 @@ import { jsonResponse } from "../_shared/http.ts";
 import { toErrorMessage } from "../_shared/errorMessage.ts";
 import {
   buildGenerateSequenceMessages,
+  extractClassifierPreamble,
   extractSequenceDrafts,
 } from "./templates.ts";
 import {
-  TRUSTED_SEQUENCE_METADATA,
   TRUSTED_SEQUENCE_CLIP_TYPES,
   validateSequenceDraft,
   type SequenceDraftValidationError,
@@ -224,9 +224,29 @@ serve(async (req) => {
       { role: "user", content: userMsg },
     ], logger);
 
+    // Unified-UX classifier preamble: if the model decides this request
+    // requires a custom sequence component instead of a JSON draft edit,
+    // it emits `// PATH: code` + `// REASON: …` and no drafts. Surface
+    // the classifier verdict to the front-end (sequenceGenerationService
+    // dispatches the follow-up call to ai-generate-sequence-component).
+    const classifier = extractClassifierPreamble(llmResponse.content);
+    if (classifier?.path === "code") {
+      logger.info(`[AI-GENERATE-SEQUENCE] classifier path=code, reason=${classifier.reason.slice(0, 200)}`);
+      await logger.flush();
+      return jsonResponse({
+        classifier: { path: "code", reason: classifier.reason },
+        drafts: [],
+        invalid_drafts: [],
+        model: llmResponse.model,
+      });
+    }
+    // For path=json (or legacy responses without a preamble), strip the
+    // preamble before parsing drafts so the JSON parser sees clean input.
+    const draftsContent = classifier?.rest ?? llmResponse.content;
+
     let rawDrafts: unknown[];
     try {
-      rawDrafts = extractSequenceDrafts(llmResponse.content);
+      rawDrafts = extractSequenceDrafts(draftsContent);
     } catch (parseErr: unknown) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       logger.info(`[AI-GENERATE-SEQUENCE] extraction failed: ${parseMsg}; retrying JSON repair`);
@@ -266,6 +286,7 @@ serve(async (req) => {
       drafts,
       invalid_drafts: invalidDrafts,
       model: llmResponse.model,
+      ...(classifier ? { classifier: { path: classifier.path, reason: classifier.reason } } : {}),
     });
   } catch (err: unknown) {
     const message = toErrorMessage(err);
