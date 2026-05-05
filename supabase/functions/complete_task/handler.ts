@@ -34,6 +34,7 @@ import {
   persistCompletionFollowUpIssues,
   type CompletionFollowUpIssue,
 } from './completionHelpers.ts';
+import { cleanupMaterializedInputs } from './cleanupMaterializedInputs.ts';
 
 // Provide a loose Deno type for local tooling
 declare const Deno: { env: { get: (key: string) => string | undefined } };
@@ -478,6 +479,21 @@ export async function completeTaskHandler(req: Request): Promise<Response> {
       await logger.flush();
       await cleanupFile(supabaseAdmin, objectPath);
       return completeTaskErrorResponse("Internal server error", 500);
+    }
+
+    try {
+      const cleanupIssues = await cleanupMaterializedInputs(supabaseAdmin, taskContext, logger);
+      completionFollowUpIssues.push(...cleanupIssues);
+    } catch (cleanupErr) {
+      logger.warn("Materialized input cleanup failed", {
+        task_id: taskIdString,
+        error: toErrorMessage(cleanupErr),
+      });
+      completionFollowUpIssues.push({
+        step: 'materialized_input_cleanup',
+        code: 'materialized_input_cleanup_failed',
+        message: toErrorMessage(cleanupErr),
+      });
     }
 
     // 13) Check orchestrator completion (for segment tasks) - uses task context

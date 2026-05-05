@@ -12,7 +12,7 @@ import { JWT_AUTH_REQUIRED } from "../_shared/requestGuards.ts";
 import { getTaskFamilyResolver } from "./resolvers/registry.ts";
 import { createWorkerPassthroughResolver } from "./resolvers/workerPassthrough.ts";
 import { TaskValidationError } from "./resolvers/shared/validation.ts";
-import type { ResolveRequest } from "./resolvers/types.ts";
+import type { MaterializedInputRecord, ResolveRequest } from "./resolvers/types.ts";
 
 function createErrorResponse(
   message: string,
@@ -87,6 +87,42 @@ function parseRequestIdempotencyKey(body: unknown): string | undefined {
   }
 
   return asNonEmptyString(body.idempotency_key) ?? undefined;
+}
+
+function parseMaterializedInputs(
+  body: unknown,
+): { ok: true; value: MaterializedInputRecord[] | undefined } | { ok: false; error: string } {
+  if (!isRecord(body) || !("materialized_inputs" in body) || body.materialized_inputs == null) {
+    return { ok: true, value: undefined };
+  }
+
+  const raw = body.materialized_inputs;
+  if (!Array.isArray(raw)) {
+    return { ok: false, error: "materialized_inputs must be an array when provided" };
+  }
+
+  const result: MaterializedInputRecord[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (!isRecord(entry)) {
+      return { ok: false, error: `materialized_inputs[${i}] must be an object` };
+    }
+    const generationId = asNonEmptyString(entry.generation_id);
+    const target = asNonEmptyString(entry.target);
+    const kind = entry.kind;
+    if (!generationId) {
+      return { ok: false, error: `materialized_inputs[${i}].generation_id must be a non-empty string` };
+    }
+    if (kind !== "file" && kind !== "remote") {
+      return { ok: false, error: `materialized_inputs[${i}].kind must be 'file' or 'remote'` };
+    }
+    if (!target) {
+      return { ok: false, error: `materialized_inputs[${i}].target must be a non-empty string` };
+    }
+    result.push({ generation_id: generationId, kind, target });
+  }
+
+  return { ok: true, value: result.length > 0 ? result : undefined };
 }
 
 function parseResolverRequest(body: unknown): ParseResolverRequestResult | null {
@@ -301,6 +337,14 @@ serve(async (req) => {
   const { supabaseAdmin, logger, auth, body: rawBody } = bootstrap.value;
   const requestIdempotencyKey = parseRequestIdempotencyKey(rawBody);
 
+  const parsedMaterializedInputs = parseMaterializedInputs(rawBody);
+  if (!parsedMaterializedInputs.ok) {
+    logger.error("Invalid materialized_inputs", { error: parsedMaterializedInputs.error });
+    await logger.flush();
+    return createErrorResponse(parsedMaterializedInputs.error, 400, "invalid_request_body", false);
+  }
+  const materializedInputs = parsedMaterializedInputs.value;
+
   const parsedResolverRequest = parseResolverRequest(rawBody);
   if (!parsedResolverRequest) {
     logger.error("Missing family field in request body");
@@ -455,7 +499,9 @@ serve(async (req) => {
       return createErrorResponse("Resolver did not return any tasks", 500, "invalid_resolver_result");
     }
 
-    const insertObjects = resolverResult.tasks;
+    const insertObjects = materializedInputs
+      ? resolverResult.tasks.map((task) => ({ ...task, materialized_inputs: materializedInputs }))
+      : resolverResult.tasks;
     const responseMeta = resolverResult.meta;
 
     const createdTaskIds: string[] = [];

@@ -7,6 +7,7 @@ import { AuthError, NetworkError, ServerError } from '@/shared/lib/errorHandling
 import { materializeLocalGeneration } from '@/shared/lib/media/materializeLocalGeneration';
 import { readAccessTokenFromStorage } from '@/shared/lib/supabaseSession';
 import { generateUUID } from './ids';
+import type { LocalWorkerSession } from './localWorkerSession';
 import { parseTaskCreationResponse } from './parseTaskCreationResponse';
 import type { BaseTaskParams, TaskCreationResult } from './types';
 
@@ -29,6 +30,7 @@ const ARRAY_GENERATION_ID_KEYS = new Set([
 
 interface CreateTaskOptions {
   signal?: AbortSignal;
+  localWorkerSession?: LocalWorkerSession;
   onMaterializeProgress?: (event: {
     generationId: string;
     progress: number;
@@ -190,7 +192,15 @@ export async function createTask(
   // deduplicates if the first attempt actually landed.
   const idempotency_key = generateUUID();
   const url = `${getSupabaseUrl()}/functions/v1/create-task`;
+
+  // Legacy safety net: callers not migrated to the per-input resolver still rely
+  // on this scan to upload local-only generations to Supabase Storage before the
+  // worker tries to fetch them. Migrated callers (with localWorkerSession) get
+  // the spec-conformant per-input behavior; their local generations are already
+  // resolved into materialized_inputs and this scan is a no-op for them.
   await materializeTaskInputGenerations(taskParams.input, options);
+
+  const materializations = options?.localWorkerSession?.records() ?? [];
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${accessToken}`,
@@ -201,6 +211,7 @@ export async function createTask(
     project_id: taskParams.project_id,
     input: taskParams.input,
     idempotency_key,
+    ...(materializations.length > 0 ? { materialized_inputs: materializations } : {}),
   });
 
   let lastError: unknown;

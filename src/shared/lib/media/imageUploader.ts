@@ -182,15 +182,11 @@ function buildUploadFailureMessage(
   return `Failed to upload image after ${maxRetries} attempts: ${lastErrorMsg || 'Unknown error'}`;
 }
 
-/**
- * Uploads an image file with retry mechanism, timeout, abort support, and optional progress tracking.
- * Returns the public URL of the uploaded image.
- */
-export const uploadImageToStorage = async (
+export const uploadImageToStorageWithPath = async (
   file: File,
   maxRetriesOrOptions?: number | UploadOptions,
   onProgress?: (progress: number) => void,
-): Promise<string> => {
+): Promise<{ publicUrl: string; path: string }> => {
   const options = resolveUploadOptions(maxRetriesOrOptions, onProgress);
   const { maxRetries, onProgress: progressCallback, signal, timeoutMs } = options;
 
@@ -226,7 +222,7 @@ export const uploadImageToStorage = async (
         onProgress: progressCallback,
       });
 
-      return getPublicUrlFromPath(filePath);
+      return { publicUrl: getPublicUrlFromPath(filePath), path: filePath };
     } catch (error) {
       lastError = error;
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -246,6 +242,19 @@ export const uploadImageToStorage = async (
 
   normalizeAndPresentError(lastError, { context: `ImageUpload:allRetriesFailed:${file.name}`, showToast: false });
   throw new Error(buildUploadFailureMessage(lastError, file.name, fileSizeMB, maxRetries));
+};
+
+/**
+ * Uploads an image file with retry mechanism, timeout, abort support, and optional progress tracking.
+ * Returns the public URL of the uploaded image.
+ */
+export const uploadImageToStorage = async (
+  file: File,
+  maxRetriesOrOptions?: number | UploadOptions,
+  onProgress?: (progress: number) => void,
+): Promise<string> => {
+  const { publicUrl } = await uploadImageToStorageWithPath(file, maxRetriesOrOptions, onProgress);
+  return publicUrl;
 };
 
 /**

@@ -3,6 +3,14 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4
 import { edgeErrorResponse } from "../_shared/edgeRequest.ts";
 import type { CompletionLogger } from './types.ts';
 
+export type MaterializedInputKind = 'file' | 'remote';
+
+export interface MaterializedInputRecord {
+  generation_id: string;
+  kind: MaterializedInputKind;
+  target: string;
+}
+
 export interface TaskContext {
   id: string;
   task_type: string;
@@ -13,6 +21,7 @@ export interface TaskContext {
   category: string;
   content_type: 'image' | 'video';
   variant_type: string | null;
+  materialized_inputs?: MaterializedInputRecord[] | null;
 }
 
 export type CompletionFollowUpStep =
@@ -20,7 +29,8 @@ export type CompletionFollowUpStep =
   | 'timeline_placement'
   | 'orchestrator_completion'
   | 'cost_calculation'
-  | 'follow_up_persistence';
+  | 'follow_up_persistence'
+  | 'materialized_input_cleanup';
 
 export interface CompletionFollowUpIssue {
   step: CompletionFollowUpStep;
@@ -128,7 +138,7 @@ export async function fetchTaskContext(
 ): Promise<TaskContext | null> {
   const { data: task, error } = await supabase
     .from("tasks")
-    .select(`id, task_type, project_id, params, result_data, task_types!tasks_task_type_fkey(tool_type, category, content_type, variant_type)`)
+    .select(`id, task_type, project_id, params, result_data, materialized_inputs, task_types!tasks_task_type_fkey(tool_type, category, content_type, variant_type)`)
     .eq("id", taskId)
     .single();
 
@@ -152,5 +162,8 @@ export async function fetchTaskContext(
     category: taskTypeInfo.category || 'unknown',
     content_type: taskTypeInfo.content_type || 'image',
     variant_type: taskTypeInfo.variant_type || null,
+    materialized_inputs: Array.isArray(task.materialized_inputs)
+      ? (task.materialized_inputs as MaterializedInputRecord[])
+      : null,
   };
 }

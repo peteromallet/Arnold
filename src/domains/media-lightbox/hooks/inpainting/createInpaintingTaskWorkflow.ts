@@ -1,10 +1,11 @@
 import type { GenerationRow } from '@/domains/generation/types';
 import { uploadImageToStorage } from '@/shared/lib/media/imageUploader';
+import { resolveTaskInputMedia } from '@/shared/lib/media/resolveTaskInputMedia';
 import { createTask } from '@/shared/lib/taskCreation';
+import { beginLocalWorkerSession, type LocalWorkerSession } from '@/shared/lib/taskCreation/localWorkerSession';
 import { createImageInpaintTask } from '@/shared/lib/tasks/imageEditing/imageInpaint';
 import { buildMaskedEditTaskParams, type MaskedEditTaskParams } from '@/shared/lib/tasks/imageEditing/buildMaskedEditTaskParams';
 import { convertToHiresFixApiParams } from '../useGenerationEditSettings';
-import { getMediaUrl } from '@/shared/lib/media/mediaTypeHelpers';
 import type { StrokeOverlayHandle } from '../../components/StrokeOverlay';
 import type { EditAdvancedSettings, QwenEditModel } from './types';
 
@@ -44,26 +45,32 @@ interface CreateInpaintingTaskWorkflowParams {
   strokeOverlay: StrokeOverlayHandle;
 }
 
-function createAnnotatedImageEditTask(params: MaskedEditTaskParams): Promise<string> {
-  return createTask({
-    project_id: params.project_id,
-    family: 'masked_edit',
-    input: {
-      task_type: 'annotated_image_edit',
-      image_url: params.image_url,
-      mask_url: params.mask_url,
-      prompt: params.prompt,
-      num_generations: params.num_generations,
-      generation_id: params.generation_id,
-      shot_id: params.shot_id,
-      tool_type: params.tool_type,
-      loras: params.loras,
-      create_as_generation: params.create_as_generation,
-      source_variant_id: params.source_variant_id,
-      hires_fix: params.hires_fix,
-      qwen_edit_model: params.qwen_edit_model,
+function createAnnotatedImageEditTask(
+  params: MaskedEditTaskParams,
+  session?: LocalWorkerSession,
+): Promise<string> {
+  return createTask(
+    {
+      project_id: params.project_id,
+      family: 'masked_edit',
+      input: {
+        task_type: 'annotated_image_edit',
+        image_url: params.image_url,
+        mask_url: params.mask_url,
+        prompt: params.prompt,
+        num_generations: params.num_generations,
+        generation_id: params.generation_id,
+        shot_id: params.shot_id,
+        tool_type: params.tool_type,
+        loras: params.loras,
+        create_as_generation: params.create_as_generation,
+        source_variant_id: params.source_variant_id,
+        hires_fix: params.hires_fix,
+        qwen_edit_model: params.qwen_edit_model,
+      },
     },
-  }).then((result) => result.task_id);
+    session ? { localWorkerSession: session } : undefined,
+  ).then((result) => result.task_id);
 }
 
 export async function createInpaintingTaskWorkflow({
@@ -90,6 +97,8 @@ export async function createInpaintingTaskWorkflow({
     throw new Error('Failed to export mask from overlay');
   }
 
+  const session = beginLocalWorkerSession();
+
   const maskBlob = await fetch(maskImageData).then((res) => res.blob());
   const maskFile = new File(
     [maskBlob],
@@ -98,8 +107,14 @@ export async function createInpaintingTaskWorkflow({
   );
   const maskUrl = await uploadImageToStorage(maskFile);
 
-  const mediaUrl = getMediaUrl(media) || media.imageUrl;
-  const sourceUrl = activeVariantLocation || mediaUrl;
+  let resolvedMediaUrl: string | undefined;
+  try {
+    const resolved = await resolveTaskInputMedia(media, session);
+    resolvedMediaUrl = resolved.url;
+  } catch {
+    resolvedMediaUrl = undefined;
+  }
+  const sourceUrl = activeVariantLocation || resolvedMediaUrl || media.imageUrl;
   if (!sourceUrl) {
     throw new Error('Missing source media URL');
   }
@@ -120,5 +135,6 @@ export async function createInpaintingTaskWorkflow({
       hiresFix: convertToHiresFixApiParams(advancedSettings),
       qwenEditModel,
     }),
+    session,
   );
 }

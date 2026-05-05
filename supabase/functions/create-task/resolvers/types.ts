@@ -3,6 +3,14 @@ import type { SystemLogger } from "../../_shared/systemLogger.ts";
 
 export type TaskStatus = "Queued" | "In Progress" | "Complete" | "Failed" | "Cancelled";
 
+export type MaterializedInputKind = "file" | "remote";
+
+export interface MaterializedInputRecord {
+  generation_id: string;
+  kind: MaterializedInputKind;
+  target: string;
+}
+
 export interface TaskInsertObject {
   attempts?: number;
   copied_from_share?: string | null;
@@ -14,6 +22,7 @@ export interface TaskInsertObject {
   generation_started_at?: string | null;
   id?: string;
   idempotency_key?: string | null;
+  materialized_inputs?: MaterializedInputRecord[] | null;
   output_location?: string | null;
   params: Record<string, unknown>;
   project_id: string;

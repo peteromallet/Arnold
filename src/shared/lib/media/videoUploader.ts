@@ -178,15 +178,11 @@ function buildStorageTarget(file: File, userId: string): { fileName: string; fil
   };
 }
 
-/**
- * Uploads a video file to Supabase storage with real progress tracking,
- * timeout, abort support, and stall detection.
- */
-export async function uploadVideoToStorage(
+export async function uploadVideoToStorageWithPath(
   file: File,
   maxRetriesOrOptions?: number | VideoUploadOptions,
   onProgress?: (progress: number) => void,
-): Promise<string> {
+): Promise<{ publicUrl: string; path: string }> {
   const { onProgress: progressCallback, maxRetries, signal, timeoutMs } =
     resolveVideoUploadOptions(maxRetriesOrOptions, onProgress);
 
@@ -216,7 +212,7 @@ export async function uploadVideoToStorage(
         data: { publicUrl },
       } = supabase().storage.from(MEDIA_BUCKET).getPublicUrl(fileName);
 
-      return publicUrl;
+      return { publicUrl, path: fileName };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Unknown upload error');
       normalizeAndPresentError(lastError, { context: 'VideoUploader', showToast: false });
@@ -232,4 +228,17 @@ export async function uploadVideoToStorage(
   }
 
   throw formatFinalUploadError(lastError, file.name, fileSizeMB);
+}
+
+/**
+ * Uploads a video file to Supabase storage with real progress tracking,
+ * timeout, abort support, and stall detection.
+ */
+export async function uploadVideoToStorage(
+  file: File,
+  maxRetriesOrOptions?: number | VideoUploadOptions,
+  onProgress?: (progress: number) => void,
+): Promise<string> {
+  const { publicUrl } = await uploadVideoToStorageWithPath(file, maxRetriesOrOptions, onProgress);
+  return publicUrl;
 }
