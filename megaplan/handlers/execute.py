@@ -131,7 +131,9 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             raise
         clear_active_step(state, run_id=run_id)
         if response.get("result") == "blocked":
+            save_state_merge_meta(plan_dir, state)
             _record_execute_blocked(plan_dir, response)
+            state = read_json(plan_dir / "state.json")
             response["state"] = STATE_BLOCKED
             response["next_step"] = None
             response.pop("next_step_runtime", None)
