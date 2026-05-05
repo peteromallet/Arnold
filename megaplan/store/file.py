@@ -71,6 +71,7 @@ from .base import (
     Store,
     StoreError,
     Transaction,
+    validate_plan_artifact_name,
 )
 from .blob import LocalDirBlobStore
 from .snapshot import canonical_json_dumps, canonical_sha256, capture_epic_snapshot
@@ -641,11 +642,12 @@ class FileStore(Store):
                 plans.append(plan)
         return sorted(plans, key=lambda plan: (plan.name, plan.id))
 
-    def _artifact_ref(self, plan_id: str, path: Path) -> ArtifactRef:
+    def _artifact_ref(self, plan_id: str, path: Path, *, artifact_root: Path | None = None) -> ArtifactRef:
         stat = path.stat()
+        name = path.name if artifact_root is None else path.relative_to(artifact_root).as_posix()
         return ArtifactRef(
             plan_id=plan_id,
-            name=path.name,
+            name=name,
             size_bytes=stat.st_size,
             sha256=self._sha256_bytes(path.read_bytes()),
             updated_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
@@ -2322,8 +2324,8 @@ class FileStore(Store):
         return plans
 
     def read_plan_artifact(self, plan_id: str, name: str) -> bytes | None:
-        path = self._plan_artifacts_dir(plan_id) / name
-        return path.read_bytes() if path.exists() else None
+        path = self._plan_artifact_path(plan_id, name)
+        return path.read_bytes() if path.is_file() else None
 
     def write_plan_artifact(
         self,
@@ -2338,21 +2340,25 @@ class FileStore(Store):
         if plan is None:
             raise FileNotFoundError(plan_id)
         self._require_expected_revision(plan.revision, expected_revision)
-        artifact_path = self._plan_artifacts_dir(plan_id) / name
+        artifact_path = self._plan_artifact_path(plan_id, name)
         self._commit_write(artifact_path, data, journal_root=self._journal_root_for_epic(plan.epic_id))
-        return self._artifact_ref(plan_id, artifact_path)
+        return self._artifact_ref(plan_id, artifact_path, artifact_root=self._plan_artifacts_dir(plan_id))
 
     def list_plan_artifacts(self, plan_id: str) -> list[ArtifactRef]:
         artifact_dir = self._plan_artifacts_dir(plan_id)
         if not artifact_dir.exists():
             return []
-        refs = [self._artifact_ref(plan_id, path) for path in sorted(artifact_dir.iterdir()) if path.is_file()]
+        refs = [
+            self._artifact_ref(plan_id, path, artifact_root=artifact_dir)
+            for path in sorted(artifact_dir.rglob("*"))
+            if path.is_file()
+        ]
         refs.sort(key=lambda ref: ref.name)
         return refs
 
     def stat_plan_artifact(self, plan_id: str, name: str) -> ArtifactStat | None:
-        path = self._plan_artifacts_dir(plan_id) / name
-        if not path.exists():
+        path = self._plan_artifact_path(plan_id, name)
+        if not path.is_file():
             return None
         stat = path.stat()
         return ArtifactStat(
@@ -2362,6 +2368,10 @@ class FileStore(Store):
             sha256=self._sha256_bytes(path.read_bytes()),
             updated_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
         )
+
+    def _plan_artifact_path(self, plan_id: str, name: str) -> Path:
+        safe_name = validate_plan_artifact_name(name)
+        return self._plan_artifacts_dir(plan_id) / safe_name
 
     # ------------------------------------------------------------------
     # Migration run audit helpers

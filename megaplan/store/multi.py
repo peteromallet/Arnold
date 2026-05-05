@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import uuid
@@ -57,6 +58,7 @@ from megaplan.store.base import (
     StoreError,
     Transaction,
     deterministic_idempotency_key,
+    validate_plan_artifact_name,
 )
 from megaplan.store.db import DBStore
 from megaplan.store.file import FileStore
@@ -959,11 +961,18 @@ class MultiStore(Store):
 
     def _artifact_model(self, ref: ArtifactRef, data: bytes) -> PlanArtifact:
         digest = hashlib.sha256(data).hexdigest()
+        try:
+            content_text = data.decode("utf-8")
+            content_base64 = None
+        except UnicodeDecodeError:
+            content_text = None
+            content_base64 = base64.b64encode(data).decode("ascii")
         return PlanArtifact(
             name=ref.name,
             kind=ref.kind or "raw_text",
             role=ref.role or "execution",
-            content_text=data.decode("utf-8", errors="replace"),
+            content_text=content_text,
+            content_base64=content_base64,
             sha256=digest,
             updated_at=ref.updated_at or utc_now(),
         )
@@ -976,7 +985,7 @@ class MultiStore(Store):
 
     def _copy_plan_artifacts_to_file(self, target: Store, plan_id: str, artifacts: list[tuple[ArtifactRef, bytes]], migration_id: str) -> None:
         for ref, data in artifacts:
-            artifact_path = target._plan_artifacts_dir(plan_id) / ref.name
+            artifact_path = target._plan_artifacts_dir(plan_id) / validate_plan_artifact_name(ref.name)
             if artifact_path.exists():
                 continue
             plan = target.load_plan(plan_id)

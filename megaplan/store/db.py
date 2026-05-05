@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import functools
 import json
@@ -71,6 +72,7 @@ from megaplan.store.base import (
     SprintItemInput,
     SprintWithItems,
     StoreError,
+    validate_plan_artifact_name,
 )
 from megaplan.store.blob import LocalDirBlobStore, SupabaseStorageBlobStore
 from megaplan.store.snapshot import canonical_json_dumps, canonical_sha256, capture_epic_snapshot
@@ -202,7 +204,7 @@ _PLAN_JSONB = frozenset({
 })
 _ARTIFACT_VALID_FIELDS = frozenset({
     "name", "kind", "role", "version", "batch", "phase",
-    "content_text", "sha256", "created_at", "updated_at",
+    "content_text", "content_base64", "sha256", "created_at", "updated_at",
 })
 
 _MIGRATION_RUN_COLUMNS = (
@@ -235,6 +237,10 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
         "blob_sha256", "blob_size_bytes", "content_type",
     }),
     "messages": frozenset({"id", "epic_id", "direction", "content", "discord_message_id", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
+    "plan_artifacts": frozenset({
+        "plan_id", "name", "kind", "role", "version", "batch", "phase",
+        "content_text", "content_bytes", "sha256", "created_at", "updated_at",
+    }),
     "plans": frozenset(_PLAN_COLUMNS),
     "progress_events": frozenset({"id", "epic_id", "plan_id", "sprint_id", "idempotency_key", "kind", "summary", "details", "occurred_at"}),
     "second_opinions": frozenset({"id", "epic_id", "requested_at", "requested_by", "focus_areas", "raw_response", "score", "summary", "verdict", "resulting_checklist_item_ids", "model_used"}),
@@ -2672,10 +2678,23 @@ class DBStore:
             "SELECT * FROM plan_artifacts WHERE plan_id = %s ORDER BY created_at",
             [plan_id],
         ).fetchall()
-        return [
-            PlanArtifact(**{k: v for k, v in row.items() if k in _ARTIFACT_VALID_FIELDS})
-            for row in rows
-        ]
+        artifacts = []
+        for row in rows:
+            data = {k: v for k, v in row.items() if k in _ARTIFACT_VALID_FIELDS}
+            content_bytes = row.get("content_bytes")
+            if content_bytes is not None:
+                data["content_base64"] = base64.b64encode(bytes(content_bytes)).decode("ascii")
+            artifacts.append(PlanArtifact(**data))
+        return artifacts
+
+    def _plan_artifact_bytes(self, row: Mapping[str, Any]) -> bytes:
+        content_bytes = row.get("content_bytes")
+        if content_bytes is not None:
+            return bytes(content_bytes)
+        content_text = row.get("content_text")
+        if content_text is None:
+            return b""
+        return content_text.encode("utf-8")
 
     def create_plan(
         self,
@@ -2799,13 +2818,17 @@ class DBStore:
         expected_revision: int | None = None,
         idempotency_key: str | None = None,
     ) -> ArtifactRef:
+        name = validate_plan_artifact_name(name)
         conn = self._get_conn()
         sha256 = hashlib.sha256(data).hexdigest()
-        content_text = data.decode("utf-8")
+        try:
+            content_text: str | None = data.decode("utf-8")
+        except UnicodeDecodeError:
+            content_text = None
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         kind_map = {"json": "json", "md": "markdown", "jsonl": "jsonl"}
         kind = kind_map.get(ext, "raw_text")
-        stem = name.split(".")[0]
+        stem = name.rsplit("/", 1)[-1].split(".")[0]
         if stem.startswith("plan_v"):
             role = "plan_version"
         elif stem in ("gate_signals", "gate"):
@@ -2824,18 +2847,19 @@ class DBStore:
             role = "template"
         row = conn.execute(
             """
-            INSERT INTO plan_artifacts (plan_id, name, kind, role, sha256, content_text)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO plan_artifacts (plan_id, name, kind, role, sha256, content_text, content_bytes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (plan_id, name) DO UPDATE SET
                 sha256 = EXCLUDED.sha256,
                 content_text = EXCLUDED.content_text,
+                content_bytes = EXCLUDED.content_bytes,
                 kind = EXCLUDED.kind,
                 role = EXCLUDED.role,
                 updated_at = now()
             RETURNING plan_id, name, kind, role, sha256, updated_at,
-                      octet_length(content_text) AS size_bytes
+                      COALESCE(octet_length(content_bytes), octet_length(content_text), 0) AS size_bytes
             """,
-            [plan_id, name, kind, role, sha256, content_text],
+            [plan_id, name, kind, role, sha256, content_text, data],
         ).fetchone()
         return ArtifactRef(
             plan_id=row["plan_id"],
@@ -2848,24 +2872,25 @@ class DBStore:
         )
 
     def read_plan_artifact(self, plan_id: str, name: str) -> bytes | None:
+        name = validate_plan_artifact_name(name)
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT content_text FROM plan_artifacts WHERE plan_id = %s AND name = %s",
+            "SELECT content_text, content_bytes FROM plan_artifacts WHERE plan_id = %s AND name = %s",
             [plan_id, name],
         ).fetchone()
         if row is None:
             return None
-        return row["content_text"].encode("utf-8")
+        return self._plan_artifact_bytes(row)
 
     def list_plan_artifacts(self, plan_id: str) -> list[ArtifactRef]:
         conn = self._get_conn()
         rows = conn.execute(
             """
             SELECT plan_id, name, kind, role, sha256, updated_at,
-                   octet_length(content_text) AS size_bytes
+                   COALESCE(octet_length(content_bytes), octet_length(content_text), 0) AS size_bytes
             FROM plan_artifacts
             WHERE plan_id = %s
-            ORDER BY created_at
+            ORDER BY name
             """,
             [plan_id],
         ).fetchall()
@@ -2883,11 +2908,12 @@ class DBStore:
         ]
 
     def stat_plan_artifact(self, plan_id: str, name: str) -> ArtifactStat | None:
+        name = validate_plan_artifact_name(name)
         conn = self._get_conn()
         row = conn.execute(
             """
             SELECT plan_id, name, sha256, updated_at,
-                   octet_length(content_text) AS size_bytes
+                   COALESCE(octet_length(content_bytes), octet_length(content_text), 0) AS size_bytes
             FROM plan_artifacts
             WHERE plan_id = %s AND name = %s
             """,
@@ -3396,15 +3422,21 @@ class DBStore:
         with conn.transaction():
             for artifact in artifacts:
                 data = artifact.model_dump()
+                name = validate_plan_artifact_name(data["name"])
                 row = {
                     "plan_id": plan_id,
-                    "name": data["name"],
+                    "name": name,
                     "kind": data["kind"],
                     "role": data["role"],
                     "version": data.get("version"),
                     "batch": data.get("batch"),
                     "phase": data.get("phase"),
                     "content_text": data.get("content_text"),
+                    "content_bytes": (
+                        base64.b64decode(data["content_base64"])
+                        if data.get("content_base64") is not None
+                        else None
+                    ),
                     "sha256": data["sha256"],
                     "created_at": data.get("created_at"),
                     "updated_at": data.get("updated_at"),

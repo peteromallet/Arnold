@@ -6,6 +6,7 @@ from contextlib import AbstractContextManager
 from datetime import datetime
 import hashlib
 import re
+from pathlib import PurePosixPath
 from types import TracebackType
 from typing import Any, Literal, Mapping, Protocol, Sequence, TypeAlias, runtime_checkable
 
@@ -135,6 +136,20 @@ class ArtifactStat(StorageModel):
     size_bytes: int
     sha256: str | None = None
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+def validate_plan_artifact_name(name: str) -> str:
+    """Return a normalized relative artifact path or reject unsafe names."""
+    if not name:
+        raise ValueError("Plan artifact name must be non-empty")
+    if "\\" in name:
+        raise ValueError(f"Unsafe plan artifact name: {name!r}")
+    path = PurePosixPath(name)
+    if path.is_absolute() or str(path) != name:
+        raise ValueError(f"Unsafe plan artifact name: {name!r}")
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError(f"Unsafe plan artifact name: {name!r}")
+    return name
 
 
 class ControlMessageInput(StorageModel):
@@ -1062,4 +1077,5 @@ __all__ = [
     "Store",
     "StoreError",
     "Transaction",
+    "validate_plan_artifact_name",
 ]
