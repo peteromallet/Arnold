@@ -39,6 +39,7 @@ import {
   type SequenceCreatorMode,
   type SequenceDraftGroup,
 } from '@/tools/video-editor/sequences/generation.ts';
+import { useSequenceCreatorStore } from '@/tools/video-editor/state/sequenceCreatorStore.ts';
 import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
 import {
   AVAILABLE_SEQUENCE_CLIP_TYPES,
@@ -137,8 +138,11 @@ export function SequenceCreatorPanel({
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const [mode, setMode] = useState<SequenceCreatorMode>('generate');
-  // User-selected routing override:
+  // Lifted into useSequenceCreatorStore so closing/reopening the panel —
+  // and full reloads — preserve in-progress state. See the store file's
+  // header for what's persisted vs transient.
+  //
+  // generationMode routing override:
   //   'auto'  → run the JSON edge function with classifier preamble; if the
   //              classifier says path=code, dispatch the code-path follow-up
   //              (current behavior, default).
@@ -146,43 +150,48 @@ export function SequenceCreatorPanel({
   //              edge function directly (Custom animation).
   //   'json'  → call the JSON edge function and ignore any classifier
   //              verdict, force-treat the response as JSON drafts (Basic).
-  const [generationMode, setGenerationMode] = useState<'auto' | 'code' | 'json'>('auto');
-  const [prompt, setPrompt] = useState('');
-  const [editPrompt, setEditPrompt] = useState('');
-  const [draftGroups, setDraftGroups] = useState<SequenceDraftGroup[]>([]);
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [selectedDraftIndex, setSelectedDraftIndex] = useState(0);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationNote, setGenerationNote] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const mode = useSequenceCreatorStore((s) => s.mode);
+  const setMode = useSequenceCreatorStore((s) => s.setMode);
+  const generationMode = useSequenceCreatorStore((s) => s.generationMode);
+  const setGenerationMode = useSequenceCreatorStore((s) => s.setGenerationMode);
+  const prompt = useSequenceCreatorStore((s) => s.prompt);
+  const setPrompt = useSequenceCreatorStore((s) => s.setPrompt);
+  const editPrompt = useSequenceCreatorStore((s) => s.editPrompt);
+  const setEditPrompt = useSequenceCreatorStore((s) => s.setEditPrompt);
+  const draftGroups = useSequenceCreatorStore((s) => s.draftGroups);
+  const setDraftGroups = useSequenceCreatorStore((s) => s.setDraftGroups);
+  const selectedGroupId = useSequenceCreatorStore((s) => s.selectedGroupId);
+  const setSelectedGroupId = useSequenceCreatorStore((s) => s.setSelectedGroupId);
+  const selectedDraftIndex = useSequenceCreatorStore((s) => s.selectedDraftIndex);
+  const setSelectedDraftIndex = useSequenceCreatorStore((s) => s.setSelectedDraftIndex);
+  const generationNote = useSequenceCreatorStore((s) => s.generationNote);
+  const setGenerationNote = useSequenceCreatorStore((s) => s.setGenerationNote);
+  const actionError = useSequenceCreatorStore((s) => s.actionError);
+  const setActionError = useSequenceCreatorStore((s) => s.setActionError);
 
   // Unified-UX classifier state: tracks what path the most recent
   // generation took (json|code) so the path/capability badge can render
   // unconditionally (always visible per CLAUDE.md UI conventions).
-  const [classifierVerdict, setClassifierVerdict] = useState<{ path: 'json' | 'code'; reason: string } | null>(null);
+  const classifierVerdict = useSequenceCreatorStore((s) => s.classifierVerdict);
+  const setClassifierVerdict = useSequenceCreatorStore((s) => s.setClassifierVerdict);
 
   // Fork-to-DB pending state: when the classifier returns path:'code' AND
   // the selected clip is theme-bundled (`installed-sequence` source), we
   // gate the code-path follow-up behind a deliberate "Customize this
   // sequence for yourself" confirmation. Stores the prompt + classifier
   // reason so the confirm action can dispatch the follow-up call.
-  const [forkPending, setForkPending] = useState<{
-    prompt: string;
-    reason: string;
-    selectedClipType: string;
-    bundledSource: ReturnType<typeof getBundledComponentSource>;
-  } | null>(null);
+  const forkPending = useSequenceCreatorStore((s) => s.forkPending);
+  const setForkPending = useSequenceCreatorStore((s) => s.setForkPending);
 
   // Latest generated component metadata (when the code path produces a
   // result). Surfaces in the path badge so the user can see whether
   // they're editing JSON params or DB-stored component code.
-  const [generatedComponent, setGeneratedComponent] = useState<{
-    code: string;
-    name: string;
-    description: string;
-    schemaJson: object;
-    defaultsJson: object;
-  } | null>(null);
+  const generatedComponent = useSequenceCreatorStore((s) => s.generatedComponent);
+  const setGeneratedComponent = useSequenceCreatorStore((s) => s.setGeneratedComponent);
+
+  // Transient request lifecycle — deliberately NOT lifted to the store.
+  // An in-flight request from before unmount/reload is gone afterward.
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const allowedAssets = useMemo(() => (
     resolvedConfig
