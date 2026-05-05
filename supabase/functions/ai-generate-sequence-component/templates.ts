@@ -77,12 +77,22 @@ const OUTPUT_RULES = `Output requirements:
 
 const ASSET_KEY_CONTRACT = `Asset-key contract:
 - The host injects a list of allowed asset keys (image and video) per generation.
-- When the user wants images or videos, params containing media MUST be expressed as
-  params.imageAssetKeys: string[] and/or params.videoAssetKeys: string[],
-  each entry referencing one of the allowed keys.
+- Declare keys in your SCHEMA + DEFAULTS as:
+    params.imageAssetKeys: string[]   (one or more entries from the allowed list)
+    params.videoAssetKeys: string[]   (likewise)
+- At render time the host populates SIBLING URL arrays the component should READ FROM:
+    params.images: string[]           (resolved URLs for imageAssetKeys, in order)
+    params.videos: string[]           (resolved URLs for videoAssetKeys, in order)
+  Render images via <Img src={(params.images ?? [])[0]} ... /> (and similarly for videos).
+  NEVER read params.imageAssetKeys at render — those are keys the host translates into URLs.
 - NEVER inline raw URLs in params or in code. The host resolves keys → URLs at render time.
+- **If allowed asset keys are non-empty (the user attached/selected media), the component
+  MUST visually display at least one of those assets as a primary, foreground visual element
+  — not merely as a faint backdrop or placeholder.** A glow / vignette / particle field on its
+  own is NOT enough; the user's image (or video) must be rendered prominently and visibly.
 - If the user did not select assets, omit imageAssetKeys / videoAssetKeys from params; default to [].
-- This mirrors how built-in sequence components like ImageJumpSequence consume images.`;
+- This mirrors how built-in sequence components like ImageJumpSequence consume images
+  (declares imageAssetKeys, renders from params.images URL array).`;
 
 const VALIDATION_RULES = `Validation rules (the host will reject your output if violated):
 - The code must contain \`exports.default =\`.

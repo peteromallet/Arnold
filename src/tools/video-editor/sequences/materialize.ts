@@ -41,24 +41,57 @@ const assetListParamsForClipType = (
   ));
 };
 
+// Convention-based substitutions for code-path / DB-stored sequence
+// components: if a custom component's params include `imageAssetKeys` or
+// `videoAssetKeys` arrays of keys, the host populates the URL arrays
+// `images` / `videos` so components can render via <Img src={params.images[0]} />
+// without needing per-clip-type metadata. Mirrors the trusted built-in
+// pattern (image-jump uses imageAssetKeys → images via componentParam) but
+// applies to any clipType emitted by ai-generate-sequence-component.
+const CONVENTION_ASSET_PARAMS: ReadonlyArray<{ keysParam: string; urlsParam: string }> = [
+  { keysParam: 'imageAssetKeys', urlsParam: 'images' },
+  { keysParam: 'videoAssetKeys', urlsParam: 'videos' },
+];
+
 export const materializeSequenceParams = (
   clipType: string | undefined,
   params: Record<string, unknown> | undefined,
   registry: SequenceAssetRegistry,
 ): Record<string, unknown> | undefined => {
-  const assetParams = assetListParamsForClipType(clipType);
-  if (assetParams.length === 0 || !params) {
-    return params;
-  }
+  if (!params) return params;
 
   let changed = false;
-  const nextParams: Record<string, unknown> = { ...params };
-  for (const param of assetParams) {
+  let nextParams: Record<string, unknown> = params;
+  const ensureCopy = () => {
+    if (nextParams === params) {
+      nextParams = { ...params };
+    }
+  };
+
+  // Trusted clip types: descriptor-driven substitution (e.g. image-jump
+  // declares imageAssetKeys → images via componentParam).
+  for (const param of assetListParamsForClipType(clipType)) {
     const componentParam = param.componentParam;
     if (!componentParam) continue;
     const materialized = materializeAssetListParam(params[param.key], registry);
     if (materialized === null) continue;
+    ensureCopy();
     nextParams[componentParam] = materialized;
+    changed = true;
+  }
+
+  // Custom-component / DB-stored components: convention-based substitution.
+  // Only fill the URL slot if the model didn't already populate it.
+  for (const { keysParam, urlsParam } of CONVENTION_ASSET_PARAMS) {
+    if (Object.prototype.hasOwnProperty.call(nextParams, urlsParam)
+      && Array.isArray(nextParams[urlsParam])
+      && (nextParams[urlsParam] as unknown[]).length > 0) {
+      continue;
+    }
+    const materialized = materializeAssetListParam(params[keysParam], registry);
+    if (materialized === null || materialized.length === 0) continue;
+    ensureCopy();
+    nextParams[urlsParam] = materialized;
     changed = true;
   }
 
