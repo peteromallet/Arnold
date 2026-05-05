@@ -933,11 +933,16 @@ class MultiStore(Store):
 
     def _copy_plan_artifacts_to_file(self, target: Store, plan_id: str, artifacts: list[tuple[ArtifactRef, bytes]], migration_id: str) -> None:
         for ref, data in artifacts:
-            target.write_plan_artifact(
-                plan_id,
-                ref.name,
+            artifact_path = target._plan_artifacts_dir(plan_id) / ref.name
+            if artifact_path.exists():
+                continue
+            plan = target.load_plan(plan_id)
+            if plan is None:
+                raise StoreError(f"Target plan {plan_id!r} missing before artifact copy")
+            target._commit_write(
+                artifact_path,
                 data,
-                idempotency_key=self._idem(migration_id, "plan_artifact", plan_id, ref.name),
+                journal_root=target._journal_root_for_epic(plan.epic_id),
             )
 
     def _collect_migration_manifest(self, source: Store, epic_id: str) -> dict[str, Any]:
@@ -1105,6 +1110,11 @@ class MultiStore(Store):
         if active_leases:
             plans = ", ".join(sorted(lease.plan_id for lease in active_leases))
             raise LeaseConflict(f"Epic {epic_id!r} has active execution leases: {plans}")
+
+    def _preflight_target_collision(self, target: Store, epic_id: str) -> None:
+        target_epic = target.load_epic(epic_id)
+        if target_epic is not None and target_epic.migrated_to is None:
+            raise StoreError(f"Target backend already has active epic {epic_id!r}")
 
     def _terminal_migration(self, run: MigrationRun) -> bool:
         return run.completed_at is not None or run.phase in {"complete", "aborted"}
@@ -1316,6 +1326,7 @@ class MultiStore(Store):
         target = self._backend(target_backend)
 
         self._preflight_migration(source, epic_id)
+        self._preflight_target_collision(target, epic_id)
         migration_id = self._migration_id(epic_id, target_backend)
         source.acquire_lock(
             epic_id,

@@ -11,6 +11,7 @@ from megaplan.store import (
     LeaseConflict,
     MultiStore,
     SprintItemInput,
+    StoreError,
     deterministic_idempotency_key,
 )
 from megaplan.store.file import FileStore
@@ -223,6 +224,22 @@ def test_migrate_epic_preflight_rejects_active_migration_collision(tmp_path: Pat
         store.migrate_epic(epic.id, to="db", ttl_seconds=60)
 
 
+def test_migrate_epic_rejects_target_collision_before_source_lock(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
+    existing = db_store.create_epic(title="Existing", goal="g", body="already there", home_backend="db")
+    db_store._save_model(
+        db_store._epic_path(epic.id),
+        existing.model_copy(update={"id": epic.id}),
+        journal_root=db_store._journal_root_for_epic(epic.id),
+    )
+
+    with pytest.raises(StoreError, match="Target backend already has active epic"):
+        store.migrate_epic(epic.id, to="db", ttl_seconds=60)
+
+    assert not file_store._lock_path(epic.id).exists()
+
+
 def test_concurrent_migrate_attempt_fails_with_lease_busy_error(tmp_path: Path) -> None:
     store, _, db_store = _multi(tmp_path)
     epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
@@ -397,6 +414,41 @@ def test_resume_migration_claims_expired_run_and_retries_copying_meta(tmp_path: 
     assert file_store.load_epic(epic.id).migrated_to == run.id
     assert db_store.load_epic(epic.id).home_backend == "db"
     assert db_store.read_plan_artifact(plan.id, "state.json") == b"{\"resume\": true}\n"
+
+
+def test_file_target_plan_artifact_copy_is_absent_only(tmp_path: Path) -> None:
+    store, _, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="DB", goal="g", body="body", home_backend="db")
+    plan = store.create_plan(
+        sprint_id=None,
+        epic_id=epic.id,
+        name="db-plan",
+        idea="move",
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "db-plan"),
+    )
+    store.write_plan_artifact(
+        plan.id,
+        "state.json",
+        b"{\"source\": true}\n",
+        idempotency_key=deterministic_idempotency_key("multi", plan.id, "source-artifact"),
+    )
+    entities = store._migration_entities(db_store, epic.id)
+    file_store = store.file
+    file_store.copy_entity_if_absent(
+        file_store._plan_path(plan.id, epic_id=epic.id, sprint_id=None),
+        plan,
+        journal_root=file_store._journal_root_for_epic(epic.id),
+    )
+    artifact_path = file_store._plan_artifacts_dir(plan.id) / "state.json"
+    file_store._commit_write(
+        artifact_path,
+        b"{\"target\": true}\n",
+        journal_root=file_store._journal_root_for_epic(epic.id),
+    )
+
+    store._copy_plan_artifacts_to_file(file_store, plan.id, entities["plan_artifacts"][plan.id], "migration-test")
+
+    assert artifact_path.read_bytes() == b"{\"target\": true}\n"
 
 
 def test_resume_migration_reenters_copying_blobs_with_copied_ids(tmp_path: Path) -> None:
