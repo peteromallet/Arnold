@@ -13,6 +13,7 @@ from megaplan.types import (
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FINALIZED,
+    STATE_FAILED,
     STATE_GATED,
     STATE_PLANNED,
     StepResponse,
@@ -237,7 +238,7 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
     return response
 
 def _override_replan(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
-    allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED}
+    allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     if state["current_state"] not in allowed:
         raise CliError(
             "invalid_transition",

@@ -32,9 +32,12 @@ from megaplan._core import (
     now_utc,
     read_json,
     require_state,
+    clear_active_step,
     save_flag_registry,
+    save_state_merge_meta,
     scope_creep_flags,
     sha256_file,
+    set_active_step,
     workflow_includes_step,
 )
 
@@ -118,10 +121,14 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         expected_ids = [check["id"] for check in active_checks]
         agent_type, mode, refreshed, model = _pkg.resolve_agent_mode("critique", args)
         if len(active_checks) > 1 and agent_type == "hermes":
+            run_id = set_active_step(state, step="critique", agent="hermes", mode="persistent", model=model)
+            save_state_merge_meta(plan_dir, state)
             try:
                 worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks)
                 agent, mode, refreshed = "hermes", "persistent", True
             except Exception as exc:
+                clear_active_step(state, run_id=run_id)
+                save_state_merge_meta(plan_dir, state)
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
                 worker, agent, mode, refreshed = _pkg._run_worker(
                     "critique",
@@ -131,6 +138,8 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     root=root,
                     resolved=(agent_type, mode, refreshed, model),
                 )
+            else:
+                clear_active_step(state, run_id=run_id)
         else:
             worker, agent, mode, refreshed = _pkg._run_worker(
                 "critique",
