@@ -260,6 +260,41 @@ def test_storage_models_normalize_json_defaults_and_extensions() -> None:
     assert sprint.status == "running"
 
 
+def test_sprint5_event_snapshot_and_image_blob_fields_are_optional() -> None:
+    event = EpicEvent.model_validate(
+        {
+            "id": "event_1",
+            "epic_id": "epic_1",
+            "transaction_id": "tx_1",
+            "summary": "Body changed",
+            "pre_state": {"epic": {"revision": 1}},
+            "post_state": {"epic": {"revision": 2}},
+            "pre_state_canonical_json": "{\"epic\":{\"revision\":1}}",
+            "post_state_canonical_json": "{\"epic\":{\"revision\":2}}",
+            "pre_state_sha256": "sha256:before",
+            "post_state_sha256": "sha256:after",
+        }
+    )
+    image = Image.model_validate(
+        {
+            "id": "img_1",
+            "source": "user_uploaded",
+            "storage_url": "mp://blob/blob_1",
+            "reference_key": "diagram",
+            "blob_backend": "file",
+            "blob_id": "blob_1",
+            "blob_sha256": "sha256:image",
+            "blob_size_bytes": 123,
+            "content_type": "image/png",
+        }
+    )
+
+    assert event.pre_state_sha256 == "sha256:before"
+    assert event.post_state["epic"]["revision"] == 2
+    assert image.blob_backend == "file"
+    assert image.blob_size_bytes == 123
+
+
 def test_plan_round_trips_current_plan_state_shape(plan_fixture) -> None:
     state = load_state(plan_fixture.plan_dir)
 

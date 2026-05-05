@@ -5,6 +5,7 @@ import pytest
 from megaplan.editorial.body import edit_section, read_body, update_body
 from megaplan.editorial.errors import EditorialValidationError, EditorialWorkflowError
 from megaplan.store import RevisionConflict
+from megaplan.store.snapshot import canonical_json_dumps
 
 
 def _body() -> str:
@@ -38,6 +39,11 @@ def test_body_update_uses_store_body_api_and_records_event(editorial_store) -> N
     assert [event.event_type for event in events] == ["body_edit"]
     assert events[0].prior_state["body"] == _body()
     assert events[0].turn_id == "turn-1"
+    assert events[0].pre_state["body"] == _body()
+    assert events[0].post_state["body"].startswith("# Goal\nUpdated")
+    assert events[0].post_state["epic"]["revision"] == updated.revision
+    assert events[0].post_state_canonical_json == canonical_json_dumps(events[0].post_state)
+    assert events[0].post_state_sha256 is not None
 
 
 def test_body_update_rejects_empty_body_and_lockdown_state(editorial_store) -> None:

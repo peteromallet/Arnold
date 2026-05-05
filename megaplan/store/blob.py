@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 import mimetypes
 from pathlib import Path
+from urllib.parse import quote
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from typing import Protocol, runtime_checkable
 
 from pydantic import Field
@@ -153,10 +157,94 @@ class LocalDirBlobStore:
         )
 
 
+class SupabaseStorageBlobStore:
+    """Supabase Storage implementation for DB-mode image blobs."""
+
+    def __init__(self, *, supabase_url: str, service_role_key: str, bucket: str) -> None:
+        self.supabase_url = supabase_url.rstrip("/")
+        self.service_role_key = service_role_key
+        self.bucket = bucket
+
+    def _object_url(self, blob_id: str) -> str:
+        path = quote(blob_id, safe="/")
+        return f"{self.supabase_url}/storage/v1/object/{self.bucket}/{path}"
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: bytes | None = None,
+        content_type: str | None = None,
+        upsert: bool = False,
+    ) -> bytes:
+        headers = {
+            "Authorization": f"Bearer {self.service_role_key}",
+            "apikey": self.service_role_key,
+        }
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        if upsert:
+            headers["x-upsert"] = "true"
+        req = Request(url, data=data, headers=headers, method=method)
+        with urlopen(req) as response:
+            return response.read()
+
+    def put(self, blob_id: str, content: bytes, *, content_type: str) -> BlobRef:
+        self._request(
+            "PUT",
+            self._object_url(blob_id),
+            data=content,
+            content_type=content_type,
+            upsert=True,
+        )
+        return BlobRef(
+            blob_id=blob_id,
+            content_type=content_type,
+            size_bytes=len(content),
+            storage_url=self.url(blob_id),
+        )
+
+    def get(self, blob_id: str) -> bytes:
+        return self._request("GET", self._object_url(blob_id))
+
+    def url(self, blob_id: str, *, signed: bool = False, ttl: int = 3600) -> str:
+        path = quote(blob_id, safe="/")
+        if not signed:
+            return f"{self.supabase_url}/storage/v1/object/public/{self.bucket}/{path}"
+        sign_url = f"{self.supabase_url}/storage/v1/object/sign/{self.bucket}/{path}"
+        payload = json.dumps({"expiresIn": ttl}).encode("utf-8")
+        response = self._request("POST", sign_url, data=payload, content_type="application/json")
+        data = json.loads(response.decode("utf-8"))
+        signed_url = data["signedURL"]
+        if signed_url.startswith("http"):
+            return signed_url
+        return f"{self.supabase_url}/storage/v1{signed_url}"
+
+    def delete(self, blob_id: str) -> None:
+        self._request("DELETE", self._object_url(blob_id))
+
+    def stat(self, blob_id: str) -> BlobStat | None:
+        try:
+            content = self.get(blob_id)
+        except HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        guessed_type = mimetypes.guess_type(blob_id)[0] or "application/octet-stream"
+        return BlobStat(
+            blob_id=blob_id,
+            content_type=guessed_type,
+            size_bytes=len(content),
+            updated_at=utc_now(),
+        )
+
+
 __all__ = [
     "BlobMissingError",
     "BlobRef",
     "BlobStat",
     "BlobStore",
     "LocalDirBlobStore",
+    "SupabaseStorageBlobStore",
 ]

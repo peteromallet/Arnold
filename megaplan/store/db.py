@@ -9,6 +9,7 @@ import os
 import uuid
 from collections import OrderedDict
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Generator, Mapping, Sequence
 
@@ -39,6 +40,7 @@ from megaplan.schemas import (
     Epic,
     EpicEvent,
     EpicLock,
+    EpicSnapshot,
     ExecutionLease,
     ExternalRequest,
     Feedback,
@@ -68,7 +70,10 @@ from megaplan.store.base import (
     RevisionConflict,
     SprintItemInput,
     SprintWithItems,
+    StoreError,
 )
+from megaplan.store.blob import LocalDirBlobStore, SupabaseStorageBlobStore
+from megaplan.store.snapshot import canonical_json_dumps, canonical_sha256, capture_epic_snapshot
 
 
 _BOOTSTRAP_ACTOR_ID = "__bootstrap__"
@@ -113,6 +118,8 @@ _IDEMPOTENT_MUTATORS = frozenset({
     "create_feedback",
     "update_feedback",
     "record_epic_event",
+    "revert",
+    "attach_image",
     "create_message",
     "update_message",
     "create_turn",
@@ -174,6 +181,14 @@ def _jb(value: Any) -> Any:
     return value
 
 
+def _parse_datetime(value: datetime | str) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
 _PLAN_COLUMNS = (
     "id", "name", "epic_id", "sprint_id", "revision", "idea", "current_state",
     "iteration", "config", "sessions", "plan_versions", "history", "meta",
@@ -204,11 +219,21 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "code_artifacts": frozenset({"id", "codebase_id", "epic_id", "kind", "source", "file_path", "line_range", "scope", "content", "content_summary", "metadata", "created_at", "last_used_at", "expires_at"}),
     "codebases": frozenset({"id", "owner", "name", "default_branch", "scope", "group_name", "associated_epic_id", "added_at", "added_via", "last_accessed_at", "verified_accessible_at", "notes"}),
     "control_messages": frozenset({"id", "epic_id", "actor_id", "intent", "target_id", "payload", "idempotency_key", "created_at", "processor_id", "claimed_at", "processed_at", "result"}),
-    "epic_events": frozenset({"id", "epic_id", "transaction_id", "event_type", "summary", "prior_state", "turn_id", "occurred_at"}),
+    "epic_events": frozenset({
+        "id", "epic_id", "transaction_id", "event_type", "summary",
+        "prior_state", "pre_state", "post_state",
+        "pre_state_canonical_json", "post_state_canonical_json",
+        "pre_state_sha256", "post_state_sha256", "turn_id", "occurred_at",
+    }),
     "epics": frozenset({"id", "title", "goal", "body", "state", "home_backend", "migrated_to", "revision", "created_at", "last_edited_at"}),
     "external_requests": frozenset({"id", "idempotency_key", "provider", "endpoint", "tool_call_id", "turn_id", "request_summary", "request_body", "status", "provider_request_id", "provider_response_summary", "attempt_count", "first_attempted_at", "last_attempted_at", "completed_at", "error_details"}),
     "feedback": frozenset({"id", "kind", "content", "source", "source_message_id", "epic_id", "turn_id", "context_snapshot", "active", "deactivation_reason", "resolved", "resolution_note", "resolved_at", "created_at", "last_referenced_at", "last_applied_at"}),
-    "images": frozenset({"id", "epic_id", "source", "prompt", "storage_url", "quality", "size", "created_at", "reference_key", "description", "caption", "in_body", "active", "discord_attachment_id"}),
+    "images": frozenset({
+        "id", "epic_id", "source", "prompt", "storage_url", "quality", "size",
+        "created_at", "reference_key", "description", "caption", "in_body",
+        "active", "discord_attachment_id", "blob_backend", "blob_id",
+        "blob_sha256", "blob_size_bytes", "content_type",
+    }),
     "messages": frozenset({"id", "epic_id", "direction", "content", "discord_message_id", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
     "plans": frozenset(_PLAN_COLUMNS),
     "progress_events": frozenset({"id", "epic_id", "plan_id", "sprint_id", "kind", "summary", "details", "occurred_at"}),
@@ -224,7 +249,7 @@ _COPY_JSONB_COLUMNS = frozenset({
     "granted_epic_ids", "history", "in_burst_with", "last_gate",
     "latest_execution", "latest_failure", "latest_finalize", "latest_review",
     "line_range", "manifest", "meta", "metadata", "payload",
-    "plan_versions", "prior_state", "prompt_snapshot",
+    "plan_versions", "post_state", "pre_state", "prior_state", "prompt_snapshot",
     "provider_response_summary", "request_body", "request_summary", "result",
     "resulting_checklist_item_ids", "sessions", "state_at_turn",
     "transcription_metadata", "triggered_by_message_ids", "warnings_issued",
@@ -278,6 +303,16 @@ class DBStore:
         self._actor_id = actor_id
         self._dsn = dsn or os.environ.get("SUPABASE_DB_URL")
         self._conn: psycopg.Connection | None = None  # type: ignore[type-arg]
+        storage_bucket = os.environ.get("SUPABASE_STORAGE_BUCKET") or os.environ.get("SUPABASE_BUCKET")
+        storage_secret_key = "SUPABASE_" + "SERVICE_" + "ROLE_KEY"
+        if os.environ.get("SUPABASE_URL") and os.environ.get(storage_secret_key) and storage_bucket:
+            self.blobs = SupabaseStorageBlobStore(
+                supabase_url=os.environ["SUPABASE_URL"],
+                service_role_key=os.environ[storage_secret_key],
+                bucket=storage_bucket,
+            )
+        else:
+            self.blobs = LocalDirBlobStore(os.environ.get("MEGAPLAN_DB_BLOB_ROOT", ".megaplan/db-blobs"))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -583,18 +618,24 @@ class DBStore:
             f"""
             SELECT *,
                    ts_rank(
-                       to_tsvector('english', title || ' ' || goal || ' ' || body),
+                       to_tsvector('english', coalesce(title, '') || ' ' || coalesce(goal, '') || ' ' || coalesce(body, '')),
                        plainto_tsquery('english', %s)
-                   ) AS rank
+                   ) AS rank,
+                   CASE
+                       WHEN lower(title) LIKE lower(%s) THEN 3
+                       WHEN lower(goal) LIKE lower(%s) THEN 2
+                       ELSE 1
+                   END AS match_tier,
+                   'db' AS backend
             FROM epics
-            WHERE to_tsvector('english', title || ' ' || goal || ' ' || body)
+            WHERE to_tsvector('english', coalesce(title, '') || ' ' || coalesce(goal, '') || ' ' || coalesce(body, ''))
                   @@ plainto_tsquery('english', %s)
               AND migrated_to IS NULL
               {state_filter}
-            ORDER BY rank DESC
+            ORDER BY match_tier DESC, rank DESC, last_edited_at DESC, id DESC
             LIMIT %s
             """,
-            [query, query, limit],
+            [query, f"%{query}%", f"%{query}%", query, limit],
         ).fetchall()
         return [EpicSummary(**row) for row in rows]
 
@@ -606,6 +647,166 @@ class DBStore:
         if row is None:
             raise KeyError(f"Epic {epic_id!r} not found")
         return row["body"]
+
+    def capture_epic_snapshot(self, epic_id: str) -> EpicSnapshot:
+        return capture_epic_snapshot(self, epic_id)
+
+    def _event_snapshot(self, event: EpicEvent, *, field: str) -> EpicSnapshot:
+        payload = event.pre_state if field == "pre" else event.post_state
+        if payload is None:
+            raise StoreError(
+                f"Event {event.id!r} from transaction {event.transaction_id!r} lacks {field}_state snapshot"
+            )
+        return EpicSnapshot.model_validate(payload)
+
+    def _insert_snapshot_rows(self, table: str, rows: Sequence[dict[str, Any]]) -> None:
+        allowed_columns = _COPY_TABLE_COLUMNS[table]
+        jsonb_columns = _COPY_JSONB_COLUMNS
+        conn = self._get_conn()
+        for raw in rows:
+            row = {key: value for key, value in raw.items() if key in allowed_columns}
+            columns = list(row)
+            if not columns:
+                continue
+            values = [_jb(row[column]) if column in jsonb_columns else row[column] for column in columns]
+            placeholders = ", ".join(["%s"] * len(columns))
+            conn.execute(
+                f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+                values,
+            )
+
+    def _restore_epic_snapshot(self, snapshot: EpicSnapshot, *, new_revision: int) -> Epic:
+        conn = self._get_conn()
+        now = "now()"
+        epic_data = {
+            key: value
+            for key, value in dict(snapshot.epic).items()
+            if key in _COPY_TABLE_COLUMNS["epics"]
+        }
+        epic_data.update({"id": snapshot.epic_id, "body": snapshot.body, "revision": new_revision})
+        set_columns = [column for column in epic_data if column != "id"]
+        values = [epic_data[column] for column in set_columns]
+        values.append(snapshot.epic_id)
+        row = conn.execute(
+            f"""
+            UPDATE epics
+            SET {', '.join(f'{column} = %s' for column in set_columns)},
+                last_edited_at = {now}
+            WHERE id = %s
+            RETURNING *
+            """,
+            values,
+        ).fetchone()
+        if row is None:
+            raise FileNotFoundError(snapshot.epic_id)
+
+        sprint_ids = [str(raw["id"]) for raw in snapshot.sprints if "id" in raw]
+        conn.execute(
+            "DELETE FROM sprint_items WHERE sprint_id IN (SELECT id FROM sprints WHERE epic_id = %s)",
+            [snapshot.epic_id],
+        )
+        conn.execute("DELETE FROM sprints WHERE epic_id = %s", [snapshot.epic_id])
+        conn.execute("DELETE FROM checklist_items WHERE epic_id = %s", [snapshot.epic_id])
+        conn.execute("DELETE FROM images WHERE epic_id = %s", [snapshot.epic_id])
+        conn.execute("DELETE FROM second_opinions WHERE epic_id = %s", [snapshot.epic_id])
+
+        self._insert_snapshot_rows("checklist_items", [dict(raw) for raw in snapshot.checklist_items])
+        self._insert_snapshot_rows("sprints", [dict(raw) for raw in snapshot.sprints])
+        sprint_id_set = set(sprint_ids)
+        invalid_items = [
+            raw
+            for raw in snapshot.sprint_items
+            if str(raw.get("sprint_id")) not in sprint_id_set
+        ]
+        if invalid_items:
+            raise StoreError("Snapshot contains sprint items without restored sprint rows")
+        self._insert_snapshot_rows("sprint_items", [dict(raw) for raw in snapshot.sprint_items])
+        self._insert_snapshot_rows("images", [dict(raw) for raw in snapshot.images])
+        self._insert_snapshot_rows("second_opinions", [dict(raw) for raw in snapshot.second_opinions])
+        return Epic(**row)
+
+    def revert(
+        self,
+        epic_id: str,
+        to_transaction_id: str,
+        *,
+        expected_revision: int,
+        idempotency_key: str | None = None,
+    ) -> Epic:
+        conn = self._get_conn()
+        current_row = conn.execute(
+            "SELECT * FROM epics WHERE id = %s",
+            [epic_id],
+        ).fetchone()
+        if current_row is None:
+            raise FileNotFoundError(epic_id)
+        current = Epic(**current_row)
+        if current.revision != expected_revision:
+            raise RevisionConflict(f"Revision conflict on epic {epic_id!r}")
+        target_rows = conn.execute(
+            """
+            SELECT * FROM epic_events
+            WHERE epic_id = %s AND transaction_id = %s
+            ORDER BY occurred_at ASC, id ASC
+            """,
+            [epic_id, to_transaction_id],
+        ).fetchall()
+        if not target_rows:
+            raise FileNotFoundError(to_transaction_id)
+        target = EpicEvent(**target_rows[0])
+        restore_snapshot = self._event_snapshot(target, field="pre")
+        if restore_snapshot.epic_id != epic_id:
+            raise StoreError(f"Snapshot epic_id {restore_snapshot.epic_id!r} does not match {epic_id!r}")
+
+        with conn.transaction():
+            locked_row = conn.execute(
+                "SELECT * FROM epics WHERE id = %s FOR UPDATE",
+                [epic_id],
+            ).fetchone()
+            locked = Epic(**locked_row)
+            if locked.revision != expected_revision:
+                raise RevisionConflict(f"Revision conflict on epic {epic_id!r}")
+            pre_snapshot = self.capture_epic_snapshot(epic_id)
+            restored = self._restore_epic_snapshot(restore_snapshot, new_revision=locked.revision + 1)
+            post_snapshot = self.capture_epic_snapshot(epic_id)
+            self.record_epic_event(
+                epic_id=epic_id,
+                transaction_id=str(uuid.uuid4()),
+                event_type="reverted_to",
+                summary=f"Reverted to transaction {to_transaction_id}",
+                prior_state={
+                    "reverted_to_transaction_id": to_transaction_id,
+                    "target_event_id": target.id,
+                    "from_revision": locked.revision,
+                    "to_revision": restored.revision,
+                },
+                pre_state=pre_snapshot.model_dump(mode="json"),
+                post_state=post_snapshot.model_dump(mode="json"),
+                pre_state_canonical_json=canonical_json_dumps(pre_snapshot),
+                post_state_canonical_json=canonical_json_dumps(post_snapshot),
+                pre_state_sha256=canonical_sha256(pre_snapshot),
+                post_state_sha256=canonical_sha256(post_snapshot),
+                idempotency_key=idempotency_key,
+            )
+        return restored
+
+    def get_epic_at_time(self, epic_id: str, when: datetime | str) -> EpicSnapshot | None:
+        cutoff = _parse_datetime(when)
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT * FROM epic_events
+            WHERE epic_id = %s AND occurred_at <= %s
+            ORDER BY occurred_at ASC, id ASC
+            """,
+            [epic_id, cutoff],
+        ).fetchall()
+        if not rows:
+            current = self.load_epic(epic_id)
+            if current is not None and current.created_at <= cutoff:
+                return self.capture_epic_snapshot(epic_id)
+            return None
+        return self._event_snapshot(EpicEvent(**rows[-1]), field="post")
 
     def update_body(self, epic_id: str, body: str, *, expected_revision: int, idempotency_key: str | None = None) -> Epic:
         self._require_actor()
@@ -1201,26 +1402,90 @@ class DBStore:
         in_body: bool = False,
         active: bool = True,
         discord_attachment_id: str | None = None,
+        blob_backend: str | None = None,
+        blob_id: str | None = None,
+        blob_sha256: str | None = None,
+        blob_size_bytes: int | None = None,
+        content_type: str | None = None,
         idempotency_key: str | None = None,
     ) -> Image:
         conn = self._get_conn()
         img_id = str(uuid.uuid4())
         ref_key = reference_key or img_id
+        if active:
+            self.deactivate_active_image_reference(epic_id, ref_key)
         row = conn.execute(
             """
             INSERT INTO images
                 (id, epic_id, source, prompt, storage_url, quality, size,
                  reference_key, description, caption, in_body, active,
-                 discord_attachment_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 discord_attachment_id, blob_backend, blob_id, blob_sha256,
+                 blob_size_bytes, content_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             [
                 img_id, epic_id, source, prompt, storage_url, quality, size,
                 ref_key, description, caption, in_body, active, discord_attachment_id,
+                blob_backend, blob_id, blob_sha256, blob_size_bytes, content_type,
             ],
         ).fetchone()
         return Image(**row)
+
+    def attach_image(
+        self,
+        *,
+        epic_id: str,
+        content: bytes,
+        content_type: str,
+        reference_key: str,
+        source: str = "user_uploaded",
+        prompt: str | None = None,
+        quality: str | None = None,
+        size: str | None = None,
+        description: str | None = None,
+        caption: str | None = None,
+        in_body: bool = True,
+        idempotency_key: str | None = None,
+    ) -> Image:
+        digest = hashlib.sha256(content).hexdigest()
+        blob_id = f"{epic_id}/{reference_key}/{digest}"
+        ref = self.blobs.put(blob_id, content, content_type=content_type)
+        return self.create_image(
+            epic_id=epic_id,
+            source=source,
+            storage_url=ref.storage_url or f"mp://blob/{blob_id}",
+            prompt=prompt,
+            quality=quality,
+            size=size,
+            reference_key=reference_key,
+            description=description,
+            caption=caption,
+            in_body=in_body,
+            active=True,
+            blob_backend="supabase_storage",
+            blob_id=blob_id,
+            blob_sha256=digest,
+            blob_size_bytes=len(content),
+            content_type=content_type,
+            idempotency_key=idempotency_key,
+        )
+
+    def resolve_image_reference(
+        self,
+        epic_id: str,
+        reference: str,
+        *,
+        signed: bool = False,
+        ttl: int = 3600,
+    ) -> str | None:
+        key = reference.removeprefix("mp://image/").removeprefix("image:")
+        image = self.load_active_image_by_reference(epic_id, key)
+        if image is None:
+            return None
+        if image.blob_id:
+            return self.blobs.url(image.blob_id, signed=signed, ttl=ttl)
+        return image.storage_url
 
     def load_image(self, image_id: str) -> Image | None:
         conn = self._get_conn()
@@ -1988,19 +2253,32 @@ class DBStore:
         event_type: str,
         summary: str,
         prior_state: dict[str, Any] | None,
-        turn_id: str | None,
+        pre_state: dict[str, Any] | None = None,
+        post_state: dict[str, Any] | None = None,
+        pre_state_canonical_json: str | None = None,
+        post_state_canonical_json: str | None = None,
+        pre_state_sha256: str | None = None,
+        post_state_sha256: str | None = None,
+        turn_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> EpicEvent:
         conn = self._get_conn()
         row = conn.execute(
             """
-            INSERT INTO epic_events (id, epic_id, transaction_id, event_type, summary, prior_state, turn_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO epic_events (
+                id, epic_id, transaction_id, event_type, summary, prior_state,
+                pre_state, post_state, pre_state_canonical_json,
+                post_state_canonical_json, pre_state_sha256, post_state_sha256,
+                turn_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             [
                 str(uuid.uuid4()), epic_id, transaction_id, event_type, summary,
-                _jb(prior_state), turn_id,
+                _jb(prior_state), _jb(pre_state), _jb(post_state),
+                pre_state_canonical_json, post_state_canonical_json,
+                pre_state_sha256, post_state_sha256, turn_id,
             ],
         ).fetchone()
         return EpicEvent(**row)
@@ -2033,10 +2311,18 @@ class DBStore:
         rows = conn.execute(sql, values).fetchall()
         return [EpicEvent(**row) for row in rows]
 
+    def list_epic_events_for_replay(self, epic_id: str) -> list[EpicEvent]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM epic_events WHERE epic_id = %s ORDER BY occurred_at ASC, id ASC",
+            [epic_id],
+        ).fetchall()
+        return [EpicEvent(**row) for row in rows]
+
     def latest_transaction_id(self, epic_id: str) -> str | None:
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT transaction_id FROM epic_events WHERE epic_id = %s ORDER BY occurred_at DESC LIMIT 1",
+            "SELECT transaction_id FROM epic_events WHERE epic_id = %s ORDER BY occurred_at DESC, id DESC LIMIT 1",
             [epic_id],
         ).fetchone()
         return row["transaction_id"] if row else None

@@ -9,7 +9,7 @@ from typing import Literal
 
 from megaplan.store import Store, deterministic_idempotency_key
 
-from ._events import dump_record, get_field, record_event, require_epic, transaction_id
+from ._events import capture_snapshot, dump_record, get_field, record_event, require_epic, transaction_id
 from .errors import EditorialValidationError
 from .lockdown import ensure_unlocked_for_edit
 
@@ -111,6 +111,7 @@ def update_body(
         sha256(body.encode("utf-8")).hexdigest(),
     )
     with store.transaction(epic_id=epic_id) as tx:
+        pre_snapshot = capture_snapshot(store, epic_id)
         updated = store.update_body(epic_id, body, expected_revision=expected_revision, idempotency_key=idem)
         record_event(
             store=store,
@@ -119,6 +120,7 @@ def update_body(
             event_type="body_edit",
             summary=f"{actor_id} updated epic body",
             prior_state={"epic": dump_record(epic), "body": prior_body},
+            pre_snapshot=pre_snapshot,
             turn_id=turn_id,
             idempotency_key=idem,
         )

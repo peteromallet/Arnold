@@ -21,6 +21,7 @@ from megaplan.schemas import (
     Epic,
     EpicEvent,
     EpicLock,
+    EpicSnapshot,
     ExecutionLease,
     ExternalRequest,
     Feedback,
@@ -91,6 +92,8 @@ class SprintItemInput(StorageModel):
 class EpicSummary(Epic):
     snippet: str | None = None
     rank: float | int | None = None
+    match_tier: int | None = None
+    backend: Backend | None = None
 
 
 class MessageSearchHit(Message):
@@ -227,6 +230,22 @@ class Store(Protocol):
     ) -> list[EpicSummary]:
         ...
 
+    def capture_epic_snapshot(self, epic_id: str) -> EpicSnapshot:
+        ...
+
+    def revert(
+        self,
+        epic_id: str,
+        to_transaction_id: str,
+        *,
+        expected_revision: int,
+        idempotency_key: str | None = None,
+    ) -> Epic:
+        ...
+
+    def get_epic_at_time(self, epic_id: str, when: datetime | str) -> EpicSnapshot | None:
+        ...
+
     # ---------- Body ----------
     def load_body(self, epic_id: str) -> str:
         ...
@@ -354,7 +373,13 @@ class Store(Protocol):
         event_type: str,
         summary: str,
         prior_state: JSONDict | None,
-        turn_id: str | None,
+        pre_state: JSONDict | None = None,
+        post_state: JSONDict | None = None,
+        pre_state_canonical_json: str | None = None,
+        post_state_canonical_json: str | None = None,
+        pre_state_sha256: str | None = None,
+        post_state_sha256: str | None = None,
+        turn_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> EpicEvent:
         ...
@@ -368,6 +393,9 @@ class Store(Protocol):
         kinds: Sequence[str] | None = None,
         limit: int | None = None,
     ) -> list[EpicEvent]:
+        ...
+
+    def list_epic_events_for_replay(self, epic_id: str) -> list[EpicEvent]:
         ...
 
     def latest_transaction_id(self, epic_id: str) -> str | None:
@@ -555,8 +583,41 @@ class Store(Protocol):
         in_body: bool = False,
         active: bool = True,
         discord_attachment_id: str | None = None,
+        blob_backend: str | None = None,
+        blob_id: str | None = None,
+        blob_sha256: str | None = None,
+        blob_size_bytes: int | None = None,
+        content_type: str | None = None,
         idempotency_key: str | None = None,
     ) -> Image:
+        ...
+
+    def attach_image(
+        self,
+        *,
+        epic_id: str,
+        content: bytes,
+        content_type: str,
+        reference_key: str,
+        source: str = "user_uploaded",
+        prompt: str | None = None,
+        quality: str | None = None,
+        size: str | None = None,
+        description: str | None = None,
+        caption: str | None = None,
+        in_body: bool = True,
+        idempotency_key: str | None = None,
+    ) -> Image:
+        ...
+
+    def resolve_image_reference(
+        self,
+        epic_id: str,
+        reference: str,
+        *,
+        signed: bool = False,
+        ttl: int = 3600,
+    ) -> str | None:
         ...
 
     def load_image(self, image_id: str) -> Image | None:
