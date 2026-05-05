@@ -1,33 +1,33 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
-import { Button } from '@/shared/components/ui/button';
+import { Button } from '@/shared/components/ui/button.tsx';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/shared/components/ui/dialog';
-import { NumberInput } from '@/shared/components/ui/number-input';
-import { Textarea } from '@/shared/components/ui/textarea';
-import { toast } from '@/shared/components/ui/toast';
-import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
-import { SequenceParamEditor } from '@/tools/video-editor/components/PropertiesPanel/SequenceParamEditor';
-import { useSelectedMediaClips } from '@/tools/video-editor/hooks/useSelectedMediaClips';
+} from '@/shared/components/ui/dialog.tsx';
+import { NumberInput } from '@/shared/components/ui/number-input.tsx';
+import { Textarea } from '@/shared/components/ui/textarea.tsx';
+import { toast } from '@/shared/components/ui/toast.tsx';
+import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview.tsx';
+import { SequenceParamEditor } from '@/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx';
+import { useSelectedMediaClips } from '@/tools/video-editor/hooks/useSelectedMediaClips.ts';
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
   useTimelinePlaybackSelector,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 import {
   buildInsertSequenceDraftEdit,
   buildReplaceSequenceDraftEdit,
   type SequenceDraftEditError,
-} from '@/tools/video-editor/lib/sequence-drafts';
-import { requestCenterTimelineClip } from '@/tools/video-editor/lib/timeline-viewport-events';
-import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet';
-import { composerRemoveAttachment } from '@/shared/state/selectionStore';
-import { AgentChatAttachmentStrip } from '@/tools/video-editor/components/AgentChat/AgentChatMessage';
+} from '@/tools/video-editor/lib/sequence-drafts.ts';
+import { requestCenterTimelineClip } from '@/tools/video-editor/lib/timeline-viewport-events.ts';
+import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet.ts';
+import { composerRemoveAttachment } from '@/shared/state/selectionStore.ts';
+import { AgentChatAttachmentStrip } from '@/tools/video-editor/components/AgentChat/AgentChatMessage.tsx';
 import {
   attachSequenceGenerationMetadata,
   buildAllowedAssetRegistry,
@@ -38,30 +38,31 @@ import {
   type EditableSequenceDraft,
   type SequenceCreatorMode,
   type SequenceDraftGroup,
-} from '@/tools/video-editor/sequences/generation';
-import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize';
+} from '@/tools/video-editor/sequences/generation.ts';
+import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
 import {
   AVAILABLE_SEQUENCE_CLIP_TYPES,
   AVAILABLE_SEQUENCE_METADATA,
   getAvailableClipTypeDescriptor,
   getAvailableSequenceMetadata,
-} from '@/tools/video-editor/sequences/registry';
+} from '@/tools/video-editor/sequences/registry.ts';
 import {
   validateSequenceDraft,
   type ValidatedSequenceDraft,
-} from '@/tools/video-editor/sequences/validation';
+} from '@/tools/video-editor/sequences/validation.ts';
 import type {
   ResolvedTimelineClip,
   ResolvedTimelineConfig,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 import {
   runSequenceComponentGenerationRequest,
   runSequenceGenerationRequest,
-} from './sequenceGenerationService';
-import { getBundledComponentSource } from '@/tools/video-editor/sequences/getBundledComponentSource';
-import { getClipCapabilityDescriptor } from '@/tools/video-editor/sequences/registry';
-import { smokeRenderSequenceComponent } from '@/tools/video-editor/sequences/headlessRender';
-import { useCreateSequenceComponentResource } from '@/tools/video-editor/hooks/useSequenceResources';
+} from './sequenceGenerationService.ts';
+import { getBundledComponentSource } from '@/tools/video-editor/sequences/getBundledComponentSource.ts';
+import { getClipCapabilityDescriptor } from '@/tools/video-editor/sequences/registry.ts';
+import { smokeRenderSequenceComponent } from '@/tools/video-editor/sequences/headlessRender.ts';
+import { useCreateSequenceComponentResource } from '@/tools/video-editor/hooks/useSequenceResources.ts';
+import { CodePathPreview } from './CodePathPreview.tsx';
 
 type SequenceCreatorPanelProps = {
   open?: boolean;
@@ -865,9 +866,15 @@ export function SequenceCreatorPanel({
                     compact
                     initialTime={0}
                   />
+                ) : generatedComponent ? (
+                  <CodePathPreview
+                    code={generatedComponent.code}
+                    defaultsJson={generatedComponent.defaultsJson}
+                    fps={resolvedConfig?.output.fps ?? 30}
+                  />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
-                    Generate a valid draft to preview it in the Remotion player.
+                    Generate a sequence to preview it here.
                   </div>
                 )}
               </div>
