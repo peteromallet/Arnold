@@ -72,7 +72,7 @@ def _record_execute_blocked(plan_dir: Path, response: StepResponse) -> None:
 
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
-        require_state(state, "execute", {STATE_FINALIZED})
+        require_state(state, "execute", {STATE_FINALIZED, STATE_BLOCKED})
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         # Loud operator warning if the resolved sandbox root is narrower than
         # the plan's stored project_dir. Silent divergence here cost entire

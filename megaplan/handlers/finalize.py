@@ -288,61 +288,42 @@ def _ensure_user_actions_post_gate_task(payload: dict[str, Any], state: dict[str
     ]
     if not after_actions:
         return
-    tasks = payload.get("tasks", [])
-    if not tasks:
-        return
+    # after_execute actions are human handoff items, not work an executor can
+    # perform inside an auto-run. Keep them in `user_actions`; the harness writes
+    # user_actions.md so callers can surface them after execute without creating
+    # an impossible pending task that blocks the plan.
+    for action in after_actions:
+        action.setdefault(
+            "rationale",
+            "Human-only after_execute handoff; surfaced by the harness in user_actions.md.",
+        )
 
-    task_order = [
-        task["id"]
-        for task in tasks
-        if isinstance(task, dict) and isinstance(task.get("id"), str)
+
+def _render_user_actions_md(payload: dict[str, Any]) -> str:
+    actions = [
+        action
+        for action in payload.get("user_actions", [])
+        if isinstance(action, dict)
     ]
-    task_ids = set(task_order)
-    depended_on: set[str] = set()
-    for task in tasks:
-        if not isinstance(task, dict):
+    lines = ["# User Actions", ""]
+    if not actions:
+        lines.append("No human user actions recorded.")
+        return "\n".join(lines) + "\n"
+    for phase in ("before_execute", "after_execute"):
+        phase_actions = [action for action in actions if action.get("phase") == phase]
+        if not phase_actions:
             continue
-        depends_on = task.get("depends_on", [])
-        if not isinstance(depends_on, list):
-            continue
-        for dep in depends_on:
-            if isinstance(dep, str) and dep in task_ids:
-                depended_on.add(dep)
-    terminal_ids = [task_id for task_id in task_order if task_id not in depended_on]
-    if not terminal_ids and task_order:
-        terminal_ids = [task_order[-1]]
-
-    action_lines = [
-        f"- {action.get('id', 'unknown')}: {action.get('description', '')}"
-        for action in after_actions
-    ]
-    task_id = _next_task_id(tasks)
-    tasks.append({
-        "id": task_id,
-        "description": (
-            "Surface after_execute user_actions to the user:\n"
-            + "\n".join(action_lines)
-            + "\nDo not perform them yourself — these require human action. Mark this task done "
-            "once they have been clearly communicated."
-        ),
-        "depends_on": terminal_ids,
-        "status": "pending",
-        "executor_notes": "",
-        "files_changed": [],
-        "commands_run": [],
-        "evidence_files": [],
-        "reviewer_verdict": "",
-    })
-
-    sense_checks = payload.setdefault("sense_checks", [])
-    sense_checks.append({
-        "id": _next_sense_check_id(sense_checks),
-        "task_id": task_id,
-        "question": "Were all after_execute user_actions clearly surfaced to the user without the executor performing them?",
-        "executor_note": "",
-        "verdict": "",
-    })
-    _append_plan_step_coverage(payload, "Surface after_execute user_actions", task_id)
+        title = "Before Execute" if phase == "before_execute" else "After Execute"
+        lines.extend([f"## {title}", ""])
+        for action in phase_actions:
+            aid = action.get("id", "unknown")
+            description = action.get("description", "")
+            lines.append(f"- **{aid}**: {description}")
+            rationale = action.get("rationale")
+            if rationale:
+                lines.append(f"  Rationale: {rationale}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     if os.getenv(MOCK_ENV_VAR) == "1":
@@ -423,6 +404,7 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     _reconcile_validation_after_mutation(payload)
     atomic_write_json(plan_dir / "finalize.json", payload)
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
+    atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(payload))
     atomic_write_text(plan_dir / "final.md", render_final_md(payload))
     return sha256_file(plan_dir / "finalize.json")
 
@@ -441,7 +423,7 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             step="finalize",
             worker=worker, agent=agent, mode=mode, refreshed=refreshed,
             summary=f"Finalized plan with {len(worker.payload['tasks'])} tasks and {len(worker.payload['watch_items'])} watch items.",
-            artifacts=["final.md", "finalize.json"],
+            artifacts=["final.md", "finalize.json", "user_actions.md"],
             output_file="finalize.json",
             artifact_hash=artifact_hash,
             next_step="execute",

@@ -73,6 +73,11 @@ class MilestoneSpec:
     label: str
     idea: str
     branch: str | None = None
+    profile: str | None = None
+    robustness: str | None = None
+    phase_model: list[str] = field(default_factory=list)
+    bakeoff: dict[str, Any] | None = None
+    notes: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], index: int) -> "MilestoneSpec":
@@ -87,7 +92,35 @@ class MilestoneSpec:
         branch = raw.get("branch")
         if branch is not None and not isinstance(branch, str):
             raise CliError("invalid_spec", f"milestones[{index}].branch must be a string")
-        return cls(label=label, idea=idea, branch=branch)
+        profile = raw.get("profile")
+        if profile is not None and not isinstance(profile, str):
+            raise CliError("invalid_spec", f"milestones[{index}].profile must be a string")
+        robustness = raw.get("robustness")
+        if robustness is not None and not isinstance(robustness, str):
+            raise CliError("invalid_spec", f"milestones[{index}].robustness must be a string")
+        phase_model_raw = raw.get("phase_model") or []
+        if isinstance(phase_model_raw, str):
+            phase_model = [phase_model_raw]
+        elif isinstance(phase_model_raw, list) and all(isinstance(item, str) for item in phase_model_raw):
+            phase_model = list(phase_model_raw)
+        else:
+            raise CliError("invalid_spec", f"milestones[{index}].phase_model must be a string or list of strings")
+        bakeoff = raw.get("bakeoff")
+        if bakeoff is not None and not isinstance(bakeoff, dict):
+            raise CliError("invalid_spec", f"milestones[{index}].bakeoff must be a mapping")
+        notes = raw.get("notes")
+        if notes is not None and not isinstance(notes, str):
+            raise CliError("invalid_spec", f"milestones[{index}].notes must be a string")
+        return cls(
+            label=label,
+            idea=idea,
+            branch=branch,
+            profile=profile,
+            robustness=robustness,
+            phase_model=phase_model,
+            bakeoff=bakeoff,
+            notes=notes,
+        )
 
 
 @dataclass
@@ -519,8 +552,80 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int
     raise CliError("gh_pr_create_failed", f"could not determine PR number for {milestone.branch}")
 
 
+def _claimed_nested_repos(root: Path, plan_name: str) -> list[Path]:
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    claimed_paths: set[str] = set()
+    for artifact_name in ("finalize.json", "execution.json"):
+        artifact = plan_dir / artifact_name
+        if not artifact.exists():
+            continue
+        try:
+            payload = json.loads(artifact.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for path in payload.get("files_changed") or []:
+            if isinstance(path, str) and path.strip():
+                claimed_paths.add(path.strip())
+        for task in payload.get("tasks") or payload.get("task_updates") or []:
+            if not isinstance(task, dict):
+                continue
+            for path in task.get("files_changed") or []:
+                if isinstance(path, str) and path.strip():
+                    claimed_paths.add(path.strip())
+
+    repos: set[Path] = set()
+    root_abs = root.resolve()
+    for raw_path in claimed_paths:
+        path = Path(raw_path)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(root_abs)
+            except (OSError, ValueError):
+                continue
+        cursor = root
+        for part in path.parts[:-1]:
+            cursor = cursor / part
+            if (cursor / ".git").exists():
+                repos.add(cursor)
+                break
+    return sorted(repos, key=lambda repo: repo.as_posix())
+
+
+def _dirty_nested_repos_from_claimed_paths(root: Path, plan_name: str, *, writer) -> list[str]:
+    dirty: list[str] = []
+    root_abs = root.resolve()
+    for repo in _claimed_nested_repos(root, plan_name):
+        proc = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        writer(f"[chain] git -C {repo} status --short -> rc={proc.returncode}\n")
+        if proc.returncode != 0 or not proc.stdout.strip():
+            continue
+        try:
+            rel = repo.resolve().relative_to(root_abs).as_posix()
+        except (OSError, ValueError):
+            rel = repo.as_posix()
+        dirty.append(rel)
+    return dirty
+
+
 def _commit_and_push_phase(root: Path, branch: str, plan: str, phase: str, *, writer) -> None:
     """Commit any current diff and push the milestone branch."""
+    dirty_nested = _dirty_nested_repos_from_claimed_paths(root, plan, writer=writer)
+    if dirty_nested:
+        raise CliError(
+            "nested_repo_changes_uncommitted",
+            "Plan claimed changes in nested git repositories that top-level chain commits "
+            "cannot publish: "
+            + ", ".join(dirty_nested)
+            + ". Commit and push those nested repositories separately, or run the plan with "
+            "a project_dir rooted at the repository being changed.",
+        )
     _run_command(root, ["git", "add", "-A"], writer=writer, error_code="git_commit_failed")
     staged = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
@@ -588,13 +693,20 @@ def _init_plan(
     *,
     robustness: str,
     auto_approve: bool,
+    profile: str | None = None,
+    phase_model: list[str] | None = None,
     writer,
 ) -> str:
     """Run `megaplan init --idea-file ...` and return the plan name."""
     args = [sys.executable, "-m", "megaplan", "init", "--project-dir", str(root)]
     if auto_approve:
         args.append("--auto-approve")
-    args.extend(["--robustness", robustness, "--idea-file", str(idea_path)])
+    args.extend(["--robustness", robustness])
+    if profile:
+        args.extend(["--profile", profile])
+    for override in phase_model or []:
+        args.extend(["--phase-model", override])
+    args.extend(["--idea-file", str(idea_path)])
     writer(f"[chain] initializing plan from {idea_path}\n")
     proc = subprocess.run(
         args, cwd=str(root), capture_output=True, text=True, check=False, timeout=300
@@ -681,6 +793,7 @@ def run_chain(
     writer=sys.stdout.write,
     no_git_refresh: bool = False,
     no_push: bool = False,
+    one: bool = False,
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
     spec = load_spec(spec_path)
@@ -789,8 +902,10 @@ def run_chain(
             plan_name = _init_plan(
                 root,
                 milestone.idea,
-                robustness=spec.robustness,
+                robustness=milestone.robustness or spec.robustness,
                 auto_approve=spec.auto_approve,
+                profile=milestone.profile,
+                phase_model=milestone.phase_model,
                 writer=writer,
             )
             state.current_milestone_index = idx
@@ -864,6 +979,14 @@ def run_chain(
         state.pr_number = None
         state.pr_state = None
         save_chain_state(spec_path, state)
+        if one:
+            log(f"paused after milestone {milestone.label}")
+            return _result(
+                "paused",
+                state,
+                events,
+                reason=f"completed one milestone: {milestone.label}",
+            )
 
     log("all milestones complete")
     return _result("done", state, events)
@@ -990,6 +1113,11 @@ def build_chain_parser(subparsers: Any) -> None:
             "Also enabled by MEGAPLAN_CHAIN_NO_PUSH=1; intended for local/no-network tests."
         ),
     )
+    chain_parser.add_argument(
+        "--one",
+        action="store_true",
+        help="Drive at most one pending milestone, persist progress, then stop cleanly.",
+    )
 
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
     start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
@@ -1005,6 +1133,11 @@ def build_chain_parser(subparsers: Any) -> None:
         "--no-push",
         action="store_true",
         help="Disable branch/PR/push lifecycle for no-network runs.",
+    )
+    start_parser.add_argument(
+        "--one",
+        action="store_true",
+        help="Drive at most one pending milestone, persist progress, then stop cleanly.",
     )
 
     status_parser = chain_sub.add_parser(
@@ -1045,12 +1178,19 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
 
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))
     no_push = bool(getattr(args, "no_push", False))
+    one = bool(getattr(args, "one", False))
     try:
-        result = run_chain(spec_path, root, no_git_refresh=no_git_refresh, no_push=no_push)
+        result = run_chain(
+            spec_path,
+            root,
+            no_git_refresh=no_git_refresh,
+            no_push=no_push,
+            one=one,
+        )
     except CliError as exc:
         return _emit_error(exc)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
-    if result["status"] == "done":
+    if result["status"] in {"done", "paused"}:
         return 0
     return 1
 

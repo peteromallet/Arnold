@@ -704,6 +704,47 @@ def test_validate_execution_evidence_clean_run_produces_no_completion_findings(
         assert not any(keyword in f for f in result["findings"]), result["findings"]
 
 
+def test_validate_execution_evidence_reads_nested_git_repo_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    nested_dir = project_dir / "reigh-app"
+    (project_dir / ".git").mkdir(parents=True)
+    (nested_dir / ".git").mkdir(parents=True)
+
+    def fake_run(args, **kwargs):
+        cwd = Path(kwargs["cwd"])
+        if cwd == project_dir:
+            stdout = ""
+        elif cwd == nested_dir:
+            stdout = " M src/a.ts\n?? docs/new.md\n"
+        else:  # pragma: no cover - defensive assertion context
+            raise AssertionError(f"unexpected cwd {cwd}")
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("megaplan.evaluation.subprocess.run", fake_run)
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": ["reigh-app/src/a.ts"],
+                "commands_run": [],
+                "executor_notes": "patched nested app file",
+            }
+        ],
+        "sense_checks": [],
+    }
+
+    result = validate_execution_evidence(finalize_data, project_dir)
+
+    assert "reigh-app/src/a.ts" in result["files_in_diff"]
+    assert not any(
+        "Executor claimed changed files not present" in finding
+        for finding in result["findings"]
+    )
+
+
 def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

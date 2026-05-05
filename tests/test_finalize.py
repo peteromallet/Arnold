@@ -4,6 +4,7 @@ import pytest
 
 import megaplan
 import megaplan.workers
+from megaplan.handlers.finalize import _write_finalize_artifacts
 from megaplan.workers import WorkerResult
 from tests.conftest import PlanFixture, load_state, read_json
 
@@ -106,6 +107,61 @@ def test_handle_finalize_rejects_invalid_payload(plan_fixture: PlanFixture, monk
 
     state = load_state(plan_fixture.plan_dir)
     assert state["history"][-1]["result"] == "error"
+
+
+def test_after_execute_user_actions_are_handoff_artifact_not_executor_task(
+    plan_fixture: PlanFixture,
+) -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Ship the code change",
+                "depends_on": [],
+                "status": "pending",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "user_actions": [
+            {
+                "id": "U1",
+                "description": "Review and sign off on the generated baseline.",
+                "phase": "after_execute",
+            }
+        ],
+        "meta_commentary": "ok",
+        "validation": {
+            "plan_steps_covered": [
+                {
+                    "plan_step_summary": "Human sign-off",
+                    "finalize_item_ids": ["U1"],
+                }
+            ],
+            "orphan_tasks": [],
+            "completeness_notes": "covered",
+            "coverage_complete": True,
+        },
+    }
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["mode"] = "code"
+
+    _write_finalize_artifacts(plan_fixture.plan_dir, payload, state)
+
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    assert [task["id"] for task in finalize_data["tasks"]] == ["T1", "T2"]
+    assert not any(
+        "Surface after_execute user_actions" in task["description"]
+        for task in finalize_data["tasks"]
+    )
+    user_actions_md = (plan_fixture.plan_dir / "user_actions.md").read_text(encoding="utf-8")
+    assert "## After Execute" in user_actions_md
+    assert "Review and sign off" in user_actions_md
 
 
 def test_finalize_snapshot_remains_pending_after_execute(plan_fixture: PlanFixture) -> None:
