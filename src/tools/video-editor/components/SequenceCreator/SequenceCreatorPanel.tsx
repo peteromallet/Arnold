@@ -62,7 +62,12 @@ import {
 import { getBundledComponentSource } from '@/tools/video-editor/sequences/getBundledComponentSource.ts';
 import { getClipCapabilityDescriptor } from '@/tools/video-editor/sequences/registry.ts';
 import { smokeRenderSequenceComponent } from '@/tools/video-editor/sequences/headlessRender.ts';
-import { useCreateSequenceComponentResource } from '@/tools/video-editor/hooks/useSequenceResources.ts';
+import {
+  useCreateSequenceComponentResource,
+  useSequenceResources,
+  type SequenceComponentResource,
+} from '@/tools/video-editor/hooks/useSequenceResources.ts';
+import { useAuth } from '@/shared/contexts/AuthContext.tsx';
 import { CodePathPreview } from './CodePathPreview.tsx';
 import { CodePathParamEditor } from './CodePathParamEditor.tsx';
 
@@ -188,6 +193,16 @@ export function SequenceCreatorPanel({
   // they're editing JSON params or DB-stored component code.
   const generatedComponent = useSequenceCreatorStore((s) => s.generatedComponent);
   const setGeneratedComponent = useSequenceCreatorStore((s) => s.setGeneratedComponent);
+  // When the user loads an entry from the Library tab, this holds the
+  // resource's existing clipType. persistGeneratedComponent reuses it instead
+  // of inserting a duplicate DB row.
+  const generatedComponentSourceClipType = useSequenceCreatorStore((s) => s.generatedComponentSourceClipType);
+  const setGeneratedComponentSourceClipType = useSequenceCreatorStore((s) => s.setGeneratedComponentSourceClipType);
+
+  // Library tab: list of saved sequence-component resources for the current
+  // user (plus public ones the merge logic in useSequenceResources adds).
+  const { userId } = useAuth();
+  const libraryCatalog = useSequenceResources(userId);
 
   // Transient request lifecycle — deliberately NOT lifted to the store.
   // An in-flight request from before unmount/reload is gone afterward.
@@ -305,6 +320,7 @@ export function SequenceCreatorPanel({
           schemaJson: codeResult.schemaJson,
           defaultsJson: codeResult.defaultsJson,
         });
+        setGeneratedComponentSourceClipType(undefined);
         setMode('edit');
         setGenerationNote(codeResult.message ?? 'Generated component code (browser-only render).');
         return;
@@ -386,6 +402,7 @@ export function SequenceCreatorPanel({
           schemaJson: codeResult.schemaJson,
           defaultsJson: codeResult.defaultsJson,
         });
+        setGeneratedComponentSourceClipType(undefined);
         setMode('edit');
         setGenerationNote(codeResult.message ?? 'Generated component code (browser-only render).');
         return;
@@ -418,6 +435,7 @@ export function SequenceCreatorPanel({
       setClassifierVerdict(result.classifier ?? null);
       // Successful JSON-path result: clear any stale generated component.
       setGeneratedComponent(null);
+      setGeneratedComponentSourceClipType(undefined);
       setForkPending(null);
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
@@ -484,6 +502,7 @@ export function SequenceCreatorPanel({
         schemaJson: codeResult.schemaJson,
         defaultsJson: codeResult.defaultsJson,
       });
+      setGeneratedComponentSourceClipType(undefined);
       setMode('edit');
       setGenerationNote(
         codeResult.message ?? `Forked "${forkPending.selectedClipType}" into a custom DB-stored sequence.`,
@@ -536,6 +555,19 @@ export function SequenceCreatorPanel({
     if (!smoke.ok) {
       return { ok: false, error: `Smoke render failed: ${smoke.error}. Component NOT saved.` };
     }
+    const defaultHold = 4;
+    // Loaded from library: the resource already exists in DB. Reuse its
+    // clipType and skip the create-resource call so we don't double-save.
+    if (generatedComponentSourceClipType) {
+      return {
+        ok: true,
+        draft: {
+          clipType: generatedComponentSourceClipType,
+          hold: defaultHold,
+          params: (generatedComponent.defaultsJson ?? {}) as ValidatedSequenceDraft['params'],
+        },
+      };
+    }
     const slug = (generatedComponent.name || 'component')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-');
@@ -559,7 +591,6 @@ export function SequenceCreatorPanel({
       const message = err instanceof Error ? err.message : 'Save failed.';
       return { ok: false, error: `Save failed: ${message}. Component NOT saved.` };
     }
-    const defaultHold = 4;
     return {
       ok: true,
       draft: {
@@ -568,7 +599,7 @@ export function SequenceCreatorPanel({
         params: (generatedComponent.defaultsJson ?? {}) as ValidatedSequenceDraft['params'],
       },
     };
-  }, [createSequenceComponent, forkPending, generatedComponent, resolvedConfig?.output.fps, resolvedConfig?.theme]);
+  }, [createSequenceComponent, forkPending, generatedComponent, generatedComponentSourceClipType, resolvedConfig?.output.fps, resolvedConfig?.theme]);
 
   const handleEditSelected = useCallback(() => {
     if (!selectedGroup || !selectedDraft) return;
@@ -706,6 +737,52 @@ export function SequenceCreatorPanel({
       : 'Generate or select a sequence first.')
     : (!data ? 'Timeline unavailable.' : null);
 
+  // Library list — sorted newest-first by created_at, falling back to name.
+  const libraryComponents = useMemo(() => {
+    const list = [...libraryCatalog.components];
+    list.sort((a, b) => {
+      const aCreated = a.created_at ?? a.createdAt ?? '';
+      const bCreated = b.created_at ?? b.createdAt ?? '';
+      if (aCreated && bCreated) {
+        return bCreated.localeCompare(aCreated);
+      }
+      if (aCreated) return -1;
+      if (bCreated) return 1;
+      return (a.name ?? '').localeCompare(b.name ?? '');
+    });
+    return list;
+  }, [libraryCatalog.components]);
+
+  const handleLoadLibraryComponent = useCallback((resource: SequenceComponentResource) => {
+    setGeneratedComponent({
+      code: resource.code,
+      name: resource.name,
+      description: resource.description ?? '',
+      schemaJson: resource.schemaJson,
+      defaultsJson: resource.defaultsJson,
+    });
+    setGeneratedComponentSourceClipType(resource.clipType);
+    setClassifierVerdict({ path: 'code', reason: 'Loaded from library.' });
+    // Clear any JSON-path draft selection so the right-pane uses the
+    // generatedComponent code-path branch.
+    setSelectedGroupId(null);
+    setActionError(null);
+    setGenerationNote(`Loaded "${resource.name}" from library.`);
+    setMode('edit');
+  }, [
+    setActionError,
+    setClassifierVerdict,
+    setGeneratedComponent,
+    setGeneratedComponentSourceClipType,
+    setGenerationNote,
+    setMode,
+    setSelectedGroupId,
+  ]);
+
+  // Edit tab is enabled when there's anything to edit: a JSON draft group OR
+  // a code-path generated component.
+  const editTabDisabled = draftGroups.length === 0 && !generatedComponent;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="h-[min(92vh,820px)] max-h-[92vh] max-w-6xl overflow-hidden p-0">
@@ -722,7 +799,7 @@ export function SequenceCreatorPanel({
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(320px,420px)_1fr] overflow-hidden">
             <div className="min-h-0 overflow-y-auto border-r border-border p-4">
               <div className="space-y-4">
-                <div className="grid grid-cols-2 rounded-lg border border-border bg-muted/30 p-1">
+                <div className="grid grid-cols-3 rounded-lg border border-border bg-muted/30 p-1">
                   <button
                     type="button"
                     className={[
@@ -744,9 +821,21 @@ export function SequenceCreatorPanel({
                         : 'text-muted-foreground hover:text-foreground',
                     ].join(' ')}
                     onClick={() => setMode('edit')}
-                    disabled={draftGroups.length === 0}
+                    disabled={editTabDisabled}
                   >
                     Edit
+                  </button>
+                  <button
+                    type="button"
+                    className={[
+                      'rounded-md px-3 py-1.5 text-sm transition-colors',
+                      mode === 'library'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    ].join(' ')}
+                    onClick={() => setMode('library')}
+                  >
+                    Library
                   </button>
                 </div>
 
@@ -799,6 +888,47 @@ export function SequenceCreatorPanel({
                       Generate new animation
                     </Button>
                   </div>
+                ) : mode === 'library' ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs text-muted-foreground">Your saved sequences</div>
+                      <div className="text-xs text-muted-foreground">{libraryComponents.length}</div>
+                    </div>
+                    {libraryCatalog.isLoading && libraryComponents.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">Loading…</div>
+                    ) : libraryComponents.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">
+                        No saved sequences yet. Generate one and Insert it to save.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {libraryComponents.map((resource) => (
+                          <button
+                            key={resource.id}
+                            type="button"
+                            onClick={() => handleLoadLibraryComponent(resource)}
+                            className="w-full rounded-lg border border-border bg-card p-3 text-left transition-colors hover:bg-muted/40"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="truncate text-sm font-medium text-foreground">
+                                  {resource.name || 'Untitled component'}
+                                </div>
+                                {resource.description && (
+                                  <div className="line-clamp-2 text-xs text-muted-foreground">
+                                    {resource.description}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="mt-2 truncate text-right text-xs text-muted-foreground">
+                              {resource.clipType}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div className="space-y-3 rounded-lg border border-border bg-card/60 p-3">
                     <div className="text-sm font-medium text-foreground">Selected Animation</div>
@@ -827,6 +957,10 @@ export function SequenceCreatorPanel({
                           Apply edit to animation
                         </Button>
                       </>
+                    ) : generatedComponent ? (
+                      <div className="text-xs text-muted-foreground">
+                        Tweak the component params on the right, then Insert at playhead or Replace selected.
+                      </div>
                     ) : (
                       <div className="text-xs text-muted-foreground">Generate an animation before editing.</div>
                     )}

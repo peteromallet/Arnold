@@ -62,6 +62,13 @@ export type SequenceCreatorPersistedState = {
   classifierVerdict: ClassifierVerdict | null;
   forkPending: ForkPending | null;
   generatedComponent: GeneratedComponent | null;
+  /**
+   * When `generatedComponent` was loaded from an existing DB resource (via the
+   * Library tab), this holds the resource's clipType. Insert/Replace reuses
+   * that clipType instead of saving a new resource. Cleared whenever a fresh
+   * generation populates `generatedComponent`.
+   */
+  generatedComponentSourceClipType: string | undefined;
 };
 
 type Updater<T> = T | ((current: T) => T);
@@ -85,6 +92,7 @@ export type SequenceCreatorActions = {
   setClassifierVerdict: (next: SetStateAction<ClassifierVerdict | null>) => void;
   setForkPending: (next: SetStateAction<ForkPending | null>) => void;
   setGeneratedComponent: (next: SetStateAction<GeneratedComponent | null>) => void;
+  setGeneratedComponentSourceClipType: (next: SetStateAction<string | undefined>) => void;
   reset: () => void;
 };
 
@@ -103,6 +111,7 @@ const INITIAL_STATE: SequenceCreatorPersistedState = {
   classifierVerdict: null,
   forkPending: null,
   generatedComponent: null,
+  generatedComponentSourceClipType: undefined,
 };
 
 const STORAGE_KEY = 'reigh:video-editor:sequence-creator';
@@ -123,11 +132,14 @@ const sequenceCreatorStore = createStore<SequenceCreatorState>()(
       setClassifierVerdict: (next) => set((state) => ({ classifierVerdict: applyUpdater(state.classifierVerdict, next) })),
       setForkPending: (next) => set((state) => ({ forkPending: applyUpdater(state.forkPending, next) })),
       setGeneratedComponent: (next) => set((state) => ({ generatedComponent: applyUpdater(state.generatedComponent, next) })),
+      setGeneratedComponentSourceClipType: (next) => set((state) => ({
+        generatedComponentSourceClipType: applyUpdater(state.generatedComponentSourceClipType, next),
+      })),
       reset: () => set(() => ({ ...INITIAL_STATE })),
     }),
     {
       name: STORAGE_KEY,
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => localStorage),
       // Drop transient feedback strings from persisted output: stale notes
       // and errors after a reload are confusing and never accurate.
@@ -142,6 +154,7 @@ const sequenceCreatorStore = createStore<SequenceCreatorState>()(
         classifierVerdict: state.classifierVerdict,
         forkPending: state.forkPending,
         generatedComponent: state.generatedComponent,
+        generatedComponentSourceClipType: state.generatedComponentSourceClipType,
       }),
       migrate: (persistedState) => persistedState as SequenceCreatorPersistedState,
     },

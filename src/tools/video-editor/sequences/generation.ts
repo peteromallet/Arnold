@@ -25,7 +25,7 @@ export type EditableSequenceDraft = {
   params: Record<string, unknown>;
 };
 
-export type SequenceCreatorMode = 'generate' | 'edit';
+export type SequenceCreatorMode = 'generate' | 'edit' | 'library';
 
 export type SequenceAnimationIntent = {
   freeform: string;
