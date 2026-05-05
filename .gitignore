@@ -21,6 +21,7 @@ custom_nodes/
 
 # Tool working directories
 .agents/
+.claude/
 .desloppify/
 .megaplan/
 *.patch

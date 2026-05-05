@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync agent-facing VibeComfy skill files from the canonical root SKILL.md."""
+"""Sync local agent skill files from the canonical AGENTS.md."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "SKILL.md"
-COPY_TARGETS = (
-    ROOT / "AGENTS.md",
+SOURCE = ROOT / "AGENTS.md"
+COPY_TARGETS = ()
+LOCAL_COPY_TARGETS = (
     ROOT / ".claude" / "skills" / "vibecomfy" / "SKILL.md",
 )
 SYMLINK_TARGETS = {
@@ -33,10 +33,10 @@ def _relative(path: Path) -> str:
 
 def _read_source() -> str:
     if not SOURCE.exists():
-        raise SystemExit("SKILL.md is missing")
+        raise SystemExit("AGENTS.md is missing")
     content = SOURCE.read_text(encoding="utf-8")
     if not content.startswith("---\n") or "name: vibecomfy" not in content:
-        raise SystemExit("SKILL.md must be the canonical VibeComfy skill with frontmatter")
+        raise SystemExit("AGENTS.md must be the canonical VibeComfy skill with frontmatter")
     return content
 
 
@@ -77,7 +77,7 @@ def check() -> int:
 
 def apply() -> int:
     source = _read_source()
-    for target in COPY_TARGETS:
+    for target in (*COPY_TARGETS, *LOCAL_COPY_TARGETS):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
         print(f"synced {_relative(target)}")

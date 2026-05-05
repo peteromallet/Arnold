@@ -9,10 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_agent_skill_surfaces_are_synced() -> None:
-    source = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    source = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
-    assert (ROOT / "AGENTS.md").read_text(encoding="utf-8") == source
-    assert (ROOT / ".claude" / "skills" / "vibecomfy" / "SKILL.md").read_text(encoding="utf-8") == source
+    assert "name: vibecomfy" in source
     assert (ROOT / "CLAUDE.md").is_symlink()
     assert str((ROOT / "CLAUDE.md").readlink()) == "AGENTS.md"
 
