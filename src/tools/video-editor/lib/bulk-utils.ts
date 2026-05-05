@@ -1,6 +1,6 @@
-import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences';
-import { getBulkVisibleTabs as getRegistryBackedBulkVisibleTabs } from '@/tools/video-editor/lib/clip-inspector';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
+import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
+import { getBulkVisibleTabs as getRegistryBackedBulkVisibleTabs } from '@/tools/video-editor/lib/clip-inspector.ts';
+import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 export const getSharedValue = <T,>(values: T[]): T | null => {
   if (values.length === 0) {

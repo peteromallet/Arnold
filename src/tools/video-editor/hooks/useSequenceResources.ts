@@ -10,12 +10,12 @@ import {
   useUpdateResource,
   type Resource,
   type SequenceComponentMetadata,
-} from '@/features/resources/hooks/useResources';
+} from '@/features/resources/hooks/useResources.ts';
 import {
   createVideoEditorSequenceComponentCatalog,
   type SequenceComponentResource,
   type VideoEditorSequenceComponentCatalog,
-} from '@/tools/video-editor/lib/sequence-component-catalog';
+} from '@/tools/video-editor/lib/sequence-component-catalog.ts';
 
 export type {
   CreateVideoEditorSequenceComponentInput,
@@ -24,9 +24,9 @@ export type {
   UpdateVideoEditorSequenceComponentInput,
   VideoEditorSequenceComponentCatalog,
   VideoEditorSequenceComponentCatalogOptions,
-} from '@/tools/video-editor/lib/sequence-component-catalog';
+} from '@/tools/video-editor/lib/sequence-component-catalog.ts';
 
-export { createVideoEditorSequenceComponentCatalog } from '@/tools/video-editor/lib/sequence-component-catalog';
+export { createVideoEditorSequenceComponentCatalog } from '@/tools/video-editor/lib/sequence-component-catalog.ts';
 
 function toSequenceComponentResource(resource: Resource): SequenceComponentResource {
   const metadata = resource.metadata as SequenceComponentMetadata;

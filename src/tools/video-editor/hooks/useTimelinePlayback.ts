@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
-import type { PreviewHandle } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
-import { useTimelineSync } from '@/tools/video-editor/hooks/useTimelineSync';
-import type { TimelineCanvasHandle } from '@/tools/video-editor/types/timeline-canvas';
+import type { PreviewHandle } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview.tsx';
+import { useTimelineSync } from '@/tools/video-editor/hooks/useTimelineSync.ts';
+import type { TimelineCanvasHandle } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export interface UseTimelinePlaybackResult {
   currentTime: number;

@@ -1,14 +1,14 @@
-import { useDerivedTimeline } from '@/tools/video-editor/hooks/useDerivedTimeline';
+import { useDerivedTimeline } from '@/tools/video-editor/hooks/useDerivedTimeline.ts';
 import {
   useTimelineMultiSelect,
   type UseTimelineMultiSelectResult,
-} from '@/shared/state/selectionStore';
+} from '@/shared/state/selectionStore.ts';
 import type {
   TimelineResolvedConfig,
   TimelineSelectedClip,
   TimelineSelectedTrack,
-} from '@/tools/video-editor/hooks/timeline-state-types';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 
 export interface UseTimelineSelectionArgs {
   data: TimelineData | null;

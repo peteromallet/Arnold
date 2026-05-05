@@ -6,10 +6,10 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/shared/components/ui/dialog';
-import { Badge } from '@/shared/components/ui/badge';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import type { TimelineConfig } from '@/tools/video-editor/types';
+} from '@/shared/components/ui/dialog.tsx';
+import { Badge } from '@/shared/components/ui/badge.tsx';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import type { TimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 /**
  * Read-only Theme chip (SD-018, SD-019). Renders:

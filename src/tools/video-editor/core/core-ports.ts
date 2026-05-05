@@ -1,5 +1,5 @@
-import type { Shot } from '@/domains/generation/types';
-import type { VideoEditorPersistencePort } from '@/tools/video-editor/data/DataProvider';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import type { VideoEditorPersistencePort } from '@/tools/video-editor/data/DataProvider.ts';
 
 export interface VideoEditorFinalVideo {
   id: string;

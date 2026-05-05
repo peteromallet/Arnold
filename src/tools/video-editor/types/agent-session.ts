@@ -1,4 +1,4 @@
-import type { TimelinePlacement } from '../../../../supabase/functions/create-task/resolvers/shared/lineage';
+import type { TimelinePlacement } from '../../../../supabase/functions/create-task/resolvers/shared/lineage.ts';
 
 export type AgentSessionStatus =
   | "waiting_user"

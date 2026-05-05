@@ -1,8 +1,8 @@
 import type {
   TimelineCommandHistoryMetadata,
   TimelineCommandTransaction,
-} from '@/tools/video-editor/commands';
-import type { AssetRegistry, TimelineConfig } from './index';
+} from '@/tools/video-editor/commands/index.ts';
+import type { AssetRegistry, TimelineConfig } from './index.ts';
 
 export type UndoSnapshot = {
   config: TimelineConfig;

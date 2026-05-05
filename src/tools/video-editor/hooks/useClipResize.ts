@@ -1,16 +1,16 @@
 import { useCallback, useRef } from 'react';
-import { buildRowTrackPatches } from '@/tools/video-editor/lib/coordinate-utils';
+import { buildRowTrackPatches } from '@/tools/video-editor/lib/coordinate-utils.ts';
 import type {
   ClipEdgeResizeContext,
   ClipEdgeResizeUpdate,
   ResizeDir,
-} from '@/tools/video-editor/lib/resize-math';
-import { getSourceTime, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps';
-import { ensureGroupContiguity } from '@/tools/video-editor/lib/shot-group-contiguity';
-import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types';
-import type { TrackKind } from '@/tools/video-editor/types';
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/resize-math.ts';
+import { getSourceTime, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps.ts';
+import { ensureGroupContiguity } from '@/tools/video-editor/lib/shot-group-contiguity.ts';
+import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { TrackKind } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 interface ResizeStartTarget {
   action: TimelineAction;

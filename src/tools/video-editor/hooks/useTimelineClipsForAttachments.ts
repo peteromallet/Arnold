@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import { useTimelineEditorData } from '@/tools/video-editor/hooks/timelineStore';
-import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils';
-import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { useTimelineEditorData } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils.ts';
+import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips.ts';
 
 export function useTimelineClipsForAttachments(): SelectedMediaClip[] {
   const { data, resolvedConfig } = useTimelineEditorData();

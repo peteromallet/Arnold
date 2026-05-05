@@ -1,18 +1,18 @@
 import { useMemo } from 'react';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
   useTimelineChromeSlice,
   useTimelineDataSlice,
   useTimelineOpsSlice,
   useTimelinePlaybackSlice,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 import type {
   ResolvedVideoEditorPanelRegistry,
   VideoEditorExtensionRuntimeConfig,
   VideoEditorRenderContext,
   VideoEditorRuntimeSlices,
-} from '@/tools/video-editor/runtime/extensionSurface';
-import { resolveVideoEditorPanelRegistry } from '@/tools/video-editor/runtime/extensionSurface';
+} from '@/tools/video-editor/runtime/extensionSurface.ts';
+import { resolveVideoEditorPanelRegistry } from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 export function buildVideoEditorRenderContext(
   runtime: ReturnType<typeof useVideoEditorRuntime>,

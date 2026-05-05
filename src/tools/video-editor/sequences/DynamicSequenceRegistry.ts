@@ -1,7 +1,7 @@
 import type { FC } from 'react';
-import * as compileSequenceModule from '@/tools/video-editor/sequences/compileSequenceComponent';
-import type { SequenceComponentProps } from '@/tools/video-editor/sequences/compileSequenceComponent';
-import { DynamicComponentRegistry } from '@/tools/video-editor/runtime-components/DynamicComponentRegistry';
+import * as compileSequenceModule from '@/tools/video-editor/sequences/compileSequenceComponent.tsx';
+import type { SequenceComponentProps } from '@/tools/video-editor/sequences/compileSequenceComponent.tsx';
+import { DynamicComponentRegistry } from '@/tools/video-editor/runtime-components/DynamicComponentRegistry.ts';
 
 /**
  * DB-stored sequences are stored in the registry under their plain clipType

@@ -1,4 +1,4 @@
-import type { VideoEditorLightboxIndicator } from '@/tools/video-editor/hooks/useVideoEditorLightboxNavigation';
+import type { VideoEditorLightboxIndicator } from '@/tools/video-editor/hooks/useVideoEditorLightboxNavigation.ts';
 
 export function VideoEditorLightboxOverlay({
   indicator,

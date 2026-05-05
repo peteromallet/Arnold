@@ -6,7 +6,7 @@ import {
   type MutableRefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
-import type { GhostRect } from '@/tools/video-editor/lib/multi-drag-utils';
+import type { GhostRect } from '@/tools/video-editor/lib/multi-drag-utils.ts';
 
 export interface DropIndicatorPosition {
   rowTop: number;

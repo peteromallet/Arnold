@@ -3,9 +3,9 @@ import {
   DataProviderWrapper,
   useVideoEditorRuntime,
   type VideoEditorRuntimeContextValue,
-} from '@/tools/video-editor/contexts/DataProviderContext';
-import type { Shot } from '@/domains/generation/types';
-import type { VideoEditorCorePorts, VideoEditorFinalVideo } from '@/tools/video-editor/core/core-ports';
+} from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import type { VideoEditorCorePorts, VideoEditorFinalVideo } from '@/tools/video-editor/core/core-ports.ts';
 
 const VideoEditorCorePortsContext = createContext<VideoEditorCorePorts | null>(null);
 const EMPTY_SHOTS: Shot[] = [];

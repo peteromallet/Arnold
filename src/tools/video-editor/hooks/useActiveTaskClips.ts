@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { taskReferencesGeneration } from '@/shared/hooks/tasks/usePendingGenerationTasks';
-import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor';
-import { TASK_STATUS } from '@/types/tasks';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types';
+import { taskReferencesGeneration } from '@/shared/hooks/tasks/usePendingGenerationTasks.ts';
+import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor.ts';
+import { TASK_STATUS } from '@/types/tasks.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 interface UseActiveTaskClipsArgs {
   registry: Record<string, ResolvedAssetRegistryEntry> | undefined;

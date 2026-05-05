@@ -1,6 +1,6 @@
-import { splitClipAtPlayhead } from '@/tools/video-editor/lib/editor-utils';
-import type { ClipMeta, TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+import { splitClipAtPlayhead } from '@/tools/video-editor/lib/editor-utils.ts';
+import type { ClipMeta, TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export const DURATION_KEYS = ['speed', 'from', 'to', 'hold'] as const;
 

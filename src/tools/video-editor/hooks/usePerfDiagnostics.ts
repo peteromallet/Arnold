@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import {
   EffectLoopDetector,
   RenderStormDetector,
-} from '@/tools/video-editor/lib/perf-diagnostics';
+} from '@/tools/video-editor/lib/perf-diagnostics.ts';
 
 export function useRenderDiagnostic(componentName: string) {
   RenderStormDetector.track(componentName);

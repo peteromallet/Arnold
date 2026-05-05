@@ -1,10 +1,10 @@
 import { useCallback, useMemo } from 'react';
-import type { Shot } from '@/domains/generation/types';
-import type { LightboxNavigationProps } from '@/domains/media-lightbox/types';
-import { getClipTypeOverlayBehavior, getRegisteredClipTypeDescriptor } from '@/tools/video-editor/clip-types';
-import { getShotColor } from '@/tools/video-editor/hooks/useShotGroups';
-import { isOpenableAssetType } from '@/tools/video-editor/lib/editor-utils';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import type { LightboxNavigationProps } from '@/domains/media-lightbox/types.ts';
+import { getClipTypeOverlayBehavior, getRegisteredClipTypeDescriptor } from '@/tools/video-editor/clip-types/index.ts';
+import { getShotColor } from '@/tools/video-editor/hooks/useShotGroups.ts';
+import { isOpenableAssetType } from '@/tools/video-editor/lib/editor-utils.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 
 interface NavigableItem {
   assetKey: string;

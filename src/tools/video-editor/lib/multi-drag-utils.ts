@@ -1,14 +1,14 @@
-import { getConfigSignature, getStableConfigSignature } from '@/tools/video-editor/lib/config-utils';
-import { addTrack } from '@/tools/video-editor/lib/editor-utils';
-import type { PinnedGroupKey } from '@/tools/video-editor/lib/pinned-group-projection';
-import { getSourceTime, type ClipMeta, type ClipOrderMap, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
-import type { PinnedShotGroup, ResolvedTimelineConfig, TrackKind } from '@/tools/video-editor/types';
-import { findNearestFreeTrack, moveClipBetweenTracks, trySnapToEdge } from '@/tools/video-editor/lib/coordinate-utils';
+import { getConfigSignature, getStableConfigSignature } from '@/tools/video-editor/lib/config-utils.ts';
+import { addTrack } from '@/tools/video-editor/lib/editor-utils.ts';
+import type { PinnedGroupKey } from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import { getSourceTime, type ClipMeta, type ClipOrderMap, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { PinnedShotGroup, ResolvedTimelineConfig, TrackKind } from '@/tools/video-editor/types/index.ts';
+import { findNearestFreeTrack, moveClipBetweenTracks, trySnapToEdge } from '@/tools/video-editor/lib/coordinate-utils.ts';
 import {
   findBestGroupStart,
   type GroupExtent,
-} from '@/tools/video-editor/lib/resolve-overlaps';
+} from '@/tools/video-editor/lib/resolve-overlaps.ts';
 
 // ── Types ────────────────────────────────────────────────────────────
 

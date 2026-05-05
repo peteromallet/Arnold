@@ -1,6 +1,6 @@
-import type { GenerationRow } from '@/domains/generation/types';
-import type { Json } from '@/integrations/supabase/jsonTypes';
-import { getSupabaseClient } from '@/integrations/supabase/client';
+import type { GenerationRow } from '@/domains/generation/types/index.ts';
+import type { Json } from '@/integrations/supabase/jsonTypes.ts';
+import { getSupabaseClient } from '@/integrations/supabase/client.ts';
 
 function toRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === 'object' && !Array.isArray(value)) {

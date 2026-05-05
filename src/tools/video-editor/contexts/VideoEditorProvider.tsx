@@ -5,55 +5,55 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { toast } from '@/shared/components/ui/runtime/sonner';
-import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
-import type { GenerationRow } from '@/domains/generation/types';
-import { VideoEditorLightboxOverlay } from '@/tools/video-editor/components/VideoEditorLightboxOverlay';
-import { useReighShotsHost } from '@/tools/video-editor/adapters/reigh/useReighShotsHost';
-import { DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME } from '@/tools/video-editor/runtime/extensionSurface';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import { toast } from '@/shared/components/ui/runtime/sonner.tsx';
+import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox.tsx';
+import type { GenerationRow } from '@/domains/generation/types/index.ts';
+import { VideoEditorLightboxOverlay } from '@/tools/video-editor/components/VideoEditorLightboxOverlay.tsx';
+import { useReighShotsHost } from '@/tools/video-editor/adapters/reigh/useReighShotsHost.ts';
+import { DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import {
   DataProviderWrapper,
   useVideoEditorRuntime,
-} from '@/tools/video-editor/contexts/DataProviderContext';
-import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext';
-import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore';
-import { useEffects } from '@/tools/video-editor/hooks/useEffects';
-import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry';
+} from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext.tsx';
+import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore.ts';
+import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
+import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry.ts';
 import {
   EffectCatalogProvider,
   useResolvedEffectCatalog,
   type VideoEditorEffectCatalog,
-} from '@/tools/video-editor/hooks/useEffectResources';
+} from '@/tools/video-editor/hooks/useEffectResources.ts';
 import {
   SequenceComponentCatalogProvider,
   useResolvedSequenceComponentCatalog,
   type VideoEditorSequenceComponentCatalog,
-} from '@/tools/video-editor/hooks/useSequenceResources';
-import { SequenceComponentRegistryProvider } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext';
-import { useTimelineClipsForAttachments } from '@/tools/video-editor/hooks/useTimelineClipsForAttachments';
-import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
-import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/useSequenceResources.ts';
+import { SequenceComponentRegistryProvider } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext.tsx';
+import { useTimelineClipsForAttachments } from '@/tools/video-editor/hooks/useTimelineClipsForAttachments.ts';
+import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState.ts';
+import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type {
   TimelineActionResizeStart,
   TimelineClipEdgeResizeEnd,
   TimelineEditorOpsContextValue,
-} from '@/tools/video-editor/hooks/useTimelineState.types';
-import { useVideoEditorLightboxNavigation } from '@/tools/video-editor/hooks/useVideoEditorLightboxNavigation';
-import { isOpenableAssetType } from '@/tools/video-editor/lib/editor-utils';
-import { loadGenerationForLightbox } from '@/tools/video-editor/lib/generation-utils';
-import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils';
+} from '@/tools/video-editor/hooks/useTimelineState.types.ts';
+import { useVideoEditorLightboxNavigation } from '@/tools/video-editor/hooks/useVideoEditorLightboxNavigation.ts';
+import { isOpenableAssetType } from '@/tools/video-editor/lib/editor-utils.ts';
+import { loadGenerationForLightbox } from '@/tools/video-editor/lib/generation-utils.ts';
+import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils.ts';
 import {
   ADD_GENERATION_QUERY_PARAM,
   readPendingAdds,
   writePendingAdds,
-} from '@/domains/media-lightbox/hooks/addToVideoEditorConstants';
+} from '@/domains/media-lightbox/hooks/addToVideoEditorConstants.ts';
 import {
   executeGenerationAssetRegistrationPlan,
   planGenerationAssetRegistration,
-} from '@/tools/video-editor/lib/timeline-asset-plans';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
-import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/lib/timeline-asset-plans.ts';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 const log = import.meta.env.DEV ? (...args: Parameters<typeof console.log>) => console.log(...args) : () => {};
 

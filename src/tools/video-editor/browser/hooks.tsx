@@ -6,19 +6,19 @@ import {
   type ApplySequenceDraftToTimelineResult,
   type ValidatedSequenceDraft,
 } from '@/tools/video-editor/sequence.ts';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
   useTimelineChromeSelector,
   useTimelineDataSelector,
   useTimelineOpsSelector,
   useTimelinePlaybackSelector,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 import type {
   VideoEditorAssetResolver,
   VideoEditorExporter,
   VideoEditorHostContext,
-} from '@/tools/video-editor/lib/browser-runtime';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+} from '@/tools/video-editor/lib/browser-runtime.ts';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 
 export type VideoEditorSaveStatus = 'saved' | 'saving' | 'dirty' | 'error';
 export type VideoEditorRenderStatus = 'idle' | 'rendering' | 'done' | 'error';

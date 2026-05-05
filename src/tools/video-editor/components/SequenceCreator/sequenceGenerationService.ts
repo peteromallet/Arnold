@@ -1,5 +1,5 @@
-import { invokeSupabaseEdgeFunction } from '@/integrations/supabase/functions/invokeSupabaseEdgeFunction';
-import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips';
+import { invokeSupabaseEdgeFunction } from '@/integrations/supabase/functions/invokeSupabaseEdgeFunction.ts';
+import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips.ts';
 import {
   buildAnimationIntentPayload,
   buildGenerationClipPayloads,
@@ -9,13 +9,13 @@ import {
   type GenerateSequenceResponse,
   type SequenceAnimationIntent,
   type SequenceCreatorMode,
-} from '@/tools/video-editor/sequences/generation';
+} from '@/tools/video-editor/sequences/generation.ts';
 import {
   AVAILABLE_SEQUENCE_CLIP_TYPES,
   AVAILABLE_SEQUENCE_METADATA,
-} from '@/tools/video-editor/sequences/registry';
-import { validateSequenceDraft } from '@/tools/video-editor/sequences/validation';
-import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/sequences/registry.ts';
+import { validateSequenceDraft } from '@/tools/video-editor/sequences/validation.ts';
+import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 export type RunSequenceGenerationOptions = {
   prompt: string;

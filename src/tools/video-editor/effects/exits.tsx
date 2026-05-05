@@ -1,6 +1,6 @@
 import type { FC } from 'react';
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
-import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances';
+import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances.tsx';
 
 const getExitProgress = (frame: number, durationInFrames: number, effectFrames: number): number => {
   return interpolate(

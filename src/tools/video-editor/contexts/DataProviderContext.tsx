@@ -1,10 +1,10 @@
 import { createContext, useContext } from 'react';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import type {
   VideoEditorAssetResolver,
   VideoEditorExporter,
   VideoEditorHostContext,
-} from '@/tools/video-editor/lib/browser-runtime';
+} from '@/tools/video-editor/lib/browser-runtime.ts';
 import type {
   VideoEditorAgentChatHost,
   VideoEditorAuthHost,
@@ -13,8 +13,8 @@ import type {
   VideoEditorShotsHost,
   VideoEditorTelemetryHost,
   VideoEditorToastHost,
-} from '@/tools/video-editor/runtime/ports';
-import type { VideoEditorExtensionRuntimeConfig } from '@/tools/video-editor/runtime/extensionSurface';
+} from '@/tools/video-editor/runtime/ports.ts';
+import type { VideoEditorExtensionRuntimeConfig } from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 export interface VideoEditorRuntimeContextValue {
   provider: DataProvider;

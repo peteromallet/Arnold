@@ -8,7 +8,7 @@ import { bootstrapEdgeHandler, NO_SESSION_RUNTIME_OPTIONS } from "../_shared/edg
 import { toErrorMessage } from "../_shared/errorMessage.ts";
 import { resolveTaskStorageActor } from "../_shared/taskActorPolicy.ts";
 import { ensureTaskActor } from "../_shared/requestGuards.ts";
-import type { AssetRegistryEntry } from "../../../src/tools/video-editor/index.ts";
+import type { AssetRegistryEntry } from "../../../src/tools/video-editor/types/index.ts";
 import {
   loadTimelineState,
   prepareTimelineConfigForPersistence,

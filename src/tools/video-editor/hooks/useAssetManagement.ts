@@ -1,18 +1,18 @@
 import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop';
-import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers';
-import { uploadBlobToStorage, uploadImageToStorage } from '@/shared/lib/media/imageUploader';
-import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata';
-import { extractVideoPosterFrame } from '@/shared/lib/media/videoPosterExtractor';
-import { generateClientThumbnail, uploadImageWithThumbnail } from '@/shared/media/clientThumbnailGenerator';
-import type { SelectClipOptions } from '@/shared/state/selectionStore';
-import { createExternalUploadGeneration } from '@/integrations/supabase/repositories/generationMutationsRepository';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
+import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop.ts';
+import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError.ts';
+import { getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers.ts';
+import { uploadBlobToStorage, uploadImageToStorage } from '@/shared/lib/media/imageUploader.ts';
+import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata.ts';
+import { extractVideoPosterFrame } from '@/shared/lib/media/videoPosterExtractor.ts';
+import { generateClientThumbnail, uploadImageWithThumbnail } from '@/shared/media/clientThumbnailGenerator.ts';
+import type { SelectClipOptions } from '@/shared/state/selectionStore.ts';
+import { createExternalUploadGeneration } from '@/integrations/supabase/repositories/generationMutationsRepository.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
   type TimelineData,
-} from '@/tools/video-editor/lib/timeline-data';
+} from '@/tools/video-editor/lib/timeline-data.ts';
 import {
   buildAssetDropEdit,
   estimateAssetDuration,
@@ -20,7 +20,7 @@ import {
   getPlayableAssetKind,
   planAssetDropTarget,
   planGenerationAssetRegistration,
-} from '@/tools/video-editor/lib/timeline-asset-plans';
+} from '@/tools/video-editor/lib/timeline-asset-plans.ts';
 import type {
   TimelineApplyEdit,
   TimelineInvalidateAssetRegistry,
@@ -28,8 +28,8 @@ import type {
   TimelineRegisterAsset,
   TimelineUnpatchRegistry,
   TimelineUploadAsset,
-} from '@/tools/video-editor/hooks/timeline-state-types';
-import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore.ts';
 
 type UploadedGenerationData = GenerationDropData & {
   assetId?: string;
@@ -84,7 +84,7 @@ export interface AssetDropTargetResolution {
   snappedTime?: number;
 }
 export { buildAssetDropEdit };
-export type { BuildAssetDropEditResult } from '@/tools/video-editor/lib/timeline-asset-plans';
+export type { BuildAssetDropEditResult } from '@/tools/video-editor/lib/timeline-asset-plans.ts';
 
 export function resolveAssetDropTarget({
   dataRef,

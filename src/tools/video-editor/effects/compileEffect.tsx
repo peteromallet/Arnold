@@ -1,13 +1,13 @@
 import React, { type FC } from 'react';
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances';
-import { useAudioParam, useAudioReactive } from '@/tools/video-editor/effects/useAudioReactive';
+import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances.tsx';
+import { useAudioParam, useAudioReactive } from '@/tools/video-editor/effects/useAudioReactive.ts';
 import {
   compileWithGlobalsAsync,
   compileWithGlobalsSync,
   preloadSucrase,
   type CompileResult as CompileResultGeneric,
-} from '@/tools/video-editor/runtime-components/compileWithGlobals';
+} from '@/tools/video-editor/runtime-components/compileWithGlobals.ts';
 
 export type CompileResult = CompileResultGeneric<EffectComponentProps>;
 export { preloadSucrase };

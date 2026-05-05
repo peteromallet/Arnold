@@ -1,8 +1,8 @@
-import { Input } from '@/shared/components/ui/input';
-import { Textarea } from '@/shared/components/ui/textarea';
-import { getRegisteredClipTypeDescriptor, getSequenceDescriptorParams } from '@/tools/video-editor/clip-types/runtime';
-import type { AvailableSequenceMetadata } from '@/tools/video-editor/sequences/registry';
-import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { Textarea } from '@/shared/components/ui/textarea.tsx';
+import { getRegisteredClipTypeDescriptor, getSequenceDescriptorParams } from '@/tools/video-editor/clip-types/runtime.ts';
+import type { AvailableSequenceMetadata } from '@/tools/video-editor/sequences/registry.ts';
+import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 type SequenceParamEditorProps = {
   clipType?: string;

@@ -1,6 +1,6 @@
-import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 const MIN_TIMELINE_DURATION_SECONDS = 0.05;
 const DEFAULT_HOLD_FRAME_RATE = 30;

@@ -1,6 +1,6 @@
-import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { serializeForDisk } from '@/tools/video-editor/lib/serialize';
-import { buildDataFromCurrentRegistry } from '@/tools/video-editor/lib/timeline-save-utils';
+import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { serializeForDisk } from '@/tools/video-editor/lib/serialize.ts';
+import { buildDataFromCurrentRegistry } from '@/tools/video-editor/lib/timeline-save-utils.ts';
 import {
   assembleTimelineData,
   preserveUploadingClips,
@@ -8,9 +8,9 @@ import {
   type ClipMeta,
   type ClipOrderMap,
   type TimelineData,
-} from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineDomainContractLevel, TimelineDomainIssue } from '@/tools/video-editor/lib/timeline-domain';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineDomainContractLevel, TimelineDomainIssue } from '@/tools/video-editor/lib/timeline-domain.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export type TimelineEditMutation =
   | {

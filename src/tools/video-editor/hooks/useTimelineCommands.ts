@@ -7,32 +7,32 @@ import {
   roundTimelineValue,
   splitClipAtPlayhead,
   updateClipInConfig,
-} from '@/tools/video-editor/lib/editor-utils';
-import { buildDuplicateClipEdit } from '@/tools/video-editor/lib/duplicate-clip';
-import { findEnclosingPinnedGroup } from '@/tools/video-editor/lib/pinned-group-projection';
-import { previewTimelineMutation } from '@/tools/video-editor/lib/timeline-mutation-engine';
+} from '@/tools/video-editor/lib/editor-utils.ts';
+import { buildDuplicateClipEdit } from '@/tools/video-editor/lib/duplicate-clip.ts';
+import { findEnclosingPinnedGroup } from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import { previewTimelineMutation } from '@/tools/video-editor/lib/timeline-mutation-engine.ts';
 import {
   buildAssetDropEdit,
   estimateAssetDuration,
   getPlayableAssetKind,
   planAssetDropTarget,
   planGenerationAssetRegistration,
-} from '@/tools/video-editor/lib/timeline-asset-plans';
-import { readPositiveDurationSeconds } from '@/tools/video-editor/lib/timeline-asset-durations';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import { moveTrackWithinKind } from '@/tools/video-editor/hooks/useTimelineTrackManagement';
+} from '@/tools/video-editor/lib/timeline-asset-plans.ts';
+import { readPositiveDurationSeconds } from '@/tools/video-editor/lib/timeline-asset-durations.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import { moveTrackWithinKind } from '@/tools/video-editor/hooks/useTimelineTrackManagement.ts';
 import {
   hasMountedTimelineAvailability,
   useTimelineAvailabilityState,
   useTimelineStoreApi,
   useTimelineStoreApiSafe,
   type TimelineStoreApi,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 import type {
   TimelineEditorDataContextValue,
   TimelineEditorOpsContextValue,
-} from '@/tools/video-editor/hooks/useTimelineState.types';
-import type { AssetRegistryEntry, TimelineClip, TrackKind } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/hooks/useTimelineState.types.ts';
+import type { AssetRegistryEntry, TimelineClip, TrackKind } from '@/tools/video-editor/types/index.ts';
 
 export type TimelineCommandErrorCode =
   | 'editor_not_mounted'

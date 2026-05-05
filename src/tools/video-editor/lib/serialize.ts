@@ -3,19 +3,19 @@ import type {
   TimelineClip,
   TimelineConfig,
   TrackDefinition,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 import {
   assertValidTimelineConfigSnapshot,
   sanitizeTimelineClipSnapshot,
   sanitizeTrackDefinitionSnapshot,
-} from './timeline-domain';
+} from './timeline-domain.ts';
 
 export {
   TIMELINE_CLIP_FIELDS,
   TRACK_DEFINITION_FIELDS,
   type TimelineClipField,
   type TrackDefinitionField,
-} from './timeline-domain';
+} from './timeline-domain.ts';
 
 export const serializeClipForDisk = (clip: ResolvedTimelineConfig['clips'][number]): TimelineClip => {
   return sanitizeTimelineClipSnapshot(clip);

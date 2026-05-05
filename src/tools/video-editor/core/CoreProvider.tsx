@@ -1,9 +1,9 @@
 import { useMemo, type ReactNode } from 'react';
-import { TimelineStoreProvider, type TimelineMutableAdapters } from '@/tools/video-editor/hooks/timelineStore';
-import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
-import type { UseTimelineStateResult } from '@/tools/video-editor/hooks/useTimelineState.types';
-import type { VideoEditorCorePorts } from '@/tools/video-editor/core/core-ports';
-import { CoreRuntimeProvider } from '@/tools/video-editor/core/core-runtime';
+import { TimelineStoreProvider, type TimelineMutableAdapters } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState.ts';
+import type { UseTimelineStateResult } from '@/tools/video-editor/hooks/useTimelineState.types.ts';
+import type { VideoEditorCorePorts } from '@/tools/video-editor/core/core-ports.ts';
+import { CoreRuntimeProvider } from '@/tools/video-editor/core/core-runtime.tsx';
 
 export interface CoreProviderRenderState extends UseTimelineStateResult {
   mutableAdapters: TimelineMutableAdapters;

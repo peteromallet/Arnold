@@ -25,14 +25,14 @@
 // client renderer can still handle that. The trigger is the clipType
 // dispatch, not theme presence.
 
-import type { TimelineRenderRequest } from '@/tools/video-editor/hooks/timeline-state-types';
-import { getRegisteredClipTypeDescriptor } from '@/tools/video-editor/clip-types/runtime';
+import type { TimelineRenderRequest } from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import { getRegisteredClipTypeDescriptor } from '@/tools/video-editor/clip-types/runtime.ts';
 import {
   getGeneratedRemotionModuleStatus,
   type GeneratedRemotionModuleBlockReason,
   type GeneratedLaneClipShape,
-} from '@/tools/video-editor/lib/generated-lanes';
-import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize';
+} from '@/tools/video-editor/lib/generated-lanes.ts';
+import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
 
 /** Minimal clip shape we need from the resolved timeline. */
 export interface RouterClipShape extends GeneratedLaneClipShape {

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSupabaseClient } from '@/integrations/supabase/client';
-import type { Json } from '@/integrations/supabase/jsonTypes';
-import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults';
+import { getSupabaseClient } from '@/integrations/supabase/client.ts';
+import type { Json } from '@/integrations/supabase/jsonTypes.ts';
+import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults.ts';
 
 export const timelineListQueryKey = (projectId: string | null | undefined) => ['timelines', projectId] as const;
 

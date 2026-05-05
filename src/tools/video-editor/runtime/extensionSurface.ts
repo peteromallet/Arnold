@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import type {
   TimelineChromeContextValue,
   TimelineEditorDataContextValue,
   TimelineEditorOpsContextValue,
   TimelinePlaybackContextValue,
-} from '@/tools/video-editor/hooks/useTimelineState.types';
+} from '@/tools/video-editor/hooks/useTimelineState.types.ts';
 
 export type VideoEditorSlotName =
   | 'header'

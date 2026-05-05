@@ -2,20 +2,20 @@ import {
   useEffect,
   useRef,
 } from 'react';
-import type { InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
-import { useTimelineCommit } from '@/tools/video-editor/hooks/useTimelineCommit';
-import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus';
-import { useTimelinePersistence } from '@/tools/video-editor/hooks/useTimelinePersistence';
-import { usePollSync, type UsePollSyncQueries } from '@/tools/video-editor/hooks/usePollSync';
-import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
-export { shouldAcceptPolledData } from '@/tools/video-editor/lib/timeline-save-utils';
-export type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence';
+import type { InteractionStateRef } from '@/tools/video-editor/lib/interaction-state.ts';
+import { useTimelineCommit } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
+import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus.ts';
+import { useTimelinePersistence } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
+import { usePollSync, type UsePollSyncQueries } from '@/tools/video-editor/hooks/usePollSync.ts';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
+export { shouldAcceptPolledData } from '@/tools/video-editor/lib/timeline-save-utils.ts';
+export type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
 
 type UseTimelineSaveQueries = UsePollSyncQueries;
 
-export type { InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
+export type { InteractionStateRef } from '@/tools/video-editor/lib/interaction-state.ts';
 
 export function useTimelineSave(
   queries: UseTimelineSaveQueries,

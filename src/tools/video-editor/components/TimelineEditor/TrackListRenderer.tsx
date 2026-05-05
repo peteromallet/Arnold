@@ -11,20 +11,20 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { useRenderBudget } from '@/shared/dev/useRenderBudget';
-import { TrackLabelContent } from '@/tools/video-editor/components/TimelineEditor/TrackLabel';
-import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils';
-import type { TrackDefinition } from '@/tools/video-editor/types';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget.ts';
+import { TrackLabelContent } from '@/tools/video-editor/components/TimelineEditor/TrackLabel.tsx';
+import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import type { TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import type {
   TimelineAction,
   TimelineRow,
-} from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/types/timeline-canvas.ts';
 import {
   ACTION_VERTICAL_MARGIN,
   EMPTY_RESIZE_PREVIEW_SNAPSHOT,
   type ResizeOverride,
-} from './timeline-canvas-constants';
+} from './timeline-canvas-constants.ts';
 
 interface SortableRowProps {
   row: TimelineRow;

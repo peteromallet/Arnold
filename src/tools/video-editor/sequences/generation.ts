@@ -1,9 +1,9 @@
-import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips';
-import type { ValidatedSequenceDraft } from '@/tools/video-editor/sequences/validation';
+import type { SelectedMediaClip } from '@/tools/video-editor/hooks/useSelectedMediaClips.ts';
+import type { ValidatedSequenceDraft } from '@/tools/video-editor/sequences/validation.ts';
 import type {
   ResolvedAssetRegistryEntry,
   ResolvedTimelineConfig,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 
 export type AllowedSequenceAsset = {
   key: string;

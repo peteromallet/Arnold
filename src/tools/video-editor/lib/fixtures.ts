@@ -1,5 +1,5 @@
-import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types';
-import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults';
+import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults.ts';
 
 export interface VideoEditorTestingTimelineFixture {
   timelineId: string;

@@ -1,13 +1,13 @@
-import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
+import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
 import {
   findGroupForTrack,
   orderClipIdsByAt,
   resolveGroupTrackId,
-} from '@/tools/video-editor/lib/pinned-group-projection';
-import { ensureGroupContiguity } from '@/tools/video-editor/lib/shot-group-contiguity';
-import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { PinnedShotGroup, PinnedShotImageClipSnapshot } from '@/tools/video-editor/types';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import { ensureGroupContiguity } from '@/tools/video-editor/lib/shot-group-contiguity.ts';
+import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { PinnedShotGroup, PinnedShotImageClipSnapshot } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 type ShotGroupLocator = {
   shotId: string;

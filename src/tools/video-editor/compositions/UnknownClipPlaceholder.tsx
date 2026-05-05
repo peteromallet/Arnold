@@ -1,7 +1,7 @@
 import type { CSSProperties, FC } from 'react';
 import { AbsoluteFill, Sequence } from 'remotion';
-import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 /**
  * Loud placeholder for clips the editor cannot render — either because

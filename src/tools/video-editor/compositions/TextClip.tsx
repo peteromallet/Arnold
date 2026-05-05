@@ -1,8 +1,8 @@
 import type { FC } from 'react';
 import { AbsoluteFill, Sequence } from 'remotion';
-import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils';
-import { wrapWithClipEffects } from '@/tools/video-editor/effects';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
+import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import { wrapWithClipEffects } from '@/tools/video-editor/effects/index.tsx';
+import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 type TextClipProps = {
   clip: ResolvedTimelineClip;

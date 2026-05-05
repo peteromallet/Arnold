@@ -1,5 +1,5 @@
-import type { PinnedShotGroup, TimelineConfig } from '@/tools/video-editor/types';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+import type { PinnedShotGroup, TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export type PinnedGroupKey = Pick<PinnedShotGroup, 'shotId' | 'trackId'>;
 

@@ -1,25 +1,25 @@
 import type { ReactNode } from 'react';
 import { useLayoutEffect } from 'react';
-import { useEffects } from '@/tools/video-editor/hooks/useEffects';
-import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry';
+import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
+import { useEffectRegistry } from '@/tools/video-editor/hooks/useEffectRegistry.ts';
 import {
   EffectCatalogProvider,
   useResolvedEffectCatalog,
   type VideoEditorEffectCatalog,
-} from '@/tools/video-editor/hooks/useEffectResources';
+} from '@/tools/video-editor/hooks/useEffectResources.ts';
 import {
   SequenceComponentCatalogProvider,
   useResolvedSequenceComponentCatalog,
   type VideoEditorSequenceComponentCatalog,
-} from '@/tools/video-editor/hooks/useSequenceResources';
-import { SequenceComponentRegistryProvider } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext';
-import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore';
-import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+} from '@/tools/video-editor/hooks/useSequenceResources.ts';
+import { SequenceComponentRegistryProvider } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext.tsx';
+import { TimelineStoreProvider } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useTimelineState } from '@/tools/video-editor/hooks/useTimelineState.ts';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import {
   DataProviderWrapper,
   type VideoEditorRuntimeContextValue,
-} from '@/tools/video-editor/contexts/DataProviderContext';
+} from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 
 export interface EditorRuntimeProviderProps {
   dataProvider: DataProvider;

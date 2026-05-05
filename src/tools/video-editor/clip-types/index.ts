@@ -6,12 +6,12 @@ export {
   isEmptyParamsSchema,
   isSequenceParamsSchema,
   toClipTypeManifest,
-} from './defineClipType';
-export { createVideoEditorClipTypeCapabilityManifest } from './manifest';
+} from './defineClipType.ts';
+export { createVideoEditorClipTypeCapabilityManifest } from './manifest.ts';
 export type {
   ClipTypeCapabilityManifestEntry,
   VideoEditorClipTypeCapabilityManifest,
-} from './manifest';
+} from './manifest.ts';
 export {
   TRUSTED_CLIP_TYPE_DESCRIPTORS,
   TRUSTED_CLIP_TYPE_METADATA,
@@ -25,7 +25,7 @@ export {
   getTrustedSequenceParamDefinitions,
   isTrustedClipType,
   resolveTrustedClipTypeRegistration,
-} from './registry';
+} from './registry.ts';
 export {
   clipTypeUsesHoldTiming,
   createClipMetaFromDescriptor,
@@ -38,7 +38,7 @@ export {
   getSequenceDescriptorParams,
   inferLegacyClipType,
   isClipTypeCommandAvailable,
-} from './runtime';
+} from './runtime.ts';
 export type {
   ClipTypeCommandConstraint,
   ClipTypeCommandConstraintValue,
@@ -68,7 +68,7 @@ export type {
   JsonPrimitive,
   JsonValue,
   NormalizedClipTypeDefaults,
-} from './defineClipType';
+} from './defineClipType.ts';
 export type {
   AvailableClipTypeLookupResult,
   AvailableClipTypeMetadata,
@@ -77,7 +77,7 @@ export type {
   TrustedClipTypeLookupResult,
   TrustedClipTypeMetadata,
   TrustedClipTypeRegistration,
-} from './registry';
+} from './registry.ts';
 export type {
   AvailableRegisteredClipTypeRegistration,
   BuiltinClipType,
@@ -89,4 +89,4 @@ export type {
   ClipTypeOverlayDoubleClickAction,
   RegisteredClipTypeLookupResult,
   TrustedRegisteredClipTypeRegistration,
-} from './runtime';
+} from './runtime.ts';

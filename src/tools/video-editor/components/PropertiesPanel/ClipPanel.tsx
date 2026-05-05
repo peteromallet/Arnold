@@ -1,35 +1,35 @@
 import { useMemo, useState } from 'react';
 import { AudioWaveform, Pencil, Plus, RefreshCw, Trash2, Volume2, X } from 'lucide-react';
-import { Button } from '@/shared/components/ui/button';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { Input } from '@/shared/components/ui/input';
-import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker';
-import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
-import { NumberInput } from '@/shared/components/ui/number-input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select';
-import { Slider } from '@/shared/components/ui/slider';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs';
-import { Textarea } from '@/shared/components/ui/textarea';
-import { ParameterControls, getDefaultValues } from '@/tools/video-editor/components/ParameterControls';
-import { SequenceParamEditor } from '@/tools/video-editor/components/PropertiesPanel/SequenceParamEditor';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker.tsx';
+import type { GenerationVariant } from '@/shared/hooks/variants/useVariants.ts';
+import { NumberInput } from '@/shared/components/ui/number-input.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select.tsx';
+import { Slider } from '@/shared/components/ui/slider.tsx';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs.tsx';
+import { Textarea } from '@/shared/components/ui/textarea.tsx';
+import { ParameterControls, getDefaultValues } from '@/tools/video-editor/components/ParameterControls.tsx';
+import { SequenceParamEditor } from '@/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx';
 import {
   clipTypeUsesHoldTiming,
   getRegisteredClipTypeDescriptor,
   getClipTypeOverlayBehavior,
   isClipTypeCommandAvailable,
-} from '@/tools/video-editor/clip-types';
-import { isSequenceParamsSchema } from '@/tools/video-editor/clip-types/defineClipType';
-import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects';
-import { EffectCreatorPanel } from '@/tools/video-editor/components/EffectCreatorPanel';
-import { useEffectResources, type EffectCategory, type EffectResource } from '@/tools/video-editor/hooks/useEffectResources';
-import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
-import { getVisibleClipTabs } from '@/tools/video-editor/lib/clip-inspector';
-import type { TimelineDeviceClass, TimelineInteractionMode } from '@/tools/video-editor/lib/mobile-interaction-model';
-import { resolveAvailableClipType } from '@/tools/video-editor/sequences/registry';
-import type { ResolvedTimelineClip, ResolvedTimelineConfig, TrackDefinition } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/clip-types/index.ts';
+import { isSequenceParamsSchema } from '@/tools/video-editor/clip-types/defineClipType.ts';
+import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects/index.tsx';
+import { EffectCreatorPanel } from '@/tools/video-editor/components/EffectCreatorPanel.tsx';
+import { useEffectResources, type EffectCategory, type EffectResource } from '@/tools/video-editor/hooks/useEffectResources.ts';
+import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
+import { getVisibleClipTabs } from '@/tools/video-editor/lib/clip-inspector.ts';
+import type { TimelineDeviceClass, TimelineInteractionMode } from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import { resolveAvailableClipType } from '@/tools/video-editor/sequences/registry.ts';
+import type { ResolvedTimelineClip, ResolvedTimelineConfig, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
-export { getVisibleClipTabs } from '@/tools/video-editor/lib/clip-inspector';
+export { getVisibleClipTabs } from '@/tools/video-editor/lib/clip-inspector.ts';
 
 interface ClipPanelProps {
   clip: ResolvedTimelineClip | null;

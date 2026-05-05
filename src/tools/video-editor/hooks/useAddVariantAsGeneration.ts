@@ -1,19 +1,19 @@
 import { useCallback, useState } from 'react';
-import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { hasVideoExtension } from '@/shared/lib/typeGuards';
-import { usePromoteVariantToGeneration } from '@/shared/hooks/variants/usePromoteVariantToGeneration';
-import { loadPrimaryVariantForGeneration } from '@/tools/video-editor/adapters/reigh/variantPromotionLookup';
-import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
+import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError.ts';
+import { hasVideoExtension } from '@/shared/lib/typeGuards.ts';
+import { usePromoteVariantToGeneration } from '@/shared/hooks/variants/usePromoteVariantToGeneration.ts';
+import { loadPrimaryVariantForGeneration } from '@/tools/video-editor/adapters/reigh/variantPromotionLookup.ts';
+import type { GenerationVariant } from '@/shared/hooks/variants/useVariants.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
   executeGenerationAssetRegistrationPlan,
   planDuplicateGenerationAssetRegistration,
-} from '@/tools/video-editor/lib/timeline-asset-plans';
-import { useTimelineCommands } from '@/tools/video-editor/hooks/useTimelineCommands';
+} from '@/tools/video-editor/lib/timeline-asset-plans.ts';
+import { useTimelineCommands } from '@/tools/video-editor/hooks/useTimelineCommands.ts';
 import {
   useTimelineEditorOps,
   useTimelineMutableAdapters,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 
 export interface UseAddVariantAsGenerationResult {
   addVariantAsGenerationAfterClip: (clipId: string, variant: GenerationVariant) => Promise<void>;

@@ -2,20 +2,20 @@ import type {
   TimelineAction,
   TimelineEffect as EditorTimelineEffect,
   TimelineRow,
-} from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/types/timeline-canvas.ts';
 import {
   getClipSourceDuration,
   getConfigSignature,
   getStableConfigSignature,
   resolveTimelineConfig as resolveTimelineConfigShared,
   type UrlResolver,
-} from '@/tools/video-editor/lib/config-utils';
-import { TIMELINE_CLIP_FIELDS } from '@/tools/video-editor/lib/serialize';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+} from '@/tools/video-editor/lib/config-utils.ts';
+import { TIMELINE_CLIP_FIELDS } from '@/tools/video-editor/lib/serialize.ts';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import type {
   AssetMissingRequest,
   AssetResolver,
-} from '@/tools/video-editor/data/AssetResolver';
+} from '@/tools/video-editor/data/AssetResolver.ts';
 import type {
   AssetRegistry,
   ClipType,
@@ -25,11 +25,11 @@ import type {
   TimelineOutput,
   TrackDefinition,
   TrackKind,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 import {
   canonicalizeTimelinePair,
   serializeTimelineConfigSnapshot,
-} from '@/tools/video-editor/lib/timeline-domain';
+} from '@/tools/video-editor/lib/timeline-domain.ts';
 
 export interface ClipMeta {
   asset?: string;

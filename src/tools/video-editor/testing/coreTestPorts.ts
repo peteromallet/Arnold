@@ -1,7 +1,7 @@
-import type { VideoEditorCorePorts } from '@/tools/video-editor/core/core-ports';
-import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types';
-import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults';
-import { InMemoryDataProvider } from '@/tools/video-editor/testing/InMemoryDataProvider';
+import type { VideoEditorCorePorts } from '@/tools/video-editor/core/core-ports.ts';
+import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults.ts';
+import { InMemoryDataProvider } from '@/tools/video-editor/testing/InMemoryDataProvider.ts';
 
 export const CORE_TEST_TIMELINE_ID = 'timeline-headless-test';
 

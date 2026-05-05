@@ -1,22 +1,22 @@
-import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types';
-import { userSelectTimelineClip, userSelectTimelineClips } from '@/shared/state/selectionStore';
-import type { DropPosition } from '@/tools/video-editor/lib/drop-position';
-import type { TimelineInputModality } from '@/tools/video-editor/lib/mobile-interaction-model';
+import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import { userSelectTimelineClip, userSelectTimelineClips } from '@/shared/state/selectionStore.ts';
+import type { DropPosition } from '@/tools/video-editor/lib/drop-position.ts';
+import type { TimelineInputModality } from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 import {
   type ClipOffset,
   applyMultiDragMoves,
   buildAugmentedData,
   buildConfigFromDragResult,
   planMultiDragMoves,
-} from '@/tools/video-editor/lib/multi-drag-utils';
+} from '@/tools/video-editor/lib/multi-drag-utils.ts';
 import {
   findEnclosingPinnedGroup,
   orderClipIdsByAt,
   resolveGroupTrackId,
-} from '@/tools/video-editor/lib/pinned-group-projection';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { PinnedShotGroup, TrackKind } from '@/tools/video-editor/types';
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { PinnedShotGroup, TrackKind } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export interface ActionDragState {
   rowId: string;

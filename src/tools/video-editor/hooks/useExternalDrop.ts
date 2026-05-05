@@ -4,32 +4,32 @@ import {
   getMultiGenerationDropData,
   getShotDropData,
   getDragType,
-} from '@/shared/lib/dnd/dragDrop';
-import { getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers';
-import { inferDragKind } from '@/tools/video-editor/lib/drop-position';
-import { resolveFinalVideoDurationSeconds } from '@/tools/video-editor/lib/finalVideoAssets';
+} from '@/shared/lib/dnd/dragDrop.ts';
+import { getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers.ts';
+import { inferDragKind } from '@/tools/video-editor/lib/drop-position.ts';
+import { resolveFinalVideoDurationSeconds } from '@/tools/video-editor/lib/finalVideoAssets.ts';
 import {
   EXTERNAL_DROP_VISIBLE_VIDEO_FALLBACK_SECONDS,
   getFinalVideoDropDurationContract,
-} from '@/tools/video-editor/lib/timeline-asset-durations';
+} from '@/tools/video-editor/lib/timeline-asset-durations.ts';
 import {
   planAssetDropTarget,
   planFinalVideoGenerationAssetRegistration,
   planGenerationAssetRegistration,
-} from '@/tools/video-editor/lib/timeline-asset-plans';
-import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
+} from '@/tools/video-editor/lib/timeline-asset-plans.ts';
+import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator.ts';
 import {
   buildAssetDropEdit,
   type UseAssetManagementResult,
-} from '@/tools/video-editor/hooks/useAssetManagement';
+} from '@/tools/video-editor/hooks/useAssetManagement.ts';
 import type {
   TimelineApplyEdit,
   TimelineInvalidateAssetRegistry,
   TimelinePatchRegistry,
   TimelineRegisterAsset,
   TimelineUploadAsset,
-} from '@/tools/video-editor/hooks/timeline-state-types';
-import { type TimelineData } from '@/tools/video-editor/lib/timeline-data';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import { type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 import {
   finalizeExternalDrop,
   handleAssetDrop,
@@ -40,14 +40,14 @@ import {
   handleTextToolDrop,
   isGenerationDragType,
   type TimelineDropPosition,
-} from '@/tools/video-editor/lib/external-drop-utils';
-import { RafLoopDetector } from '@/tools/video-editor/lib/perf-diagnostics';
-import { buildPinnedShotGroupsOverride } from '@/tools/video-editor/lib/shot-group-commands';
-import type { TrackKind } from '@/tools/video-editor/types';
-import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll';
-import type { Shot } from '@/domains/generation/types';
-import type { ShotFinalVideo } from '@/tools/video-editor/hooks/useFinalVideoAvailable';
-import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/lib/external-drop-utils.ts';
+import { RafLoopDetector } from '@/tools/video-editor/lib/perf-diagnostics.ts';
+import { buildPinnedShotGroupsOverride } from '@/tools/video-editor/lib/shot-group-commands.ts';
+import type { TrackKind } from '@/tools/video-editor/types/index.ts';
+import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll.ts';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import type { ShotFinalVideo } from '@/tools/video-editor/hooks/useFinalVideoAvailable.ts';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore.ts';
 
 async function resolveFinalVideoDurationSecondsWithRetry(
   finalVideo: Parameters<typeof resolveFinalVideoDurationSeconds>[0],

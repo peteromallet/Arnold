@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
-import type { PreviewHandle } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
-import type { TimelineCanvasHandle } from '@/tools/video-editor/types/timeline-canvas';
+import type { PreviewHandle } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview.tsx';
+import type { TimelineCanvasHandle } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 interface UseTimelineSyncOptions {
   timelineRef: React.RefObject<TimelineCanvasHandle>;

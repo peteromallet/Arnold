@@ -1,4 +1,4 @@
-import type { TimelineConfig, TrackDefinition } from '@/tools/video-editor/types';
+import type { TimelineConfig, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 export const DEFAULT_VIDEO_TRACKS: TrackDefinition[] = [
   {

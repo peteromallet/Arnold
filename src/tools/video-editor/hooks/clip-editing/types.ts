@@ -1,11 +1,11 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { SelectClipOptions } from '@/shared/state/selectionStore';
+import type { SelectClipOptions } from '@/shared/state/selectionStore.ts';
 import type {
   ClipMeta,
   TimelineData,
-} from '@/tools/video-editor/lib/timeline-data';
-import type { ApplyEditOptions } from '@/tools/video-editor/hooks/useTimelineCommit';
-import type { TimelineSelectedTrack } from '@/tools/video-editor/hooks/timeline-state-types';
+} from '@/tools/video-editor/lib/timeline-data.ts';
+import type { ApplyEditOptions } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
+import type { TimelineSelectedTrack } from '@/tools/video-editor/hooks/timeline-state-types.ts';
 
 export type DeleteClipOptions = {
   allowPinnedGroupDelete?: boolean;

@@ -1,10 +1,10 @@
-import { migrateToFlatTracks, repairConfig } from '@/tools/video-editor/lib/migrate';
-import { assembleTimelineData, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import { migrateToFlatTracks, repairConfig } from '@/tools/video-editor/lib/migrate.ts';
+import { assembleTimelineData, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 import type {
   AssetRegistry,
   ResolvedAssetRegistryEntry,
   ResolvedTimelineConfig,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 
 const buildResolvedRegistry = (registry: AssetRegistry): Record<string, ResolvedAssetRegistryEntry> => {
   return Object.fromEntries(

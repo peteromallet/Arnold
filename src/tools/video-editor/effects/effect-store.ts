@@ -1,4 +1,4 @@
-import type { CustomEffectEntry } from '@/tools/video-editor/types';
+import type { CustomEffectEntry } from '@/tools/video-editor/types/index.ts';
 
 const STORAGE_KEY = 'video-editor:draft-effects';
 

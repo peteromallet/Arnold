@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
-import { VideoEditorShell } from '@/tools/video-editor/components/VideoEditorShell';
+import { VideoEditorShell } from '@/tools/video-editor/components/VideoEditorShell.tsx';
 import {
   BrowserVideoEditorProvider,
   type BrowserVideoEditorProviderProps,
-} from '@/tools/video-editor/browser/BrowserVideoEditorProvider';
+} from '@/tools/video-editor/browser/BrowserVideoEditorProvider.tsx';
 
 export type BrowserVideoEditorLayoutRenderer = (shell: ReactNode) => ReactNode;
 

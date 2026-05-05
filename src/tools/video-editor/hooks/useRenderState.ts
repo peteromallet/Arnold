@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useClientRender } from '@/tools/video-editor/hooks/useClientRender';
-import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline';
-import type { VideoEditorExporter } from '@/tools/video-editor/lib/browser-runtime';
-import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
+import { useClientRender } from '@/tools/video-editor/hooks/useClientRender.ts';
+import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline.ts';
+import type { VideoEditorExporter } from '@/tools/video-editor/lib/browser-runtime.ts';
+import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
 

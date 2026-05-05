@@ -1,11 +1,11 @@
-import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences';
+import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
 import {
   getClipTypeOverlayBehavior,
   getRegisteredClipTypeDescriptor,
   isClipTypeCommandAvailable,
   isSequenceParamsSchema,
-} from '@/tools/video-editor/clip-types';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/clip-types/index.ts';
+import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 const BASE_TABS: ClipTab[] = ['effects', 'timing'];
 

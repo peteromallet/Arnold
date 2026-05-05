@@ -1,7 +1,7 @@
 import type { FC } from 'react';
 import { AbsoluteFill } from 'remotion';
-import type { RuntimeTheme } from '@/tools/video-editor/compositions/fallback/theme-api';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+import type { RuntimeTheme } from '@/tools/video-editor/compositions/fallback/theme-api.tsx';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 type RegisteredSequenceComponent = FC<{
   clip: ResolvedTimelineClip;

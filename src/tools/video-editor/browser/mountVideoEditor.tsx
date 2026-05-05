@@ -1,5 +1,5 @@
 import { createRoot, type Root } from 'react-dom/client';
-import { BrowserVideoEditor, type BrowserVideoEditorProps } from '@/tools/video-editor/browser/BrowserVideoEditor';
+import { BrowserVideoEditor, type BrowserVideoEditorProps } from '@/tools/video-editor/browser/BrowserVideoEditor.tsx';
 
 export interface MountedVideoEditor {
   update(nextProps: BrowserVideoEditorProps): void;

@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { Shot } from '@/domains/generation/types';
-import { getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers';
-import { selectTimelineImages } from '@/shared/lib/shotImageSelectors';
-import { buildAssetDropEdit, type UseAssetManagementResult } from '@/tools/video-editor/hooks/useAssetManagement';
-import type { TimelineApplyEdit, TimelineDataRef } from '@/tools/video-editor/hooks/timeline-state-types';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import { getMediaUrl, getThumbnailUrl } from '@/shared/lib/media/mediaTypeHelpers.ts';
+import { selectTimelineImages } from '@/shared/lib/shotImageSelectors.ts';
+import { buildAssetDropEdit, type UseAssetManagementResult } from '@/tools/video-editor/hooks/useAssetManagement.ts';
+import type { TimelineApplyEdit, TimelineDataRef } from '@/tools/video-editor/hooks/timeline-state-types.ts';
 import {
   buildPinShotGroupMutation,
   buildUnpinShotGroupMutation,
   buildUpdatePinnedShotGroupMutation,
   clonePinnedShotGroup,
-} from '@/tools/video-editor/lib/shot-group-commands';
-import { orderClipIdsByAt, resolveGroupTrackId } from '@/tools/video-editor/lib/pinned-group-projection';
-import { ensureGroupContiguity } from '@/tools/video-editor/lib/shot-group-contiguity';
-import type { ClipMeta, TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { PinnedShotGroup } from '@/tools/video-editor/types';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/shot-group-commands.ts';
+import { orderClipIdsByAt, resolveGroupTrackId } from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import { ensureGroupContiguity } from '@/tools/video-editor/lib/shot-group-contiguity.ts';
+import type { ClipMeta, TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { PinnedShotGroup } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 interface UsePinnedShotGroupsArgs {
   dataRef: TimelineDataRef;

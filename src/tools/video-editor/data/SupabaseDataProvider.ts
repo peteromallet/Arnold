@@ -2,22 +2,22 @@
  * Internal Reigh persistence adapter backed by Supabase.
  * Not part of the supported public SDK surface.
  */
-import { getSupabaseClient } from '@/integrations/supabase/client';
-import { generateUUID } from '@/shared/lib/taskCreation/ids';
-import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults';
-import { extractAssetRegistryEntry } from '@/tools/video-editor/lib/mediaMetadata';
+import { getSupabaseClient } from '@/integrations/supabase/client.ts';
+import { generateUUID } from '@/shared/lib/taskCreation/ids.ts';
+import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults.ts';
+import { extractAssetRegistryEntry } from '@/tools/video-editor/lib/mediaMetadata.ts';
 import {
   serializeTimelineConfigSnapshot,
   serializeTimelinePair,
-} from '@/tools/video-editor/lib/timeline-domain';
+} from '@/tools/video-editor/lib/timeline-domain.ts';
 import {
   TimelineVersionConflictError,
   type DataProvider,
   type LoadedTimeline,
   type UploadAssetOptions,
-} from '@/tools/video-editor/data/DataProvider';
-import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types';
-import type { Checkpoint } from '@/tools/video-editor/types/history';
+} from '@/tools/video-editor/data/DataProvider.ts';
+import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
 
 const TIMELINE_ASSETS_BUCKET = 'timeline-assets';
 const TIMELINE_CHECKPOINT_LIMIT = 30;

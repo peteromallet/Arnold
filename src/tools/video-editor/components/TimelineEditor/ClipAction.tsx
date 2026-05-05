@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, Clapperboard, Copy, Ellipsis, Film, FolderPlus, ImageIcon, Layers, Loader2, Music2, RefreshCw, Scissors, Sparkles, Trash2, Type, X } from 'lucide-react';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker';
-import type { GenerationVariant } from '@/shared/hooks/variants/useVariants';
-import type { Shot } from '@/domains/generation/types';
-import { usePortalMousedownGuard } from '@/shared/hooks/usePortalMousedownGuard';
-import { WaveformOverlay } from '@/tools/video-editor/components/TimelineEditor/WaveformOverlay';
-import { useWaveformData } from '@/tools/video-editor/hooks/useWaveformData';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { MediaVariantPicker } from '@/shared/components/MediaVariantPicker.tsx';
+import type { GenerationVariant } from '@/shared/hooks/variants/useVariants.ts';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import { usePortalMousedownGuard } from '@/shared/hooks/usePortalMousedownGuard.ts';
+import { WaveformOverlay } from '@/tools/video-editor/components/TimelineEditor/WaveformOverlay.tsx';
+import { useWaveformData } from '@/tools/video-editor/hooks/useWaveformData.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 const log = import.meta.env.DEV ? (...args: Parameters<typeof console.log>) => console.log(...args) : () => {};
 

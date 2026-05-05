@@ -4,16 +4,16 @@ import {
   type BuildInsertSequenceDraftOptions,
   type BuildReplaceSequenceDraftOptions,
   type SequenceDraftEditError,
-} from '@/tools/video-editor/lib/sequence-drafts';
+} from '@/tools/video-editor/lib/sequence-drafts.ts';
 import {
   buildTimelineData,
   rowsToConfig,
   type ClipMeta,
   type ClipOrderMap,
-} from '@/tools/video-editor/lib/timeline-data';
-import type { UrlResolver } from '@/tools/video-editor/lib/config-utils';
-import type { ValidatedSequenceDraft } from '@/tools/video-editor/sequences/validation';
-import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/lib/timeline-data.ts';
+import type { UrlResolver } from '@/tools/video-editor/lib/config-utils.ts';
+import type { ValidatedSequenceDraft } from '@/tools/video-editor/sequences/validation.ts';
+import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 export type InsertSequenceDraftIntoTimelineOptions = BuildInsertSequenceDraftOptions & {
   mode?: 'insert';

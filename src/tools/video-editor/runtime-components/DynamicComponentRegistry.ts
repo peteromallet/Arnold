@@ -1,5 +1,5 @@
 import type { FC } from 'react';
-import type { CompileResult } from './compileWithGlobals';
+import type { CompileResult } from './compileWithGlobals.ts';
 
 export interface DynamicComponentRegistryOptions<TProps, TSchema> {
   builtIn: Record<string, FC<TProps>>;

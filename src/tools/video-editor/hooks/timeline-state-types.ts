@@ -1,11 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
-import type { ApplyEditOptions, TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit';
-import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline';
-import type { RenderRuntime } from '@/tools/video-editor/render/renderRuntime';
-import type { AssetRegistryEntry, TrackDefinition } from '@/tools/video-editor/types';
-import type { AssetRegistry } from '@/tools/video-editor/types';
-import type { Checkpoint } from '@/tools/video-editor/types/history';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import type { ApplyEditOptions, TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
+import type { CompositionMetadata } from '@/tools/video-editor/hooks/useDerivedTimeline.ts';
+import type { RenderRuntime } from '@/tools/video-editor/render/renderRuntime.ts';
+import type { AssetRegistryEntry, TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import type { AssetRegistry } from '@/tools/video-editor/types/index.ts';
+import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 
 export type TimelineResolvedConfig = TimelineData['resolvedConfig'] | null;
 export type TimelineSelectedClip = TimelineData['resolvedConfig']['clips'][number] | null;

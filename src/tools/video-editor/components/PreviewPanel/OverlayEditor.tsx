@@ -5,11 +5,11 @@ import {
   getClipTypeOverlayBehavior,
   getRegisteredClipTypeDescriptor,
   type ClipTypeOverlayBehavior,
-} from '@/tools/video-editor/clip-types';
+} from '@/tools/video-editor/clip-types/index.ts';
 import {
   hasRenderableBounds,
-} from '@/tools/video-editor/lib/render-bounds';
-import { useEffectDiagnostic, useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
+} from '@/tools/video-editor/lib/render-bounds.ts';
+import { useEffectDiagnostic, useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
 import {
   isTouchTimelineInput,
   type TimelineContextTarget,
@@ -18,10 +18,10 @@ import {
   type TimelineInputModality,
   type TimelineInspectorTarget,
   type TimelineInteractionMode,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
-import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 import {
   clamp,
   getFullBoundsFromVisibleBounds,
@@ -34,8 +34,8 @@ import {
   type CropValues,
   type OverlayBounds,
   type OverlayLayout,
-} from '@/tools/video-editor/lib/overlay-bounds';
-import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
+} from '@/tools/video-editor/lib/overlay-bounds.ts';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
 
 interface OverlayEditorProps {
   rows: TimelineRow[];

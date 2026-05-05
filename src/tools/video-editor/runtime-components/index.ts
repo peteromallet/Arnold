@@ -4,9 +4,9 @@ export {
   preloadSucrase,
   type CompileResult,
   type CompileWithGlobalsOptions,
-} from './compileWithGlobals';
+} from './compileWithGlobals.ts';
 
 export {
   DynamicComponentRegistry,
   type DynamicComponentRegistryOptions,
-} from './DynamicComponentRegistry';
+} from './DynamicComponentRegistry.ts';

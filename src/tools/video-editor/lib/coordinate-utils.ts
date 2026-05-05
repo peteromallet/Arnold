@@ -1,5 +1,5 @@
-import type { TrackDefinition, TrackKind } from '@/tools/video-editor/types';
-import type { ClipMeta, ClipOrderMap } from '@/tools/video-editor/lib/timeline-data';
+import type { TrackDefinition, TrackKind } from '@/tools/video-editor/types/index.ts';
+import type { ClipMeta, ClipOrderMap } from '@/tools/video-editor/lib/timeline-data.ts';
 
 export const ROW_HEIGHT = 36;
 export const SCALE_SECONDS = 5;

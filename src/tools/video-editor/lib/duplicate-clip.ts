@@ -1,5 +1,5 @@
-import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 
 function cloneClipMeta(meta: ClipMeta, assetKey: string, trackId: string): ClipMeta {
   return {

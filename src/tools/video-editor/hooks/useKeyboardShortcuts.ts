@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { isEditableTarget } from '@/tools/video-editor/lib/coordinate-utils';
+import { isEditableTarget } from '@/tools/video-editor/lib/coordinate-utils.ts';
 
 interface UseKeyboardShortcutsOptions {
   hasSelectedClip: boolean;

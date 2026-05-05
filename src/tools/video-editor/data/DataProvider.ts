@@ -1,12 +1,12 @@
-import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types';
-import type { Checkpoint } from '@/tools/video-editor/types/history';
-import type { AssetResolver } from '@/tools/video-editor/data/AssetResolver';
+import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
+import type { AssetResolver } from '@/tools/video-editor/data/AssetResolver.ts';
 export type {
   AssetProfile,
   SilenceRegion,
   UploadedAssetResult,
   UploadAssetOptions,
-} from '@/tools/video-editor/data/AssetResolver';
+} from '@/tools/video-editor/data/AssetResolver.ts';
 
 export interface LoadedTimeline {
   config: TimelineConfig;

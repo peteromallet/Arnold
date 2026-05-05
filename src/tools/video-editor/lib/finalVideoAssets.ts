@@ -1,6 +1,6 @@
-import { extractVideoMetadataFromUrl } from '@/shared/lib/media/videoMetadata';
-import { asRecord } from '@/shared/lib/jsonNarrowing';
-import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+import { extractVideoMetadataFromUrl } from '@/shared/lib/media/videoMetadata.ts';
+import { asRecord } from '@/shared/lib/jsonNarrowing.ts';
+import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 export interface FinalVideoAssetSource {
   id: string;

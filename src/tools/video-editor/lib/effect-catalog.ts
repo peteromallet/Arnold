@@ -1,4 +1,4 @@
-import type { EffectMetadata } from '@/features/resources/hooks/useResources';
+import type { EffectMetadata } from '@/features/resources/hooks/useResources.ts';
 
 export type EffectCategory = EffectMetadata['category'];
 

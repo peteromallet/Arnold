@@ -1,4 +1,4 @@
-import { RafLoopDetector } from '@/tools/video-editor/lib/perf-diagnostics';
+import { RafLoopDetector } from '@/tools/video-editor/lib/perf-diagnostics.ts';
 
 const EDGE_ZONE_PX = 40;
 const MAX_SCROLL_SPEED = 12;

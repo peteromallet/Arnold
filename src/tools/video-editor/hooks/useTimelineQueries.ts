@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { loadTimelineJsonFromProvider } from '@/tools/video-editor/lib/timeline-data';
-import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import { loadTimelineJsonFromProvider } from '@/tools/video-editor/lib/timeline-data.ts';
+import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline.ts';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 
 export function useTimelineQueries(
   provider: DataProvider,

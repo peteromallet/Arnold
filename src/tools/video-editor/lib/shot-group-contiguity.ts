@@ -1,5 +1,5 @@
-import type { PinnedShotGroup } from '@/tools/video-editor/types';
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+import type { PinnedShotGroup } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 const CONTIGUITY_EPSILON = 0.001;
 

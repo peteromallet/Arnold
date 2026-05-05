@@ -8,9 +8,9 @@ import {
   getSanitizedPlaybackRate,
   getSanitizedVolume,
   secondsToFrames,
-} from '@/tools/video-editor/lib/config-utils';
-import { MediaErrorBoundary } from '@/tools/video-editor/compositions/MediaErrorBoundary';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/lib/config-utils.ts';
+import { MediaErrorBoundary } from '@/tools/video-editor/compositions/MediaErrorBoundary.tsx';
+import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 const AudioTrackComponent: FC<{
   track: TrackDefinition;

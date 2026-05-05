@@ -1,7 +1,7 @@
-import { categorizeSelection, findGroupForTrack } from '@/tools/video-editor/lib/pinned-group-projection';
-import { buildDeleteShotGroupMutation, clonePinnedShotGroup } from '@/tools/video-editor/lib/shot-group-commands';
-import type { TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import { categorizeSelection, findGroupForTrack } from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import { buildDeleteShotGroupMutation, clonePinnedShotGroup } from '@/tools/video-editor/lib/shot-group-commands.ts';
+import type { TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 
 export function buildKeyboardDeleteMutation(
   currentData: TimelineData | null,

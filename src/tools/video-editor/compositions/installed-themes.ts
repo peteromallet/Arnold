@@ -5,7 +5,7 @@ import {
 import type {
   ResolvedTimelineConfig,
   ThemeOverrides,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 
 type ThemeRegistry = Record<string, Theme>;
 

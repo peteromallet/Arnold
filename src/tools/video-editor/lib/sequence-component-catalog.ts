@@ -1,4 +1,4 @@
-import type { SequenceComponentMetadata } from '@/features/resources/hooks/useResources';
+import type { SequenceComponentMetadata } from '@/features/resources/hooks/useResources.ts';
 
 export type SequenceComponentResource = SequenceComponentMetadata & {
   id: string;

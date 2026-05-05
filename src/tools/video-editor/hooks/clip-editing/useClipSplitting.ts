@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { splitClipAtPlayhead } from '@/tools/video-editor/lib/editor-utils';
-import { splitIntersectingClipsAtPlayhead } from '@/tools/video-editor/lib/clip-editing-utils';
-import type { ClipEditingContext } from './types';
+import { splitClipAtPlayhead } from '@/tools/video-editor/lib/editor-utils.ts';
+import { splitIntersectingClipsAtPlayhead } from '@/tools/video-editor/lib/clip-editing-utils.ts';
+import type { ClipEditingContext } from './types.ts';
 
 export function useClipSplitting(ctx: ClipEditingContext) {
   const {

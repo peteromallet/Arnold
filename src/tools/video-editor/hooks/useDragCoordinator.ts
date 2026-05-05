@@ -3,15 +3,15 @@ import type { MutableRefObject } from 'react';
 import type {
   DropIndicatorHandle,
   DropIndicatorPosition,
-} from '@/tools/video-editor/components/TimelineEditor/DropIndicator';
+} from '@/tools/video-editor/components/TimelineEditor/DropIndicator.tsx';
 import {
   computeDropPosition,
   type DropPosition,
-} from '@/tools/video-editor/lib/drop-position';
-import type { GhostRect } from '@/tools/video-editor/lib/multi-drag-utils';
-import { RafLoopDetector } from '@/tools/video-editor/lib/perf-diagnostics';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TrackKind } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/lib/drop-position.ts';
+import type { GhostRect } from '@/tools/video-editor/lib/multi-drag-utils.ts';
+import { RafLoopDetector } from '@/tools/video-editor/lib/perf-diagnostics.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TrackKind } from '@/tools/video-editor/types/index.ts';
 
 export interface DragCoordinator {
   update(params: {

@@ -1,10 +1,10 @@
-import { assembleTimelineData, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import { canonicalizeTimelinePair } from '@/tools/video-editor/lib/timeline-domain';
+import { assembleTimelineData, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import { canonicalizeTimelinePair } from '@/tools/video-editor/lib/timeline-domain.ts';
 import type {
   AssetRegistry,
   ResolvedAssetRegistryEntry,
   TimelineConfig,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 
 export function shouldAcceptPolledData(
   editSeq: number,

@@ -1,5 +1,5 @@
-import type { ClipMeta, ClipOrderMap, TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+import type { ClipMeta, ClipOrderMap, TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];

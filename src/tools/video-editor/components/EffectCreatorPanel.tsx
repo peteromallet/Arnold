@@ -2,38 +2,38 @@ import { useCallback, useMemo, useRef, useState, type FC } from 'react';
 import { Loader2, RotateCcw, Save, Sparkles, Pencil, Globe, Lock, X } from 'lucide-react';
 import { Player } from '@remotion/player';
 import { AbsoluteFill } from 'remotion';
-import { Button } from '@/shared/components/ui/button';
+import { Button } from '@/shared/components/ui/button.tsx';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/shared/components/ui/dialog';
-import { Input } from '@/shared/components/ui/input';
-import { Slider } from '@/shared/components/ui/slider';
+} from '@/shared/components/ui/dialog.tsx';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { Slider } from '@/shared/components/ui/slider.tsx';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/shared/components/ui/select';
-import { Switch } from '@/shared/components/ui/switch';
-import { Textarea } from '@/shared/components/ui/textarea';
-import { toast } from '@/shared/components/ui/toast';
-import { invokeSupabaseEdgeFunction } from '@/integrations/supabase/functions/invokeSupabaseEdgeFunction';
-import { ParameterControls, getDefaultValues } from '@/tools/video-editor/components/ParameterControls';
-import { SyntheticAudioProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider';
-import { tryCompileEffectAsync, type CompileResult } from '@/tools/video-editor/effects/compileEffect';
-import { wrapWithEffect } from '@/tools/video-editor/effects';
-import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances';
+} from '@/shared/components/ui/select.tsx';
+import { Switch } from '@/shared/components/ui/switch.tsx';
+import { Textarea } from '@/shared/components/ui/textarea.tsx';
+import { toast } from '@/shared/components/ui/toast.tsx';
+import { invokeSupabaseEdgeFunction } from '@/integrations/supabase/functions/invokeSupabaseEdgeFunction.ts';
+import { ParameterControls, getDefaultValues } from '@/tools/video-editor/components/ParameterControls.tsx';
+import { SyntheticAudioProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider.tsx';
+import { tryCompileEffectAsync, type CompileResult } from '@/tools/video-editor/effects/compileEffect.tsx';
+import { wrapWithEffect } from '@/tools/video-editor/effects/index.tsx';
+import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances.tsx';
 import {
   type EffectCategory,
   type EffectResource,
   useEffectResources,
-} from '@/tools/video-editor/hooks/useEffectResources';
-import type { ParameterSchema } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/hooks/useEffectResources.ts';
+import type { ParameterSchema } from '@/tools/video-editor/types/index.ts';
 
 // ---------------------------------------------------------------------------
 // Types

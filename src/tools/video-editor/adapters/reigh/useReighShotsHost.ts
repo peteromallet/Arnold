@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useShots } from '@/shared/contexts/ShotsContext';
-import { useShotFinalVideos, type ShotFinalVideo } from '@/tools/travel-between-images/hooks/video/useShotFinalVideos';
-import type { VideoEditorShotsHost } from '@/tools/video-editor/runtime/ports';
+import { useShots } from '@/shared/contexts/ShotsContext.tsx';
+import { useShotFinalVideos, type ShotFinalVideo } from '@/tools/travel-between-images/hooks/video/useShotFinalVideos.ts';
+import type { VideoEditorShotsHost } from '@/tools/video-editor/runtime/ports.ts';
 
 const MAX_DISMISSED_FINAL_VIDEOS = 256;
 const dismissedFinalVideoIds = new Set<string>();

@@ -1,10 +1,10 @@
-import { Input } from '@/shared/components/ui/input';
-import { NumberInput } from '@/shared/components/ui/number-input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select';
-import { Slider } from '@/shared/components/ui/slider';
-import { Switch } from '@/shared/components/ui/switch';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import type { AudioBindingValue, ParameterDefinition, ParameterSchema } from '@/tools/video-editor/types';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { NumberInput } from '@/shared/components/ui/number-input.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select.tsx';
+import { Slider } from '@/shared/components/ui/slider.tsx';
+import { Switch } from '@/shared/components/ui/switch.tsx';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import type { AudioBindingValue, ParameterDefinition, ParameterSchema } from '@/tools/video-editor/types/index.ts';
 
 export interface ParameterControlsProps {
   schema: ParameterSchema;

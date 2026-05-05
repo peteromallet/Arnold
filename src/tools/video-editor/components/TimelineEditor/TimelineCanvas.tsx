@@ -13,48 +13,48 @@ import React, {
 } from 'react';
 import { type DragEndEvent, useSensors } from '@dnd-kit/core';
 import { Layers, Sparkles } from 'lucide-react';
-import { usePortalMousedownGuard } from '@/shared/hooks/usePortalMousedownGuard';
+import { usePortalMousedownGuard } from '@/shared/hooks/usePortalMousedownGuard.ts';
 import {
   ShotGroupBorders,
   ShotGroupLabels,
   type PositionedShotGroup,
-} from '@/tools/video-editor/components/TimelineEditor/ShotGroupOverlay';
+} from '@/tools/video-editor/components/TimelineEditor/ShotGroupOverlay.tsx';
 import {
   ShotGroupContextMenu,
   type ShotGroupMenuState,
-} from '@/tools/video-editor/components/TimelineEditor/ShotGroupContextMenu';
+} from '@/tools/video-editor/components/TimelineEditor/ShotGroupContextMenu.tsx';
 import {
   buildGridBackground,
   TimelineRulerAndGrid,
-} from '@/tools/video-editor/components/TimelineEditor/TimelineRulerAndGrid';
-import { TrackListRenderer } from '@/tools/video-editor/components/TimelineEditor/TrackListRenderer';
-import { useClipResizeGesture } from '@/tools/video-editor/hooks/useClipResizeGesture';
-import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups';
-import { useTimelineMutableAdapters } from '@/tools/video-editor/hooks/timelineStore';
-import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils';
+} from '@/tools/video-editor/components/TimelineEditor/TimelineRulerAndGrid.tsx';
+import { TrackListRenderer } from '@/tools/video-editor/components/TimelineEditor/TrackListRenderer.tsx';
+import { useClipResizeGesture } from '@/tools/video-editor/hooks/useClipResizeGesture.ts';
+import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups.ts';
+import { useTimelineMutableAdapters } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils.ts';
 import {
   shouldExpandTouchTrimHandles,
   type TimelineDeviceClass,
   type TimelineGestureOwner,
   type TimelineInputModality,
   type TimelineInteractionMode,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 import {
   type ResizeDir,
-} from '@/tools/video-editor/lib/resize-math';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
-import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
-import { useRenderBudget } from '@/shared/dev/useRenderBudget';
+} from '@/tools/video-editor/lib/resize-math.ts';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale.ts';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget.ts';
 import {
   TIMELINE_CENTER_CLIP_EVENT,
   type TimelineCenterClipEventDetail,
-} from '@/tools/video-editor/lib/timeline-viewport-events';
-import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
-import type { TrackDefinition } from '@/tools/video-editor/types';
-import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
-import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag';
-import type { ClipEdgeResizeEndTarget } from '@/tools/video-editor/hooks/useClipResize';
-import type { MarqueeRect } from '@/tools/video-editor/hooks/useMarqueeSelect';
+} from '@/tools/video-editor/lib/timeline-viewport-events.ts';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
+import type { TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction, TimelineCanvasHandle, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { DragSession } from '@/tools/video-editor/hooks/useClipDrag.ts';
+import type { ClipEdgeResizeEndTarget } from '@/tools/video-editor/hooks/useClipResize.ts';
+import type { MarqueeRect } from '@/tools/video-editor/hooks/useMarqueeSelect.ts';
 import {
   ACTION_VERTICAL_MARGIN,
   CURSOR_WIDTH,
@@ -63,7 +63,7 @@ import {
   RESIZE_HANDLE_WIDTH,
   TOUCH_RESIZE_HANDLE_WIDTH,
   type ResizeOverride,
-} from './timeline-canvas-constants';
+} from './timeline-canvas-constants.ts';
 
 interface ScrollMetrics {
   scrollLeft: number;

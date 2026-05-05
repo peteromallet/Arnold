@@ -1,9 +1,9 @@
 import { memo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useHomeNavigation } from '@/shared/hooks/useHomeNavigation';
-import { usePanesStore } from '@/shared/state/panesStore';
-import { CompactPreview } from '@/tools/video-editor/components/CompactPreview';
-import { TimelineEditorShellCore } from '@/tools/video-editor/components/TimelineEditorShellCore';
+import { useHomeNavigation } from '@/shared/hooks/useHomeNavigation.ts';
+import { usePanesStore } from '@/shared/state/panesStore.ts';
+import { CompactPreview } from '@/tools/video-editor/components/CompactPreview.tsx';
+import { TimelineEditorShellCore } from '@/tools/video-editor/components/TimelineEditorShellCore.tsx';
 
 interface ReighVideoEditorShellProps {
   mode: 'full' | 'compact';

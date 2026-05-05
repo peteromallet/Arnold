@@ -7,11 +7,11 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import type { VideoEditorDialogDescriptor } from '@/tools/video-editor/runtime/extensionSurface';
+import type { VideoEditorDialogDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import {
   useVideoEditorDialogDescriptors,
   useVideoEditorRenderContext,
-} from '@/tools/video-editor/runtime/useVideoEditorRenderContext';
+} from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
 
 interface VideoEditorDialogHostRegistryValue {
   upsert: (ownerId: string, dialogs: readonly VideoEditorDialogDescriptor[]) => void;

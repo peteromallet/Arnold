@@ -1,9 +1,9 @@
 import type { DragEvent as ReactDragEvent, MutableRefObject } from 'react';
-import { getDragType } from '@/shared/lib/dnd/dragDrop';
-import { findNearestFreeTrack, rawRowIndexFromY, trySnapToEdge } from '@/tools/video-editor/lib/coordinate-utils';
-import { createTimelineScale } from '@/tools/video-editor/lib/timeline-scale';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TrackKind } from '@/tools/video-editor/types';
+import { getDragType } from '@/shared/lib/dnd/dragDrop.ts';
+import { findNearestFreeTrack, rawRowIndexFromY, trySnapToEdge } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { createTimelineScale } from '@/tools/video-editor/lib/timeline-scale.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TrackKind } from '@/tools/video-editor/types/index.ts';
 
 interface TimelineDomNodes {
   wrapper: HTMLDivElement;

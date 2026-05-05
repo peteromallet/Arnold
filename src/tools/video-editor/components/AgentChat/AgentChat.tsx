@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Loader2, MessageSquareText, Mic, Send, Square, X } from 'lucide-react';
-import type { GenerationRow } from '@/domains/generation/types';
-import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox';
-import { Button } from '@/shared/components/ui/button';
-import { useAgentChatBridge, useAgentChatActionsRegistry, type AgentChatActionsHandlers } from '@/shared/contexts/AgentChatContext';
-import { composerClearAttachments, composerRemoveAttachment } from '@/shared/state/selectionStore';
-import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet';
-import { usePanesStore } from '@/shared/state/panesStore';
-import { useAgentSession, useAgentSessions, useCancelSession, useCreateSession, useSendMessage } from '@/tools/video-editor/hooks/useAgentSession';
-import { useAgentVoice } from '@/tools/video-editor/hooks/useAgentVoice';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
-import { loadGenerationForLightbox } from '@/tools/video-editor/lib/generation-utils';
-import type { AgentTurn, AgentTurnAttachment } from '@/tools/video-editor/types/agent-session';
-import { AgentChatAttachmentStrip, AgentChatMessage, AgentChatToolGroup, type AgentChatAttachmentPreviewItem } from './AgentChatMessage';
+import type { GenerationRow } from '@/domains/generation/types/index.ts';
+import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox.tsx';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { useAgentChatBridge, useAgentChatActionsRegistry, type AgentChatActionsHandlers } from '@/shared/contexts/AgentChatContext.tsx';
+import { composerClearAttachments, composerRemoveAttachment } from '@/shared/state/selectionStore.ts';
+import { useCurrentAttachmentSet } from '@/shared/state/currentAttachmentSet.ts';
+import { usePanesStore } from '@/shared/state/panesStore.ts';
+import { useAgentSession, useAgentSessions, useCancelSession, useCreateSession, useSendMessage } from '@/tools/video-editor/hooks/useAgentSession.ts';
+import { useAgentVoice } from '@/tools/video-editor/hooks/useAgentVoice.ts';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { loadGenerationForLightbox } from '@/tools/video-editor/lib/generation-utils.ts';
+import type { AgentTurn, AgentTurnAttachment } from '@/tools/video-editor/types/agent-session.ts';
+import { AgentChatAttachmentStrip, AgentChatMessage, AgentChatToolGroup, type AgentChatAttachmentPreviewItem } from './AgentChatMessage.tsx';
 
 export type ToolCallPair = {
   call: AgentTurn;

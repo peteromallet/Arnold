@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react';
 import { AudioWaveform, Volume2 } from 'lucide-react';
-import { Button } from '@/shared/components/ui/button';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { Input } from '@/shared/components/ui/input';
-import { NumberInput } from '@/shared/components/ui/number-input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select';
-import { Slider } from '@/shared/components/ui/slider';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs';
-import { getDefaultValues } from '@/tools/video-editor/components/ParameterControls';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { NumberInput } from '@/shared/components/ui/number-input.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select.tsx';
+import { Slider } from '@/shared/components/ui/slider.tsx';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs.tsx';
+import { getDefaultValues } from '@/tools/video-editor/components/ParameterControls.tsx';
 import {
   FieldLabel,
   NO_EFFECT,
   TAB_COLUMNS_CLASS,
-} from '@/tools/video-editor/components/PropertiesPanel/ClipPanel';
-import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects';
-import { useEffectResources } from '@/tools/video-editor/hooks/useEffectResources';
-import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx';
+import { continuousEffectTypes, entranceEffectTypes, exitEffectTypes } from '@/tools/video-editor/effects/index.tsx';
+import { useEffectResources } from '@/tools/video-editor/hooks/useEffectResources.ts';
+import type { ClipTab } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 const MIXED_SELECT_VALUE = '__mixed__';
 

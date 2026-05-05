@@ -1,4 +1,4 @@
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 /** Default snap threshold in seconds — overridden at call site based on zoom. */
 const DEFAULT_THRESHOLD_S = 0.15;

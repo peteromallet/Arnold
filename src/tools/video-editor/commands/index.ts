@@ -3,7 +3,7 @@ export {
   createTimelineCommandRegistry,
   createTimelineCommandRunner,
   runTimelineCommands,
-} from './runner';
+} from './runner.ts';
 export {
   ADD_MEDIA_COMMAND_DESCRIPTOR,
   applyProvisionedMediaCommand,
@@ -13,16 +13,16 @@ export {
   dryRunProvisionedMediaCommand,
   materializeProvisionedMediaCommand,
   MEDIA_COMMAND_DESCRIPTORS,
-} from './media';
+} from './media.ts';
 export {
   buildExternalTimelineAssetEntry,
   estimateProvisionedAssetDuration,
   provisionRegisteredTimelineMedia,
   provisionTimelineMedia,
-} from './provisioning';
+} from './provisioning.ts';
 export {
   buildTimelineCommandData,
-} from './timelineData';
+} from './timelineData.ts';
 export type {
   JsonObject,
   JsonPrimitive,
@@ -48,11 +48,11 @@ export type {
   TimelineCommandStepStatus,
   TimelineCommandTransaction,
   TimelineCommandValidationError,
-} from './types';
+} from './types.ts';
 export type {
   AddMediaCommand,
   SwapMediaCommand,
-} from './media';
+} from './media.ts';
 export type {
   ExternalTimelineMediaSource,
   RegisteredTimelineMediaSource,
@@ -60,4 +60,4 @@ export type {
   TimelineMediaSource,
   TimelineProvisionedAsset,
   TimelineProvisionedMediaType,
-} from './provisioning';
+} from './provisioning.ts';

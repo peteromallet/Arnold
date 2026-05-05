@@ -1,13 +1,13 @@
-import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types';
+import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types/index.ts';
 import {
   toClipTypeManifest,
   type ClipTypeManifest,
-} from './defineClipType';
+} from './defineClipType.ts';
 import {
   createAvailableClipTypeRegistry,
   TRUSTED_CLIP_TYPE_REGISTRATIONS,
-} from './registry';
-import { getBuiltinClipTypeDescriptor } from './runtime';
+} from './registry.ts';
+import { getBuiltinClipTypeDescriptor } from './runtime.ts';
 
 export type ClipTypeCapabilityManifestEntry = ClipTypeManifest & {
   source: 'builtin' | 'sequence';

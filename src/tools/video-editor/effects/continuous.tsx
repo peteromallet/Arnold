@@ -1,6 +1,6 @@
 import type { FC } from 'react';
 import { AbsoluteFill, interpolate, useCurrentFrame } from 'remotion';
-import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances';
+import type { EffectComponentProps } from '@/tools/video-editor/effects/entrances.tsx';
 
 export const KenBurnsEffect: FC<EffectComponentProps> = ({ children, durationInFrames, intensity = 0.5 }) => {
   const frame = useCurrentFrame();

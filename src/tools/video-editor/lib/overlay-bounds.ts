@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export type CropValues = { cropTop: number; cropBottom: number; cropLeft: number; cropRight: number };
 export type OverlayBounds = { x: number; y: number; width: number; height: number };

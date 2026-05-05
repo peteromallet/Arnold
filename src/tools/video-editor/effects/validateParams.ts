@@ -1,4 +1,4 @@
-import type { AudioBindingValue, ParameterDefinition, ParameterSchema } from '@/tools/video-editor/types';
+import type { AudioBindingValue, ParameterDefinition, ParameterSchema } from '@/tools/video-editor/types/index.ts';
 
 const COLOR_RE = /^#[0-9a-f]{3,8}$/i;
 const AUDIO_SOURCES = new Set<AudioBindingValue['source']>(['bass', 'mid', 'treble', 'amplitude']);

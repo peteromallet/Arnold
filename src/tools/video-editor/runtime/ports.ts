@@ -1,7 +1,7 @@
 import type { ComponentType, ReactNode } from 'react';
-import type { Shot, GenerationRow } from '@/domains/generation/types';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
-import type { ShotFinalVideo } from '@/tools/travel-between-images/hooks/video/useShotFinalVideos';
+import type { Shot, GenerationRow } from '@/domains/generation/types/index.ts';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
+import type { ShotFinalVideo } from '@/tools/travel-between-images/hooks/video/useShotFinalVideos.ts';
 
 /**
  * Checklist-backed runtime inventory for the host surfaces Sprint 2 is

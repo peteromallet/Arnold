@@ -4,13 +4,13 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import { Check, GripVertical, Settings, Trash2, Video, Volume2, VolumeX } from 'lucide-react';
-import { Button } from '@/shared/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/shared/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select';
-import { Slider } from '@/shared/components/ui/slider';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { isTrackMuted } from '@/tools/video-editor/lib/editor-utils';
-import type { TrackBlendMode, TrackDefinition, TrackFit } from '@/tools/video-editor/types';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/shared/components/ui/dialog.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select.tsx';
+import { Slider } from '@/shared/components/ui/slider.tsx';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { isTrackMuted } from '@/tools/video-editor/lib/editor-utils.ts';
+import type { TrackBlendMode, TrackDefinition, TrackFit } from '@/tools/video-editor/types/index.ts';
 
 interface TrackLabelProps {
   id: string;

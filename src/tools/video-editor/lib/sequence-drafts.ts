@@ -1,15 +1,15 @@
-import type { TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit';
-import { createClipMetaFromDescriptor } from '@/tools/video-editor/clip-types/runtime';
+import type { TimelineEditMutation } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
+import { createClipMetaFromDescriptor } from '@/tools/video-editor/clip-types/runtime.ts';
 import {
   findNearestFreeTrack,
   getCompatibleTrackId,
   trySnapToEdge,
   updateClipOrder,
-} from '@/tools/video-editor/lib/coordinate-utils';
-import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps';
-import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { ValidatedSequenceDraft } from '@/tools/video-editor/sequences/validation';
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps.ts';
+import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { ValidatedSequenceDraft } from '@/tools/video-editor/sequences/validation.ts';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export type SequenceDraftEditError =
   | 'no_visual_track'

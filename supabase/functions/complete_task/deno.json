@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@/": "../../../src/",
+    "@banodoco/timeline-ops": "../../../vendor/timeline-ops/typescript/dist/src/index.js",
+    "@banodoco/timeline-schema": "../../../vendor/timeline-schema/typescript/dist/src/index.js",
+    "@banodoco/timeline-composition": "../../../vendor/timeline-composition/typescript/dist/src/index.js",
+    "@banodoco/timeline-theme-2rp": "../../../vendor/timeline-theme-2rp/typescript/dist/src/index.js"
+  }
+}

@@ -1,8 +1,8 @@
 import type { FC, ReactNode } from 'react';
-import { secondsToFrames } from '@/tools/video-editor/lib/config-utils';
-import { DynamicEffectRegistry } from '@/tools/video-editor/effects/DynamicEffectRegistry';
-import { EffectErrorBoundary } from '@/tools/video-editor/effects/EffectErrorBoundary';
-import { validateAndCoerceParams } from '@/tools/video-editor/effects/validateParams';
+import { secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import { DynamicEffectRegistry } from '@/tools/video-editor/effects/DynamicEffectRegistry.ts';
+import { EffectErrorBoundary } from '@/tools/video-editor/effects/EffectErrorBoundary.tsx';
+import { validateAndCoerceParams } from '@/tools/video-editor/effects/validateParams.ts';
 import {
   BounceEntrance,
   FadeEntrance,
@@ -16,14 +16,14 @@ import {
   ZoomInEntrance,
   ZoomSpinEntrance,
   type EffectComponentProps,
-} from '@/tools/video-editor/effects/entrances';
+} from '@/tools/video-editor/effects/entrances.tsx';
 import {
   DriftEffect,
   FloatEffect,
   GlitchEffect,
   KenBurnsEffect,
   SlowZoomEffect,
-} from '@/tools/video-editor/effects/continuous';
+} from '@/tools/video-editor/effects/continuous.tsx';
 import {
   DissolveExit,
   FadeOutExit,
@@ -31,8 +31,8 @@ import {
   ShrinkExit,
   SlideDownExit,
   ZoomOutExit,
-} from '@/tools/video-editor/effects/exits';
-import type { ParameterSchema, ResolvedTimelineClip } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/effects/exits.tsx';
+import type { ParameterSchema, ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 export type ClipEffectComponent = FC<EffectComponentProps>;
 

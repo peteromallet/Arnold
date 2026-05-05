@@ -1,17 +1,17 @@
-import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { getNextClipId, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { AssetRegistry, TimelineClip } from '@/tools/video-editor/types';
-import { applyTimelineCommandEffect, createTimelineCommandRunner } from './runner';
-import { buildTimelineCommandData } from './timelineData';
+import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { getNextClipId, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { AssetRegistry, TimelineClip } from '@/tools/video-editor/types/index.ts';
+import { applyTimelineCommandEffect, createTimelineCommandRunner } from './runner.ts';
+import { buildTimelineCommandData } from './timelineData.ts';
 import type {
   TimelineCommand,
   TimelineCommandDescriptor,
   TimelineCommandEffect,
-} from './types';
+} from './types.ts';
 import {
   estimateProvisionedAssetDuration,
   type TimelineProvisionedAsset,
-} from './provisioning';
+} from './provisioning.ts';
 
 export type AddMediaCommand = TimelineCommand<'add-media', {
   trackId: string;

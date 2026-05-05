@@ -1,6 +1,6 @@
-export { useClipDeletion } from './useClipDeletion';
-export { useClipSplitting } from './useClipSplitting';
-export { useClipAudioManagement } from './useClipAudioManagement';
-export { useClipPositioning } from './useClipPositioning';
-export { useClipTextOverlay } from './useClipTextOverlay';
-export type { ClipEditingContext, DeleteClipOptions } from './types';
+export { useClipDeletion } from './useClipDeletion.ts';
+export { useClipSplitting } from './useClipSplitting.ts';
+export { useClipAudioManagement } from './useClipAudioManagement.ts';
+export { useClipPositioning } from './useClipPositioning.ts';
+export { useClipTextOverlay } from './useClipTextOverlay.ts';
+export type { ClipEditingContext, DeleteClipOptions } from './types.ts';

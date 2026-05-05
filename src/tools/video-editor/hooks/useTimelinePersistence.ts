@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { isInteractionActive, onInteractionEnd, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
-import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus';
-import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
+import { isInteractionActive, onInteractionEnd, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state.ts';
+import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus.ts';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore.ts';
 import {
   isTimelineNotFoundError,
   isTimelineVersionConflictError,
   type DataProvider,
-} from '@/tools/video-editor/data/DataProvider';
-import { buildTimelineData, buildTimelineDataWithResolver, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { AssetResolver } from '@/tools/video-editor/data/AssetResolver';
-import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types';
-import type { CommitDataOptions, ScheduleSaveFn } from '@/tools/video-editor/hooks/useTimelineCommit';
+} from '@/tools/video-editor/data/DataProvider.ts';
+import { buildTimelineData, buildTimelineDataWithResolver, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { AssetResolver } from '@/tools/video-editor/data/AssetResolver.ts';
+import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import type { CommitDataOptions, ScheduleSaveFn } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
 
 export type SaveStatus = 'saved' | 'saving' | 'dirty' | 'error';
 

@@ -1,11 +1,11 @@
 import { useCallback } from 'react';
-import { createClipMetaFromDescriptor } from '@/tools/video-editor/clip-types/runtime';
-import { getVisualTracks } from '@/tools/video-editor/lib/editor-utils';
-import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps';
-import { getNextClipId } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
-import type { ClipEditingContext } from './types';
+import { createClipMetaFromDescriptor } from '@/tools/video-editor/clip-types/runtime.ts';
+import { getVisualTracks } from '@/tools/video-editor/lib/editor-utils.ts';
+import { updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps.ts';
+import { getNextClipId } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { ClipEditingContext } from './types.ts';
 
 export function useClipTextOverlay(ctx: ClipEditingContext) {
   const {

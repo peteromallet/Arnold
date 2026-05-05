@@ -1,20 +1,20 @@
 import { AbsoluteFill, Sequence } from 'remotion';
 import { memo, useMemo, type FC, type ReactNode } from 'react';
-import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils';
-import { getClipDurationInFrames, getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils';
-import { BUILTIN_CLIP_TYPES, type ResolvedTimelineClip, type ResolvedTimelineConfig, type TrackDefinition } from '@/tools/video-editor/types';
-import { AudioTrack } from '@/tools/video-editor/compositions/AudioTrack';
-import { AudioAnalysisProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider';
-import { EffectLayerSequence } from '@/tools/video-editor/compositions/EffectLayerSequence';
-import { TextClipSequence } from '@/tools/video-editor/compositions/TextClip';
-import { VisualClipSequence } from '@/tools/video-editor/compositions/VisualClip';
-import { UnknownClipPlaceholderSequence } from '@/tools/video-editor/compositions/UnknownClipPlaceholder';
-import { resolveTimelineRenderTheme } from '@/tools/video-editor/compositions/installed-themes';
+import { getAudioTracks, getVisualTracks } from '@/tools/video-editor/lib/editor-utils.ts';
+import { getClipDurationInFrames, getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import { BUILTIN_CLIP_TYPES, type ResolvedTimelineClip, type ResolvedTimelineConfig, type TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import { AudioTrack } from '@/tools/video-editor/compositions/AudioTrack.tsx';
+import { AudioAnalysisProvider } from '@/tools/video-editor/compositions/AudioAnalysisProvider.tsx';
+import { EffectLayerSequence } from '@/tools/video-editor/compositions/EffectLayerSequence.tsx';
+import { TextClipSequence } from '@/tools/video-editor/compositions/TextClip.tsx';
+import { VisualClipSequence } from '@/tools/video-editor/compositions/VisualClip.tsx';
+import { UnknownClipPlaceholderSequence } from '@/tools/video-editor/compositions/UnknownClipPlaceholder.tsx';
+import { resolveTimelineRenderTheme } from '@/tools/video-editor/compositions/installed-themes.ts';
 import {
   getGeneratedRemotionModuleStatus,
   isGeneratedRemotionModuleClip,
-} from '@/tools/video-editor/lib/generated-lanes';
-import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize';
+} from '@/tools/video-editor/lib/generated-lanes.ts';
+import { materializeResolvedSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
 import {
   ThemeProvider,
   useTheme,
@@ -26,8 +26,8 @@ import {
   resolveSequenceClipEntry,
   SEQUENCE_COMPONENT_REGISTRY,
   type DynamicSequenceComponentEntry,
-} from '@/tools/video-editor/sequences/registry';
-import { useSequenceComponentRegistrySnapshot } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext';
+} from '@/tools/video-editor/sequences/registry.ts';
+import { useSequenceComponentRegistrySnapshot } from '@/tools/video-editor/sequences/SequenceComponentRegistryContext.tsx';
 
 // Phase 4d (Sprint 5): EFFECT_REGISTRY dispatch.
 //

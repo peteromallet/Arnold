@@ -1,9 +1,9 @@
-import { TimeRuler } from '@/tools/video-editor/components/TimelineEditor/TimeRuler';
-import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils';
+import { TimeRuler } from '@/tools/video-editor/components/TimelineEditor/TimeRuler.tsx';
+import { LABEL_WIDTH } from '@/tools/video-editor/lib/coordinate-utils.ts';
 import type {
   TimelineGestureOwner,
   TimelineInputModality,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 
 interface TimelineRulerAndGridProps {
   scale: number;

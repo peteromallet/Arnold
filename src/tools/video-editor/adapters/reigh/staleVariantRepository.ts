@@ -1,4 +1,4 @@
-import { getSupabaseClient } from '@/integrations/supabase/client';
+import { getSupabaseClient } from '@/integrations/supabase/client.ts';
 
 export interface PrimaryVariantInfo {
   location: string;

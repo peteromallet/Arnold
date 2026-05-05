@@ -1,11 +1,11 @@
 import { useCallback, useMemo } from 'react';
-import type { Shot } from '@/domains/generation/types';
-import { buildDeleteShotGroupMutation } from '@/tools/video-editor/lib/shot-group-commands';
-import type { TimelineApplyEdit, TimelineDataRef } from '@/tools/video-editor/hooks/timeline-state-types';
-import type { ShotFinalVideo } from '@/tools/video-editor/hooks/useFinalVideoAvailable';
-import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups';
-import type { ResolvedAssetRegistryEntry, PinnedShotGroup } from '@/tools/video-editor/types';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import { buildDeleteShotGroupMutation } from '@/tools/video-editor/lib/shot-group-commands.ts';
+import type { TimelineApplyEdit, TimelineDataRef } from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { ShotFinalVideo } from '@/tools/video-editor/hooks/useFinalVideoAvailable.ts';
+import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups.ts';
+import type { ResolvedAssetRegistryEntry, PinnedShotGroup } from '@/tools/video-editor/types/index.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 interface UseShotGroupHandlersArgs {
   shots: Shot[] | undefined;

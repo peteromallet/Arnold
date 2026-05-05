@@ -1,4 +1,4 @@
-import { getSupabaseClient } from '@/integrations/supabase/client';
+import { getSupabaseClient } from '@/integrations/supabase/client.ts';
 
 export async function loadPrimaryVariantForGeneration(generationId: string) {
   const { data, error } = await getSupabaseClient()

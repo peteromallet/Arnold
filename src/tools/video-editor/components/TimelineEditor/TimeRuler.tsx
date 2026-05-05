@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { formatTime } from '@/tools/video-editor/lib/coordinate-utils';
-import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
-import type { TimelineGestureOwner, TimelineInputModality } from '@/tools/video-editor/lib/mobile-interaction-model';
+import { formatTime } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale.ts';
+import type { TimelineGestureOwner, TimelineInputModality } from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 
 const POINTER_DRAG_THRESHOLD_PX = 3;
 const OVERSCAN_STEPS = 4;

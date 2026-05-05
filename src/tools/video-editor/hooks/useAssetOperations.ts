@@ -1,12 +1,12 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useCallback, type MutableRefObject } from 'react';
-import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline';
+import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline.ts';
 import {
   transcodeAssetWithResolver,
   uploadAssetWithResolver,
   type AssetResolver,
-} from '@/tools/video-editor/data/AssetResolver';
-import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/data/AssetResolver.ts';
+import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 export function useAssetOperations(
   provider: AssetResolver,

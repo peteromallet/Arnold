@@ -1,5 +1,5 @@
-import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop';
-import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop.ts';
+import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 export type VideoDurationContract = {
   assetDurationSeconds: number | null;

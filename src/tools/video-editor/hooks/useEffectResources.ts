@@ -10,13 +10,13 @@ import {
   useUpdateResource,
   type EffectMetadata,
   type Resource,
-} from '@/features/resources/hooks/useResources';
+} from '@/features/resources/hooks/useResources.ts';
 import {
   createVideoEditorEffectCatalog,
   type EffectCategory,
   type EffectResource,
   type VideoEditorEffectCatalog,
-} from '@/tools/video-editor/lib/effect-catalog';
+} from '@/tools/video-editor/lib/effect-catalog.ts';
 
 export type {
   CreateVideoEditorEffectInput,
@@ -27,9 +27,9 @@ export type {
   UpdateVideoEditorEffectInput,
   VideoEditorEffectCatalog,
   VideoEditorEffectCatalogOptions,
-} from '@/tools/video-editor/lib/effect-catalog';
+} from '@/tools/video-editor/lib/effect-catalog.ts';
 
-export { createVideoEditorEffectCatalog } from '@/tools/video-editor/lib/effect-catalog';
+export { createVideoEditorEffectCatalog } from '@/tools/video-editor/lib/effect-catalog.ts';
 
 function toEffectResource(resource: Resource): EffectResource {
   const metadata = resource.metadata as EffectMetadata;

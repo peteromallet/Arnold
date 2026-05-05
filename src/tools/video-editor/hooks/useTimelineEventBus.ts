@@ -1,5 +1,5 @@
-import type { CommitHistoryOptions, ScheduleSaveFn } from '@/tools/video-editor/hooks/useTimelineCommit';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import type { CommitHistoryOptions, ScheduleSaveFn } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 
 type TimelineEventMap = {
   beforeCommit: (currentData: TimelineData, options: CommitHistoryOptions) => void;

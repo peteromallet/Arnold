@@ -12,12 +12,12 @@ import {
   editorSelectTimelineClip,
   editorSetSelectedTrackId,
   useTimelineSelectionStore,
-} from '@/shared/state/selectionStore';
-import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus';
-import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { migrateToFlatTracks } from '@/tools/video-editor/lib/migrate';
-import { serializeForDisk } from '@/tools/video-editor/lib/serialize';
-import { buildDataFromCurrentRegistry } from '@/tools/video-editor/lib/timeline-save-utils';
+} from '@/shared/state/selectionStore.ts';
+import { TimelineEventBus } from '@/tools/video-editor/hooks/useTimelineEventBus.ts';
+import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { migrateToFlatTracks } from '@/tools/video-editor/lib/migrate.ts';
+import { serializeForDisk } from '@/tools/video-editor/lib/serialize.ts';
+import { buildDataFromCurrentRegistry } from '@/tools/video-editor/lib/timeline-save-utils.ts';
 import {
   assembleTimelineData,
   preserveUploadingClips,
@@ -25,13 +25,13 @@ import {
   type ClipMeta,
   type ClipOrderMap,
   type TimelineData,
-} from '@/tools/video-editor/lib/timeline-data';
+} from '@/tools/video-editor/lib/timeline-data.ts';
 import type {
   TimelineCommandHistoryMetadata,
   TimelineCommandTransaction,
-} from '@/tools/video-editor/commands';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
-import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/commands/index.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 export type CommandHistoryCommitMetadata = {
   transaction: TimelineCommandTransaction;

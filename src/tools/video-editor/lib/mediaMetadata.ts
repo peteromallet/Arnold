@@ -1,5 +1,5 @@
-import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata';
-import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+import { extractVideoMetadata } from '@/shared/lib/media/videoMetadata.ts';
+import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 const VIDEO_EXTENSION_TYPES: Record<string, string> = {
   '.avi': 'video/x-msvideo',

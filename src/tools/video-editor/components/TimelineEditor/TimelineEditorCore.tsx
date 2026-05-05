@@ -7,36 +7,36 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import type { Shot } from '@/domains/generation/types';
-import { userSelectTimelineClip } from '@/shared/state/selectionStore';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import { userSelectTimelineClip } from '@/shared/state/selectionStore.ts';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import '@/tools/video-editor/components/TimelineEditor/timeline-overrides.css';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
-import { ClipAction } from '@/tools/video-editor/components/TimelineEditor/ClipAction';
-import { DropIndicator } from '@/tools/video-editor/components/TimelineEditor/DropIndicator';
-import { TimelineCanvas } from '@/tools/video-editor/components/TimelineEditor/TimelineCanvas';
-import { ROW_HEIGHT, TIMELINE_START_LEFT } from '@/tools/video-editor/lib/coordinate-utils';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { ClipAction } from '@/tools/video-editor/components/TimelineEditor/ClipAction.tsx';
+import { DropIndicator } from '@/tools/video-editor/components/TimelineEditor/DropIndicator.tsx';
+import { TimelineCanvas } from '@/tools/video-editor/components/TimelineEditor/TimelineCanvas.tsx';
+import { ROW_HEIGHT, TIMELINE_START_LEFT } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
 import {
   useTimelineChromeSelector,
   useTimelineDataSelector,
   useTimelineOpsSelector,
-} from '@/tools/video-editor/hooks/timelineStore';
-import { useClipDrag } from '@/tools/video-editor/hooks/useClipDrag';
-import { useActiveTaskClips } from '@/tools/video-editor/hooks/useActiveTaskClips';
-import { useMarqueeSelect } from '@/tools/video-editor/hooks/useMarqueeSelect';
-import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups';
-import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants';
-import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration';
-import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useClipDrag } from '@/tools/video-editor/hooks/useClipDrag.ts';
+import { useActiveTaskClips } from '@/tools/video-editor/hooks/useActiveTaskClips.ts';
+import { useMarqueeSelect } from '@/tools/video-editor/hooks/useMarqueeSelect.ts';
+import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups.ts';
+import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants.ts';
+import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration.ts';
+import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale.ts';
 import {
   clampClipToMediaDuration,
   convertOverhangToHold,
   detectClipOverhang,
-} from '@/tools/video-editor/lib/overhang';
-import type { TimelineActionResizeStart, TimelineClipEdgeResizeEnd } from '@/tools/video-editor/hooks/useTimelineState.types';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/overhang.ts';
+import type { TimelineActionResizeStart, TimelineClipEdgeResizeEnd } from '@/tools/video-editor/hooks/useTimelineState.types.ts';
+import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 const EMPTY_ASSET_GENERATION_MAP: Record<string, string> = {};
 const EMPTY_CLIP_IDS = new Set<string>();

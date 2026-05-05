@@ -1,22 +1,22 @@
 import { memo, type CSSProperties, type ReactNode } from 'react';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel';
-import { useVideoEditorPreviewSurface } from '@/tools/video-editor/components/PreviewPanel/useVideoEditorPreviewSurface';
-import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel';
-import { VideoEditorAssetPanelSurface } from '@/tools/video-editor/components/PropertiesPanel/VideoEditorAssetPanelSurface';
-import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor';
-import { VideoEditorProvider, type VideoEditorProviderProps } from '@/tools/video-editor/contexts/VideoEditorProvider';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx';
+import { useVideoEditorPreviewSurface } from '@/tools/video-editor/components/PreviewPanel/useVideoEditorPreviewSurface.tsx';
+import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx';
+import { VideoEditorAssetPanelSurface } from '@/tools/video-editor/components/PropertiesPanel/VideoEditorAssetPanelSurface.tsx';
+import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor.tsx';
+import { VideoEditorProvider, type VideoEditorProviderProps } from '@/tools/video-editor/contexts/VideoEditorProvider.tsx';
 import {
   useTimelineChromeContext,
   useTimelineEditorData,
   useTimelinePlaybackContext,
-} from '@/tools/video-editor/hooks/timelineStore';
-import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
 import {
   useVideoEditorRenderContext,
   useVideoEditorSlotRenderers,
-} from '@/tools/video-editor/runtime/useVideoEditorRenderContext';
-import type { VideoEditorRenderContext, VideoEditorSlotRenderer } from '@/tools/video-editor/runtime/extensionSurface';
+} from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
+import type { VideoEditorRenderContext, VideoEditorSlotRenderer } from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 function resolveSlot(
   slotRenderer: VideoEditorSlotRenderer | undefined,

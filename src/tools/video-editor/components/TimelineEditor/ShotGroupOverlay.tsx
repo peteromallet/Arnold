@@ -1,10 +1,10 @@
 import React from 'react';
 import { Ellipsis, Loader2, RefreshCw, Video } from 'lucide-react';
-import { cn } from '@/shared/components/ui/contracts/cn';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
 import {
   SHOT_GROUP_LABEL_HEIGHT,
   TIME_RULER_HEIGHT,
-} from './timeline-canvas-constants';
+} from './timeline-canvas-constants.ts';
 
 export interface PositionedShotGroup {
   key: string;

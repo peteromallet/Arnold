@@ -1,4 +1,4 @@
-import { useVoiceRecording } from "@/shared/hooks/useVoiceRecording";
+import { useVoiceRecording } from "@/shared/hooks/useVoiceRecording.ts";
 
 type UseAgentVoiceOptions = {
   onTranscription: (text: string) => void;

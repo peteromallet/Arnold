@@ -1,15 +1,15 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { getGenerationDropData, getDragType } from '@/shared/lib/dnd/dragDrop';
-import { Button } from '@/shared/components/ui/button';
-import { Input } from '@/shared/components/ui/input';
-import { ScrollArea } from '@/shared/components/ui/scroll-area';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { getGenerationDropData, getDragType } from '@/shared/lib/dnd/dragDrop.ts';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { ScrollArea } from '@/shared/components/ui/scroll-area.tsx';
 import { ExternalLink, Film, ImageIcon, Music2, Upload } from 'lucide-react';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import { useTimelineEditorOps } from '@/tools/video-editor/hooks/timelineStore';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
-import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { useTimelineEditorOps } from '@/tools/video-editor/hooks/timelineStore.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 interface AssetPanelProps {
   assetMap: Record<string, string>;

@@ -3,9 +3,9 @@ import {
   TimelineVersionConflictError,
   type DataProvider,
   type LoadedTimeline,
-} from '@/tools/video-editor/data/DataProvider';
-import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults';
-import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/data/DataProvider.ts';
+import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults.ts';
+import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 type TimelineSeed = {
   config?: TimelineConfig;

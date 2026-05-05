@@ -1,4 +1,4 @@
-import { TOOL_IDS } from '@/shared/lib/tooling/toolIds';
+import { TOOL_IDS } from '@/shared/lib/tooling/toolIds.ts';
 
 export interface VideoEditorSettings {
   lastTimelineId?: string;

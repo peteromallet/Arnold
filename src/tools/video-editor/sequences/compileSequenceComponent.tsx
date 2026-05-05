@@ -17,8 +17,8 @@ import {
   compileWithGlobalsAsync,
   compileWithGlobalsSync,
   type CompileResult,
-} from '@/tools/video-editor/runtime-components/compileWithGlobals';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/runtime-components/compileWithGlobals.ts';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 export interface SequenceComponentProps {
   clip: ResolvedTimelineClip;

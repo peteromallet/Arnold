@@ -1,27 +1,27 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { shallow } from 'zustand/shallow';
-import type { Shot } from '@/domains/generation/types';
-import { toast } from '@/shared/components/ui/runtime/sonner';
-import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
-import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
-import { useShots } from '@/shared/contexts/ShotsContext';
-import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation';
-import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation';
-import { VideoGenerationModal } from '@/tools/travel-between-images/components/VideoGenerationModal';
-import { TimelineEditorCore, resolveSelectedGenerationIdsForShotCreation } from '@/tools/video-editor/components/TimelineEditor/TimelineEditorCore';
-import { useActiveTaskClips } from '@/tools/video-editor/hooks/useActiveTaskClips';
-import { useFinalVideoAvailable } from '@/tools/video-editor/hooks/useFinalVideoAvailable';
-import { usePinnedGroupSync, usePinnedShotGroups } from '@/tools/video-editor/hooks/usePinnedShotGroups';
-import { useShotGroupHandlers } from '@/tools/video-editor/hooks/useShotGroupHandlers';
-import { useShotGroups } from '@/tools/video-editor/hooks/useShotGroups';
-import { useSwitchToFinalVideo } from '@/tools/video-editor/hooks/useSwitchToFinalVideo';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import { toast } from '@/shared/components/ui/runtime/sonner.tsx';
+import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError.ts';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext.tsx';
+import { useShots } from '@/shared/contexts/ShotsContext.tsx';
+import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation.ts';
+import { useShotNavigation } from '@/shared/hooks/shots/useShotNavigation.ts';
+import { VideoGenerationModal } from '@/tools/travel-between-images/components/VideoGenerationModal.tsx';
+import { TimelineEditorCore, resolveSelectedGenerationIdsForShotCreation } from '@/tools/video-editor/components/TimelineEditor/TimelineEditorCore.tsx';
+import { useActiveTaskClips } from '@/tools/video-editor/hooks/useActiveTaskClips.ts';
+import { useFinalVideoAvailable } from '@/tools/video-editor/hooks/useFinalVideoAvailable.ts';
+import { usePinnedGroupSync, usePinnedShotGroups } from '@/tools/video-editor/hooks/usePinnedShotGroups.ts';
+import { useShotGroupHandlers } from '@/tools/video-editor/hooks/useShotGroupHandlers.ts';
+import { useShotGroups } from '@/tools/video-editor/hooks/useShotGroups.ts';
+import { useSwitchToFinalVideo } from '@/tools/video-editor/hooks/useSwitchToFinalVideo.ts';
 import {
   useTimelineDataSelector,
   useTimelineOpsSelector,
-} from '@/tools/video-editor/hooks/timelineStore';
-import { buildDuplicateClipEdit } from '@/tools/video-editor/lib/duplicate-clip';
-import { duplicateGenerationAsset } from '@/tools/video-editor/lib/generation-utils';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
+import { buildDuplicateClipEdit } from '@/tools/video-editor/lib/duplicate-clip.ts';
+import { duplicateGenerationAsset } from '@/tools/video-editor/lib/generation-utils.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
 
 interface ReighTimelineEditorProps {
   onOpenSequenceCreator?: () => void;

@@ -1,5 +1,5 @@
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import type { ShotFinalVideo } from '@/tools/travel-between-images/hooks/video/useShotFinalVideos';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import type { ShotFinalVideo } from '@/tools/travel-between-images/hooks/video/useShotFinalVideos.ts';
 
 export type { ShotFinalVideo };
 

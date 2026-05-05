@@ -1,18 +1,18 @@
-import type { useAssetManagement } from '@/tools/video-editor/hooks/useAssetManagement';
-import type { useClipEditing } from '@/tools/video-editor/hooks/useClipEditing';
-import type { useClipResize } from '@/tools/video-editor/hooks/useClipResize';
-import type { useDragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
-import type { useExternalDrop } from '@/tools/video-editor/hooks/useExternalDrop';
-import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
-import type { useTimelinePlayback } from '@/tools/video-editor/hooks/useTimelinePlayback';
-import type { useTimelineTrackManagement } from '@/tools/video-editor/hooks/useTimelineTrackManagement';
+import type { useAssetManagement } from '@/tools/video-editor/hooks/useAssetManagement.ts';
+import type { useClipEditing } from '@/tools/video-editor/hooks/useClipEditing.ts';
+import type { useClipResize } from '@/tools/video-editor/hooks/useClipResize.ts';
+import type { useDragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator.ts';
+import type { useExternalDrop } from '@/tools/video-editor/hooks/useExternalDrop.ts';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore.ts';
+import type { useTimelinePlayback } from '@/tools/video-editor/hooks/useTimelinePlayback.ts';
+import type { useTimelineTrackManagement } from '@/tools/video-editor/hooks/useTimelineTrackManagement.ts';
 import type {
   AddMediaCommand,
   SwapMediaCommand,
   TimelineCommandExecutionResult,
   TimelineCommandInput,
   TimelineCommandRunOptions,
-} from '@/tools/video-editor/commands';
+} from '@/tools/video-editor/commands/index.ts';
 import type {
   TimelineApplyEdit,
   TimelineCheckpoints,
@@ -35,12 +35,12 @@ import type {
   TimelineStartRender,
   TimelineUnpatchRegistry,
   TimelineUploadFiles,
-} from '@/tools/video-editor/hooks/timeline-state-types';
-import type { ClipTab, EditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences';
-import type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState';
-import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelineSave';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { SelectClipOptions, UseTimelineMultiSelectResult } from '@/shared/state/selectionStore';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { ClipTab, EditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
+import type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState.ts';
+import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelineSave.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { SelectClipOptions, UseTimelineMultiSelectResult } from '@/shared/state/selectionStore.ts';
 import type {
   MobileInteractionPolicy,
   TimelineContextTarget,
@@ -48,7 +48,7 @@ import type {
   TimelineInputModality,
   TimelineInspectorTarget,
   TimelineInteractionMode,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 
 type DragCoordinatorHook = ReturnType<typeof useDragCoordinator>;
 type TimelinePlaybackHook = ReturnType<typeof useTimelinePlayback>;

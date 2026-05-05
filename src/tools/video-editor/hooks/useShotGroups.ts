@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import type { Shot } from '@/domains/generation/types';
-import { resolveGroupTrackId } from '@/tools/video-editor/lib/pinned-group-projection';
-import type { TimelineConfig } from '@/tools/video-editor/types';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+import type { Shot } from '@/domains/generation/types/index.ts';
+import { resolveGroupTrackId } from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import type { TimelineConfig } from '@/tools/video-editor/types/index.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 const SHOT_COLORS = ['#a855f7', '#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#14b8a6', '#ec4899', '#84cc16'];
 

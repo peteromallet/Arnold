@@ -1,16 +1,16 @@
 import { useMemo } from 'react';
 import { ExternalLink, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@/shared/components/ui/button';
-import { Slider } from '@/shared/components/ui/slider';
-import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
-import { getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { Slider } from '@/shared/components/ui/slider.tsx';
+import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview.tsx';
+import { getTimelineDurationInFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
 import {
   useTimelineChromeContext,
   useTimelineEditorData,
   useTimelinePlaybackContext,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 
 interface CompactPreviewCoreProps {
   timelineId?: string | null;

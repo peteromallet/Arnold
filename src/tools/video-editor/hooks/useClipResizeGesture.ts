@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
-import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups';
-import { notifyInteractionEndIfIdle } from '@/tools/video-editor/lib/interaction-state';
-import type { TimelineGestureOwner, TimelineInputModality } from '@/tools/video-editor/lib/mobile-interaction-model';
-import type { ResizeDir } from '@/tools/video-editor/lib/resize-math';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
-import type { ClipEdgeResizeEndTarget, ClipEdgeResizeSession } from '@/tools/video-editor/hooks/useClipResize';
+import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups.ts';
+import { notifyInteractionEndIfIdle } from '@/tools/video-editor/lib/interaction-state.ts';
+import type { TimelineGestureOwner, TimelineInputModality } from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import type { ResizeDir } from '@/tools/video-editor/lib/resize-math.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { ClipEdgeResizeEndTarget, ClipEdgeResizeSession } from '@/tools/video-editor/hooks/useClipResize.ts';
 import {
   RESIZE_ACTIVATION_THRESHOLD_PX,
   type ResizeOverride,
-} from '@/tools/video-editor/components/TimelineEditor/timeline-canvas-constants';
+} from '@/tools/video-editor/components/TimelineEditor/timeline-canvas-constants.ts';
 import {
   clearResizePreview,
   computeResizePreview,
@@ -20,12 +20,12 @@ import {
   resolveClipEdgeResizeContext,
   updateResize,
   type ResizePreviewStore,
-} from '@/tools/video-editor/hooks/useClipResizeGesture.helpers';
+} from '@/tools/video-editor/hooks/useClipResizeGesture.helpers.ts';
 import {
   useTimelineDataSliceSafe,
   useTimelineMutableAdaptersSafe,
   useTimelineOpsSliceSafe,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 
 export interface InternalResizeSession extends ClipEdgeResizeSession {
   startClientX: number;

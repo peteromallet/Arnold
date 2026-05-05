@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor';
-import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline';
-import { timelineListQueryKey } from '@/tools/video-editor/hooks/useTimelinesList';
+import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor.ts';
+import { assetRegistryQueryKey, timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline.ts';
+import { timelineListQueryKey } from '@/tools/video-editor/hooks/useTimelinesList.ts';
 
 interface UseTimelineRealtimeOptions {
   timelineId: string;

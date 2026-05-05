@@ -3,7 +3,7 @@ import type {
   AssetRegistryEntry,
   TimelineClip,
   TimelineConfig,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 
 export interface SilenceRegion {
   start: number;

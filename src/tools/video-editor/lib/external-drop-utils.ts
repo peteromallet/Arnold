@@ -1,40 +1,40 @@
 import type { DragEvent, MutableRefObject } from 'react';
-import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop';
-import { getDragType } from '@/shared/lib/dnd/dragDrop';
+import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop.ts';
+import { getDragType } from '@/shared/lib/dnd/dragDrop.ts';
 import {
   resolveAssetUrlWithResolver,
   type AssetResolver,
-} from '@/tools/video-editor/data/AssetResolver';
-import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll';
-import { getCompatibleTrackId, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils';
-import { inferDragKind } from '@/tools/video-editor/lib/drop-position';
-import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps';
+} from '@/tools/video-editor/data/AssetResolver.ts';
+import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll.ts';
+import { getCompatibleTrackId, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils.ts';
+import { inferDragKind } from '@/tools/video-editor/lib/drop-position.ts';
+import { resolveOverlaps } from '@/tools/video-editor/lib/resolve-overlaps.ts';
 import {
   getDroppedGenerationDurationContract,
-} from '@/tools/video-editor/lib/timeline-asset-durations';
+} from '@/tools/video-editor/lib/timeline-asset-durations.ts';
 import {
   buildAssetDropEdit,
   getPlayableAssetKind,
   planAssetDropTarget,
   planGenerationAssetRegistration,
-} from '@/tools/video-editor/lib/timeline-asset-plans';
+} from '@/tools/video-editor/lib/timeline-asset-plans.ts';
 import {
   createEffectLayerClipMeta,
   getNextClipId,
   type ClipMeta,
   type TimelineData,
-} from '@/tools/video-editor/lib/timeline-data';
-import type { UseAssetManagementResult } from '@/tools/video-editor/hooks/useAssetManagement';
-import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
+} from '@/tools/video-editor/lib/timeline-data.ts';
+import type { UseAssetManagementResult } from '@/tools/video-editor/hooks/useAssetManagement.ts';
+import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator.ts';
 import type {
   TimelineApplyEdit,
   TimelineInvalidateAssetRegistry,
   TimelinePatchRegistry,
   TimelineUploadAsset,
-} from '@/tools/video-editor/hooks/timeline-state-types';
-import type { TrackKind } from '@/tools/video-editor/types';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { TrackKind } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export type TimelineDropPosition = NonNullable<ReturnType<DragCoordinator['update']>>;
 

@@ -4,8 +4,8 @@ import {
   AudioAnalysisContext,
   SILENT_AUDIO_DATA,
   type AudioAnalysisData,
-} from '@/tools/video-editor/compositions/AudioAnalysisProvider';
-import type { AudioBindingValue } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/compositions/AudioAnalysisProvider.tsx';
+import type { AudioBindingValue } from '@/tools/video-editor/types/index.ts';
 
 export function useAudioReactive(): AudioAnalysisData {
   const frame = useCurrentFrame();

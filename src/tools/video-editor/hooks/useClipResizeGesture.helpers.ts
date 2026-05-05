@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups';
+import type { ShotGroup } from '@/tools/video-editor/hooks/useShotGroups.ts';
 import {
   applyClipEdgeMove,
   snapBoundaryToSiblings,
@@ -7,15 +7,15 @@ import {
   type ClipEdgeResizeUpdate,
   type FreeClipEdgeResizeContext,
   type ResizeDir,
-} from '@/tools/video-editor/lib/resize-math';
-import { getSourceTime, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
-import type { ClipEdgeResizeSession } from '@/tools/video-editor/hooks/useClipResize';
+} from '@/tools/video-editor/lib/resize-math.ts';
+import { getSourceTime, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { ClipEdgeResizeSession } from '@/tools/video-editor/hooks/useClipResize.ts';
 import {
   EMPTY_RESIZE_PREVIEW_SNAPSHOT,
   SNAP_THRESHOLD_PX,
   type ResizeOverride,
-} from '@/tools/video-editor/components/TimelineEditor/timeline-canvas-constants';
+} from '@/tools/video-editor/components/TimelineEditor/timeline-canvas-constants.ts';
 
 export interface ResizePreviewStore {
   subscribe: (listener: () => void) => () => void;

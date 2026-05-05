@@ -1,14 +1,14 @@
 import { useEffect, useRef } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
-import type { SelectClipOptions } from '@/shared/state/selectionStore';
-import { userSelectTimelineClip } from '@/shared/state/selectionStore';
-import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
-import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types';
-import type { TrackKind } from '@/tools/video-editor/types';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import { computeSecondaryGhosts } from '@/tools/video-editor/lib/multi-drag-utils';
-import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll';
-import { notifyInteractionEndIfIdle } from '@/tools/video-editor/lib/interaction-state';
+import type { SelectClipOptions } from '@/shared/state/selectionStore.ts';
+import { userSelectTimelineClip } from '@/shared/state/selectionStore.ts';
+import type { DragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator.ts';
+import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { TrackKind } from '@/tools/video-editor/types/index.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import { computeSecondaryGhosts } from '@/tools/video-editor/lib/multi-drag-utils.ts';
+import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll.ts';
+import { notifyInteractionEndIfIdle } from '@/tools/video-editor/lib/interaction-state.ts';
 import {
   shouldPreserveTouchSelectionForMove,
   shouldAllowTouchClipDrag,
@@ -17,16 +17,16 @@ import {
   type TimelineGestureOwner,
   type TimelineInputModality,
   type TimelineInteractionMode,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
-import { snapDrag } from '@/tools/video-editor/lib/snap-edges';
-import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import { snapDrag } from '@/tools/video-editor/lib/snap-edges.ts';
+import { useTimelineScale } from '@/tools/video-editor/hooks/useTimelineScale.ts';
 import {
   useTimelineDataSliceSafe,
   useTimelineMutableAdaptersSafe,
   useTimelineOpsSliceSafe,
-} from '@/tools/video-editor/hooks/timelineStore';
-import type { ActionDragState, DragMachineState, DragSession, InternalDragSession } from '@/tools/video-editor/hooks/useClipDrag.helpers';
-import { buildPendingDragSession, commitDraggingSession, createFloatingGhost, ensureCountBadge, findClipElement, updateFloatingGhostPosition } from '@/tools/video-editor/hooks/useClipDrag.helpers';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
+import type { ActionDragState, DragMachineState, DragSession, InternalDragSession } from '@/tools/video-editor/hooks/useClipDrag.helpers.ts';
+import { buildPendingDragSession, commitDraggingSession, createFloatingGhost, ensureCountBadge, findClipElement, updateFloatingGhostPosition } from '@/tools/video-editor/hooks/useClipDrag.helpers.ts';
 
 const DRAG_THRESHOLD_PX = 4;
 /** Snap threshold in pixels — converted to seconds based on current zoom. */
@@ -80,7 +80,7 @@ export interface UseClipDragResult {
   dragSessionRef: MutableRefObject<DragSession | null>;
 }
 
-export type { ActionDragState, DragSession } from '@/tools/video-editor/hooks/useClipDrag.helpers';
+export type { ActionDragState, DragSession } from '@/tools/video-editor/hooks/useClipDrag.helpers.ts';
 
 export const useClipDrag = ({
   timelineWrapperRef,

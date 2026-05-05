@@ -1,12 +1,12 @@
 import {
   getTrustedSequenceParamDefinitions,
-} from '@/tools/video-editor/clip-types/registry';
-import type { ClipTypeSequenceParamDefinition as SequenceParamMetadata } from '@/tools/video-editor/clip-types/defineClipType';
+} from '@/tools/video-editor/clip-types/registry.ts';
+import type { ClipTypeSequenceParamDefinition as SequenceParamMetadata } from '@/tools/video-editor/clip-types/defineClipType.ts';
 import type {
   ResolvedAssetRegistryEntry,
   ResolvedTimelineClip,
   ResolvedTimelineConfig,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 
 export type SequenceAssetRegistry = Record<string, Partial<ResolvedAssetRegistryEntry> | undefined>;
 

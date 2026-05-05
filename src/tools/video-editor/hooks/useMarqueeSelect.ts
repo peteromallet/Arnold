@@ -1,14 +1,14 @@
 import { useCallback, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent } from 'react';
-import { isAdditiveSelectionEvent, isPrimaryPointer } from '@/shared/lib/interactions/selectionGesture';
-import { userClearAllSelection, userSelectTimelineClips } from '@/shared/state/selectionStore';
-import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll';
+import { isAdditiveSelectionEvent, isPrimaryPointer } from '@/shared/lib/interactions/selectionGesture.ts';
+import { userClearAllSelection, userSelectTimelineClips } from '@/shared/state/selectionStore.ts';
+import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll.ts';
 import {
   shouldAllowTouchMarquee,
   type TimelineDeviceClass,
   type TimelineGestureOwner,
   type TimelineInputModality,
   type TimelineInteractionMode,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 
 const MARQUEE_THRESHOLD_PX = 4;
 

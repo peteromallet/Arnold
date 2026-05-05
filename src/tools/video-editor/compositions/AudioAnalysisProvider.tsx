@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { continueRender, delayRender } from 'remotion';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 const FFT_SIZE = 1024;
 const HALF_FFT_SIZE = FFT_SIZE / 2;

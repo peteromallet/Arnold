@@ -4,13 +4,13 @@ import type {
   ResolvedTimelineConfig,
   TimelineClip,
   TimelineConfig,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 import {
   getCanonicalClipPlaybackRate,
   getConfigTimelineClipDuration,
   getConfigTimelineClipSourceDuration,
   getConfigTimelineDuration,
-} from './timeline-domain';
+} from './timeline-domain.ts';
 
 export const parseResolution = (resolution: string): { width: number; height: number } => {
   const [width, height] = resolution.toLowerCase().split('x');

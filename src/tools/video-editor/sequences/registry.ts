@@ -1,20 +1,20 @@
 import {
   THEME_PACKAGE_REGISTRY,
 } from '@banodoco/timeline-composition/registry.generated';
-import { getGeneratedRemotionModuleStatus, type GeneratedLaneClipShape } from '@/tools/video-editor/lib/generated-lanes';
-import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types';
+import { getGeneratedRemotionModuleStatus, type GeneratedLaneClipShape } from '@/tools/video-editor/lib/generated-lanes.ts';
+import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types/index.ts';
 import {
   AVAILABLE_TIMELINE_THEME_IDS,
   INSTALLED_TIMELINE_THEMES,
-} from '@/tools/video-editor/compositions/installed-themes';
+} from '@/tools/video-editor/compositions/installed-themes.ts';
 import {
   TRUSTED_SEQUENCE_METADATA,
   type SequenceCapabilityOverrides,
   type TrustedSequenceMetadata,
-} from '@/tools/video-editor/sequences/metadata';
-import { ImageJumpSequence } from '@/tools/video-editor/sequences/components/ImageJumpSequence';
-import { TitleCardSequence } from '@/tools/video-editor/sequences/components/TitleCardSequence';
-import { createAvailableClipTypeRegistry } from '@/tools/video-editor/clip-types';
+} from '@/tools/video-editor/sequences/metadata.ts';
+import { ImageJumpSequence } from '@/tools/video-editor/sequences/components/ImageJumpSequence.tsx';
+import { TitleCardSequence } from '@/tools/video-editor/sequences/components/TitleCardSequence.tsx';
+import { createAvailableClipTypeRegistry } from '@/tools/video-editor/clip-types/index.ts';
 
 export type SequenceComponentRegistryEntry = {
   component?: unknown;

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
-import { isInteractionActive, onInteractionEnd, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
-import { shouldAcceptPolledData } from '@/tools/video-editor/lib/timeline-save-utils';
-import { buildTimelineData, preserveUploadingClips, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
-import type { CommitDataOptions } from '@/tools/video-editor/hooks/useTimelineCommit';
-import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore';
+import { isInteractionActive, onInteractionEnd, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state.ts';
+import { shouldAcceptPolledData } from '@/tools/video-editor/lib/timeline-save-utils.ts';
+import { buildTimelineData, preserveUploadingClips, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
+import type { CommitDataOptions } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
+import type { TimelineStoreApi } from '@/tools/video-editor/hooks/timelineStore.ts';
 
 const TIMELINE_SYNC_LOG_TAG = '[TimelineSync]';
 

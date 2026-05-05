@@ -1,9 +1,9 @@
-import {
-  getPairTimelineClipDuration,
-  type AssetRegistryEntry,
-  type TimelineClip,
-  type TimelineConfig,
-} from "../../../src/tools/video-editor/index.ts";
+import { getPairTimelineClipDuration } from "../../../src/tools/video-editor/lib/timeline-domain.ts";
+import type {
+  AssetRegistryEntry,
+  TimelineClip,
+  TimelineConfig,
+} from "../../../src/tools/video-editor/types/index.ts";
 import {
   loadTimelineState,
   prepareTimelineConfigForPersistence,

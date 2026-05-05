@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor';
+import { realtimeEventProcessor } from '@/shared/realtime/RealtimeEventProcessor.ts';
 import {
   fetchCurrentPrimaryVariant,
   fetchPrimaryVariantLocations,
   type PrimaryVariantInfo,
-} from '@/tools/video-editor/adapters/reigh/staleVariantRepository';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import type { AssetRegistryEntry, ResolvedAssetRegistryEntry } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/adapters/reigh/staleVariantRepository.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import type { AssetRegistryEntry, ResolvedAssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 import type {
   TimelinePatchRegistry,
   TimelineRegisterAsset,
-} from '@/tools/video-editor/hooks/timeline-state-types';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
 
 interface UseStaleVariantsArgs {
   registry: Record<string, ResolvedAssetRegistryEntry> | undefined;

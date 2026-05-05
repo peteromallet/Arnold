@@ -1,4 +1,4 @@
-import type { AssetRegistryEntry } from '@/tools/video-editor/types';
+import type { AssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 export type TimelineProvisionedMediaType = 'image' | 'video' | 'audio';
 

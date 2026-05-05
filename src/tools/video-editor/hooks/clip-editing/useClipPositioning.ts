@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { updateClipInConfig } from '@/tools/video-editor/lib/editor-utils';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
-import type { ClipEditingContext } from './types';
+import { updateClipInConfig } from '@/tools/video-editor/lib/editor-utils.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { ClipEditingContext } from './types.ts';
 
 export function useClipPositioning(ctx: ClipEditingContext) {
   const {

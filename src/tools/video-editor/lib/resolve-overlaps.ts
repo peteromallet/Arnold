@@ -1,5 +1,5 @@
-import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
-import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data';
+import type { TimelineAction, TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { ClipMeta } from '@/tools/video-editor/lib/timeline-data.ts';
 
 /** Minimum clip duration in seconds — below this the move is rejected. */
 const MIN_CLIP_DURATION = 0.05;

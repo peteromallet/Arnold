@@ -1,17 +1,17 @@
 import { memo, type ReactNode } from 'react';
 import { shallow } from 'zustand/shallow';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import OverlayEditor from '@/tools/video-editor/components/PreviewPanel/OverlayEditor';
-import type { VideoEditorPreviewSurface } from '@/tools/video-editor/components/PreviewPanel/useVideoEditorPreviewSurface';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import OverlayEditor from '@/tools/video-editor/components/PreviewPanel/OverlayEditor.tsx';
+import type { VideoEditorPreviewSurface } from '@/tools/video-editor/components/PreviewPanel/useVideoEditorPreviewSurface.tsx';
 import {
   useTimelineDataSelector,
   useTimelineOpsSelector,
   useTimelinePlaybackSelector,
-} from '@/tools/video-editor/hooks/timelineStore';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
-import { isTouchTimelineInput } from '@/tools/video-editor/lib/mobile-interaction-model';
-import { useRenderBudget } from '@/shared/dev/useRenderBudget';
-import { userClearAllSelection, userSelectTimelineClip } from '@/shared/state/selectionStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { isTouchTimelineInput } from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import { useRenderBudget } from '@/shared/dev/useRenderBudget.ts';
+import { userClearAllSelection, userSelectTimelineClip } from '@/shared/state/selectionStore.ts';
 
 export interface PreviewPanelProps {
   surface: VideoEditorPreviewSurface;

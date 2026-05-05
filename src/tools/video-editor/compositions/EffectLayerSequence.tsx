@@ -5,9 +5,9 @@ import {
   getEffectRegistry,
   lookupEffect,
   wrapWithEffect,
-} from '@/tools/video-editor/effects';
-import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/effects/index.tsx';
+import { getClipDurationInFrames, secondsToFrames } from '@/tools/video-editor/lib/config-utils.ts';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 interface EffectLayerSequenceProps {
   clip: ResolvedTimelineClip;

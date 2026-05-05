@@ -1,21 +1,21 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
-import { Button } from '@/shared/components/ui/button';
-import { BulkClipPanel } from '@/tools/video-editor/components/PropertiesPanel/BulkClipPanel';
-import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/components/PropertiesPanel/ClipPanel';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { BulkClipPanel } from '@/tools/video-editor/components/PropertiesPanel/BulkClipPanel.tsx';
+import { ClipPanel, getVisibleClipTabs, NO_EFFECT } from '@/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx';
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/hooks/timelineStore';
-import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants';
-import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
-import { getFallbackClipTab, getSelectionDefaultClipTab } from '@/tools/video-editor/lib/clip-inspector';
-import { getBulkVisibleTabs, getSharedNestedValue, getSharedValue } from '@/tools/video-editor/lib/bulk-utils';
-import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useStaleVariants } from '@/tools/video-editor/hooks/useStaleVariants.ts';
+import { useAddVariantAsGeneration } from '@/tools/video-editor/hooks/useAddVariantAsGeneration.ts';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { getFallbackClipTab, getSelectionDefaultClipTab } from '@/tools/video-editor/lib/clip-inspector.ts';
+import { getBulkVisibleTabs, getSharedNestedValue, getSharedValue } from '@/tools/video-editor/lib/bulk-utils.ts';
+import { VIDEO_EDITOR_THEME_VARS } from '@/tools/video-editor/lib/themeTokens.ts';
 import {
   useVideoEditorInspectorSections,
   useVideoEditorRenderContext,
-} from '@/tools/video-editor/runtime/useVideoEditorRenderContext';
+} from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
 
 function InspectorRegistrySections({
   placement,

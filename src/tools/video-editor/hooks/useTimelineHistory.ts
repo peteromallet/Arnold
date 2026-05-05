@@ -3,29 +3,29 @@ import {
   createTimelineCommandRunner,
   MEDIA_COMMAND_DESCRIPTORS,
   type TimelineCommandHistoryMetadata,
-} from '@/tools/video-editor/commands';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
+} from '@/tools/video-editor/commands/index.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import type {
   CommandHistoryCommitMetadata,
   CommitDataOptions,
   CommitHistoryOptions,
-} from '@/tools/video-editor/hooks/useTimelineCommit';
+} from '@/tools/video-editor/hooks/useTimelineCommit.ts';
 import {
   isInteractionActive,
   type InteractionStateRef,
-} from '@/tools/video-editor/lib/interaction-state';
+} from '@/tools/video-editor/lib/interaction-state.ts';
 import {
   buildDataFromCurrentRegistry,
   buildDataFromSnapshot,
-} from '@/tools/video-editor/lib/timeline-save-utils';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TimelineConfig } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/lib/timeline-save-utils.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import type {
   Checkpoint,
   CheckpointTriggerType,
   UndoEntry,
   UndoSnapshot,
-} from '@/tools/video-editor/types/history';
+} from '@/tools/video-editor/types/history.ts';
 
 const UNDO_STACK_LIMIT = 100;
 const CHECKPOINT_LIMIT = 30;

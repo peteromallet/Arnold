@@ -1,44 +1,44 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { Download, Eye, GripHorizontal, History, Maximize2, Minimize2, Redo2, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/shared/components/ui/alert-dialog';
-import { Badge } from '@/shared/components/ui/badge';
-import { Button } from '@/shared/components/ui/button';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/shared/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/shared/components/ui/dropdown-menu';
-import { Slider } from '@/shared/components/ui/slider';
-import { editorReplaceTimelineSelection } from '@/shared/state/selectionStore';
-import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel';
-import { useVideoEditorPreviewSurface } from '@/tools/video-editor/components/PreviewPanel/useVideoEditorPreviewSurface';
-import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel';
-import { VideoEditorAssetPanelSurface } from '@/tools/video-editor/components/PropertiesPanel/VideoEditorAssetPanelSurface';
-import { SequenceCreatorPanel } from '@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel';
-import { ThemeChip } from '@/tools/video-editor/components/ThemeChip';
-import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/shared/components/ui/alert-dialog.tsx';
+import { Badge } from '@/shared/components/ui/badge.tsx';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/shared/components/ui/dialog.tsx';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/shared/components/ui/dropdown-menu.tsx';
+import { Slider } from '@/shared/components/ui/slider.tsx';
+import { editorReplaceTimelineSelection } from '@/shared/state/selectionStore.ts';
+import { PreviewPanel } from '@/tools/video-editor/components/PreviewPanel/PreviewPanel.tsx';
+import { useVideoEditorPreviewSurface } from '@/tools/video-editor/components/PreviewPanel/useVideoEditorPreviewSurface.tsx';
+import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx';
+import { VideoEditorAssetPanelSurface } from '@/tools/video-editor/components/PropertiesPanel/VideoEditorAssetPanelSurface.tsx';
+import { SequenceCreatorPanel } from '@/tools/video-editor/components/SequenceCreator/SequenceCreatorPanel.tsx';
+import { ThemeChip } from '@/tools/video-editor/components/ThemeChip.tsx';
+import { TimelineEditor } from '@/tools/video-editor/components/TimelineEditor/TimelineEditor.tsx';
 import {
   useVideoEditorAssetPanels,
   useVideoEditorRenderContext,
   useVideoEditorSlotRenderers,
-} from '@/tools/video-editor/runtime/useVideoEditorRenderContext';
+} from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
 import {
   useTimelineChromeContext,
   useTimelineEditorData,
   useTimelineEditorOps,
   useTimelinePlaybackContext,
-} from '@/tools/video-editor/hooks/timelineStore';
-import { useKeyboardShortcuts } from '@/tools/video-editor/hooks/useKeyboardShortcuts';
-import { useTimelineRealtime } from '@/tools/video-editor/hooks/useTimelineRealtime';
-import { getTimelineDurationInFrames, parseResolution } from '@/tools/video-editor/lib/config-utils';
-import { buildKeyboardDeleteMutation } from '@/tools/video-editor/lib/keyboard-delete';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
+import { useKeyboardShortcuts } from '@/tools/video-editor/hooks/useKeyboardShortcuts.ts';
+import { useTimelineRealtime } from '@/tools/video-editor/hooks/useTimelineRealtime.ts';
+import { getTimelineDurationInFrames, parseResolution } from '@/tools/video-editor/lib/config-utils.ts';
+import { buildKeyboardDeleteMutation } from '@/tools/video-editor/lib/keyboard-delete.ts';
 import {
   areTimelineInteractionTargetsEqual,
   type TimelineInteractionMode,
   type TimelineInspectorTarget,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
-import { bootDiagnostics, MemoryPressureDetector } from '@/tools/video-editor/lib/perf-diagnostics';
-import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics';
-import { dispatchAppEvent } from '@/shared/lib/typedEvents';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import { bootDiagnostics, MemoryPressureDetector } from '@/tools/video-editor/lib/perf-diagnostics.ts';
+import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { dispatchAppEvent } from '@/shared/lib/typedEvents.ts';
 
 const MIN_TIMELINE_HEIGHT = 140;
 const MIN_PREVIEW_HEIGHT = 180;

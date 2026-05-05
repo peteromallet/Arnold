@@ -6,9 +6,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { DynamicSequenceRegistry } from '@/tools/video-editor/sequences/DynamicSequenceRegistry';
-import type { SequenceComponentResource } from '@/tools/video-editor/lib/sequence-component-catalog';
-import type { DynamicSequenceComponentEntry } from '@/tools/video-editor/sequences/registry';
+import { DynamicSequenceRegistry } from '@/tools/video-editor/sequences/DynamicSequenceRegistry.ts';
+import type { SequenceComponentResource } from '@/tools/video-editor/lib/sequence-component-catalog.ts';
+import type { DynamicSequenceComponentEntry } from '@/tools/video-editor/sequences/registry.ts';
 
 // Implementation note (FLAG-003 divergence — intentional):
 // The effects side uses a module-level singleton + `lookupEffect()` pattern

@@ -8,7 +8,7 @@ import type {
   TimelineClip,
   TimelineConfig,
   TrackDefinition,
-} from '../types';
+} from '../types/index.ts';
 
 export type TimelineDomainContractLevel = 'config-only' | 'pair-aware';
 export type TimelineDomainIssueSeverity = 'warning' | 'error';

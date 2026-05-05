@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSupabaseClient } from '@/integrations/supabase/client';
+import { getSupabaseClient } from '@/integrations/supabase/client.ts';
 
 export const effectsQueryKey = (userId: string | null | undefined) => ['effects', userId] as const;
 

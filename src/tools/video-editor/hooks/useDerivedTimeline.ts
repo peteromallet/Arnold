@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import { getTrackById } from '@/tools/video-editor/lib/editor-utils';
-import { getTimelineDurationInFrames, parseResolution } from '@/tools/video-editor/lib/config-utils';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import type { TrackDefinition } from '@/tools/video-editor/types';
+import { getTrackById } from '@/tools/video-editor/lib/editor-utils.ts';
+import { getTimelineDurationInFrames, parseResolution } from '@/tools/video-editor/lib/config-utils.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import type { TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 export interface CompositionMetadata {
   fps: number;

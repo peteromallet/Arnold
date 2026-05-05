@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { ClipEditingContext, DeleteClipOptions } from './types';
+import type { ClipEditingContext, DeleteClipOptions } from './types.ts';
 
 export function useClipDeletion(ctx: ClipEditingContext) {
   const {

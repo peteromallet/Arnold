@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSupabaseClient } from '@/integrations/supabase/client';
-import type { AgentSession, AgentSessionStatus, AgentTurn } from '@/tools/video-editor/types/agent-session';
-import { timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline';
+import { getSupabaseClient } from '@/integrations/supabase/client.ts';
+import type { AgentSession, AgentSessionStatus, AgentTurn } from '@/tools/video-editor/types/agent-session.ts';
+import { timelineQueryKey } from '@/tools/video-editor/hooks/useTimeline.ts';
 
 const TIMELINE_AGENT_SESSIONS_TABLE = 'timeline_agent_sessions';
 const AUTO_CONTINUE_LIMIT = 10;

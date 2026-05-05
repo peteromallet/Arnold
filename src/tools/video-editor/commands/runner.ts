@@ -1,12 +1,12 @@
-import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils';
-import { serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
-import { buildDataFromCurrentRegistry } from '@/tools/video-editor/lib/timeline-save-utils';
+import { buildTrackClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize.ts';
+import { buildDataFromCurrentRegistry } from '@/tools/video-editor/lib/timeline-save-utils.ts';
 import {
   preserveUploadingClips,
   rowsToConfig,
   type ClipMeta,
   type TimelineData,
-} from '@/tools/video-editor/lib/timeline-data';
+} from '@/tools/video-editor/lib/timeline-data.ts';
 import type {
   JsonObject,
   JsonValue,
@@ -26,7 +26,7 @@ import type {
   TimelineCommandStepResult,
   TimelineCommandTransaction,
   TimelineCommandValidationError,
-} from './types';
+} from './types.ts';
 
 const DEFAULT_EXECUTION_MODE: TimelineCommandExecutionMode = 'atomic';
 const DEFAULT_MAX_ERRORS = Number.POSITIVE_INFINITY;

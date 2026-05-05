@@ -1,10 +1,10 @@
 import { useCallback, useMemo } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
-import { addTrack, getTrackIndex } from '@/tools/video-editor/lib/editor-utils';
-import { DEFAULT_VIDEO_TRACKS } from '@/tools/video-editor/lib/defaults';
-import type { PinnedShotGroup, TrackDefinition, TrackKind } from '@/tools/video-editor/types';
-import { findNearestFreeTrack, moveClipBetweenTracks, trySnapToEdge } from '@/tools/video-editor/lib/coordinate-utils';
-import type { ClipMeta, TimelineData } from '@/tools/video-editor/lib/timeline-data';
+import { addTrack, getTrackIndex } from '@/tools/video-editor/lib/editor-utils.ts';
+import { DEFAULT_VIDEO_TRACKS } from '@/tools/video-editor/lib/defaults.ts';
+import type { PinnedShotGroup, TrackDefinition, TrackKind } from '@/tools/video-editor/types/index.ts';
+import { findNearestFreeTrack, moveClipBetweenTracks, trySnapToEdge } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import type { ClipMeta, TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 import {
   categorizeSelection,
   findEnclosingPinnedGroup,
@@ -12,9 +12,9 @@ import {
   orderClipIdsByAt,
   resolveGroupTrackId,
   type PinnedGroupKey,
-} from '@/tools/video-editor/lib/pinned-group-projection';
-import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types';
-import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/pinned-group-projection.ts';
+import type { TimelineApplyEdit } from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { TimelineRow } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export interface UseTimelineTrackManagementArgs {
   dataRef: React.MutableRefObject<TimelineData | null>;

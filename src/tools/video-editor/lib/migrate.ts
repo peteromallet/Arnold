@@ -2,4 +2,4 @@ export {
   migrateToFlatTracks,
   repairConfig,
   repairShotGroupContiguity,
-} from './timeline-domain';
+} from './timeline-domain.ts';

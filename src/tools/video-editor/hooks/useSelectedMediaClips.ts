@@ -3,9 +3,9 @@
  * Not part of the supported public SDK surface.
  */
 import { useMemo } from 'react';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import { useTimelineEditorData } from '@/tools/video-editor/hooks/timelineStore';
-import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { useTimelineEditorData } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { getClipTimelineDuration } from '@/tools/video-editor/lib/config-utils.ts';
 
 export type SelectedMediaClip = {
   clipId: string;

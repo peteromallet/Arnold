@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import { DynamicEffectRegistry } from '@/tools/video-editor/effects/DynamicEffectRegistry';
+import { DynamicEffectRegistry } from '@/tools/video-editor/effects/DynamicEffectRegistry.ts';
 import {
   continuousEffects,
   entranceEffects,
   exitEffects,
   getEffectRegistry,
   replaceEffectRegistry,
-} from '@/tools/video-editor/effects';
-import { loadDraftEffects } from '@/tools/video-editor/effects/effect-store';
-import type { EffectResource } from '@/tools/video-editor/hooks/useEffectResources';
+} from '@/tools/video-editor/effects/index.tsx';
+import { loadDraftEffects } from '@/tools/video-editor/effects/effect-store.ts';
+import type { EffectResource } from '@/tools/video-editor/hooks/useEffectResources.ts';
 
 const BUILT_INS = {
   ...entranceEffects,

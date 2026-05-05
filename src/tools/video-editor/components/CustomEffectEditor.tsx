@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/shared/components/ui/button';
-import { Input } from '@/shared/components/ui/input';
-import { Textarea } from '@/shared/components/ui/textarea';
-import { toast } from '@/shared/components/ui/toast';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import { deleteDraftEffect, loadDraftEffects, saveDraftEffect } from '@/tools/video-editor/effects/effect-store';
-import { getEffectPromptTemplate } from '@/tools/video-editor/effects/effectPromptTemplate';
-import { useEffects } from '@/tools/video-editor/hooks/useEffects';
-import type { CustomEffectEntry } from '@/tools/video-editor/types';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { Textarea } from '@/shared/components/ui/textarea.tsx';
+import { toast } from '@/shared/components/ui/toast.tsx';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { deleteDraftEffect, loadDraftEffects, saveDraftEffect } from '@/tools/video-editor/effects/effect-store.ts';
+import { getEffectPromptTemplate } from '@/tools/video-editor/effects/effectPromptTemplate.ts';
+import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
+import type { CustomEffectEntry } from '@/tools/video-editor/types/index.ts';
 
 interface CustomEffectEditorProps {
   category: CustomEffectEntry['category'];

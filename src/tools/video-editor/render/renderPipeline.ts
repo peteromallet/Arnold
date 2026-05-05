@@ -1,11 +1,11 @@
-import type { TimelineRenderRequest } from '@/tools/video-editor/hooks/timeline-state-types';
+import type { TimelineRenderRequest } from '@/tools/video-editor/hooks/timeline-state-types.ts';
 import {
   RENDER_PROVIDER_REGISTRY,
   buildRenderTimelinePayload,
   enqueueBanodocoRenderTimeline,
   type RenderProviderId,
   type RenderRouteDecision,
-} from '@/tools/video-editor/lib/renderRouter';
+} from '@/tools/video-editor/lib/renderRouter.ts';
 
 export type RenderPipelineEvent =
   | {

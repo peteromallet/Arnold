@@ -1,10 +1,10 @@
-import { getClipTimelineDuration } from './config-utils';
+import { getClipTimelineDuration } from './config-utils.ts';
 import type {
   ResolvedTimelineClip,
   ResolvedTimelineConfig,
   TrackDefinition,
   TrackKind,
-} from '@/tools/video-editor/types';
+} from '@/tools/video-editor/types/index.ts';
 
 const SPLIT_EPSILON = 0.0001;
 

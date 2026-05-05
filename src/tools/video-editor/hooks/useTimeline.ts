@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
-import type { DataProvider, LoadedTimeline } from '@/tools/video-editor/data/DataProvider';
-import type { TimelineConfig } from '@/tools/video-editor/types';
+import type { DataProvider, LoadedTimeline } from '@/tools/video-editor/data/DataProvider.ts';
+import type { TimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 export const timelineQueryKey = (timelineId: string | null | undefined) => ['timeline', timelineId] as const;
 export const assetRegistryQueryKey = (timelineId: string | null | undefined) => ['asset-registry', timelineId] as const;

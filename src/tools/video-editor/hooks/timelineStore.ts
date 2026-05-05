@@ -15,21 +15,21 @@ import {
 import { shallow } from 'zustand/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import { defaultPreferences, type EditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences';
+import { defaultPreferences, type EditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
 import type {
   TimelineChromeContextValue,
   TimelineEditorDataContextValue,
   TimelineEditorOpsContextValue,
   TimelinePlaybackContextValue,
-} from '@/tools/video-editor/hooks/useTimelineState.types';
-import { createInteractionState } from '@/tools/video-editor/lib/interaction-state';
+} from '@/tools/video-editor/hooks/useTimelineState.types.ts';
+import { createInteractionState } from '@/tools/video-editor/lib/interaction-state.ts';
 import {
   createMobileInteractionPolicy,
   resolveInputModalityFromPointerType,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
-import type { DropPosition } from '@/tools/video-editor/lib/drop-position';
-import type { TimelineCanvasHandle } from '@/tools/video-editor/types/timeline-canvas';
-import type { PreviewHandle } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import type { DropPosition } from '@/tools/video-editor/lib/drop-position.ts';
+import type { TimelineCanvasHandle } from '@/tools/video-editor/types/timeline-canvas.ts';
+import type { PreviewHandle } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview.tsx';
 
 export interface TimelineAvailabilityState {
   mounted: boolean;

@@ -5,20 +5,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Clapperboard, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Button } from '@/shared/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/shared/components/ui/card';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { Input } from '@/shared/components/ui/input';
-import { Skeleton } from '@/shared/components/ui/skeleton';
-import { useAuth } from '@/shared/contexts/AuthContext';
-import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext';
-import { useToolSettings } from '@/shared/hooks/settings/useToolSettings';
-import { toast } from '@/shared/components/ui/toast';
-import { SupabaseDataProvider } from '@/tools/video-editor/data/SupabaseDataProvider';
-import { VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider';
-import { ReighVideoEditorShell } from '@/tools/video-editor/components/ReighVideoEditorShell';
-import { useTimelinesList } from '@/tools/video-editor/hooks/useTimelinesList';
-import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults';
+import { Button } from '@/shared/components/ui/button.tsx';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/shared/components/ui/card.tsx';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { Input } from '@/shared/components/ui/input.tsx';
+import { Skeleton } from '@/shared/components/ui/skeleton.tsx';
+import { useAuth } from '@/shared/contexts/AuthContext.tsx';
+import { useProjectSelectionContext } from '@/shared/contexts/ProjectContext.tsx';
+import { useToolSettings } from '@/shared/hooks/settings/useToolSettings.ts';
+import { toast } from '@/shared/components/ui/toast.tsx';
+import { SupabaseDataProvider } from '@/tools/video-editor/data/SupabaseDataProvider.ts';
+import { VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider.tsx';
+import { ReighVideoEditorShell } from '@/tools/video-editor/components/ReighVideoEditorShell.tsx';
+import { useTimelinesList } from '@/tools/video-editor/hooks/useTimelinesList.ts';
+import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults.ts';
 
 function TimelineList({ onSelect }: { onSelect: (timelineId: string) => void }) {
   const { selectedProjectId } = useProjectSelectionContext();

@@ -1,30 +1,30 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { toast } from '@/shared/components/ui/runtime/sonner';
-import type { SelectClipOptions } from '@/shared/state/selectionStore';
+import { toast } from '@/shared/components/ui/runtime/sonner.tsx';
+import type { SelectClipOptions } from '@/shared/state/selectionStore.ts';
 import {
   patchAffectsDuration,
   recalcActionEnd,
-} from '@/tools/video-editor/lib/clip-editing-utils';
-import { findEnclosingPinnedGroup } from '@/tools/video-editor/lib/pinned-group-projection';
+} from '@/tools/video-editor/lib/clip-editing-utils.ts';
+import { findEnclosingPinnedGroup } from '@/tools/video-editor/lib/pinned-group-projection.ts';
 import {
   type ClipMeta,
   type TimelineData,
-} from '@/tools/video-editor/lib/timeline-data';
-import type { ApplyEditOptions } from '@/tools/video-editor/hooks/useTimelineCommit';
+} from '@/tools/video-editor/lib/timeline-data.ts';
+import type { ApplyEditOptions } from '@/tools/video-editor/hooks/useTimelineCommit.ts';
 import type {
   TimelineApplyEdit,
   TimelineSelectedTrack,
-} from '@/tools/video-editor/hooks/timeline-state-types';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
 import {
   useClipAudioManagement,
   useClipDeletion,
   useClipPositioning,
   useClipSplitting,
   useClipTextOverlay,
-} from './clip-editing';
-import type { ClipEditingContext } from './clip-editing';
-import type { DeleteClipOptions } from './clip-editing/types';
+} from './clip-editing/index.ts';
+import type { ClipEditingContext } from './clip-editing/index.ts';
+import type { DeleteClipOptions } from './clip-editing/types.ts';
 
 export interface UseClipEditingArgs {
   dataRef: MutableRefObject<TimelineData | null>;
@@ -56,8 +56,8 @@ export interface UseClipEditingResult {
   handleAddTextAt: (trackId: string, time: number) => void;
 }
 
-export { DURATION_KEYS, patchAffectsDuration, recalcActionEnd } from '@/tools/video-editor/lib/clip-editing-utils';
-export type { DeleteClipOptions } from './clip-editing/types';
+export { DURATION_KEYS, patchAffectsDuration, recalcActionEnd } from '@/tools/video-editor/lib/clip-editing-utils.ts';
+export type { DeleteClipOptions } from './clip-editing/types.ts';
 
 const PINNED_GROUP_EDIT_MESSAGE = 'Use Delete shot from the shot menu';
 

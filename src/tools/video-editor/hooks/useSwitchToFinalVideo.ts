@@ -1,26 +1,26 @@
 import { useCallback } from 'react';
-import { generateUUID } from '@/shared/lib/taskCreation/ids';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import { getFinalVideoReplacementDurationContract } from '@/tools/video-editor/lib/timeline-asset-durations';
-import { resolveFinalVideoDurationSeconds } from '@/tools/video-editor/lib/finalVideoAssets';
+import { generateUUID } from '@/shared/lib/taskCreation/ids.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { getFinalVideoReplacementDurationContract } from '@/tools/video-editor/lib/timeline-asset-durations.ts';
+import { resolveFinalVideoDurationSeconds } from '@/tools/video-editor/lib/finalVideoAssets.ts';
 import {
   executeGenerationAssetRegistrationPlan,
   planFinalVideoGenerationAssetRegistration,
-} from '@/tools/video-editor/lib/timeline-asset-plans';
+} from '@/tools/video-editor/lib/timeline-asset-plans.ts';
 import {
   buildSwitchShotGroupToFinalVideoMutation,
   buildSwitchShotGroupToImagesMutation,
   buildUpdateShotGroupToLatestVideoMutation,
-} from '@/tools/video-editor/lib/shot-group-commands';
-import { findGroupForTrack, resolveGroupTrackId } from '@/tools/video-editor/lib/pinned-group-projection';
+} from '@/tools/video-editor/lib/shot-group-commands.ts';
+import { findGroupForTrack, resolveGroupTrackId } from '@/tools/video-editor/lib/pinned-group-projection.ts';
 import type {
   TimelineApplyEdit,
   TimelineDataRef,
   TimelinePatchRegistry,
   TimelineRegisterAsset,
   TimelineUnpatchRegistry,
-} from '@/tools/video-editor/hooks/timeline-state-types';
-import type { ShotFinalVideo } from '@/tools/video-editor/hooks/useFinalVideoAvailable';
+} from '@/tools/video-editor/hooks/timeline-state-types.ts';
+import type { ShotFinalVideo } from '@/tools/video-editor/hooks/useFinalVideoAvailable.ts';
 
 interface UseSwitchToFinalVideoArgs {
   applyEdit: TimelineApplyEdit;

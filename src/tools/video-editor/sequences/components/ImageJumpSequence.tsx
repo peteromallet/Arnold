@@ -1,7 +1,7 @@
 import type { FC } from 'react';
 import { AbsoluteFill, Img, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
 import { useTheme, type RuntimeTheme } from '@banodoco/timeline-composition/theme-api';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 type ImageJumpSequenceParams = {
   images?: string[];

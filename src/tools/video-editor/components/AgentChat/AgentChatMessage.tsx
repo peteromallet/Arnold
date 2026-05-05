@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, Terminal, X } from 'lucide-react';
-import { cn } from '@/shared/components/ui/contracts/cn';
-import { buildAttachedSummary } from '@/tools/video-editor/hooks/useSelectedMediaClips';
-import type { AgentTurn } from '@/tools/video-editor/types/agent-session';
-import type { ToolCallPair } from './AgentChat';
+import { cn } from '@/shared/components/ui/contracts/cn.ts';
+import { buildAttachedSummary } from '@/tools/video-editor/hooks/useSelectedMediaClips.ts';
+import type { AgentTurn } from '@/tools/video-editor/types/agent-session.ts';
+import type { ToolCallPair } from './AgentChat.tsx';
 
 const MAX_TOOL_NAME_LENGTH = 80;
 const MAX_ATTACHMENT_SUMMARY_LENGTH = 120;

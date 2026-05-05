@@ -40,8 +40,8 @@ import {
   Video,
 } from 'remotion';
 import { composeAnimations, useTheme } from '@banodoco/timeline-composition/theme-api';
-import { compileWithGlobalsAsync } from '@/tools/video-editor/runtime-components/compileWithGlobals';
-import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
+import { compileWithGlobalsAsync } from '@/tools/video-editor/runtime-components/compileWithGlobals.ts';
+import type { ResolvedTimelineClip } from '@/tools/video-editor/types/index.ts';
 
 export interface SmokeRenderInput {
   code: string;

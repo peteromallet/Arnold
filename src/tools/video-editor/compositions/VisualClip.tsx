@@ -9,12 +9,12 @@ import {
   getSanitizedVolume,
   parseResolution,
   secondsToFrames,
-} from '@/tools/video-editor/lib/config-utils';
-import { wrapWithClipEffects } from '@/tools/video-editor/effects';
-import { transitions } from '@/tools/video-editor/effects/transitions';
-import { MediaErrorBoundary } from '@/tools/video-editor/compositions/MediaErrorBoundary';
-import { computeViewportMediaLayout } from '@/tools/video-editor/lib/render-bounds';
-import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types';
+} from '@/tools/video-editor/lib/config-utils.ts';
+import { wrapWithClipEffects } from '@/tools/video-editor/effects/index.tsx';
+import { transitions } from '@/tools/video-editor/effects/transitions.ts';
+import { MediaErrorBoundary } from '@/tools/video-editor/compositions/MediaErrorBoundary.tsx';
+import { computeViewportMediaLayout } from '@/tools/video-editor/lib/render-bounds.ts';
+import type { ResolvedTimelineClip, TrackDefinition } from '@/tools/video-editor/types/index.ts';
 
 // SD-025 (Sprint 3): inline missing-asset placeholder body. Mirrors the
 // styling of UnknownClipPlaceholder so the two loud cases look like a pair.

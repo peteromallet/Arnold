@@ -1,40 +1,40 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { useIsMobile, useIsTablet } from '@/shared/hooks/mobile';
+import { useIsMobile, useIsTablet } from '@/shared/hooks/mobile/index.ts';
 import {
   editorClearTimelineSelection,
   systemResetTimelineSelection,
   useTimelineMultiSelect,
   userSelectTimelineClip,
   userSelectTimelineClips,
-} from '@/shared/state/selectionStore';
-import { createInteractionState, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state';
-import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext';
-import { ROW_HEIGHT, TIMELINE_START_LEFT } from '@/tools/video-editor/lib/coordinate-utils';
-import { useAssetManagement } from '@/tools/video-editor/hooks/useAssetManagement';
-import { useAssetOperations } from '@/tools/video-editor/hooks/useAssetOperations';
-import { useClipEditing } from '@/tools/video-editor/hooks/useClipEditing';
-import { useClipResize } from '@/tools/video-editor/hooks/useClipResize';
-import { useDerivedTimeline } from '@/tools/video-editor/hooks/useDerivedTimeline';
-import { useDragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator';
-import { useEditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences';
-import { useExternalDrop } from '@/tools/video-editor/hooks/useExternalDrop';
-import { useTimelinePlayback } from '@/tools/video-editor/hooks/useTimelinePlayback';
-import { useRenderState } from '@/tools/video-editor/hooks/useRenderState';
-import { useTimelineHistory } from '@/tools/video-editor/hooks/useTimelineHistory';
-import { useTimelineQueries } from '@/tools/video-editor/hooks/useTimelineQueries';
-import { useTimelineSave } from '@/tools/video-editor/hooks/useTimelineSave';
-import { useTimelineSelection } from '@/tools/video-editor/hooks/useTimelineSelection';
+} from '@/shared/state/selectionStore.ts';
+import { createInteractionState, type InteractionStateRef } from '@/tools/video-editor/lib/interaction-state.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { ROW_HEIGHT, TIMELINE_START_LEFT } from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { useAssetManagement } from '@/tools/video-editor/hooks/useAssetManagement.ts';
+import { useAssetOperations } from '@/tools/video-editor/hooks/useAssetOperations.ts';
+import { useClipEditing } from '@/tools/video-editor/hooks/useClipEditing.ts';
+import { useClipResize } from '@/tools/video-editor/hooks/useClipResize.ts';
+import { useDerivedTimeline } from '@/tools/video-editor/hooks/useDerivedTimeline.ts';
+import { useDragCoordinator } from '@/tools/video-editor/hooks/useDragCoordinator.ts';
+import { useEditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
+import { useExternalDrop } from '@/tools/video-editor/hooks/useExternalDrop.ts';
+import { useTimelinePlayback } from '@/tools/video-editor/hooks/useTimelinePlayback.ts';
+import { useRenderState } from '@/tools/video-editor/hooks/useRenderState.ts';
+import { useTimelineHistory } from '@/tools/video-editor/hooks/useTimelineHistory.ts';
+import { useTimelineQueries } from '@/tools/video-editor/hooks/useTimelineQueries.ts';
+import { useTimelineSave } from '@/tools/video-editor/hooks/useTimelineSave.ts';
+import { useTimelineSelection } from '@/tools/video-editor/hooks/useTimelineSelection.ts';
 import {
   createTimelineStore,
   type TimelineStoreApi,
   type TimelineStoreBootstrap,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 import {
   createTimelineCommandRunner,
   MEDIA_COMMAND_DESCRIPTORS,
   provisionRegisteredTimelineMedia,
-} from '@/tools/video-editor/commands';
+} from '@/tools/video-editor/commands/index.ts';
 import type {
   TimelineChromeContextValue,
   TimelineEditorCommandInput,
@@ -43,19 +43,19 @@ import type {
   TimelineEditorCommands,
   TimelinePlaybackContextValue,
   UseTimelineStateResult,
-} from '@/tools/video-editor/hooks/useTimelineState.types';
+} from '@/tools/video-editor/hooks/useTimelineState.types.ts';
 import {
   createMobileInteractionPolicy,
   getDefaultInteractionMode,
   resolveInputModalityFromPointerType,
   resolveTimelineDeviceClass,
-} from '@/tools/video-editor/lib/mobile-interaction-model';
-import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
-import { useTimelineTrackManagement } from '@/tools/video-editor/hooks/useTimelineTrackManagement';
+} from '@/tools/video-editor/lib/mobile-interaction-model.ts';
+import type { TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
+import { useTimelineTrackManagement } from '@/tools/video-editor/hooks/useTimelineTrackManagement.ts';
 
-export type { EditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences';
-export type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState';
-export type { SaveStatus } from '@/tools/video-editor/hooks/useTimelineSave';
+export type { EditorPreferences } from '@/tools/video-editor/hooks/useEditorPreferences.ts';
+export type { RenderStatus } from '@/tools/video-editor/hooks/useRenderState.ts';
+export type { SaveStatus } from '@/tools/video-editor/hooks/useTimelineSave.ts';
 
 type SelectionHook = ReturnType<typeof useTimelineSelection>;
 type MultiSelectHook = ReturnType<typeof useTimelineMultiSelect>;

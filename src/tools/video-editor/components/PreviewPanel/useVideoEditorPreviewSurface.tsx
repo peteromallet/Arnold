@@ -8,8 +8,8 @@ import {
   type RefCallback,
 } from 'react';
 import { shallow } from 'zustand/shallow';
-import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview';
-import { useTimelineDataSelector, useTimelinePlaybackSelector } from '@/tools/video-editor/hooks/timelineStore';
+import { RemotionPreview } from '@/tools/video-editor/components/PreviewPanel/RemotionPreview.tsx';
+import { useTimelineDataSelector, useTimelinePlaybackSelector } from '@/tools/video-editor/hooks/timelineStore.ts';
 
 export interface VideoEditorPreviewSurface {
   slotRef: RefCallback<HTMLDivElement>;

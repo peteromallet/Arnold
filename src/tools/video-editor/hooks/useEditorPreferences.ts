@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useEditorSettings } from '@/tools/video-editor/settings/useEditorSettings';
+import { useEditorSettings } from '@/tools/video-editor/settings/useEditorSettings.ts';
 
 export type ClipTab = 'effects' | 'timing' | 'position' | 'audio' | 'text';
 

@@ -1,7 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { extractSettingsFromCache } from '@/shared/hooks/settings/useToolSettings';
-import { queryKeys } from '@/shared/lib/queryKeys';
-import { videoEditorSettings, type VideoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults';
+import { extractSettingsFromCache } from '@/shared/hooks/settings/useToolSettings.ts';
+import { queryKeys } from '@/shared/lib/queryKeys/index.ts';
+import { videoEditorSettings, type VideoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults.ts';
 
 export const VIDEO_EDITOR_PATH = '/tools/video-editor';
 

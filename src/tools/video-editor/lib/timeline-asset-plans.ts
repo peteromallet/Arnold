@@ -1,18 +1,18 @@
-import { generateUUID } from '@/shared/lib/taskCreation/ids';
+import { generateUUID } from '@/shared/lib/taskCreation/ids.ts';
 import {
   findNearestFreeTrack,
   getCompatibleTrackId,
   trySnapToEdge,
   updateClipOrder,
-} from '@/tools/video-editor/lib/coordinate-utils';
-import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils';
-import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data';
+} from '@/tools/video-editor/lib/coordinate-utils.ts';
+import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils.ts';
+import { getNextClipId, type ClipMeta, type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 import {
   getDuplicateGenerationDurationContract,
   readPositiveDurationSeconds,
-} from '@/tools/video-editor/lib/timeline-asset-durations';
-import type { AssetRegistryEntry, ClipType } from '@/tools/video-editor/types';
-import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas';
+} from '@/tools/video-editor/lib/timeline-asset-durations.ts';
+import type { AssetRegistryEntry, ClipType } from '@/tools/video-editor/types/index.ts';
+import type { TimelineAction } from '@/tools/video-editor/types/timeline-canvas.ts';
 
 export type PlannedGenerationAssetRegistration =
   | {

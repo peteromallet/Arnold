@@ -1,13 +1,13 @@
 import { memo } from 'react';
-import AssetPanel from '@/tools/video-editor/components/PropertiesPanel/AssetPanel';
+import AssetPanel from '@/tools/video-editor/components/PropertiesPanel/AssetPanel.tsx';
 import {
   useTimelineEditorData,
   useTimelineEditorOps,
-} from '@/tools/video-editor/hooks/timelineStore';
+} from '@/tools/video-editor/hooks/timelineStore.ts';
 import {
   useVideoEditorAssetPanels,
   useVideoEditorRenderContext,
-} from '@/tools/video-editor/runtime/useVideoEditorRenderContext';
+} from '@/tools/video-editor/runtime/useVideoEditorRenderContext.ts';
 
 export interface VideoEditorAssetPanelSurfaceProps {
   includeBuiltIn?: boolean;
