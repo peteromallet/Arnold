@@ -18,12 +18,17 @@ STATE_FINALIZED = "finalized"
 STATE_EXECUTED = "executed"
 STATE_DONE = "done"
 STATE_ABORTED = "aborted"
+STATE_FAILED = "failed"
+STATE_BLOCKED = "blocked"
+STATE_PAUSED = "paused"
+STATE_CANCELLED = "cancelled"
 STATE_AWAITING_PR_MERGE = "awaiting_pr_merge"
 STATE_AWAITING_HUMAN = "awaiting_human_verify"
 STATE_TIEBREAKER_PENDING = "tiebreaker_pending"
 STATE_TIEBREAKER_READY = "tiebreaker_ready"
-TERMINAL_STATES = {STATE_DONE, STATE_ABORTED}
+TERMINAL_STATES = {STATE_DONE, STATE_ABORTED, STATE_FAILED, STATE_BLOCKED, STATE_CANCELLED}
 AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {
+    STATE_PAUSED,
     STATE_AWAITING_HUMAN,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
@@ -140,6 +145,8 @@ class PlanState(TypedDict):
     last_gate: LastGateRecord
     active_step: NotRequired[ActiveStep]
     clarification: NotRequired[ClarificationRecord]
+    latest_failure: NotRequired[dict[str, Any] | None]
+    resume_cursor: NotRequired[dict[str, Any] | None]
 
 
 class _FlagRecordRequired(TypedDict):

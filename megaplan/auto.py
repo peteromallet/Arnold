@@ -27,9 +27,16 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import find_plan_dir
+from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
+    STATE_ABORTED,
     STATE_AWAITING_HUMAN,
+    STATE_BLOCKED,
+    STATE_CANCELLED,
+    STATE_DONE,
+    STATE_FAILED,
+    STATE_PAUSED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
@@ -60,7 +67,7 @@ PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "stalled" | "escalated" | "failed" | "aborted" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required"
+    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required"
     plan: str
     final_state: str
     iterations: int
@@ -299,6 +306,50 @@ def _get_review_marker(plan_dir: Path | None) -> float | None:
         return None
 
 
+def _latest_artifact_name(plan_dir: Path | None) -> str | None:
+    if plan_dir is None:
+        return None
+    try:
+        artifact = PlanRepository.from_plan_dir(plan_dir).latest_execution_batch_artifact()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if artifact is None:
+        return None
+    try:
+        return artifact.relative_to(plan_dir).as_posix()
+    except ValueError:
+        return artifact.name
+
+
+def _record_lifecycle_failure(
+    *,
+    plan_dir: Path | None,
+    kind: str,
+    message: str,
+    current_state: str,
+    phase: str | None,
+    resume_cursor: dict[str, Any] | None,
+    last_artifact: str | None = None,
+    suggested_action: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if plan_dir is None:
+        return
+    try:
+        PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
+            kind=kind,
+            message=message,
+            current_state=current_state,
+            phase=phase,
+            resume_cursor=resume_cursor,
+            last_artifact=last_artifact,
+            suggested_action=suggested_action,
+            metadata=metadata,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return
+
+
 def drive(
     plan: str,
     *,
@@ -377,6 +428,16 @@ def drive(
             status = _status(plan, cwd=cwd, timeout=status_timeout)
         except (RuntimeError, json.JSONDecodeError) as error:
             log(f"status lookup failed: {error}")
+            _record_lifecycle_failure(
+                plan_dir=plan_dir,
+                kind="status_lookup_failed",
+                message=str(error),
+                current_state=STATE_FAILED,
+                phase=last_phase,
+                resume_cursor={"phase": last_phase or "status", "retry_strategy": "rerun_status"},
+                suggested_action="Inspect state.json and rerun status before resuming automation.",
+                metadata={"iteration": iteration},
+            )
             return _outcome(
                 "failed",
                 final_state=last_state or "unknown",
@@ -395,6 +456,16 @@ def drive(
                     f"total_cost_usd={cumulative} > cost_cap_usd={max_cost_usd}",
                     total_cost_usd=cumulative,
                     cost_cap_usd=max_cost_usd,
+                )
+                _record_lifecycle_failure(
+                    plan_dir=plan_dir,
+                    kind="cost_cap_exceeded",
+                    message=f"Cost cap exceeded: {cumulative} > {max_cost_usd}",
+                    current_state=STATE_BLOCKED,
+                    phase=last_phase,
+                    resume_cursor={"phase": last_phase or "status", "retry_strategy": "increase_cap_or_resume"},
+                    suggested_action="Increase the cost cap or resume the plan after reviewing spend.",
+                    metadata={"total_cost_usd": cumulative, "cost_cap_usd": max_cost_usd, "iteration": iteration},
                 )
                 return _outcome(
                     "cost_cap_exceeded",
@@ -447,9 +518,25 @@ def drive(
                     reason="tiebreaker synthesis complete — awaiting human decision",
                     last_phase=last_phase,
                 )
+            if state == STATE_PAUSED:
+                log("plan paused — automation stopping until resumed")
+                return _outcome(
+                    "paused",
+                    final_state=state,
+                    iterations=iteration,
+                    reason="plan is paused and must be resumed by the user",
+                    last_phase=last_phase,
+                )
+            terminal_status = {
+                STATE_DONE: "done",
+                STATE_ABORTED: "aborted",
+                STATE_FAILED: "failed",
+                STATE_BLOCKED: "blocked",
+                STATE_CANCELLED: "cancelled",
+            }.get(state, state)
             log(f"terminal state reached: {state}")
             return _outcome(
-                "done" if state == "done" else "aborted",
+                terminal_status,
                 final_state=state,
                 iterations=iteration,
                 reason=f"plan entered terminal state '{state}'",
@@ -516,6 +603,17 @@ def drive(
                         f"all pending tasks reported status=blocked "
                         f"({tasks_blocked} blocked) — treating as poisoned outcome"
                     )
+                    _record_lifecycle_failure(
+                        plan_dir=plan_dir,
+                        kind="tasks_blocked",
+                        message="all pending tasks reported blocked",
+                        current_state=STATE_BLOCKED,
+                        phase=last_phase,
+                        resume_cursor={"phase": last_phase or "execute", "retry_strategy": "fresh_session"},
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action="Resume with a fresh worker session after reviewing blocked task reasons.",
+                        metadata={"tasks_blocked": tasks_blocked, "iteration": iteration},
+                    )
                     return _outcome(
                         "blocked",
                         final_state=state,
@@ -527,6 +625,16 @@ def drive(
                         last_phase=last_phase,
                     )
                 log(f"stalled at state={state} for {stall_count} iterations")
+                _record_lifecycle_failure(
+                    plan_dir=plan_dir,
+                    kind="stalled",
+                    message=f"stalled at '{state}' for {stall_count} iterations",
+                    current_state=STATE_BLOCKED,
+                    phase=last_phase,
+                    resume_cursor={"phase": last_phase or str(next_step or "status"), "retry_strategy": "manual_review"},
+                    suggested_action="Review the plan state before resuming automation.",
+                    metadata={"stall_count": stall_count, "iteration": iteration},
+                )
                 return _outcome(
                     "stalled",
                     final_state=state,
@@ -570,6 +678,16 @@ def drive(
                             "escalate_requires_user_approval",
                         )
                         if any(signal in combined_text for signal in strict_signals):
+                            _record_lifecycle_failure(
+                                plan_dir=plan_dir,
+                                kind="human_required",
+                                message="force-proceed blocked by strict-notes",
+                                current_state=STATE_BLOCKED,
+                                phase="override",
+                                resume_cursor={"phase": "override", "retry_strategy": "human_approval"},
+                                suggested_action="Address strict notes or approve escalate before resuming.",
+                                metadata={"signals": [signal for signal in strict_signals if signal in combined_text]},
+                            )
                             return _outcome(
                                 "human_required",
                                 final_state=state,
@@ -580,6 +698,16 @@ def drive(
                                 ),
                                 last_phase=last_phase,
                             )
+                        _record_lifecycle_failure(
+                            plan_dir=plan_dir,
+                            kind="override_failed",
+                            message=f"override force-proceed exited {code}",
+                            current_state=STATE_FAILED,
+                            phase="override",
+                            resume_cursor={"phase": "override", "retry_strategy": "rerun_override"},
+                            suggested_action="Inspect override output before resuming.",
+                            metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:]},
+                        )
                         return _outcome(
                             "failed",
                             final_state=state,
@@ -611,6 +739,16 @@ def drive(
                     )
                 # on_escalate == "fail"
                 log("gate escalated — failing (per on_escalate=fail)")
+                _record_lifecycle_failure(
+                    plan_dir=plan_dir,
+                    kind="gate_escalated",
+                    message="gate escalated and on_escalate=fail",
+                    current_state=STATE_BLOCKED,
+                    phase="gate",
+                    resume_cursor={"phase": "gate", "retry_strategy": "human_decision"},
+                    suggested_action="Resolve the gate escalation before resuming.",
+                    metadata={"iteration": iteration},
+                )
                 return _outcome(
                     "escalated",
                     final_state=state,
@@ -619,6 +757,16 @@ def drive(
                     last_phase=last_phase,
                 )
             log(f"no next_step and no override available (valid_next={valid_next})")
+            _record_lifecycle_failure(
+                plan_dir=plan_dir,
+                kind="no_next_step",
+                message="no next_step and no override available",
+                current_state=STATE_FAILED,
+                phase=None,
+                resume_cursor={"phase": "status", "retry_strategy": "repair_state"},
+                suggested_action="Repair state.json or workflow mapping before resuming.",
+                metadata={"valid_next": valid_next, "iteration": iteration},
+            )
             return _outcome(
                 "failed",
                 final_state=state,
@@ -644,6 +792,17 @@ def drive(
                         context_retries_used=context_retry_count,
                         max_context_retries=max_context_retries,
                     )
+                    _record_lifecycle_failure(
+                        plan_dir=plan_dir,
+                        kind="context_retry_exhausted",
+                        message=f"context exhaustion retry cap reached ({context_retry_count}/{max_context_retries})",
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={"phase": next_step, "retry_strategy": "fresh_session"},
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action="Resume execute with a fresh worker context.",
+                        metadata={"context_retries_used": context_retry_count, "max_context_retries": max_context_retries},
+                    )
                     return _outcome(
                         "context_retry_exhausted",
                         final_state=state,
@@ -667,17 +826,50 @@ def drive(
                 code, out, err = _run_megaplan(cmd, cwd=cwd, timeout=phase_timeout)
         if code == PHASE_TIMEOUT_EXIT_CODE:
             log(f"phase '{next_step}' timed out after {phase_timeout}s — stall detection will enforce the cap")
+            _record_lifecycle_failure(
+                plan_dir=plan_dir,
+                kind="phase_timeout",
+                message=f"phase '{next_step}' timed out after {phase_timeout}s",
+                current_state=STATE_FAILED,
+                phase=next_step,
+                resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action="Investigate the timed-out phase and resume from the phase cursor.",
+                metadata={"timeout_seconds": phase_timeout, "iteration": iteration},
+            )
         elif code != 0:
             # Don't bail immediately — megaplan often records a partial failure
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
             log(f"phase '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+            _record_lifecycle_failure(
+                plan_dir=plan_dir,
+                kind="phase_failed",
+                message=f"phase '{next_step}' exited {code}",
+                current_state=STATE_FAILED,
+                phase=next_step,
+                resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action="Inspect phase output and resume from the failed phase.",
+                metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
+            )
 
         if on_phase_complete and next_step in {"plan", "critique", "gate", "finalize", "execute", "review"}:
             try:
                 on_phase_complete(next_step, int(code or 0), out, err)
             except Exception as error:  # pragma: no cover - defensive callback boundary
                 log(f"phase-complete callback failed after '{next_step}': {error}")
+                _record_lifecycle_failure(
+                    plan_dir=plan_dir,
+                    kind="phase_callback_failed",
+                    message=f"phase-complete callback failed after '{next_step}': {error}",
+                    current_state=STATE_FAILED,
+                    phase=next_step,
+                    resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
+                    last_artifact=_latest_artifact_name(plan_dir),
+                    suggested_action="Fix the phase-complete callback and resume this phase.",
+                    metadata={"iteration": iteration},
+                )
                 return _outcome(
                     "failed",
                     final_state=state,
@@ -702,6 +894,25 @@ def drive(
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocking_reasons=deviations,
+                    )
+                    _record_lifecycle_failure(
+                        plan_dir=plan_dir,
+                        kind="execution_blocked",
+                        message="execute returned result=blocked from quality gates",
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={
+                            "phase": next_step,
+                            "batch_index": None,
+                            "retry_strategy": "fresh_session",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action="Review blocking deviations and resume execute with a fresh session.",
+                        metadata={
+                            "blocked_retries_used": blocked_retry_count,
+                            "max_blocked_retries": max_blocked_retries,
+                            "blocking_reasons": deviations,
+                        },
                     )
                     return _outcome(
                         "worker_blocked",
@@ -729,6 +940,16 @@ def drive(
 
     # Hit iteration cap.
     log(f"hit max_iterations={max_iterations}")
+    _record_lifecycle_failure(
+        plan_dir=plan_dir,
+        kind="iteration_cap",
+        message=f"exceeded max_iterations={max_iterations}",
+        current_state=STATE_BLOCKED,
+        phase=last_phase,
+        resume_cursor={"phase": last_phase or "status", "retry_strategy": "manual_review"},
+        suggested_action="Review automation progress before resuming.",
+        metadata={"max_iterations": max_iterations},
+    )
     return _outcome(
         "cap",
         final_state=last_state or "unknown",
@@ -885,13 +1106,13 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
     if args.outcome_file:
         _atomic_write_text(Path(args.outcome_file), outcome_json)
     sys.stdout.write(outcome_json + "\n")
-    # Exit codes: 0 done/aborted, 1 failed/unknown, 2 stalled, 3 escalated,
-    # 4 iteration cap, 5 blocked, 6 cost cap exceeded, 7 context retry exhausted,
-    # 8 worker_blocked.
+    # Exit codes: 0 done/aborted/cancelled/paused, 1 failed/unknown,
+    # 2 stalled, 3 escalated, 4 iteration cap, 5 blocked, 6 cost cap exceeded,
+    # 7 context retry exhausted, 8 worker_blocked.
     if outcome.status == "done":
         return 0
-    if outcome.status == "aborted":
-        return 0  # user-requested abort is not a failure
+    if outcome.status in {"aborted", "cancelled", "paused"}:
+        return 0  # user-requested/non-running stops are not phase failures
     if outcome.status == "stalled":
         return 2
     if outcome.status == "escalated":

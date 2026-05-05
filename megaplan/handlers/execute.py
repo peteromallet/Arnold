@@ -13,11 +13,13 @@ from megaplan.types import (
     CliError,
     PlanState,
     STATE_AWAITING_HUMAN,
+    STATE_BLOCKED,
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FINALIZED,
     StepResponse,
 )
+from megaplan.store import PlanRepository
 from megaplan._core import (
     atomic_write_json,
     clear_active_step,
@@ -27,7 +29,6 @@ from megaplan._core import (
     load_plan_locked,
     read_json,
     require_state,
-    save_state,
     save_state_merge_meta,
     set_active_step,
     workflow_includes_step,
@@ -53,6 +54,21 @@ def _is_blocked_retry(state: PlanState) -> bool:
         if entry.get("step") in ("review", "finalize"):
             return False
     return False
+
+
+def _record_execute_blocked(plan_dir: Path, response: StepResponse) -> None:
+    repo = PlanRepository.from_plan_dir(plan_dir)
+    artifact = repo.latest_execution_batch_artifact()
+    repo.record_lifecycle_failure(
+        kind="execution_blocked",
+        message="execute returned result=blocked from quality gates",
+        current_state=STATE_BLOCKED,
+        phase="execute",
+        resume_cursor={"phase": "execute", "batch_index": None, "retry_strategy": "fresh_session"},
+        last_artifact=artifact.name if artifact is not None else None,
+        suggested_action="Review blocking deviations and resume execute with a fresh worker session.",
+        metadata={"response": dict(response)},
+    )
 
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
@@ -114,6 +130,11 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             save_state_merge_meta(plan_dir, state)
             raise
         clear_active_step(state, run_id=run_id)
+        if response.get("result") == "blocked":
+            _record_execute_blocked(plan_dir, response)
+            response["state"] = STATE_BLOCKED
+            response["next_step"] = None
+            response.pop("next_step_runtime", None)
         if is_prose_mode(state) and response.get("state") == STATE_EXECUTED:
             from megaplan.doc_assembly import assemble_doc
             output_path = Path(state["config"]["project_dir"]) / state["config"]["output_path"]

@@ -178,12 +178,12 @@ _PLAN_COLUMNS = (
     "id", "name", "epic_id", "sprint_id", "revision", "idea", "current_state",
     "iteration", "config", "sessions", "plan_versions", "history", "meta",
     "last_gate", "active_step", "clarification", "latest_finalize",
-    "latest_review", "latest_execution", "latest_failure", "created_at", "updated_at",
+    "latest_review", "latest_execution", "latest_failure", "resume_cursor", "created_at", "updated_at",
 )
 _PLAN_JSONB = frozenset({
     "config", "sessions", "plan_versions", "history", "meta", "last_gate",
     "active_step", "clarification", "latest_finalize", "latest_review",
-    "latest_execution", "latest_failure",
+    "latest_execution", "latest_failure", "resume_cursor",
 })
 _ARTIFACT_VALID_FIELDS = frozenset({
     "name", "kind", "role", "version", "batch", "phase",
@@ -681,6 +681,7 @@ class DBStore:
         ).fetchone()
         base_pos = max_row["max_pos"]
         result = []
+        moved: list[tuple[str, int]] = []
         auto_idx = 0
         for item in items:
             item_id = item.id or str(uuid.uuid4())
@@ -704,11 +705,23 @@ class DBStore:
                 ],
             ).fetchone()
             result.append(ChecklistItem(**row))
-        return result
+            moved.append((item_id, position))
+        self._normalize_checklist_positions_db(epic_id, moved=moved)
+        by_id = {item.id: item for item in self.list_checklist_items(epic_id)}
+        return [by_id[item.id] for item in result if item.id in by_id]
 
     def update_checklist_item(self, item_id: str, *, idempotency_key: str | None = None,
         **changes: Any) -> ChecklistItem:
         conn = self._get_conn()
+        current = conn.execute(
+            "SELECT * FROM checklist_items WHERE id = %s",
+            [item_id],
+        ).fetchone()
+        if current is None:
+            raise FileNotFoundError(item_id)
+        if not changes:
+            return ChecklistItem(**current)
+        moved_position = changes.get("position")
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values())
         if changes.get("status") == "done" and "completed_at" not in changes:
@@ -717,6 +730,15 @@ class DBStore:
         row = conn.execute(
             f"UPDATE checklist_items SET {', '.join(set_parts)} WHERE id = %s RETURNING *",
             values,
+        ).fetchone()
+        updated = ChecklistItem(**row)
+        self._normalize_checklist_positions_db(
+            updated.epic_id,
+            moved=[(updated.id, int(moved_position))] if moved_position is not None else None,
+        )
+        row = conn.execute(
+            "SELECT * FROM checklist_items WHERE id = %s",
+            [item_id],
         ).fetchone()
         return ChecklistItem(**row)
 
@@ -727,10 +749,16 @@ class DBStore:
         if not item_ids:
             return
         conn = self._get_conn()
+        epic_rows = conn.execute(
+            "SELECT DISTINCT epic_id FROM checklist_items WHERE id = ANY(%s)",
+            [list(item_ids)],
+        ).fetchall()
         conn.execute(
             "DELETE FROM checklist_items WHERE id = ANY(%s)",
             [list(item_ids)],
         )
+        for row in epic_rows:
+            self._normalize_checklist_positions_db(str(row["epic_id"]))
 
     def replace_checklist(
         self,
@@ -764,6 +792,41 @@ class DBStore:
                     ],
                 ).fetchone()
                 result.append(ChecklistItem(**row))
+            self._normalize_checklist_positions_db(epic_id, moved=[(item.id, item.position) for item in result])
+        by_id = {item.id: item for item in self.list_checklist_items(epic_id)}
+        return [by_id[item.id] for item in result if item.id in by_id]
+
+    def _normalize_checklist_positions_db(
+        self,
+        epic_id: str,
+        *,
+        moved: Sequence[tuple[str, int]] | None = None,
+    ) -> list[ChecklistItem]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM checklist_items WHERE epic_id = %s ORDER BY position, created_at, id",
+            [epic_id],
+        ).fetchall()
+        ordered = [ChecklistItem(**row) for row in rows]
+        by_id = {item.id: item for item in ordered}
+        if moved:
+            for item_id, requested_position in moved:
+                item = by_id.get(item_id)
+                if item is None:
+                    continue
+                ordered = [row for row in ordered if row.id != item_id]
+                index = max(0, min(int(requested_position) - 1, len(ordered)))
+                ordered.insert(index, item)
+        result: list[ChecklistItem] = []
+        for position, item in enumerate(ordered, start=1):
+            if item.position != position:
+                row = conn.execute(
+                    "UPDATE checklist_items SET position = %s WHERE id = %s RETURNING *",
+                    [position, item.id],
+                ).fetchone()
+                result.append(ChecklistItem(**row))
+            else:
+                result.append(item)
         return result
 
     # ------------------------------------------------------------------
@@ -959,31 +1022,61 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> list[Sprint]:
         conn = self._get_conn()
-        with conn.transaction():
-            # pending leg: sprints transitioning out of queue (need a reason)
-            for sprint_id, reason in pending.items():
-                conn.execute(
-                    """
-                    UPDATE sprints
-                    SET status = 'pending', pending_reason = %s,
-                        queue_position = NULL, updated_at = now()
-                    WHERE id = %s AND epic_id = %s
-                    """,
-                    [reason, sprint_id, epic_id],
-                )
-            # ordered leg: sprints being placed in queue
-            for i, sprint_id in enumerate(ordered_sprint_ids, 1):
-                conn.execute(
-                    """
-                    UPDATE sprints
-                    SET status = 'queued', queue_position = %s,
-                        queued_at = now(), updated_at = now()
-                    WHERE id = %s AND epic_id = %s
-                    """,
-                    [i, sprint_id, epic_id],
-                )
+        ordered_ids = [str(sprint_id) for sprint_id in ordered_sprint_ids]
+        pending_map = {str(sprint_id): str(reason) for sprint_id, reason in pending.items()}
+        if len(set(ordered_ids)) != len(ordered_ids):
+            raise ValueError("Duplicate queued sprint IDs are not allowed")
+        overlap = set(ordered_ids) & set(pending_map)
+        if overlap:
+            raise ValueError(f"Sprints cannot be both queued and pending: {sorted(overlap)}")
         rows = conn.execute(
             "SELECT * FROM sprints WHERE epic_id = %s ORDER BY sprint_number",
+            [epic_id],
+        ).fetchall()
+        known_ids = {str(row["id"]) for row in rows}
+        unknown = sorted((set(ordered_ids) | set(pending_map)) - known_ids)
+        if unknown:
+            raise FileNotFoundError(f"Unknown sprint IDs for epic {epic_id!r}: {unknown}")
+        missing_reason_ids = sorted(sprint_id for sprint_id, reason in pending_map.items() if not reason.strip())
+        if missing_reason_ids:
+            raise ValueError(f"Pending sprints require a reason: {missing_reason_ids}")
+        with conn.transaction():
+            for row in rows:
+                sprint_id = str(row["id"])
+                if sprint_id in ordered_ids:
+                    conn.execute(
+                        """
+                        UPDATE sprints
+                        SET status = 'queued', queue_position = %s, pending_reason = NULL,
+                            queued_at = now(), revision = revision + 1, updated_at = now()
+                        WHERE id = %s AND epic_id = %s
+                        """,
+                        [ordered_ids.index(sprint_id) + 1, sprint_id, epic_id],
+                    )
+                elif sprint_id in pending_map:
+                    conn.execute(
+                        """
+                        UPDATE sprints
+                        SET status = 'pending', pending_reason = %s,
+                            queue_position = NULL, queued_at = NULL,
+                            revision = revision + 1, updated_at = now()
+                        WHERE id = %s AND epic_id = %s
+                        """,
+                        [pending_map[sprint_id], sprint_id, epic_id],
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE sprints
+                        SET status = CASE WHEN status IN ('queued', 'pending') THEN 'proposed' ELSE status END,
+                            queue_position = NULL, pending_reason = NULL, queued_at = NULL,
+                            revision = revision + 1, updated_at = now()
+                        WHERE id = %s AND epic_id = %s
+                        """,
+                        [sprint_id, epic_id],
+                    )
+        rows = conn.execute(
+            "SELECT * FROM sprints WHERE epic_id = %s ORDER BY COALESCE(queue_position, 9999), sprint_number, id",
             [epic_id],
         ).fetchall()
         return [Sprint(**row) for row in rows]
