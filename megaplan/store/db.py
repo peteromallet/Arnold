@@ -236,7 +236,7 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     }),
     "messages": frozenset({"id", "epic_id", "direction", "content", "discord_message_id", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
     "plans": frozenset(_PLAN_COLUMNS),
-    "progress_events": frozenset({"id", "epic_id", "plan_id", "sprint_id", "kind", "summary", "details", "occurred_at"}),
+    "progress_events": frozenset({"id", "epic_id", "plan_id", "sprint_id", "idempotency_key", "kind", "summary", "details", "occurred_at"}),
     "second_opinions": frozenset({"id", "epic_id", "requested_at", "requested_by", "focus_areas", "raw_response", "score", "summary", "verdict", "resulting_checklist_item_ids", "model_used"}),
     "sprint_items": frozenset({"id", "sprint_id", "content", "estimated_complexity", "status", "source_section", "position", "created_at"}),
     "sprints": frozenset({"id", "epic_id", "sprint_number", "name", "goal", "status", "queue_position", "pending_reason", "target_weeks", "revision", "created_at", "updated_at", "queued_at"}),
@@ -417,6 +417,8 @@ class DBStore:
     ) -> Any:
         ledger_actor_id = _BOOTSTRAP_ACTOR_ID if operation in _BOOTSTRAP_IDEMPOTENT_MUTATORS else self._require_actor()
         idempotency_key = kwargs.get("idempotency_key")
+        if not idempotency_key and operation == "append_progress_event" and args:
+            idempotency_key = getattr(args[0], "idempotency_key", None)
         if not idempotency_key:
             raise ValueError(f"idempotency_key is required for DBStore.{operation}")
         target_actor_id = kwargs.get("actor_id") if "actor_id" in kwargs else (args[0] if args else None)
@@ -3096,16 +3098,19 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> ProgressEvent:
         self._require_actor()
+        effective_idempotency_key = idempotency_key or event.idempotency_key
         conn = self._get_conn()
         row = conn.execute(
             """
-            INSERT INTO progress_events (id, epic_id, plan_id, sprint_id, kind, summary, details)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO progress_events (id, epic_id, plan_id, sprint_id, idempotency_key, kind, summary, details)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE
+            SET idempotency_key = EXCLUDED.idempotency_key
             RETURNING *
             """,
             [
                 str(uuid.uuid4()), event.epic_id, event.plan_id, event.sprint_id,
-                event.kind, event.summary, _jb(dict(event.details)),
+                effective_idempotency_key, event.kind, event.summary, _jb(dict(event.details)),
             ],
         ).fetchone()
         return ProgressEvent(**row)

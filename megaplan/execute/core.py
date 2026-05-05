@@ -898,6 +898,20 @@ def handle_execute_one_batch(
     }
     if next_step == "execute" and not blocked:
         response["guidance"] = f"Run --batch {batch_number + 1}"
+    emitter = getattr(args, "progress_emitter", None)
+    if emitter is not None:
+        emitter.batch_complete(
+            str(batch_number),
+            summary=f"Batch {batch_number}/{batches_total} complete",
+            batch_number=batch_number,
+            batches_total=batches_total,
+            task_ids=batch_task_ids,
+            sense_check_ids=batch_sense_check_ids,
+            merged_task_count=result.merged_task_count,
+            total_task_count=result.total_task_count,
+            blocked=blocked,
+            state=response_state,
+        )
     _attach_next_step_runtime(response)
     return response
 

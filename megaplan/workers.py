@@ -21,6 +21,7 @@ from typing import Any, Callable
 from megaplan.audits.robustness import build_empty_template
 from megaplan.forms.provocations import select_active_checks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key
+from megaplan.progress import strip_progress_env
 from megaplan.types import (
     CliError,
     DEFAULT_AGENT_ROUTING,
@@ -538,13 +539,17 @@ def _trusted_container() -> bool:
 
 
 def _codex_child_env() -> dict[str, str]:
-    env = os.environ.copy()
+    env = strip_progress_env(os.environ.copy())
     # Nested Codex workers should not inherit the parent Codex session state.
     # Those variables can cause the child to attach to the outer thread/CI
     # context instead of behaving like an isolated worker invocation.
     env.pop("CODEX_THREAD_ID", None)
     env.pop("CODEX_CI", None)
     return env
+
+
+def _external_worker_env() -> dict[str, str]:
+    return strip_progress_env(os.environ.copy())
 
 
 def _merge_partial_output(raw_output: str, output_path: Path) -> str:
@@ -1453,7 +1458,7 @@ def run_claude_step(
         **(prompt_kwargs or {}),
     )
     try:
-        result = run_command(command, cwd=work_dir, stdin_text=prompt)
+        result = run_command(command, cwd=work_dir, stdin_text=prompt, env=_external_worker_env())
     except CliError as error:
         if error.code == "worker_timeout":
             error.extra["session_id"] = session_id
