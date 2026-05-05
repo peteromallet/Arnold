@@ -49,11 +49,7 @@ def _reset_timeout_invalid_tasks(
     reset_reasons: dict[str, list[str]] = {}
     mode_state = {"config": {"mode": mode}}
     def _has_code_task_advisory_evidence(task: dict[str, Any]) -> bool:
-        return bool(
-            task.get("commands_run")
-            or task.get("evidence_files")
-            or str(task.get("executor_notes") or "").strip()
-        )
+        return bool(task.get("commands_run"))
 
     if is_prose_mode(mode_state):
         missing_task_ids = _check_done_task_evidence(

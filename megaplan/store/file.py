@@ -39,6 +39,7 @@ from megaplan.schemas import (
     Feedback,
     Image,
     Message,
+    MigrationRun,
     Plan,
     ProgressEvent,
     SecondOpinion,
@@ -326,6 +327,9 @@ class FileStore(Store):
     def _automation_actors_dir(self) -> Path:
         return self.root / "automation_actors"
 
+    def _migration_runs_dir(self) -> Path:
+        return self.root / "migration_runs"
+
     def _message_path(self, message_id: str) -> Path:
         return self._messages_dir() / f"{message_id}.json"
 
@@ -370,6 +374,9 @@ class FileStore(Store):
 
     def _automation_actor_path(self, actor_id: str) -> Path:
         return self._automation_actors_dir() / f"{actor_id}.json"
+
+    def _migration_run_path(self, migration_id: str) -> Path:
+        return self._migration_runs_dir() / f"{migration_id}.json"
 
     def _sprint_dir(self, epic_id: str, sprint_id: str) -> Path:
         return self._epic_dir(epic_id) / "sprints" / sprint_id
@@ -445,6 +452,12 @@ class FileStore(Store):
 
     def _save_model(self, path: Path, model: Any, *, journal_root: Path) -> None:
         self._commit_write(path, _model_bytes(model), journal_root=journal_root)
+
+    def copy_entity_if_absent(self, entity_path: Path, model: Any, *, journal_root: Path) -> bool:
+        if entity_path.exists():
+            return False
+        self._save_model(entity_path, model, journal_root=journal_root)
+        return True
 
     def _delete_file(self, path: Path) -> None:
         if not path.exists():
@@ -539,6 +552,9 @@ class FileStore(Store):
     def _automation_actors(self) -> list[AutomationActor]:
         return self._iter_models(self._automation_actors_dir(), AutomationActor)
 
+    def _migration_runs(self) -> list[MigrationRun]:
+        return self._iter_models(self._migration_runs_dir(), MigrationRun)
+
     def _epics(self) -> list[Epic]:
         epics_root = self.root / "epics"
         if not epics_root.exists():
@@ -619,6 +635,7 @@ class FileStore(Store):
         body: str,
         state: str = "shaping",
         home_backend: str = "file",
+        idempotency_key: str | None = None,
     ) -> Epic:
         epic_id = _new_id("epic")
         epic = Epic(
@@ -641,7 +658,7 @@ class FileStore(Store):
     def load_epic(self, epic_id: str) -> Epic | None:
         return self._load_model(self._epic_path(epic_id), Epic)
 
-    def update_epic(self, epic_id: str, *, expected_revision: int | None = None, **changes: Any) -> Epic:
+    def update_epic(self, epic_id: str, *, expected_revision: int, idempotency_key: str | None = None, **changes: Any) -> Epic:
         current = self.load_epic(epic_id)
         if current is None:
             raise FileNotFoundError(epic_id)
@@ -666,6 +683,7 @@ class FileStore(Store):
         home_backend: str | None = None,
     ) -> list[EpicSummary]:
         epics = self._epics()
+        epics = [epic for epic in epics if epic.migrated_to is None]
         if active_only:
             epics = [epic for epic in epics if epic.state in _ACTIVE_EPIC_STATES]
         if home_backend is not None:
@@ -697,14 +715,17 @@ class FileStore(Store):
             raise FileNotFoundError(epic_id)
         return epic.body
 
-    def update_body(self, epic_id: str, body: str, *, expected_revision: int) -> Epic:
+    def update_body(self, epic_id: str, body: str, *, expected_revision: int, idempotency_key: str | None = None) -> Epic:
         return self.update_epic(epic_id, expected_revision=expected_revision, body=body)
 
     # ------------------------------------------------------------------
     # Checklist
     # ------------------------------------------------------------------
 
-    def seed_checklist(self, epic_id: str, items: Sequence[str]) -> list[ChecklistItem]:
+    def seed_checklist(self, epic_id: str, items: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[ChecklistItem]:
         seeded = [
             ChecklistItemInput(
                 content=content,
@@ -722,7 +743,10 @@ class FileStore(Store):
             items = [item for item in items if item.status == status]
         return items
 
-    def add_checklist_items(self, epic_id: str, items: Sequence[ChecklistItemInput]) -> list[ChecklistItem]:
+    def add_checklist_items(self, epic_id: str, items: Sequence[ChecklistItemInput],
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[ChecklistItem]:
         existing = self._checklist_items(epic_id)
         next_position = max((item.position for item in existing), default=0) + 1
         created: list[ChecklistItem] = []
@@ -747,7 +771,8 @@ class FileStore(Store):
                 created.append(item)
         return sorted(created, key=lambda item: (item.position, item.id))
 
-    def update_checklist_item(self, item_id: str, **changes: Any) -> ChecklistItem:
+    def update_checklist_item(self, item_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> ChecklistItem:
         path = self._find_checklist_path(item_id)
         if path is None:
             raise FileNotFoundError(item_id)
@@ -761,13 +786,19 @@ class FileStore(Store):
         self._save_model(path, updated, journal_root=self._journal_root_for_epic(updated.epic_id))
         return updated
 
-    def delete_checklist_items(self, item_ids: Sequence[str]) -> None:
+    def delete_checklist_items(self, item_ids: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         for item_id in item_ids:
             path = self._find_checklist_path(item_id)
             if path is not None:
                 self._delete_file(path)
 
-    def replace_checklist(self, epic_id: str, items: Sequence[ChecklistItemInput]) -> list[ChecklistItem]:
+    def replace_checklist(self, epic_id: str, items: Sequence[ChecklistItemInput],
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[ChecklistItem]:
         for existing in self._checklist_items(epic_id):
             self._delete_file(self._checklist_path(epic_id, existing.id))
         return self.add_checklist_items(epic_id, items)
@@ -787,6 +818,7 @@ class FileStore(Store):
         queue_position: int | None = None,
         pending_reason: str | None = None,
         target_weeks: int = 2,
+        idempotency_key: str | None = None,
     ) -> Sprint:
         sprint = Sprint(
             id=_new_id("sprint"),
@@ -836,7 +868,7 @@ class FileStore(Store):
             )
         return result
 
-    def update_sprint(self, sprint_id: str, *, expected_revision: int | None = None, **changes: Any) -> Sprint:
+    def update_sprint(self, sprint_id: str, *, expected_revision: int, idempotency_key: str | None = None, **changes: Any) -> Sprint:
         path = self._find_sprint_path(sprint_id)
         if path is None:
             raise FileNotFoundError(sprint_id)
@@ -853,13 +885,19 @@ class FileStore(Store):
         self._save_model(path, updated, journal_root=self._journal_root_for_epic(updated.epic_id))
         return updated
 
-    def delete_sprint(self, sprint_id: str) -> None:
+    def delete_sprint(self, sprint_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         path = self._find_sprint_path(sprint_id)
         if path is None:
             return
         self._delete_tree(path.parent)
 
-    def replace_sprint_items(self, sprint_id: str, items: Sequence[SprintItemInput]) -> list[SprintItem]:
+    def replace_sprint_items(self, sprint_id: str, items: Sequence[SprintItemInput],
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[SprintItem]:
         sprint = self.load_sprint(sprint_id)
         if sprint is None:
             raise FileNotFoundError(sprint_id)
@@ -888,6 +926,8 @@ class FileStore(Store):
         epic_id: str,
         ordered_sprint_ids: Sequence[str],
         pending: Mapping[str, str],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[Sprint]:
         result: list[Sprint] = []
         with self.transaction(epic_id):
@@ -927,6 +967,7 @@ class FileStore(Store):
         summary: str,
         prior_state: dict[str, Any] | None,
         turn_id: str | None,
+        idempotency_key: str | None = None,
     ) -> EpicEvent:
         event = EpicEvent(
             id=_new_id("evt"),
@@ -1011,6 +1052,7 @@ class FileStore(Store):
         audio_storage_url: str | None = None,
         transcription_metadata: dict[str, Any] | None = None,
         synthesize_outbound_id: bool = True,
+        idempotency_key: str | None = None,
     ) -> Message:
         if synthesize_outbound_id and direction == "outbound" and discord_message_id is None and bot_turn_id:
             discord_message_id = self._next_invocation_message_id(bot_turn_id)
@@ -1039,7 +1081,8 @@ class FileStore(Store):
         by_id = {message.id: message for message in self._messages()}
         return [by_id[msg_id] for msg_id in message_ids if msg_id in by_id]
 
-    def update_message(self, message_id: str, **changes: Any) -> Message:
+    def update_message(self, message_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Message:
         return self._update_model(
             self._message_path(message_id),
             Message,
@@ -1063,6 +1106,7 @@ class FileStore(Store):
         prompt_version: str | None = None,
         state_at_turn: dict[str, Any] | None = None,
         model_version: str | None = None,
+        idempotency_key: str | None = None,
     ) -> BotTurn:
         turn = BotTurn(
             id=_new_id("turn"),
@@ -1078,7 +1122,8 @@ class FileStore(Store):
         self._save_model(self._turn_path(turn.id), turn, journal_root=self.root)
         return turn
 
-    def update_turn(self, turn_id: str, **changes: Any) -> BotTurn:
+    def update_turn(self, turn_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> BotTurn:
         return self._update_model(self._turn_path(turn_id), BotTurn, journal_root=self.root, **changes)
 
     def find_abandoned_turns(self, older_than_seconds: int) -> list[BotTurn]:
@@ -1123,6 +1168,7 @@ class FileStore(Store):
         arguments: dict[str, Any],
         result: dict[str, Any],
         duration_ms: int,
+        idempotency_key: str | None = None,
     ) -> ToolCall:
         tool_call = ToolCall(
             id=_new_id("tool"),
@@ -1169,6 +1215,7 @@ class FileStore(Store):
         details: dict[str, Any] | None = None,
         turn_id: str | None = None,
         epic_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> SystemLog:
         log = SystemLog(
             id=_new_id("log"),
@@ -1271,6 +1318,7 @@ class FileStore(Store):
         *,
         provider_request_id: str | None = None,
         provider_response_summary: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> ExternalRequest:
         return self._update_external_request(
             request_id,
@@ -1281,7 +1329,9 @@ class FileStore(Store):
             last_attempted_at=utc_now(),
         )
 
-    def mark_failed(self, request_id: str, *, error_details: dict[str, Any]) -> ExternalRequest:
+    def mark_failed(self, request_id: str, *, error_details: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> ExternalRequest:
         return self._update_external_request(
             request_id,
             status="failed",
@@ -1301,7 +1351,9 @@ class FileStore(Store):
             key=lambda row: (row.last_attempted_at, row.id),
         )
 
-    def mark_orphaned(self, request_id: str, *, error_details: dict[str, Any]) -> ExternalRequest:
+    def mark_orphaned(self, request_id: str, *, error_details: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> ExternalRequest:
         return self._update_external_request(
             request_id,
             status="orphaned",
@@ -1334,6 +1386,7 @@ class FileStore(Store):
         in_body: bool = False,
         active: bool = True,
         discord_attachment_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Image:
         ref = reference_key or self._next_image_reference(source)
         if active:
@@ -1369,7 +1422,8 @@ class FileStore(Store):
         images.sort(key=lambda row: (row.created_at, row.id))
         return images
 
-    def update_image(self, image_id: str, **changes: Any) -> Image:
+    def update_image(self, image_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Image:
         if changes.get("active") and changes.get("reference_key"):
             epic_id = changes.get("epic_id") or (self.load_image(image_id).epic_id if self.load_image(image_id) else None)
             if epic_id:
@@ -1388,7 +1442,10 @@ class FileStore(Store):
     def active_image_reference_exists(self, epic_id: str, reference_key: str) -> bool:
         return self.load_active_image_by_reference(epic_id, reference_key) is not None
 
-    def deactivate_active_image_reference(self, epic_id: str, reference_key: str) -> list[Image]:
+    def deactivate_active_image_reference(self, epic_id: str, reference_key: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[Image]:
         updated: list[Image] = []
         for image in self.list_active_images(epic_id):
             if image.reference_key != reference_key:
@@ -1412,6 +1469,7 @@ class FileStore(Store):
         verdict: str,
         model_used: str,
         resulting_checklist_item_ids: Sequence[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SecondOpinion:
         opinion = SecondOpinion(
             id=_new_id("opinion"),
@@ -1438,6 +1496,8 @@ class FileStore(Store):
         self,
         second_opinion_id: str,
         checklist_item_ids: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
     ) -> SecondOpinion:
         return self._update_model(
             self._second_opinion_path(second_opinion_id),
@@ -1463,6 +1523,7 @@ class FileStore(Store):
         verified_accessible_at: str | None = None,
         notes: str | None = None,
         codebase_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         codebase = Codebase(
             id=codebase_id or _new_id("codebase"),
@@ -1480,7 +1541,8 @@ class FileStore(Store):
         self._save_model(self._codebase_path(codebase.id), codebase, journal_root=self.root)
         return codebase
 
-    def upsert_codebase(self, **fields: Any) -> Codebase:
+    def upsert_codebase(self, *, idempotency_key: str | None = None,
+        **fields: Any) -> Codebase:
         existing = self.find_codebase(fields["owner"], fields["name"])
         if existing is None:
             return self.create_codebase(**fields)
@@ -1521,17 +1583,23 @@ class FileStore(Store):
         codebases.sort(key=lambda row: (row.owner, row.name, row.id))
         return codebases
 
-    def update_codebase(self, codebase_id: str, **changes: Any) -> Codebase:
+    def update_codebase(self, codebase_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Codebase:
         if "owner" in changes:
             changes["owner"] = changes["owner"].lower()
         if "name" in changes:
             changes["name"] = changes["name"].lower()
         return self._update_model(self._codebase_path(codebase_id), Codebase, journal_root=self.root, **changes)
 
-    def remove_codebase(self, codebase_id: str) -> None:
+    def remove_codebase(self, codebase_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         self._delete_file(self._codebase_path(codebase_id))
 
-    def touch_codebase_accessed(self, codebase_id: str, *, accessed_at: str | None = None) -> Codebase:
+    def touch_codebase_accessed(self, codebase_id: str, *, accessed_at: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Codebase:
         return self.update_codebase(codebase_id, last_accessed_at=_parse_datetime(accessed_at) or utc_now())
 
     def mark_codebase_verified(
@@ -1540,6 +1608,7 @@ class FileStore(Store):
         *,
         verified_at: str | None = None,
         default_branch: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         changes: dict[str, Any] = {"verified_accessible_at": _parse_datetime(verified_at) or utc_now()}
         if default_branch is not None:
@@ -1561,6 +1630,7 @@ class FileStore(Store):
         metadata: dict[str, Any] | None = None,
         expires_at: str | None = None,
         artifact_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         artifact = CodeArtifact(
             id=artifact_id or _new_id("artifact"),
@@ -1619,13 +1689,19 @@ class FileStore(Store):
             return filtered[:limit]
         return filtered
 
-    def update_code_artifact(self, artifact_id: str, **changes: Any) -> CodeArtifact:
+    def update_code_artifact(self, artifact_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> CodeArtifact:
         return self._update_model(self._code_artifact_path(artifact_id), CodeArtifact, journal_root=self.root, **changes)
 
-    def delete_code_artifact(self, artifact_id: str) -> None:
+    def delete_code_artifact(self, artifact_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         self._delete_file(self._code_artifact_path(artifact_id))
 
-    def touch_code_artifact_used(self, artifact_id: str, *, used_at: str | None = None) -> CodeArtifact:
+    def touch_code_artifact_used(self, artifact_id: str, *, used_at: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> CodeArtifact:
         return self.update_code_artifact(artifact_id, last_used_at=_parse_datetime(used_at) or utc_now())
 
     def get_api_cache(self, cache_key: str, *, now: str | None = None, touch: bool = True) -> CodeArtifact | None:
@@ -1655,6 +1731,7 @@ class FileStore(Store):
         scope: str | None = None,
         expires_at: str | None = None,
         ttl_seconds: int = 3600,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         existing = self.get_api_cache(cache_key, touch=False)
         expiry = _parse_datetime(expires_at) or (datetime.now(UTC) + timedelta(seconds=ttl_seconds))
@@ -1685,7 +1762,9 @@ class FileStore(Store):
             expires_at=expiry,
         )
 
-    def cleanup_expired_api_cache(self, *, now: str | None = None) -> int:
+    def cleanup_expired_api_cache(self, *, now: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> int:
         now_dt = _parse_datetime(now) or datetime.now(UTC)
         expired = [
             artifact
@@ -1710,6 +1789,7 @@ class FileStore(Store):
         epic_id: str | None = None,
         turn_id: str | None = None,
         context_snapshot: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> Feedback:
         feedback = Feedback(
             id=_new_id("fb"),
@@ -1728,7 +1808,8 @@ class FileStore(Store):
     def load_feedback(self, feedback_id: str) -> Feedback | None:
         return self._load_model(self._feedback_path(feedback_id), Feedback)
 
-    def update_feedback(self, feedback_id: str, **changes: Any) -> Feedback:
+    def update_feedback(self, feedback_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Feedback:
         return self._update_model(self._feedback_path(feedback_id), Feedback, journal_root=self.root, **changes)
 
     def list_feedback(
@@ -1768,6 +1849,7 @@ class FileStore(Store):
         epic_id: str | None,
         name: str,
         idea: str,
+        idempotency_key: str | None = None,
         **fields: Any,
     ) -> Plan:
         now_dt = utc_now()
@@ -1808,7 +1890,7 @@ class FileStore(Store):
         path = self._find_plan_path(plan_id)
         return self._load_model(path, Plan) if path is not None else None
 
-    def update_plan(self, plan_id: str, *, expected_revision: int | None = None, **changes: Any) -> Plan:
+    def update_plan(self, plan_id: str, *, expected_revision: int, idempotency_key: str | None = None, **changes: Any) -> Plan:
         current = self.load_plan(plan_id)
         if current is None:
             raise FileNotFoundError(plan_id)
@@ -1852,6 +1934,7 @@ class FileStore(Store):
         data: bytes,
         *,
         expected_revision: int | None = None,
+        idempotency_key: str | None = None,
     ) -> ArtifactRef:
         plan = self.load_plan(plan_id)
         if plan is None:
@@ -1883,6 +1966,53 @@ class FileStore(Store):
         )
 
     # ------------------------------------------------------------------
+    # Migration run audit helpers
+    # ------------------------------------------------------------------
+
+    def save_migration_run(self, run: MigrationRun) -> MigrationRun:
+        self._save_model(self._migration_run_path(run.id), run, journal_root=self.root)
+        return run
+
+    def create_migration_run(self, run: MigrationRun) -> MigrationRun:
+        path = self._migration_run_path(run.id)
+        if path.exists():
+            raise FileExistsError(run.id)
+        return self.save_migration_run(run)
+
+    def load_migration_run(self, migration_id: str) -> MigrationRun | None:
+        return self._load_model(self._migration_run_path(migration_id), MigrationRun)
+
+    def update_migration_run(self, migration_id: str, **changes: Any) -> MigrationRun:
+        current = self.load_migration_run(migration_id)
+        if current is None:
+            raise FileNotFoundError(migration_id)
+        data = current.model_dump()
+        data.update(changes)
+        data["updated_at"] = utc_now()
+        updated = MigrationRun.model_validate(data)
+        self.save_migration_run(updated)
+        return updated
+
+    def heartbeat_migration(self, migration_id: str, ttl_seconds: int) -> MigrationRun:
+        return self.update_migration_run(
+            migration_id,
+            updated_at=utc_now(),
+            expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
+        )
+
+    def find_active_migration_for_epic(self, epic_id: str) -> MigrationRun | None:
+        """Audit-only local migration lookup; DB migration_runs coordinate correctness."""
+        active = [
+            run
+            for run in self._migration_runs()
+            if run.epic_id == epic_id
+            and run.completed_at is None
+            and run.expires_at > datetime.now(UTC)
+        ]
+        active.sort(key=lambda run: run.started_at, reverse=True)
+        return active[0] if active else None
+
+    # ------------------------------------------------------------------
     # Leases / locks
     # ------------------------------------------------------------------
 
@@ -1892,14 +2022,18 @@ class FileStore(Store):
         holder_id: str,
         worker_kind: str,
         ttl_seconds: int,
+        *,
+        epic_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> ExecutionLease:
         current = self.get_active_lease(plan_id)
         if current is not None and current.holder_id != holder_id:
             raise LeaseConflict(plan_id)
         plan = self.load_plan(plan_id)
+        lease_epic_id = epic_id if epic_id is not None else (plan.epic_id if plan else None)
         lease = ExecutionLease(
             plan_id=plan_id,
-            epic_id=plan.epic_id if plan else None,
+            epic_id=lease_epic_id,
             holder_id=holder_id,
             phase=plan.current_state if plan else "unknown",
             worker_kind=worker_kind,
@@ -1910,7 +2044,20 @@ class FileStore(Store):
         self._save_model(self._lease_path(plan_id), lease, journal_root=self.root)
         return lease
 
-    def heartbeat_lease(self, plan_id: str, holder_id: str) -> ExecutionLease:
+    def find_active_leases_for_epic(self, epic_id: str) -> list[ExecutionLease]:
+        now = datetime.now(UTC)
+        leases = [
+            lease
+            for lease in self._iter_models(self._leases_dir(), ExecutionLease)
+            if lease.epic_id == epic_id and lease.expires_at > now
+        ]
+        leases.sort(key=lambda lease: (lease.expires_at, lease.plan_id))
+        return leases
+
+    def heartbeat_lease(self, plan_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ExecutionLease:
         lease = self.get_active_lease(plan_id)
         if lease is None or lease.holder_id != holder_id:
             raise LeaseConflict(plan_id)
@@ -1923,7 +2070,10 @@ class FileStore(Store):
             expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
         )
 
-    def release_lease(self, plan_id: str, holder_id: str) -> None:
+    def release_lease(self, plan_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         lease = self.get_active_lease(plan_id)
         if lease is None or lease.holder_id != holder_id:
             return
@@ -1938,7 +2088,10 @@ class FileStore(Store):
             return None
         return lease
 
-    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int) -> EpicLock:
+    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> EpicLock:
         current = self._load_model(self._lock_path(epic_id), EpicLock)
         if current is not None and current.expires_at > datetime.now(UTC) and current.holder_id != holder_id:
             raise LockConflict(epic_id)
@@ -1951,7 +2104,10 @@ class FileStore(Store):
         self._save_model(self._lock_path(epic_id), lock, journal_root=self.root)
         return lock
 
-    def release_lock(self, epic_id: str, holder_id: str) -> None:
+    def release_lock(self, epic_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         current = self._load_model(self._lock_path(epic_id), EpicLock)
         if current is None or current.holder_id != holder_id:
             return
@@ -1961,7 +2117,10 @@ class FileStore(Store):
     # Control plane / progress
     # ------------------------------------------------------------------
 
-    def put_control_message(self, msg: ControlMessageInput) -> ControlMessage:
+    def put_control_message(self, msg: ControlMessageInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ControlMessage:
         control = ControlMessage(
             id=_new_id("ctrl"),
             epic_id=msg.epic_id,
@@ -1975,7 +2134,9 @@ class FileStore(Store):
         self._save_model(self._control_message_path(control.id), control, journal_root=self.root)
         return control
 
-    def claim_pending_control_messages(self, *, processor_id: str, max: int = 10) -> list[ControlMessage]:
+    def claim_pending_control_messages(self, *, processor_id: str, max: int = 10,
+        idempotency_key: str | None = None,
+    ) -> list[ControlMessage]:
         pending = [
             row
             for row in self._control_messages()
@@ -1995,7 +2156,10 @@ class FileStore(Store):
             )
         return claimed
 
-    def mark_control_message_processed(self, msg_id: str, result: dict[str, Any]) -> None:
+    def mark_control_message_processed(self, msg_id: str, result: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         self._update_model(
             self._control_message_path(msg_id),
             ControlMessage,
@@ -2004,7 +2168,10 @@ class FileStore(Store):
             processed_at=utc_now(),
         )
 
-    def append_progress_event(self, event: ProgressEventInput) -> ProgressEvent:
+    def append_progress_event(self, event: ProgressEventInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ProgressEvent:
         progress = ProgressEvent(
             id=_new_id("prog"),
             epic_id=event.epic_id,
@@ -2046,6 +2213,7 @@ class FileStore(Store):
         name: str,
         granted_epic_ids: str | Sequence[str],
         actor_kind: str,
+        idempotency_key: str | None = None,
     ) -> AutomationActor:
         actor = AutomationActor(
             id=actor_id,
@@ -2060,7 +2228,8 @@ class FileStore(Store):
     def load_automation_actor(self, actor_id: str) -> AutomationActor | None:
         return self._load_model(self._automation_actor_path(actor_id), AutomationActor)
 
-    def update_automation_actor(self, actor_id: str, **changes: Any) -> AutomationActor:
+    def update_automation_actor(self, actor_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> AutomationActor:
         if "last_active_at" not in changes:
             changes["last_active_at"] = utc_now()
         return self._update_model(self._automation_actor_path(actor_id), AutomationActor, journal_root=self.root, **changes)

@@ -104,9 +104,9 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
         _reject("Finalize output must include a `sense_checks` list.")
     if not isinstance(payload.get("watch_items"), list):
         _reject("Finalize output must include a `watch_items` list.")
-    user_actions = payload.get("user_actions")
+    user_actions = payload.get("user_actions", [])
     if not isinstance(user_actions, list):
-        _reject("Finalize output must include a `user_actions` list.")
+        _reject("Finalize output `user_actions` must be a list when present.")
     user_actions_by_id: dict[str, dict[str, Any]] = {}
     for index, action in enumerate(user_actions, start=1):
         aid = action.get("id", index) if isinstance(action, dict) else index

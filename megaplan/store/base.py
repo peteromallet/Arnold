@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from datetime import datetime
+import hashlib
+import re
 from types import TracebackType
 from typing import Any, Literal, Mapping, Protocol, Sequence, TypeAlias, runtime_checkable
 
@@ -37,6 +39,15 @@ from megaplan.schemas.base import NormalizedDict, utc_now
 
 Backend = Literal["file", "db"]
 JSONDict: TypeAlias = dict[str, Any]
+_IDEMPOTENCY_PART_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
+
+
+def deterministic_idempotency_key(*parts: object) -> str:
+    """Build a stable, readable idempotency key from caller-owned values."""
+    raw = ":".join(str(part) for part in parts if part is not None)
+    slug = _IDEMPOTENCY_PART_RE.sub("-", raw).strip("-") or "operation"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+    return f"{slug}:{digest}"
 
 
 class StoreError(RuntimeError):
@@ -181,6 +192,7 @@ class Store(Protocol):
         body: str,
         state: str = "shaping",
         home_backend: Backend = "file",
+        idempotency_key: str | None = None,
     ) -> Epic:
         ...
 
@@ -191,7 +203,8 @@ class Store(Protocol):
         self,
         epic_id: str,
         *,
-        expected_revision: int | None = None,
+        expected_revision: int,
+        idempotency_key: str | None = None,
         **changes: Any,
     ) -> Epic:
         ...
@@ -218,11 +231,14 @@ class Store(Protocol):
     def load_body(self, epic_id: str) -> str:
         ...
 
-    def update_body(self, epic_id: str, body: str, *, expected_revision: int) -> Epic:
+    def update_body(self, epic_id: str, body: str, *, expected_revision: int, idempotency_key: str | None = None) -> Epic:
         ...
 
     # ---------- Checklist ----------
-    def seed_checklist(self, epic_id: str, items: Sequence[str]) -> list[ChecklistItem]:
+    def seed_checklist(self, epic_id: str, items: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[ChecklistItem]:
         ...
 
     def list_checklist_items(
@@ -237,19 +253,27 @@ class Store(Protocol):
         self,
         epic_id: str,
         items: Sequence[ChecklistItemInput],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[ChecklistItem]:
         ...
 
-    def update_checklist_item(self, item_id: str, **changes: Any) -> ChecklistItem:
+    def update_checklist_item(self, item_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> ChecklistItem:
         ...
 
-    def delete_checklist_items(self, item_ids: Sequence[str]) -> None:
+    def delete_checklist_items(self, item_ids: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         ...
 
     def replace_checklist(
         self,
         epic_id: str,
         items: Sequence[ChecklistItemInput],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[ChecklistItem]:
         ...
 
@@ -265,6 +289,7 @@ class Store(Protocol):
         queue_position: int | None = None,
         pending_reason: str | None = None,
         target_weeks: int = 2,
+        idempotency_key: str | None = None,
     ) -> Sprint:
         ...
 
@@ -286,18 +311,24 @@ class Store(Protocol):
         self,
         sprint_id: str,
         *,
-        expected_revision: int | None = None,
+        expected_revision: int,
+        idempotency_key: str | None = None,
         **changes: Any,
     ) -> Sprint:
         ...
 
-    def delete_sprint(self, sprint_id: str) -> None:
+    def delete_sprint(self, sprint_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         ...
 
     def replace_sprint_items(
         self,
         sprint_id: str,
         items: Sequence[SprintItemInput],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[SprintItem]:
         ...
 
@@ -309,6 +340,8 @@ class Store(Protocol):
         epic_id: str,
         ordered_sprint_ids: Sequence[str],
         pending: Mapping[str, str],
+        *,
+        idempotency_key: str | None = None,
     ) -> list[Sprint]:
         ...
 
@@ -322,6 +355,7 @@ class Store(Protocol):
         summary: str,
         prior_state: JSONDict | None,
         turn_id: str | None,
+        idempotency_key: str | None = None,
     ) -> EpicEvent:
         ...
 
@@ -358,6 +392,7 @@ class Store(Protocol):
         audio_storage_url: str | None = None,
         transcription_metadata: JSONDict | None = None,
         synthesize_outbound_id: bool = True,
+        idempotency_key: str | None = None,
     ) -> Message:
         ...
 
@@ -367,7 +402,8 @@ class Store(Protocol):
     def load_messages(self, message_ids: Sequence[str]) -> list[Message]:
         ...
 
-    def update_message(self, message_id: str, **changes: Any) -> Message:
+    def update_message(self, message_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Message:
         ...
 
     def latest_outbound_message(self, *, epic_id: str | None = None) -> Message | None:
@@ -382,10 +418,12 @@ class Store(Protocol):
         prompt_version: str | None = None,
         state_at_turn: JSONDict | None = None,
         model_version: str | None = None,
+        idempotency_key: str | None = None,
     ) -> BotTurn:
         ...
 
-    def update_turn(self, turn_id: str, **changes: Any) -> BotTurn:
+    def update_turn(self, turn_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> BotTurn:
         ...
 
     def find_abandoned_turns(self, older_than_seconds: int) -> list[BotTurn]:
@@ -417,6 +455,7 @@ class Store(Protocol):
         arguments: JSONDict,
         result: JSONDict,
         duration_ms: int,
+        idempotency_key: str | None = None,
     ) -> ToolCall:
         ...
 
@@ -440,6 +479,7 @@ class Store(Protocol):
         details: JSONDict | None = None,
         turn_id: str | None = None,
         epic_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> SystemLog:
         ...
 
@@ -474,6 +514,7 @@ class Store(Protocol):
         *,
         provider_request_id: str | None = None,
         provider_response_summary: JSONDict | None = None,
+        idempotency_key: str | None = None,
     ) -> ExternalRequest:
         ...
 
@@ -482,6 +523,7 @@ class Store(Protocol):
         request_id: str,
         *,
         error_details: JSONDict,
+        idempotency_key: str | None = None,
     ) -> ExternalRequest:
         ...
 
@@ -493,6 +535,7 @@ class Store(Protocol):
         request_id: str,
         *,
         error_details: JSONDict,
+        idempotency_key: str | None = None,
     ) -> ExternalRequest:
         ...
 
@@ -512,6 +555,7 @@ class Store(Protocol):
         in_body: bool = False,
         active: bool = True,
         discord_attachment_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Image:
         ...
 
@@ -527,7 +571,8 @@ class Store(Protocol):
     ) -> list[Image]:
         ...
 
-    def update_image(self, image_id: str, **changes: Any) -> Image:
+    def update_image(self, image_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Image:
         ...
 
     def list_active_images(self, epic_id: str) -> list[Image]:
@@ -539,7 +584,10 @@ class Store(Protocol):
     def active_image_reference_exists(self, epic_id: str, reference_key: str) -> bool:
         ...
 
-    def deactivate_active_image_reference(self, epic_id: str, reference_key: str) -> list[Image]:
+    def deactivate_active_image_reference(self, epic_id: str, reference_key: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> list[Image]:
         ...
 
     # ---------- Second opinions ----------
@@ -555,6 +603,7 @@ class Store(Protocol):
         verdict: str,
         model_used: str,
         resulting_checklist_item_ids: Sequence[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SecondOpinion:
         ...
 
@@ -565,6 +614,8 @@ class Store(Protocol):
         self,
         second_opinion_id: str,
         checklist_item_ids: Sequence[str],
+        *,
+        idempotency_key: str | None = None,
     ) -> SecondOpinion:
         ...
 
@@ -582,6 +633,7 @@ class Store(Protocol):
         verified_accessible_at: str | None = None,
         notes: str | None = None,
         codebase_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         ...
 
@@ -597,6 +649,7 @@ class Store(Protocol):
         added_via: str = "manual",
         verified_accessible_at: str | None = None,
         notes: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         ...
 
@@ -616,10 +669,14 @@ class Store(Protocol):
     ) -> list[Codebase]:
         ...
 
-    def update_codebase(self, codebase_id: str, **changes: Any) -> Codebase:
+    def update_codebase(self, codebase_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Codebase:
         ...
 
-    def remove_codebase(self, codebase_id: str) -> None:
+    def remove_codebase(self, codebase_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         ...
 
     def touch_codebase_accessed(
@@ -627,6 +684,7 @@ class Store(Protocol):
         codebase_id: str,
         *,
         accessed_at: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         ...
 
@@ -636,6 +694,7 @@ class Store(Protocol):
         *,
         verified_at: str | None = None,
         default_branch: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Codebase:
         ...
 
@@ -654,6 +713,7 @@ class Store(Protocol):
         metadata: JSONDict | None = None,
         expires_at: str | None = None,
         artifact_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         ...
 
@@ -674,10 +734,14 @@ class Store(Protocol):
     ) -> list[CodeArtifact]:
         ...
 
-    def update_code_artifact(self, artifact_id: str, **changes: Any) -> CodeArtifact:
+    def update_code_artifact(self, artifact_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> CodeArtifact:
         ...
 
-    def delete_code_artifact(self, artifact_id: str) -> None:
+    def delete_code_artifact(self, artifact_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         ...
 
     def touch_code_artifact_used(
@@ -685,6 +749,7 @@ class Store(Protocol):
         artifact_id: str,
         *,
         used_at: str | None = None,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         ...
 
@@ -710,10 +775,13 @@ class Store(Protocol):
         scope: str | None = None,
         expires_at: str | None = None,
         ttl_seconds: int = 3600,
+        idempotency_key: str | None = None,
     ) -> CodeArtifact:
         ...
 
-    def cleanup_expired_api_cache(self, *, now: str | None = None) -> int:
+    def cleanup_expired_api_cache(self, *, now: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> int:
         ...
 
     # ---------- Feedback ----------
@@ -727,13 +795,15 @@ class Store(Protocol):
         epic_id: str | None = None,
         turn_id: str | None = None,
         context_snapshot: JSONDict | None = None,
+        idempotency_key: str | None = None,
     ) -> Feedback:
         ...
 
     def load_feedback(self, feedback_id: str) -> Feedback | None:
         ...
 
-    def update_feedback(self, feedback_id: str, **changes: Any) -> Feedback:
+    def update_feedback(self, feedback_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Feedback:
         ...
 
     def list_feedback(
@@ -762,6 +832,7 @@ class Store(Protocol):
         epic_id: str | None,
         name: str,
         idea: str,
+        idempotency_key: str | None = None,
         **fields: Any,
     ) -> Plan:
         ...
@@ -773,7 +844,8 @@ class Store(Protocol):
         self,
         plan_id: str,
         *,
-        expected_revision: int | None = None,
+        expected_revision: int,
+        idempotency_key: str | None = None,
         **changes: Any,
     ) -> Plan:
         ...
@@ -797,6 +869,7 @@ class Store(Protocol):
         data: bytes,
         *,
         expected_revision: int | None = None,
+        idempotency_key: str | None = None,
     ) -> ArtifactRef:
         ...
 
@@ -813,27 +886,48 @@ class Store(Protocol):
         holder_id: str,
         worker_kind: str,
         ttl_seconds: int,
+        *,
+        epic_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Lease:
         ...
 
-    def heartbeat_lease(self, plan_id: str, holder_id: str) -> Lease:
+    def heartbeat_lease(self, plan_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Lease:
         ...
 
-    def release_lease(self, plan_id: str, holder_id: str) -> None:
+    def release_lease(self, plan_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         ...
 
     def get_active_lease(self, plan_id: str) -> Lease | None:
         ...
 
-    # ---------- Locks ----------
-    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int) -> EpicLock:
+    def find_active_leases_for_epic(self, epic_id: str) -> list[Lease]:
         ...
 
-    def release_lock(self, epic_id: str, holder_id: str) -> None:
+    # ---------- Locks ----------
+    def acquire_lock(self, epic_id: str, holder_id: str, ttl_seconds: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> EpicLock:
+        ...
+
+    def release_lock(self, epic_id: str, holder_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         ...
 
     # ---------- Control plane ----------
-    def put_control_message(self, msg: ControlMessageInput) -> ControlMessage:
+    def put_control_message(self, msg: ControlMessageInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ControlMessage:
         ...
 
     def claim_pending_control_messages(
@@ -841,13 +935,20 @@ class Store(Protocol):
         *,
         processor_id: str,
         max: int = 10,
+        idempotency_key: str | None = None,
     ) -> list[ControlMessage]:
         ...
 
-    def mark_control_message_processed(self, msg_id: str, result: JSONDict) -> None:
+    def mark_control_message_processed(self, msg_id: str, result: JSONDict,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         ...
 
-    def append_progress_event(self, event: ProgressEventInput) -> ProgressEvent:
+    def append_progress_event(self, event: ProgressEventInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ProgressEvent:
         ...
 
     def list_progress_events(
@@ -867,13 +968,15 @@ class Store(Protocol):
         name: str,
         granted_epic_ids: str | Sequence[str],
         actor_kind: str,
+        idempotency_key: str | None = None,
     ) -> AutomationActor:
         ...
 
     def load_automation_actor(self, actor_id: str) -> AutomationActor | None:
         ...
 
-    def update_automation_actor(self, actor_id: str, **changes: Any) -> AutomationActor:
+    def update_automation_actor(self, actor_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> AutomationActor:
         ...
 
 
