@@ -975,6 +975,7 @@ export function SequenceCreatorPanel({
                     code={generatedComponent.code}
                     defaultsJson={generatedComponent.defaultsJson}
                     fps={resolvedConfig?.output.fps ?? 30}
+                    allowedAssets={allowedAssets}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
