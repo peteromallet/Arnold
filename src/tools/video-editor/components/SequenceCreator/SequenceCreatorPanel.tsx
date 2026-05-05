@@ -137,6 +137,15 @@ export function SequenceCreatorPanel({
   const abortRef = useRef<AbortController | null>(null);
 
   const [mode, setMode] = useState<SequenceCreatorMode>('generate');
+  // User-selected routing override:
+  //   'auto'  → run the JSON edge function with classifier preamble; if the
+  //              classifier says path=code, dispatch the code-path follow-up
+  //              (current behavior, default).
+  //   'code'  → skip the classifier entirely and call the code-path
+  //              edge function directly (Custom animation).
+  //   'json'  → call the JSON edge function and ignore any classifier
+  //              verdict, force-treat the response as JSON drafts (Basic).
+  const [generationMode, setGenerationMode] = useState<'auto' | 'code' | 'json'>('auto');
   const [prompt, setPrompt] = useState('');
   const [editPrompt, setEditPrompt] = useState('');
   const [draftGroups, setDraftGroups] = useState<SequenceDraftGroup[]>([]);
@@ -259,6 +268,37 @@ export function SequenceCreatorPanel({
     }
 
     try {
+      // Custom animation mode: skip the classifier round-trip and call the
+      // code-path edge function directly. Avoids wasted Claude tokens on a
+      // routing decision the user has already made.
+      if (generationMode === 'code') {
+        const codeResult = await runSequenceComponentGenerationRequest({
+          prompt: generationPrompt,
+          resolvedConfig,
+          selectedClips: selectedMedia.clips,
+          attachedClips: attachmentSet.clips,
+          allowedAssets,
+          allowedAssetKeys,
+          signal: controller.signal,
+        });
+        if (codeResult.status === 'aborted') return;
+        if (codeResult.status === 'error') {
+          setActionError(codeResult.error);
+          setGenerationNote(`Code-path generation failed: ${codeResult.error}`);
+          return;
+        }
+        setClassifierVerdict({ path: 'code', reason: 'Custom animation mode (forced).' });
+        setGeneratedComponent({
+          code: codeResult.code,
+          name: codeResult.name,
+          description: codeResult.description,
+          schemaJson: codeResult.schemaJson,
+          defaultsJson: codeResult.defaultsJson,
+        });
+        setGenerationNote(codeResult.message ?? 'Generated component code (browser-only render).');
+        return;
+      }
+
       const result = await runSequenceGenerationRequest({
         prompt: generationPrompt,
         mode: options.mode,
@@ -271,6 +311,15 @@ export function SequenceCreatorPanel({
         signal: controller.signal,
       });
       if (result.status === 'aborted') return;
+
+      // Basic mode: force-ignore any classifier verdict and treat the
+      // response as JSON-only. The edge function still includes the
+      // classifier preamble; we just refuse to route to code.
+      if (generationMode === 'json' && result.status === 'classifier_code') {
+        setClassifierVerdict({ path: 'json', reason: 'Basic mode (classifier override).' });
+        setGenerationNote('Basic mode: stayed on JSON path even though the classifier suggested code.');
+        return;
+      }
 
       if (result.status === 'classifier_code') {
         // Unified-UX (T13): classifier routed this prompt to the code path.
@@ -370,6 +419,7 @@ export function SequenceCreatorPanel({
     allowedAssetKeys,
     allowedAssets,
     attachmentSet.clips,
+    generationMode,
     resolvedConfig,
     selectedClipId,
     selectedClipIds,
@@ -689,6 +739,32 @@ export function SequenceCreatorPanel({
 
                 {mode === 'generate' ? (
                   <div className="space-y-2">
+                    <div className="space-y-1">
+                      <div className="text-sm font-medium text-foreground">Generation mode</div>
+                      <div className="grid grid-cols-3 gap-1 rounded-md border border-border bg-background p-1 text-xs">
+                        {([
+                          { value: 'auto', label: 'Automatic', help: 'Let the model pick: param tweak vs custom code.' },
+                          { value: 'code', label: 'Custom animation', help: 'Always generate a custom React component.' },
+                          { value: 'json', label: 'Basic', help: 'Always edit JSON params on a trusted clip type.' },
+                        ] as const).map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            data-testid={`sequence-creator-mode-${option.value}`}
+                            onClick={() => setGenerationMode(option.value)}
+                            title={option.help}
+                            className={[
+                              'rounded-sm px-2 py-1 text-foreground transition-colors',
+                              generationMode === option.value
+                                ? 'bg-primary text-primary-foreground'
+                                : 'hover:bg-muted',
+                            ].join(' ')}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="text-sm font-medium text-foreground">Prompt</div>
                     <Textarea
                       value={prompt}
