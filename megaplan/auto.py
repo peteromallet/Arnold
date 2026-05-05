@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,13 @@ DEFAULT_MAX_BLOCKED_RETRIES = 1
 # internally (default 3); the auto-driver applies its own cap so that an
 # unexpected-config or mis-routed rework loop cannot spin indefinitely.
 DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
+# How many consecutive `override add-note` failures the auto-driver will
+# tolerate at a given critique fork before escalating to `override
+# force-proceed`. The gate emits `override add-note` first in `valid_next`
+# when a critique loop won't converge; without a human, the driver can
+# only synthesize a stub note, and if even that fails twice the only
+# remaining safe escape valve is force-proceed.
+DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 
@@ -259,10 +267,15 @@ def _phase_command(next_step: str) -> list[str]:
 
     Most phases are one-to-one: next_step == command. Execute adds the
     destructive + user-approved flags because auto-mode implies both.
+
+    Multi-token values like ``"override add-note"`` must be split into
+    ``["override", "add-note"]`` so argparse sees the sub-subcommand —
+    otherwise the whole string is passed as a single positional and
+    argparse rejects it with `invalid choice`.
     """
     if next_step == "execute":
         return ["execute", "--confirm-destructive", "--user-approved"]
-    return [next_step]
+    return shlex.split(next_step)
 
 
 def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
@@ -337,6 +350,114 @@ def _read_execute_blocking_deviations(plan_dir: Path | None) -> list[str]:
         for d in deviations
         if isinstance(d, str) and any(prefix in d for prefix in blocking_prefixes)
     ]
+
+
+def _latest_versioned_artifact(plan_dir: Path | None, prefix: str) -> Path | None:
+    """Return the highest-numbered versioned artifact (``<prefix>v<N>.json``)."""
+    if plan_dir is None:
+        return None
+    try:
+        candidates = [
+            p for p in plan_dir.iterdir()
+            if p.name.startswith(prefix) and p.suffix == ".json"
+        ]
+    except OSError:
+        return None
+    if not candidates:
+        return None
+
+    def _version(path: Path) -> int:
+        stem = path.stem  # drop .json
+        try:
+            return int(stem.split("v")[-1])
+        except (ValueError, IndexError):
+            return -1
+
+    candidates.sort(key=_version)
+    return candidates[-1] if candidates else None
+
+
+def _read_unresolved_flag_ids(plan_dir: Path | None) -> list[str]:
+    """Best-effort list of unresolved flag IDs from the latest gate signals.
+
+    Falls back to the latest critique artifact if no gate_signals_v*.json
+    exists yet (e.g. ESCALATE arrived from a non-gate path). Returns ``[]``
+    on any read/parse error — callers must treat that as "no flags known"
+    and synthesize a generic note rather than crashing.
+    """
+    sources = [
+        _latest_versioned_artifact(plan_dir, "gate_signals_v"),
+        _latest_versioned_artifact(plan_dir, "critique_v"),
+    ]
+    for path in sources:
+        if path is None:
+            continue
+        try:
+            with path.open(encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        # gate_signals_v*.json uses key "unresolved_flags"; critique_v*.json
+        # uses "flags". Either may be missing on truncated artifacts.
+        for key in ("unresolved_flags", "flags"):
+            flags = payload.get(key)
+            if isinstance(flags, list) and flags:
+                ids = [
+                    str(f.get("id"))
+                    for f in flags
+                    if isinstance(f, dict) and isinstance(f.get("id"), str) and f.get("id")
+                ]
+                if ids:
+                    return ids
+    return []
+
+
+def _synthesize_add_note_text(
+    plan_dir: Path | None,
+    *,
+    iteration: int,
+    attempt: int,
+) -> str:
+    """Build a non-empty `--note` string for an unattended add-note dispatch.
+
+    The orchestrator only reaches `override add-note` when the
+    critique→revise→gate loop has failed to converge and the gate has
+    punted to a human. Without a human, the auto-driver records why it
+    is advancing anyway: the unresolved flag IDs (if readable) and the
+    iteration/attempt counters so audits can spot loops.
+    """
+    flag_ids = _read_unresolved_flag_ids(plan_dir)
+    if flag_ids:
+        # Cap the inline list — strict-notes mode rejects giant blobs.
+        head = ", ".join(flag_ids[:10])
+        suffix = f" (+{len(flag_ids) - 10} more)" if len(flag_ids) > 10 else ""
+        flags_part = f"; unresolved=[{head}{suffix}]"
+    else:
+        flags_part = "; unresolved=[unknown]"
+    return (
+        f"auto: critique loop unresolved at iter {iteration} "
+        f"(add-note attempt {attempt}){flags_part}; advancing without human"
+    )
+
+
+def _build_override_add_note_command(
+    plan: str,
+    plan_dir: Path | None,
+    *,
+    iteration: int,
+    attempt: int,
+) -> list[str]:
+    """Construct the full argv for ``megaplan override add-note ...``.
+
+    Matches the CLI contract enforced by ``cli.py::_validate_override_args``:
+    requires both ``--plan`` and a non-empty ``--note``. Without ``--note``
+    the subcommand fails with ``invalid_args`` and the auto-driver retries
+    the same broken call until stall detection kills the run.
+    """
+    note = _synthesize_add_note_text(plan_dir, iteration=iteration, attempt=attempt)
+    return ["override", "add-note", "--plan", plan, "--note", note]
 
 
 def _sum_history_cost_usd(plan_dir: Path | None) -> float:
@@ -446,6 +567,7 @@ def drive(
     max_cost_usd: float | None = None,
     max_context_retries: int = DEFAULT_MAX_CONTEXT_RETRIES,
     max_blocked_retries: int = DEFAULT_MAX_BLOCKED_RETRIES,
+    max_add_note_attempts: int = DEFAULT_MAX_ADD_NOTE_ATTEMPTS,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
@@ -470,6 +592,10 @@ def drive(
     last_phase: str | None = None
     context_retry_count = 0
     blocked_retry_count = 0
+    # Consecutive `override add-note` dispatches that failed (non-zero exit).
+    # Reset on any successful add-note OR when the next_step changes — only a
+    # repeating add-note→fail loop should trip the escalation.
+    add_note_failures = 0
 
     # Rework-cycle tracking. When review returns `needs_rework`, the plan
     # ping-pongs `finalized ↔ executed ↔ finalized` while execute re-runs
@@ -894,10 +1020,58 @@ def drive(
             )
 
         # Run the next phase.
-        cmd = _phase_command(next_step) + ["--plan", plan]
+        # Special-case `override add-note`: the CLI requires a non-empty
+        # ``--note`` argument, so we synthesize one from the latest gate
+        # signals / critique flags. After ``max_add_note_attempts``
+        # consecutive failed dispatches, fall through to ``override
+        # force-proceed`` — that's the safety-net escape valve when
+        # human intervention isn't available (Track B fallback).
+        if next_step == "override add-note":
+            if (
+                max_add_note_attempts >= 0
+                and add_note_failures >= max_add_note_attempts
+                and _has_valid_next(status, "override force-proceed")
+            ):
+                log(
+                    f"override add-note failed {add_note_failures} times — "
+                    "escalating to override force-proceed",
+                    add_note_failures=add_note_failures,
+                    max_add_note_attempts=max_add_note_attempts,
+                )
+                cmd = [
+                    "override",
+                    "force-proceed",
+                    "--plan",
+                    plan,
+                    "--reason",
+                    (
+                        f"megaplan auto: {add_note_failures} add-note retries "
+                        "failed, forcing proceed"
+                    ),
+                ]
+                last_phase = "override force-proceed"
+                add_note_failures = 0
+            else:
+                cmd = _build_override_add_note_command(
+                    plan,
+                    plan_dir,
+                    iteration=iteration,
+                    attempt=add_note_failures + 1,
+                )
+                last_phase = next_step
+        else:
+            # Any non-add-note dispatch resets the add-note failure counter —
+            # only a repeating add-note→fail loop should trigger escalation.
+            add_note_failures = 0
+            cmd = _phase_command(next_step) + ["--plan", plan]
+            last_phase = next_step
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
-        last_phase = next_step
         code, out, err = _run_phase(cmd)
+        if next_step == "override add-note" and last_phase == "override add-note":
+            if code != 0:
+                add_note_failures += 1
+            else:
+                add_note_failures = 0
         if max_context_retries > 0:
             while (
                 next_step == "execute"
@@ -1146,6 +1320,18 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
+        "--max-add-note-attempts",
+        type=_non_negative_int,
+        default=DEFAULT_MAX_ADD_NOTE_ATTEMPTS,
+        help=(
+            f"Consecutive `override add-note` failures to tolerate before "
+            f"escalating to `override force-proceed` (default "
+            f"{DEFAULT_MAX_ADD_NOTE_ATTEMPTS}). The driver synthesizes a "
+            "note from the latest gate signals; the cap protects against "
+            "loops where add-note itself keeps failing."
+        ),
+    )
+    auto_parser.add_argument(
         "--on-escalate",
         choices=ESCALATE_ACTIONS,
         default="force-proceed",
@@ -1238,6 +1424,7 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         max_cost_usd=args.max_cost_usd,
         max_context_retries=args.max_context_retries,
         max_blocked_retries=args.max_blocked_retries,
+        max_add_note_attempts=args.max_add_note_attempts,
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
