@@ -257,14 +257,17 @@ def test_migrate_local_plans_all_projects_legacy_epic_and_db_promotion_preserve_
     assert len(response["created"]) == 2
 
     file_store = FileStore(MultiStore.canonical_filestore_root(project))
-    legacy_epic_id = response["legacy_epic_id"]
-    plans = file_store.list_plans(epic_id=legacy_epic_id)
-    assert {plan.meta["legacy_migration"]["source_project"] for plan in plans} == {"project-one", "project-two"}
-    binary_plan = next(plan for plan in plans if plan.meta["legacy_migration"]["source_project"] == "project-one")
+    legacy_epic_ids = response["legacy_epic_ids"]
+    assert set(legacy_epic_ids) == {"project-one", "project-two"}
+    first_plans = file_store.list_plans(epic_id=legacy_epic_ids["project-one"])
+    second_plans = file_store.list_plans(epic_id=legacy_epic_ids["project-two"])
+    assert {plan.meta["legacy_migration"]["source_project"] for plan in first_plans} == {"project-one"}
+    assert {plan.meta["legacy_migration"]["source_project"] for plan in second_plans} == {"project-two"}
+    binary_plan = first_plans[0]
     assert file_store.read_plan_artifact(binary_plan.id, "nested/blob.bin") == binary
 
     promoted = MultiStore(file_store=file_store, db_store=FileStore(tmp_path / "db"), actor_id="actor")
-    promoted.migrate_epic(legacy_epic_id, to="db", ttl_seconds=60)
+    promoted.migrate_epic(legacy_epic_ids["project-one"], to="db", ttl_seconds=60)
     assert promoted.db.read_plan_artifact(binary_plan.id, "nested/blob.bin") == binary
 
 

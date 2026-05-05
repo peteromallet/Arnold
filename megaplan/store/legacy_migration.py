@@ -57,6 +57,10 @@ def _legacy_plan_id(source_project: str, source_plan_id: str) -> str:
     return f"legacy-{_safe_id(source_project)}-{_safe_id(source_plan_id)}"
 
 
+def _legacy_epic_title(source_project: str) -> str:
+    return f"Legacy local plans: {source_project}"
+
+
 def migrate_local_plans(
     *,
     source_home: Path,
@@ -88,26 +92,9 @@ def migrate_local_plans(
         "conflicts": [],
         "errors": [],
     }
-    legacy_epic_id: str | None = None
+    legacy_epic_ids: dict[str, str] = {}
     if mode == "legacy-epic":
-        existing = (
-            next((epic for epic in target.list_epics(active_only=False, limit=500) if epic.title == "Legacy local plans"), None)
-            if target is not None
-            else None
-        )
-        if existing is not None:
-            legacy_epic_id = existing.id
-        elif not dry_run:
-            created_epic = target.create_epic(
-                title="Legacy local plans",
-                goal="Imported from pre-schema local megaplan plan directories.",
-                body="Legacy local plans imported by `megaplan migrate-local-plans`.",
-                home_backend="file",
-            )
-            legacy_epic_id = created_epic.id
-        else:
-            legacy_epic_id = "dry-run-legacy-local-plans"
-        result["legacy_epic_id"] = legacy_epic_id
+        result["legacy_epic_ids"] = legacy_epic_ids
     for project in projects:
         plans_root = _source_plans_root(source_home, project)
         project_entry = {"source_project": project, "plans_root": str(plans_root), "plans": []}
@@ -115,6 +102,30 @@ def migrate_local_plans(
         if not plans_root.exists():
             result["errors"].append({"source_project": project, "error": "plans_root_missing"})
             continue
+        legacy_epic_id: str | None = None
+        if mode == "legacy-epic":
+            title = _legacy_epic_title(project)
+            existing = (
+                next((epic for epic in target.list_epics(active_only=False, limit=500) if epic.title == title), None)
+                if target is not None
+                else None
+            )
+            if existing is not None:
+                legacy_epic_id = existing.id
+            elif not dry_run:
+                if target is None:
+                    target = FileStore(target_root)
+                created_epic = target.create_epic(
+                    title=title,
+                    goal=f"Imported from pre-schema local megaplan plan directories for {project}.",
+                    body="Legacy local plans imported by `megaplan migrate-local-plans`.",
+                    home_backend="file",
+                )
+                legacy_epic_id = created_epic.id
+            else:
+                legacy_epic_id = f"dry-run-legacy-local-plans-{_safe_id(project)}"
+            legacy_epic_ids[project] = legacy_epic_id
+            project_entry["legacy_epic_id"] = legacy_epic_id
         for plan_dir in sorted(path for path in plans_root.iterdir() if path.is_dir()):
             snapshot = _snapshot_plan_dir(plan_dir)
             plan_id = _legacy_plan_id(project, plan_dir.name)
