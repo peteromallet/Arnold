@@ -21,14 +21,26 @@
 // the resource is NOT persisted on failure; the error message surfaces inline.
 
 import { renderToString } from 'react-dom/server.browser';
-import {
+import React, {
   Component,
   createElement,
   type ErrorInfo,
   type FC,
   type ReactNode,
 } from 'react';
-import { compileSequenceComponentAsync } from '@/tools/video-editor/sequences/compileSequenceComponent';
+import {
+  AbsoluteFill,
+  Audio,
+  Easing,
+  Img,
+  interpolate,
+  Sequence,
+  Series,
+  spring,
+  Video,
+} from 'remotion';
+import { composeAnimations, useTheme } from '@banodoco/timeline-composition/theme-api';
+import { compileWithGlobalsAsync } from '@/tools/video-editor/runtime-components/compileWithGlobals';
 import type { ResolvedTimelineClip } from '@/tools/video-editor/types';
 
 export interface SmokeRenderInput {
@@ -113,14 +125,43 @@ export async function smokeRenderSequenceComponent(
 }
 
 async function runSmoke(input: SmokeRenderInput): Promise<SmokeRenderResult> {
+  const fps = input.fps ?? 30;
+  // Real Remotion hooks throw outside `<Player>` ("useCurrentFrame can only
+  // be called inside a component that was passed to <Player>"). For the
+  // server-rendered smoke gate we substitute trivial mocks that return
+  // sensible defaults so simple draws compile and render.
+  const mockUseCurrentFrame = () => 0;
+  const mockUseVideoConfig = () => ({ fps, width: 320, height: 320, durationInFrames: fps });
+  const smokeGlobals: Record<string, unknown> = {
+    React,
+    useCurrentFrame: mockUseCurrentFrame,
+    useVideoConfig: mockUseVideoConfig,
+    interpolate,
+    spring,
+    AbsoluteFill,
+    Sequence,
+    Series,
+    Img,
+    Video,
+    Audio,
+    Easing,
+    useTheme,
+    composeAnimations,
+  };
   let Component: FC<unknown>;
   try {
-    Component = (await compileSequenceComponentAsync(input.code)) as unknown as FC<unknown>;
+    const result = await compileWithGlobalsAsync<unknown>(input.code, smokeGlobals, {
+      transforms: ['jsx', 'typescript'],
+      jsxRuntime: 'classic',
+    });
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+    Component = result.component as unknown as FC<unknown>;
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
-  const fps = input.fps ?? 30;
   const params = input.defaultsJson ?? {};
 
   let html = '';
