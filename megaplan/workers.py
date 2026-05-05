@@ -656,6 +656,150 @@ def _merge_partial_output(raw_output: str, output_path: Path) -> str:
     return merged
 
 
+def _codex_session_jsonl_path(session_id: str) -> Path | None:
+    """Locate the rollout JSONL for a given codex session_id.
+
+    Codex stores rollouts at
+    ``$CODEX_HOME/sessions/<YYYY>/<MM>/<DD>/rollout-<timestamp>-<session-id>.jsonl``.
+    The directory date may not match the call date if a session was created
+    earlier and resumed. We glob across all date dirs and return the most
+    recently modified match (or ``None`` if none).
+    """
+    if not session_id:
+        return None
+    codex_home_str = os.getenv("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
+    sessions_root = Path(codex_home_str).expanduser() / "sessions"
+    if not sessions_root.is_dir():
+        return None
+    try:
+        matches = list(sessions_root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
+    except OSError:
+        return None
+    if not matches:
+        return None
+    try:
+        matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        pass
+    return matches[0]
+
+
+def _read_codex_total_token_usage(jsonl_path: Path) -> dict[str, Any] | None:
+    """Read a codex rollout JSONL and return the latest ``total_token_usage``.
+
+    Scans for ``event_msg`` events of type ``token_count`` and returns the
+    ``info.total_token_usage`` blob from the last one with non-null ``info``.
+    Returns ``None`` if no usable event is found or the file is unreadable.
+    Tolerates malformed/non-JSON lines.
+    """
+    try:
+        text = jsonl_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+    last_usage: dict[str, Any] | None = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict) or obj.get("type") != "event_msg":
+            continue
+        payload = obj.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "token_count":
+            continue
+        info = payload.get("info")
+        if not isinstance(info, dict):
+            continue
+        usage = info.get("total_token_usage")
+        if isinstance(usage, dict):
+            last_usage = usage
+    return last_usage
+
+
+def _read_codex_default_model() -> str | None:
+    """Best-effort read of the codex CLI default model from ``config.toml``.
+
+    Returns ``None`` if the config is missing or the model field is absent;
+    callers should fall back to :data:`codex_pricing.DEFAULT_MODEL` in that
+    case. We do a permissive line-based parse to avoid taking a hard
+    dependency on a TOML library just for one key.
+    """
+    codex_home_str = os.getenv("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
+    config_path = Path(codex_home_str).expanduser() / "config.toml"
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Stop at first table header so we only read top-level model =
+        if stripped.startswith("["):
+            break
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() == "model":
+            value = value.strip().split("#", 1)[0].strip()
+            return value.strip().strip('"').strip("'") or None
+    return None
+
+
+def _codex_step_cost(
+    session_id: str | None,
+    session_entry: dict[str, Any],
+) -> tuple[float, int, int, str | None, dict[str, Any] | None]:
+    """Compute incremental cost (USD) and token deltas for one codex step.
+
+    Looks up the rollout JSONL for ``session_id``, reads the cumulative
+    ``total_token_usage``, and subtracts the ``last_total_tokens`` snapshot
+    stored on ``session_entry`` (mutated in place to record the new totals).
+
+    Returns ``(cost_usd, prompt_tokens_delta, completion_tokens_delta,
+    model, current_total_usage)``. Any failure to read the JSONL or compute
+    the delta returns zeros and a ``None`` usage blob — never raises.
+    """
+    from megaplan.codex_pricing import cost_from_usage
+
+    if not session_id:
+        return 0.0, 0, 0, None, None
+    path = _codex_session_jsonl_path(session_id)
+    if path is None:
+        return 0.0, 0, 0, None, None
+    current = _read_codex_total_token_usage(path)
+    if current is None:
+        return 0.0, 0, 0, None, None
+    prev = session_entry.get("last_total_tokens") if isinstance(session_entry, dict) else None
+    if not isinstance(prev, dict):
+        prev = {}
+
+    def _delta(key: str) -> int:
+        try:
+            cur = int(current.get(key, 0) or 0)
+            old = int(prev.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+        return max(cur - old, 0)
+
+    delta_usage = {
+        "input_tokens": _delta("input_tokens"),
+        "cached_input_tokens": _delta("cached_input_tokens"),
+        "output_tokens": _delta("output_tokens"),
+        "reasoning_output_tokens": _delta("reasoning_output_tokens"),
+    }
+    model = _read_codex_default_model()
+    cost = cost_from_usage(delta_usage, model)
+    prompt_tokens = delta_usage["input_tokens"]  # already includes cached
+    completion_tokens = (
+        delta_usage["output_tokens"] + delta_usage["reasoning_output_tokens"]
+    )
+    return cost, prompt_tokens, completion_tokens, model, current
+
+
 def extract_session_id(raw: str) -> str | None:
     # Try structured JSONL first (codex --json emits {"type":"thread.started","thread_id":"..."})
     for line in raw.splitlines():
@@ -1509,6 +1653,10 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
     return key, entry
 
 
+_VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+_VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
+
+
 def run_claude_step(
     step: str,
     state: PlanState,
@@ -1518,7 +1666,10 @@ def run_claude_step(
     fresh: bool,
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
+    effort: str | None = None,
 ) -> WorkerResult:
+    if effort is not None and effort not in _VALID_CLAUDE_EFFORTS:
+        raise CliError("invalid_args", f"Unsupported claude effort level: {effort}")
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
@@ -1534,6 +1685,8 @@ def run_claude_step(
     session = state["sessions"].get(session_key, {})
     session_id = session.get("id")
     command = ["claude", "-p", "--output-format", "json", "--json-schema", schema_text, "--add-dir", str(work_dir)]
+    if effort is not None:
+        command.extend(["--effort", effort])
     if step in _EXECUTE_STEPS:
         command.extend(["--permission-mode", "bypassPermissions"])
     if session_id and not fresh:
@@ -1582,6 +1735,7 @@ def run_claude_step(
                 fresh=True,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
+                effort=effort,
             )
         raise
     raw = result.stdout or result.stderr
@@ -1607,6 +1761,7 @@ def run_claude_step(
             fresh=True,
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
+            effort=effort,
         )
     envelope, payload = parse_claude_envelope(raw)
     payload = _normalize_worker_payload(step, payload)
@@ -1635,7 +1790,10 @@ def run_codex_step(
     json_trace: bool = False,
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
+    effort: str | None = None,
 ) -> WorkerResult:
+    if effort is not None and effort not in _VALID_CODEX_EFFORTS:
+        raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
@@ -1669,6 +1827,8 @@ def run_codex_step(
         command = ["codex", "exec", "resume"]
         if _trusted_container():
             command.append("--dangerously-bypass-approvals-and-sandbox")
+        if effort is not None:
+            command.extend(["-c", f"model_reasoning_effort={effort}"])
         command.extend(_codex_exec_mode_flags(step))
         if json_trace:
             command.append("--json")
@@ -1737,6 +1897,8 @@ def run_codex_step(
             "-o",
             str(output_path),
         ])
+        if effort is not None:
+            command.extend(["-c", f"model_reasoning_effort={effort}"])
         if not persistent:
             command.append("--ephemeral")
         command.extend(_codex_exec_mode_flags(step))
@@ -1781,6 +1943,7 @@ def run_codex_step(
                 json_trace=json_trace,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
+                effort=effort,
             )
         # Recover from a poisoned session: the history carries an obsolete
         # "sandbox is broken" belief from a pre-trusted-container run. Only
@@ -1812,6 +1975,7 @@ def run_codex_step(
                 json_trace=json_trace,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
+                effort=effort,
             )
         # Recover from a session that grew too large to remote-compact:
         # OpenAI 429s the compaction call, codex gives up and exits. Same
@@ -1840,6 +2004,7 @@ def run_codex_step(
                 json_trace=json_trace,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
+                effort=effort,
             )
         if error.code == "worker_timeout":
             recovered_payload = _recover_codex_payload(
@@ -1915,6 +2080,7 @@ def run_codex_step(
             json_trace=json_trace,
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
+            effort=effort,
         )
     # Poisoned-session recovery on non-exception path: the worker exited 0 or
     # non-zero but produced output that still echoes an obsolete sandbox
@@ -1942,6 +2108,7 @@ def run_codex_step(
             json_trace=json_trace,
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
+            effort=effort,
         )
     # Oversized-session recovery on non-exception path. See the matching
     # branch in the CliError handler above for context.
@@ -1968,6 +2135,7 @@ def run_codex_step(
             json_trace=json_trace,
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
+            effort=effort,
         )
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
@@ -1990,14 +2158,42 @@ def run_codex_step(
                 extra={"raw_output": raw},
             )
     trace_output = raw if json_trace else None
+    # Capture real codex token usage / USD cost from the rollout JSONL.
+    # session_id may be None for ephemeral runs; in that case try to recover
+    # the auto-assigned id from the run output so we can still bill the step.
+    cost_session_id = session_id or extract_session_id(raw)
+    session_entry = state["sessions"].get(session_key, {}) if isinstance(state.get("sessions"), dict) else {}
+    cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
+        cost_session_id, session_entry
+    )
+    if current_totals is not None:
+        # Persist the running totals so the next step in the same session
+        # only bills its own delta. We mutate the existing session entry
+        # when present; otherwise stash a minimal record under session_key.
+        if isinstance(state.get("sessions"), dict):
+            entry = state["sessions"].setdefault(session_key, {})
+            if isinstance(entry, dict):
+                entry["last_total_tokens"] = dict(current_totals)
+    if cost_usd == 0.0 and cost_session_id and current_totals is None:
+        # Don't crash; just leave a breadcrumb so operators can investigate
+        # missing rollouts (codex stored elsewhere, permission issue, etc.).
+        print(
+            f"[megaplan] Could not locate codex rollout for session "
+            f"{cost_session_id}; step cost will be recorded as $0.00",
+            flush=True,
+        )
     return WorkerResult(
         payload=payload,
         raw_output=raw,
         duration_ms=result.duration_ms,
-        cost_usd=0.0,
+        cost_usd=cost_usd,
         session_id=session_id,
         trace_output=trace_output,
         rendered_prompt=prompt,
+        model_actual=model_actual,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
     )
 
 
@@ -2154,6 +2350,7 @@ def run_step_with_worker(
                     fresh=effective_refreshed,
                     prompt_override=prompt_override,
                     prompt_kwargs=prompt_kwargs,
+                    effort=model,
                 )
             else:
                 attempted_retry = False
@@ -2169,6 +2366,7 @@ def run_step_with_worker(
                             json_trace=(step == "execute"),
                             prompt_override=prompt_override,
                             prompt_kwargs=prompt_kwargs,
+                            effort=model,
                         )
                         break
                     except CliError as error:

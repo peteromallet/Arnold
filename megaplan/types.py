@@ -332,7 +332,7 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
 KNOWN_AGENTS = ["claude", "codex", "hermes"]
 ROBUSTNESS_LEVELS = ("tiny", "light", "standard", "robust", "superrobust")
 def parse_agent_spec(spec: str) -> tuple[str, str | None]:
-    """Parse 'hermes:model/name' → ('hermes', 'model/name') or 'claude' → ('claude', None)."""
+    """Parse 'hermes:model/name' → ('hermes', 'model/name'), 'claude:low' → ('claude', 'low'), or 'claude' → ('claude', None)."""
     if ":" in spec:
         agent, model = spec.split(":", 1)
         return agent, model
