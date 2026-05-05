@@ -35,7 +35,7 @@ interface TimelineCoreAdapter {
 interface TimelineInteractionAdapter {
   onImageReorder: (orderedIds: string[], draggedItemId?: string) => void;
   onFramePositionsChange?: (framePositions: Map<string, number>) => void;
-  onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+  onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   onGenerationDrop?: (generationId: string, imageUrl: string, thumbUrl: string | undefined, targetFrame?: number) => Promise<void>;
   onVariantDrop?: (params: VariantDropParams) => Promise<void>;
   onImageDelete: NonNullable<LightboxActionHandlers['onDelete']>;

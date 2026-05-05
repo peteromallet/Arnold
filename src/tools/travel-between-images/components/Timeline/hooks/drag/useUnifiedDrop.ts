@@ -14,8 +14,25 @@ import { filterValidTimelineImageFiles } from "./imageDropValidation";
 // Re-export for backward compatibility
 export type { DragType, GenerationDropData };
 
+type FileDropHandleItem = DataTransferItem & {
+  getAsFileSystemHandle?: () => Promise<FileSystemHandle | null>;
+};
+
+type FileSystemHandleLike = FileSystemHandle & {
+  getFile?: () => Promise<File>;
+};
+
+function supportsLocalFileHandles(): boolean {
+  return typeof DataTransferItem !== 'undefined'
+    && typeof (DataTransferItem.prototype as FileDropHandleItem).getAsFileSystemHandle === 'function';
+}
+
+function isReadableFileHandle(handle: FileSystemHandleLike | null | undefined): handle is FileSystemFileHandle {
+  return !!handle && handle.kind === 'file' && typeof handle.getFile === 'function';
+}
+
 interface UseUnifiedDropProps {
-  onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+  onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   onGenerationDrop?: (generationId: string, imageUrl: string, thumbUrl: string | undefined, targetFrame?: number) => Promise<void>;
   fullMin: number;
   fullRange: number;
@@ -132,10 +149,18 @@ export const useUnifiedDrop = ({
     // Handle file drops (from file system)
     if (dragType === 'file' && onFileDrop) {
       const files = Array.from(e.dataTransfer.files);
-      
+
       if (files.length === 0) {
         return;
       }
+
+      const canUseLocalHandles = supportsLocalFileHandles();
+      const fileItems = canUseLocalHandles
+        ? (Array.from(e.dataTransfer.items).filter((it): it is FileDropHandleItem => it.kind === 'file'))
+        : null;
+      const allHandlePromises: Array<Promise<FileSystemHandle | null> | null> | null = fileItems
+        ? files.map((_, idx) => fileItems[idx]?.getAsFileSystemHandle?.() ?? null)
+        : null;
 
       const validFiles = filterValidTimelineImageFiles(files);
 
@@ -143,8 +168,28 @@ export const useUnifiedDrop = ({
         return;
       }
 
+      let alignedHandlePromises: Array<Promise<FileSystemHandle | null> | null> | null = null;
+      if (allHandlePromises) {
+        alignedHandlePromises = [];
+        let cursor = 0;
+        for (let i = 0; i < files.length && cursor < validFiles.length; i++) {
+          if (files[i] === validFiles[cursor]) {
+            alignedHandlePromises.push(allHandlePromises[i]);
+            cursor++;
+          }
+        }
+      }
+
+      let handles: Array<FileSystemFileHandle | null> | undefined;
+      if (alignedHandlePromises) {
+        const resolved = await Promise.all(
+          alignedHandlePromises.map((p) => (p ? p.catch(() => null) : Promise.resolve(null))),
+        );
+        handles = resolved.map((h) => (isReadableFileHandle(h as FileSystemHandleLike | null) ? (h as FileSystemFileHandle) : null));
+      }
+
       try {
-        await onFileDrop(validFiles, targetFrame ?? undefined);
+        await onFileDrop(validFiles, targetFrame ?? undefined, handles);
       } catch (error) {
         normalizeAndPresentError(error, { context: 'UnifiedDrop', toastTitle: 'Failed to add images' });
       }

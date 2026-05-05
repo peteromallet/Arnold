@@ -44,7 +44,7 @@ interface TimelineOrchestratorCoreProps {
 
 interface TimelineOrchestratorDropHandlers {
   onImageReorder: (orderedIds: string[], draggedItemId?: string) => void;
-  onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+  onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   onGenerationDrop?: (
     generationId: string,
     imageUrl: string,

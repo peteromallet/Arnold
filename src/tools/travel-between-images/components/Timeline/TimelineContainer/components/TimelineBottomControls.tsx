@@ -11,7 +11,7 @@ export interface TimelineBottomControlsProps {
   setResetGap: (value: number) => void;
   maxGap: number;
   onReset: () => void;
-  onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+  onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   isUploadingImage: boolean;
   uploadProgress: number;
   readOnly?: boolean;

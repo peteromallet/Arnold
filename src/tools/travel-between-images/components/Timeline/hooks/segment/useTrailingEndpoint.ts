@@ -14,7 +14,7 @@ interface UseTrailingEndpointProps {
   callbackTrailingVideoUrl: string | null;
   /** Setter for callbackTrailingVideoUrl — caller clears it when last image changes */
   setCallbackTrailingVideoUrl: (url: string | null) => void;
-  onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+  onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
 }
 
 interface UseTrailingEndpointReturn {

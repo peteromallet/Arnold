@@ -30,7 +30,7 @@ import type { VariantDropParams } from '@/shared/hooks/dnd/useImageVariantDrop';
 // Type for generation actions from useGenerationActions
 // All drop handlers now use unified targetFrame parameter
 interface GenerationActionsReturn {
-  handleTimelineImageDrop: (files: File[], targetFrame?: number) => Promise<void>;
+  handleTimelineImageDrop: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   handleTimelineGenerationDrop: (
     generationId: string,
     imageUrl: string,
@@ -207,8 +207,8 @@ export function useShotSettingsValue({
   const imageHandlersForContext = useMemo(
     (): ShotSettingsContextValue['imageHandlers'] => ({
       onReorder: handleImageReorder,
-      onFileDrop: async (files: File[], targetFrame?: number) => {
-        await generationActions.handleTimelineImageDrop(files, targetFrame);
+      onFileDrop: async (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => {
+        await generationActions.handleTimelineImageDrop(files, targetFrame, handles);
       },
       onGenerationDrop: async (
         generationId: string,

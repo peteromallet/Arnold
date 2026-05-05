@@ -12,7 +12,8 @@ import { useTapToMove } from '../drag/useTapToMove';
 interface ImageDropInterceptorArgs {
   files: File[];
   targetFrame?: number;
-  onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+  handles?: Array<FileSystemFileHandle | null>;
+  onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   setPendingDropFrame: (frame: number | null) => void;
 }
 
@@ -64,7 +65,7 @@ interface UseTimelineOrchestratorActionsInput {
   images: GenerationRow[];
   onImageDuplicate: (imageId: string, timelineFrame: number, nextTimelineFrame?: number) => void;
   setPendingDuplicateFrame: (frame: number | null) => void;
-  onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+  onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   setPendingDropFrame: (frame: number | null) => void;
   onGenerationDrop?: (
     generationId: string,
@@ -83,7 +84,7 @@ interface UseTimelineOrchestratorActionsInput {
 }
 
 interface TimelineOrchestratorActionsResult {
-  handleImageDropInterceptor: (files: File[], targetFrame?: number) => Promise<void>;
+  handleImageDropInterceptor: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
   handleGenerationDropInterceptor: (
     generationId: string,
     imageUrl: string,
@@ -100,6 +101,7 @@ interface TimelineOrchestratorActionsResult {
 export async function runImageDropInterceptor({
   files,
   targetFrame,
+  handles,
   onFileDrop,
   setPendingDropFrame,
 }: ImageDropInterceptorArgs): Promise<void> {
@@ -107,7 +109,7 @@ export async function runImageDropInterceptor({
     setPendingDropFrame(targetFrame);
   }
   if (onFileDrop) {
-    await onFileDrop(files, targetFrame);
+    await onFileDrop(files, targetFrame, handles);
   }
 }
 
@@ -226,10 +228,11 @@ export function useTimelineOrchestratorActions({
   setShowVideoBrowser,
   maxFrameLimit,
 }: UseTimelineOrchestratorActionsInput): TimelineOrchestratorActionsResult {
-  const handleImageDropInterceptor = useCallback(async (files: File[], targetFrame?: number) => {
+  const handleImageDropInterceptor = useCallback(async (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => {
     await runImageDropInterceptor({
       files,
       targetFrame,
+      handles,
       onFileDrop,
       setPendingDropFrame,
     });

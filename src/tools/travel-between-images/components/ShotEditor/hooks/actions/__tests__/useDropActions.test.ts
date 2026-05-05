@@ -528,4 +528,54 @@ describe('useDropActions', () => {
     expect(handleExternalImageDropMutateAsyncMock).not.toHaveBeenCalled();
     expect(addImageToShotMutateAsyncMock).not.toHaveBeenCalled();
   });
+
+  it('forwards the handles array into the external-drop mutation payload', async () => {
+    probeBehavior.width = 1000;
+    probeBehavior.height = 1000;
+
+    const fileA = createFile('a.png');
+    const fileB = createFile('b.png');
+    const handleA = { kind: 'file', name: 'a.png', getFile: async () => fileA, isSameEntry: async () => false } as unknown as FileSystemFileHandle;
+    const handleB = { kind: 'file', name: 'b.png', getFile: async () => fileB, isSameEntry: async () => false } as unknown as FileSystemFileHandle;
+    const { result } = renderUseDropActions();
+
+    await act(async () => {
+      await result.current.handleTimelineImageDrop([fileA, fileB], 24, [handleA, handleB]);
+    });
+
+    expect(handleExternalImageDropMutateAsyncMock).toHaveBeenCalledTimes(1);
+    expect(handleExternalImageDropMutateAsyncMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageFiles: [fileA, fileB],
+        handles: [handleA, handleB],
+      }),
+    );
+  });
+
+  it('nulls the handle for the replaced index when cropImagesToShotAspectRatio returns a new File for that index', async () => {
+    probeBehavior.width = 1000;
+    probeBehavior.height = 1000;
+
+    const fileA = createFile('a.png');
+    const fileB = createFile('b.png');
+    const replacementA = new File(['cropped'], 'a.png', { type: 'image/png' });
+    const handleA = { kind: 'file', name: 'a.png', getFile: async () => fileA, isSameEntry: async () => false } as unknown as FileSystemFileHandle;
+    const handleB = { kind: 'file', name: 'b.png', getFile: async () => fileB, isSameEntry: async () => false } as unknown as FileSystemFileHandle;
+
+    cropImagesToShotAspectRatioMock.mockImplementationOnce(async (files: File[]) => [
+      replacementA,
+      files[1],
+    ]);
+
+    const { result } = renderUseDropActions();
+
+    await act(async () => {
+      await result.current.handleTimelineImageDrop([fileA, fileB], 24, [handleA, handleB]);
+    });
+
+    expect(handleExternalImageDropMutateAsyncMock).toHaveBeenCalledTimes(1);
+    const payload = handleExternalImageDropMutateAsyncMock.mock.calls[0][0];
+    expect(payload.imageFiles).toEqual([replacementA, fileB]);
+    expect(payload.handles).toEqual([null, handleB]);
+  });
 });

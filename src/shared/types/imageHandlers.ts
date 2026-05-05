@@ -15,6 +15,7 @@ export type ImageReorderHandler = (
 export type FileDropHandler = (
   files: File[],
   targetFrame?: number,
+  handles?: Array<FileSystemFileHandle | null>,
 ) => Promise<void>;
 
 export type GenerationDropHandler = (

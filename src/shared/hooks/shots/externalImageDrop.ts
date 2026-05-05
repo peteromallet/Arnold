@@ -4,7 +4,8 @@ import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { cropImageToProjectAspectRatio } from '@/shared/lib/media/imageCropper';
 import { parseRatio } from '@/shared/lib/media/aspectRatios';
-import { createGenerationForUploadedImage } from '@/shared/lib/media/createGenerationFromFile';
+import { createGenerationForLocalFile, createGenerationForUploadedImage } from '@/shared/lib/media/createGenerationFromFile';
+import { IMAGE_INLINE_UPLOAD_LIMIT_BYTES } from '@/shared/lib/media/dropToGenerationConfig';
 
 export interface ExternalImageDropVariables {
   imageFiles: File[];
@@ -13,6 +14,7 @@ export interface ExternalImageDropVariables {
   currentShotCount: number;
   skipAutoPosition?: boolean;
   positions?: number[];
+  handles?: Array<FileSystemFileHandle | null>;
   onProgress?: (fileIndex: number, fileProgress: number, overallProgress: number) => void;
 }
 
@@ -255,6 +257,7 @@ async function processSingleDroppedImage(input: {
   addImageToShot: ProcessDroppedImagesInput['addImageToShot'];
   addImageToShotWithoutPosition: ProcessDroppedImagesInput['addImageToShotWithoutPosition'];
   createGeneration: typeof createGenerationForUploadedImage;
+  handle?: FileSystemFileHandle | null;
 }): Promise<UploadedGenerationMetadata | null> {
   const {
     imageFile,
@@ -266,15 +269,25 @@ async function processSingleDroppedImage(input: {
     addImageToShot,
     addImageToShotWithoutPosition,
     createGeneration,
+    handle,
   } = input;
 
   let generation: Database['public']['Tables']['generations']['Row'];
   try {
-    generation = await createGeneration({
-      imageFile,
-      projectId,
-      onProgress: buildProgressHandler(variables.onProgress, fileIndex, totalFiles),
-    });
+    if (imageFile.size >= IMAGE_INLINE_UPLOAD_LIMIT_BYTES && handle != null) {
+      generation = await createGenerationForLocalFile({
+        file: imageFile,
+        projectId,
+        handle,
+        mediaType: 'image',
+      });
+    } else {
+      generation = await createGeneration({
+        imageFile,
+        projectId,
+        onProgress: buildProgressHandler(variables.onProgress, fileIndex, totalFiles),
+      });
+    }
   } catch (error) {
     toast.error(`Failed to create generation data for ${imageFile.name}: ${(error as Error).message}`);
     return null;
@@ -323,6 +336,7 @@ export async function processDroppedImages(
 
   const cropConfig = await getCropConfig(projectId, targetShotId);
   const processedFiles = await cropFilesIfNeeded(imageFiles, cropConfig);
+  const alignedHandles = variables.handles?.map((h, i) => processedFiles[i] === imageFiles[i] ? h : null);
   const shotId = await ensureTargetShotId(targetShotId, currentShotCount, projectId, createShot);
   if (!shotId) {
     return null;
@@ -343,6 +357,7 @@ export async function processDroppedImages(
         addImageToShot,
         addImageToShotWithoutPosition,
         createGeneration,
+        handle: alignedHandles?.[fileIndex] ?? null,
       });
       if (metadata) {
         generationIds.push(metadata.generationId);

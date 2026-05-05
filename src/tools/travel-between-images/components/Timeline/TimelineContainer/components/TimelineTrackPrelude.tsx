@@ -49,7 +49,7 @@ interface TimelineTrackPreludeProps {
     onSegmentFrameCountChange?: (pairShotGenerationId: string, frameCount: number) => void;
     onTrailingEndFrameChange: (endFrame: number | undefined) => void;
     onTrailingVideoInfo: (videoUrl: string | null) => void;
-    onFileDrop?: (files: File[], targetFrame?: number) => Promise<void>;
+    onFileDrop?: (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => Promise<void>;
     videoOutputs?: GenerationRow[];
   };
   guidance: Pick<

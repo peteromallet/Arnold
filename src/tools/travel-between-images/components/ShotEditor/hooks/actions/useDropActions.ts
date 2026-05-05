@@ -184,7 +184,7 @@ export const useDropActions = ({
   /**
    * Handle dropping external image files onto the timeline
    */
-  const handleTimelineImageDrop = useCallback(async (files: File[], targetFrame?: number) => {
+  const handleTimelineImageDrop = useCallback(async (files: File[], targetFrame?: number, handles?: Array<FileSystemFileHandle | null>) => {
     const currentShot = selectedShotRef.current;
     const currentProjectId = projectIdRef.current;
     const currentBatchVideoFrames = batchVideoFramesRef.current;
@@ -257,6 +257,8 @@ export const useDropActions = ({
         uploadSettingsRef.current
       );
 
+      const alignedHandles = handles?.map((h, i) => processedFiles[i] === files[i] ? h : null);
+
       // 3. Calculate positions for each file
       const positions = processedFiles.map((_, index) =>
         calculatedTargetFrame + (index * currentBatchVideoFrames)
@@ -270,6 +272,7 @@ export const useDropActions = ({
         currentShotCount: 0,
         skipAutoPosition: false,
         positions: positions,
+        handles: alignedHandles,
       });
 
       if (!result?.generationIds?.length) {
