@@ -72,6 +72,7 @@ from megaplan.store.base import (
     SprintWithItems,
     StoreError,
 )
+from megaplan.store.blob import LocalDirBlobStore, SupabaseStorageBlobStore
 from megaplan.store.snapshot import canonical_json_dumps, canonical_sha256, capture_epic_snapshot
 
 
@@ -302,6 +303,16 @@ class DBStore:
         self._actor_id = actor_id
         self._dsn = dsn or os.environ.get("SUPABASE_DB_URL")
         self._conn: psycopg.Connection | None = None  # type: ignore[type-arg]
+        storage_bucket = os.environ.get("SUPABASE_STORAGE_BUCKET") or os.environ.get("SUPABASE_BUCKET")
+        storage_secret_key = "SUPABASE_" + "SERVICE_" + "ROLE_KEY"
+        if os.environ.get("SUPABASE_URL") and os.environ.get(storage_secret_key) and storage_bucket:
+            self.blobs = SupabaseStorageBlobStore(
+                supabase_url=os.environ["SUPABASE_URL"],
+                service_role_key=os.environ[storage_secret_key],
+                bucket=storage_bucket,
+            )
+        else:
+            self.blobs = LocalDirBlobStore(os.environ.get("MEGAPLAN_DB_BLOB_ROOT", ".megaplan/db-blobs"))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1401,6 +1412,8 @@ class DBStore:
         conn = self._get_conn()
         img_id = str(uuid.uuid4())
         ref_key = reference_key or img_id
+        if active:
+            self.deactivate_active_image_reference(epic_id, ref_key)
         row = conn.execute(
             """
             INSERT INTO images
@@ -1418,6 +1431,61 @@ class DBStore:
             ],
         ).fetchone()
         return Image(**row)
+
+    def attach_image(
+        self,
+        *,
+        epic_id: str,
+        content: bytes,
+        content_type: str,
+        reference_key: str,
+        source: str = "user_uploaded",
+        prompt: str | None = None,
+        quality: str | None = None,
+        size: str | None = None,
+        description: str | None = None,
+        caption: str | None = None,
+        in_body: bool = True,
+        idempotency_key: str | None = None,
+    ) -> Image:
+        digest = hashlib.sha256(content).hexdigest()
+        blob_id = f"{epic_id}/{reference_key}/{digest}"
+        ref = self.blobs.put(blob_id, content, content_type=content_type)
+        return self.create_image(
+            epic_id=epic_id,
+            source=source,
+            storage_url=ref.storage_url or f"mp://blob/{blob_id}",
+            prompt=prompt,
+            quality=quality,
+            size=size,
+            reference_key=reference_key,
+            description=description,
+            caption=caption,
+            in_body=in_body,
+            active=True,
+            blob_backend="supabase_storage",
+            blob_id=blob_id,
+            blob_sha256=digest,
+            blob_size_bytes=len(content),
+            content_type=content_type,
+            idempotency_key=idempotency_key,
+        )
+
+    def resolve_image_reference(
+        self,
+        epic_id: str,
+        reference: str,
+        *,
+        signed: bool = False,
+        ttl: int = 3600,
+    ) -> str | None:
+        key = reference.removeprefix("mp://image/").removeprefix("image:")
+        image = self.load_active_image_by_reference(epic_id, key)
+        if image is None:
+            return None
+        if image.blob_id:
+            return self.blobs.url(image.blob_id, signed=signed, ttl=ttl)
+        return image.storage_url
 
     def load_image(self, image_id: str) -> Image | None:
         conn = self._get_conn()

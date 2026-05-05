@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
+import hashlib
 import json
+import mimetypes
 import re
 import shutil
 import sqlite3
@@ -1734,6 +1736,76 @@ class FileStore(Store):
         )
         self._save_model(self._image_path(image.id), image, journal_root=self.root)
         return image
+
+    def attach_image(
+        self,
+        *,
+        epic_id: str,
+        content: bytes,
+        content_type: str,
+        reference_key: str,
+        source: str = "user_uploaded",
+        prompt: str | None = None,
+        quality: str | None = None,
+        size: str | None = None,
+        description: str | None = None,
+        caption: str | None = None,
+        in_body: bool = True,
+        idempotency_key: str | None = None,
+    ) -> Image:
+        digest = hashlib.sha256(content).hexdigest()
+        blob_id = f"{epic_id}/{reference_key}/{digest}"
+        with self.transaction(epic_id):
+            extension = (mimetypes.guess_extension(content_type, strict=False) or ".bin").lstrip(".")
+            blob_dir = self.blobs._blob_dir(blob_id)
+            metadata = {
+                "blob_id": blob_id,
+                "content_type": content_type,
+                "size_bytes": len(content),
+                "updated_at": utc_now().isoformat().replace("+00:00", "Z"),
+            }
+            self._commit_blob(
+                blob_dir,
+                content,
+                extension=extension,
+                metadata=metadata,
+                journal_root=self._journal_root_for_epic(epic_id),
+            )
+            return self.create_image(
+                epic_id=epic_id,
+                source=source,
+                storage_url=str(blob_dir / f"data.{extension}"),
+                prompt=prompt,
+                quality=quality,
+                size=size,
+                reference_key=reference_key,
+                description=description,
+                caption=caption,
+                in_body=in_body,
+                active=True,
+                blob_backend="file",
+                blob_id=blob_id,
+                blob_sha256=digest,
+                blob_size_bytes=len(content),
+                content_type=content_type,
+                idempotency_key=idempotency_key,
+            )
+
+    def resolve_image_reference(
+        self,
+        epic_id: str,
+        reference: str,
+        *,
+        signed: bool = False,
+        ttl: int = 3600,
+    ) -> str | None:
+        key = reference.removeprefix("mp://image/").removeprefix("image:")
+        image = self.load_active_image_by_reference(epic_id, key)
+        if image is None:
+            return None
+        if image.blob_id:
+            return self.blobs.url(image.blob_id, signed=signed, ttl=ttl)
+        return image.storage_url
 
     def load_image(self, image_id: str) -> Image | None:
         return self._load_model(self._image_path(image_id), Image)

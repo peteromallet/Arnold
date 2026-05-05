@@ -273,6 +273,28 @@ def test_migrate_epic_runs_seven_phases_and_tombstones_source(tmp_path: Path) ->
     assert len(db_store.list_images(epic_id=epic.id, active=None)) == 1
 
 
+def test_migrate_epic_copies_blob_backed_image_bytes_and_hashes(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="File", goal="g", body="![alt](mp://image/diagram)", home_backend="file")
+    image = store.attach_image(
+        epic_id=epic.id,
+        content=b"image-bytes",
+        content_type="image/png",
+        reference_key="diagram",
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "blob-image"),
+    )
+
+    run = store.migrate_epic(epic.id, to="db", ttl_seconds=60)
+
+    copied = db_store.load_active_image_by_reference(epic.id, "diagram")
+    assert copied is not None
+    assert copied.id == image.id
+    assert db_store.blobs.get(copied.blob_id) == file_store.blobs.get(image.blob_id)
+    assert run.blob_copy_progress["images"]["diagram"]["source_sha256"] == image.blob_sha256
+    assert db_store.resolve_image_reference(epic.id, "mp://image/diagram") == db_store.resolve_image_reference(epic.id, "image:diagram")
+    assert db_store.load_body(epic.id) == "![alt](mp://image/diagram)"
+
+
 def test_migrate_epic_preflight_rejects_active_execution_lease(tmp_path: Path) -> None:
     store, _, _ = _multi(tmp_path)
     epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")

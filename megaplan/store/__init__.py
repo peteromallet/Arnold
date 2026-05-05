@@ -21,7 +21,7 @@ from .base import (
     Transaction,
     deterministic_idempotency_key,
 )
-from .blob import BlobMissingError, BlobRef, BlobStat, BlobStore, LocalDirBlobStore
+from .blob import BlobMissingError, BlobRef, BlobStat, BlobStore, LocalDirBlobStore, SupabaseStorageBlobStore
 from .compat import ArnoldBlobAdapter, ArnoldStoreAdapter
 from .db import DBStore
 from .file import FileStore
@@ -61,6 +61,7 @@ __all__ = [
     "SprintWithItems",
     "Store",
     "StoreError",
+    "SupabaseStorageBlobStore",
     "Transaction",
     "validate_actor_exists",
 ]

@@ -592,6 +592,34 @@ class Store(Protocol):
     ) -> Image:
         ...
 
+    def attach_image(
+        self,
+        *,
+        epic_id: str,
+        content: bytes,
+        content_type: str,
+        reference_key: str,
+        source: str = "user_uploaded",
+        prompt: str | None = None,
+        quality: str | None = None,
+        size: str | None = None,
+        description: str | None = None,
+        caption: str | None = None,
+        in_body: bool = True,
+        idempotency_key: str | None = None,
+    ) -> Image:
+        ...
+
+    def resolve_image_reference(
+        self,
+        epic_id: str,
+        reference: str,
+        *,
+        signed: bool = False,
+        ttl: int = 3600,
+    ) -> str | None:
+        ...
+
     def load_image(self, image_id: str) -> Image | None:
         ...
 

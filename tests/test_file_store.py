@@ -60,6 +60,31 @@ def test_local_dir_blob_store_round_trip(tmp_path: Path) -> None:
     assert store.stat("blob-1") is None
 
 
+def test_file_store_attach_image_replaces_active_reference_and_resolves_without_body_mutation(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="![alt](mp://image/diagram)")
+
+    first = store.attach_image(
+        epic_id=epic.id,
+        content=b"first-image",
+        content_type="image/png",
+        reference_key="diagram",
+    )
+    second = store.attach_image(
+        epic_id=epic.id,
+        content=b"second-image",
+        content_type="image/png",
+        reference_key="diagram",
+    )
+
+    assert store.load_image(first.id).active is False
+    assert second.active is True
+    assert [row.id for row in store.list_active_images(epic.id)] == [second.id]
+    assert store.blobs.get(second.blob_id) == b"second-image"
+    assert store.resolve_image_reference(epic.id, "mp://image/diagram") == store.resolve_image_reference(epic.id, "image:diagram")
+    assert store.load_body(epic.id) == "![alt](mp://image/diagram)"
+
+
 def test_file_store_normalizes_checklist_positions_across_mutations(tmp_path: Path) -> None:
     store = FileStore(tmp_path / "store")
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
