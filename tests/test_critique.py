@@ -71,6 +71,7 @@ def test_handle_critique_rejects_invalid_check_payload(plan_fixture: PlanFixture
 
     state = load_state(plan_fixture.plan_dir)
     assert state["history"][-1]["result"] == "error"
+    assert state.get("active_step") is None
     assert not (plan_fixture.plan_dir / "critique_v1.json").exists()
 
 

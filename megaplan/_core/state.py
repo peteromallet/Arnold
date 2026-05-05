@@ -576,6 +576,7 @@ def record_step_failure(
             message=error.message,
         ),
     )
+    state["active_step"] = None
     # Phases hold the lock for many minutes; merge meta to avoid clobbering
     # concurrent ``override add-note`` / ``override`` appends.
     save_state_merge_meta(plan_dir, state)

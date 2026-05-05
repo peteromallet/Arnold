@@ -24,12 +24,35 @@ from megaplan.evaluation import (
     validate_execution_evidence,
     validate_plan_structure,
 )
+from megaplan.audits.robustness import validate_critique_checks
 from megaplan.workers import _build_mock_payload
 
 
 def _write_json(path: Path, data: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def test_validate_critique_checks_allows_custom_checks_when_none_are_required() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "custom-check",
+                "question": "Did the broad critique find a concrete issue?",
+                "findings": [
+                    {
+                        "detail": "The broad critique found a concrete repository mismatch and should not fail only because no named robustness checks were required.",
+                        "flagged": True,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    assert validate_critique_checks(payload, expected_ids=[]) == []
 
 
 def _state(tmp_path: Path, *, iteration: int = 1, robustness: str = "standard") -> dict[str, object]:
