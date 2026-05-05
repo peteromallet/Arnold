@@ -150,6 +150,7 @@ class ProgressEventInput(StorageModel):
     epic_id: str
     plan_id: str | None = None
     sprint_id: str | None = None
+    idempotency_key: str | None = None
     kind: str
     summary: str
     details: NormalizedDict = Field(default_factory=dict)

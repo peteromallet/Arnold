@@ -81,6 +81,8 @@ from megaplan.profiles import (
 )
 from megaplan.step_edit import handle_step
 
+_PROGRESS_PHASE_COMMANDS = {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
+
 
 def render_response(response: StepResponse, *, exit_code: int = 0) -> int:
     if isinstance(response, str):
@@ -143,6 +145,32 @@ def error_response(error: CliError, *, root: Path | None = None) -> int:
     if error.code == "plan_locked":
         _augment_plan_locked_error(payload, error, root=root)
     return render_response(payload, exit_code=error.exit_code)
+
+
+def _emit_response_progress(command: str, response: StepResponse, emitter: Any) -> None:
+    if command not in _PROGRESS_PHASE_COMMANDS or not isinstance(response, dict):
+        return
+    state = response.get("state")
+    step = str(response.get("step") or command)
+    emitter.phase_end(
+        step,
+        success=bool(response.get("success", True)),
+        state=state,
+        result=response.get("result"),
+        next_step=response.get("next_step"),
+    )
+    if state == "done":
+        emitter.plan_done(summary=str(response.get("summary") or "Plan complete"), phase=step)
+    elif state == "failed":
+        emitter.plan_failed(summary=str(response.get("summary") or "Plan failed"), phase=step)
+    elif state == "blocked":
+        emitter.execution_blocked(summary=str(response.get("summary") or "Execution blocked"), phase=step)
+
+
+def _emit_error_progress(command: str, error: CliError, emitter: Any) -> None:
+    if command not in _PROGRESS_PHASE_COMMANDS:
+        return
+    emitter.phase_end(command, success=False, error_code=error.code, message=error.message)
 
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
@@ -1526,6 +1554,8 @@ def main(argv: list[str] | None = None) -> int:
         handler = COMMAND_HANDLERS.get(args.command)
         if handler is None:
             raise CliError("invalid_command", f"Unknown command {args.command!r}")
+        from megaplan.progress import ProgressEmitter
+        args.progress_emitter = ProgressEmitter.from_env()
         if args.command == "override" and remaining:
             if not args.note:
                 args.note = " ".join(remaining)
@@ -1559,8 +1589,14 @@ def main(argv: list[str] | None = None) -> int:
             if epic.body:
                 parts.append(epic.body)
             args.idea = "\n\n".join(parts)
-        return render_response(handler(root, args))
+        if args.command in _PROGRESS_PHASE_COMMANDS:
+            args.progress_emitter.phase_start(args.command, plan=getattr(args, "plan", None))
+        response = handler(root, args)
+        _emit_response_progress(args.command, response, args.progress_emitter)
+        return render_response(response)
     except CliError as error:
+        if "args" in locals() and hasattr(args, "progress_emitter"):
+            _emit_error_progress(getattr(args, "command", ""), error, args.progress_emitter)
         return error_response(error, root=root)
 
 

@@ -20,7 +20,7 @@ from megaplan.types import (
     SessionInfo,
 )
 
-from .base import HomeBackend, NormalizedDict, NormalizedList, NormalizedStringList, StorageModel, utc_now
+from .base import HomeBackend, NormalizedDict, NormalizedStringList, StorageModel, utc_now
 
 MigrationPhase = Literal[
     "planning",
@@ -145,6 +145,7 @@ class ProgressEvent(StorageModel):
     epic_id: str
     plan_id: str | None = None
     sprint_id: str | None = None
+    idempotency_key: str | None = None
     kind: ProgressEventKind
     summary: str
     details: NormalizedDict = Field(default_factory=dict)

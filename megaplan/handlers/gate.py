@@ -381,6 +381,16 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         # Store last_gate AFTER _apply_gate_outcome — the outcome may override
         # the recommendation (e.g. PROCEED → ITERATE when flags are unresolved).
         _store_last_gate(state, gate_summary)
+        emitter = getattr(args, "progress_emitter", None)
+        if emitter is not None and gate_summary["recommendation"] in {"ESCALATE", "TIEBREAKER"}:
+            emitter.gate_pending(
+                f"{state['name']}:gate:{iteration}",
+                summary=summary,
+                recommendation=gate_summary["recommendation"],
+                rationale=gate_summary["rationale"],
+                next_step=next_step,
+                state=state["current_state"],
+            )
         return _finish_step(
             plan_dir,
             state,

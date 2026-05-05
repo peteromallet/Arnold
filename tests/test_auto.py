@@ -360,6 +360,32 @@ def test_run_auto_without_outcome_file_preserves_stdout_only_behavior(
     assert stdout == outcome.to_json() + "\n"
 
 
+def test_run_auto_passes_progress_env_to_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from megaplan.progress import ProgressContext
+
+    captured: dict[str, dict[str, str] | None] = {}
+    env = ProgressContext(
+        backend="file",
+        file_root=str(tmp_path / "store"),
+        epic_id="epic-1",
+        plan_id="demo",
+        run_id="run-1",
+    ).to_env()
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    outcome = DriverOutcome(status="done", plan="demo", final_state="done", iterations=1)
+
+    def fake_drive(*args, **kwargs):
+        del args
+        captured["progress_env"] = kwargs.get("progress_env")
+        return outcome
+
+    with patch.object(auto, "drive", side_effect=fake_drive):
+        assert auto.run_auto(tmp_path, _auto_args("demo")) == 0
+
+    assert captured["progress_env"] == env
+
+
 def test_auto_driver_stops_on_lifecycle_terminal_states_without_phase_runs(tmp_path: Path) -> None:
     expected = {
         "failed": "failed",

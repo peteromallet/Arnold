@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Callable
 
 from megaplan.store import (
@@ -384,13 +383,28 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
         ProgressEventInput(
             epic_id=epic.id,
             plan_id=orphan_plan.id,
+            idempotency_key=idem("contract", orphan_plan.id, "append_progress"),
             kind="phase_start",
             summary="started",
             details={"phase": "execute"},
         ),
         idempotency_key=idem("contract", orphan_plan.id, "append_progress"),
     )
-    assert store.list_progress_events(plan_id=orphan_plan.id)[0].id == progress.id
+    duplicate_progress = store.append_progress_event(
+        ProgressEventInput(
+            epic_id=epic.id,
+            plan_id=orphan_plan.id,
+            idempotency_key=idem("contract", orphan_plan.id, "append_progress"),
+            kind="phase_start",
+            summary="started",
+            details={"phase": "execute"},
+        ),
+        idempotency_key=idem("contract", orphan_plan.id, "append_progress"),
+    )
+    progress_events = store.list_progress_events(plan_id=orphan_plan.id)
+    assert progress_events[0].id == progress.id
+    assert duplicate_progress.id == progress.id
+    assert len([event for event in progress_events if event.idempotency_key == progress.idempotency_key]) == 1
 
     actor = store.create_automation_actor(
         actor_id="actor-1",

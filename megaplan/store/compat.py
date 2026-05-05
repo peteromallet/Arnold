@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from megaplan.schemas import StorageModel
 
-from .base import ChecklistItemInput, JSONDict, LockConflict, SprintItemInput, Store, deterministic_idempotency_key
+from .base import ChecklistItemInput, ControlMessageInput, JSONDict, LockConflict, SprintItemInput, Store, deterministic_idempotency_key
 from .blob import BlobRef as StoreBlobRef
 from .blob import BlobStore
 
@@ -83,6 +83,7 @@ class ArnoldStoreAdapter:
             "release_lease",
             "acquire_lock",
             "release_lock",
+            "create_control_message",
             "put_control_message",
             "claim_pending_control_messages",
             "mark_control_message_processed",
@@ -401,6 +402,69 @@ class ArnoldStoreAdapter:
 
     def list_sprints_with_items(self, epic_id: str) -> list[JSONDict]:
         return self._call("list_sprints_with_items", epic_id)
+
+    def create_control_message(
+        self,
+        *,
+        epic_id: str,
+        actor_id: str,
+        intent: str,
+        target_id: str,
+        payload: JSONDict | None = None,
+        idempotency_key: str | None = None,
+    ) -> JSONDict:
+        effective_key = idempotency_key or deterministic_idempotency_key(
+            "arnold-adapter",
+            "create_control_message",
+            epic_id,
+            actor_id,
+            intent,
+            target_id,
+            payload or {},
+        )
+        return _dump(
+            self._store.put_control_message(
+                ControlMessageInput(
+                    epic_id=epic_id,
+                    actor_id=actor_id,
+                    intent=intent,
+                    target_id=target_id,
+                    payload=payload or {},
+                    idempotency_key=effective_key,
+                ),
+                idempotency_key=effective_key,
+            )
+        )
+
+    def list_progress_events(
+        self,
+        *,
+        epic_id: str | None = None,
+        plan_id: str | None = None,
+        after_id: str | None = None,
+        since: str | None = None,
+        limit: int = 50,
+    ) -> list[JSONDict]:
+        since_value: Any = since
+        if isinstance(since, str):
+            since_value = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        events = self._call(
+            "list_progress_events",
+            epic_id=epic_id,
+            plan_id=plan_id,
+            since=since_value,
+        )
+        events.sort(key=lambda event: (str(event.get("occurred_at") or ""), str(event.get("id") or "")))
+        if after_id is not None:
+            cursor = next((event for event in events if event.get("id") == after_id), None)
+            if cursor is not None:
+                cursor_key = (str(cursor.get("occurred_at") or ""), str(cursor.get("id") or ""))
+                events = [
+                    event
+                    for event in events
+                    if (str(event.get("occurred_at") or ""), str(event.get("id") or "")) > cursor_key
+                ]
+        return events[:limit]
 
 
 class ArnoldBlobAdapter:
