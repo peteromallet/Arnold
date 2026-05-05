@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 from datetime import datetime, timezone
@@ -883,6 +884,119 @@ def build_store(args: argparse.Namespace):
     return None  # Sprint 3: write-back to DB
 
 
+def build_epic_store(root: Path, *, actor_id: str | None = None):
+    from megaplan.store import MultiStore
+
+    return MultiStore.for_project(root, actor_id=actor_id)
+
+
+def _jsonable_model(model: Any) -> dict[str, Any]:
+    return model.model_dump(mode="json")
+
+
+def _snapshot_payload(store: Any, epic_id: str) -> dict[str, Any]:
+    epic = store.load_epic(epic_id)
+    if epic is None:
+        raise CliError("not_found", f"Epic {epic_id!r} not found")
+    source = store._route_for_epic(epic_id)
+    entities = store._migration_entities(source, epic_id)
+    plan_artifacts: dict[str, list[dict[str, Any]]] = {}
+    for plan_id, artifacts in entities["plan_artifacts"].items():
+        plan_artifacts[plan_id] = [
+            {
+                "name": ref.name,
+                "kind": ref.kind,
+                "role": ref.role,
+                "size_bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "content_text": data.decode("utf-8", errors="replace"),
+            }
+            for ref, data in artifacts
+        ]
+    return {
+        "epic": _jsonable_model(entities["epic"]),
+        "body": store.load_body(epic_id),
+        "checklist_items": [_jsonable_model(row) for row in entities["checklist_items"]],
+        "sprints": [_jsonable_model(row) for row in entities["sprints"]],
+        "sprint_items": [_jsonable_model(row) for row in entities["sprint_items"]],
+        "plans": [_jsonable_model(row) for row in entities["plans"]],
+        "plan_artifacts_by_plan": plan_artifacts,
+        "images": [_jsonable_model(row) for row in entities["images"]],
+        "second_opinions": [_jsonable_model(row) for row in entities["second_opinions"]],
+        "feedback": [_jsonable_model(row) for row in entities["feedback"]],
+        "code_artifacts": [_jsonable_model(row) for row in entities["code_artifacts"]],
+        "epic_events": [_jsonable_model(row) for row in entities["epic_events"]],
+    }
+
+
+def _snapshot_dir(epic_id: str) -> Path:
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z").replace(":", "-")
+    return Path.home() / ".megaplan" / "snapshots" / f"{epic_id}-{timestamp}"
+
+
+def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
+    action = args.epic_action
+    if action == "snapshot":
+        store = build_epic_store(root)
+        try:
+            payload = _snapshot_payload(store, args.epic_id)
+        finally:
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
+        snapshot_dir = _snapshot_dir(args.epic_id)
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_path = snapshot_dir / "snapshot.json"
+        atomic_write_text(snapshot_path, json_dump(payload))
+        return {
+            "success": True,
+            "step": "epic",
+            "action": "snapshot",
+            "epic_id": args.epic_id,
+            "path": str(snapshot_path),
+        }
+    if action == "migrate":
+        actor_id = getattr(args, "actor", None) or os.environ.get("MEGAPLAN_ACTOR_ID")
+        if not actor_id:
+            raise CliError(
+                "missing_actor",
+                "actor ID required for epic migration. Set MEGAPLAN_ACTOR_ID or pass --actor <id>.",
+            )
+        store = build_epic_store(root, actor_id=actor_id)
+        try:
+            warnings = store.warn_incomplete_migrations()
+            if args.resume:
+                if args.epic_id:
+                    raise CliError("invalid_args", "epic migrate --resume does not accept an epic id")
+                run = store.resume_migration(args.resume, ttl_seconds=args.ttl)
+                migration_action = "resume"
+            else:
+                if not args.epic_id:
+                    raise CliError("invalid_args", "epic migrate requires an epic id unless --resume is used")
+                if not args.to:
+                    raise CliError("invalid_args", "epic migrate requires --to file|db unless --resume is used")
+                run = store.migrate_epic(args.epic_id, to=args.to, ttl_seconds=args.ttl)
+                migration_action = "migrate"
+        finally:
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
+        return {
+            "success": True,
+            "step": "epic",
+            "action": migration_action,
+            "migration_id": run.id,
+            "phase": run.phase,
+            "epic_id": run.epic_id,
+            "source_backend": run.source_backend,
+            "target_backend": run.target_backend,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "migration": run.model_dump(mode="json"),
+            "warnings": warnings,
+        }
+    raise CliError("invalid_args", f"Unknown epic action: {action}")
+
+
 # ---------------------------------------------------------------------------
 # Parser and dispatch
 # ---------------------------------------------------------------------------
@@ -969,6 +1083,20 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Filter by state (e.g. 'done', 'finalized', 'executed', or comma-separated 'planned,critiqued')")
     list_parser.add_argument("--summary", action="store_true",
                              help="Show count breakdown by state")
+
+    epic_parser = subparsers.add_parser("epic", help="Inspect or migrate Arnold epics")
+    epic_parser.add_argument("--project-dir", default=None)
+    epic_subparsers = epic_parser.add_subparsers(dest="epic_action", required=True)
+    epic_snapshot_parser = epic_subparsers.add_parser("snapshot", help="Write an offline JSON snapshot for an epic")
+    epic_snapshot_parser.add_argument("epic_id")
+    epic_snapshot_parser.add_argument("--project-dir", default=None)
+    epic_migrate_parser = epic_subparsers.add_parser("migrate", help="Promote or demote an epic between backends")
+    epic_migrate_parser.add_argument("epic_id", nargs="?")
+    epic_migrate_parser.add_argument("--to", choices=["file", "db"], default=None)
+    epic_migrate_parser.add_argument("--resume", metavar="MIGRATION_ID", default=None)
+    epic_migrate_parser.add_argument("--actor", default=None, metavar="ID", help="Actor ID for migration writes")
+    epic_migrate_parser.add_argument("--ttl", type=int, default=300)
+    epic_migrate_parser.add_argument("--project-dir", default=None)
 
     for name in ["status", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
@@ -1207,6 +1335,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "loop-status": handle_loop_status,
     "loop-pause": handle_loop_pause,
     "debt": handle_debt,
+    "epic": handle_epic,
     "step": handle_step,
     "override": handle_override,
     "verify-human": handle_verify_human,

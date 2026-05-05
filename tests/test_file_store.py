@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.store import FileStore, LocalDirBlobStore
+from megaplan.store import FileStore, LocalDirBlobStore, deterministic_idempotency_key
 from megaplan.tests.store_contract import run_arnold_adapter_contract, run_store_contract
 
 
@@ -16,9 +16,24 @@ def test_file_store_arnold_adapter_contract(tmp_path: Path) -> None:
 
 def test_file_store_places_orphan_plans_under_orphan_root(tmp_path: Path) -> None:
     store = FileStore(tmp_path / "store")
-    plan = store.create_plan(sprint_id=None, epic_id=None, name="legacy-plan", idea="legacy")
-    turn = store.create_turn(epic_id=None, triggered_by_message_ids=[])
-    message = store.create_message(epic_id=None, direction="inbound", content="bootstrap")
+    plan = store.create_plan(
+        sprint_id=None,
+        epic_id=None,
+        name="legacy-plan",
+        idea="legacy",
+        idempotency_key=deterministic_idempotency_key("file-test", "legacy-plan"),
+    )
+    turn = store.create_turn(
+        epic_id=None,
+        triggered_by_message_ids=[],
+        idempotency_key=deterministic_idempotency_key("file-test", "turn"),
+    )
+    message = store.create_message(
+        epic_id=None,
+        direction="inbound",
+        content="bootstrap",
+        idempotency_key=deterministic_idempotency_key("file-test", "message"),
+    )
 
     assert (tmp_path / "store" / "orphan_plans" / plan.id / "plan.json").exists()
     assert (tmp_path / "store" / "turns" / f"{turn.id}.json").exists()

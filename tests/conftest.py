@@ -133,7 +133,7 @@ def db_store_factory(request: pytest.FixtureRequest):
     dsn = os.environ.get("SUPABASE_DB_URL")
     if not dsn:
         pytest.skip("SUPABASE_DB_URL not set")
-    from megaplan.store import DBStore
+    from megaplan.store import DBStore, deterministic_idempotency_key
     actor_id = f"ci-actor-{uuid.uuid4().hex[:12]}"
     bootstrap = DBStore(actor_id=None, dsn=dsn)
     try:
@@ -142,6 +142,7 @@ def db_store_factory(request: pytest.FixtureRequest):
             name="CI Contract Actor",
             granted_epic_ids="*",
             actor_kind="cli",
+            idempotency_key=deterministic_idempotency_key("db-store-fixture", actor_id, "create_actor"),
         )
     finally:
         bootstrap.close()

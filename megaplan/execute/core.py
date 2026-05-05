@@ -302,7 +302,7 @@ def build_blocking_reasons(
         )
     if missing_task_evidence:
         reasons.append(
-            "done tasks missing files_changed, commands_run, evidence_files, and executor_notes: "
+            "done tasks missing both files_changed and commands_run: "
             + ", ".join(missing_task_evidence)
         )
     if timeout_reason is not None:
@@ -311,11 +311,7 @@ def build_blocking_reasons(
 
 
 def _has_code_task_advisory_evidence(task: dict[str, Any]) -> bool:
-    return bool(
-        task.get("commands_run")
-        or task.get("evidence_files")
-        or str(task.get("executor_notes") or "").strip()
-    )
+    return bool(task.get("commands_run"))
 
 
 def _merge_batch_results(
@@ -542,7 +538,7 @@ def _run_and_merge_batch(
             should_classify=lambda task: task.get("id") in batch_task_id_set,
             has_evidence=lambda task: bool(task.get("files_changed")),
             has_advisory_evidence=_has_code_task_advisory_evidence,
-            missing_message="Done tasks missing files_changed, commands_run, evidence_files, and executor_notes: ",
+            missing_message="Done tasks missing both files_changed and commands_run: ",
             advisory_message="Advisory: done tasks rely on non-file evidence (FLAG-006 softening): ",
         )
     execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
@@ -1176,7 +1172,7 @@ def handle_execute_auto_loop(
             should_classify=lambda task: task.get("id") in active_task_ids,
             has_evidence=lambda task: bool(task.get("files_changed")),
             has_advisory_evidence=_has_code_task_advisory_evidence,
-            missing_message="Done tasks missing files_changed, commands_run, evidence_files, and executor_notes: ",
+            missing_message="Done tasks missing both files_changed and commands_run: ",
             advisory_message="Advisory: done tasks rely on non-file evidence (FLAG-006 softening): ",
         )
     blocking_reasons = build_blocking_reasons(

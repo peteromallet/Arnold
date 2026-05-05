@@ -91,7 +91,7 @@ def test_auto_attribute_single_done_task_with_unclaimed_changes(tmp_path: Path) 
     assert _missing_code_task_evidence(finalize_data["tasks"]) == []
 
 
-def test_done_task_evidence_accepts_evidence_files_and_notes() -> None:
+def test_done_task_evidence_requires_files_or_commands() -> None:
     tasks = [
         {
             "id": "T1",
@@ -111,7 +111,7 @@ def test_done_task_evidence_accepts_evidence_files_and_notes() -> None:
         },
     ]
 
-    assert _missing_code_task_evidence(tasks) == []
+    assert _missing_code_task_evidence(tasks) == ["T1", "T2"]
 
 
 def test_auto_attribute_multiple_done_tasks_share_unclaimed_paths(tmp_path: Path) -> None:

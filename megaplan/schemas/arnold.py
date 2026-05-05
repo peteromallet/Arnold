@@ -74,6 +74,7 @@ class Epic(StorageModel):
     body: str
     state: EpicState
     home_backend: HomeBackend = "file"
+    migrated_to: str | None = None
     revision: int = 0
     created_at: datetime = Field(default_factory=utc_now)
     last_edited_at: datetime = Field(default_factory=utc_now)
