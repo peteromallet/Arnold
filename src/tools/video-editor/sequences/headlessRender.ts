@@ -20,7 +20,7 @@
 // Caller (SequenceCreatorPanel Save) treats `{ ok: false }` as a hard gate:
 // the resource is NOT persisted on failure; the error message surfaces inline.
 
-import { renderToString } from 'react-dom/server';
+import { renderToString } from 'react-dom/server.browser';
 import {
   Component,
   createElement,
