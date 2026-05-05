@@ -97,6 +97,12 @@ export interface SequenceComponentMetadata {
     code: string;
     schemaJson: object;
     defaultsJson: object;
+    /**
+     * User-facing controls manifest. AI-generated sequences MUST emit this;
+     * older saved components without a manifest are treated as "no controls"
+     * (no migration). See src/tools/video-editor/sequences/controlsManifest.ts.
+     */
+    controlsManifest?: unknown[];
     clipType: string;
     themeId: string;
     description: string;

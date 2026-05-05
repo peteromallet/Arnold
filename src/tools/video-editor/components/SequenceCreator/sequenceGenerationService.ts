@@ -15,6 +15,10 @@ import {
   AVAILABLE_SEQUENCE_METADATA,
 } from '@/tools/video-editor/sequences/registry.ts';
 import { validateSequenceDraft } from '@/tools/video-editor/sequences/validation.ts';
+import {
+  validateControlsManifest,
+  type ControlsManifest,
+} from '@/tools/video-editor/sequences/controlsManifest.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 export type RunSequenceGenerationOptions = {
@@ -194,6 +198,7 @@ export interface ExistingSequenceComponentInput {
   code: string;
   schema: object;
   defaults: object;
+  controls?: unknown[];
 }
 
 export type RunSequenceComponentGenerationOptions = {
@@ -215,6 +220,7 @@ export interface SequenceComponentGenerationResponse {
   description?: string;
   schemaJson?: object;
   defaultsJson?: object;
+  controlsManifest?: unknown[];
   message?: string;
   model?: string;
   error?: string;
@@ -231,6 +237,7 @@ export type RunSequenceComponentGenerationResult =
       description: string;
       schemaJson: object;
       defaultsJson: object;
+      controlsManifest: ControlsManifest;
       message: string | null;
       model: string | null;
     }
@@ -287,6 +294,18 @@ export const runSequenceComponentGenerationRequest = async ({
         rawOutput: response.rawOutput,
       };
     }
+    // Client-side gate (mirrors the edge-function-side validator). The edge
+    // function already rejects bad manifests, but we re-check here so a
+    // misbehaving deployment can't bypass the contract — and so the user
+    // sees a useful error even if the response shape ever drifts.
+    const manifestResult = validateControlsManifest(response.controlsManifest, { code: response.code });
+    if (!manifestResult.ok) {
+      return {
+        status: 'error',
+        error: `Controls manifest invalid: ${manifestResult.errors.map((e) => e.message).join('; ')}`,
+        rawOutput: response.rawOutput,
+      };
+    }
     return {
       status: 'ok',
       code: response.code,
@@ -294,6 +313,7 @@ export const runSequenceComponentGenerationRequest = async ({
       description: response.description ?? '',
       schemaJson: response.schemaJson,
       defaultsJson: response.defaultsJson,
+      controlsManifest: manifestResult.manifest,
       message: response.message ?? null,
       model: response.model ?? null,
     };

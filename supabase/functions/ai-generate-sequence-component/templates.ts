@@ -1,10 +1,13 @@
 import { parseEnvelope } from '../_shared/promptEnvelope.ts';
 import { validateSequenceComponentCode } from './sequence-component-validation.ts';
+import { validateControlsManifestForCode } from './controls-manifest-validation.ts';
 
 export interface ExistingSequenceComponent {
   code: string;
   schema: object;
   defaults: object;
+  /** Prior CONTROLS manifest, surfaced to the model during edit/fix mode. */
+  controls?: unknown[];
 }
 
 export interface BuildGenerateSequenceComponentMessagesInput {
@@ -27,6 +30,7 @@ interface ExtractedSequenceComponentMeta {
   description: string;
   schemaJson: object;
   defaultsJson: object;
+  controlsManifest: unknown[];
   message: string;
 }
 
@@ -66,14 +70,44 @@ const OUTPUT_RULES = `Output requirements:
   // DESCRIPTION: <one concise sentence describing the visual>
   // SCHEMA: { "type": "object", "properties": { ... }, "required": [...] }
   // DEFAULTS: { ... }
+  // CONTROLS: [ { "name": "...", "label": "...", "type": "...", "priority": "primary" | "secondary", "default": ..., ... } ]
   // MESSAGE: <brief note for the user>
 - SCHEMA is JSON Schema (a JSON object). Every \`params.X\` access in your code MUST appear in SCHEMA.properties.
 - DEFAULTS is a JSON object with one entry per SCHEMA property; values must be valid for the schema.
+- CONTROLS is the user-facing controls manifest (a JSON array). See "Controls manifest contract" below.
 - After the metadata, write the component definition and assign it via \`exports.default = ComponentName\`.
 - The default export MUST be a function component compatible with the contract above.
 - Use useVideoConfig() and the fps prop to express timing in frames; do NOT use wall-clock APIs.
 - Read all user-tunable values from the params prop (e.g. params.duration, params.color), never as top-level props.
 - Express spatial values as percentages of the composition width — preview is small, timeline can be 1920×1080+.`;
+
+const CONTROLS_MANIFEST_CONTRACT = `Controls manifest contract:
+- CONTROLS is a JSON array. One entry per user-tunable param the component reads from \`params.X\`.
+- Asset-key fields (params.imageAssetKeys, params.videoAssetKeys) and host-injected URL arrays
+  (params.images, params.videos) are EXCLUDED from CONTROLS — they are managed by the asset picker,
+  not by the controls panel.
+- Every entry MUST have these fields:
+    { "name": "<JS identifier matching params.X>",
+      "label": "<short human label>",
+      "type": "number" | "boolean" | "text" | "color" | "enum" | "slider",
+      "priority": "primary" | "secondary",
+      "default": <value valid for the type> }
+- Type-specific fields:
+    number  → optional "min", "max", "step"
+    slider  → REQUIRED "min", "max"; optional "step"; default is a number in [min, max]
+    boolean → default is true | false
+    text    → default is a string
+    color   → default is a hex string like "#rrggbb"
+    enum    → REQUIRED "options": string[] (non-empty); default MUST be one of options
+- Priority rules — read carefully:
+    Mark a control "primary" only if it is the ONE knob the user is most likely to tweak each
+    time they pick this sequence. Most controls should be "secondary". A typical sequence has
+    0–2 primary controls. If you find yourself marking 3+ as primary, demote the rest to secondary.
+- Cross-coverage:
+    Every entry's "name" MUST be referenced as \`params.<name>\` somewhere in the component code.
+    Every \`params.<name>\` accessed in the code (excluding asset-key/URL fields above) MUST have a
+    matching CONTROLS entry. The host rejects manifests that fail this check.
+- Type allowlist is FIXED. Do not invent new widget types — pick the closest from the list above.`;
 
 const ASSET_KEY_CONTRACT = `Asset-key contract:
 - The host injects a list of allowed asset keys (image and video) per generation.
@@ -126,7 +160,7 @@ export function buildGenerateSequenceComponentMessages(
 
 - Fix ONLY the issue described in the error. Keep everything else the same — same SCHEMA fields,
   same DEFAULTS values, same component name.
-- Re-emit the full envelope (NAME / DESCRIPTION / SCHEMA / DEFAULTS / MESSAGE) followed by the fixed code.
+- Re-emit the full envelope (NAME / DESCRIPTION / SCHEMA / DEFAULTS / CONTROLS / MESSAGE) followed by the fixed code.
 
 Code that needs fixing:
 \`\`\`tsx
@@ -134,14 +168,15 @@ ${existingComponent.code.trim()}
 \`\`\`
 
 Existing SCHEMA: ${JSON.stringify(existingComponent.schema)}
-Existing DEFAULTS: ${JSON.stringify(existingComponent.defaults)}`;
+Existing DEFAULTS: ${JSON.stringify(existingComponent.defaults)}
+Existing CONTROLS: ${JSON.stringify(existingComponent.controls ?? [])}`;
   } else if (existingComponent?.code) {
     modeInstructions = `Edit mode:
 - You are making a TARGETED EDIT to an existing, working sequence component.
 - Start from the existing code below and modify ONLY what the user asked for.
 - Preserve component name, structure, and existing SCHEMA fields unless the user's request
   requires changing them.
-- Re-emit the full envelope (NAME / DESCRIPTION / SCHEMA / DEFAULTS / MESSAGE) followed by the
+- Re-emit the full envelope (NAME / DESCRIPTION / SCHEMA / DEFAULTS / CONTROLS / MESSAGE) followed by the
   edited code.
 
 Existing code:
@@ -150,7 +185,8 @@ ${existingComponent.code.trim()}
 \`\`\`
 
 Existing SCHEMA: ${JSON.stringify(existingComponent.schema)}
-Existing DEFAULTS: ${JSON.stringify(existingComponent.defaults)}`;
+Existing DEFAULTS: ${JSON.stringify(existingComponent.defaults)}
+Existing CONTROLS: ${JSON.stringify(existingComponent.controls ?? [])}`;
   } else {
     modeInstructions = `Creation mode:
 - Generate a new sequence component from scratch.
@@ -184,6 +220,8 @@ ${ASSET_KEY_CONTRACT}
 
 ${OUTPUT_RULES}
 
+${CONTROLS_MANIFEST_CONTRACT}
+
 ${VALIDATION_RULES}`;
 
   const userMsg = `User request${name ? ` for a sequence component called "${name}"` : ''}:
@@ -211,8 +249,8 @@ export function extractSequenceComponentCodeAndMeta(
 ): ExtractedSequenceComponentMeta {
   const { values, jsonValues, codeBody } = parseEnvelope(
     responseText,
-    ['NAME', 'DESCRIPTION', 'SCHEMA', 'DEFAULTS', 'MESSAGE'],
-    { jsonObjectFields: ['SCHEMA', 'DEFAULTS'] },
+    ['NAME', 'DESCRIPTION', 'SCHEMA', 'DEFAULTS', 'CONTROLS', 'MESSAGE'],
+    { jsonObjectFields: ['SCHEMA', 'DEFAULTS'], jsonArrayFields: ['CONTROLS'] },
   );
 
   const schemaJson = (jsonValues.SCHEMA && typeof jsonValues.SCHEMA === 'object'
@@ -221,6 +259,9 @@ export function extractSequenceComponentCodeAndMeta(
   const defaultsJson = (jsonValues.DEFAULTS && typeof jsonValues.DEFAULTS === 'object'
     ? jsonValues.DEFAULTS as object
     : null);
+  const controlsManifest = Array.isArray(jsonValues.CONTROLS)
+    ? jsonValues.CONTROLS as unknown[]
+    : null;
 
   if (!schemaJson) {
     throw new Error('Generated sequence component is missing a valid // SCHEMA: { ... } block');
@@ -228,8 +269,12 @@ export function extractSequenceComponentCodeAndMeta(
   if (!defaultsJson) {
     throw new Error('Generated sequence component is missing a valid // DEFAULTS: { ... } block');
   }
+  if (!controlsManifest) {
+    throw new Error('Generated sequence component is missing a valid // CONTROLS: [ ... ] block');
+  }
 
   validateSequenceComponentCode(codeBody, schemaJson, defaultsJson);
+  validateControlsManifestForCode(controlsManifest, codeBody);
 
   return {
     code: codeBody,
@@ -237,6 +282,7 @@ export function extractSequenceComponentCodeAndMeta(
     description: values.DESCRIPTION ?? '',
     schemaJson,
     defaultsJson,
+    controlsManifest,
     message: values.MESSAGE ?? '',
   };
 }

@@ -55,11 +55,18 @@ const collectAssetKeys = (...sources: unknown[]): string[] => {
 function isExistingComponent(value: unknown): value is ExistingSequenceComponent {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
-  return (
-    typeof record.code === "string" &&
-    record.schema !== null && typeof record.schema === "object" &&
-    record.defaults !== null && typeof record.defaults === "object"
-  );
+  if (
+    typeof record.code !== "string" ||
+    record.schema === null || typeof record.schema !== "object" ||
+    record.defaults === null || typeof record.defaults !== "object"
+  ) {
+    return false;
+  }
+  // controls is optional and only used to surface prior manifest to the model.
+  if (record.controls !== undefined && !Array.isArray(record.controls)) {
+    return false;
+  }
+  return true;
 }
 
 async function callAnthropic(
@@ -290,7 +297,7 @@ serve(async (req) => {
       return jsonResponse({ error: parseMsg, rawOutput: llmResponse.content.slice(0, 500) }, 422);
     }
 
-    const { code, name: generatedName, description, schemaJson, defaultsJson, message } = extracted;
+    const { code, name: generatedName, description, schemaJson, defaultsJson, controlsManifest, message } = extracted;
 
     if (retryDepth > 0) {
       logger.info(`[AI-GENERATE-SEQUENCE-COMPONENT] retry succeeded at depth ${retryDepth}`);
@@ -302,6 +309,7 @@ serve(async (req) => {
       description,
       schemaJson,
       defaultsJson,
+      controlsManifest,
       message: message || undefined,
       model: llmResponse.model,
     });

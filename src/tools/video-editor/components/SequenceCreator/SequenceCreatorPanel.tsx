@@ -70,6 +70,8 @@ import {
 import { useAuth } from '@/shared/contexts/AuthContext.tsx';
 import { CodePathPreview } from './CodePathPreview.tsx';
 import { CodePathParamEditor } from './CodePathParamEditor.tsx';
+import { ControlsManifestLayout } from './ControlsManifestLayout.tsx';
+import { validateControlsManifest } from '@/tools/video-editor/sequences/controlsManifest.ts';
 
 type SequenceCreatorPanelProps = {
   open?: boolean;
@@ -319,6 +321,7 @@ export function SequenceCreatorPanel({
           description: codeResult.description,
           schemaJson: codeResult.schemaJson,
           defaultsJson: codeResult.defaultsJson,
+          controlsManifest: codeResult.controlsManifest as unknown[],
         });
         setGeneratedComponentSourceClipType(undefined);
         setMode('edit');
@@ -401,6 +404,7 @@ export function SequenceCreatorPanel({
           description: codeResult.description,
           schemaJson: codeResult.schemaJson,
           defaultsJson: codeResult.defaultsJson,
+          controlsManifest: codeResult.controlsManifest as unknown[],
         });
         setGeneratedComponentSourceClipType(undefined);
         setMode('edit');
@@ -482,6 +486,8 @@ export function SequenceCreatorPanel({
           schema: forkPending.bundledSource.schema,
           defaults: forkPending.bundledSource.defaults,
         },
+        // Bundled clip types pre-date the manifest concept, so no controls
+        // are surfaced for fork; the model generates a fresh manifest.
         resolvedConfig,
         selectedClips: selectedMedia.clips,
         attachedClips: attachmentSet.clips,
@@ -501,6 +507,7 @@ export function SequenceCreatorPanel({
         description: codeResult.description,
         schemaJson: codeResult.schemaJson,
         defaultsJson: codeResult.defaultsJson,
+        controlsManifest: codeResult.controlsManifest as unknown[],
       });
       setGeneratedComponentSourceClipType(undefined);
       setMode('edit');
@@ -579,6 +586,7 @@ export function SequenceCreatorPanel({
       code: generatedComponent.code,
       schemaJson: generatedComponent.schemaJson,
       defaultsJson: generatedComponent.defaultsJson,
+      controlsManifest: generatedComponent.controlsManifest,
       clipType: uniqueClipType,
       themeId: resolvedConfig?.theme ?? '2rp',
       description: generatedComponent.description,
@@ -760,6 +768,7 @@ export function SequenceCreatorPanel({
       description: resource.description ?? '',
       schemaJson: resource.schemaJson,
       defaultsJson: resource.defaultsJson,
+      controlsManifest: resource.controlsManifest as unknown[] | undefined,
     });
     setGeneratedComponentSourceClipType(resource.clipType);
     setClassifierVerdict({ path: 'code', reason: 'Loaded from library.' });
@@ -1185,15 +1194,38 @@ export function SequenceCreatorPanel({
                                 </div>
                               )}
                             </div>
-                            <CodePathParamEditor
-                              schemaJson={generatedComponent.schemaJson}
-                              values={generatedComponent.defaultsJson as Record<string, unknown>}
-                              allowedAssetKeys={allowedAssetKeys}
-                              allowedAssets={allowedAssets}
-                              onChange={(next) => setGeneratedComponent((prev) => (
-                                prev ? { ...prev, defaultsJson: next } : prev
-                              ))}
-                            />
+                            {(() => {
+                              // Render controls via the new manifest layout when the
+                              // component declared one (AI-generated post-manifest).
+                              // Backwards compat: components saved before the manifest
+                              // existed fall back to the JSON-schema-driven editor so
+                              // they keep working without forcing a regeneration.
+                              const manifestResult = generatedComponent.controlsManifest
+                                ? validateControlsManifest(generatedComponent.controlsManifest, { code: generatedComponent.code })
+                                : null;
+                              if (manifestResult?.ok) {
+                                return (
+                                  <ControlsManifestLayout
+                                    manifest={manifestResult.manifest}
+                                    values={generatedComponent.defaultsJson as Record<string, unknown>}
+                                    onChange={(next) => setGeneratedComponent((prev) => (
+                                      prev ? { ...prev, defaultsJson: next } : prev
+                                    ))}
+                                  />
+                                );
+                              }
+                              return (
+                                <CodePathParamEditor
+                                  schemaJson={generatedComponent.schemaJson}
+                                  values={generatedComponent.defaultsJson as Record<string, unknown>}
+                                  allowedAssetKeys={allowedAssetKeys}
+                                  allowedAssets={allowedAssets}
+                                  onChange={(next) => setGeneratedComponent((prev) => (
+                                    prev ? { ...prev, defaultsJson: next } : prev
+                                  ))}
+                                />
+                              );
+                            })()}
                           </div>
                         ) : null}
 

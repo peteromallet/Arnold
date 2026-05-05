@@ -47,6 +47,12 @@ export type GeneratedComponent = {
   description: string;
   schemaJson: object;
   defaultsJson: object;
+  /**
+   * Controls manifest emitted by the agent. Undefined for components loaded
+   * from the library before the manifest field existed (backwards compat:
+   * those render with no controls; users can regenerate to opt in).
+   */
+  controlsManifest?: unknown[];
 };
 
 export type SequenceCreatorPersistedState = {
