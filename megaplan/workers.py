@@ -989,18 +989,19 @@ def _recover_codex_payload(
     plan_dir: Path,
     output_path: Path,
     raw: str,
+    prefer_output_file: bool = True,
 ) -> dict[str, Any] | None:
-    payload = None
+    file_payload = None
     file_recovered_candidates: list[dict[str, Any]] = []
     try:
-        payload = parse_json_file(output_path)
+        file_payload = parse_json_file(output_path)
     except CliError:
         try:
             file_raw = output_path.read_text(encoding="utf-8", errors="replace")
             file_recovered_candidates.extend(_extract_json_candidates_from_raw(file_raw))
         except OSError:
             pass
-    if payload is None:
+    if file_payload is None:
         fallback_names = {
             "critique": "critique_output.json",
         }
@@ -1008,17 +1009,30 @@ def _recover_codex_payload(
         fallback_path = plan_dir / fallback_name
         if fallback_path != output_path and fallback_path.exists():
             try:
-                payload = parse_json_file(fallback_path)
+                file_payload = parse_json_file(fallback_path)
             except CliError:
                 try:
                     fallback_raw = fallback_path.read_text(encoding="utf-8", errors="replace")
                     file_recovered_candidates.extend(_extract_json_candidates_from_raw(fallback_raw))
                 except OSError:
                     pass
+    if prefer_output_file and file_payload is not None:
+        normalized_file_payload = _normalize_worker_payload(step, file_payload)
+        try:
+            validate_payload(step, normalized_file_payload)
+        except CliError as error:
+            if _looks_like_step_payload(step, normalized_file_payload):
+                raise CliError(
+                    "parse_error",
+                    f"Recovered JSON object for {step} failed validation: {error.message}",
+                    extra={"raw_output": raw},
+                ) from error
+        else:
+            return normalized_file_payload
     raw_candidates = _extract_json_candidates_from_raw(raw)
     candidate_payloads: list[dict[str, Any]] = []
-    if payload is not None:
-        candidate_payloads.append(payload)
+    if file_payload is not None:
+        candidate_payloads.append(file_payload)
     candidate_payloads.extend(file_recovered_candidates)
     candidate_payloads.extend(raw_candidates)
     valid_payloads: list[dict[str, Any]] = []
@@ -2012,6 +2026,7 @@ def run_codex_step(
                 plan_dir=plan_dir,
                 output_path=output_path,
                 raw=str(error.extra.get("raw_output", "")),
+                prefer_output_file=False,
             )
             if recovered_payload is not None:
                 timeout_session_id = session.get("id") if persistent else None
