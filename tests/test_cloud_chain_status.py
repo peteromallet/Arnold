@@ -184,7 +184,7 @@ def test_cloud_status_chain_uses_marker_before_cloud_yaml_fallback(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["spec"] == remote_spec
-    assert provider.reads[0] == "/workspace/app/chain_state.json"
+    assert provider.reads[0] == str(chain_module._state_path_for(Path(remote_spec)))
 
 
 def test_cloud_status_chain_falls_back_to_cloud_yaml_chain_spec(
@@ -215,7 +215,7 @@ def test_cloud_status_chain_falls_back_to_cloud_yaml_chain_spec(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["spec"] == remote_spec
-    assert provider.reads == ["/workspace/app/chain_state.json", remote_spec]
+    assert provider.reads == [str(chain_module._state_path_for(Path(remote_spec))), remote_spec]
 
 
 def test_cloud_status_chain_errors_when_no_remote_spec_can_be_resolved(
