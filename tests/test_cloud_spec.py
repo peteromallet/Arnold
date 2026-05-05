@@ -122,6 +122,21 @@ def test_load_spec_rejects_unknown_provider(tmp_path: Path) -> None:
         load_spec(_write_spec(tmp_path, payload))
 
 
+@pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high"])
+def test_load_spec_accepts_each_codex_reasoning_effort(tmp_path: Path, effort: str) -> None:
+    payload = _base_spec()
+    payload["codex"] = {"model": "gpt-5.5", "reasoning": effort}
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.codex.reasoning == effort
+
+
+def test_load_spec_rejects_unknown_codex_reasoning(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["codex"] = {"model": "gpt-5.4", "reasoning": "extreme"}
+    with pytest.raises(CliError, match="minimal, low, medium, high"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
 def test_load_spec_rejects_future_provider_with_distinct_error(tmp_path: Path) -> None:
     payload = _base_spec()
     payload["provider"] = "fly"
