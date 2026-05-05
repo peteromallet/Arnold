@@ -9,8 +9,8 @@ agents:
   default: codex
 
 codex:
-  model: gpt-5.4
-  reasoning: high
+  model: gpt-5.5
+  reasoning: low
 
 mode: chain
 
