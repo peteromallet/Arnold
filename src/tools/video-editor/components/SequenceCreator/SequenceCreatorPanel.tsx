@@ -295,6 +295,7 @@ export function SequenceCreatorPanel({
           schemaJson: codeResult.schemaJson,
           defaultsJson: codeResult.defaultsJson,
         });
+        setMode('edit');
         setGenerationNote(codeResult.message ?? 'Generated component code (browser-only render).');
         return;
       }
@@ -375,6 +376,7 @@ export function SequenceCreatorPanel({
           schemaJson: codeResult.schemaJson,
           defaultsJson: codeResult.defaultsJson,
         });
+        setMode('edit');
         setGenerationNote(codeResult.message ?? 'Generated component code (browser-only render).');
         return;
       }
@@ -472,6 +474,7 @@ export function SequenceCreatorPanel({
         schemaJson: codeResult.schemaJson,
         defaultsJson: codeResult.defaultsJson,
       });
+      setMode('edit');
       setGenerationNote(
         codeResult.message ?? `Forked "${forkPending.selectedClipType}" into a custom DB-stored sequence.`,
       );
@@ -985,44 +988,62 @@ export function SequenceCreatorPanel({
               </div>
 
               <div className="flex max-h-[360px] min-h-0 flex-col border-t border-border">
-                {selectedDraft && selectedMetadata ? (
+                {(selectedDraft && selectedMetadata) || generatedComponent ? (
                   <>
                     <div className="min-h-0 flex-1 overflow-y-auto p-4">
                       <div className="space-y-4">
-                        <div className="grid grid-cols-[1fr_140px] items-end gap-3">
-                          <div>
-                            <div className="text-sm font-medium text-foreground">
-                              {selectedDescriptor?.label ?? selectedMetadata.label}
+                        {selectedDraft && selectedMetadata ? (
+                          <>
+                            <div className="grid grid-cols-[1fr_140px] items-end gap-3">
+                              <div>
+                                <div className="text-sm font-medium text-foreground">
+                                  {selectedDescriptor?.label ?? selectedMetadata.label}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {selectedDescriptor?.description ?? selectedMetadata.description}
+                                </div>
+                              </div>
+                              <div className="space-y-1.5">
+                                <div className="text-xs font-medium text-muted-foreground">Duration</div>
+                                <NumberInput
+                                  value={selectedDraft.hold}
+                                  min={selectedMetadata.hold.minSeconds}
+                                  max={selectedMetadata.hold.maxSeconds}
+                                  step={selectedMetadata.hold.stepSeconds}
+                                  onChange={(value) => updateSelectedDraft({ hold: value ?? selectedMetadata.hold.defaultSeconds })}
+                                />
+                              </div>
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {selectedDescriptor?.description ?? selectedMetadata.description}
-                            </div>
-                          </div>
-                          <div className="space-y-1.5">
-                            <div className="text-xs font-medium text-muted-foreground">Duration</div>
-                            <NumberInput
-                              value={selectedDraft.hold}
-                              min={selectedMetadata.hold.minSeconds}
-                              max={selectedMetadata.hold.maxSeconds}
-                              step={selectedMetadata.hold.stepSeconds}
-                              onChange={(value) => updateSelectedDraft({ hold: value ?? selectedMetadata.hold.defaultSeconds })}
+
+                            <SequenceParamEditor
+                              clipType={selectedDraft.clipType}
+                              metadata={selectedMetadata}
+                              params={selectedDraft.params}
+                              registry={allowedRegistry}
+                              onChange={(params) => updateSelectedDraft({ params })}
                             />
-                          </div>
-                        </div>
 
-                        <SequenceParamEditor
-                          clipType={selectedDraft.clipType}
-                          metadata={selectedMetadata}
-                          params={selectedDraft.params}
-                          registry={allowedRegistry}
-                          onChange={(params) => updateSelectedDraft({ params })}
-                        />
-
-                        {selectedValidation && !selectedValidation.ok && (
-                          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                            {summarizeValidationErrors(selectedValidation.errors)}
+                            {selectedValidation && !selectedValidation.ok && (
+                              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                                {summarizeValidationErrors(selectedValidation.errors)}
+                              </div>
+                            )}
+                          </>
+                        ) : generatedComponent ? (
+                          <div className="space-y-1">
+                            <div className="text-sm font-medium text-foreground">
+                              {generatedComponent.name || 'Generated component'}
+                            </div>
+                            {generatedComponent.description && (
+                              <div className="text-xs text-muted-foreground">
+                                {generatedComponent.description}
+                              </div>
+                            )}
+                            <p className="text-xs italic text-muted-foreground">
+                              Insert at playhead or Replace selected — saves the component to your library on the same click.
+                            </p>
                           </div>
-                        )}
+                        ) : null}
 
                         {(actionError || replaceDisabledReason || insertDisabledReason) && (
                           <div className="rounded-lg border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
@@ -1036,19 +1057,19 @@ export function SequenceCreatorPanel({
                       <Button
                         type="button"
                         variant="secondary"
-                        disabled={Boolean(replaceDisabledReason)}
-                        onClick={handleReplace}
+                        disabled={Boolean(replaceDisabledReason) || isSaving}
+                        onClick={() => void handleReplace()}
                         title={replaceDisabledReason ?? undefined}
                       >
-                        Replace selected
+                        {isSaving ? 'Saving…' : 'Replace selected'}
                       </Button>
                       <Button
                         type="button"
-                        disabled={Boolean(insertDisabledReason)}
-                        onClick={handleInsert}
+                        disabled={Boolean(insertDisabledReason) || isSaving}
+                        onClick={() => void handleInsert()}
                         title={insertDisabledReason ?? undefined}
                       >
-                        Insert at playhead
+                        {isSaving ? 'Saving…' : 'Insert at playhead'}
                       </Button>
                     </div>
                   </>

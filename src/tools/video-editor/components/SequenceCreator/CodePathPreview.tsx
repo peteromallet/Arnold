@@ -54,17 +54,46 @@ export function CodePathPreview({ code, defaultsJson, fps = PREVIEW_FPS, allowed
   const inputProps = useMemo(() => {
     const urls = (allowedAssets ?? []).map((a) => a.url).filter(Boolean);
     const keys = (allowedAssets ?? []).map((a) => a.key).filter(Boolean);
+    // key → url lookup, used to resolve any imageAssetKeys the model
+    // returned in defaults into the URL form components actually render
+    // (mirrors what the runtime asset registry does at insert time).
+    const keyToUrl = new Map<string, string>();
+    for (const a of allowedAssets ?? []) {
+      if (a.key && a.url) keyToUrl.set(a.key, a.url);
+    }
+
     const baseParams = (defaultsJson ?? {}) as Record<string, unknown>;
-    // Inject asset URLs/keys ONLY where the model didn't already provide a
-    // non-empty default (don't clobber prompt-derived intent).
-    const hasArray = (v: unknown) => Array.isArray(v) && v.length > 0;
+    const isStringArray = (v: unknown): v is string[] =>
+      Array.isArray(v) && v.every((x) => typeof x === 'string');
+    const resolveKeysToUrls = (raw: unknown): string[] | undefined => {
+      if (!isStringArray(raw) || raw.length === 0) return undefined;
+      const resolved = raw
+        .map((k) => keyToUrl.get(k) ?? null)
+        .filter((u): u is string => typeof u === 'string' && u.length > 0);
+      return resolved.length > 0 ? resolved : undefined;
+    };
+    const hasNonEmptyArray = (v: unknown) => Array.isArray(v) && v.length > 0;
+
+    // Build `images` (URL strings the component renders against) by
+    // preferring model defaults if they already contain URLs, else
+    // resolving asset keys, else falling back to the user's attached URLs.
+    const modelImages = isStringArray(baseParams.images)
+      ? (baseParams.images as string[]).filter((s) => /^https?:\/\//.test(s) || s.startsWith('data:'))
+      : [];
+    const resolvedFromKeys = resolveKeysToUrls(baseParams.imageAssetKeys)
+      ?? resolveKeysToUrls(baseParams.assetKeys);
+    const images = modelImages.length > 0
+      ? modelImages
+      : (resolvedFromKeys ?? urls);
+
     const params = {
       ...baseParams,
-      ...(hasArray(baseParams.images) ? {} : { images: urls }),
-      ...(hasArray(baseParams.imageAssetKeys) ? {} : { imageAssetKeys: keys }),
-      ...(hasArray(baseParams.assetKeys) ? {} : { assetKeys: keys }),
-      ...(hasArray(baseParams.assetUrls) ? {} : { assetUrls: urls }),
+      images,
+      ...(hasNonEmptyArray(baseParams.imageAssetKeys) ? {} : { imageAssetKeys: keys }),
+      ...(hasNonEmptyArray(baseParams.assetKeys) ? {} : { assetKeys: keys }),
+      assetUrls: hasNonEmptyArray(baseParams.assetUrls) ? baseParams.assetUrls : urls,
     };
+    const firstImage = images[0] ?? urls[0];
     const previewClip: ResolvedTimelineClip = {
       id: 'code-path-preview',
       clipType: 'code-path-preview',
@@ -72,7 +101,7 @@ export function CodePathPreview({ code, defaultsJson, fps = PREVIEW_FPS, allowed
       at: 0,
       from: 0,
       to: PREVIEW_DURATION_SECONDS,
-      asset: urls[0] ? { src: urls[0], mediaType: 'image' } : undefined,
+      asset: firstImage ? { src: firstImage, mediaType: 'image' } : undefined,
     } as unknown as ResolvedTimelineClip;
     return {
       clip: previewClip,
