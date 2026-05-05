@@ -63,6 +63,7 @@ import { getClipCapabilityDescriptor } from '@/tools/video-editor/sequences/regi
 import { smokeRenderSequenceComponent } from '@/tools/video-editor/sequences/headlessRender.ts';
 import { useCreateSequenceComponentResource } from '@/tools/video-editor/hooks/useSequenceResources.ts';
 import { CodePathPreview } from './CodePathPreview.tsx';
+import { CodePathParamEditor } from './CodePathParamEditor.tsx';
 
 type SequenceCreatorPanelProps = {
   open?: boolean;
@@ -1030,18 +1031,26 @@ export function SequenceCreatorPanel({
                             )}
                           </>
                         ) : generatedComponent ? (
-                          <div className="space-y-1">
-                            <div className="text-sm font-medium text-foreground">
-                              {generatedComponent.name || 'Generated component'}
-                            </div>
-                            {generatedComponent.description && (
-                              <div className="text-xs text-muted-foreground">
-                                {generatedComponent.description}
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <div className="text-sm font-medium text-foreground">
+                                {generatedComponent.name || 'Generated component'}
                               </div>
-                            )}
-                            <p className="text-xs italic text-muted-foreground">
-                              Insert at playhead or Replace selected — saves the component to your library on the same click.
-                            </p>
+                              {generatedComponent.description && (
+                                <div className="text-xs text-muted-foreground">
+                                  {generatedComponent.description}
+                                </div>
+                              )}
+                            </div>
+                            <CodePathParamEditor
+                              schemaJson={generatedComponent.schemaJson}
+                              values={generatedComponent.defaultsJson as Record<string, unknown>}
+                              allowedAssetKeys={allowedAssetKeys}
+                              allowedAssets={allowedAssets}
+                              onChange={(next) => setGeneratedComponent((prev) => (
+                                prev ? { ...prev, defaultsJson: next } : prev
+                              ))}
+                            />
                           </div>
                         ) : null}
 
