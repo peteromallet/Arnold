@@ -308,17 +308,60 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
                 f"Sense check {sense_check_id} acknowledgment is perfunctory: {note.strip()!r}."
             )
 
+    pending_tasks: list[str] = []
+    skipped_without_reason: list[str] = []
+    blocked_without_reason: list[str] = []
+    hollow_done_tasks: list[str] = []
     for task in finalize_data.get("tasks", []):
-        if task.get("status") != "done":
-            continue
         task_id = task.get("id", "?")
+        status = task.get("status", "")
         notes = task.get("executor_notes", "")
-        if not isinstance(notes, str) or not notes.strip():
+        notes_text = notes.strip() if isinstance(notes, str) else ""
+        if status == "pending":
+            pending_tasks.append(task_id)
             continue
-        if is_rubber_stamp(notes, strict=True):
-            findings.append(
-                f"Task {task_id} executor_notes are perfunctory: {notes.strip()!r}."
-            )
+        if status == "skipped" and not notes_text:
+            skipped_without_reason.append(task_id)
+            continue
+        if status == "blocked" and not notes_text:
+            blocked_without_reason.append(task_id)
+            continue
+        if status == "done":
+            files = task.get("files_changed") or []
+            commands = task.get("commands_run") or []
+            if not files and not commands:
+                hollow_done_tasks.append(task_id)
+                continue
+            if notes_text and is_rubber_stamp(notes, strict=True):
+                findings.append(
+                    f"Task {task_id} executor_notes are perfunctory: {notes_text!r}."
+                )
+
+    # Tasks left in `pending` after execute means the executor never started
+    # them — the most common cause of silent scope shrink (e.g., quota
+    # exhaustion mid-execute). Flag every one so the auto-driver retries
+    # execute or escalates instead of treating the partial run as clean.
+    if pending_tasks:
+        findings.append(
+            "Tasks left pending after execute (executor never started them): "
+            + ", ".join(pending_tasks)
+        )
+    if skipped_without_reason:
+        findings.append(
+            "Tasks marked skipped without an executor_notes reason: "
+            + ", ".join(skipped_without_reason)
+        )
+    if blocked_without_reason:
+        findings.append(
+            "Tasks marked blocked without an executor_notes reason: "
+            + ", ".join(blocked_without_reason)
+        )
+    if hollow_done_tasks:
+        findings.append(
+            "Tasks marked done with neither files_changed nor commands_run "
+            "(suspicious — executor may have skipped without flagging): "
+            + ", ".join(hollow_done_tasks)
+        )
 
     return {
         "findings": findings,
