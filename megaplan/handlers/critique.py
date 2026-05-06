@@ -151,7 +151,23 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         invalid_checks = validate_critique_checks(worker.payload, expected_ids=expected_ids)
         if invalid_checks:
-            _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
+            recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
+            if recovered_payload is None:
+                _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
+            worker = WorkerResult(
+                payload=recovered_payload,
+                raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json",
+                duration_ms=worker.duration_ms,
+                cost_usd=worker.cost_usd,
+                session_id=worker.session_id,
+                trace_output=worker.trace_output,
+                rendered_prompt=worker.rendered_prompt,
+                model_actual=worker.model_actual,
+                prompt_tokens=worker.prompt_tokens,
+                completion_tokens=worker.completion_tokens,
+                total_tokens=worker.total_tokens,
+            )
+
 
         from megaplan.audits.capabilities import get_worker_capabilities
         from megaplan.audits.verifiability import audit_criteria, validate_requires
@@ -229,6 +245,19 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             response_fields=response_fields,
             history_fields={"flags_count": len(worker.payload.get("flags", []))},
         )
+
+
+def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -> dict[str, Any] | None:
+    output_path = plan_dir / "critique_output.json"
+    if not output_path.exists():
+        return None
+    payload = read_json(output_path)
+    invalid_checks = validate_critique_checks(payload, expected_ids=expected_ids)
+    if invalid_checks:
+        return None
+    validate_payload("critique", payload)
+    return payload
+
 
 def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="revise") as (plan_dir, state):
