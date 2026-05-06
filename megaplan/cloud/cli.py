@@ -17,8 +17,8 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any
 
 from megaplan.cloud.providers.base import _write_redacted_output, get_provider
-from megaplan.cloud.spec import CloudSpec, RailwaySpec, load_spec as load_cloud_spec
-from megaplan.cloud.template import materialize_deploy_dir
+from megaplan.cloud.spec import CloudSpec, RailwaySpec, apply_repo_overrides, load_spec as load_cloud_spec
+from megaplan.cloud.template import materialize_deploy_dir, render_ensure_repo_command
 from megaplan.types import CliError
 
 
@@ -60,6 +60,7 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Directory containing local idea files referenced by the chain spec",
     )
+    _add_repo_override_args(chain_parser)
 
     bootstrap_parser = cloud_sub.add_parser(
         "bootstrap",
@@ -69,6 +70,7 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     bootstrap_parser.add_argument("idea_file", help="Local idea file path")
     bootstrap_parser.add_argument("--plan-name", default=None, help="Optional remote plan name")
     bootstrap_parser.add_argument("--robustness", default="standard")
+    _add_repo_override_args(bootstrap_parser)
 
     status_parser = cloud_sub.add_parser(
         "status",
@@ -142,6 +144,12 @@ def build_cloud_parser(subparsers: Any) -> None:
         help="Manage provider-backed megaplan cloud runners",
     )
     _register_cloud_subcommands(cloud_parser)
+
+
+def _add_repo_override_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo-url", default=None, help="Override cloud.yaml repo.url in memory")
+    parser.add_argument("--repo-branch", default=None, help="Override cloud.yaml repo.branch in memory")
+    parser.add_argument("--repo-workspace", default=None, help="Override cloud.yaml repo.workspace in memory")
 
 
 def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
@@ -229,7 +237,13 @@ def _cloud_yaml_path(root: Path, args: argparse.Namespace) -> Path:
 
 
 def _load_cloud_spec(root: Path, args: argparse.Namespace) -> CloudSpec:
-    return load_spec(_cloud_yaml_path(root, args))
+    spec = load_spec(_cloud_yaml_path(root, args))
+    return apply_repo_overrides(
+        spec,
+        repo_url=getattr(args, "repo_url", None),
+        repo_branch=getattr(args, "repo_branch", None),
+        repo_workspace=getattr(args, "repo_workspace", None),
+    )
 
 
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
@@ -244,6 +258,24 @@ def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
     railway = spec.railway or RailwaySpec()
     overridden = replace(spec, railway=replace(railway, session=session_name))
     return get_provider(overridden.provider, overridden)
+
+
+def _ensure_repo_command(spec: CloudSpec) -> str:
+    return render_ensure_repo_command(spec.repo)
+
+
+def _ensure_repo_checkout(spec: CloudSpec, provider) -> None:
+    result = provider.ssh_exec(_ensure_repo_command(spec))
+    _relay_output(result, secret_names=spec.secrets, env=os.environ)
+    if result.returncode != 0:
+        raise CliError(
+            "provider_failed",
+            (
+                "ensure repo checkout failed "
+                f"for {spec.repo.url}@{spec.repo.branch} into {spec.repo.workspace} "
+                f"(exit {result.returncode})"
+            ),
+        )
 
 
 def _run_init(root: Path, args: argparse.Namespace) -> int:
@@ -281,6 +313,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     chain_spec = chain_module.load_spec(local_spec_path)
     idea_dir = Path(args.idea_dir).expanduser().resolve() if args.idea_dir else local_spec_path.parent.resolve()
     remote_spec_path = str(PurePosixPath(spec.repo.workspace) / "chain.yaml")
+    uploads: list[tuple[Path, str]] = []
 
     for milestone in chain_spec.milestones:
         local_source = _resolve_local_idea_source(
@@ -293,8 +326,11 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "missing_idea_file",
                 f"milestone '{milestone.label}' idea not found on disk at {local_source}. Use --idea-dir to point at the directory containing ideas.",
             )
-        provider.upload_file(local_source, milestone.idea)
+        uploads.append((local_source, milestone.idea))
 
+    _ensure_repo_checkout(spec, provider)
+    for local_source, remote_path in uploads:
+        provider.upload_file(local_source, remote_path)
     provider.upload_file(local_spec_path, remote_spec_path)
     chain_command = (
         f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec {shlex.quote(remote_spec_path)} "
@@ -337,6 +373,7 @@ def _run_bootstrap_wrapper(args: argparse.Namespace, spec: CloudSpec, provider) 
     if not local_idea_path.exists():
         raise CliError("missing_idea_file", f"idea file not found: {local_idea_path}")
     remote_idea_path = str(PurePosixPath(spec.repo.workspace) / "idea.txt")
+    _ensure_repo_checkout(spec, provider)
     provider.upload_file(local_idea_path, remote_idea_path)
 
     command = (

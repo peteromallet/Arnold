@@ -306,6 +306,16 @@ def test_migrate_epic_runs_seven_phases_and_tombstones_source(tmp_path: Path) ->
         epic_id=epic.id,
         idempotency_key=deterministic_idempotency_key("multi", epic.id, "feedback"),
     )
+    codebase = store.create_codebase(
+        owner="openai",
+        name="megaplan",
+        default_branch="main",
+        repo_url="https://github.com/openai/megaplan.git",
+        repo_workspace="/workspace/megaplan",
+        scope="epic_specific",
+        associated_epic_id=epic.id,
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "codebase"),
+    )
     plan = store.create_plan(
         sprint_id=sprint.id,
         epic_id=epic.id,
@@ -325,7 +335,9 @@ def test_migrate_epic_runs_seven_phases_and_tombstones_source(tmp_path: Path) ->
     assert run.phase == "complete"
     assert run.completed_at is not None
     assert run.manifest["entities"]["plan_artifacts_by_plan"] == {plan.id: ["state.json"]}
+    assert run.manifest["entities"]["codebases"] == [codebase.id]
     assert run.copied_ids["plan_artifacts_by_plan"] == {plan.id: ["state.json"]}
+    assert run.copied_ids["codebases"] == [codebase.id]
     assert run.blob_copy_progress[plan.id]["state.json"]
     assert file_store.load_epic(epic.id).migrated_to == run.id
     assert [row.id for row in file_store.list_epics()] == []
@@ -337,6 +349,9 @@ def test_migrate_epic_runs_seven_phases_and_tombstones_source(tmp_path: Path) ->
     assert len(db_store.list_sprints(epic.id)) == 1
     assert len(db_store.list_second_opinions(epic.id)) == 1
     assert len(db_store.list_images(epic_id=epic.id, active=None)) == 1
+    copied_codebase = db_store.load_codebase(codebase.id)
+    assert copied_codebase.repo_url == "https://github.com/openai/megaplan.git"
+    assert copied_codebase.repo_workspace == "/workspace/megaplan"
 
 
 def test_migrate_epic_copies_blob_backed_image_bytes_and_hashes(tmp_path: Path) -> None:

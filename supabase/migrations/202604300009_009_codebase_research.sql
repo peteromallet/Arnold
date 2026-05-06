@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS codebases (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL CHECK (owner = lower(owner) AND length(owner) > 0),
     name TEXT NOT NULL CHECK (name = lower(name) AND length(name) > 0),
+    repo_url TEXT,
+    repo_workspace TEXT,
     default_branch TEXT NOT NULL,
     scope TEXT NOT NULL DEFAULT 'global' CHECK (scope IN ('global', 'epic_specific')),
     group_name TEXT,
@@ -13,8 +15,16 @@ CREATE TABLE IF NOT EXISTS codebases (
     notes TEXT
 );
 
+ALTER TABLE codebases
+    ADD COLUMN IF NOT EXISTS repo_url TEXT;
+ALTER TABLE codebases
+    ADD COLUMN IF NOT EXISTS repo_workspace TEXT;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_codebases_owner_name_unique
     ON codebases (lower(owner), lower(name));
+CREATE INDEX IF NOT EXISTS idx_codebases_repo_url
+    ON codebases (repo_url)
+    WHERE repo_url IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_codebases_scope_group
     ON codebases (scope, group_name);
 CREATE INDEX IF NOT EXISTS idx_codebases_associated_epic

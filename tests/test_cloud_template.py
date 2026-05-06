@@ -22,6 +22,7 @@ from megaplan.cloud.template import (
     materialize_deploy_dir,
     render_dockerfile,
     render_entrypoint,
+    render_ensure_repo_command,
 )
 
 
@@ -77,6 +78,8 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
     assert "claude setup-token" in rendered
     assert "WARN: Claude token auth failed or timed out; continuing" in rendered
     assert "exit 1" not in rendered
+    assert render_ensure_repo_command(spec.repo) in rendered
+    assert 'git clone --branch "$$REPO_BRANCH"' not in rendered
 
     routing_lines = [
         line.strip()
@@ -102,6 +105,24 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
         assert 'tmux new-session -d -s agent -c /workspace/custom-app "bash -l"' in rendered
         assert "megaplan auto --plan" not in rendered
         assert "mp-chain " not in rendered
+
+
+def test_render_ensure_repo_command_is_fixed_and_safely_quoted() -> None:
+    repo = RepoSpec(
+        url="git@github.com:example/repo name.git",
+        branch="feature/resident tools",
+        workspace="/workspace/custom app",
+    )
+
+    command = render_ensure_repo_command(repo)
+
+    assert command == (
+        "mkdir -p /workspace && "
+        "if [ ! -d '/workspace/custom app/.git' ]; then "
+        "git clone --branch 'feature/resident tools' "
+        "'git@github.com:example/repo name.git' '/workspace/custom app'; "
+        "else true; fi"
+    )
 
 
 def test_materialize_deploy_dir_creates_expected_layout(tmp_path: Path) -> None:

@@ -5,10 +5,10 @@ from __future__ import annotations
 import shlex
 import stat
 from importlib import resources
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from string import Template
 
-from megaplan.cloud.spec import CloudSpec, ToolchainSpec
+from megaplan.cloud.spec import CloudSpec, RepoSpec, ToolchainSpec
 from megaplan.types import DEFAULT_AGENT_ROUTING
 
 
@@ -27,6 +27,7 @@ PLACEHOLDERS = (
     "AUTO_PLAN_NAME",
     "AGENT_ROUTING_BLOCK",
     "CLAUDE_AUTH_BLOCK",
+    "ENSURE_REPO_BLOCK",
     "RUNNER_LAUNCH_BLOCK",
 )
 
@@ -82,6 +83,24 @@ def _dockerfile_template() -> Template:
 
 def _quoted(script: str) -> str:
     return shlex.quote(script.strip())
+
+
+def render_ensure_repo_command(repo: RepoSpec) -> str:
+    """Render the fixed clone-if-missing command used by cloud entrypoints."""
+    workspace = PurePosixPath(repo.workspace)
+    parent = str(workspace.parent)
+    git_dir = str(workspace / ".git")
+    return " && ".join(
+        [
+            f"mkdir -p {shlex.quote(parent)}",
+            (
+                f"if [ ! -d {shlex.quote(git_dir)} ]; then "
+                f"git clone --branch {shlex.quote(repo.branch)} "
+                f"{shlex.quote(repo.url)} {shlex.quote(repo.workspace)}; "
+                "else true; fi"
+            ),
+        ]
+    )
 
 
 def _auto_command(spec: CloudSpec) -> str:
@@ -162,6 +181,7 @@ def render_entrypoint(spec: CloudSpec) -> str:
         "AUTO_PLAN_NAME": spec.auto.plan_name if spec.auto is not None else "idle-plan",
         "AGENT_ROUTING_BLOCK": _agent_routing_block(spec),
         "CLAUDE_AUTH_BLOCK": _claude_auth_block(),
+        "ENSURE_REPO_BLOCK": render_ensure_repo_command(spec.repo),
         "RUNNER_LAUNCH_BLOCK": _runner_block(spec),
     }
     rendered = _entrypoint_template().safe_substitute(values)

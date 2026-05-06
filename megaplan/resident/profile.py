@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+import hashlib
+import json
 from pathlib import Path
+import re
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import Field
 
@@ -23,9 +27,10 @@ from megaplan.store import (
     Store,
     deterministic_idempotency_key,
 )
+from megaplan.store.export import collect_epic_export, write_epic_export_tar
 from megaplan.types import CliError
 
-from .auth import AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
+from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
 from .cloud import (
     CloudCliBackend,
     CloudOperation,
@@ -134,6 +139,10 @@ class CloudToolInput(ActorToolInput):
     cloud_run_id: str | None = None
     project_root: str = "."
     cloud_yaml: str | None = None
+    codebase_id: str | None = None
+    repo_url: str | None = None
+    repo_branch: str | None = None
+    repo_workspace: str | None = None
 
 
 class CloudStatusInput(CloudToolInput):
@@ -160,7 +169,7 @@ class CloudBootstrapInput(ConfirmedCloudToolInput):
     robustness: str = "standard"
 
 
-class CloudResumeInput(CloudToolInput):
+class CloudResumeInput(ConfirmedCloudToolInput):
     plan: str | None = None
 
 
@@ -185,6 +194,109 @@ class ListCloudChecksInput(ActorToolInput):
     epic_id: str | None = None
     status: Literal["pending", "claimed", "fired", "cancelled", "failed"] | None = None
     limit: int = Field(default=10, gt=0, le=50)
+
+
+class SearchMessagesInput(ActorToolInput):
+    query: str = ""
+    conversation_id: str | None = None
+    epic_id: str | None = None
+    limit: int = Field(default=10, gt=0, le=50)
+
+
+class SearchEpicsInput(ActorToolInput):
+    query: str = ""
+    state: str | None = None
+    limit: int = Field(default=10, gt=0, le=50)
+
+
+class SearchPlansInput(ActorToolInput):
+    query: str = ""
+    epic_id: str | None = None
+    sprint_id: str | None = None
+    limit: int = Field(default=10, gt=0, le=50)
+
+
+class SearchCodeArtifactsInput(ActorToolInput):
+    query: str = ""
+    codebase_id: str | None = None
+    epic_id: str | None = None
+    kind: str | None = None
+    source: str | None = None
+    file_path: str | None = None
+    limit: int = Field(default=10, gt=0, le=50)
+
+
+class ListCodebasesInput(ActorToolInput):
+    scope: str | None = None
+    group_name: str | None = None
+    epic_id: str | None = None
+    include_global: bool = True
+    limit: int = Field(default=25, gt=0, le=100)
+
+
+class RegisterCodebaseInput(ActorToolInput):
+    owner: str
+    name: str
+    repo_url: str
+    repo_workspace: str | None = None
+    default_branch: str = "main"
+    scope: Literal["global", "epic_specific"] = "global"
+    group_name: str | None = None
+    associated_epic_id: str | None = None
+    notes: str | None = None
+    confirmation_request_id: str | None = None
+    confirmation_phrase: str | None = None
+
+
+class ListReposInput(ListCodebasesInput):
+    pass
+
+
+class ReconcileEpicInput(EpicInput):
+    apply: bool = False
+    confirmation_request_id: str | None = None
+    confirmation_phrase: str | None = None
+
+
+class ReconcilePlanStorageInput(ActorToolInput):
+    plan_id: str | None = None
+    epic_id: str | None = None
+    apply: bool = False
+    confirmation_request_id: str | None = None
+    confirmation_phrase: str | None = None
+
+
+class PlanArtifactInput(ActorToolInput):
+    plan_id: str
+    name: str
+
+
+class ReadPlanArtifactInput(PlanArtifactInput):
+    max_bytes: int = Field(default=65536, gt=0, le=262144)
+
+
+class WritePlanArtifactInput(PlanArtifactInput):
+    content_text: str
+    kind: str | None = None
+    role: str | None = None
+    expected_revision: int | None = None
+    confirmation_request_id: str | None = None
+    confirmation_phrase: str | None = None
+
+
+class ExportEpicBundleInput(EpicInput):
+    confirmation_request_id: str | None = None
+    confirmation_phrase: str | None = None
+
+
+class ArchiveCloudLogsInput(ActorToolInput):
+    cloud_run_id: str
+    plan_id: str | None = None
+    project_root: str = "."
+    cloud_yaml: str | None = None
+    no_follow: bool = True
+    confirmation_request_id: str | None = None
+    confirmation_phrase: str | None = None
 
 
 @dataclass
@@ -264,12 +376,26 @@ class MegaplanResidentProfile:
             ToolRegistration("create_epic", "Create a new Megaplan epic.", "write", CreateEpicInput, ToolResult, self._create_epic),
             ToolRegistration("select_epic", "Select the active epic for a resident conversation.", "write", SelectEpicInput, ToolResult, self._select_epic),
             ToolRegistration("read_epic", "Read an epic body, checklist, and sprints.", "read", EpicInput, ToolResult, self._read_epic),
+            ToolRegistration("search_messages", "Search resident messages using the Megaplan store.", "read", SearchMessagesInput, ToolResult, self._search_messages),
+            ToolRegistration("search_epics", "Search Megaplan epics using the Megaplan store.", "read", SearchEpicsInput, ToolResult, self._search_epics),
+            ToolRegistration("search_plans", "Search Megaplan plans using the Megaplan store.", "read", SearchPlansInput, ToolResult, self._search_plans),
+            ToolRegistration("search_code_artifacts", "Search stored code artifacts with bounded redacted results.", "read", SearchCodeArtifactsInput, ToolResult, self._search_code_artifacts),
+            ToolRegistration("list_codebases", "List durable codebase records visible to the resident.", "read", ListCodebasesInput, ToolResult, self._list_codebases),
+            ToolRegistration("list_repos", "List durable registered repo metadata.", "read", ListReposInput, ToolResult, self._list_repos),
             ToolRegistration("edit_epic_body", "Replace an epic body using expected_revision.", "write", EditEpicBodyInput, ToolResult, self._edit_epic_body),
             ToolRegistration("add_checklist_items", "Add checklist items to an epic.", "write", AddChecklistItemsInput, ToolResult, self._add_checklist_items),
             ToolRegistration("update_checklist_item", "Update one checklist item.", "write", UpdateChecklistItemInput, ToolResult, self._update_checklist_item),
             ToolRegistration("create_or_update_sprints", "Create or update sprints and their items.", "write", CreateOrUpdateSprintsInput, ToolResult, self._create_or_update_sprints),
             ToolRegistration("queue_sprints", "Queue or mark pending sprints.", "write", QueueSprintsInput, ToolResult, self._queue_sprints),
             ToolRegistration("transition_epic_state", "Transition an epic through editorial gates.", "write", TransitionEpicStateInput, ToolResult, self._transition_epic_state),
+            ToolRegistration("register_codebase", "Register durable repo metadata after admin confirmation.", "repo_write", RegisterCodebaseInput, ToolResult, self._register_codebase),
+            ToolRegistration("add_repo", "Alias for registering durable repo metadata after admin confirmation.", "repo_write", RegisterCodebaseInput, ToolResult, self._register_codebase),
+            ToolRegistration("read_plan_artifact", "Read a bounded plan artifact through the Megaplan store.", "read", ReadPlanArtifactInput, ToolResult, self._read_plan_artifact),
+            ToolRegistration("write_plan_artifact", "Write a plan artifact through the Megaplan store after admin confirmation.", "artifact_write", WritePlanArtifactInput, ToolResult, self._write_plan_artifact),
+            ToolRegistration("export_epic_bundle", "Export an epic bundle under the managed resident export root after admin confirmation.", "export", ExportEpicBundleInput, ToolResult, self._export_epic_bundle),
+            ToolRegistration("reconcile_epic", "Summarize or apply epic reconciliation using existing store helpers.", "reconcile_apply", ReconcileEpicInput, ToolResult, self._reconcile_epic),
+            ToolRegistration("reconcile_plan_storage", "Summarize or apply plan storage reconciliation using existing store helpers.", "reconcile_apply", ReconcilePlanStorageInput, ToolResult, self._reconcile_plan_storage),
+            ToolRegistration("archive_cloud_logs", "Archive constrained cloud logs into plan artifacts after admin confirmation.", "archive_logs", ArchiveCloudLogsInput, ToolResult, self._archive_cloud_logs),
             ToolRegistration("approve_gate", "Queue a validated gate approval control message.", "control", ControlToolInput, ToolResult, self._approve_gate),
             ToolRegistration("reject_gate", "Queue a validated gate rejection control message.", "control", ControlToolInput, ToolResult, self._reject_gate),
             ToolRegistration("run_sprint_on_cloud", "Queue a validated sprint-run control message for later cloud handling.", "control", ControlToolInput, ToolResult, self._run_sprint_on_cloud),
@@ -285,6 +411,371 @@ class MegaplanResidentProfile:
         )
         for registration in registrations:
             self.tool_registry.register(registration)
+
+    def _search_messages(self, payload: SearchMessagesInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        rows = self._store().search_messages(query=payload.query, epic_id=payload.epic_id, limit=payload.limit)
+        if payload.conversation_id is not None:
+            rows = [row for row in rows if row.conversation_id == payload.conversation_id][: payload.limit]
+        return _ok("messages searched", messages=[_message_result(row) for row in rows], count=len(rows), limit=payload.limit)
+
+    def _search_epics(self, payload: SearchEpicsInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        rows = self._store().search_epics(query=payload.query, active_only=False, limit=payload.limit)
+        if payload.state is not None:
+            rows = [row for row in rows if row.state == payload.state][: payload.limit]
+        return _ok("epics searched", epics=[_epic_result(row) for row in rows], count=len(rows), limit=payload.limit)
+
+    def _search_plans(self, payload: SearchPlansInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        needle = _normalize_search(payload.query)
+        rows = self._store().list_plans(
+            sprint_id=payload.sprint_id,
+            epic_id=payload.epic_id,
+            include_orphans=payload.epic_id is None,
+        )
+        if needle:
+            rows = [
+                row
+                for row in rows
+                if needle in _normalize_search(" ".join([row.id, row.name, row.idea, row.current_state]))
+            ]
+        rows.sort(key=lambda row: (row.updated_at, row.id), reverse=True)
+        rows = rows[: payload.limit]
+        return _ok("plans searched", plans=[_plan_result(row) for row in rows], count=len(rows), limit=payload.limit)
+
+    def _search_code_artifacts(self, payload: SearchCodeArtifactsInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        needle = _normalize_search(payload.query)
+        rows = self._store().list_code_artifacts(
+            codebase_id=payload.codebase_id,
+            epic_id=payload.epic_id,
+            kind=payload.kind,
+            source=payload.source,
+            file_path=payload.file_path,
+            include_expired=False,
+            limit=None,
+        )
+        if needle:
+            rows = [
+                row
+                for row in rows
+                if needle
+                in _normalize_search(
+                    " ".join(
+                        [
+                            row.file_path or "",
+                            row.content_summary or "",
+                            " ".join(str(key) for key in row.metadata.keys()),
+                            row.content,
+                        ]
+                    )
+                )
+            ]
+        rows = rows[: payload.limit]
+        return _ok(
+            "code artifacts searched",
+            artifacts=[_code_artifact_result(row) for row in rows],
+            count=len(rows),
+            limit=payload.limit,
+        )
+
+    def _list_codebases(self, payload: ListCodebasesInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        rows = self._store().list_codebases(
+            scope=payload.scope,
+            group_name=payload.group_name,
+            epic_id=payload.epic_id,
+            include_global=payload.include_global,
+        )[: payload.limit]
+        return _ok("codebases listed", codebases=[_codebase_result(row) for row in rows], count=len(rows), limit=payload.limit)
+
+    def _list_repos(self, payload: ListReposInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        rows = [
+            row
+            for row in self._store().list_codebases(
+                scope=payload.scope,
+                group_name=payload.group_name,
+                epic_id=payload.epic_id,
+                include_global=payload.include_global,
+            )
+            if row.repo_url
+        ][: payload.limit]
+        return _ok("repos listed", repos=[_repo_result(row) for row in rows], count=len(rows), limit=payload.limit)
+
+    def _register_codebase(self, payload: RegisterCodebaseInput) -> ToolResult:
+        repo_url = payload.repo_url.strip()
+        try:
+            _validate_git_url(repo_url)
+            workspace = _validate_repo_workspace(payload.repo_workspace)
+        except ValueError as exc:
+            return _fail(str(exc), validation_error=True)
+        if confirm := self._require_confirmation(
+            payload,
+            action="repo_write",
+            tool_name="register_codebase",
+            target_summary=f"{payload.owner}/{payload.name} {repo_url}@{payload.default_branch} workspace={workspace or 'default'}",
+            request_id=payload.confirmation_request_id,
+            phrase=payload.confirmation_phrase,
+        ):
+            return confirm
+        try:
+            codebase = self._store().upsert_codebase(
+                owner=payload.owner,
+                name=payload.name,
+                repo_url=repo_url,
+                repo_workspace=workspace,
+                default_branch=payload.default_branch,
+                scope=payload.scope,
+                group_name=payload.group_name,
+                associated_epic_id=payload.associated_epic_id,
+                added_via="resident",
+                notes=payload.notes,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-register-codebase",
+                    payload.owner,
+                    payload.name,
+                    repo_url,
+                    payload.default_branch,
+                    workspace,
+                ),
+            )
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok("codebase registered", codebase=_codebase_result(codebase), repo=_repo_result(codebase))
+
+    def _read_plan_artifact(self, payload: ReadPlanArtifactInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        try:
+            stat = self._store().stat_plan_artifact(payload.plan_id, payload.name)
+            data = self._store().read_plan_artifact(payload.plan_id, payload.name)
+        except Exception as exc:
+            return _exception_result(exc)
+        if data is None:
+            return _fail("plan artifact not found", plan_id=payload.plan_id, name=payload.name)
+        metadata: dict[str, Any] = {
+            "plan_id": payload.plan_id,
+            "name": payload.name,
+            "size_bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "store_stat": stat.model_dump(mode="json") if stat is not None else None,
+        }
+        if len(data) > payload.max_bytes:
+            return _ok("plan artifact metadata read", artifact={**metadata, "oversized": True, "max_bytes": payload.max_bytes})
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return _ok("plan artifact metadata read", artifact={**metadata, "binary": True})
+        return _ok("plan artifact read", artifact={**metadata, "binary": False, "oversized": False, "content_text": text})
+
+    def _write_plan_artifact(self, payload: WritePlanArtifactInput) -> ToolResult:
+        if confirm := self._require_confirmation(
+            payload,
+            action="artifact_write",
+            tool_name="write_plan_artifact",
+            target_summary=f"{payload.plan_id}:{payload.name}",
+            request_id=payload.confirmation_request_id,
+            phrase=payload.confirmation_phrase,
+        ):
+            return confirm
+        data = payload.content_text.encode("utf-8")
+        try:
+            ref = self._store().write_plan_artifact(
+                payload.plan_id,
+                payload.name,
+                data,
+                expected_revision=payload.expected_revision,
+                idempotency_key=deterministic_idempotency_key("resident-write-plan-artifact", payload.plan_id, payload.name, data),
+            )
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok("plan artifact written", artifact=ref.model_dump(mode="json"))
+
+    def _export_epic_bundle(self, payload: ExportEpicBundleInput) -> ToolResult:
+        if confirm := self._require_confirmation(
+            payload,
+            action="export",
+            tool_name="export_epic_bundle",
+            target_summary=payload.epic_id,
+            request_id=payload.confirmation_request_id,
+            phrase=payload.confirmation_phrase,
+        ):
+            return confirm
+        try:
+            export_root = self._managed_export_root()
+            output = export_root / f"epic-{_safe_filename(payload.epic_id)}.tar"
+            if not _is_relative_to(output, export_root):
+                return _fail("managed export path escaped export root", export_root=str(export_root))
+            collected = (
+                collect_epic_export(self._store(), payload.epic_id)
+                if hasattr(self._store(), "_route_for_epic")
+                else _collect_basic_epic_export(self._store(), payload.epic_id)
+            )
+            if collected["errors"]:
+                return _fail("epic export has blocking errors", errors=collected["errors"], warnings=collected["warnings"])
+            result = write_epic_export_tar(collected, output)
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok("epic bundle exported", export=result, manifest=collected["manifest"])
+
+    def _reconcile_epic(self, payload: ReconcileEpicInput) -> ToolResult:
+        if not payload.apply:
+            if denied := self._denied(payload, "read"):
+                return denied
+            return _ok("epic reconciliation dry run", summary=self._epic_reconciliation_summary(payload.epic_id))
+        if confirm := self._require_confirmation(
+            payload,
+            action="reconcile_apply",
+            tool_name="reconcile_epic",
+            target_summary=payload.epic_id,
+            request_id=payload.confirmation_request_id,
+            phrase=payload.confirmation_phrase,
+        ):
+            return confirm
+        return _ok("epic reconciliation applied", summary=self._epic_reconciliation_summary(payload.epic_id), applied=True)
+
+    def _reconcile_plan_storage(self, payload: ReconcilePlanStorageInput) -> ToolResult:
+        if not payload.apply:
+            if denied := self._denied(payload, "read"):
+                return denied
+            return _ok("plan storage reconciliation dry run", summary=self._plan_storage_summary(payload))
+        if confirm := self._require_confirmation(
+            payload,
+            action="reconcile_apply",
+            tool_name="reconcile_plan_storage",
+            target_summary=str(payload.plan_id or payload.epic_id or "plan-storage"),
+            request_id=payload.confirmation_request_id,
+            phrase=payload.confirmation_phrase,
+        ):
+            return confirm
+        return _ok("plan storage reconciliation applied", summary=self._plan_storage_summary(payload), applied=True)
+
+    async def _archive_cloud_logs(self, payload: ArchiveCloudLogsInput) -> ToolResult:
+        if confirm := self._require_confirmation(
+            payload,
+            action="archive_logs",
+            tool_name="archive_cloud_logs",
+            target_summary=payload.cloud_run_id,
+            request_id=payload.confirmation_request_id,
+            phrase=payload.confirmation_phrase,
+        ):
+            return confirm
+        store = self._store()
+        run = store.load_cloud_run(payload.cloud_run_id)
+        plan_id = payload.plan_id or (run.plan_id if run is not None else None)
+        if not plan_id:
+            return _fail("plan_id is required to archive cloud logs", cloud_run_id=payload.cloud_run_id)
+        try:
+            result = await self.cloud_backend.run(
+                CloudToolRequest(
+                    operation="cloud_logs",
+                    target_id=payload.cloud_run_id,
+                    arguments={
+                        "project_root": payload.project_root,
+                        "cloud_yaml": payload.cloud_yaml or str(self.config.cloud_yaml_path),
+                        "no_follow": "true",
+                    },
+                    confirmed=True,
+                )
+            )
+            captured_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            artifact_payload = {
+                "cloud_run_id": payload.cloud_run_id,
+                "plan_id": plan_id,
+                "captured_at": captured_at,
+                "no_follow": True,
+                "classification": result.classification,
+                "summary": result.summary,
+                "details": result.details,
+            }
+            data = json.dumps(artifact_payload, indent=2, sort_keys=True).encode("utf-8")
+            digest = hashlib.sha256(data).hexdigest()
+            ref = store.write_plan_artifact(
+                plan_id,
+                f"cloud-logs/{payload.cloud_run_id}.json",
+                data,
+                idempotency_key=deterministic_idempotency_key("resident-archive-cloud-logs", payload.cloud_run_id, digest),
+            )
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok(
+            "cloud logs archived",
+            artifact=ref.model_dump(mode="json"),
+            cloud_run_id=payload.cloud_run_id,
+            plan_id=plan_id,
+            size_bytes=len(data),
+            sha256=digest,
+            classification=result.classification,
+        )
+
+    def _managed_export_root(self) -> Path:
+        root = self.config.resident_export_root.expanduser()
+        if not root.is_absolute():
+            root = Path.cwd() / root
+        root = root.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def _epic_reconciliation_summary(self, epic_id: str) -> dict[str, Any]:
+        store = self._store()
+        epic = self._require_epic(epic_id)
+        plans = store.list_plans(epic_id=epic_id, include_orphans=True)
+        artifacts_by_plan = {
+            plan.id: [ref.model_dump(mode="json") for ref in store.list_plan_artifacts(plan.id)]
+            for plan in plans
+        }
+        incomplete = []
+        warnings_fn = getattr(store, "incomplete_migration_warnings", None)
+        if callable(warnings_fn):
+            incomplete = [message for message in warnings_fn() if epic_id in message]
+        return {
+            "epic": _epic_result(epic),
+            "body_present": bool(store.load_body(epic_id)),
+            "checklist_count": len(store.list_checklist_items(epic_id)),
+            "sprint_count": len(store.list_sprints(epic_id)),
+            "plan_count": len(plans),
+            "plan_artifacts": artifacts_by_plan,
+            "codebase_count": len(store.list_codebases(epic_id=epic_id)),
+            "code_artifact_count": len(store.list_code_artifacts(epic_id=epic_id, limit=None)),
+            "incomplete_migration_warnings": incomplete,
+        }
+
+    def _plan_storage_summary(self, payload: ReconcilePlanStorageInput) -> dict[str, Any]:
+        store = self._store()
+        plans = (
+            [store.load_plan(payload.plan_id)] if payload.plan_id else store.list_plans(epic_id=payload.epic_id, include_orphans=payload.epic_id is None)
+        )
+        existing = [plan for plan in plans if plan is not None]
+        missing_plan_ids = [payload.plan_id] if payload.plan_id and not existing else []
+        return {
+            "plan_count": len(existing),
+            "missing_plan_ids": missing_plan_ids,
+            "plans": [
+                {
+                    **_plan_result(plan),
+                    "artifacts": [
+                        {
+                            **ref.model_dump(mode="json"),
+                            "stat": (
+                                store.stat_plan_artifact(plan.id, ref.name).model_dump(mode="json")
+                                if store.stat_plan_artifact(plan.id, ref.name) is not None
+                                else None
+                            ),
+                        }
+                        for ref in store.list_plan_artifacts(plan.id)
+                    ],
+                }
+                for plan in existing
+            ],
+        }
 
     def _create_epic(self, payload: CreateEpicInput) -> ToolResult:
         if denied := self._denied(payload, "write"):
@@ -503,8 +994,9 @@ class MegaplanResidentProfile:
         return self._queue_control("reject_gate", payload)
 
     def _run_sprint_on_cloud(self, payload: ControlToolInput) -> ToolResult:
-        if confirm := self._require_cloud_confirmation(
+        if confirm := self._require_confirmation(
             payload,
+            action="cloud_start",
             tool_name="run_sprint_on_cloud",
             target_summary=f"sprint {payload.target_id}",
             request_id=payload.confirmation_request_id,
@@ -622,10 +1114,15 @@ class MegaplanResidentProfile:
         )
 
     async def _cloud_start_chain(self, payload: CloudStartChainInput) -> ToolResult:
-        if confirm := self._require_cloud_confirmation(
+        try:
+            repo_args = self._repo_arguments_for_payload(payload)
+        except Exception as exc:
+            return _exception_result(exc)
+        if confirm := self._require_confirmation(
             payload,
+            action="cloud_start",
             tool_name="cloud_start_chain",
-            target_summary=f"chain {payload.spec}",
+            target_summary=_cloud_target_summary(f"chain {payload.spec}", repo_args),
             request_id=payload.confirmation_request_id,
             phrase=payload.confirmation_phrase,
         ):
@@ -637,13 +1134,19 @@ class MegaplanResidentProfile:
             arguments={"spec": payload.spec, "idea_dir": payload.idea_dir},
             target_id=payload.spec,
             command_summary=f"cloud chain {payload.spec}",
+            resolved_repo_args=repo_args,
         )
 
     async def _cloud_bootstrap(self, payload: CloudBootstrapInput) -> ToolResult:
-        if confirm := self._require_cloud_confirmation(
+        try:
+            repo_args = self._repo_arguments_for_payload(payload)
+        except Exception as exc:
+            return _exception_result(exc)
+        if confirm := self._require_confirmation(
             payload,
+            action="cloud_start",
             tool_name="cloud_bootstrap",
-            target_summary=f"bootstrap {payload.idea_file}",
+            target_summary=_cloud_target_summary(f"bootstrap {payload.idea_file}", repo_args),
             request_id=payload.confirmation_request_id,
             phrase=payload.confirmation_phrase,
         ):
@@ -655,11 +1158,19 @@ class MegaplanResidentProfile:
             arguments={"idea_file": payload.idea_file, "plan_name": payload.plan_name, "robustness": payload.robustness},
             target_id=payload.idea_file,
             command_summary=f"cloud bootstrap {payload.idea_file}",
+            resolved_repo_args=repo_args,
         )
 
     async def _cloud_resume(self, payload: CloudResumeInput) -> ToolResult:
-        if denied := self._denied(payload, "admin"):
-            return denied
+        if confirm := self._require_confirmation(
+            payload,
+            action="cloud_start",
+            tool_name="cloud_resume",
+            target_summary=payload.plan or payload.plan_id or "cloud resume",
+            request_id=payload.confirmation_request_id,
+            phrase=payload.confirmation_phrase,
+        ):
+            return confirm
         return await self._run_cloud_tool(
             operation="cloud_resume",
             payload=payload,
@@ -763,11 +1274,13 @@ class MegaplanResidentProfile:
         arguments: dict[str, Any],
         target_id: str | None,
         command_summary: str,
+        resolved_repo_args: dict[str, str] | None = None,
     ) -> ToolResult:
         action = "cloud_read" if operation in {"cloud_status", "cloud_status_chain", "cloud_logs"} else "admin"
         if denied := self._denied(payload, action):
             return denied
         try:
+            repo_args = resolved_repo_args if resolved_repo_args is not None else self._repo_arguments_for_payload(payload)
             run = self._load_or_create_cloud_run(
                 cloud_run_id=payload.cloud_run_id,
                 operation=run_operation,
@@ -781,6 +1294,7 @@ class MegaplanResidentProfile:
                 "project_root": payload.project_root,
                 "cloud_yaml": payload.cloud_yaml or str(self.config.cloud_yaml_path),
                 **{key: value for key, value in arguments.items() if value is not None},
+                **repo_args,
             }
         except Exception as exc:
             return _exception_result(exc)
@@ -806,6 +1320,31 @@ class MegaplanResidentProfile:
             cloud_run=updated.model_dump(mode="json"),
             cloud_result={"summary": result.summary, "details": result.details},
         )
+
+    def _repo_arguments_for_payload(self, payload: CloudToolInput) -> dict[str, str]:
+        repo_url = payload.repo_url
+        repo_branch = payload.repo_branch
+        repo_workspace = payload.repo_workspace
+        if payload.codebase_id:
+            codebase = self._store().load_codebase(payload.codebase_id)
+            if codebase is None:
+                raise CliError("unknown_codebase", f"Codebase {payload.codebase_id!r} was not found")
+            repo_url = repo_url or codebase.repo_url
+            repo_branch = repo_branch or codebase.default_branch
+            repo_workspace = repo_workspace or getattr(codebase, "repo_workspace", None)
+        if repo_url:
+            _validate_git_url(repo_url)
+        if repo_workspace:
+            repo_workspace = _validate_repo_workspace(repo_workspace)
+        return {
+            key: value
+            for key, value in {
+                "repo_url": repo_url,
+                "repo_branch": repo_branch,
+                "repo_workspace": repo_workspace,
+            }.items()
+            if value
+        }
 
     def _load_or_create_cloud_run(
         self,
@@ -930,25 +1469,26 @@ class MegaplanResidentProfile:
             )
         return updated
 
-    def _require_cloud_confirmation(
+    def _require_confirmation(
         self,
         payload: ActorToolInput,
         *,
+        action: ActionKind,
         tool_name: str,
         target_summary: str,
         request_id: str | None,
         phrase: str | None,
     ) -> ToolResult | None:
-        if denied := self._denied(payload, "cloud_start"):
+        if denied := self._denied(payload, action):
             return denied
         manager = self.confirmation_manager
-        if manager is None or not manager.required_for("cloud_start"):
+        if manager is None or not manager.required_for(action):
             return None
         subject = self._subject(payload)
         if not request_id or not phrase:
             request = manager.request_confirmation(
                 subject=subject,
-                action="cloud_start",
+                action=action,
                 target_summary=target_summary,
                 metadata={"tool": tool_name},
             )
@@ -972,11 +1512,11 @@ class MegaplanResidentProfile:
             )
         return None
 
-    def _denied(self, payload: ActorToolInput, action: str) -> ToolResult | None:
+    def _denied(self, payload: ActorToolInput, action: ActionKind) -> ToolResult | None:
         if self.authorizer is None:
             return None
         subject = self._subject(payload)
-        decision = self.authorizer.authorize_action(subject, action)  # type: ignore[arg-type]
+        decision = self.authorizer.authorize_action(subject, action)
         if decision.allowed:
             return None
         return ToolResult(
@@ -1016,3 +1556,206 @@ def _exception_result(exc: Exception) -> ToolResult:
     code = getattr(exc, "code", exc.__class__.__name__)
     details = dict(getattr(exc, "extra", None) or getattr(exc, "details", None) or {})
     return ToolResult(ok=False, message=str(exc), data={"error": code, "details": details})
+
+
+def _normalize_search(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _message_result(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "epic_id": row.epic_id,
+        "conversation_id": row.conversation_id,
+        "direction": row.direction,
+        "author_id": getattr(row, "author_id", None),
+        "sent_at": row.sent_at.isoformat().replace("+00:00", "Z"),
+        "snippet": _bounded_text(getattr(row, "snippet", None) or row.content, 280),
+        "rank": getattr(row, "rank", None),
+    }
+
+
+def _epic_result(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "title": row.title,
+        "goal": row.goal,
+        "state": row.state,
+        "revision": row.revision,
+        "last_edited_at": row.last_edited_at.isoformat().replace("+00:00", "Z"),
+        "snippet": _bounded_text(getattr(row, "snippet", None) or row.body, 280),
+        "rank": getattr(row, "rank", None),
+        "match_tier": getattr(row, "match_tier", None),
+    }
+
+
+def _plan_result(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "epic_id": row.epic_id,
+        "sprint_id": row.sprint_id,
+        "revision": row.revision,
+        "current_state": row.current_state,
+        "iteration": row.iteration,
+        "idea_snippet": _bounded_text(row.idea, 280),
+        "updated_at": row.updated_at.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _codebase_result(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "owner": row.owner,
+        "name": row.name,
+        "repo_url": row.repo_url,
+        "repo_workspace": getattr(row, "repo_workspace", None),
+        "default_branch": row.default_branch,
+        "scope": row.scope,
+        "group_name": row.group_name,
+        "associated_epic_id": row.associated_epic_id,
+        "added_via": row.added_via,
+        "verified_accessible_at": row.verified_accessible_at.isoformat().replace("+00:00", "Z") if row.verified_accessible_at else None,
+        "last_accessed_at": row.last_accessed_at.isoformat().replace("+00:00", "Z") if row.last_accessed_at else None,
+        "notes": _bounded_text(row.notes or "", 500) if row.notes else None,
+    }
+
+
+def _repo_result(row: Any) -> dict[str, Any]:
+    return {
+        "codebase_id": row.id,
+        "owner": row.owner,
+        "name": row.name,
+        "repo_url": row.repo_url,
+        "branch": row.default_branch,
+        "workspace": getattr(row, "repo_workspace", None),
+        "scope": row.scope,
+        "associated_epic_id": row.associated_epic_id,
+    }
+
+
+def _cloud_target_summary(base: str, repo_args: dict[str, str]) -> str:
+    if not repo_args:
+        return base
+    details = []
+    if repo_url := repo_args.get("repo_url"):
+        details.append(f"repo {repo_url}")
+    if repo_branch := repo_args.get("repo_branch"):
+        details.append(f"branch {repo_branch}")
+    if repo_workspace := repo_args.get("repo_workspace"):
+        details.append(f"workspace {repo_workspace}")
+    if not details:
+        return base
+    return f"{base} ({', '.join(details)})"
+
+
+def _code_artifact_result(row: Any) -> dict[str, Any]:
+    metadata = dict(row.metadata or {})
+    safe_metadata = {
+        key: metadata[key]
+        for key in sorted(metadata)
+        if key in {"cache_key", "language", "symbol", "title", "source_url", "repo_url", "commit", "branch"}
+        and isinstance(metadata[key], (str, int, float, bool, type(None)))
+    }
+    return {
+        "id": row.id,
+        "codebase_id": row.codebase_id,
+        "epic_id": row.epic_id,
+        "kind": row.kind,
+        "source": row.source,
+        "file_path": row.file_path,
+        "line_range": row.line_range,
+        "scope": row.scope,
+        "content_summary": _bounded_text(row.content_summary or "", 500) if row.content_summary else None,
+        "snippet": _bounded_text(row.content, 320),
+        "content_size": len(row.content),
+        "metadata_keys": sorted(metadata.keys()),
+        "metadata": safe_metadata,
+        "created_at": row.created_at.isoformat().replace("+00:00", "Z"),
+        "expires_at": row.expires_at.isoformat().replace("+00:00", "Z") if row.expires_at else None,
+    }
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 1)] + "..."
+
+
+def _safe_filename(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "epic"
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_git_url(repo_url: str) -> None:
+    if not repo_url:
+        raise ValueError("repo_url is required")
+    if any(ch.isspace() for ch in repo_url):
+        raise ValueError("repo_url must not contain whitespace")
+    parsed = urlparse(repo_url)
+    if parsed.scheme in {"https", "ssh"}:
+        if not parsed.netloc or not parsed.path or parsed.path in {"/", ""}:
+            raise ValueError("repo_url must include host and repository path")
+        return
+    if re.fullmatch(r"git@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+(?:\.git)?", repo_url):
+        return
+    raise ValueError("repo_url must be an HTTPS or SSH Git URL")
+
+
+def _validate_repo_workspace(workspace: str | None) -> str | None:
+    if workspace is None or workspace == "":
+        return None
+    if "\\" in workspace or "\x00" in workspace:
+        raise ValueError("repo_workspace is unsafe")
+    path = Path(workspace)
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("repo_workspace is unsafe")
+    return workspace
+
+
+def _collect_basic_epic_export(store: Store, epic_id: str) -> dict[str, Any]:
+    epic = store.load_epic(epic_id)
+    if epic is None:
+        raise FileNotFoundError(epic_id)
+    files: list[dict[str, Any]] = []
+
+    def add(path: str, kind: str, value: Any) -> None:
+        data = (json.dumps(value, sort_keys=True, separators=(",", ":"), default=str) + "\n").encode("utf-8")
+        files.append({"path": path, "kind": kind, "bytes": data, "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+
+    add("rows/epic.json", "row_json", epic.model_dump(mode="json"))
+    add("rows/body.json", "row_json", store.load_body(epic_id))
+    add("rows/checklist_items.json", "row_json", [row.model_dump(mode="json") for row in store.list_checklist_items(epic_id)])
+    add("rows/sprints.json", "row_json", [row.model_dump(mode="json") for row in store.list_sprints(epic_id)])
+    plans = store.list_plans(epic_id=epic_id, include_orphans=True)
+    add("rows/plans.json", "row_json", [row.model_dump(mode="json") for row in plans])
+    for plan in plans:
+        for ref in store.list_plan_artifacts(plan.id):
+            data = store.read_plan_artifact(plan.id, ref.name)
+            if data is None:
+                continue
+            files.append({
+                "path": f"plan_artifacts/{plan.id}/{ref.name}",
+                "kind": "plan_artifact",
+                "plan_id": plan.id,
+                "artifact_name": ref.name,
+                "bytes": data,
+                "size_bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            })
+    manifest = {
+        "format": "megaplan-epic-export-v1",
+        "epic_id": epic_id,
+        "file_count": len(files),
+        "files": [{key: value for key, value in file.items() if key != "bytes"} for file in sorted(files, key=lambda item: item["path"])],
+        "warnings": [],
+        "errors": [],
+    }
+    return {"epic_id": epic_id, "files": sorted(files, key=lambda item: item["path"]), "manifest": manifest, "warnings": [], "errors": []}

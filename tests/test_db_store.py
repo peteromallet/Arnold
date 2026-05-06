@@ -124,6 +124,7 @@ def test_db_resident_schema_plumbing_constants_are_registered() -> None:
     }.issubset(db_module._IDEMPOTENT_MUTATORS)
     assert {"resident_conversations", "scheduled_jobs", "cloud_runs"}.issubset(db_module._COPY_TABLE_COLUMNS)
     assert {"conversation_id", "idempotency_key"}.issubset(db_module._COPY_TABLE_COLUMNS["messages"])
+    assert {"repo_url", "repo_workspace"}.issubset(db_module._COPY_TABLE_COLUMNS["codebases"])
     assert {"payload", "metadata", "last_status"}.issubset(db_module._COPY_JSONB_COLUMNS)
 
 
@@ -144,6 +145,26 @@ def test_sprint5_supabase_migration_declares_snapshot_image_and_search_indexes()
         "images_one_active_reference",
         "epics_search_tsv_gin",
         "to_tsvector",
+    ]:
+        assert expected in migration
+
+
+def test_codebase_supabase_migration_declares_repo_url_column_and_index() -> None:
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "supabase"
+        / "migrations"
+        / "202604300009_009_codebase_research.sql"
+    ).read_text(encoding="utf-8")
+
+    for expected in [
+        "repo_url TEXT",
+        "repo_workspace TEXT",
+        "ADD COLUMN IF NOT EXISTS repo_url",
+        "ADD COLUMN IF NOT EXISTS repo_workspace",
+        "idx_codebases_repo_url",
     ]:
         assert expected in migration
 

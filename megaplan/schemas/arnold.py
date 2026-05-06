@@ -368,6 +368,8 @@ class Codebase(StorageModel):
     id: str
     owner: str
     name: str
+    repo_url: str | None = None
+    repo_workspace: str | None = None
     default_branch: str
     scope: CodebaseScope = "global"
     group_name: str | None = None
