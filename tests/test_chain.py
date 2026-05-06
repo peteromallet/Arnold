@@ -216,6 +216,48 @@ def test_commit_phase_fails_when_plan_claims_dirty_nested_repo(tmp_path: Path) -
     assert "reigh-app" in excinfo.value.message
 
 
+def test_commit_phase_ignores_unclaimed_dirty_nested_files(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "checkout", "-b", "branch")
+    (tmp_path / "README.md").write_text("root\n", encoding="utf-8")
+    _git(tmp_path, "add", "README.md")
+    _git(tmp_path, "commit", "-m", "init")
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare")
+    _git(tmp_path, "remote", "add", "origin", str(origin))
+
+    nested = tmp_path / "reigh-app"
+    nested.mkdir()
+    _git(nested, "init")
+    _git(nested, "config", "user.email", "test@example.com")
+    _git(nested, "config", "user.name", "Test User")
+    (nested / "claimed.ts").write_text("published\n", encoding="utf-8")
+    (nested / "unrelated.ts").write_text("old\n", encoding="utf-8")
+    _git(nested, "add", "claimed.ts", "unrelated.ts")
+    _git(nested, "commit", "-m", "nested init")
+    (nested / "unrelated.ts").write_text("user work\n", encoding="utf-8")
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution.json").write_text(
+        json.dumps({"files_changed": ["reigh-app/claimed.ts"]}),
+        encoding="utf-8",
+    )
+
+    _commit_and_push_phase(
+        tmp_path,
+        "branch",
+        "plan",
+        "execute",
+        writer=lambda _msg: None,
+    )
+
+    assert (nested / "unrelated.ts").read_text(encoding="utf-8") == "user work\n"
+
+
 # ---------------------------------------------------------------------------
 # Chain state persistence
 # ---------------------------------------------------------------------------
