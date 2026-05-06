@@ -648,19 +648,6 @@ def _dirty_nested_repos_from_claimed_paths(root: Path, plan_name: str, *, writer
     return dirty
 
 
-def _is_gitlink_path(root: Path, rel_path: str) -> bool:
-    proc = subprocess.run(
-        ["git", "ls-files", "-s", "--", rel_path],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
-    first = proc.stdout.splitlines()[0] if proc.stdout.splitlines() else ""
-    return first.startswith("160000 ")
-
-
 def _dirty_worktree_paths(root: Path) -> list[Path]:
     proc = subprocess.run(
         ["git", "status", "--porcelain"],
@@ -678,7 +665,7 @@ def _dirty_worktree_paths(root: Path) -> list[Path]:
         candidates = raw_path.split(" -> ", 1) if " -> " in raw_path else [raw_path]
         for path in candidates:
             path = path.strip()
-            if path and not _is_gitlink_path(root, path):
+            if path:
                 paths.append(root / path)
     return paths
 
