@@ -384,6 +384,131 @@ def test_recover_codex_payload_prefers_valid_output_file_over_raw_transcript(tmp
     assert recovered == file_payload
 
 
+def test_recover_codex_payload_prefers_completed_critique_template_over_schema_summary(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+    summary_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [
+                    {
+                        "detail": "Wrote the critique output file with the detailed findings.",
+                        "flagged": False,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    completed_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [
+                    {
+                        "detail": "Found one concrete issue in the issue-hints lens.",
+                        "flagged": True,
+                    }
+                ],
+            },
+            {
+                "id": "correctness",
+                "question": "Is the plan technically correct?",
+                "findings": [
+                    {
+                        "detail": "Found one concrete issue in the correctness lens.",
+                        "flagged": True,
+                    }
+                ],
+            },
+            {
+                "id": "scope",
+                "question": "Is the plan scoped correctly?",
+                "findings": [
+                    {
+                        "detail": "Found one concrete issue in the scope lens.",
+                        "flagged": True,
+                    }
+                ],
+            },
+        ],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "Detailed critique should win over a schema-summary payload.",
+                "evidence": "The side-effect template contains more completed checks.",
+                "category": "correctness",
+                "severity_hint": "likely-significant",
+            }
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    output_path.write_text(json.dumps(summary_payload), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(json.dumps(completed_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered == completed_payload
+
+
+def test_recover_codex_payload_keeps_meaningful_critique_when_template_is_empty(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+    meaningful_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [
+                    {
+                        "detail": "The output file contains the only meaningful critique finding.",
+                        "flagged": True,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    empty_template = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    output_path.write_text(json.dumps(meaningful_payload), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(json.dumps(empty_template), encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered == meaningful_payload
+
+
 def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()

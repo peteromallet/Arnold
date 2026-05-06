@@ -1021,6 +1021,7 @@ def _recover_codex_payload(
     prefer_output_file: bool = True,
 ) -> dict[str, Any] | None:
     file_payload = None
+    template_payload = None
     file_recovered_candidates: list[dict[str, Any]] = []
     try:
         file_payload = parse_json_file(output_path)
@@ -1030,22 +1031,26 @@ def _recover_codex_payload(
             file_recovered_candidates.extend(_extract_json_candidates_from_raw(file_raw))
         except OSError:
             pass
-    if file_payload is None:
-        fallback_names = {
-            "critique": "critique_output.json",
-        }
-        fallback_name = fallback_names.get(step, f"{step}_output.json")
-        fallback_path = plan_dir / fallback_name
-        if fallback_path != output_path and fallback_path.exists():
+    fallback_names = {
+        "critique": "critique_output.json",
+        "review": "review_output.json",
+    }
+    fallback_name = fallback_names.get(step, f"{step}_output.json")
+    fallback_path = plan_dir / fallback_name
+    if fallback_path != output_path and fallback_path.exists():
+        try:
+            template_payload = parse_json_file(fallback_path)
+        except CliError:
             try:
-                file_payload = parse_json_file(fallback_path)
-            except CliError:
-                try:
-                    fallback_raw = fallback_path.read_text(encoding="utf-8", errors="replace")
-                    file_recovered_candidates.extend(_extract_json_candidates_from_raw(fallback_raw))
-                except OSError:
-                    pass
-    if prefer_output_file and file_payload is not None:
+                fallback_raw = fallback_path.read_text(encoding="utf-8", errors="replace")
+                file_recovered_candidates.extend(_extract_json_candidates_from_raw(fallback_raw))
+            except OSError:
+                pass
+    if file_payload is None and template_payload is not None:
+        file_payload = template_payload
+        template_payload = None
+    output_is_template_file = output_path == fallback_path
+    if prefer_output_file and file_payload is not None and (step != "critique" or output_is_template_file):
         normalized_file_payload = _normalize_worker_payload(step, file_payload)
         try:
             validate_payload(step, normalized_file_payload)
@@ -1062,6 +1067,8 @@ def _recover_codex_payload(
     candidate_payloads: list[dict[str, Any]] = []
     if file_payload is not None:
         candidate_payloads.append(file_payload)
+    if template_payload is not None:
+        candidate_payloads.append(template_payload)
     candidate_payloads.extend(file_recovered_candidates)
     candidate_payloads.extend(raw_candidates)
     valid_payloads: list[dict[str, Any]] = []
@@ -1086,11 +1093,21 @@ def _recover_codex_payload(
             )
         return None
     if step == "critique" and len(valid_payloads) > 1:
-        def _findings_count(item: dict[str, Any]) -> int:
+        def _critique_completeness_score(item: dict[str, Any]) -> tuple[int, int]:
             checks = item.get("checks", [])
-            return sum(len(check.get("findings", [])) for check in checks if isinstance(check, dict))
+            completed_checks = 0
+            total_findings = 0
+            for check in checks:
+                if not isinstance(check, dict):
+                    continue
+                findings = check.get("findings", [])
+                if not isinstance(findings, list) or not findings:
+                    continue
+                completed_checks += 1
+                total_findings += len(findings)
+            return (completed_checks, total_findings)
 
-        return max(valid_payloads, key=_findings_count)
+        return max(valid_payloads, key=_critique_completeness_score)
     return valid_payloads[0]
 
 
