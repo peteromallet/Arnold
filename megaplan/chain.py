@@ -66,6 +66,29 @@ from megaplan.types import CliError, STATE_AWAITING_PR_MERGE
 VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
 VALID_MERGE_POLICIES = ("auto", "review")
 TERMINAL_SKIP_STATES = ("done", "aborted", "failed")
+GH_TRANSIENT_ERROR_PATTERNS = (
+    " 500",
+    " 502",
+    " 503",
+    " 504",
+    "deadline exceeded",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "gateway timeout",
+    "i/o timeout",
+    "net/http:",
+    "service unavailable",
+    "bad gateway",
+    "graphql: timeout",
+    "graphql timeout",
+    "temporary failure",
+    "temporarily unavailable",
+    "timed out",
+    "try again",
+)
+GH_PR_STATE_ATTEMPTS = 3
 
 
 @dataclass
@@ -694,14 +717,37 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> None:
     )
 
 
+def _is_transient_gh_error(exc: CliError) -> bool:
+    combined = " ".join(
+        str(part or "")
+        for part in (
+            exc.message,
+            exc.extra.get("stdout", ""),
+            exc.extra.get("stderr", ""),
+        )
+    ).lower()
+    return any(pattern in combined for pattern in GH_TRANSIENT_ERROR_PATTERNS)
+
+
 def _pr_state(root: Path, pr_number: int, *, writer) -> str:
-    proc = _run_command(
-        root,
-        ["gh", "pr", "view", str(pr_number), "--json", "state"],
-        writer=writer,
-        timeout=120,
-        error_code="gh_pr_view_failed",
-    )
+    for attempt in range(1, GH_PR_STATE_ATTEMPTS + 1):
+        try:
+            proc = _run_command(
+                root,
+                ["gh", "pr", "view", str(pr_number), "--json", "state"],
+                writer=writer,
+                timeout=120,
+                error_code="gh_pr_view_failed",
+            )
+            break
+        except CliError as exc:
+            if attempt >= GH_PR_STATE_ATTEMPTS or not _is_transient_gh_error(exc):
+                raise
+            writer(
+                "[chain] transient gh pr view failure; "
+                f"retrying ({attempt}/{GH_PR_STATE_ATTEMPTS})\n"
+            )
+            time.sleep(min(2 * attempt, 5))
     try:
         payload = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError as exc:

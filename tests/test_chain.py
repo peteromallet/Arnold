@@ -17,6 +17,7 @@ from megaplan.chain import (
     MilestoneSpec,
     _commit_and_push_phase,
     _enable_auto_merge,
+    _pr_state,
     _state_path_for,
     format_chain_status,
     load_chain_state,
@@ -859,6 +860,75 @@ def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: P
         ["gh", "pr", "merge", "7", "--squash", "--delete-branch"],
     ]
     assert "falling back" in "".join(messages)
+
+
+def test_pr_state_retries_transient_gh_failures(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    messages: list[str] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        if len(calls) == 1:
+            raise CliError(
+                "gh_pr_view_failed",
+                "gh pr view failed",
+                extra={"stderr": "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)"},
+            )
+        return subprocess.CompletedProcess(argv, 0, '{"state":"OPEN"}', "")
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run), \
+         patch("megaplan.chain.time.sleep") as sleep:
+        state = _pr_state(tmp_path, 11, writer=messages.append)
+
+    assert state == "open"
+    assert len(calls) == 2
+    assert "transient gh pr view failure" in "".join(messages)
+    sleep.assert_called_once()
+
+
+def test_pr_state_retries_graphql_timeout_until_attempts_exhausted(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view failed",
+            extra={"stderr": "GraphQL: timeout while checking pull request state"},
+        )
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run), \
+         patch("megaplan.chain.time.sleep") as sleep:
+        with pytest.raises(CliError) as exc_info:
+            _pr_state(tmp_path, 11, writer=lambda _m: None)
+
+    assert exc_info.value.code == "gh_pr_view_failed"
+    assert len(calls) == 3
+    assert sleep.call_count == 2
+
+
+def test_pr_state_does_not_retry_non_transient_gh_failures(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view failed",
+            extra={"stderr": "GraphQL: Could not resolve to a PullRequest with the number of 11."},
+        )
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run), \
+         patch("megaplan.chain.time.sleep") as sleep:
+        with pytest.raises(CliError) as exc_info:
+            _pr_state(tmp_path, 11, writer=lambda _m: None)
+
+    assert exc_info.value.code == "gh_pr_view_failed"
+    assert len(calls) == 1
+    sleep.assert_not_called()
 
 
 def test_run_chain_advances_when_pr_already_merged(tmp_path: Path) -> None:
