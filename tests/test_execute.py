@@ -1148,6 +1148,92 @@ def test_handle_execute_persists_blocked_lifecycle_after_direct_blocked_response
     }
 
 
+def test_handle_execute_allows_resume_from_blocked_state(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["current_state"] = megaplan.STATE_BLOCKED
+    state.setdefault("history", []).append({"step": "execute", "result": "blocked"})
+    (plan_fixture.plan_dir / "state.json").write_text(
+        json.dumps(state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    def resumed_dispatch(**kwargs: object) -> dict[str, object]:
+        return {
+            "success": True,
+            "result": "success",
+            "state": megaplan.STATE_EXECUTED,
+            "next_step": None,
+            "artifacts": [],
+            "summary": "resumed",
+        }
+
+    monkeypatch.setattr(execute_handler, "dispatch_execute_auto_loop", resumed_dispatch)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    assert response["success"] is True
+    assert response["state"] in {megaplan.STATE_EXECUTED, megaplan.STATE_DONE}
+
+
+def test_handle_execute_allows_resume_from_failed_state(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["current_state"] = megaplan.STATE_FAILED
+    state["active_step"] = {"step": "execute", "run_id": "stale"}
+    (plan_fixture.plan_dir / "state.json").write_text(
+        json.dumps(state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    def resumed_dispatch(**kwargs: object) -> dict[str, object]:
+        persisted = load_state(plan_fixture.plan_dir)
+        assert persisted["active_step"]["step"] == "execute"
+        assert persisted["active_step"]["run_id"] != "stale"
+        return {
+            "success": True,
+            "result": "success",
+            "state": megaplan.STATE_EXECUTED,
+            "next_step": None,
+            "artifacts": [],
+            "summary": "resumed",
+        }
+
+    monkeypatch.setattr(execute_handler, "dispatch_execute_auto_loop", resumed_dispatch)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    assert response["success"] is True
+    state = load_state(plan_fixture.plan_dir)
+    assert "active_step" not in state
+
+
 def test_execute_blocks_done_task_without_any_per_task_evidence(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,

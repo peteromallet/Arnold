@@ -298,6 +298,90 @@ def test_run_megaplan_uses_module_launcher(tmp_path: Path) -> None:
     ]
 
 
+def test_phase_command_splits_multi_token_next_step() -> None:
+    """`_phase_command` must split values like 'override add-note' into argv tokens.
+
+    Regression: status returns multi-word next_step values for override
+    sub-subcommands (`override add-note`, `override force-proceed`, etc.).
+    Passing the whole string as a single argv element makes argparse reject
+    it with `invalid choice: 'override add-note'`, the auto-driver then
+    exits 2 every iteration and stalls.
+    """
+    assert auto._phase_command("override add-note") == ["override", "add-note"]
+    assert auto._phase_command("override force-proceed") == ["override", "force-proceed"]
+    assert auto._phase_command("override abort") == ["override", "abort"]
+    # Single-token phases unchanged.
+    assert auto._phase_command("review") == ["review"]
+    assert auto._phase_command("step") == ["step"]
+    # Execute keeps its auto-mode flags.
+    assert auto._phase_command("execute") == [
+        "execute",
+        "--confirm-destructive",
+        "--user-approved",
+    ]
+
+
+def test_drive_dispatches_multi_token_next_step_correctly(tmp_path: Path) -> None:
+    """End-to-end: a gate response advising 'override add-note' must dispatch
+    as the subcommand `override add-note`, not as a single positional arg.
+    """
+    plan = "multi-token-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    statuses = [
+        {
+            "success": True,
+            "step": "status",
+            "plan": plan,
+            "state": "critiqued",
+            "iteration": 1,
+            "summary": "Plan is in state 'critiqued'.",
+            "next_step": "override add-note",
+            "valid_next": [
+                "override add-note",
+                "override force-proceed",
+                "override abort",
+                "step",
+            ],
+        },
+        _done_status(plan),
+    ]
+
+    captured_args: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0) if len(statuses) > 1 else statuses[0]
+
+    def fake_run(args, cwd=None, timeout=None):
+        captured_args.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=10,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # The first phase invocation must split "override add-note" into separate
+    # argv tokens followed by --plan and a synthesized --note; otherwise
+    # argparse rejects the combined-string positional as an invalid command
+    # choice, or the override CLI rejects the missing --note as invalid_args.
+    assert captured_args, "expected at least one phase invocation"
+    first = captured_args[0]
+    assert first[:4] == ["override", "add-note", "--plan", plan], (
+        f"expected next_step to be split into argv tokens, got {first!r}"
+    )
+    assert "--note" in first, f"expected synthesized --note, got {first!r}"
+    note_value = first[first.index("--note") + 1]
+    assert note_value, "synthesized --note must be non-empty"
+    assert outcome.status == "done"
+
+
 def _auto_args(plan: str, outcome_file: str | None = None) -> argparse.Namespace:
     return argparse.Namespace(
         plan=plan,
@@ -312,6 +396,7 @@ def _auto_args(plan: str, outcome_file: str | None = None) -> argparse.Namespace
         max_cost_usd=None,
         max_context_retries=2,
         max_blocked_retries=1,
+        max_add_note_attempts=2,
     )
 
 
@@ -879,6 +964,222 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     assert outcome.blocked_retries_used == 0
 
 
+def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step(tmp_path: Path) -> None:
+    plan = "callback-reconcile"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "finalized",
+                "active_step": {"step": "execute", "run_id": "stale"},
+                "config": {"mode": "code"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"id": "T1", "status": "pending", "executor_notes": ""},
+                ],
+                "sense_checks": [
+                    {"id": "SC1", "executor_note": ""},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "id": "T1",
+                        "status": "completed",
+                        "executor_notes": "Completed before callback failure.",
+                        "files_changed": ["app.py"],
+                        "commands_run": ["pytest"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"id": "SC1", "executor_note": "Confirmed before callback failure."}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None):
+        return 0, "execute ok", ""
+
+    def failing_callback(step: str, code: int, out: str, err: str) -> None:
+        raise RuntimeError("nested publish failed")
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            poll_sleep=0,
+            on_phase_complete=failing_callback,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "failed"
+    finalize_data = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    assert finalize_data["tasks"][0]["status"] == "done"
+    assert finalize_data["tasks"][0]["files_changed"] == ["app.py"]
+    assert finalize_data["sense_checks"][0]["executor_note"] == "Confirmed before callback failure."
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert "active_step" not in state_data
+    assert state_data["latest_failure"]["metadata"]["checkpoint_reconciliation"]["reconciled"] is True
+
+
+def test_failed_execute_callback_resume_restores_executed_state(tmp_path: Path) -> None:
+    plan = "callback-resume"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "failed",
+                "history": [{"step": "execute", "result": "success"}],
+                "latest_failure": {
+                    "kind": "phase_callback_failed",
+                    "phase": "execute",
+                    "state": "failed",
+                    "metadata": {
+                        "checkpoint_reconciliation": {"reconciled": True},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execution.json").write_text(json.dumps({"output": "ok"}), encoding="utf-8")
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state = state_data["current_state"]
+        if state == "executed":
+            return _phase_status(plan_name, state="executed", next_step="review")
+        return _terminal_status(plan_name, state=state)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        assert args[0] == "review"
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state_data["current_state"] = "done"
+        (plan_dir / "state.json").write_text(json.dumps(state_data), encoding="utf-8")
+        return 0, "review ok", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+    assert outcome.status == "done"
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state_data["current_state"] == "done"
+    assert any("recovered execute state" in event.get("msg", "") for event in outcome.events)
+
+
+def test_failed_execute_callback_resume_restores_blocked_execute_to_finalized(tmp_path: Path) -> None:
+    plan = "callback-blocked-resume"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "failed",
+                "history": [{"step": "execute", "result": "blocked"}],
+                "latest_failure": {
+                    "kind": "phase_callback_failed",
+                    "phase": "execute",
+                    "state": "failed",
+                    "metadata": {
+                        "checkpoint_reconciliation": {"reconciled": True},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execution.json").write_text(json.dumps({"output": "blocked"}), encoding="utf-8")
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state = state_data["current_state"]
+        if state == "finalized":
+            return _execute_status(plan_name, state="finalized")
+        return _terminal_status(plan_name, state=state)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        assert args[0] == "execute"
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state_data["current_state"] = "done"
+        state_data.setdefault("history", []).append({"step": "execute", "result": "success"})
+        (plan_dir / "state.json").write_text(json.dumps(state_data), encoding="utf-8")
+        return 0, "execute ok", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+    assert outcome.status == "done"
+    assert any("recovered execute state" in event.get("msg", "") for event in outcome.events)
+
+
+def test_phase_complete_callback_skipped_after_nonzero_phase(tmp_path: Path) -> None:
+    plan = "nonzero-no-callback"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    callback_calls: list[str] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _phase_status(plan_name, state="planned", next_step="critique")
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        return 1, "", "critique failed"
+
+    def callback(step: str, code: int, out: str, err: str) -> None:
+        callback_calls.append(step)
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=1,
+            poll_sleep=0,
+            on_phase_complete=callback,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "cap"
+    assert callback_calls == []
+    assert any("phase 'critique' exited 1" in event.get("msg", "") for event in outcome.events)
+
+
+def test_plan_liveness_mtime_uses_state_and_execution_batches(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    assert auto._plan_liveness_mtime(plan_dir) is None
+    state_path = plan_dir / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+    first = auto._plan_liveness_mtime(plan_dir)
+    assert first is not None
+
+    batch_path = plan_dir / "execution_batch_1.json"
+    batch_path.write_text("{}", encoding="utf-8")
+    os.utime(batch_path, (state_path.stat().st_mtime + 10, state_path.stat().st_mtime + 10))
+    batch_mtime = batch_path.stat().st_mtime
+    assert auto._plan_liveness_mtime(plan_dir) == batch_mtime
+
+
 def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -> None:
     """When force-proceed is rejected by strict-notes, the auto driver should
     surface a `human_required` outcome rather than a generic `failed`."""
@@ -938,3 +1239,185 @@ def test_last_history_step_result_handles_missing_and_corrupt(tmp_path: Path) ->
     # Most recent execute wins; intervening review is ignored for the execute query.
     assert auto._last_history_step_result(plan_dir, "execute") == "success"
     assert auto._last_history_step_result(plan_dir, "review") == "approved"
+
+
+def _critiqued_status_with_overrides(plan: str) -> dict:
+    """Status snapshot when the gate has escalated to override add-note.
+
+    Mirrors the gate.py output for ESCALATE: next_step is "override add-note"
+    and valid_next includes the full override fan-out plus "step".
+    """
+    return {
+        "success": True,
+        "step": "status",
+        "plan": plan,
+        "state": "critiqued",
+        "iteration": 1,
+        "summary": "Plan is in state 'critiqued'.",
+        "next_step": "override add-note",
+        "valid_next": [
+            "override add-note",
+            "override force-proceed",
+            "override abort",
+            "step",
+        ],
+    }
+
+
+def _write_gate_signals(plan_dir: Path, version: int, flag_ids: list[str]) -> None:
+    flags = [
+        {"id": fid, "concern": f"concern for {fid}", "severity": "significant", "status": "open"}
+        for fid in flag_ids
+    ]
+    (plan_dir / f"gate_signals_v{version}.json").write_text(
+        json.dumps({"unresolved_flags": flags, "signals": {}, "warnings": []}),
+        encoding="utf-8",
+    )
+
+
+def test_synthesize_add_note_text_includes_unresolved_flag_ids(tmp_path: Path) -> None:
+    """Note text must include flag ids when gate signals are present."""
+    plan_dir = _make_plan_dir(tmp_path, "synth-plan")
+    _write_gate_signals(plan_dir, 1, ["F-1", "F-2"])
+    _write_gate_signals(plan_dir, 2, ["F-3", "F-4", "F-5"])
+    note = auto._synthesize_add_note_text(plan_dir, iteration=12, attempt=1)
+    # Must read the highest-versioned gate_signals file.
+    assert "F-3" in note and "F-4" in note and "F-5" in note
+    assert "F-1" not in note and "F-2" not in note
+    assert "iter 12" in note
+    assert "attempt 1" in note
+
+
+def test_synthesize_add_note_text_falls_back_when_no_artifacts(tmp_path: Path) -> None:
+    """Without artifacts the helper still produces a non-empty note."""
+    plan_dir = _make_plan_dir(tmp_path, "synth-empty")
+    note = auto._synthesize_add_note_text(plan_dir, iteration=3, attempt=2)
+    assert note.strip()
+    assert "unknown" in note
+    assert "iter 3" in note
+
+
+def test_build_override_add_note_command_includes_note_argument(tmp_path: Path) -> None:
+    """The override add-note dispatch must always include --note <text>."""
+    plan_dir = _make_plan_dir(tmp_path, "build-cmd-plan")
+    _write_gate_signals(plan_dir, 1, ["FLAG-A"])
+    cmd = auto._build_override_add_note_command(
+        "build-cmd-plan", plan_dir, iteration=4, attempt=1
+    )
+    assert cmd[:4] == ["override", "add-note", "--plan", "build-cmd-plan"]
+    assert "--note" in cmd
+    note_idx = cmd.index("--note")
+    assert cmd[note_idx + 1].strip(), "--note must be non-empty"
+    assert "FLAG-A" in cmd[note_idx + 1]
+
+
+def test_drive_supplies_note_arg_when_dispatching_override_add_note(tmp_path: Path) -> None:
+    """End-to-end: a gate ESCALATE that surfaces 'override add-note' must
+    dispatch the subprocess with a non-empty --note argument; otherwise the
+    CLI rejects it as invalid_args and the auto-driver loops until stalled.
+    """
+    plan = "synth-note-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_gate_signals(plan_dir, 1, ["FLAG-X", "FLAG-Y"])
+
+    statuses = [
+        _critiqued_status_with_overrides(plan),
+        _done_status(plan),
+    ]
+    captured: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0) if len(statuses) > 1 else statuses[0]
+
+    def fake_run(args, cwd=None, timeout=None):
+        captured.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=10,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert captured, "expected at least one phase invocation"
+    first = captured[0]
+    assert first[:2] == ["override", "add-note"]
+    assert "--plan" in first and first[first.index("--plan") + 1] == plan
+    assert "--note" in first
+    note_value = first[first.index("--note") + 1]
+    assert note_value, "synthesized --note must be non-empty"
+    assert "FLAG-X" in note_value or "FLAG-Y" in note_value
+    assert outcome.status == "done"
+
+
+def test_drive_escalates_to_force_proceed_after_max_add_note_attempts(
+    tmp_path: Path,
+) -> None:
+    """If add-note keeps failing, fall through to override force-proceed.
+
+    Track B safety-net: after `max_add_note_attempts` consecutive
+    add-note failures, the auto-driver must escalate to force-proceed
+    rather than retrying the same broken (or merely insufficient)
+    add-note dispatch forever. This is the existing escape valve when
+    human intervention isn't available.
+    """
+    plan = "escalate-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_gate_signals(plan_dir, 1, ["FLAG-Z"])
+
+    # Status always reports the same critiqued/override-add-note fork.
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _critiqued_status_with_overrides(plan)
+
+    captured: list[list[str]] = []
+
+    def fake_run(args, cwd=None, timeout=None):
+        captured.append(list(args))
+        # Simulate add-note always failing (e.g. the worker rejects the
+        # synthesized note), but force-proceed succeeding.
+        if args[:2] == ["override", "add-note"]:
+            return 1, "", '{"success": false, "error": "rejected"}'
+        if args[:2] == ["override", "force-proceed"]:
+            return 0, "{}", ""
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=10,  # let escalation fire before stall trips
+            max_iterations=10,
+            max_add_note_attempts=2,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    add_note_calls = [c for c in captured if c[:2] == ["override", "add-note"]]
+    fp_calls = [c for c in captured if c[:2] == ["override", "force-proceed"]]
+    # The fake status never advances state, so the loop alternates: 2
+    # add-note failures -> 1 force-proceed (counter reset) -> 2 add-note
+    # failures -> 1 force-proceed -> ...  What matters is that the FIRST
+    # force-proceed appears after exactly 2 add-note failures.
+    assert len(add_note_calls) >= 2, (
+        f"expected at least 2 add-note attempts before escalation, got {add_note_calls!r}"
+    )
+    assert fp_calls, "expected at least one force-proceed dispatch after add-note failures"
+    assert captured[0][:2] == ["override", "add-note"]
+    assert captured[1][:2] == ["override", "add-note"]
+    assert captured[2][:2] == ["override", "force-proceed"], (
+        f"expected force-proceed as 3rd dispatch after 2 add-note failures, "
+        f"got {captured[2]!r}"
+    )
+    fp_first = fp_calls[0]
+    assert "--reason" in fp_first
+    reason = fp_first[fp_first.index("--reason") + 1]
+    assert "add-note" in reason and "forcing proceed" in reason
+    # Outcome can be `done`/`stalled`/etc. depending on later flow; what
+    # matters is that the loop did not stay stuck on add-note.
+    assert outcome.status in {"done", "stalled", "failed", "aborted", "cap"}

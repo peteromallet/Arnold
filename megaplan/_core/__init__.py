@@ -112,6 +112,7 @@ from .state import (
     save_state_merge_meta,
     set_active_step,
     store_raw_worker_output,
+    touch_active_step,
 )
 
 # -- registries.py: flag + debt registries -----------------------------------
@@ -247,6 +248,7 @@ __all__ = [
     "save_state_merge_meta",
     "set_active_step",
     "store_raw_worker_output",
+    "touch_active_step",
     # registries
     "add_or_increment_debt",
     "debt_by_subsystem",

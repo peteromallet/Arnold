@@ -180,7 +180,7 @@ def test_arnold_editorial_flow_parity_compares_stable_semantics(editorial_store)
         "body": read_body(store=store, epic_id=epic.id),
         "checklist": _normalize_checklist(checklist.list_items(store=store, epic_id=epic.id)),
         "sprints": _normalize_sprints(sprints.list_sprints_with_items(store=store, epic_id=epic.id)),
-        "event_kinds": [event.event_type for event in store.list_epic_events(epic.id)],
+        "event_kinds": [event.event_type for event in store.list_epic_events_for_replay(epic.id)],
     } == {
         "state": "planned",
         "body": "\n".join(

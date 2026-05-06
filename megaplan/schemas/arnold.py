@@ -29,7 +29,8 @@ def map_arnold_epic_state(state: str) -> EpicState:
         raise ValueError(f"Unsupported Arnold epic state: {state}") from exc
 BotTurnStatus = Literal["in_progress", "completed", "failed", "abandoned"]
 MessageDirection = Literal["inbound", "outbound"]
-ToolOperationKind = Literal["read", "write"]
+ResidentConversationTransport = Literal["discord"]
+ToolOperationKind = Literal["read", "write", "cloud_read", "cloud_start", "control"]
 SystemLogLevel = Literal["debug", "info", "warn", "error"]
 SystemLogCategory = Literal["system", "application", "tool", "llm", "external_api", "recovery"]
 ExternalRequestProvider = Literal["anthropic", "openai", "groq", "github", "discord", "supabase_storage"]
@@ -115,9 +116,29 @@ class BotTurn(StorageModel):
     model_version: str | None = None
 
 
+class ResidentConversation(StorageModel):
+    id: str
+    transport: ResidentConversationTransport = "discord"
+    conversation_key: str
+    active_epic_id: str | None = None
+    guild_id: str | None = None
+    channel_id: str | None = None
+    thread_id: str | None = None
+    dm_user_id: str | None = None
+    last_inbound_message_id: str | None = None
+    last_outbound_message_id: str | None = None
+    delivery_cursor: str | None = None
+    metadata: NormalizedDict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    last_active_at: datetime | None = None
+
+
 class Message(StorageModel):
     id: str
     epic_id: str | None = None
+    conversation_id: str | None = None
+    idempotency_key: str | None = None
     direction: MessageDirection
     content: str
     sent_at: datetime = Field(default_factory=utc_now)

@@ -337,6 +337,219 @@ def test_recover_codex_payload_handles_stderr_bleed_in_output_file(tmp_path: Pat
     assert recovered == valid_payload
 
 
+def test_recover_codex_payload_prefers_valid_output_file_over_raw_transcript(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "critique_output.json"
+    file_payload = {
+        "checks": [],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "The plan should revise the RunPod disk defaults.",
+                "evidence": "runpod-lifecycle config still contains stale defaults.",
+                "severity": "medium",
+                "category": "correctness",
+            }
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    raw_payload = {
+        "checks": [
+            {
+                "id": "disk-defaults",
+                "question": "Are disk defaults aligned?",
+                "findings": [
+                    {
+                        "detail": "Intermediate transcript JSON should not outrank the output file.",
+                        "flagged": True,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    output_path.write_text(json.dumps(file_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=f"thinking...\n{json.dumps(raw_payload)}\n",
+    )
+
+    assert recovered == file_payload
+
+
+def test_recover_codex_payload_prefers_completed_critique_template_over_schema_summary(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+    summary_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [
+                    {
+                        "detail": "Wrote the critique output file with the detailed findings.",
+                        "flagged": False,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    completed_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [
+                    {
+                        "detail": "Found one concrete issue in the issue-hints lens.",
+                        "flagged": True,
+                    }
+                ],
+            },
+            {
+                "id": "correctness",
+                "question": "Is the plan technically correct?",
+                "findings": [
+                    {
+                        "detail": "Found one concrete issue in the correctness lens.",
+                        "flagged": True,
+                    }
+                ],
+            },
+            {
+                "id": "scope",
+                "question": "Is the plan scoped correctly?",
+                "findings": [
+                    {
+                        "detail": "Found one concrete issue in the scope lens.",
+                        "flagged": True,
+                    }
+                ],
+            },
+        ],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "Detailed critique should win over a schema-summary payload.",
+                "evidence": "The side-effect template contains more completed checks.",
+                "category": "correctness",
+                "severity_hint": "likely-significant",
+            }
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    output_path.write_text(json.dumps(summary_payload), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(json.dumps(completed_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered == completed_payload
+
+
+def test_recover_codex_payload_keeps_meaningful_critique_when_template_is_empty(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+    meaningful_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [
+                    {
+                        "detail": "The output file contains the only meaningful critique finding.",
+                        "flagged": True,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    empty_template = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    output_path.write_text(json.dumps(meaningful_payload), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(json.dumps(empty_template), encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered == meaningful_payload
+
+
+def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "execute_output.json"
+    output_path.write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "id": "T3",
+                        "status": "completed",
+                        "executor_notes": "Generated the template index.",
+                        "files_changed": ["vibecomfy/template_index.json"],
+                        "commands_run": ["python -m json.tool template_index.json"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {
+                        "id": "SC3",
+                        "executor_note": "Template index count is 51.",
+                        "verdict": "",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recovered = _recover_codex_payload(
+        "execute",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered is not None
+    assert recovered["task_updates"][0]["task_id"] == "T3"
+    assert recovered["task_updates"][0]["status"] == "done"
+    assert recovered["sense_check_acknowledgments"][0]["sense_check_id"] == "SC3"
+
+
 def test_recover_codex_payload_accepts_review_without_checks_and_trailing_telemetry(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
@@ -868,6 +1081,98 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
     assert result.cost_usd == 0.05
     assert result.session_id == "sess-abc"
     assert result.duration_ms == 500
+
+
+def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_claude_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    claude_output = json.dumps({
+        "structured_output": plan_payload,
+        "total_cost_usd": 0.0,
+        "session_id": "sess-effort",
+    })
+    fake_result = CommandResult(
+        command=["claude"],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=claude_output,
+        stderr="",
+        duration_ms=10,
+    )
+    with patch("megaplan.workers.run_command", return_value=fake_result) as run_command:
+        run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, effort="low")
+    invoked_cmd = run_command.call_args.args[0]
+    assert "--effort" in invoked_cmd
+    assert invoked_cmd[invoked_cmd.index("--effort") + 1] == "low"
+
+
+def test_run_claude_step_rejects_invalid_effort(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import run_claude_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    with pytest.raises(CliError, match="Unsupported claude effort level"):
+        run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, effort="bogus")
+
+
+def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True, effort="low",
+        )
+    invoked_cmd = captured["command"]
+    assert "model_reasoning_effort=low" in invoked_cmd
+    idx = invoked_cmd.index("model_reasoning_effort=low")
+    assert invoked_cmd[idx - 1] == "-c"
+
+
+def test_run_codex_step_rejects_invalid_effort(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    with pytest.raises(CliError, match="Unsupported codex effort level"):
+        run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True, effort="bogus",
+        )
 
 
 def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) -> None:
@@ -2413,3 +2718,263 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
                     persistent=False,
                     fresh=True,
                 )
+
+
+# ---------------------------------------------------------------------------
+# Codex token-usage / cost capture (codex_pricing + run_codex_step wiring)
+# ---------------------------------------------------------------------------
+
+
+def _write_codex_rollout(
+    codex_home: Path,
+    session_id: str,
+    total_token_usage: dict,
+    *,
+    date: str = "2026/05/05",
+    timestamp: str = "0000-1234567890",
+) -> Path:
+    """Write a fake codex rollout JSONL and return its path."""
+    sessions_dir = codex_home / "sessions" / date
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    path = sessions_dir / f"rollout-{timestamp}-{session_id}.jsonl"
+    lines = [
+        json.dumps({
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "timestamp": "2026-05-05T09:00:00Z",
+                "model_provider": "openai",
+            },
+        }),
+        json.dumps({
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": total_token_usage,
+                    "last_token_usage": total_token_usage,
+                    "model_context_window": 258400,
+                },
+            },
+        }),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_codex_pricing_table() -> None:
+    from megaplan.codex_pricing import (
+        DEFAULT_MODEL,
+        PRICING,
+        cost_from_usage,
+    )
+
+    # Spec example: 66607 in (4864 cached), 1089 out, 230 reasoning -> $0.350717
+    usage = {
+        "input_tokens": 66607,
+        "cached_input_tokens": 4864,
+        "output_tokens": 1089,
+        "reasoning_output_tokens": 230,
+    }
+    expected = (
+        (66607 - 4864) * 5.00
+        + 4864 * 0.50
+        + (1089 + 230) * 30.00
+    ) / 1_000_000
+    assert cost_from_usage(usage, "gpt-5.5") == pytest.approx(expected)
+    # Unknown model falls back to default rates.
+    assert cost_from_usage(usage, "totally-made-up") == pytest.approx(expected)
+    # Default model resolves the same way.
+    assert DEFAULT_MODEL in PRICING
+    assert cost_from_usage(usage) == pytest.approx(expected)
+    # Empty / None usage -> 0.
+    assert cost_from_usage(None) == 0.0
+    assert cost_from_usage({}) == 0.0
+    # gpt-5 cheaper rates apply.
+    cheap = cost_from_usage(usage, "gpt-5")
+    assert 0 < cheap < expected
+
+
+def test_codex_step_extracts_token_usage_from_session_jsonl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    codex_home = tmp_path / "codex_home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    session_id = "019df78d-2a47-7981-a7d1-fadf79f5b240"
+    total_usage = {
+        "input_tokens": 66607,
+        "cached_input_tokens": 4864,
+        "output_tokens": 1089,
+        "reasoning_output_tokens": 230,
+        "total_tokens": 67696,
+    }
+    _write_codex_rollout(codex_home, session_id, total_usage)
+
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=f'{{"type":"thread.started","thread_id":"{session_id}"}}\n',
+            stderr="",
+            duration_ms=300,
+        )
+
+    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
+        )
+
+    expected_cost = (
+        (66607 - 4864) * 5.00
+        + 4864 * 0.50
+        + (1089 + 230) * 30.00
+    ) / 1_000_000
+    assert result.cost_usd == pytest.approx(expected_cost)
+    assert result.prompt_tokens == 66607
+    assert result.completion_tokens == 1089 + 230
+    assert result.total_tokens == 66607 + 1089 + 230
+    assert result.session_id == session_id
+
+
+def test_codex_step_handles_missing_session_jsonl_gracefully(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    # Point CODEX_HOME at an empty dir so no rollout matches.
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty_codex_home"))
+
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout='{"type":"thread.started","thread_id":"abc-1234-no-rollout"}\n',
+            stderr="",
+            duration_ms=300,
+        )
+
+    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
+        )
+
+    assert result.cost_usd == 0.0
+    assert result.prompt_tokens == 0
+    assert result.completion_tokens == 0
+    captured = capsys.readouterr()
+    assert "Could not locate codex rollout" in captured.out
+
+
+def test_codex_step_incremental_cost_within_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    codex_home = tmp_path / "codex_home2"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    session_id = "session-incr-0001"
+    # First step: cumulative totals after step 1.
+    first_total = {
+        "input_tokens": 1000,
+        "cached_input_tokens": 0,
+        "output_tokens": 500,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 1500,
+    }
+    rollout_path = _write_codex_rollout(codex_home, session_id, first_total)
+
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=f'{{"type":"thread.started","thread_id":"{session_id}"}}\n',
+            stderr="",
+            duration_ms=200,
+        )
+
+    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        first = run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
+        )
+
+    expected_first = (1000 * 5.00 + 500 * 30.00) / 1_000_000
+    assert first.cost_usd == pytest.approx(expected_first)
+    # Session entry should now carry the running totals.
+    session_key = "codex_planner"
+    assert state["sessions"][session_key]["last_total_tokens"]["input_tokens"] == 1000
+
+    # Second step: rollout grows. Rewrite the file with a larger cumulative.
+    second_total = {
+        "input_tokens": 3000,
+        "cached_input_tokens": 200,
+        "output_tokens": 1500,
+        "reasoning_output_tokens": 100,
+        "total_tokens": 4600,
+    }
+    rollout_path.unlink()
+    _write_codex_rollout(codex_home, session_id, second_total)
+
+    # Pre-seed session id so the second call resumes (mirroring real flow).
+    state["sessions"][session_key]["id"] = session_id
+
+    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        second = run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=False,
+        )
+
+    delta_input = 3000 - 1000  # 2000 new input tokens
+    delta_cached = 200  # all new
+    delta_full_input = delta_input - delta_cached  # 1800
+    delta_output = (1500 + 100) - (500 + 0)  # 1100
+    expected_second = (
+        delta_full_input * 5.00 + delta_cached * 0.50 + delta_output * 30.00
+    ) / 1_000_000
+    assert second.cost_usd == pytest.approx(expected_second)
+    # Cumulative bookkeeping advanced.
+    assert state["sessions"][session_key]["last_total_tokens"]["input_tokens"] == 3000

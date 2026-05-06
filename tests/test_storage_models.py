@@ -11,6 +11,7 @@ from megaplan.schemas import (
     CodeArtifact,
     Codebase,
     ControlMessage,
+    CloudRun,
     Epic,
     EpicEvent,
     EpicLock,
@@ -23,6 +24,8 @@ from megaplan.schemas import (
     Plan,
     PlanArtifact,
     ProgressEvent,
+    ResidentConversation,
+    ScheduledJob,
     SecondOpinion,
     Sprint,
     SprintItem,
@@ -41,6 +44,15 @@ NOW = datetime(2026, 5, 3, tzinfo=timezone.utc)
         (Epic, {"id": "epic_1", "title": "Epic", "goal": "Ship it", "body": "Body", "state": "shaping"}),
         (BotTurn, {"id": "turn_1", "status": "in_progress"}),
         (Message, {"id": "msg_1", "direction": "inbound", "content": "hello"}),
+        (
+            ResidentConversation,
+            {
+                "id": "conversation_1",
+                "conversation_key": "discord:guild:g1:channel:c1",
+                "guild_id": "g1",
+                "channel_id": "c1",
+            },
+        ),
         (ToolCall, {"id": "tool_1", "turn_id": "turn_1", "tool_name": "read_file", "operation_kind": "read"}),
         (SystemLog, {"id": "log_1", "level": "info", "category": "system", "event_type": "boot", "message": "ok"}),
         (EpicLock, {"epic_id": "epic_1", "holder_id": "worker", "expires_at": NOW}),
@@ -181,6 +193,26 @@ NOW = datetime(2026, 5, 3, tzinfo=timezone.utc)
             },
         ),
         (
+            ScheduledJob,
+            {
+                "id": "job_1",
+                "job_type": "cloud_check",
+                "conversation_id": "conversation_1",
+                "cloud_run_id": "cloud_run_1",
+                "scheduled_for": NOW,
+            },
+        ),
+        (
+            CloudRun,
+            {
+                "id": "cloud_run_1",
+                "operation": "chain",
+                "status": "running",
+                "conversation_id": "conversation_1",
+                "provider": "railway",
+            },
+        ),
+        (
             AutomationActor,
             {
                 "id": "actor_1",
@@ -258,6 +290,36 @@ def test_storage_models_normalize_json_defaults_and_extensions() -> None:
     assert opinion.focus_areas == []
     assert opinion.resulting_checklist_item_ids == []
     assert sprint.status == "running"
+
+
+def test_resident_schema_exports_and_message_idempotency_fields() -> None:
+    from megaplan import schemas
+    from megaplan.schemas import models
+    from megaplan.store import CloudRun as StoreCloudRun
+    from megaplan.store import ResidentConversation as StoreResidentConversation
+    from megaplan.store import ScheduledJob as StoreScheduledJob
+
+    message = Message.model_validate(
+        {
+            "id": "msg_resident_1",
+            "conversation_id": "conversation_1",
+            "idempotency_key": "discord:message:123",
+            "direction": "inbound",
+            "content": "hello",
+        }
+    )
+
+    assert message.conversation_id == "conversation_1"
+    assert message.idempotency_key == "discord:message:123"
+    assert models.ResidentConversation is ResidentConversation
+    assert schemas.ResidentConversation is ResidentConversation
+    assert StoreResidentConversation is ResidentConversation
+    assert models.ScheduledJob is ScheduledJob
+    assert schemas.ScheduledJob is ScheduledJob
+    assert StoreScheduledJob is ScheduledJob
+    assert models.CloudRun is CloudRun
+    assert schemas.CloudRun is CloudRun
+    assert StoreCloudRun is CloudRun
 
 
 def test_sprint5_event_snapshot_and_image_blob_fields_are_optional() -> None:

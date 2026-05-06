@@ -906,6 +906,27 @@ def test_override_set_robustness_blocked_in_terminal_state(plan_fixture: PlanFix
         )
 
 
+def test_override_replan_recovers_failed_state(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["current_state"] = megaplan.STATE_FAILED
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="replan",
+            reason="retry after provider interruption",
+        ),
+    )
+
+    assert response["state"] == megaplan.STATE_PLANNED
+    state = load_state(plan_fixture.plan_dir)
+    assert state["current_state"] == megaplan.STATE_PLANNED
+    assert any(entry["action"] == "replan" for entry in state["meta"]["overrides"])
+
+
 def test_force_proceed_requires_critiqued_state(plan_fixture: PlanFixture) -> None:
     with pytest.raises(megaplan.CliError, match="critiqued"):
         megaplan.handle_override(

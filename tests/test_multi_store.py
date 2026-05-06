@@ -8,8 +8,11 @@ import pytest
 
 from megaplan.store import (
     ChecklistItemInput,
+    CloudRunInput,
     LeaseConflict,
     MultiStore,
+    ResidentConversationInput,
+    ScheduledJobInput,
     SprintItemInput,
     StoreError,
     deterministic_idempotency_key,
@@ -193,6 +196,69 @@ def test_multi_store_plan_lifecycle_fields_round_trip_on_routed_backend(tmp_path
     )
     assert updated.resume_cursor == {"phase": "review"}
     assert db_store.load_plan(plan.id).latest_failure == {"kind": "failed"}
+
+
+def test_multi_store_resident_records_live_on_db_backend_and_reject_file_home_cloud_runs(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    file_epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
+    db_epic = store.create_epic(title="DB", goal="g", body="body", home_backend="db")
+
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:channel",
+            active_epic_id=db_epic.id,
+            guild_id="guild",
+            channel_id="channel",
+        )
+    )
+    assert file_store.load_resident_conversation(conversation.id) is None
+    assert db_store.load_resident_conversation(conversation.id).conversation_key == "discord:guild:channel"
+
+    message = store.create_message(
+        epic_id=db_epic.id,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="hello",
+        idempotency_key="multi-resident-message",
+    )
+    assert db_store.load_message(message.id).conversation_id == conversation.id
+    assert store.create_message(
+        epic_id=db_epic.id,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="duplicate",
+        idempotency_key="multi-resident-message",
+    ).id == message.id
+
+    run = store.create_cloud_run(
+        CloudRunInput(
+            operation="status",
+            conversation_id=conversation.id,
+            epic_id=db_epic.id,
+            provider="fake",
+            idempotency_key="multi-cloud-run",
+        ),
+        idempotency_key="multi-cloud-run",
+    )
+    assert db_store.load_cloud_run(run.id).epic_id == db_epic.id
+
+    job = store.create_scheduled_job(
+        ScheduledJobInput(
+            job_type="cloud_check",
+            conversation_id=conversation.id,
+            cloud_run_id=run.id,
+            epic_id=db_epic.id,
+            scheduled_for=datetime.now(UTC) - timedelta(seconds=1),
+        )
+    )
+    assert db_store.load_scheduled_job(job.id).cloud_run_id == run.id
+    assert store.claim_due_scheduled_jobs(worker_id="resident-worker")[0].id == job.id
+
+    with pytest.raises(StoreError, match="DB-home epic"):
+        store.create_cloud_run(
+            CloudRunInput(operation="status", conversation_id=conversation.id, epic_id=file_epic.id),
+            idempotency_key="file-home-cloud-run",
+        )
 
 
 def test_migrate_epic_runs_seven_phases_and_tombstones_source(tmp_path: Path) -> None:
