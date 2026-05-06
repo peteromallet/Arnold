@@ -197,10 +197,11 @@ def _run_megaplan(
     stdout_parts: list[bytes] = []
     stderr_parts: list[bytes] = []
     last_activity = time.monotonic()
+    last_hard_progress = last_activity
     last_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
 
     def _reader(stream: Any, parts: list[bytes]) -> None:
-        nonlocal last_activity
+        nonlocal last_activity, last_hard_progress
         if stream is None:
             return
         while True:
@@ -209,6 +210,7 @@ def _run_megaplan(
                 break
             parts.append(chunk)
             last_activity = time.monotonic()
+            last_hard_progress = last_activity
 
     threads = [
         threading.Thread(target=_reader, args=(proc.stdout, stdout_parts), daemon=True),
@@ -231,7 +233,9 @@ def _run_megaplan(
         ):
             last_liveness_mtime = current_liveness_mtime
             last_activity = now
-        if timeout is not None and now - started >= timeout:
+            last_hard_progress = now
+        timeout_base = last_hard_progress if idle_timeout is not None else started
+        if timeout is not None and now - timeout_base >= timeout:
             timed_out_reason = f"subprocess timed out after {timeout}s"
             break
         if idle_timeout is not None and now - last_activity >= idle_timeout:

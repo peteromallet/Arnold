@@ -294,6 +294,18 @@ def _default_resume_runner(args: list[str], cwd: Path | None = None) -> tuple[in
     return proc.returncode, proc.stdout, proc.stderr
 
 
+_RESUME_ACTIVE_STATES: dict[str, str] = {
+    "prep": "initialized",
+    "plan": "initialized",
+    "critique": "planned",
+    "gate": "critiqued",
+    "revise": "critiqued",
+    "finalize": "gated",
+    "execute": "finalized",
+    "review": "executed",
+}
+
+
 def resume_plan(
     root: Path,
     plan: str,
@@ -318,9 +330,16 @@ def resume_plan(
         raise CliError("invalid_resume_cursor", f"Plan '{plan}' has an invalid resume cursor", extra={"resume_cursor": cursor})
     args = _resume_phase_args(phase, cursor, plan)
     runner_fn = runner or _default_resume_runner
+    previous_state = repo.load_state()
+    active_state = _RESUME_ACTIVE_STATES.get(phase)
+    if active_state and previous_state.get("current_state") in {"failed", "blocked"}:
+        state = dict(previous_state)
+        state["current_state"] = active_state
+        repo.save_state(state)
     try:
         code, stdout, stderr = runner_fn(args, cwd=root)
     except RevisionConflict as error:
+        repo.save_state(previous_state)
         state = repo.load_state()
         epic_id = state.get("epic_id") or (state.get("meta") or {}).get("epic_id")
         details = {"phase": phase, "message": str(error), "resume_cursor": cursor}
@@ -340,6 +359,7 @@ def resume_plan(
             extra=details,
         ) from error
     if code != 0:
+        repo.save_state(previous_state)
         return {
             "success": False,
             "step": "resume",
