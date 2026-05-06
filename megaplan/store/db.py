@@ -2413,6 +2413,26 @@ class DBStore:
         conn = self._get_conn()
         if synthesize_outbound_id and direction == "outbound" and discord_message_id is None and bot_turn_id:
             discord_message_id = self._next_invocation_message_id(bot_turn_id)
+        if discord_message_id is not None:
+            existing = conn.execute(
+                "SELECT * FROM messages WHERE discord_message_id = %s",
+                [discord_message_id],
+            ).fetchone()
+            if existing is not None:
+                changes: dict[str, Any] = {}
+                if conversation_id is not None and existing["conversation_id"] is None:
+                    changes["conversation_id"] = conversation_id
+                if idempotency_key is not None and existing["idempotency_key"] is None:
+                    changes["idempotency_key"] = idempotency_key
+                if bot_turn_id is not None and existing["bot_turn_id"] is None:
+                    changes["bot_turn_id"] = bot_turn_id
+                if changes:
+                    set_parts = [f"{column} = %s" for column in changes]
+                    existing = conn.execute(
+                        f"UPDATE messages SET {', '.join(set_parts)} WHERE id = %s RETURNING *",
+                        [*changes.values(), existing["id"]],
+                    ).fetchone()
+                return Message(**existing)
         row = conn.execute(
             """
             INSERT INTO messages (

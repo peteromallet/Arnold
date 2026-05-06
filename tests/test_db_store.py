@@ -100,6 +100,7 @@ def test_db_resident_store_methods_use_idempotency_and_skip_locked_claims() -> N
 
     assert "conversation_id" in source_create_message
     assert "idempotency_key" in source_create_message
+    assert "SELECT * FROM messages WHERE discord_message_id" in source_create_message
     assert "ON CONFLICT (idempotency_key)" in source_create_message
     assert "FOR UPDATE SKIP LOCKED" in source_claim_jobs
     assert "status = 'pending'" in source_claim_jobs
