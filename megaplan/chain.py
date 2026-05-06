@@ -747,7 +747,7 @@ def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
     _run_command(root, ["gh", "pr", "ready", str(pr_number)], writer=writer, error_code="gh_pr_ready_failed")
 
 
-def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> None:
+def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
     try:
         _run_command(
             root,
@@ -756,7 +756,7 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> None:
             timeout=120,
             error_code="gh_pr_merge_failed",
         )
-        return
+        return "open"
     except CliError as exc:
         combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
         if "Auto merge is not allowed" not in combined:
@@ -769,6 +769,7 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> None:
         timeout=120,
         error_code="gh_pr_merge_failed",
     )
+    return "merged"
 
 
 def _is_transient_gh_error(exc: CliError) -> bool:
@@ -1112,8 +1113,7 @@ def run_chain(
                         events,
                         reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
                     )
-                _enable_auto_merge(root, state.pr_number, writer=writer)
-                state.pr_state = "open"
+                state.pr_state = _enable_auto_merge(root, state.pr_number, writer=writer)
                 save_chain_state(spec_path, state)
         # advance or skip
         state.completed.append(
