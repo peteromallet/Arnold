@@ -16,6 +16,7 @@ from megaplan.chain import (
     ChainState,
     MilestoneSpec,
     _commit_and_push_phase,
+    _enable_auto_merge,
     _state_path_for,
     format_chain_status,
     load_chain_state,
@@ -832,6 +833,31 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
     saved = load_chain_state(spec_path)
     assert saved.current_milestone_index == 1
     assert saved.pr_number is None
+
+
+def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    messages: list[str] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        if "--auto" in argv:
+            raise CliError(
+                "gh_pr_merge_failed",
+                "gh pr merge failed",
+                extra={"stderr": "GraphQL: Auto merge is not allowed for this repository"},
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run):
+        _enable_auto_merge(tmp_path, 7, writer=messages.append)
+
+    assert calls == [
+        ["gh", "pr", "merge", "7", "--auto", "--squash", "--delete-branch"],
+        ["gh", "pr", "merge", "7", "--squash", "--delete-branch"],
+    ]
+    assert "falling back" in "".join(messages)
 
 
 def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Path) -> None:
