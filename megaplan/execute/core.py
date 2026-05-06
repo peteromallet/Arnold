@@ -1028,13 +1028,43 @@ def handle_execute_auto_loop(
         for task in tasks
         if task.get("status") == "pending" and isinstance(task.get("id"), str)
     ]
-    # Treat blocked tasks as "satisfied" for batching only so pending tasks
-    # that depend on them can still be scheduled; without this, compute_task_batches
-    # raises "Unknown dependency ID" because blocked tasks are neither in the
-    # filtered pending list nor in completed. The actual blockage is surfaced
-    # to supervisors via warnings below.
+    if blocked_task_ids:
+        blocked_list = ", ".join(sorted(blocked_task_ids))
+        summary = (
+            f"Blocked: existing blocked task(s) prevent dependent execution: {blocked_list}. "
+            "Resolve or replan the blocked task(s) before continuing."
+        )
+        append_history(
+            state,
+            make_history_entry(
+                "execute",
+                duration_ms=0,
+                cost_usd=0.0,
+                result="blocked",
+                message=summary,
+            ),
+        )
+        save_state_merge_meta(plan_dir, state)
+        response: StepResponse = {
+            "success": False,
+            "step": "execute",
+            "summary": summary,
+            "artifacts": ["finalize.json", "final.md"],
+            "monitor_hint": build_monitor_hint(plan_dir),
+            "next_step": "execute",
+            "state": STATE_FINALIZED,
+            "files_changed": [],
+            "deviations": [],
+            "warnings": [summary],
+            "auto_approve": auto_approve,
+            "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+            "blocked_task_ids": sorted(blocked_task_ids),
+        }
+        _attach_next_step_runtime(response)
+        return response
+
     pending_batches = compute_task_batches(
-        pending_tasks, completed_ids=completed_task_ids | blocked_task_ids
+        pending_tasks, completed_ids=completed_task_ids
     )
     single_batch_mode = len(pending_batches) <= 1
     global_batches = compute_global_batches(finalize_data)

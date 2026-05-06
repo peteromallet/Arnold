@@ -2203,3 +2203,34 @@ def test_batch_1_incomplete_tracking_returns_blocked(
     )
     assert finalize_data["tasks"][0]["status"] == "pending"
     assert state["history"][-1]["result"] == "blocked"
+
+def test_execute_auto_loop_stops_when_existing_task_is_blocked(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"][0]["status"] = "blocked"
+    finalize_data["tasks"][0]["executor_notes"] = "Awaiting live canary trigger evidence."
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    def worker_should_not_run(*_args, **_kwargs):
+        raise AssertionError("execute auto loop must not run dependent batches after a blocked task")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker_should_not_run)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    assert response["success"] is False
+    assert response["state"] == megaplan.STATE_FINALIZED
+    assert response["next_step"] == "execute"
+    assert response["blocked_task_ids"] == ["T1"]
+    assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
+    assert state["history"][-1]["result"] == "blocked"
