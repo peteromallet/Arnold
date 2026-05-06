@@ -226,7 +226,7 @@ def test_commit_phase_ignores_unclaimed_dirty_nested_files(tmp_path: Path) -> No
     (tmp_path / "README.md").write_text("root\n", encoding="utf-8")
     _git(tmp_path, "add", "README.md")
     _git(tmp_path, "commit", "-m", "init")
-    origin = tmp_path / "origin.git"
+    origin = tmp_path.parent / f"{tmp_path.name}-origin.git"
     origin.mkdir()
     _git(origin, "init", "--bare")
     _git(tmp_path, "remote", "add", "origin", str(origin))
@@ -258,6 +258,53 @@ def test_commit_phase_ignores_unclaimed_dirty_nested_files(tmp_path: Path) -> No
     )
 
     assert (nested / "unrelated.ts").read_text(encoding="utf-8") == "user work\n"
+
+
+def test_commit_phase_excludes_preexisting_dirty_root_files(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "checkout", "-b", "branch")
+    intended = tmp_path / "intended.txt"
+    unrelated = tmp_path / "unrelated.txt"
+    intended.write_text("base\n", encoding="utf-8")
+    unrelated.write_text("base\n", encoding="utf-8")
+    _git(tmp_path, "add", "intended.txt", "unrelated.txt")
+    _git(tmp_path, "commit", "-m", "init")
+    origin = tmp_path.parent / f"{tmp_path.name}-origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare")
+    _git(tmp_path, "remote", "add", "origin", str(origin))
+
+    intended.write_text("base\nplanned\n", encoding="utf-8")
+    unrelated.write_text("base\nuser dirty\n", encoding="utf-8")
+
+    _commit_and_push_phase(
+        tmp_path,
+        "branch",
+        "plan",
+        "execute",
+        writer=lambda _msg: None,
+        preexisting_dirty_paths=[unrelated],
+    )
+
+    committed = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    status = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert committed == ["intended.txt"]
+    assert " M unrelated.txt" in status
 
 
 # ---------------------------------------------------------------------------
@@ -815,7 +862,7 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
          patch("megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
          patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
-         patch("megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, *, writer: commits.append((branch, plan, phase))), \
+         patch("megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, **_kwargs: commits.append((branch, plan, phase))), \
          patch("megaplan.chain._pr_state", return_value="open"), \
          patch("megaplan.chain._mark_pr_ready") as ready, \
          patch("megaplan.chain._enable_auto_merge") as merge:

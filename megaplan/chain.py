@@ -648,7 +648,73 @@ def _dirty_nested_repos_from_claimed_paths(root: Path, plan_name: str, *, writer
     return dirty
 
 
-def _commit_and_push_phase(root: Path, branch: str, plan: str, phase: str, *, writer) -> None:
+def _is_gitlink_path(root: Path, rel_path: str) -> bool:
+    proc = subprocess.run(
+        ["git", "ls-files", "-s", "--", rel_path],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    first = proc.stdout.splitlines()[0] if proc.stdout.splitlines() else ""
+    return first.startswith("160000 ")
+
+
+def _dirty_worktree_paths(root: Path) -> list[Path]:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    paths: list[Path] = []
+    for line in proc.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        raw_path = line[3:]
+        candidates = raw_path.split(" -> ", 1) if " -> " in raw_path else [raw_path]
+        for path in candidates:
+            path = path.strip()
+            if path and not _is_gitlink_path(root, path):
+                paths.append(root / path)
+    return paths
+
+
+def _reset_staged_paths(root: Path, paths: list[Path], *, writer) -> None:
+    if not paths:
+        return
+    root_abs = root.resolve()
+    rel_paths: list[str] = []
+    for path in paths:
+        try:
+            rel_paths.append(path.resolve().relative_to(root_abs).as_posix())
+        except (OSError, ValueError):
+            continue
+    if rel_paths:
+        cmd = ["git", "reset", "--", *sorted(set(rel_paths))]
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+
+
+def _commit_and_push_phase(
+    root: Path,
+    branch: str,
+    plan: str,
+    phase: str,
+    *,
+    writer,
+    preexisting_dirty_paths: list[Path] | None = None,
+) -> None:
     """Commit any current diff and push the milestone branch."""
     dirty_nested = _dirty_nested_repos_from_claimed_paths(root, plan, writer=writer)
     if dirty_nested:
@@ -661,6 +727,7 @@ def _commit_and_push_phase(root: Path, branch: str, plan: str, phase: str, *, wr
             "a project_dir rooted at the repository being changed.",
         )
     _run_command(root, ["git", "add", "-A"], writer=writer, error_code="git_commit_failed")
+    _reset_staged_paths(root, preexisting_dirty_paths or [], writer=writer)
     staged = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
         cwd=str(root),
@@ -870,6 +937,7 @@ def run_chain(
     spec = load_spec(spec_path)
     validate_paths(spec, root)
     state = load_chain_state(spec_path)
+    preexisting_dirty_paths = _dirty_worktree_paths(root)
     push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
 
     events: list[dict[str, Any]] = []
@@ -983,14 +1051,28 @@ def run_chain(
             state.current_plan_name = plan_name
             save_chain_state(spec_path, state)
             if use_pr:
-                _commit_and_push_phase(root, milestone.branch or "", plan_name, "init", writer=writer)
+                _commit_and_push_phase(
+                    root,
+                    milestone.branch or "",
+                    plan_name,
+                    "init",
+                    writer=writer,
+                    preexisting_dirty_paths=preexisting_dirty_paths,
+                )
                 state.pr_number = _ensure_milestone_pr(root, milestone, writer=writer)
                 state.pr_state = "open"
                 save_chain_state(spec_path, state)
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
-                _commit_and_push_phase(root, milestone.branch, plan_name, phase, writer=writer)
+                _commit_and_push_phase(
+                    root,
+                    milestone.branch,
+                    plan_name,
+                    phase,
+                    writer=writer,
+                    preexisting_dirty_paths=preexisting_dirty_paths,
+                )
 
         outcome = _drive_plan(
             root,
@@ -1018,7 +1100,14 @@ def run_chain(
             save_chain_state(spec_path, state)
             continue
         if decision == "advance" and use_pr and state.pr_number is not None:
-            _commit_and_push_phase(root, milestone.branch or "", plan_name, "done", writer=writer)
+            _commit_and_push_phase(
+                root,
+                milestone.branch or "",
+                plan_name,
+                "done",
+                writer=writer,
+                preexisting_dirty_paths=preexisting_dirty_paths,
+            )
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"
