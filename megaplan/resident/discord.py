@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import logging
 import os
 from typing import Any
 
 from .auth import AuthorizationSubject
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,7 @@ class ResidentDiscordService:
         except ImportError as exc:
             raise RuntimeError("discord.py is required for `megaplan resident discord`") from exc
 
+        logging.basicConfig(level=os.environ.get("MEGAPLAN_LOG_LEVEL", "INFO").upper())
         intents = discord.Intents.default()
         intents.message_content = True
         client = discord.Client(intents=intents)
@@ -146,13 +150,36 @@ class ResidentDiscordService:
             outbound = getattr(self.runtime, "outbound", None)
             if isinstance(outbound, DiscordOutboundSink):
                 outbound.bind_client(client)
-            await self.runtime.recover_abandoned_turns()
+            recovered = await self.runtime.recover_abandoned_turns()
+            user = getattr(client, "user", None)
+            guilds = getattr(client, "guilds", ())
+            LOGGER.info(
+                "Resident Discord service ready user_id=%s guild_count=%s recovered_turns=%s",
+                getattr(user, "id", None),
+                len(guilds),
+                recovered,
+            )
 
         @client.event
         async def on_message(message: Any) -> None:
             if getattr(getattr(message, "author", None), "bot", False):
                 return
-            await self.runtime.receive(DiscordInboundMessage.from_discord_message(message).to_inbound_event())
+            try:
+                inbound = DiscordInboundMessage.from_discord_message(message)
+                LOGGER.info(
+                    "Resident Discord inbound message_id=%s author_id=%s conversation_key=%s content_length=%s",
+                    inbound.message_id,
+                    inbound.author_id,
+                    inbound.target.conversation_key,
+                    len(inbound.content),
+                )
+                await self.runtime.receive(inbound.to_inbound_event())
+            except Exception:
+                LOGGER.exception("Resident Discord message handling failed")
+
+        @client.event
+        async def on_error(event_method: str, *args: Any, **kwargs: Any) -> None:
+            LOGGER.exception("Resident Discord client event failed: %s", event_method)
 
         await client.start(self.token)
 
