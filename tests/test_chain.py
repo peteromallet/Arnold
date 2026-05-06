@@ -815,6 +815,7 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
          patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
          patch("megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, *, writer: commits.append((branch, plan, phase))), \
+         patch("megaplan.chain._pr_state", return_value="open"), \
          patch("megaplan.chain._mark_pr_ready") as ready, \
          patch("megaplan.chain._enable_auto_merge") as merge:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
@@ -860,6 +861,33 @@ def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: P
     assert "falling back" in "".join(messages)
 
 
+def test_run_chain_advances_when_pr_already_merged(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}]},
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    with patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._checkout_milestone_branch"), \
+         patch("megaplan.chain._ensure_milestone_pr", return_value=17), \
+         patch("megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._pr_state", return_value="merged"), \
+         patch("megaplan.chain._mark_pr_ready") as ready, \
+         patch("megaplan.chain._enable_auto_merge") as merge:
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    ready.assert_not_called()
+    merge.assert_not_called()
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 1
+    assert saved.completed[0]["pr_state"] == "merged"
+
+
 def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Path) -> None:
     i1 = _touch_idea(tmp_path, "m1.txt")
     i2 = _touch_idea(tmp_path, "m2.txt")
@@ -881,6 +909,7 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
          patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
          patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._pr_state", return_value="open"), \
          patch("megaplan.chain._mark_pr_ready"):
         first = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
