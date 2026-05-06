@@ -34,6 +34,7 @@ from megaplan.schemas import (
     CodeArtifact,
     Codebase,
     ControlMessage,
+    CloudRun,
     Epic,
     EpicEvent,
     EpicLock,
@@ -46,6 +47,8 @@ from megaplan.schemas import (
     MigrationRun,
     Plan,
     ProgressEvent,
+    ResidentConversation,
+    ScheduledJob,
     SecondOpinion,
     Sprint,
     SprintItem,
@@ -59,17 +62,20 @@ from .base import (
     ArtifactStat,
     ChecklistItemInput,
     ControlMessageInput,
+    CloudRunInput,
     EpicSummary,
     HotContext,
     LeaseConflict,
     LockConflict,
     MessageSearchHit,
     ProgressEventInput,
+    ResidentConversationInput,
     RevisionConflict,
     SprintItemInput,
     SprintWithItems,
     Store,
     StoreError,
+    ScheduledJobInput,
     Transaction,
     validate_plan_artifact_name,
 )
@@ -351,6 +357,15 @@ class FileStore(Store):
     def _progress_events_dir(self) -> Path:
         return self.root / "progress_events"
 
+    def _resident_conversations_dir(self) -> Path:
+        return self.root / "resident_conversations"
+
+    def _scheduled_jobs_dir(self) -> Path:
+        return self.root / "scheduled_jobs"
+
+    def _cloud_runs_dir(self) -> Path:
+        return self.root / "cloud_runs"
+
     def _automation_actors_dir(self) -> Path:
         return self.root / "automation_actors"
 
@@ -398,6 +413,15 @@ class FileStore(Store):
 
     def _progress_event_path(self, event_id: str) -> Path:
         return self._progress_events_dir() / f"{event_id}.json"
+
+    def _resident_conversation_path(self, conversation_id: str) -> Path:
+        return self._resident_conversations_dir() / f"{conversation_id}.json"
+
+    def _scheduled_job_path(self, job_id: str) -> Path:
+        return self._scheduled_jobs_dir() / f"{job_id}.json"
+
+    def _cloud_run_path(self, run_id: str) -> Path:
+        return self._cloud_runs_dir() / f"{run_id}.json"
 
     def _automation_actor_path(self, actor_id: str) -> Path:
         return self._automation_actors_dir() / f"{actor_id}.json"
@@ -582,6 +606,15 @@ class FileStore(Store):
 
     def _progress_events(self) -> list[ProgressEvent]:
         return self._iter_models(self._progress_events_dir(), ProgressEvent)
+
+    def _resident_conversations(self) -> list[ResidentConversation]:
+        return self._iter_models(self._resident_conversations_dir(), ResidentConversation)
+
+    def _scheduled_jobs(self) -> list[ScheduledJob]:
+        return self._iter_models(self._scheduled_jobs_dir(), ScheduledJob)
+
+    def _cloud_runs(self) -> list[CloudRun]:
+        return self._iter_models(self._cloud_runs_dir(), CloudRun)
 
     def _automation_actors(self) -> list[AutomationActor]:
         return self._iter_models(self._automation_actors_dir(), AutomationActor)
@@ -1371,13 +1404,20 @@ class FileStore(Store):
         audio_storage_url: str | None = None,
         transcription_metadata: dict[str, Any] | None = None,
         synthesize_outbound_id: bool = True,
+        conversation_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> Message:
+        if idempotency_key is not None:
+            for existing in self._messages():
+                if existing.idempotency_key == idempotency_key:
+                    return existing
         if synthesize_outbound_id and direction == "outbound" and discord_message_id is None and bot_turn_id:
             discord_message_id = self._next_invocation_message_id(bot_turn_id)
         message = Message(
             id=_new_id("msg"),
             epic_id=epic_id,
+            conversation_id=conversation_id,
+            idempotency_key=idempotency_key,
             direction=direction,
             content=content,
             sent_at=utc_now(),
@@ -2564,6 +2604,53 @@ class FileStore(Store):
             )
         return claimed
 
+    def recover_stale_control_messages(
+        self,
+        *,
+        processor_id: str,
+        older_than_seconds: int,
+        max: int = 10,
+        idempotency_key: str | None = None,
+    ) -> list[ControlMessage]:
+        cutoff = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
+        stale = [
+            row
+            for row in self._control_messages()
+            if row.processed_at is None
+            and row.claimed_at is not None
+            and row.claimed_at <= cutoff
+        ]
+        stale.sort(key=lambda row: (_utc_key(row.claimed_at), row.id))
+        recovered: list[ControlMessage] = []
+        for row in stale[:max]:
+            recovered.append(
+                self._update_model(
+                    self._control_message_path(row.id),
+                    ControlMessage,
+                    journal_root=self.root,
+                    processor_id=processor_id,
+                    claimed_at=utc_now(),
+                )
+            )
+        return recovered
+
+    def list_stale_control_messages(
+        self,
+        *,
+        older_than_seconds: int,
+        limit: int = 10,
+    ) -> list[ControlMessage]:
+        cutoff = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
+        stale = [
+            row
+            for row in self._control_messages()
+            if row.processed_at is None
+            and row.claimed_at is not None
+            and row.claimed_at <= cutoff
+        ]
+        stale.sort(key=lambda row: (_utc_key(row.claimed_at), row.id))
+        return stale[:limit]
+
     def mark_control_message_processed(self, msg_id: str, result: dict[str, Any],
         *,
         idempotency_key: str | None = None,
@@ -2575,6 +2662,249 @@ class FileStore(Store):
             result=result,
             processed_at=utc_now(),
         )
+
+    # ------------------------------------------------------------------
+    # Resident orchestration
+    # ------------------------------------------------------------------
+
+    def upsert_resident_conversation(
+        self,
+        conversation: ResidentConversationInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ResidentConversation:
+        existing = self.get_resident_conversation_by_key(
+            transport=conversation.transport,
+            conversation_key=conversation.conversation_key,
+        )
+        now = utc_now()
+        data = conversation.model_dump(mode="python")
+        if existing is not None:
+            changes = {
+                key: value
+                for key, value in data.items()
+                if key not in {"transport", "conversation_key"} and value is not None
+            }
+            changes["updated_at"] = now
+            return self._update_model(
+                self._resident_conversation_path(existing.id),
+                ResidentConversation,
+                journal_root=self.root,
+                **changes,
+            )
+        resident = ResidentConversation(
+            id=_new_id("rconv"),
+            **data,
+            created_at=now,
+            updated_at=now,
+            last_active_at=now,
+        )
+        self._save_model(self._resident_conversation_path(resident.id), resident, journal_root=self.root)
+        return resident
+
+    def load_resident_conversation(self, conversation_id: str) -> ResidentConversation | None:
+        return self._load_model(self._resident_conversation_path(conversation_id), ResidentConversation)
+
+    def get_resident_conversation_by_key(
+        self,
+        *,
+        transport: str,
+        conversation_key: str,
+    ) -> ResidentConversation | None:
+        for row in self._resident_conversations():
+            if row.transport == transport and row.conversation_key == conversation_key:
+                return row
+        return None
+
+    def list_resident_conversations(
+        self,
+        *,
+        transport: str | None = None,
+        active_epic_id: str | None = None,
+        limit: int = 50,
+    ) -> list[ResidentConversation]:
+        rows = self._resident_conversations()
+        if transport is not None:
+            rows = [row for row in rows if row.transport == transport]
+        if active_epic_id is not None:
+            rows = [row for row in rows if row.active_epic_id == active_epic_id]
+        rows.sort(key=lambda row: (_utc_key(row.last_active_at), row.id), reverse=True)
+        return rows[:limit]
+
+    def update_resident_conversation(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> ResidentConversation:
+        changes.setdefault("updated_at", utc_now())
+        return self._update_model(
+            self._resident_conversation_path(conversation_id),
+            ResidentConversation,
+            journal_root=self.root,
+            **changes,
+        )
+
+    def create_scheduled_job(
+        self,
+        job: ScheduledJobInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ScheduledJob:
+        scheduled = ScheduledJob(
+            id=_new_id("job"),
+            **job.model_dump(mode="python"),
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        self._save_model(self._scheduled_job_path(scheduled.id), scheduled, journal_root=self.root)
+        return scheduled
+
+    def load_scheduled_job(self, job_id: str) -> ScheduledJob | None:
+        return self._load_model(self._scheduled_job_path(job_id), ScheduledJob)
+
+    def update_scheduled_job(
+        self,
+        job_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> ScheduledJob:
+        changes.setdefault("updated_at", utc_now())
+        return self._update_model(
+            self._scheduled_job_path(job_id),
+            ScheduledJob,
+            journal_root=self.root,
+            **changes,
+        )
+
+    def claim_due_scheduled_jobs(
+        self,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        stale_after_seconds: int | None = None,
+        max: int = 10,
+        job_type: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> list[ScheduledJob]:
+        effective_now = now or utc_now()
+        stale_cutoff = (
+            effective_now - timedelta(seconds=stale_after_seconds)
+            if stale_after_seconds is not None
+            else None
+        )
+        due: list[ScheduledJob] = []
+        for row in self._scheduled_jobs():
+            if job_type is not None and row.job_type != job_type:
+                continue
+            pending_due = row.status == "pending" and row.scheduled_for <= effective_now
+            stale_claim = (
+                row.status == "claimed"
+                and stale_cutoff is not None
+                and row.claimed_at is not None
+                and row.claimed_at <= stale_cutoff
+            )
+            if pending_due or stale_claim:
+                due.append(row)
+        due.sort(key=lambda row: (_utc_key(row.scheduled_for), row.id))
+        claimed: list[ScheduledJob] = []
+        for row in due[:max]:
+            claimed.append(
+                self.update_scheduled_job(
+                    row.id,
+                    status="claimed",
+                    claimed_by=worker_id,
+                    claimed_at=effective_now,
+                    attempt_count=row.attempt_count + 1,
+                    idempotency_key=idempotency_key,
+                )
+            )
+        return claimed
+
+    def list_scheduled_jobs(
+        self,
+        *,
+        conversation_id: str | None = None,
+        cloud_run_id: str | None = None,
+        status: str | None = None,
+        job_type: str | None = None,
+        limit: int = 50,
+    ) -> list[ScheduledJob]:
+        rows = self._scheduled_jobs()
+        if conversation_id is not None:
+            rows = [row for row in rows if row.conversation_id == conversation_id]
+        if cloud_run_id is not None:
+            rows = [row for row in rows if row.cloud_run_id == cloud_run_id]
+        if status is not None:
+            rows = [row for row in rows if row.status == status]
+        if job_type is not None:
+            rows = [row for row in rows if row.job_type == job_type]
+        rows.sort(key=lambda row: (_utc_key(row.scheduled_for), row.id), reverse=True)
+        return rows[:limit]
+
+    def create_cloud_run(
+        self,
+        run: CloudRunInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> CloudRun:
+        effective_key = idempotency_key or run.idempotency_key
+        if effective_key is not None:
+            for existing in self._cloud_runs():
+                if existing.idempotency_key == effective_key:
+                    return existing
+        cloud_run = CloudRun(
+            id=_new_id("cloud"),
+            **{**run.model_dump(mode="python"), "idempotency_key": effective_key},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        self._save_model(self._cloud_run_path(cloud_run.id), cloud_run, journal_root=self.root)
+        return cloud_run
+
+    def load_cloud_run(self, run_id: str) -> CloudRun | None:
+        return self._load_model(self._cloud_run_path(run_id), CloudRun)
+
+    def update_cloud_run(
+        self,
+        run_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> CloudRun:
+        changes.setdefault("updated_at", utc_now())
+        return self._update_model(
+            self._cloud_run_path(run_id),
+            CloudRun,
+            journal_root=self.root,
+            **changes,
+        )
+
+    def list_cloud_runs(
+        self,
+        *,
+        conversation_id: str | None = None,
+        epic_id: str | None = None,
+        plan_id: str | None = None,
+        sprint_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[CloudRun]:
+        rows = self._cloud_runs()
+        if conversation_id is not None:
+            rows = [row for row in rows if row.conversation_id == conversation_id]
+        if epic_id is not None:
+            rows = [row for row in rows if row.epic_id == epic_id]
+        if plan_id is not None:
+            rows = [row for row in rows if row.plan_id == plan_id]
+        if sprint_id is not None:
+            rows = [row for row in rows if row.sprint_id == sprint_id]
+        if status is not None:
+            rows = [row for row in rows if row.status == status]
+        rows.sort(key=lambda row: (_utc_key(row.created_at), row.id), reverse=True)
+        return rows[:limit]
 
     def append_progress_event(self, event: ProgressEventInput,
         *,

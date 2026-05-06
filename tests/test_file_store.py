@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from megaplan.editorial.body import update_body
-from megaplan.store import FileStore, LocalDirBlobStore, deterministic_idempotency_key
+from megaplan.store import (
+    CloudRunInput,
+    FileStore,
+    LocalDirBlobStore,
+    ResidentConversationInput,
+    ScheduledJobInput,
+    deterministic_idempotency_key,
+)
 from megaplan.store import ChecklistItemInput, RevisionConflict, StoreError
 from megaplan.store.snapshot import canonical_sha256
 from megaplan.tests.store_contract import run_arnold_adapter_contract, run_store_contract
@@ -43,6 +51,88 @@ def test_file_store_places_orphan_plans_under_orphan_root(tmp_path: Path) -> Non
     assert (tmp_path / "store" / "orphan_plans" / plan.id / "plan.json").exists()
     assert (tmp_path / "store" / "turns" / f"{turn.id}.json").exists()
     assert (tmp_path / "store" / "messages" / f"{message.id}.json").exists()
+
+
+def test_file_store_resident_rows_claiming_and_message_idempotency(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Body")
+
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:g1:c1",
+            active_epic_id=epic.id,
+            guild_id="g1",
+            channel_id="c1",
+            metadata={"mode": "test"},
+        )
+    )
+    same_conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:g1:c1",
+            active_epic_id=epic.id,
+            guild_id="g1",
+            channel_id="c1",
+            metadata={"mode": "updated"},
+        )
+    )
+    assert same_conversation.id == conversation.id
+    assert store.get_resident_conversation_by_key(transport="discord", conversation_key="discord:g1:c1").id == conversation.id
+
+    first = store.create_message(
+        epic_id=epic.id,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="hello",
+        idempotency_key="discord-message-1",
+    )
+    duplicate = store.create_message(
+        epic_id=epic.id,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="duplicate delivery",
+        idempotency_key="discord-message-1",
+    )
+    assert duplicate.id == first.id
+    assert duplicate.content == "hello"
+
+    run = store.create_cloud_run(
+        CloudRunInput(
+            operation="status",
+            conversation_id=conversation.id,
+            epic_id=epic.id,
+            provider="fake",
+            idempotency_key="cloud-run-1",
+        ),
+        idempotency_key="cloud-run-1",
+    )
+    assert store.create_cloud_run(
+        CloudRunInput(operation="status", conversation_id=conversation.id, epic_id=epic.id, idempotency_key="cloud-run-1"),
+        idempotency_key="cloud-run-1",
+    ).id == run.id
+
+    due = store.create_scheduled_job(
+        ScheduledJobInput(
+            job_type="cloud_check",
+            conversation_id=conversation.id,
+            cloud_run_id=run.id,
+            epic_id=epic.id,
+            scheduled_for=datetime.now(UTC) - timedelta(seconds=1),
+        )
+    )
+    claimed = store.claim_due_scheduled_jobs(worker_id="worker-a", max=10)
+    assert [job.id for job in claimed] == [due.id]
+    assert claimed[0].claimed_by == "worker-a"
+    assert claimed[0].attempt_count == 1
+
+    stale = store.update_scheduled_job(
+        due.id,
+        status="claimed",
+        claimed_by="worker-old",
+        claimed_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
+    reclaimed = store.claim_due_scheduled_jobs(worker_id="worker-b", stale_after_seconds=60)
+    assert [job.id for job in reclaimed] == [stale.id]
+    assert reclaimed[0].claimed_by == "worker-b"
 
 
 def test_file_store_plan_artifacts_are_recursive_and_path_safe(tmp_path: Path) -> None:
