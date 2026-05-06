@@ -6,7 +6,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-ToolOperationKind = Literal["read", "write", "cloud_read", "cloud_start", "control"]
+ToolOperationKind = Literal[
+    "read",
+    "write",
+    "cloud_read",
+    "cloud_start",
+    "control",
+    "repo_write",
+    "artifact_write",
+    "export",
+    "archive_logs",
+    "reconcile_apply",
+]
 
 
 class ToolInput(BaseModel):

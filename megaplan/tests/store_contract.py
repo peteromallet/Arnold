@@ -255,19 +255,25 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
         owner="openai",
         name="megaplan",
         default_branch="main",
+        repo_url="https://github.com/openai/megaplan.git",
+        repo_workspace="/workspace/megaplan",
         group_name="backend",
         idempotency_key=idem("contract", "codebase", "create"),
     )
     assert store.find_codebase("openai", "megaplan").id == codebase.id
-    assert (
-        store.upsert_codebase(
-            owner="openai",
-            name="megaplan",
-            default_branch="trunk",
-            idempotency_key=idem("contract", "codebase", "upsert"),
-        ).default_branch
-        == "trunk"
+    assert store.load_codebase(codebase.id).repo_url == "https://github.com/openai/megaplan.git"
+    assert store.load_codebase(codebase.id).repo_workspace == "/workspace/megaplan"
+    upserted_codebase = store.upsert_codebase(
+        owner="openai",
+        name="megaplan",
+        default_branch="trunk",
+        repo_url="git@github.com:openai/megaplan.git",
+        repo_workspace="/workspace/megaplan-next",
+        idempotency_key=idem("contract", "codebase", "upsert"),
     )
+    assert upserted_codebase.default_branch == "trunk"
+    assert upserted_codebase.repo_url == "git@github.com:openai/megaplan.git"
+    assert upserted_codebase.repo_workspace == "/workspace/megaplan-next"
     artifact = store.create_code_artifact(
         kind="excerpt",
         source="codebase",

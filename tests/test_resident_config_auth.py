@@ -36,6 +36,7 @@ def test_resident_config_loads_allowlists_and_runtime_settings_from_env() -> Non
             "MEGAPLAN_RESIDENT_CONFIRMATION_EXPIRY_S": "60",
             "MEGAPLAN_RESIDENT_REQUIRE_CLOUD_CONFIRMATION": "false",
             "MEGAPLAN_RESIDENT_CLOUD_YAML": "ops/cloud.yaml",
+            "MEGAPLAN_RESIDENT_EXPORT_ROOT": "ops/exports",
         }
     )
 
@@ -60,6 +61,7 @@ def test_resident_config_loads_allowlists_and_runtime_settings_from_env() -> Non
     assert config.confirmation_expiry_s == 60
     assert config.require_cloud_start_confirmation is False
     assert str(config.cloud_yaml_path) == "ops/cloud.yaml"
+    assert str(config.resident_export_root) == "ops/exports"
 
 
 def test_resident_config_accepts_arnold_v2_discord_user_whitelist_fallback() -> None:
@@ -114,6 +116,10 @@ def test_cloud_start_requires_admin_and_exact_confirmation() -> None:
     assert authorizer.authorize_action(ordinary, "cloud_start").reason == "admin_required"
     assert authorizer.authorize_action(admin, "cloud_start").allowed is True
     assert manager.required_for("cloud_start") is True
+    for action in ("repo_write", "artifact_write", "export", "archive_logs", "reconcile_apply"):
+        assert authorizer.authorize_action(ordinary, action).reason == "admin_required"
+        assert authorizer.authorize_action(admin, action).allowed is True
+        assert manager.required_for(action) is True
 
     now = datetime(2026, 5, 6, tzinfo=UTC)
     request = manager.request_confirmation(
@@ -124,7 +130,8 @@ def test_cloud_start_requires_admin_and_exact_confirmation() -> None:
         now=now,
     )
     assert request.exact_phrase.startswith("confirm cloud_start ")
-    assert "chain production" not in request.exact_phrase
+    assert "chain production" in request.exact_phrase
+    assert "should-not-be-echoed" not in request.exact_phrase
     assert manager.confirm(request_id=request.id, subject=admin, phrase="confirm cloud_start wrong", now=now).allowed is False
     assert manager.confirm(request_id=request.id, subject=ordinary, phrase=request.exact_phrase, now=now).reason == "confirmation_user_mismatch"
 

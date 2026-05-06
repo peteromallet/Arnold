@@ -235,7 +235,7 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "bot_turns": frozenset({"id", "epic_id", "triggered_by_message_ids", "prompt_snapshot", "prompt_version", "state_at_turn", "status", "started_at", "completed_at", "model_version", "warnings_issued"}),
     "checklist_items": frozenset({"id", "epic_id", "content", "status", "position", "source", "skip_reason", "superseded_by_item_id", "created_at", "completed_at"}),
     "code_artifacts": frozenset({"id", "codebase_id", "epic_id", "kind", "source", "file_path", "line_range", "scope", "content", "content_summary", "metadata", "created_at", "last_used_at", "expires_at"}),
-    "codebases": frozenset({"id", "owner", "name", "default_branch", "scope", "group_name", "associated_epic_id", "added_at", "added_via", "last_accessed_at", "verified_accessible_at", "notes"}),
+    "codebases": frozenset({"id", "owner", "name", "repo_url", "repo_workspace", "default_branch", "scope", "group_name", "associated_epic_id", "added_at", "added_via", "last_accessed_at", "verified_accessible_at", "notes"}),
     "control_messages": frozenset({"id", "epic_id", "actor_id", "intent", "target_id", "payload", "idempotency_key", "created_at", "processor_id", "claimed_at", "processed_at", "result"}),
     "cloud_runs": frozenset({"id", "operation", "status", "conversation_id", "epic_id", "sprint_id", "plan_id", "provider", "provider_run_id", "target_id", "command_summary", "progress_summary", "last_status", "metadata", "idempotency_key", "started_by_actor_id", "started_at", "last_checked_at", "completed_at", "created_at", "updated_at"}),
     "epic_events": frozenset({
@@ -1782,6 +1782,8 @@ class DBStore:
         owner: str,
         name: str,
         default_branch: str,
+        repo_url: str | None = None,
+        repo_workspace: str | None = None,
         scope: str = "global",
         group_name: str | None = None,
         associated_epic_id: str | None = None,
@@ -1795,14 +1797,14 @@ class DBStore:
         row = conn.execute(
             """
             INSERT INTO codebases
-                (id, owner, name, default_branch, scope, group_name,
+                (id, owner, name, repo_url, repo_workspace, default_branch, scope, group_name,
                  associated_epic_id, added_via, verified_accessible_at, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             [
                 codebase_id or str(uuid.uuid4()),
-                owner.lower(), name.lower(), default_branch, scope, group_name,
+                owner.lower(), name.lower(), repo_url, repo_workspace, default_branch, scope, group_name,
                 associated_epic_id, added_via, verified_accessible_at, notes,
             ],
         ).fetchone()
@@ -1814,6 +1816,8 @@ class DBStore:
         owner: str,
         name: str,
         default_branch: str,
+        repo_url: str | None = None,
+        repo_workspace: str | None = None,
         scope: str = "global",
         group_name: str | None = None,
         associated_epic_id: str | None = None,
@@ -1826,10 +1830,12 @@ class DBStore:
         row = conn.execute(
             """
             INSERT INTO codebases
-                (id, owner, name, default_branch, scope, group_name,
+                (id, owner, name, repo_url, repo_workspace, default_branch, scope, group_name,
                  associated_epic_id, added_via, verified_accessible_at, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (lower(owner), lower(name)) DO UPDATE SET
+                repo_url             = EXCLUDED.repo_url,
+                repo_workspace       = EXCLUDED.repo_workspace,
                 default_branch       = EXCLUDED.default_branch,
                 scope                = EXCLUDED.scope,
                 group_name           = EXCLUDED.group_name,
@@ -1841,7 +1847,7 @@ class DBStore:
             """,
             [
                 str(uuid.uuid4()),
-                owner.lower(), name.lower(), default_branch, scope, group_name,
+                owner.lower(), name.lower(), repo_url, repo_workspace, default_branch, scope, group_name,
                 associated_epic_id, added_via, verified_accessible_at, notes,
             ],
         ).fetchone()

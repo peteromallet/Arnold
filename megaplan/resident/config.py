@@ -42,6 +42,7 @@ class ResidentConfig(BaseModel):
     confirmation_expiry_s: float = Field(default=900.0, gt=0)
     require_cloud_start_confirmation: bool = True
     cloud_yaml_path: Path = Path("cloud.yaml")
+    resident_export_root: Path = Path(".megaplan/resident_exports")
 
     @field_validator(
         "allowed_guild_ids",
@@ -90,6 +91,7 @@ class ResidentConfig(BaseModel):
                 True,
             ),
             cloud_yaml_path=Path(env.get("MEGAPLAN_RESIDENT_CLOUD_YAML", "cloud.yaml")),
+            resident_export_root=Path(env.get("MEGAPLAN_RESIDENT_EXPORT_ROOT", ".megaplan/resident_exports")),
         )
 
     @property

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -191,7 +192,32 @@ def test_megaplan_profile_editorial_and_control_tools_validate_and_deny(tmp_path
     profile = MegaplanResidentProfile(store=store, authorizer=authorizer)
     names = {tool.name for tool in profile.tools().list()}
     assert {"read_epic", "edit_epic_body", "run_sprint_on_cloud", "approve_gate", "reject_gate"}.issubset(names)
-    assert not {"shell", "remote_shell", "exec", "remote_exec"} & names
+    assert {
+        "search_messages",
+        "search_epics",
+        "search_plans",
+        "search_code_artifacts",
+        "list_codebases",
+        "register_codebase",
+        "add_repo",
+        "reconcile_epic",
+        "reconcile_plan_storage",
+        "list_repos",
+        "read_plan_artifact",
+        "write_plan_artifact",
+        "export_epic_bundle",
+        "archive_cloud_logs",
+        "cloud_start_chain",
+        "cloud_bootstrap",
+    }.issubset(names)
+    assert not {"shell", "remote_shell", "exec", "remote_exec", "clone", "remote_command", "filesystem_write"} & names
+
+    catalog = {tool.name: tool for tool in profile.tools().list()}
+    assert catalog["register_codebase"].operation_kind == "repo_write"
+    assert catalog["write_plan_artifact"].operation_kind == "artifact_write"
+    assert catalog["export_epic_bundle"].operation_kind == "export"
+    assert catalog["archive_cloud_logs"].operation_kind == "archive_logs"
+    assert catalog["reconcile_epic"].operation_kind == "reconcile_apply"
 
     select = profile.tools().get("select_epic").handler(
         profile.tools().get("select_epic").input_model(
@@ -416,3 +442,195 @@ def test_megaplan_profile_cloud_check_tools_are_durable_and_authorized(tmp_path:
         )
     )
     assert [row["id"] for row in cancelled_list.data["scheduled_jobs"]] == [job_id]
+
+
+def test_megaplan_profile_store_search_and_code_artifact_results_are_bounded(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig(allowed_user_ids=("user",), admin_user_ids=("admin",))
+    profile = MegaplanResidentProfile(store=store, authorizer=ResidentAuthorizer(config), config=config)
+    epic = store.create_epic(title="Search Epic", goal="Find resident data", body="Body mentions needle")
+    conversation = store.upsert_resident_conversation(
+        conversation=ResidentConversationInput(conversation_key="discord:guild:g:channel:c", active_epic_id=epic.id)
+    )
+    store.create_message(epic_id=epic.id, conversation_id=conversation.id, direction="inbound", content="needle in a message")
+    plan = store.create_plan(sprint_id=None, epic_id=epic.id, name="needle-plan", idea="plan idea needle")
+    codebase = store.create_codebase(
+        owner="openai",
+        name="megaplan",
+        default_branch="main",
+        repo_url="https://github.com/openai/megaplan.git",
+    )
+    artifact = store.create_code_artifact(
+        kind="excerpt",
+        source="codebase",
+        content="needle secret full content should not be returned " * 20,
+        codebase_id=codebase.id,
+        epic_id=epic.id,
+        file_path="src/app.py",
+        content_summary="summary needle",
+        metadata={"language": "python", "unsafe_nested": {"secret": "nope"}},
+    )
+
+    messages = profile.tools().get("search_messages").handler(
+        profile.tools().get("search_messages").input_model(actor_user_id="user", query="needle", conversation_id=conversation.id)
+    )
+    epics = profile.tools().get("search_epics").handler(
+        profile.tools().get("search_epics").input_model(actor_user_id="user", query="needle")
+    )
+    plans = profile.tools().get("search_plans").handler(
+        profile.tools().get("search_plans").input_model(actor_user_id="user", query="needle", epic_id=epic.id)
+    )
+    codebases = profile.tools().get("list_codebases").handler(
+        profile.tools().get("list_codebases").input_model(actor_user_id="user")
+    )
+    repos = profile.tools().get("list_repos").handler(profile.tools().get("list_repos").input_model(actor_user_id="user"))
+    artifacts = profile.tools().get("search_code_artifacts").handler(
+        profile.tools().get("search_code_artifacts").input_model(actor_user_id="user", query="needle", epic_id=epic.id)
+    )
+
+    assert messages.ok is True and messages.data["messages"][0]["conversation_id"] == conversation.id
+    assert epics.ok is True and epics.data["epics"][0]["id"] == epic.id
+    assert plans.ok is True and plans.data["plans"][0]["id"] == plan.id
+    assert codebases.ok is True and codebases.data["codebases"][0]["repo_url"] == "https://github.com/openai/megaplan.git"
+    assert repos.ok is True and repos.data["repos"][0]["repo_url"] == "https://github.com/openai/megaplan.git"
+    assert artifacts.ok is True
+    result = artifacts.data["artifacts"][0]
+    assert result["id"] == artifact.id
+    assert "content" not in result
+    assert len(result["snippet"]) <= 323
+    assert result["metadata"] == {"language": "python"}
+    assert "unsafe_nested" in result["metadata_keys"]
+
+
+def test_megaplan_profile_register_repo_requires_confirmation_and_validates_url(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig(allowed_user_ids=("user", "admin"), admin_user_ids=("admin",))
+    profile = MegaplanResidentProfile(store=store, authorizer=ResidentAuthorizer(config), config=config)
+    tool = profile.tools().get("register_codebase")
+
+    denied = tool.handler(
+        tool.input_model(actor_user_id="user", owner="openai", name="megaplan", repo_url="https://github.com/openai/megaplan.git")
+    )
+    assert denied.ok is False
+    assert denied.data["authorization_denied"] is True
+
+    invalid = tool.handler(
+        tool.input_model(actor_user_id="admin", owner="openai", name="megaplan", repo_url="file:///tmp/repo")
+    )
+    assert invalid.ok is False
+    assert invalid.data["validation_error"] is True
+
+    needs_confirmation = tool.handler(
+        tool.input_model(
+            actor_user_id="admin",
+            owner="openai",
+            name="megaplan",
+            repo_url="git@github.com:openai/megaplan.git",
+            repo_workspace="/workspace/megaplan",
+            default_branch="main",
+        )
+    )
+    assert needs_confirmation.ok is False
+    assert needs_confirmation.data["confirmation_required"] is True
+    assert store.find_codebase("openai", "megaplan") is None
+
+    registered = tool.handler(
+        tool.input_model(
+            actor_user_id="admin",
+            owner="openai",
+            name="megaplan",
+            repo_url="git@github.com:openai/megaplan.git",
+            repo_workspace="/workspace/megaplan",
+            default_branch="main",
+            confirmation_request_id=needs_confirmation.data["request_id"],
+            confirmation_phrase=needs_confirmation.data["exact_phrase"],
+        )
+    )
+    assert registered.ok is True
+    persisted = store.find_codebase("openai", "megaplan")
+    assert persisted.repo_url == "git@github.com:openai/megaplan.git"
+    assert persisted.repo_workspace == "/workspace/megaplan"
+
+
+def test_megaplan_profile_plan_artifacts_export_and_reconcile_are_guarded(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig(
+        allowed_user_ids=("user", "admin"),
+        admin_user_ids=("admin",),
+        resident_export_root=tmp_path / "exports",
+    )
+    profile = MegaplanResidentProfile(store=store, authorizer=ResidentAuthorizer(config), config=config)
+    epic = store.create_epic(title="Artifact Epic", goal="Artifacts", body="body")
+    plan = store.create_plan(sprint_id=None, epic_id=epic.id, name="artifact-plan", idea="artifact idea")
+
+    write_tool = profile.tools().get("write_plan_artifact")
+    read_tool = profile.tools().get("read_plan_artifact")
+    export_tool = profile.tools().get("export_epic_bundle")
+    reconcile_tool = profile.tools().get("reconcile_epic")
+    storage_tool = profile.tools().get("reconcile_plan_storage")
+
+    needs_write_confirmation = write_tool.handler(
+        write_tool.input_model(actor_user_id="admin", plan_id=plan.id, name="notes/state.txt", content_text="hello")
+    )
+    assert needs_write_confirmation.ok is False
+    assert store.read_plan_artifact(plan.id, "notes/state.txt") is None
+
+    written = write_tool.handler(
+        write_tool.input_model(
+            actor_user_id="admin",
+            plan_id=plan.id,
+            name="notes/state.txt",
+            content_text="hello",
+            confirmation_request_id=needs_write_confirmation.data["request_id"],
+            confirmation_phrase=needs_write_confirmation.data["exact_phrase"],
+        )
+    )
+    assert written.ok is True
+
+    read = read_tool.handler(read_tool.input_model(actor_user_id="user", plan_id=plan.id, name="notes/state.txt"))
+    assert read.ok is True
+    assert read.data["artifact"]["content_text"] == "hello"
+
+    binary_ref = store.write_plan_artifact(plan.id, "binary.bin", b"\x00\xff")
+    binary = read_tool.handler(read_tool.input_model(actor_user_id="user", plan_id=plan.id, name=binary_ref.name))
+    assert binary.ok is True
+    assert binary.data["artifact"]["binary"] is True
+    assert "content_text" not in binary.data["artifact"]
+
+    dry_run = reconcile_tool.handler(reconcile_tool.input_model(actor_user_id="user", epic_id=epic.id))
+    assert dry_run.ok is True
+    assert dry_run.data["summary"]["plan_count"] == 1
+    storage_dry_run = storage_tool.handler(storage_tool.input_model(actor_user_id="user", plan_id=plan.id))
+    assert storage_dry_run.ok is True
+    assert storage_dry_run.data["summary"]["plans"][0]["artifacts"]
+
+    needs_export_confirmation = export_tool.handler(export_tool.input_model(actor_user_id="admin", epic_id=epic.id))
+    assert needs_export_confirmation.ok is False
+    assert not list((tmp_path / "exports").glob("*.tar"))
+    exported = export_tool.handler(
+        export_tool.input_model(
+            actor_user_id="admin",
+            epic_id=epic.id,
+            confirmation_request_id=needs_export_confirmation.data["request_id"],
+            confirmation_phrase=needs_export_confirmation.data["exact_phrase"],
+        )
+    )
+    assert exported.ok is True
+    export_path = Path(exported.data["export"]["path"])
+    assert export_path.parent == (tmp_path / "exports").resolve()
+    with tarfile.open(export_path) as tar:
+        assert "manifest.json" in tar.getnames()
+
+    needs_apply_confirmation = storage_tool.handler(storage_tool.input_model(actor_user_id="admin", plan_id=plan.id, apply=True))
+    assert needs_apply_confirmation.ok is False
+    applied = storage_tool.handler(
+        storage_tool.input_model(
+            actor_user_id="admin",
+            plan_id=plan.id,
+            apply=True,
+            confirmation_request_id=needs_apply_confirmation.data["request_id"],
+            confirmation_phrase=needs_apply_confirmation.data["exact_phrase"],
+        )
+    )
+    assert applied.ok is True
+    assert applied.data["applied"] is True

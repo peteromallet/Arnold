@@ -127,6 +127,8 @@ NOW = datetime(2026, 5, 3, tzinfo=timezone.utc)
                 "id": "codebase_1",
                 "owner": "openai",
                 "name": "megaplan",
+                "repo_url": "https://github.com/openai/megaplan.git",
+                "repo_workspace": "/workspace/megaplan",
                 "default_branch": "main",
             },
         ),

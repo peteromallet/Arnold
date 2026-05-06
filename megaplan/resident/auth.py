@@ -12,8 +12,41 @@ from megaplan.store.base import JSONDict, ScheduledJobInput, Store, deterministi
 
 from .config import ResidentConfig
 
-ActionKind = Literal["read", "write", "cloud_start", "cloud_read", "admin"]
+ActionKind = Literal[
+    "read",
+    "write",
+    "cloud_start",
+    "cloud_read",
+    "admin",
+    "repo_write",
+    "artifact_write",
+    "export",
+    "archive_logs",
+    "reconcile_apply",
+]
 ConfirmationStatus = Literal["pending", "approved", "denied", "expired"]
+
+HIGH_IMPACT_ACTIONS: frozenset[ActionKind] = frozenset(
+    {
+        "cloud_start",
+        "admin",
+        "repo_write",
+        "artifact_write",
+        "export",
+        "archive_logs",
+        "reconcile_apply",
+    }
+)
+
+CONFIRMED_HIGH_IMPACT_ACTIONS: frozenset[ActionKind] = frozenset(
+    {
+        "repo_write",
+        "artifact_write",
+        "export",
+        "archive_logs",
+        "reconcile_apply",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -90,7 +123,7 @@ class ResidentAuthorizer:
         inbound = self.authorize_inbound(subject)
         if not inbound.allowed:
             return inbound
-        if action in {"cloud_start", "admin"} and subject.user_id not in self.config.admin_user_ids:
+        if action in HIGH_IMPACT_ACTIONS and subject.user_id not in self.config.admin_user_ids:
             return self._deny(subject, action, "admin_required")
         return AuthorizationDecision(True)
 
@@ -115,7 +148,9 @@ class ConfirmationManager:
         self._pending: dict[str, ConfirmationRequest] = {}
 
     def required_for(self, action: ActionKind) -> bool:
-        return action == "cloud_start" and self.config.require_cloud_start_confirmation
+        if action == "cloud_start":
+            return self.config.require_cloud_start_confirmation
+        return action in CONFIRMED_HIGH_IMPACT_ACTIONS
 
     def request_confirmation(
         self,
@@ -130,6 +165,8 @@ class ConfirmationManager:
         seed = f"{subject.user_id}:{action}:{target_summary}:{created_at.isoformat()}:{secrets.token_hex(4)}"
         request_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
         exact_phrase = f"confirm {action} {request_id}"
+        if action == "cloud_start":
+            exact_phrase = f"{exact_phrase} {target_summary}"
         request = ConfirmationRequest(
             id=request_id,
             subject=subject,

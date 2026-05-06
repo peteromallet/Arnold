@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -105,6 +106,30 @@ class CloudSpec:
     local: LocalSpec | None = None
     ssh: SshSpec | None = None
     toolchains: list[ToolchainSpec] | None = None
+
+
+def apply_repo_overrides(
+    spec: CloudSpec,
+    *,
+    repo_url: str | None = None,
+    repo_branch: str | None = None,
+    repo_workspace: str | None = None,
+) -> CloudSpec:
+    """Return an in-memory spec copy with resident/CLI repo overrides applied."""
+    if repo_url is None and repo_branch is None and repo_workspace is None:
+        return spec
+    workspace = spec.repo.workspace
+    if repo_workspace is not None:
+        workspace = _absolute_posix(repo_workspace, "repo.workspace")
+    return replace(
+        spec,
+        repo=replace(
+            spec.repo,
+            url=repo_url or spec.repo.url,
+            branch=repo_branch or spec.repo.branch,
+            workspace=workspace,
+        ),
+    )
 
 
 def _invalid(message: str) -> CliError:

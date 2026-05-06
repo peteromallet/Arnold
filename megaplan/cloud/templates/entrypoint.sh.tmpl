@@ -12,7 +12,6 @@ chmod 700 /root/.ssh
 REPO_URL="$${REPO_URL:-${REPO_URL}}"
 REPO_BRANCH="$${REPO_BRANCH:-${REPO_BRANCH}}"
 WORKSPACE_PATH="${WORKSPACE_PATH}"
-REPO_DIR="$$WORKSPACE_PATH"
 MODE="${MODE}"
 IDEA_FILE="${IDEA_FILE}"
 CHAIN_SPEC="${CHAIN_SPEC}"
@@ -24,7 +23,7 @@ git config --global user.email "$${GIT_EMAIL:-${CODEX_EMAIL}}"
 git config --global user.name "$${GIT_NAME:-Codex Agent}"
 git config --global init.defaultBranch main
 git config --global pull.rebase false
-git config --global --add safe.directory "$$REPO_DIR"
+git config --global --add safe.directory "$$WORKSPACE_PATH"
 
 # GitHub credential helper if token present
 if [[ -n "$${GITHUB_TOKEN:-}" ]]; then
@@ -37,16 +36,7 @@ EOF
 fi
 
 # Clone repo if missing (volume may already have it from a prior boot)
-if [[ ! -d "$$REPO_DIR/.git" ]]; then
-  echo "Cloning $$REPO_URL into $$REPO_DIR (branch: $$REPO_BRANCH)"
-  if git clone --branch "$$REPO_BRANCH" "$$REPO_URL" "$$REPO_DIR" 2>&1 | tail -10; then
-    echo "Clone complete."
-  else
-    echo "Clone failed — set GITHUB_TOKEN or clone manually."
-  fi
-else
-  echo "$$REPO_DIR already present — skipping clone."
-fi
+${ENSURE_REPO_BLOCK}
 
 # Codex auth from env
 if [[ -n "$${OPENAI_API_KEY:-}" ]] && [[ ! -f /root/.codex/auth.json ]]; then

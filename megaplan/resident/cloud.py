@@ -143,6 +143,7 @@ def _argv_for_request(request: CloudToolRequest) -> list[str]:
         argv = ["chain", spec]
         if idea_dir := args.get("idea_dir"):
             argv.extend(["--idea-dir", idea_dir])
+        _append_repo_args(argv, args)
     elif request.operation == "cloud_bootstrap":
         idea_file = args.get("idea_file")
         if not idea_file:
@@ -152,6 +153,7 @@ def _argv_for_request(request: CloudToolRequest) -> list[str]:
             argv.extend(["--plan-name", plan_name])
         if robustness := args.get("robustness"):
             argv.extend(["--robustness", robustness])
+        _append_repo_args(argv, args)
     elif request.operation == "cloud_resume":
         argv = ["resume"]
         if plan := args.get("plan"):
@@ -165,6 +167,15 @@ def _argv_for_request(request: CloudToolRequest) -> list[str]:
     if cloud_yaml:
         argv.extend(["--cloud-yaml", cloud_yaml])
     return argv
+
+
+def _append_repo_args(argv: list[str], args: dict[str, str]) -> None:
+    if repo_url := args.get("repo_url"):
+        argv.extend(["--repo-url", repo_url])
+    if repo_branch := args.get("repo_branch"):
+        argv.extend(["--repo-branch", repo_branch])
+    if repo_workspace := args.get("repo_workspace"):
+        argv.extend(["--repo-workspace", repo_workspace])
 
 
 def _summary_for_payload(

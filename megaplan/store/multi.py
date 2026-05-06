@@ -700,13 +700,13 @@ class MultiStore(Store):
                 continue
         raise KeyError(f"Second opinion {second_opinion_id!r} not found in file or db backends")
 
-    def create_codebase(self, *, owner: str, name: str, default_branch: str, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, codebase_id: str | None = None, idempotency_key: str | None = None) -> Codebase:
+    def create_codebase(self, *, owner: str, name: str, default_branch: str, repo_url: str | None = None, repo_workspace: str | None = None, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, codebase_id: str | None = None, idempotency_key: str | None = None) -> Codebase:
         backend = self._route_for_epic(associated_epic_id) if associated_epic_id is not None else self.db
-        return backend.create_codebase(owner=owner, name=name, default_branch=default_branch, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, codebase_id=codebase_id, idempotency_key=idempotency_key)
+        return backend.create_codebase(owner=owner, name=name, default_branch=default_branch, repo_url=repo_url, repo_workspace=repo_workspace, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, codebase_id=codebase_id, idempotency_key=idempotency_key)
 
-    def upsert_codebase(self, *, owner: str, name: str, default_branch: str, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, idempotency_key: str | None = None) -> Codebase:
+    def upsert_codebase(self, *, owner: str, name: str, default_branch: str, repo_url: str | None = None, repo_workspace: str | None = None, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, idempotency_key: str | None = None) -> Codebase:
         backend = self._route_for_epic(associated_epic_id) if associated_epic_id is not None else self.db
-        return backend.upsert_codebase(owner=owner, name=name, default_branch=default_branch, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, idempotency_key=idempotency_key)
+        return backend.upsert_codebase(owner=owner, name=name, default_branch=default_branch, repo_url=repo_url, repo_workspace=repo_workspace, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, idempotency_key=idempotency_key)
 
     def load_codebase(self, codebase_id: str) -> Codebase | None:
         return self._load_from_backends("load_codebase", codebase_id)
@@ -1073,6 +1073,7 @@ class MultiStore(Store):
         second_opinions = source.list_second_opinions(epic_id)
         feedback = source.list_feedback(epic_id=epic_id)
         code_artifacts = source.list_code_artifacts(epic_id=epic_id, limit=None)
+        codebases = source.list_codebases(epic_id=epic_id, include_global=False)
         events = source.list_epic_events(epic_id, limit=None)
         return {
             "epic_id": epic_id,
@@ -1085,6 +1086,7 @@ class MultiStore(Store):
                 "images": [row.id for row in images],
                 "second_opinions": [row.id for row in second_opinions],
                 "feedback": [row.id for row in feedback],
+                "codebases": [row.id for row in codebases],
                 "code_artifacts": [row.id for row in code_artifacts],
                 "epic_events": [row.id for row in events],
             },
@@ -1112,6 +1114,7 @@ class MultiStore(Store):
             "images": source.list_images(epic_id=epic_id, active=None),
             "second_opinions": source.list_second_opinions(epic_id),
             "feedback": source.list_feedback(epic_id=epic_id),
+            "codebases": source.list_codebases(epic_id=epic_id, include_global=False),
             "code_artifacts": source.list_code_artifacts(epic_id=epic_id, limit=None),
             "epic_events": source.list_epic_events(epic_id, limit=None),
         }
@@ -1142,6 +1145,8 @@ class MultiStore(Store):
             self._copy_model_to_filestore(target, target._second_opinion_path(opinion.id), opinion)
         for feedback in entities["feedback"]:
             self._copy_model_to_filestore(target, target._feedback_path(feedback.id), feedback)
+        for codebase in entities["codebases"]:
+            self._copy_model_to_filestore(target, target._codebase_path(codebase.id), codebase)
         for artifact in entities["code_artifacts"]:
             self._copy_model_to_filestore(target, target._code_artifact_path(artifact.id), artifact)
         events_path = target._events_path(epic.id)
@@ -1151,7 +1156,7 @@ class MultiStore(Store):
                 "\n".join(row.model_dump_json() for row in entities["epic_events"]).encode() + b"\n",
                 journal_root=target.root,
             )
-        for name in ("checklist_items", "sprints", "sprint_items", "plans", "images", "second_opinions", "feedback", "code_artifacts", "epic_events"):
+        for name in ("checklist_items", "sprints", "sprint_items", "plans", "images", "second_opinions", "feedback", "codebases", "code_artifacts", "epic_events"):
             copied[name] = [row.id for row in entities[name]]
         copied["plan_artifacts_by_plan"] = {
             plan_id: [ref.name for ref, _ in artifacts]
@@ -1163,7 +1168,7 @@ class MultiStore(Store):
         epic = self._epic_for_target(entities["epic"], target_backend)
         copied: dict[str, Any] = {"epics": [epic.id]}
         self._copy_rows_to_target(target, "epics", [epic])
-        for table in ("checklist_items", "sprints", "sprint_items", "plans", "images", "second_opinions", "feedback", "code_artifacts", "epic_events"):
+        for table in ("checklist_items", "sprints", "sprint_items", "plans", "images", "second_opinions", "feedback", "codebases", "code_artifacts", "epic_events"):
             rows = entities[table]
             self._copy_rows_to_target(target, table, rows)
             copied[table] = [row.id for row in rows]
