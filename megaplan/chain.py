@@ -973,21 +973,26 @@ def run_chain(
             continue
         if decision == "advance" and use_pr and state.pr_number is not None:
             _commit_and_push_phase(root, milestone.branch or "", plan_name, "done", writer=writer)
-            _mark_pr_ready(root, state.pr_number, writer=writer)
-            if spec.merge_policy == "review":
-                state.last_state = STATE_AWAITING_PR_MERGE
-                state.pr_state = "awaiting_merge"
+            current_pr_state = _pr_state(root, state.pr_number, writer=writer)
+            if current_pr_state == "merged":
+                state.pr_state = "merged"
                 save_chain_state(spec_path, state)
-                log(f"PR #{state.pr_number} ready; awaiting manual merge")
-                return _result(
-                    STATE_AWAITING_PR_MERGE,
-                    state,
-                    events,
-                    reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
-                )
-            _enable_auto_merge(root, state.pr_number, writer=writer)
-            state.pr_state = "open"
-            save_chain_state(spec_path, state)
+            else:
+                _mark_pr_ready(root, state.pr_number, writer=writer)
+                if spec.merge_policy == "review":
+                    state.last_state = STATE_AWAITING_PR_MERGE
+                    state.pr_state = "awaiting_merge"
+                    save_chain_state(spec_path, state)
+                    log(f"PR #{state.pr_number} ready; awaiting manual merge")
+                    return _result(
+                        STATE_AWAITING_PR_MERGE,
+                        state,
+                        events,
+                        reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
+                    )
+                _enable_auto_merge(root, state.pr_number, writer=writer)
+                state.pr_state = "open"
+                save_chain_state(spec_path, state)
         # advance or skip
         state.completed.append(
             {
