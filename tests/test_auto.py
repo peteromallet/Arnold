@@ -1040,6 +1040,53 @@ def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step
     assert state_data["latest_failure"]["metadata"]["checkpoint_reconciliation"]["reconciled"] is True
 
 
+def test_phase_complete_callback_skipped_after_nonzero_phase(tmp_path: Path) -> None:
+    plan = "nonzero-no-callback"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    callback_calls: list[str] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _phase_status(plan_name, state="planned", next_step="critique")
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        return 1, "", "critique failed"
+
+    def callback(step: str, code: int, out: str, err: str) -> None:
+        callback_calls.append(step)
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=1,
+            poll_sleep=0,
+            on_phase_complete=callback,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "cap"
+    assert callback_calls == []
+    assert any("phase 'critique' exited 1" in event.get("msg", "") for event in outcome.events)
+
+
+def test_plan_liveness_mtime_uses_state_and_execution_batches(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    assert auto._plan_liveness_mtime(plan_dir) is None
+    state_path = plan_dir / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+    first = auto._plan_liveness_mtime(plan_dir)
+    assert first is not None
+
+    batch_path = plan_dir / "execution_batch_1.json"
+    batch_path.write_text("{}", encoding="utf-8")
+    os.utime(batch_path, (state_path.stat().st_mtime + 10, state_path.stat().st_mtime + 10))
+    batch_mtime = batch_path.stat().st_mtime
+    assert auto._plan_liveness_mtime(plan_dir) == batch_mtime
+
+
 def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -> None:
     """When force-proceed is rejected by strict-notes, the auto driver should
     surface a `human_required` outcome rather than a generic `failed`."""

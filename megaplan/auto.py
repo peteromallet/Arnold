@@ -141,6 +141,7 @@ def _run_megaplan(
     timeout: float | None = None,
     idle_timeout: float | None = None,
     progress_env: dict[str, str] | None = None,
+    liveness_plan_dir: Path | None = None,
 ) -> tuple[int, str, str]:
     """Run a megaplan sub-command in its own process.
 
@@ -194,6 +195,7 @@ def _run_megaplan(
     stdout_parts: list[bytes] = []
     stderr_parts: list[bytes] = []
     last_activity = time.monotonic()
+    last_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
 
     def _reader(stream: Any, parts: list[bytes]) -> None:
         nonlocal last_activity
@@ -217,6 +219,16 @@ def _run_megaplan(
     timed_out_reason: str | None = None
     while proc.poll() is None:
         now = time.monotonic()
+        current_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
+        if (
+            current_liveness_mtime is not None
+            and (
+                last_liveness_mtime is None
+                or current_liveness_mtime > last_liveness_mtime
+            )
+        ):
+            last_liveness_mtime = current_liveness_mtime
+            last_activity = now
         if timeout is not None and now - started >= timeout:
             timed_out_reason = f"subprocess timed out after {timeout}s"
             break
@@ -240,6 +252,27 @@ def _run_megaplan(
     stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
     stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
     return int(proc.returncode or 0), stdout, stderr
+
+
+def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
+    """Return newest plan artifact mtime that proves a quiet phase is alive."""
+
+    if plan_dir is None:
+        return None
+    candidates = [plan_dir / "state.json"]
+    try:
+        candidates.extend(plan_dir.glob("execution_batch_*.json"))
+    except OSError:
+        pass
+    newest: float | None = None
+    for path in candidates:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
 
 
 def _status(
@@ -636,6 +669,7 @@ def drive(
             "cwd": cwd,
             "timeout": phase_timeout,
             "idle_timeout": phase_idle_timeout,
+            "liveness_plan_dir": plan_dir,
         }
         if progress_env:
             run_kwargs["progress_env"] = progress_env
@@ -644,9 +678,10 @@ def drive(
         except TypeError as error:
             # Several unit tests monkeypatch _run_megaplan with the pre-idle-timeout
             # signature. Keep that surface compatible without weakening the real path.
-            if "idle_timeout" not in str(error):
+            if "idle_timeout" not in str(error) and "liveness_plan_dir" not in str(error):
                 raise
             run_kwargs.pop("idle_timeout", None)
+            run_kwargs.pop("liveness_plan_dir", None)
             return _run_megaplan(cmd, **run_kwargs)
 
     def _outcome(
@@ -1166,7 +1201,11 @@ def drive(
                 metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
             )
 
-        if on_phase_complete and next_step in {"plan", "critique", "gate", "finalize", "execute", "review"}:
+        if (
+            code in (0, None)
+            and on_phase_complete
+            and next_step in {"plan", "critique", "gate", "finalize", "execute", "review"}
+        ):
             try:
                 on_phase_complete(next_step, int(code or 0), out, err)
             except Exception as error:  # pragma: no cover - defensive callback boundary
