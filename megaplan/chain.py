@@ -552,7 +552,7 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int
     raise CliError("gh_pr_create_failed", f"could not determine PR number for {milestone.branch}")
 
 
-def _claimed_nested_repos(root: Path, plan_name: str) -> list[Path]:
+def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str]]:
     plan_dir = root / ".megaplan" / "plans" / plan_name
     claimed_paths: set[str] = set()
     for artifact_name in ("finalize.json", "execution.json"):
@@ -573,7 +573,7 @@ def _claimed_nested_repos(root: Path, plan_name: str) -> list[Path]:
                 if isinstance(path, str) and path.strip():
                     claimed_paths.add(path.strip())
 
-    repos: set[Path] = set()
+    repo_paths: dict[Path, set[str]] = {}
     root_abs = root.resolve()
     for raw_path in claimed_paths:
         path = Path(raw_path)
@@ -586,24 +586,35 @@ def _claimed_nested_repos(root: Path, plan_name: str) -> list[Path]:
         for part in path.parts[:-1]:
             cursor = cursor / part
             if (cursor / ".git").exists():
-                repos.add(cursor)
+                rel_to_repo = Path(*path.parts[len(cursor.relative_to(root).parts):])
+                repo_paths.setdefault(cursor, set()).add(rel_to_repo.as_posix())
                 break
-    return sorted(repos, key=lambda repo: repo.as_posix())
+    return repo_paths
+
+
+def _claimed_nested_repos(root: Path, plan_name: str) -> list[Path]:
+    return sorted(_claimed_nested_repo_paths(root, plan_name), key=lambda repo: repo.as_posix())
 
 
 def _dirty_nested_repos_from_claimed_paths(root: Path, plan_name: str, *, writer) -> list[str]:
     dirty: list[str] = []
     root_abs = root.resolve()
-    for repo in _claimed_nested_repos(root, plan_name):
+    for repo, paths in sorted(
+        _claimed_nested_repo_paths(root, plan_name).items(),
+        key=lambda item: item[0].as_posix(),
+    ):
         proc = subprocess.run(
-            ["git", "status", "--short"],
+            ["git", "status", "--short", "--", *sorted(paths)],
             cwd=str(repo),
             capture_output=True,
             text=True,
             check=False,
             timeout=120,
         )
-        writer(f"[chain] git -C {repo} status --short -> rc={proc.returncode}\n")
+        writer(
+            f"[chain] git -C {repo} status --short -- "
+            f"{' '.join(sorted(paths))} -> rc={proc.returncode}\n"
+        )
         if proc.returncode != 0 or not proc.stdout.strip():
             continue
         try:
