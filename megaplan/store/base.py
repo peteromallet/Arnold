@@ -19,6 +19,7 @@ from megaplan.schemas import (
     CodeArtifact,
     Codebase,
     ControlMessage,
+    CloudRun,
     Epic,
     EpicEvent,
     EpicLock,
@@ -30,6 +31,8 @@ from megaplan.schemas import (
     Message,
     Plan,
     ProgressEvent,
+    ResidentConversation,
+    ScheduledJob,
     SecondOpinion,
     Sprint,
     SprintItem,
@@ -159,6 +162,42 @@ class ControlMessageInput(StorageModel):
     target_id: str
     payload: NormalizedDict = Field(default_factory=dict)
     idempotency_key: str
+
+
+class ResidentConversationInput(StorageModel):
+    transport: str = "discord"
+    conversation_key: str
+    active_epic_id: str | None = None
+    guild_id: str | None = None
+    channel_id: str | None = None
+    thread_id: str | None = None
+    dm_user_id: str | None = None
+    metadata: NormalizedDict = Field(default_factory=dict)
+
+
+class ScheduledJobInput(StorageModel):
+    job_type: str
+    conversation_id: str | None = None
+    cloud_run_id: str | None = None
+    epic_id: str | None = None
+    payload: NormalizedDict = Field(default_factory=dict)
+    scheduled_for: datetime
+    max_attempts: int = Field(default=3, ge=1)
+
+
+class CloudRunInput(StorageModel):
+    operation: str
+    conversation_id: str | None = None
+    epic_id: str | None = None
+    sprint_id: str | None = None
+    plan_id: str | None = None
+    provider: str | None = None
+    provider_run_id: str | None = None
+    target_id: str | None = None
+    command_summary: str | None = None
+    metadata: NormalizedDict = Field(default_factory=dict)
+    idempotency_key: str | None = None
+    started_by_actor_id: str | None = None
 
 
 class ProgressEventInput(StorageModel):
@@ -436,6 +475,7 @@ class Store(Protocol):
         audio_storage_url: str | None = None,
         transcription_metadata: JSONDict | None = None,
         synthesize_outbound_id: bool = True,
+        conversation_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> Message:
         ...
@@ -1022,6 +1062,137 @@ class Store(Protocol):
     ) -> None:
         ...
 
+    def recover_stale_control_messages(
+        self,
+        *,
+        processor_id: str,
+        older_than_seconds: int,
+        max: int = 10,
+        idempotency_key: str | None = None,
+    ) -> list[ControlMessage]:
+        ...
+
+    def list_stale_control_messages(
+        self,
+        *,
+        older_than_seconds: int,
+        limit: int = 10,
+    ) -> list[ControlMessage]:
+        ...
+
+    # ---------- Resident orchestration ----------
+    def upsert_resident_conversation(
+        self,
+        conversation: ResidentConversationInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ResidentConversation:
+        ...
+
+    def load_resident_conversation(self, conversation_id: str) -> ResidentConversation | None:
+        ...
+
+    def get_resident_conversation_by_key(
+        self,
+        *,
+        transport: str,
+        conversation_key: str,
+    ) -> ResidentConversation | None:
+        ...
+
+    def list_resident_conversations(
+        self,
+        *,
+        transport: str | None = None,
+        active_epic_id: str | None = None,
+        limit: int = 50,
+    ) -> list[ResidentConversation]:
+        ...
+
+    def update_resident_conversation(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> ResidentConversation:
+        ...
+
+    def create_scheduled_job(
+        self,
+        job: ScheduledJobInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ScheduledJob:
+        ...
+
+    def load_scheduled_job(self, job_id: str) -> ScheduledJob | None:
+        ...
+
+    def update_scheduled_job(
+        self,
+        job_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> ScheduledJob:
+        ...
+
+    def claim_due_scheduled_jobs(
+        self,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        stale_after_seconds: int | None = None,
+        max: int = 10,
+        job_type: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> list[ScheduledJob]:
+        ...
+
+    def list_scheduled_jobs(
+        self,
+        *,
+        conversation_id: str | None = None,
+        cloud_run_id: str | None = None,
+        status: str | None = None,
+        job_type: str | None = None,
+        limit: int = 50,
+    ) -> list[ScheduledJob]:
+        ...
+
+    def create_cloud_run(
+        self,
+        run: CloudRunInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> CloudRun:
+        ...
+
+    def load_cloud_run(self, run_id: str) -> CloudRun | None:
+        ...
+
+    def update_cloud_run(
+        self,
+        run_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> CloudRun:
+        ...
+
+    def list_cloud_runs(
+        self,
+        *,
+        conversation_id: str | None = None,
+        epic_id: str | None = None,
+        plan_id: str | None = None,
+        sprint_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[CloudRun]:
+        ...
+
     def append_progress_event(self, event: ProgressEventInput,
         *,
         idempotency_key: str | None = None,
@@ -1063,6 +1234,7 @@ __all__ = [
     "Backend",
     "ChecklistItemInput",
     "ControlMessageInput",
+    "CloudRunInput",
     "EpicSummary",
     "HotContext",
     "JSONDict",
@@ -1071,6 +1243,8 @@ __all__ = [
     "LockConflict",
     "MessageSearchHit",
     "ProgressEventInput",
+    "ResidentConversationInput",
+    "ScheduledJobInput",
     "RevisionConflict",
     "SprintItemInput",
     "SprintWithItems",

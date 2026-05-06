@@ -16,6 +16,7 @@ from .arnold import (
     Feedback,
     Image,
     Message,
+    ResidentConversation,
     SecondOpinion,
     Sprint,
     SprintItem,
@@ -25,12 +26,14 @@ from .arnold import (
 from .base import HomeBackend, StorageModel, utc_now
 from .sprint1 import (
     AutomationActor,
+    CloudRun,
     ControlMessage,
     ExecutionLease,
     MigrationRun,
     Plan,
     PlanArtifact,
     ProgressEvent,
+    ScheduledJob,
 )
 
 __all__ = [
@@ -40,6 +43,7 @@ __all__ = [
     "CodeArtifact",
     "Codebase",
     "ControlMessage",
+    "CloudRun",
     "Epic",
     "EpicEvent",
     "EpicLock",
@@ -55,6 +59,8 @@ __all__ = [
     "Plan",
     "PlanArtifact",
     "ProgressEvent",
+    "ResidentConversation",
+    "ScheduledJob",
     "SecondOpinion",
     "Sprint",
     "SprintItem",

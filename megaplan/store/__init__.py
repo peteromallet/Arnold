@@ -5,6 +5,7 @@ from .base import (
     ArtifactStat,
     Backend,
     ChecklistItemInput,
+    CloudRunInput,
     ControlMessageInput,
     EpicSummary,
     HotContext,
@@ -13,7 +14,9 @@ from .base import (
     LockConflict,
     MessageSearchHit,
     ProgressEventInput,
+    ResidentConversationInput,
     RevisionConflict,
+    ScheduledJobInput,
     SprintItemInput,
     SprintWithItems,
     Store,
@@ -21,6 +24,7 @@ from .base import (
     Transaction,
     deterministic_idempotency_key,
 )
+from megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
 from .blob import BlobMissingError, BlobRef, BlobStat, BlobStore, LocalDirBlobStore, SupabaseStorageBlobStore
 from .compat import ArnoldBlobAdapter, ArnoldStoreAdapter
 from .db import DBStore
@@ -40,6 +44,8 @@ __all__ = [
     "BlobStat",
     "BlobStore",
     "ChecklistItemInput",
+    "CloudRun",
+    "CloudRunInput",
     "ControlMessageInput",
     "DBStore",
     "deterministic_idempotency_key",
@@ -55,8 +61,12 @@ __all__ = [
     "PlanRepository",
     "ProgressEventInput",
     "require_actor_id",
+    "ResidentConversation",
+    "ResidentConversationInput",
     "resolve_actor_id",
     "RevisionConflict",
+    "ScheduledJob",
+    "ScheduledJobInput",
     "SprintItemInput",
     "SprintWithItems",
     "Store",

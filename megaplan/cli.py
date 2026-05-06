@@ -1415,6 +1415,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cloud_parser.add_argument("cloud_args", nargs=argparse.REMAINDER)
 
+    resident_parser = subparsers.add_parser(
+        "resident",
+        add_help=False,
+        help="Run resident Discord orchestration services",
+    )
+    resident_parser.add_argument("resident_args", nargs=argparse.REMAINDER)
+
     bakeoff_parser = subparsers.add_parser(
         "bakeoff",
         add_help=False,
@@ -1571,6 +1578,18 @@ def main(argv: list[str] | None = None) -> int:
         ensure_runtime_layout(root)
         try:
             return run_cloud_cli(root, cloud_args)
+        except CliError as error:
+            return error_response(error, root=root)
+    if argv and argv[0] == "resident":
+        from megaplan.resident.cli import _register_resident_subcommands, run_resident_cli
+
+        resident_parser = argparse.ArgumentParser(prog="megaplan resident")
+        _register_resident_subcommands(resident_parser)
+        resident_args = resident_parser.parse_args(argv[1:])
+        root = _find_megaplan_root(Path.cwd())
+        ensure_runtime_layout(root)
+        try:
+            return render_response(run_resident_cli(root, resident_args))
         except CliError as error:
             return error_response(error, root=root)
     if argv and argv[0] == "bakeoff":
