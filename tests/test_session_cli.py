@@ -12,6 +12,7 @@ import pytest
 
 import vibecomfy.commands.session as session_cmd
 import vibecomfy.runtime.session as session_module
+from vibecomfy.memory_profile import MemoryProfile
 from vibecomfy.runtime.session import SessionConfig, find_active_session
 
 
@@ -74,6 +75,7 @@ def test_session_cli_start_list_flush_stop_flow(
         cache_policy="lru:3",
         warm_policy="always",
         disable_smart_memory=True,
+        memory_profile=None,
     )
     assert session_cmd._cmd_session_start(start_args) == 0
     assert (tmp_path / "out/sessions/default/pid").exists()
@@ -100,6 +102,60 @@ def test_session_cli_start_list_flush_stop_flow(
     assert not (tmp_path / "out/sessions/default/pid").exists()
     assert not (tmp_path / "out/sessions/default/url").exists()
     assert not (tmp_path / "out/sessions/default/config.json").exists()
+
+
+def test_session_cli_start_persists_memory_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_cmd.subprocess, "Popen", FakePopen)
+    FakePopen.started = []
+
+    for profile in range(1, 6):
+        args = argparse.Namespace(
+            id=f"profile-{profile}",
+            port=8200 + profile,
+            vram_policy=None,
+            reserve_vram_gb=None,
+            cache_policy=None,
+            warm_policy="auto",
+            disable_smart_memory=False,
+            memory_profile=profile,
+        )
+
+        assert session_cmd._cmd_session_start(args) == 0
+        config = json.loads(
+            (tmp_path / f"out/sessions/profile-{profile}/config.json").read_text(encoding="utf-8")
+        )
+        assert config["memory_profile"] == profile
+        assert config["port"] == 8200 + profile
+        effective = SessionConfig.from_dict(config)
+        assert effective.memory_profile == profile
+        for key, value in MemoryProfile(profile).to_session_overrides().items():
+            assert getattr(effective, key) == value
+
+
+def test_session_cli_start_without_memory_profile_leaves_config_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_cmd.subprocess, "Popen", FakePopen)
+    FakePopen.started = []
+    args = argparse.Namespace(
+        id="default",
+        port=8200,
+        vram_policy="auto",
+        reserve_vram_gb=None,
+        cache_policy="smart",
+        warm_policy="auto",
+        disable_smart_memory=False,
+        memory_profile=None,
+    )
+
+    assert session_cmd._cmd_session_start(args) == 0
+    config = json.loads((tmp_path / "out/sessions/default/config.json").read_text(encoding="utf-8"))
+
+    assert "memory_profile" not in config
 
 
 def test_find_active_session_returns_url_or_cleans_stale_files(
@@ -159,6 +215,7 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
 
     typed = {
         "port": 8200,
+        "memory_profile": 3,
         "vram_policy": "high",
         "reserve_vram_gb": 2.0,
         "cache_policy": "lru:3",
@@ -175,6 +232,7 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
     assert asyncio.run(session_cmd._daemon_main(argparse.Namespace(id="raw", config=json.dumps(raw)))) == 0
 
     assert captured[0] == SessionConfig(
+        memory_profile=MemoryProfile.LOW_VRAM,
         port=8200,
         vram_policy="high",
         reserve_vram_gb=2.0,

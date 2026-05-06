@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from vibecomfy.commands.run import _cmd_run
+from vibecomfy.runtime.session import SessionConfig
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 runtime_run_module = importlib.import_module("vibecomfy.runtime.run")
@@ -108,6 +109,77 @@ def test_run_surfaces_queue_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -
     assert queued_prompts == [
         {"1": {"class_type": "SaveImage", "inputs": {"filename_prefix": "test"}}}
     ]
+
+
+def test_run_managed_server_uses_workflow_session_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    captured_configs = []
+
+    workflow = _workflow()
+    workflow.metadata["comfy_configuration"] = {
+        "memory_profile": 5,
+        "port": 8205,
+    }
+
+    @asynccontextmanager
+    async def fake_server(*, server_url=None, log_path=None, config=None):
+        captured_configs.append(config)
+        yield "http://managed.test"
+
+    class FakeClient:
+        def __init__(self, server_url: str) -> None:
+            self.server_url = server_url
+
+        async def queue_prompt(self, prompt: dict) -> dict:
+            return {"prompt_id": "prompt-managed"}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+
+    result = asyncio.run(runtime_run_module.run(workflow, server_url=None))
+
+    assert result.prompt_id == "prompt-managed"
+    assert len(captured_configs) == 1
+    config = captured_configs[0]
+    assert config.memory_profile == 5
+    assert config.port == 8205
+    assert config.vram_policy == "low"
+    assert config.cache_policy == "lru:1"
+    assert config.reserve_vram_gb == 4.0
+    assert config.disable_smart_memory is True
+
+
+def test_run_external_server_does_not_apply_workflow_session_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    captured_configs = []
+    workflow = _workflow()
+    workflow.metadata["comfy_configuration"] = {"memory_profile": 5}
+
+    @asynccontextmanager
+    async def fake_server(*, server_url=None, log_path=None, config=None):
+        captured_configs.append(config)
+        yield server_url
+
+    class FakeClient:
+        def __init__(self, server_url: str) -> None:
+            self.server_url = server_url
+
+        async def queue_prompt(self, prompt: dict) -> dict:
+            return {"prompt_id": "prompt-external"}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+
+    result = asyncio.run(runtime_run_module.run(workflow, server_url="http://external.test"))
+
+    assert result.prompt_id == "prompt-external"
+    assert captured_configs == [None]
 
 
 def test_embedded_configuration_uses_hiddenswitch_configuration_object(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -286,3 +358,198 @@ def test_cmd_run_auto_without_active_session_falls_back_to_embedded(
     assert schema_calls == [("auto", None)]
     assert embedded_calls[0][1] == "api"
     assert "run_id: run-embedded" in capsys.readouterr().out
+
+
+def test_cmd_run_server_without_active_session_starts_one_shot_managed_server(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = argparse.Namespace(
+        path="edit/qwen_image_edit",
+        ready=True,
+        runtime="server",
+        server_url=None,
+        backend="api",
+        prompt=None,
+        seed=None,
+        steps=None,
+    )
+    run_calls: list[tuple[VibeWorkflow, str | None, str]] = []
+
+    monkeypatch.setattr("vibecomfy.commands.run.find_active_session", lambda _id: None)
+    monkeypatch.setattr(
+        "vibecomfy.commands.run.get_schema_provider",
+        lambda prefer, *, server_url=None: object(),
+    )
+    monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: _workflow())
+
+    def fake_run_sync(workflow: VibeWorkflow, *, server_url: str | None, backend: str):
+        run_calls.append((workflow, server_url, backend))
+        return types.SimpleNamespace(
+            run_id="run-managed",
+            prompt_id="prompt-managed",
+            outputs=[],
+            metadata_path="metadata.json",
+            log_path="comfy.log",
+        )
+
+    monkeypatch.setattr("vibecomfy.commands.run.run_sync", fake_run_sync)
+    monkeypatch.setattr(
+        "vibecomfy.commands.run.run_embedded_sync",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("embedded should not run")),
+    )
+
+    assert _cmd_run(args) == 0
+
+    assert run_calls[0][1:] == (None, "api")
+    assert "run_id: run-managed" in capsys.readouterr().out
+
+
+def test_cmd_run_memory_profile_overrides_embedded_config(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow = _workflow()
+    workflow.metadata["comfy_configuration"] = {
+        "memory_profile": 4,
+        "cache_policy": "none",
+        "reserve_vram_gb": 7.0,
+    }
+    args = argparse.Namespace(
+        path="edit/qwen_image_edit",
+        ready=True,
+        runtime="embedded",
+        server_url=None,
+        backend="api",
+        prompt=None,
+        seed=None,
+        steps=None,
+        memory_profile=5,
+    )
+    embedded_configs: list[SessionConfig] = []
+
+    monkeypatch.setattr("vibecomfy.commands.run.get_schema_provider", lambda prefer, *, server_url=None: object())
+    monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: workflow)
+
+    def fake_run_embedded_sync(workflow: VibeWorkflow, *, backend: str, config: SessionConfig):
+        embedded_configs.append(config)
+        return types.SimpleNamespace(
+            run_id="run-embedded",
+            prompt_id="prompt-embedded",
+            outputs=[],
+            metadata_path="metadata.json",
+            log_path="embedded.log",
+        )
+
+    monkeypatch.setattr("vibecomfy.commands.run.run_embedded_sync", fake_run_embedded_sync)
+
+    assert _cmd_run(args) == 0
+
+    assert len(embedded_configs) == 1
+    assert embedded_configs[0].memory_profile == 5
+    assert embedded_configs[0].cache_policy == "lru:1"
+    assert embedded_configs[0].reserve_vram_gb == 4.0
+    assert workflow.metadata["comfy_configuration"]["cache_policy"] == "none"
+    assert "run_id: run-embedded" in capsys.readouterr().out
+
+
+def test_cmd_run_memory_profile_overrides_new_managed_server_config(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow = _workflow()
+    workflow.metadata["comfy_configuration"] = {
+        "memory_profile": 4,
+        "cache_policy": "none",
+        "reserve_vram_gb": 7.0,
+    }
+    args = argparse.Namespace(
+        path="edit/qwen_image_edit",
+        ready=True,
+        runtime="server",
+        server_url=None,
+        backend="api",
+        prompt=None,
+        seed=None,
+        steps=None,
+        memory_profile=5,
+    )
+    server_configs: list[SessionConfig] = []
+
+    monkeypatch.setattr("vibecomfy.commands.run.find_active_session", lambda _id: None)
+    monkeypatch.setattr("vibecomfy.commands.run.get_schema_provider", lambda prefer, *, server_url=None: object())
+    monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: workflow)
+
+    def fake_run_sync(
+        workflow: VibeWorkflow,
+        *,
+        server_url: str | None,
+        backend: str,
+        config: SessionConfig,
+    ):
+        server_configs.append(config)
+        return types.SimpleNamespace(
+            run_id="run-managed",
+            prompt_id="prompt-managed",
+            outputs=[],
+            metadata_path="metadata.json",
+            log_path="comfy.log",
+        )
+
+    monkeypatch.setattr("vibecomfy.commands.run.run_sync", fake_run_sync)
+
+    assert _cmd_run(args) == 0
+
+    assert len(server_configs) == 1
+    assert server_configs[0].memory_profile == 5
+    assert server_configs[0].cache_policy == "lru:1"
+    assert server_configs[0].reserve_vram_gb == 4.0
+    assert "run_id: run-managed" in capsys.readouterr().out
+
+
+def test_cmd_run_memory_profile_rejects_explicit_external_server(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = argparse.Namespace(
+        path="edit/qwen_image_edit",
+        ready=True,
+        runtime="server",
+        server_url="http://external.test",
+        backend="api",
+        prompt=None,
+        seed=None,
+        steps=None,
+        memory_profile=5,
+    )
+
+    monkeypatch.setattr(
+        "vibecomfy.commands.run.load_workflow_reference",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("workflow should not load")),
+    )
+
+    assert _cmd_run(args) == 2
+
+    assert "requires a new local VibeComfy runtime" in capsys.readouterr().err
+
+
+def test_cmd_run_memory_profile_rejects_active_session(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = argparse.Namespace(
+        path="edit/qwen_image_edit",
+        ready=True,
+        runtime="server",
+        server_url=None,
+        backend="api",
+        prompt=None,
+        seed=None,
+        steps=None,
+        memory_profile=5,
+    )
+
+    monkeypatch.setattr("vibecomfy.commands.run.find_active_session", lambda _id: "http://warm.test")
+    monkeypatch.setattr(
+        "vibecomfy.commands.run.load_workflow_reference",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("workflow should not load")),
+    )
+
+    assert _cmd_run(args) == 2
+
+    assert "Stop/restart the session" in capsys.readouterr().err

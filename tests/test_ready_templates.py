@@ -11,6 +11,7 @@ from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.resolution import resolution
 from vibecomfy.registry.ready import ready_template_ids, workflow_from_ready
 from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.runtime.session import SessionConfig
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -24,6 +25,11 @@ SNAPSHOT_IDS = (
     "video/wan_i2v",
     "video/ltx2_3_t2v",
     "video/ltx2_3_i2v",
+)
+
+PROFILE_SMOKE_TEMPLATE_IDS = (
+    "video/wanvideo_wrapper_22_5b_i2v",
+    "video/wan_t2v",
 )
 
 
@@ -134,6 +140,27 @@ def test_ready_template_uses_real_python_before_comfy_compile() -> None:
 
     assert workflow.metadata["external_python_marker"] == marker
     assert any(node["inputs"].get("widget_0") == marker for node in api.values())
+
+
+@pytest.mark.parametrize("template_id", PROFILE_SMOKE_TEMPLATE_IDS)
+@pytest.mark.parametrize("memory_profile", [1, 2, 3, 4, 5])
+def test_representative_video_ready_templates_compile_under_memory_profiles(
+    template_id: str,
+    memory_profile: int,
+) -> None:
+    baseline = workflow_from_ready(template_id)
+    baseline_api = baseline.compile("api")
+    workflow = workflow_from_ready(template_id)
+    workflow.metadata["comfy_configuration"] = {"memory_profile": memory_profile}
+
+    config = SessionConfig.from_workflow_metadata(workflow)
+    api = workflow.compile("api")
+
+    assert config.memory_profile == memory_profile
+    assert workflow.validate().ok
+    assert api
+    assert _class_type_counter(api) == _class_type_counter(baseline_api)
+    assert _topology_counter(api) == _topology_counter(baseline_api)
 
 
 @pytest.mark.parametrize("template_id", SNAPSHOT_IDS)

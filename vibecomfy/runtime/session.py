@@ -11,10 +11,11 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from vibecomfy.memory_profile import MemoryProfile, apply_memory_profile_overrides
 from vibecomfy.workflow import VibeWorkflow
 
 from .client import ComfyClient
@@ -43,6 +44,7 @@ class RunResult:
 
 @dataclass(slots=True)
 class SessionConfig:
+    memory_profile: MemoryProfile | None = None
     vram_policy: str = "auto"
     reserve_vram_gb: float | None = None
     cache_policy: str = "smart"
@@ -63,6 +65,15 @@ class SessionConfig:
         if not isinstance(values, dict):
             values = {}
         return cls.from_dict(values)
+
+
+def apply_memory_profile_override(
+    config: SessionConfig,
+    memory_profile: int | MemoryProfile,
+) -> SessionConfig:
+    profile = MemoryProfile.parse(memory_profile)
+    resolved = apply_memory_profile_overrides(config, profile, precedence="profile")
+    return replace(resolved, memory_profile=profile)
 
 
 class VibeSession(Protocol):
@@ -188,6 +199,7 @@ class EmbeddedSession:
             queued=queued,
             outputs=outputs,
             runtime="embedded",
+            config=self.config,
         )
         metadata_path = run_dir / "metadata.json"
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -320,6 +332,7 @@ class ServerSession:
             queued=queued,
             outputs=[],
             runtime="server",
+            config=self.config,
         )
         metadata_path = run_dir / "metadata.json"
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -437,6 +450,7 @@ def _partition_comfy_config(values: dict[str, Any]) -> tuple[dict[str, Any], dic
     names overwrite translated values when both forms are present.
     """
     typed_fields = {
+        "memory_profile",
         "port",
         "vram_policy",
         "cache_policy",
@@ -447,6 +461,11 @@ def _partition_comfy_config(values: dict[str, Any]) -> tuple[dict[str, Any], dic
     }
     kwargs: dict[str, Any] = {}
     extra: dict[str, Any] = {}
+
+    if "memory_profile" in values and values["memory_profile"] is not None:
+        profile = MemoryProfile.parse(values["memory_profile"])
+        kwargs["memory_profile"] = profile
+        kwargs.update(profile.to_session_overrides())
 
     for key, value in values.items():
         if key in typed_fields:
@@ -469,7 +488,7 @@ def _partition_comfy_config(values: dict[str, Any]) -> tuple[dict[str, Any], dic
             extra[key] = value
 
     for key, value in values.items():
-        if key in typed_fields:
+        if key in typed_fields and key != "memory_profile":
             kwargs[key] = value
 
     return kwargs, extra
@@ -580,9 +599,10 @@ def _run_metadata(
     queued: Any,
     outputs: list[str],
     runtime: str,
+    config: SessionConfig | None = None,
 ) -> dict[str, Any]:
     serialized = json.dumps(api_dict, sort_keys=True, default=str)
-    return {
+    metadata = {
         "run_id": run_id,
         "workflow_id": workflow.id,
         "source": asdict(workflow.source),
@@ -593,6 +613,9 @@ def _run_metadata(
         "outputs": outputs,
         "runtime": runtime,
     }
+    if config is not None and config.memory_profile is not None:
+        metadata.update(MemoryProfile.parse(config.memory_profile).to_telemetry())
+    return metadata
 
 
 def _git_sha() -> str | None:

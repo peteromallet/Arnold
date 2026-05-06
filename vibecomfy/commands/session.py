@@ -25,13 +25,23 @@ def _session_dir(id_: str) -> Path:
 
 
 def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    memory_profile = getattr(args, "memory_profile", None)
     config: dict[str, Any] = {
         "port": args.port,
-        "vram_policy": args.vram_policy,
-        "cache_policy": args.cache_policy,
-        "warm_policy": args.warm_policy,
-        "disable_smart_memory": args.disable_smart_memory,
     }
+    if memory_profile is not None:
+        config["memory_profile"] = memory_profile
+        if args.vram_policy is not None:
+            config["vram_policy"] = args.vram_policy
+        if args.cache_policy is not None:
+            config["cache_policy"] = args.cache_policy
+        if args.disable_smart_memory:
+            config["disable_smart_memory"] = args.disable_smart_memory
+    else:
+        config["vram_policy"] = args.vram_policy or "auto"
+        config["cache_policy"] = args.cache_policy or "smart"
+        config["disable_smart_memory"] = args.disable_smart_memory
+    config["warm_policy"] = args.warm_policy or "auto"
     if args.reserve_vram_gb is not None:
         config["reserve_vram_gb"] = args.reserve_vram_gb
     return config
@@ -174,11 +184,12 @@ def register(subparsers) -> None:
 
     start = session_sub.add_parser("start")
     start.add_argument("--id", default="default")
-    start.add_argument("--vram-policy", choices=["auto", "high", "low", "normal"], default="auto")
+    start.add_argument("--vram-policy", choices=["auto", "high", "low", "normal"])
     start.add_argument("--reserve-vram-gb", type=float)
-    start.add_argument("--cache-policy", default="smart")
+    start.add_argument("--cache-policy")
     start.add_argument("--disable-smart-memory", action="store_true")
-    start.add_argument("--warm-policy", choices=["auto", "always", "never"], default="auto")
+    start.add_argument("--warm-policy", choices=["auto", "always", "never"])
+    start.add_argument("--memory-profile", type=int, choices=[1, 2, 3, 4, 5])
     start.add_argument("--port", type=int, default=8188)
     start.set_defaults(func=_cmd_session_start)
 

@@ -24,12 +24,20 @@ from .session import (
 logger = logging.getLogger(__name__)
 
 
-async def run(workflow: VibeWorkflow, *, server_url: str | None = None, backend: str = "api") -> RunResult:
+async def run(
+    workflow: VibeWorkflow,
+    *,
+    server_url: str | None = None,
+    backend: str = "api",
+    config: SessionConfig | None = None,
+) -> RunResult:
     run_id = f"run-{int(time.time())}"
     run_dir = Path("out/runs") / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "comfy.log"
-    async with comfy_server(server_url=server_url, log_path=log_path) as active_url:
+    resolved_config = config or SessionConfig.from_workflow_metadata(workflow)
+    managed_config = resolved_config if server_url is None else None
+    async with comfy_server(server_url=server_url, log_path=log_path, config=managed_config) as active_url:
         provider = _build_schema_provider(active_url)
         warned = {"emitted": False}
 
@@ -56,6 +64,7 @@ async def run(workflow: VibeWorkflow, *, server_url: str | None = None, backend:
         queued=queued,
         outputs=[],
         runtime="server",
+        config=managed_config,
     )
     metadata_path = run_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -68,20 +77,36 @@ async def run(workflow: VibeWorkflow, *, server_url: str | None = None, backend:
     )
 
 
-def run_sync(workflow: VibeWorkflow, *, server_url: str | None = None, backend: str = "api") -> RunResult:
-    return asyncio.run(run(workflow, server_url=server_url, backend=backend))
+def run_sync(
+    workflow: VibeWorkflow,
+    *,
+    server_url: str | None = None,
+    backend: str = "api",
+    config: SessionConfig | None = None,
+) -> RunResult:
+    return asyncio.run(run(workflow, server_url=server_url, backend=backend, config=config))
 
 
-async def run_embedded(workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
-    session = EmbeddedSession(SessionConfig.from_workflow_metadata(workflow))
+async def run_embedded(
+    workflow: VibeWorkflow,
+    *,
+    backend: str = "api",
+    config: SessionConfig | None = None,
+) -> RunResult:
+    session = EmbeddedSession(config or SessionConfig.from_workflow_metadata(workflow))
     try:
         return await session.run(workflow, backend=backend)
     finally:
         await session.stop()
 
 
-def run_embedded_sync(workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
-    return asyncio.run(run_embedded(workflow, backend=backend))
+def run_embedded_sync(
+    workflow: VibeWorkflow,
+    *,
+    backend: str = "api",
+    config: SessionConfig | None = None,
+) -> RunResult:
+    return asyncio.run(run_embedded(workflow, backend=backend, config=config))
 
 
 async def smoke_runtime(*, server_url: str | None = None) -> dict[str, Any]:

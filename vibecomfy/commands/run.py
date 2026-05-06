@@ -6,7 +6,7 @@ from typing import Any
 
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.runtime.run import run_embedded_sync, run_sync
-from vibecomfy.runtime.session import find_active_session
+from vibecomfy.runtime.session import SessionConfig, apply_memory_profile_override, find_active_session
 from vibecomfy.schema import get_schema_provider
 
 
@@ -39,9 +39,16 @@ def _override_unwired_message(workflow_id: str, flag: str, override: str) -> str
 
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
+        memory_profile = getattr(args, "memory_profile", None)
         session_url = args.server_url
+        if memory_profile is not None and args.server_url is not None:
+            print(_memory_profile_restart_required_message("explicit --server-url"), file=sys.stderr)
+            return 2
         if session_url is None and args.runtime in {"auto", "server"}:
             session_url = find_active_session("default")
+            if memory_profile is not None and session_url is not None:
+                print(_memory_profile_restart_required_message("already-running session"), file=sys.stderr)
+                return 2
         schema_provider = get_schema_provider("auto", server_url=session_url)
         workflow = load_workflow_reference(
             args.path,
@@ -61,15 +68,30 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 print(_override_unwired_message(workflow.id, "--steps", "steps"), file=sys.stderr)
                 return 2
             workflow.set_steps(args.steps)
+        override_config = None
+        if memory_profile is not None:
+            override_config = apply_memory_profile_override(
+                SessionConfig.from_workflow_metadata(workflow),
+                memory_profile,
+            )
         if args.runtime == "embedded":
-            result = run_embedded_sync(workflow, backend=args.backend)
+            if override_config is None:
+                result = run_embedded_sync(workflow, backend=args.backend)
+            else:
+                result = run_embedded_sync(workflow, backend=args.backend, config=override_config)
         elif args.runtime == "auto":
             if session_url:
                 result = run_sync(workflow, server_url=session_url, backend=args.backend)
             else:
-                result = run_embedded_sync(workflow, backend=args.backend)
+                if override_config is None:
+                    result = run_embedded_sync(workflow, backend=args.backend)
+                else:
+                    result = run_embedded_sync(workflow, backend=args.backend, config=override_config)
         elif args.runtime == "server":
-            result = run_sync(workflow, server_url=session_url, backend=args.backend)
+            if override_config is None:
+                result = run_sync(workflow, server_url=session_url, backend=args.backend)
+            else:
+                result = run_sync(workflow, server_url=session_url, backend=args.backend, config=override_config)
         else:
             print(f"unknown runtime: {args.runtime}", file=sys.stderr)
             return 2
@@ -85,6 +107,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _memory_profile_restart_required_message(target: str) -> str:
+    return (
+        "run failed: --memory-profile requires a new local VibeComfy runtime for this run; "
+        f"cannot apply it to {target}. Stop/restart the session with `vibecomfy session start "
+        "--memory-profile N`, or run without --server-url and without an active session."
+    )
+
+
 def register(subparsers) -> None:
     run = subparsers.add_parser("run")
     run.add_argument("path")
@@ -95,4 +125,5 @@ def register(subparsers) -> None:
     run.add_argument("--prompt")
     run.add_argument("--seed", type=int)
     run.add_argument("--steps", type=int)
+    run.add_argument("--memory-profile", type=int, choices=[1, 2, 3, 4, 5])
     run.set_defaults(func=_cmd_run)

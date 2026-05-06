@@ -14,15 +14,19 @@ import pytest
 
 import vibecomfy.runtime.session as session_module
 import vibecomfy.node_packs_install as node_packs_install
+from vibecomfy.memory_profile import MemoryProfile
 from vibecomfy.node_packs import CustomNodePack
 from vibecomfy.schema import InputSpec, NodeSchema
 from vibecomfy.runtime.session import (
     EmbeddedSession,
     ServerSession,
     SessionConfig,
+    _comfy_server_argv,
     _embedded_configuration_for_session,
     _prepare_prompt_async,
+    _run_metadata,
     _warm_schema_provider,
+    apply_memory_profile_override,
     model_fingerprint,
 )
 import vibecomfy.runtime.client as client_module
@@ -239,7 +243,8 @@ def test_one_shot_run_validates_against_active_url(tmp_path: Path, monkeypatch: 
     queued_urls: list[str] = []
 
     @asynccontextmanager
-    async def fake_server(*, server_url=None, log_path=None):
+    async def fake_server(*, server_url=None, log_path=None, config=None):
+        assert config is None
         yield "http://active-runtime.test"
 
     def fake_build(server_url: str | None):
@@ -460,6 +465,165 @@ def test_session_config_typed_values_override_raw_hiddenswitch_conflicts() -> No
 
 def test_session_config_empty_dict_uses_defaults() -> None:
     assert SessionConfig.from_dict({}) == SessionConfig(extra={})
+
+
+def test_session_config_memory_profile_overlay_uses_normal_precedence() -> None:
+    config = SessionConfig.from_dict(
+        {
+            "memory_profile": 5,
+            "vram_policy": "normal",
+            "reserve_vram_gb": 8.0,
+            "cache_policy": "none",
+        }
+    )
+
+    assert config.memory_profile is MemoryProfile.MINIMUM
+    assert config.vram_policy == "normal"
+    assert config.reserve_vram_gb == 8.0
+    assert config.cache_policy == "none"
+    assert config.disable_smart_memory is True
+
+
+def test_session_config_memory_profile_overlay_respects_raw_hiddenswitch_precedence() -> None:
+    config = SessionConfig.from_dict(
+        {
+            "memory_profile": 1,
+            "lowvram": True,
+            "reserve_vram": 3.0,
+            "cache_none": True,
+        }
+    )
+
+    assert config.memory_profile is MemoryProfile.LOW_RAM
+    assert config.vram_policy == "low"
+    assert config.reserve_vram_gb == 3.0
+    assert config.cache_policy == "none"
+
+
+@pytest.mark.parametrize("value", [0, 6, -1, "1", 1.0, True])
+def test_session_config_memory_profile_rejects_invalid_values(value: object) -> None:
+    with pytest.raises(ValueError, match="integer from 1 to 5"):
+        SessionConfig.from_dict({"memory_profile": value})
+
+
+def test_from_workflow_metadata_applies_memory_profile_before_explicit_fields() -> None:
+    workflow = _workflow()
+    workflow.metadata["comfy_configuration"] = {
+        "memory_profile": 4,
+        "cache_policy": "none",
+        "reserve_vram_gb": 7.0,
+    }
+
+    config = SessionConfig.from_workflow_metadata(workflow)
+
+    assert config.memory_profile is MemoryProfile.VERY_LOW_VRAM
+    assert config.vram_policy == "low"
+    assert config.cache_policy == "none"
+    assert config.reserve_vram_gb == 7.0
+
+
+def test_explicit_memory_profile_override_wins_after_workflow_metadata_resolution() -> None:
+    workflow = _workflow()
+    workflow.metadata["comfy_configuration"] = {
+        "memory_profile": 4,
+        "cache_policy": "none",
+        "reserve_vram_gb": 7.0,
+    }
+    config = SessionConfig.from_workflow_metadata(workflow)
+
+    resolved = apply_memory_profile_override(config, 5)
+
+    assert config.memory_profile is MemoryProfile.VERY_LOW_VRAM
+    assert config.cache_policy == "none"
+    assert config.reserve_vram_gb == 7.0
+    assert resolved.memory_profile is MemoryProfile.MINIMUM
+    assert resolved.vram_policy == "low"
+    assert resolved.cache_policy == "lru:1"
+    assert resolved.reserve_vram_gb == 4.0
+    assert resolved.disable_smart_memory is True
+    assert workflow.metadata["comfy_configuration"] == {
+        "memory_profile": 4,
+        "cache_policy": "none",
+        "reserve_vram_gb": 7.0,
+    }
+
+
+def test_memory_profiles_round_trip_to_embedded_config_and_server_argv(fake_comfy) -> None:
+    expected = {
+        1: {"vram": "--highvram", "cache": None, "reserve": None, "disable": False},
+        2: {"vram": "--highvram", "cache": ("--cache-lru", "32"), "reserve": None, "disable": False},
+        3: {"vram": "--normalvram", "cache": None, "reserve": None, "disable": False},
+        4: {"vram": "--lowvram", "cache": "--cache-classic", "reserve": "2.0", "disable": False},
+        5: {"vram": "--lowvram", "cache": ("--cache-lru", "1"), "reserve": "4.0", "disable": True},
+    }
+
+    for value, profile_expected in expected.items():
+        config = SessionConfig.from_dict({"memory_profile": value, "port": 8200})
+        embedded = _embedded_configuration_for_session(config)
+        argv = _comfy_server_argv(config)
+
+        assert config.memory_profile == value
+        assert embedded is not None
+        assert getattr(embedded, profile_expected["vram"].removeprefix("--")) is True
+        assert profile_expected["vram"] in argv
+        assert argv[argv.index("--port") + 1] == "8200"
+
+        cache = profile_expected["cache"]
+        if cache is None:
+            assert "--cache-lru" not in argv
+            assert "--cache-classic" not in argv
+            assert "--cache-none" not in argv
+        elif isinstance(cache, tuple):
+            flag, amount = cache
+            assert argv[argv.index(flag) + 1] == amount
+            assert getattr(embedded, flag.removeprefix("--").replace("-", "_")) == int(amount)
+        else:
+            assert cache in argv
+            assert getattr(embedded, cache.removeprefix("--").replace("-", "_")) is True
+
+        if profile_expected["reserve"] is None:
+            assert "--reserve-vram" not in argv
+            assert "reserve_vram" not in embedded
+        else:
+            assert argv[argv.index("--reserve-vram") + 1] == profile_expected["reserve"]
+            assert embedded.reserve_vram == float(profile_expected["reserve"])
+
+        if profile_expected["disable"]:
+            assert "--disable-smart-memory" in argv
+            assert embedded.disable_smart_memory is True
+        else:
+            assert "--disable-smart-memory" not in argv
+            assert "disable_smart_memory" not in embedded
+
+
+def test_run_metadata_includes_memory_profile_telemetry_when_configured() -> None:
+    metadata = _run_metadata(
+        run_id="run-test",
+        workflow=_workflow(),
+        api_dict={"1": {"class_type": "CheckpointLoaderSimple", "inputs": {}}},
+        queued={"prompt_id": "prompt-test"},
+        outputs=[],
+        runtime="embedded",
+        config=SessionConfig.from_dict({"memory_profile": 3}),
+    )
+
+    assert metadata["memory_profile"] == 3
+    assert metadata["memory_profile_label"] == "Low VRAM"
+
+
+def test_run_metadata_omits_memory_profile_telemetry_when_unset() -> None:
+    metadata = _run_metadata(
+        run_id="run-test",
+        workflow=_workflow(),
+        api_dict={"1": {"class_type": "CheckpointLoaderSimple", "inputs": {}}},
+        queued={"prompt_id": "prompt-test"},
+        outputs=[],
+        runtime="embedded",
+        config=SessionConfig(),
+    )
+
+    assert "memory_profile" not in metadata
+    assert "memory_profile_label" not in metadata
 
 
 def test_model_fingerprint_wan_snapshot() -> None:
