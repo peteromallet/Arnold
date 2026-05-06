@@ -12,3 +12,34 @@ dist/
 *.egg-info/
 activity-summary-*.md
 megaplan/cloud/_reference/
+
+# Local/generated planning inputs and cloud runner specs.
+cloud.yaml
+chain.yaml
+plan.md
+planning-bot-spec.md
+idea-*.txt
+ideas/
+*-critique_output.json
+
+# Generated audit/design reports from one-off planning runs.
+docs/arnold-merge-design.md
+docs/sprint-0-spike-report.md
+docs/persistence-storage-audit.md
+
+# Vendored Hermes runtime should stay lean; these paths are external docs,
+# benchmarks, generated runs, or standalone apps.
+megaplan/agent/assets/
+megaplan/agent/auto_improve/
+megaplan/agent/batch_runner.py
+megaplan/agent/cli-config.yaml.example
+megaplan/agent/datagen-config-examples/
+megaplan/agent/evals/
+megaplan/agent/landingpage/
+megaplan/agent/mini-swe-agent
+megaplan/agent/package*.json
+megaplan/agent/RELEASE_v*.md
+megaplan/agent/rl_cli.py
+megaplan/agent/setup-hermes.sh
+megaplan/agent/tinker-atropos
+megaplan/agent/website/
