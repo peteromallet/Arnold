@@ -671,9 +671,23 @@ def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
 
 
 def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> None:
+    try:
+        _run_command(
+            root,
+            ["gh", "pr", "merge", str(pr_number), "--auto", "--squash", "--delete-branch"],
+            writer=writer,
+            timeout=120,
+            error_code="gh_pr_merge_failed",
+        )
+        return
+    except CliError as exc:
+        combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
+        if "Auto merge is not allowed" not in combined:
+            raise
+        writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
     _run_command(
         root,
-        ["gh", "pr", "merge", str(pr_number), "--auto", "--squash", "--delete-branch"],
+        ["gh", "pr", "merge", str(pr_number), "--squash", "--delete-branch"],
         writer=writer,
         timeout=120,
         error_code="gh_pr_merge_failed",
