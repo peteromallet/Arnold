@@ -263,3 +263,14 @@ def test_load_plan_migrates_legacy_evaluated_state(tmp_path: Path) -> None:
     assert state["current_state"] == megaplan.STATE_CRITIQUED
     assert state["last_gate"] == {}
     assert "last_evaluation" not in persisted
+
+
+def test_parse_agent_spec_claude_effort_levels() -> None:
+    from megaplan.types import parse_agent_spec
+    assert parse_agent_spec("claude:low") == ("claude", "low")
+    assert parse_agent_spec("claude:high") == ("claude", "high")
+    assert parse_agent_spec("claude") == ("claude", None)
+    assert parse_agent_spec("codex:low") == ("codex", "low")
+    assert parse_agent_spec("codex:high") == ("codex", "high")
+    assert parse_agent_spec("codex") == ("codex", None)
+    assert parse_agent_spec("hermes:openai/gpt-5") == ("hermes", "openai/gpt-5")

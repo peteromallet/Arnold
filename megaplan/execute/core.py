@@ -430,6 +430,76 @@ def _merge_batch_results(
     return merged_count, total_batch_tasks, acknowledged_count, total_batch_checks
 
 
+def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[str, Any]:
+    """Best-effort merge of the latest execution_batch_N artifact into finalize.json.
+
+    This is used at failure boundaries outside the execute handler, such as a
+    chain phase-complete callback failing after an execute subprocess produced
+    a checkpoint artifact. It intentionally treats the latest batch payload as
+    structured evidence and lets the normal merge validator decide which
+    entries are usable.
+    """
+
+    artifacts = list_batch_artifacts(plan_dir)
+    if not artifacts:
+        return {"reconciled": False, "reason": "no execution batch artifacts"}
+    latest = artifacts[-1]
+    try:
+        payload = read_json(latest)
+        finalize_data = read_json(plan_dir / "finalize.json")
+    except Exception as error:
+        return {
+            "reconciled": False,
+            "artifact": latest.name,
+            "reason": f"failed to read checkpoint inputs: {error}",
+        }
+    if not isinstance(payload, dict) or not isinstance(finalize_data, dict):
+        return {
+            "reconciled": False,
+            "artifact": latest.name,
+            "reason": "checkpoint or finalize payload was not an object",
+        }
+
+    batch_task_ids = [
+        task["id"]
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    ]
+    batch_sense_check_ids = [
+        check["id"]
+        for check in finalize_data.get("sense_checks", [])
+        if isinstance(check, dict) and isinstance(check.get("id"), str)
+    ]
+    issues: list[str] = []
+    merged_count, total_task_count, acknowledged_count, total_check_count = _merge_batch_results(
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=batch_task_ids,
+        batch_sense_check_ids=batch_sense_check_ids,
+        issues=issues,
+        mode=state.get("config", {}).get("mode", "code"),
+        state=state,
+    )
+    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    final_md_error: str | None = None
+    try:
+        atomic_write_text(
+            plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
+        )
+    except Exception as error:
+        final_md_error = str(error)
+    return {
+        "reconciled": True,
+        "artifact": latest.name,
+        "merged_task_count": merged_count,
+        "total_task_count": total_task_count,
+        "acknowledged_sense_check_count": acknowledged_count,
+        "total_sense_check_count": total_check_count,
+        "issues": issues,
+        "final_md_error": final_md_error,
+    }
+
+
 def _run_and_merge_batch(
     *,
     root: Path,

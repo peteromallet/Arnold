@@ -38,6 +38,7 @@ from megaplan.schemas import (
     CodeArtifact,
     Codebase,
     ControlMessage,
+    CloudRun,
     Epic,
     EpicEvent,
     EpicLock,
@@ -51,6 +52,8 @@ from megaplan.schemas import (
     Plan,
     PlanArtifact,
     ProgressEvent,
+    ResidentConversation,
+    ScheduledJob,
     SecondOpinion,
     Sprint,
     SprintItem,
@@ -62,13 +65,16 @@ from megaplan.store.base import (
     ArtifactStat,
     ChecklistItemInput,
     ControlMessageInput,
+    CloudRunInput,
     EpicSummary,
     HotContext,
     LeaseConflict,
     LockConflict,
     MessageSearchHit,
     ProgressEventInput,
+    ResidentConversationInput,
     RevisionConflict,
+    ScheduledJobInput,
     SprintItemInput,
     SprintWithItems,
     StoreError,
@@ -124,6 +130,13 @@ _IDEMPOTENT_MUTATORS = frozenset({
     "attach_image",
     "create_message",
     "update_message",
+    "upsert_resident_conversation",
+    "update_resident_conversation",
+    "create_scheduled_job",
+    "update_scheduled_job",
+    "claim_due_scheduled_jobs",
+    "create_cloud_run",
+    "update_cloud_run",
     "create_turn",
     "update_turn",
     "create_plan",
@@ -153,6 +166,7 @@ _REPLAY_MODEL_TYPES = {
         CodeArtifact,
         Codebase,
         ControlMessage,
+        CloudRun,
         Epic,
         EpicEvent,
         EpicLock,
@@ -164,6 +178,8 @@ _REPLAY_MODEL_TYPES = {
         Plan,
         PlanArtifact,
         ProgressEvent,
+        ResidentConversation,
+        ScheduledJob,
         SecondOpinion,
         Sprint,
         SprintItem,
@@ -221,6 +237,7 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "code_artifacts": frozenset({"id", "codebase_id", "epic_id", "kind", "source", "file_path", "line_range", "scope", "content", "content_summary", "metadata", "created_at", "last_used_at", "expires_at"}),
     "codebases": frozenset({"id", "owner", "name", "default_branch", "scope", "group_name", "associated_epic_id", "added_at", "added_via", "last_accessed_at", "verified_accessible_at", "notes"}),
     "control_messages": frozenset({"id", "epic_id", "actor_id", "intent", "target_id", "payload", "idempotency_key", "created_at", "processor_id", "claimed_at", "processed_at", "result"}),
+    "cloud_runs": frozenset({"id", "operation", "status", "conversation_id", "epic_id", "sprint_id", "plan_id", "provider", "provider_run_id", "target_id", "command_summary", "progress_summary", "last_status", "metadata", "idempotency_key", "started_by_actor_id", "started_at", "last_checked_at", "completed_at", "created_at", "updated_at"}),
     "epic_events": frozenset({
         "id", "epic_id", "transaction_id", "event_type", "summary",
         "prior_state", "pre_state", "post_state",
@@ -236,13 +253,15 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
         "active", "discord_attachment_id", "blob_backend", "blob_id",
         "blob_sha256", "blob_size_bytes", "content_type",
     }),
-    "messages": frozenset({"id", "epic_id", "direction", "content", "discord_message_id", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
+    "messages": frozenset({"id", "epic_id", "conversation_id", "idempotency_key", "direction", "content", "discord_message_id", "bot_turn_id", "has_code_attachment", "has_image_attachment", "in_burst_with", "was_voice_message", "audio_storage_url", "transcription_metadata", "sent_at"}),
     "plan_artifacts": frozenset({
         "plan_id", "name", "kind", "role", "version", "batch", "phase",
         "content_text", "content_bytes", "sha256", "created_at", "updated_at",
     }),
     "plans": frozenset(_PLAN_COLUMNS),
     "progress_events": frozenset({"id", "epic_id", "plan_id", "sprint_id", "idempotency_key", "kind", "summary", "details", "occurred_at"}),
+    "resident_conversations": frozenset({"id", "transport", "conversation_key", "active_epic_id", "guild_id", "channel_id", "thread_id", "dm_user_id", "last_inbound_message_id", "last_outbound_message_id", "delivery_cursor", "metadata", "created_at", "updated_at", "last_active_at"}),
+    "scheduled_jobs": frozenset({"id", "job_type", "status", "conversation_id", "cloud_run_id", "epic_id", "payload", "scheduled_for", "attempt_count", "max_attempts", "claimed_by", "claimed_at", "fired_at", "cancelled_at", "last_error", "created_at", "updated_at"}),
     "second_opinions": frozenset({"id", "epic_id", "requested_at", "requested_by", "focus_areas", "raw_response", "score", "summary", "verdict", "resulting_checklist_item_ids", "model_used"}),
     "sprint_items": frozenset({"id", "sprint_id", "content", "estimated_complexity", "status", "source_section", "position", "created_at"}),
     "sprints": frozenset({"id", "epic_id", "sprint_number", "name", "goal", "status", "queue_position", "pending_reason", "target_weeks", "revision", "created_at", "updated_at", "queued_at"}),
@@ -252,7 +271,7 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
 _COPY_JSONB_COLUMNS = frozenset({
     "active_step", "arguments", "blob_copy_progress", "clarification", "config",
     "context_snapshot", "copied_ids", "details", "error_details", "focus_areas",
-    "granted_epic_ids", "history", "in_burst_with", "last_gate",
+    "granted_epic_ids", "history", "in_burst_with", "last_gate", "last_status",
     "latest_execution", "latest_failure", "latest_finalize", "latest_review",
     "line_range", "manifest", "meta", "metadata", "payload",
     "plan_versions", "post_state", "pre_state", "prior_state", "prompt_snapshot",
@@ -260,6 +279,11 @@ _COPY_JSONB_COLUMNS = frozenset({
     "resulting_checklist_item_ids", "sessions", "state_at_turn",
     "transcription_metadata", "triggered_by_message_ids", "warnings_issued",
 })
+_SOURCE_REFERENCE_PREFIX = {
+    "user_uploaded": "img_user_upload",
+    "caller_uploaded": "img_caller_upload",
+    "agent_generated": "img_agent_generated",
+}
 
 
 class _DBTransaction:
@@ -1395,6 +1419,15 @@ class DBStore:
     # T8: Images
     # ------------------------------------------------------------------
 
+    def _next_image_reference(self, epic_id: str, source: str) -> str:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT count(*) AS count FROM images WHERE epic_id = %s AND source = %s",
+            [epic_id, source],
+        ).fetchone()
+        prefix = _SOURCE_REFERENCE_PREFIX.get(source, f"img_{source}")
+        return f"{prefix}_{int(row['count']) + 1}"
+
     def create_image(
         self,
         *,
@@ -1419,9 +1452,9 @@ class DBStore:
     ) -> Image:
         conn = self._get_conn()
         img_id = str(uuid.uuid4())
-        ref_key = reference_key or img_id
+        ref_key = reference_key or self._next_image_reference(epic_id, source)
         if active:
-            self.deactivate_active_image_reference(epic_id, ref_key)
+            DBStore.deactivate_active_image_reference(self, epic_id, ref_key)
         row = conn.execute(
             """
             INSERT INTO images
@@ -2347,6 +2380,18 @@ class DBStore:
     # T7 — Messages
     # ------------------------------------------------------------------
 
+    def _next_invocation_message_id(self, turn_id: str) -> str:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            SELECT count(*) AS count
+            FROM messages
+            WHERE bot_turn_id = %s AND direction = 'outbound'
+            """,
+            [turn_id],
+        ).fetchone()
+        return f"inv_{turn_id}_{int(row['count']) + 1}"
+
     def create_message(
         self,
         *,
@@ -2362,20 +2407,26 @@ class DBStore:
         audio_storage_url: str | None = None,
         transcription_metadata: dict[str, Any] | None = None,
         synthesize_outbound_id: bool = True,
+        conversation_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> Message:
         conn = self._get_conn()
+        if synthesize_outbound_id and direction == "outbound" and discord_message_id is None and bot_turn_id:
+            discord_message_id = self._next_invocation_message_id(bot_turn_id)
         row = conn.execute(
             """
             INSERT INTO messages (
-                id, epic_id, direction, content, discord_message_id, bot_turn_id,
+                id, epic_id, conversation_id, idempotency_key, direction, content, discord_message_id, bot_turn_id,
                 has_code_attachment, has_image_attachment, in_burst_with,
                 was_voice_message, audio_storage_url, transcription_metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE
+            SET idempotency_key = EXCLUDED.idempotency_key
             RETURNING *
             """,
             [
-                str(uuid.uuid4()), epic_id, direction, content, discord_message_id,
+                str(uuid.uuid4()), epic_id, conversation_id, idempotency_key,
+                direction, content, discord_message_id,
                 bot_turn_id, has_code_attachment, has_image_attachment,
                 _jb(list(in_burst_with) if in_burst_with is not None else None),
                 was_voice_message, audio_storage_url, _jb(transcription_metadata),
@@ -2393,8 +2444,8 @@ class DBStore:
         if not message_ids:
             return []
         rows = conn.execute(
-            "SELECT * FROM messages WHERE id = ANY(%s::text[]) ORDER BY sent_at",
-            [list(message_ids)],
+            "SELECT * FROM messages WHERE id = ANY(%s::text[]) ORDER BY array_position(%s::text[], id)",
+            [list(message_ids), list(message_ids)],
         ).fetchall()
         return [Message(**row) for row in rows]
 
@@ -2437,13 +2488,16 @@ class DBStore:
         limit: int = 20,
     ) -> list[MessageSearchHit]:
         conn = self._get_conn()
-        conditions = ["m.content @@ websearch_to_tsquery('english', %s)"]
-        values: list[Any] = [query]
+        conditions = [
+            "(to_tsvector('english', m.content) @@ websearch_to_tsquery('english', %s) "
+            "OR lower(m.content) LIKE lower(%s))"
+        ]
+        values: list[Any] = [query, f"%{query}%"]
         if epic_id is not None:
             conditions.append("m.epic_id = %s")
             values.append(epic_id)
         where = " AND ".join(conditions)
-        values.extend([query, query, limit])
+        values = [query, query, *values, limit]
         rows = conn.execute(
             f"""
             SELECT m.*,
@@ -2469,13 +2523,11 @@ class DBStore:
             """
             SELECT * FROM messages m
             WHERE m.epic_id = %s
+              AND m.direction = 'inbound'
+              AND m.bot_turn_id IS NULL
               AND m.sent_at >= %s::timestamptz
               AND NOT (m.id = ANY(%s::text[]))
-              AND NOT EXISTS (
-                  SELECT 1 FROM bot_turns bt
-                  WHERE bt.triggered_by_message_ids @> jsonb_build_array(m.id)
-              )
-            ORDER BY m.sent_at
+            ORDER BY m.sent_at, m.id
             """,
             [epic_id, started_at, list(exclude_ids)],
         ).fetchall()
@@ -2527,6 +2579,8 @@ class DBStore:
             "warnings_issued",
         })
         set_parts = [f"{k} = %s" for k in changes]
+        if changes.get("status") in {"completed", "failed", "abandoned"} and "completed_at" not in changes:
+            set_parts.append("completed_at = now()")
         values = [_jb(v) if k in jsonb_turn_cols else v for k, v in changes.items()]
         values.append(turn_id)
         row = conn.execute(
@@ -3114,6 +3168,386 @@ class DBStore:
             "UPDATE control_messages SET processed_at = now(), result = %s WHERE id = %s",
             [_jb(result), msg_id],
         )
+
+    def recover_stale_control_messages(
+        self,
+        *,
+        processor_id: str,
+        older_than_seconds: int,
+        max: int = 10,
+        idempotency_key: str | None = None,
+    ) -> list[ControlMessage]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            UPDATE control_messages
+            SET claimed_at = now(), processor_id = %s
+            WHERE id IN (
+                SELECT id FROM control_messages
+                WHERE processed_at IS NULL
+                  AND claimed_at IS NOT NULL
+                  AND claimed_at < now() - make_interval(secs => %s)
+                ORDER BY claimed_at, created_at
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING *
+            """,
+            [processor_id, older_than_seconds, max],
+        ).fetchall()
+        return [ControlMessage(**row) for row in rows]
+
+    def list_stale_control_messages(
+        self,
+        *,
+        older_than_seconds: int,
+        limit: int = 10,
+    ) -> list[ControlMessage]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT * FROM control_messages
+            WHERE processed_at IS NULL
+              AND claimed_at IS NOT NULL
+              AND claimed_at < now() - make_interval(secs => %s)
+            ORDER BY claimed_at, created_at
+            LIMIT %s
+            """,
+            [older_than_seconds, limit],
+        ).fetchall()
+        return [ControlMessage(**row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Resident orchestration
+    # ------------------------------------------------------------------
+
+    def upsert_resident_conversation(
+        self,
+        conversation: ResidentConversationInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ResidentConversation:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            INSERT INTO resident_conversations (
+                id, transport, conversation_key, active_epic_id, guild_id,
+                channel_id, thread_id, dm_user_id, metadata, last_active_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (transport, conversation_key) DO UPDATE SET
+                active_epic_id = COALESCE(EXCLUDED.active_epic_id, resident_conversations.active_epic_id),
+                guild_id = COALESCE(EXCLUDED.guild_id, resident_conversations.guild_id),
+                channel_id = COALESCE(EXCLUDED.channel_id, resident_conversations.channel_id),
+                thread_id = COALESCE(EXCLUDED.thread_id, resident_conversations.thread_id),
+                dm_user_id = COALESCE(EXCLUDED.dm_user_id, resident_conversations.dm_user_id),
+                metadata = EXCLUDED.metadata,
+                updated_at = now(),
+                last_active_at = now()
+            RETURNING *
+            """,
+            [
+                str(uuid.uuid4()), conversation.transport, conversation.conversation_key,
+                conversation.active_epic_id, conversation.guild_id, conversation.channel_id,
+                conversation.thread_id, conversation.dm_user_id, _jb(dict(conversation.metadata)),
+            ],
+        ).fetchone()
+        return ResidentConversation(**row)
+
+    def load_resident_conversation(self, conversation_id: str) -> ResidentConversation | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM resident_conversations WHERE id = %s", [conversation_id]).fetchone()
+        return ResidentConversation(**row) if row else None
+
+    def get_resident_conversation_by_key(
+        self,
+        *,
+        transport: str,
+        conversation_key: str,
+    ) -> ResidentConversation | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM resident_conversations WHERE transport = %s AND conversation_key = %s",
+            [transport, conversation_key],
+        ).fetchone()
+        return ResidentConversation(**row) if row else None
+
+    def list_resident_conversations(
+        self,
+        *,
+        transport: str | None = None,
+        active_epic_id: str | None = None,
+        limit: int = 50,
+    ) -> list[ResidentConversation]:
+        conn = self._get_conn()
+        conditions: list[str] = []
+        values: list[Any] = []
+        for column, value in (
+            ("transport", transport),
+            ("active_epic_id", active_epic_id),
+        ):
+            if value is not None:
+                conditions.append(f"{column} = %s")
+                values.append(value)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = conn.execute(
+            f"SELECT * FROM resident_conversations {where} ORDER BY last_active_at DESC, id DESC LIMIT %s",
+            [*values, limit],
+        ).fetchall()
+        return [ResidentConversation(**row) for row in rows]
+
+    def update_resident_conversation(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> ResidentConversation:
+        conn = self._get_conn()
+        if not changes:
+            row = conn.execute("SELECT * FROM resident_conversations WHERE id = %s", [conversation_id]).fetchone()
+            if row is None:
+                raise RevisionConflict(f"Resident conversation {conversation_id!r} not found")
+            return ResidentConversation(**row)
+        jsonb_cols = frozenset({"metadata"})
+        set_parts = [f"{key} = %s" for key in changes]
+        set_parts.append("updated_at = now()")
+        values = [_jb(value) if key in jsonb_cols else value for key, value in changes.items()]
+        values.append(conversation_id)
+        row = conn.execute(
+            f"UPDATE resident_conversations SET {', '.join(set_parts)} WHERE id = %s RETURNING *",
+            values,
+        ).fetchone()
+        if row is None:
+            raise RevisionConflict(f"Resident conversation {conversation_id!r} not found")
+        return ResidentConversation(**row)
+
+    def create_scheduled_job(
+        self,
+        job: ScheduledJobInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ScheduledJob:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            INSERT INTO scheduled_jobs (
+                id, job_type, conversation_id, cloud_run_id, epic_id, payload,
+                scheduled_for, max_attempts
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            [
+                str(uuid.uuid4()), job.job_type, job.conversation_id,
+                job.cloud_run_id, job.epic_id, _jb(dict(job.payload)),
+                job.scheduled_for, job.max_attempts,
+            ],
+        ).fetchone()
+        return ScheduledJob(**row)
+
+    def load_scheduled_job(self, job_id: str) -> ScheduledJob | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = %s", [job_id]).fetchone()
+        return ScheduledJob(**row) if row else None
+
+    def update_scheduled_job(
+        self,
+        job_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> ScheduledJob:
+        conn = self._get_conn()
+        if not changes:
+            row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = %s", [job_id]).fetchone()
+            if row is None:
+                raise RevisionConflict(f"Scheduled job {job_id!r} not found")
+            return ScheduledJob(**row)
+        jsonb_cols = frozenset({"payload"})
+        set_parts = [f"{key} = %s" for key in changes]
+        set_parts.append("updated_at = now()")
+        if changes.get("status") == "fired" and "fired_at" not in changes:
+            set_parts.append("fired_at = now()")
+        if changes.get("status") == "cancelled" and "cancelled_at" not in changes:
+            set_parts.append("cancelled_at = now()")
+        values = [_jb(value) if key in jsonb_cols else value for key, value in changes.items()]
+        values.append(job_id)
+        row = conn.execute(
+            f"UPDATE scheduled_jobs SET {', '.join(set_parts)} WHERE id = %s RETURNING *",
+            values,
+        ).fetchone()
+        if row is None:
+            raise RevisionConflict(f"Scheduled job {job_id!r} not found")
+        return ScheduledJob(**row)
+
+    def claim_due_scheduled_jobs(
+        self,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+        stale_after_seconds: int | None = None,
+        max: int = 10,
+        job_type: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> list[ScheduledJob]:
+        conn = self._get_conn()
+        values: list[Any] = [worker_id, now, now]
+        stale_clause = ""
+        if stale_after_seconds is not None:
+            stale_clause = """
+                OR (
+                    status = 'claimed'
+                    AND claimed_at IS NOT NULL
+                    AND claimed_at < COALESCE(%s::timestamptz, now()) - make_interval(secs => %s)
+                )
+            """
+            values.extend([now, stale_after_seconds])
+        type_clause = ""
+        if job_type is not None:
+            type_clause = "AND job_type = %s"
+            values.append(job_type)
+        rows = conn.execute(
+            f"""
+            UPDATE scheduled_jobs
+            SET status = 'claimed',
+                claimed_by = %s,
+                claimed_at = COALESCE(%s::timestamptz, now()),
+                attempt_count = attempt_count + 1,
+                updated_at = now()
+            WHERE id IN (
+                SELECT id FROM scheduled_jobs
+                WHERE (
+                    (status = 'pending' AND scheduled_for <= COALESCE(%s::timestamptz, now()))
+                    {stale_clause}
+                )
+                {type_clause}
+                ORDER BY scheduled_for, id
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING *
+            """,
+            [*values, max],
+        ).fetchall()
+        return [ScheduledJob(**row) for row in rows]
+
+    def list_scheduled_jobs(
+        self,
+        *,
+        conversation_id: str | None = None,
+        cloud_run_id: str | None = None,
+        status: str | None = None,
+        job_type: str | None = None,
+        limit: int = 50,
+    ) -> list[ScheduledJob]:
+        conn = self._get_conn()
+        conditions: list[str] = []
+        values: list[Any] = []
+        for column, value in (
+            ("conversation_id", conversation_id),
+            ("cloud_run_id", cloud_run_id),
+            ("status", status),
+            ("job_type", job_type),
+        ):
+            if value is not None:
+                conditions.append(f"{column} = %s")
+                values.append(value)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = conn.execute(
+            f"SELECT * FROM scheduled_jobs {where} ORDER BY scheduled_for DESC, id DESC LIMIT %s",
+            [*values, limit],
+        ).fetchall()
+        return [ScheduledJob(**row) for row in rows]
+
+    def create_cloud_run(
+        self,
+        run: CloudRunInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> CloudRun:
+        conn = self._get_conn()
+        effective_key = idempotency_key or run.idempotency_key
+        row = conn.execute(
+            """
+            INSERT INTO cloud_runs (
+                id, operation, conversation_id, epic_id, sprint_id, plan_id,
+                provider, provider_run_id, target_id, command_summary,
+                metadata, idempotency_key, started_by_actor_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE
+            SET idempotency_key = EXCLUDED.idempotency_key
+            RETURNING *
+            """,
+            [
+                str(uuid.uuid4()), run.operation, run.conversation_id, run.epic_id,
+                run.sprint_id, run.plan_id, run.provider, run.provider_run_id,
+                run.target_id, run.command_summary, _jb(dict(run.metadata)),
+                effective_key, run.started_by_actor_id,
+            ],
+        ).fetchone()
+        return CloudRun(**row)
+
+    def load_cloud_run(self, run_id: str) -> CloudRun | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM cloud_runs WHERE id = %s", [run_id]).fetchone()
+        return CloudRun(**row) if row else None
+
+    def update_cloud_run(
+        self,
+        run_id: str,
+        *,
+        idempotency_key: str | None = None,
+        **changes: Any,
+    ) -> CloudRun:
+        conn = self._get_conn()
+        if not changes:
+            row = conn.execute("SELECT * FROM cloud_runs WHERE id = %s", [run_id]).fetchone()
+            if row is None:
+                raise RevisionConflict(f"Cloud run {run_id!r} not found")
+            return CloudRun(**row)
+        jsonb_cols = frozenset({"last_status", "metadata"})
+        set_parts = [f"{key} = %s" for key in changes]
+        set_parts.append("updated_at = now()")
+        if changes.get("status") in {"completed", "failed", "blocked", "cancelled"} and "completed_at" not in changes:
+            set_parts.append("completed_at = now()")
+        values = [_jb(value) if key in jsonb_cols else value for key, value in changes.items()]
+        values.append(run_id)
+        row = conn.execute(
+            f"UPDATE cloud_runs SET {', '.join(set_parts)} WHERE id = %s RETURNING *",
+            values,
+        ).fetchone()
+        if row is None:
+            raise RevisionConflict(f"Cloud run {run_id!r} not found")
+        return CloudRun(**row)
+
+    def list_cloud_runs(
+        self,
+        *,
+        conversation_id: str | None = None,
+        epic_id: str | None = None,
+        plan_id: str | None = None,
+        sprint_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[CloudRun]:
+        conn = self._get_conn()
+        conditions: list[str] = []
+        values: list[Any] = []
+        for column, value in (
+            ("conversation_id", conversation_id),
+            ("epic_id", epic_id),
+            ("plan_id", plan_id),
+            ("sprint_id", sprint_id),
+            ("status", status),
+        ):
+            if value is not None:
+                conditions.append(f"{column} = %s")
+                values.append(value)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = conn.execute(
+            f"SELECT * FROM cloud_runs {where} ORDER BY created_at DESC, id DESC LIMIT %s",
+            [*values, limit],
+        ).fetchall()
+        return [CloudRun(**row) for row in rows]
 
     # ------------------------------------------------------------------
     # T11 — Progress Events

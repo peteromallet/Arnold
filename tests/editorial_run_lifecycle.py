@@ -53,6 +53,8 @@ def test_resume_plan_reenters_cursor_and_clears_failure_after_success(tmp_path: 
     def runner(args: list[str], cwd: Path | None = None):
         calls.append(args)
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "finalized"
+        assert state["latest_failure"] == {"kind": "execution_blocked"}
         state["current_state"] = "executed"
         (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
         return 0, "ok", ""
@@ -71,11 +73,17 @@ def test_resume_plan_preserves_failure_after_failed_resume(tmp_path: Path) -> No
     project = _project(tmp_path)
     plan_dir = _plan_dir(project, "failed-resume", phase="review", batch_index=None)
 
-    result = resume_plan(project, "failed-resume", runner=lambda args, cwd=None: (5, "", "still bad"))
+    def runner(args: list[str], cwd: Path | None = None):
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "executed"
+        return 5, "", "still bad"
+
+    result = resume_plan(project, "failed-resume", runner=runner)
 
     assert result["success"] is False
     assert result["phase"] == "review"
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "blocked"
     assert state["latest_failure"] == {"kind": "execution_blocked"}
     assert state["resume_cursor"]["phase"] == "review"
 

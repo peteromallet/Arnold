@@ -60,6 +60,10 @@ PlanArtifactRole = Literal[
     "tiebreaker_payload",
 ]
 WorkerKind = Literal["local_cli", "cloud_worker", "auto_driver"]
+ScheduledJobStatus = Literal["pending", "claimed", "fired", "cancelled", "failed"]
+ScheduledJobType = Literal["cloud_check", "deferred_turn", "heartbeat", "confirmation_expiry"]
+CloudRunStatus = Literal["queued", "starting", "running", "blocked", "failed", "gate-needed", "completed", "cancelled", "unknown"]
+CloudRunOperation = Literal["chain", "bootstrap", "resume", "sprint", "status"]
 ControlIntent = Literal[
     "run_sprint",
     "pause_plan",
@@ -151,6 +155,50 @@ class ProgressEvent(StorageModel):
     summary: str
     details: NormalizedDict = Field(default_factory=dict)
     occurred_at: datetime = Field(default_factory=utc_now)
+
+
+class ScheduledJob(StorageModel):
+    id: str
+    job_type: ScheduledJobType
+    status: ScheduledJobStatus = "pending"
+    conversation_id: str | None = None
+    cloud_run_id: str | None = None
+    epic_id: str | None = None
+    payload: NormalizedDict = Field(default_factory=dict)
+    scheduled_for: datetime
+    attempt_count: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=3, ge=1)
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
+    fired_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class CloudRun(StorageModel):
+    id: str
+    operation: CloudRunOperation
+    status: CloudRunStatus = "queued"
+    conversation_id: str | None = None
+    epic_id: str | None = None
+    sprint_id: str | None = None
+    plan_id: str | None = None
+    provider: str | None = None
+    provider_run_id: str | None = None
+    target_id: str | None = None
+    command_summary: str | None = None
+    progress_summary: str | None = None
+    last_status: NormalizedDict = Field(default_factory=dict)
+    metadata: NormalizedDict = Field(default_factory=dict)
+    idempotency_key: str | None = None
+    started_by_actor_id: str | None = None
+    started_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class AutomationActor(StorageModel):

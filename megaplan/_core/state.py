@@ -404,12 +404,21 @@ def set_active_step(
     run_id: str | None = None,
 ) -> str:
     resolved_run_id = run_id or str(uuid.uuid4())
+    started_at = now_utc()
+    attempt = 1 + sum(
+        1
+        for entry in state.get("history", [])
+        if isinstance(entry, dict) and entry.get("step") == step
+    )
     active_step: ActiveStep = {
         "step": step,
         "agent": agent,
         "mode": mode,
         "run_id": resolved_run_id,
-        "started_at": now_utc(),
+        "started_at": started_at,
+        "attempt": attempt,
+        "last_activity_at": started_at,
+        "last_activity_kind": "started",
     }
     if model:
         active_step["model"] = model
@@ -422,6 +431,40 @@ def set_active_step(
             active_step["session_id"] = session_id
     state["active_step"] = active_step
     return resolved_run_id
+
+
+def touch_active_step(
+    plan_dir: Path,
+    *,
+    run_id: str | None,
+    kind: str,
+    detail: str | None = None,
+) -> None:
+    """Persist lightweight liveness for the active step.
+
+    This intentionally reads the current on-disk state and updates only the
+    matching ``active_step``. That preserves concurrent metadata appends and
+    avoids the long-running worker writing an old in-memory snapshot over
+    operator changes.
+    """
+    if not run_id:
+        return
+    state_path = plan_dir / "state.json"
+    try:
+        state = read_json(state_path)
+    except Exception:
+        return
+    if not isinstance(state, dict):
+        return
+    active_step = state.get("active_step")
+    if not isinstance(active_step, dict) or active_step.get("run_id") != run_id:
+        return
+    active_step["last_activity_at"] = now_utc()
+    active_step["last_activity_kind"] = kind
+    if detail:
+        active_step["last_activity_detail"] = detail[-500:]
+    state["active_step"] = active_step
+    atomic_write_json(state_path, state)
 
 
 def clear_active_step(state: PlanState, *, run_id: str | None = None) -> None:
@@ -533,6 +576,7 @@ def record_step_failure(
             message=error.message,
         ),
     )
+    state["active_step"] = None
     # Phases hold the lock for many minutes; merge meta to avoid clobbering
     # concurrent ``override add-note`` / ``override`` appends.
     save_state_merge_meta(plan_dir, state)

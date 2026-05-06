@@ -24,12 +24,35 @@ from megaplan.evaluation import (
     validate_execution_evidence,
     validate_plan_structure,
 )
+from megaplan.audits.robustness import validate_critique_checks
 from megaplan.workers import _build_mock_payload
 
 
 def _write_json(path: Path, data: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def test_validate_critique_checks_allows_custom_checks_when_none_are_required() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "custom-check",
+                "question": "Did the broad critique find a concrete issue?",
+                "findings": [
+                    {
+                        "detail": "The broad critique found a concrete repository mismatch and should not fail only because no named robustness checks were required.",
+                        "flagged": True,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    assert validate_critique_checks(payload, expected_ids=[]) == []
 
 
 def _state(tmp_path: Path, *, iteration: int = 1, robustness: str = "standard") -> dict[str, object]:
@@ -702,6 +725,47 @@ def test_validate_execution_evidence_clean_run_produces_no_completion_findings(
     result = validate_execution_evidence(finalize_data, project_dir)
     for keyword in ("pending", "skipped without", "blocked without", "neither files_changed"):
         assert not any(keyword in f for f in result["findings"]), result["findings"]
+
+
+def test_validate_execution_evidence_reads_nested_git_repo_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    nested_dir = project_dir / "reigh-app"
+    (project_dir / ".git").mkdir(parents=True)
+    (nested_dir / ".git").mkdir(parents=True)
+
+    def fake_run(args, **kwargs):
+        cwd = Path(kwargs["cwd"])
+        if cwd == project_dir:
+            stdout = ""
+        elif cwd == nested_dir:
+            stdout = " M src/a.ts\n?? docs/new.md\n"
+        else:  # pragma: no cover - defensive assertion context
+            raise AssertionError(f"unexpected cwd {cwd}")
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("megaplan.evaluation.subprocess.run", fake_run)
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": ["reigh-app/src/a.ts"],
+                "commands_run": [],
+                "executor_notes": "patched nested app file",
+            }
+        ],
+        "sense_checks": [],
+    }
+
+    result = validate_execution_evidence(finalize_data, project_dir)
+
+    assert "reigh-app/src/a.ts" in result["files_in_diff"]
+    assert not any(
+        "Executor claimed changed files not present" in finding
+        for finding in result["findings"]
+    )
 
 
 def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(

@@ -15,6 +15,9 @@ from megaplan.auto import DriverOutcome
 from megaplan.chain import (
     ChainState,
     MilestoneSpec,
+    _commit_and_push_phase,
+    _enable_auto_merge,
+    _pr_state,
     _state_path_for,
     format_chain_status,
     load_chain_state,
@@ -46,6 +49,16 @@ def _fake_outcome(plan: str, status: str = "done") -> DriverOutcome:
     )
 
 
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Spec parsing
 # ---------------------------------------------------------------------------
@@ -58,7 +71,16 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
         {
             "seed": {"plan": "seed-plan-20260415"},
             "milestones": [
-                {"label": "m1", "idea": str(idea), "branch": "mp/m1"},
+                {
+                    "label": "m1",
+                    "idea": str(idea),
+                    "branch": "mp/m1",
+                    "profile": "poirot",
+                    "robustness": "standard",
+                    "phase_model": ["plan=claude:high", "revise=claude:high"],
+                    "bakeoff": {"enabled": True, "arms": ["poirot", "all-claude", "all-codex"]},
+                    "notes": "contract seam",
+                },
             ],
             "on_failure": {"abort": "stop_chain"},
             "on_escalate": {"abort": "skip_milestone"},
@@ -67,7 +89,16 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
     spec = load_spec(spec_path)
     assert spec.seed_plan == "seed-plan-20260415"
     assert len(spec.milestones) == 1
-    assert spec.milestones[0] == MilestoneSpec(label="m1", idea=str(idea), branch="mp/m1")
+    assert spec.milestones[0] == MilestoneSpec(
+        label="m1",
+        idea=str(idea),
+        branch="mp/m1",
+        profile="poirot",
+        robustness="standard",
+        phase_model=["plan=claude:high", "revise=claude:high"],
+        bakeoff={"enabled": True, "arms": ["poirot", "all-claude", "all-codex"]},
+        notes="contract seam",
+    )
     assert spec.on_failure == "stop_chain"
     assert spec.on_escalate == "skip_milestone"
     assert spec.merge_policy == "auto"
@@ -138,6 +169,95 @@ def test_run_chain_errors_when_seed_plan_missing(tmp_path: Path) -> None:
     with pytest.raises(CliError) as excinfo:
         run_chain(spec_path, tmp_path, writer=lambda _msg: None)
     assert excinfo.value.code == "missing_seed_plan"
+
+
+def test_commit_phase_fails_when_plan_claims_dirty_nested_repo(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    (tmp_path / "README.md").write_text("root\n", encoding="utf-8")
+    _git(tmp_path, "add", "README.md")
+    _git(tmp_path, "commit", "-m", "init")
+
+    nested = tmp_path / "reigh-app"
+    nested.mkdir()
+    _git(nested, "init")
+    _git(nested, "config", "user.email", "test@example.com")
+    _git(nested, "config", "user.name", "Test User")
+    (nested / "tracked.ts").write_text("old\n", encoding="utf-8")
+    _git(nested, "add", "tracked.ts")
+    _git(nested, "commit", "-m", "nested init")
+    (nested / "tracked.ts").write_text("new\n", encoding="utf-8")
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "files_changed": ["reigh-app/tracked.ts"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        _commit_and_push_phase(
+            tmp_path,
+            "branch",
+            "plan",
+            "execute",
+            writer=lambda _msg: None,
+        )
+
+    assert excinfo.value.code == "nested_repo_changes_uncommitted"
+    assert "reigh-app" in excinfo.value.message
+
+
+def test_commit_phase_ignores_unclaimed_dirty_nested_files(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "checkout", "-b", "branch")
+    (tmp_path / "README.md").write_text("root\n", encoding="utf-8")
+    _git(tmp_path, "add", "README.md")
+    _git(tmp_path, "commit", "-m", "init")
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare")
+    _git(tmp_path, "remote", "add", "origin", str(origin))
+
+    nested = tmp_path / "reigh-app"
+    nested.mkdir()
+    _git(nested, "init")
+    _git(nested, "config", "user.email", "test@example.com")
+    _git(nested, "config", "user.name", "Test User")
+    (nested / "claimed.ts").write_text("published\n", encoding="utf-8")
+    (nested / "unrelated.ts").write_text("old\n", encoding="utf-8")
+    _git(nested, "add", "claimed.ts", "unrelated.ts")
+    _git(nested, "commit", "-m", "nested init")
+    (nested / "unrelated.ts").write_text("user work\n", encoding="utf-8")
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution.json").write_text(
+        json.dumps({"files_changed": ["reigh-app/claimed.ts"]}),
+        encoding="utf-8",
+    )
+
+    _commit_and_push_phase(
+        tmp_path,
+        "branch",
+        "plan",
+        "execute",
+        writer=lambda _msg: None,
+    )
+
+    assert (nested / "unrelated.ts").read_text(encoding="utf-8") == "user work\n"
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +390,7 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
     init_calls: list[str] = []
     drive_calls: list[str] = []
 
-    def fake_init(root, idea_path, *, robustness, auto_approve, writer):
+    def fake_init(root, idea_path, *, robustness, auto_approve, profile=None, phase_model=None, writer):
         plan = f"plan-for-{Path(idea_path).stem}"
         init_calls.append(idea_path)
         return plan
@@ -292,6 +412,25 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
     assert [c["label"] for c in saved.completed] == ["m1", "m1a"]
 
 
+def test_run_chain_one_pauses_after_single_milestone(tmp_path: Path) -> None:
+    spec_path = _setup_two_milestones(tmp_path)
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    def fake_drive(plan, **_kwargs):
+        return _fake_outcome(plan, "done")
+
+    with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
+         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("megaplan.chain._refresh_main", lambda *a, **k: None):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, one=True)
+
+    assert result["status"] == "paused"
+    assert result["reason"] == "completed one milestone: m1"
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 1
+    assert [c["label"] for c in saved.completed] == ["m1"]
+
+
 def test_chain_start_invokes_driver(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -305,10 +444,12 @@ def test_chain_start_invokes_driver(
         *,
         no_git_refresh: bool = False,
         no_push: bool = False,
+        one: bool = False,
         writer=None,
     ):
         del writer
         del no_push
+        del one
         calls.append((spec_path_arg, root, no_git_refresh))
         return {"status": "done", "reason": "", "chain_state": {}, "events": []}
 
@@ -375,7 +516,7 @@ def test_run_chain_resumes_from_chain_state(tmp_path: Path) -> None:
 
     init_calls: list[str] = []
 
-    def fake_init(root, idea_path, *, robustness, auto_approve, writer):
+    def fake_init(root, idea_path, *, robustness, auto_approve, profile=None, phase_model=None, writer):
         init_calls.append(idea_path)
         return f"plan-{Path(idea_path).stem}"
 
@@ -537,6 +678,8 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
             str(idea_path),
             robustness="standard",
             auto_approve=True,
+            profile="poirot",
+            phase_model=["plan=claude:high", "revise=claude:high"],
             writer=lambda _m: None,
         ) == "demo-plan"
 
@@ -550,6 +693,12 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
         "--auto-approve",
         "--robustness",
         "standard",
+        "--profile",
+        "poirot",
+        "--phase-model",
+        "plan=claude:high",
+        "--phase-model",
+        "revise=claude:high",
         "--idea-file",
         str(idea_path),
     ]
@@ -667,6 +816,7 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
          patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
          patch("megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, *, writer: commits.append((branch, plan, phase))), \
+         patch("megaplan.chain._pr_state", return_value="open"), \
          patch("megaplan.chain._mark_pr_ready") as ready, \
          patch("megaplan.chain._enable_auto_merge") as merge:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
@@ -685,6 +835,127 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
     saved = load_chain_state(spec_path)
     assert saved.current_milestone_index == 1
     assert saved.pr_number is None
+
+
+def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    messages: list[str] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        if "--auto" in argv:
+            raise CliError(
+                "gh_pr_merge_failed",
+                "gh pr merge failed",
+                extra={"stderr": "GraphQL: Auto merge is not allowed for this repository"},
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run):
+        _enable_auto_merge(tmp_path, 7, writer=messages.append)
+
+    assert calls == [
+        ["gh", "pr", "merge", "7", "--auto", "--squash", "--delete-branch"],
+        ["gh", "pr", "merge", "7", "--squash", "--delete-branch"],
+    ]
+    assert "falling back" in "".join(messages)
+
+
+def test_pr_state_retries_transient_gh_failures(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    messages: list[str] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        if len(calls) == 1:
+            raise CliError(
+                "gh_pr_view_failed",
+                "gh pr view failed",
+                extra={"stderr": "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)"},
+            )
+        return subprocess.CompletedProcess(argv, 0, '{"state":"OPEN"}', "")
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run), \
+         patch("megaplan.chain.time.sleep") as sleep:
+        state = _pr_state(tmp_path, 11, writer=messages.append)
+
+    assert state == "open"
+    assert len(calls) == 2
+    assert "transient gh pr view failure" in "".join(messages)
+    sleep.assert_called_once()
+
+
+def test_pr_state_retries_graphql_timeout_until_attempts_exhausted(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view failed",
+            extra={"stderr": "GraphQL: timeout while checking pull request state"},
+        )
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run), \
+         patch("megaplan.chain.time.sleep") as sleep:
+        with pytest.raises(CliError) as exc_info:
+            _pr_state(tmp_path, 11, writer=lambda _m: None)
+
+    assert exc_info.value.code == "gh_pr_view_failed"
+    assert len(calls) == 3
+    assert sleep.call_count == 2
+
+
+def test_pr_state_does_not_retry_non_transient_gh_failures(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view failed",
+            extra={"stderr": "GraphQL: Could not resolve to a PullRequest with the number of 11."},
+        )
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run), \
+         patch("megaplan.chain.time.sleep") as sleep:
+        with pytest.raises(CliError) as exc_info:
+            _pr_state(tmp_path, 11, writer=lambda _m: None)
+
+    assert exc_info.value.code == "gh_pr_view_failed"
+    assert len(calls) == 1
+    sleep.assert_not_called()
+
+
+def test_run_chain_advances_when_pr_already_merged(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}]},
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    with patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._checkout_milestone_branch"), \
+         patch("megaplan.chain._ensure_milestone_pr", return_value=17), \
+         patch("megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._pr_state", return_value="merged"), \
+         patch("megaplan.chain._mark_pr_ready") as ready, \
+         patch("megaplan.chain._enable_auto_merge") as merge:
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    ready.assert_not_called()
+    merge.assert_not_called()
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 1
+    assert saved.completed[0]["pr_state"] == "merged"
 
 
 def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Path) -> None:
@@ -708,6 +979,7 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
          patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
          patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._pr_state", return_value="open"), \
          patch("megaplan.chain._mark_pr_ready"):
         first = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 

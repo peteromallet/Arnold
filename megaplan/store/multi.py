@@ -21,6 +21,7 @@ from megaplan.schemas import (
     CodeArtifact,
     Codebase,
     ControlMessage,
+    CloudRun,
     Epic,
     EpicEvent,
     EpicLock,
@@ -34,6 +35,8 @@ from megaplan.schemas import (
     Plan,
     PlanArtifact,
     ProgressEvent,
+    ResidentConversation,
+    ScheduledJob,
     SecondOpinion,
     Sprint,
     SprintItem,
@@ -47,11 +50,14 @@ from megaplan.store.base import (
     Backend,
     ChecklistItemInput,
     ControlMessageInput,
+    CloudRunInput,
     EpicSummary,
     HotContext,
     LeaseConflict,
     MessageSearchHit,
     ProgressEventInput,
+    ResidentConversationInput,
+    ScheduledJobInput,
     SprintItemInput,
     SprintWithItems,
     Store,
@@ -506,6 +512,7 @@ class MultiStore(Store):
         audio_storage_url: str | None = None,
         transcription_metadata: dict[str, Any] | None = None,
         synthesize_outbound_id: bool = True,
+        conversation_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> Message:
         backend = self._route_for_epic(epic_id) if epic_id is not None else self.db
@@ -522,6 +529,7 @@ class MultiStore(Store):
             audio_storage_url=audio_storage_url,
             transcription_metadata=transcription_metadata,
             synthesize_outbound_id=synthesize_outbound_id,
+            conversation_id=conversation_id,
             idempotency_key=idempotency_key,
         )
 
@@ -879,6 +887,61 @@ class MultiStore(Store):
 
     def mark_control_message_processed(self, msg_id: str, result: dict[str, Any], *, idempotency_key: str | None = None) -> None:
         return self.db.mark_control_message_processed(msg_id, result, idempotency_key=idempotency_key)
+
+    def recover_stale_control_messages(self, *, processor_id: str, older_than_seconds: int, max: int = 10, idempotency_key: str | None = None) -> list[ControlMessage]:
+        return self.db.recover_stale_control_messages(processor_id=processor_id, older_than_seconds=older_than_seconds, max=max, idempotency_key=idempotency_key)
+
+    def list_stale_control_messages(self, *, older_than_seconds: int, limit: int = 10) -> list[ControlMessage]:
+        return self.db.list_stale_control_messages(older_than_seconds=older_than_seconds, limit=limit)
+
+    def upsert_resident_conversation(self, conversation: ResidentConversationInput, *, idempotency_key: str | None = None) -> ResidentConversation:
+        return self.db.upsert_resident_conversation(conversation, idempotency_key=idempotency_key)
+
+    def load_resident_conversation(self, conversation_id: str) -> ResidentConversation | None:
+        return self.db.load_resident_conversation(conversation_id)
+
+    def get_resident_conversation_by_key(self, *, transport: str, conversation_key: str) -> ResidentConversation | None:
+        return self.db.get_resident_conversation_by_key(transport=transport, conversation_key=conversation_key)
+
+    def list_resident_conversations(self, *, transport: str | None = None, active_epic_id: str | None = None, limit: int = 50) -> list[ResidentConversation]:
+        return self.db.list_resident_conversations(transport=transport, active_epic_id=active_epic_id, limit=limit)
+
+    def update_resident_conversation(self, conversation_id: str, *, idempotency_key: str | None = None, **changes: Any) -> ResidentConversation:
+        return self.db.update_resident_conversation(conversation_id, idempotency_key=idempotency_key, **changes)
+
+    def create_scheduled_job(self, job: ScheduledJobInput, *, idempotency_key: str | None = None) -> ScheduledJob:
+        return self.db.create_scheduled_job(job, idempotency_key=idempotency_key)
+
+    def load_scheduled_job(self, job_id: str) -> ScheduledJob | None:
+        return self.db.load_scheduled_job(job_id)
+
+    def update_scheduled_job(self, job_id: str, *, idempotency_key: str | None = None, **changes: Any) -> ScheduledJob:
+        return self.db.update_scheduled_job(job_id, idempotency_key=idempotency_key, **changes)
+
+    def claim_due_scheduled_jobs(self, *, worker_id: str, now: datetime | None = None, stale_after_seconds: int | None = None, max: int = 10, job_type: str | None = None, idempotency_key: str | None = None) -> list[ScheduledJob]:
+        return self.db.claim_due_scheduled_jobs(worker_id=worker_id, now=now, stale_after_seconds=stale_after_seconds, max=max, job_type=job_type, idempotency_key=idempotency_key)
+
+    def list_scheduled_jobs(self, *, conversation_id: str | None = None, cloud_run_id: str | None = None, status: str | None = None, job_type: str | None = None, limit: int = 50) -> list[ScheduledJob]:
+        return self.db.list_scheduled_jobs(conversation_id=conversation_id, cloud_run_id=cloud_run_id, status=status, job_type=job_type, limit=limit)
+
+    def create_cloud_run(self, run: CloudRunInput, *, idempotency_key: str | None = None) -> CloudRun:
+        if run.epic_id is not None:
+            routed = self._route_for_epic(run.epic_id)
+            if routed is self.file:
+                raise StoreError(
+                    "Resident cloud orchestration requires a DB-home epic; "
+                    f"epic {run.epic_id!r} is file-home"
+                )
+        return self.db.create_cloud_run(run, idempotency_key=idempotency_key)
+
+    def load_cloud_run(self, run_id: str) -> CloudRun | None:
+        return self.db.load_cloud_run(run_id)
+
+    def update_cloud_run(self, run_id: str, *, idempotency_key: str | None = None, **changes: Any) -> CloudRun:
+        return self.db.update_cloud_run(run_id, idempotency_key=idempotency_key, **changes)
+
+    def list_cloud_runs(self, *, conversation_id: str | None = None, epic_id: str | None = None, plan_id: str | None = None, sprint_id: str | None = None, status: str | None = None, limit: int = 50) -> list[CloudRun]:
+        return self.db.list_cloud_runs(conversation_id=conversation_id, epic_id=epic_id, plan_id=plan_id, sprint_id=sprint_id, status=status, limit=limit)
 
     def append_progress_event(self, event: ProgressEventInput, *, idempotency_key: str | None = None) -> ProgressEvent:
         return self._route_for_epic(event.epic_id).append_progress_event(event, idempotency_key=idempotency_key)

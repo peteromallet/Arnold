@@ -173,10 +173,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         if action == "status":
             if bool(getattr(args, "chain", False)):
                 return _run_chain_status(root, args, spec, provider)
-            payload = provider.status_payload(
-                plan=getattr(args, "plan", None),
-                workspace=spec.repo.workspace,
-            )
+            payload = cloud_status_payload(args, spec, provider)
             sys.stdout.write(json.dumps(payload, indent=2) + "\n")
             return 0
 
@@ -380,6 +377,24 @@ def _resolve_remote_chain_spec(root: Path, args: argparse.Namespace, spec: Cloud
 
 
 def _run_chain_status(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
+    payload = cloud_chain_status_payload(root, args, spec, provider)
+    from megaplan import chain as chain_module
+
+    chain_module._write_chain_status_pretty(payload["summary"], writer=sys.stderr.write)
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0
+
+
+def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
+    """Return the same payload printed by `megaplan cloud status`."""
+    return provider.status_payload(
+        plan=getattr(args, "plan", None),
+        workspace=spec.repo.workspace,
+    )
+
+
+def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
+    """Return the same payload printed by `megaplan cloud status --chain`."""
     from megaplan import chain as chain_module
 
     remote_spec = _resolve_remote_chain_spec(root, args, spec)
@@ -398,8 +413,7 @@ def _run_chain_status(root: Path, args: argparse.Namespace, spec: CloudSpec, pro
         temp_spec.unlink(missing_ok=True)
 
     summary = chain_module.format_chain_status(chain_spec, chain_state)
-    chain_module._write_chain_status_pretty(summary, writer=sys.stderr.write)
-    payload = {
+    return {
         "success": True,
         "spec": remote_spec,
         "milestone_count": len(chain_spec.milestones),
@@ -407,8 +421,6 @@ def _run_chain_status(root: Path, args: argparse.Namespace, spec: CloudSpec, pro
         "chain_state": chain_state.to_dict(),
         "summary": summary,
     }
-    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
-    return 0
 
 
 def _materialized_deploy_dir(spec: CloudSpec):

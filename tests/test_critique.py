@@ -71,12 +71,13 @@ def test_handle_critique_rejects_invalid_check_payload(plan_fixture: PlanFixture
 
     state = load_state(plan_fixture.plan_dir)
     assert state["history"][-1]["result"] == "error"
+    assert state.get("active_step") is None
     assert not (plan_fixture.plan_dir / "critique_v1.json").exists()
 
 
 def test_handle_critique_accepts_validated_checks(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        megaplan.handlers,
+        megaplan.handlers.critique,
         "validate_critique_checks",
         lambda payload, **kwargs: [],
     )
@@ -86,6 +87,59 @@ def test_handle_critique_accepts_validated_checks(plan_fixture: PlanFixture, mon
 
     assert response["success"] is True
     assert (plan_fixture.plan_dir / "critique_v1.json").exists()
+
+
+def test_parallel_critique_sets_and_clears_active_step(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        lambda payload, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "moonshotai/kimi-k2.6"),
+    )
+
+    observed: dict[str, str] = {}
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None):
+        persisted = load_state(plan_dir)
+        observed.update(persisted["active_step"])
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {
+                        "id": check["id"],
+                        "summary": "ok",
+                        "findings": [],
+                    }
+                    for check in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="parallel",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id=None,
+        )
+
+    monkeypatch.setattr(megaplan.handlers.critique, "run_parallel_critique", fake_parallel)
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+
+    assert response["success"] is True
+    assert observed["step"] == "critique"
+    assert observed["agent"] == "hermes"
+    assert observed["model"] == "moonshotai/kimi-k2.6"
+    assert "active_step" not in state
 
 
 def test_critique_prompt_contains_robustness_instruction(plan_fixture: PlanFixture) -> None:

@@ -91,6 +91,41 @@ def test_db_sprint5_schema_plumbing_constants_are_registered() -> None:
     assert {"pre_state", "post_state"}.issubset(db_module._COPY_JSONB_COLUMNS)
 
 
+def test_db_resident_store_methods_use_idempotency_and_skip_locked_claims() -> None:
+    from megaplan.store import DBStore
+
+    source_create_message = inspect.getsource(DBStore.create_message)
+    source_claim_jobs = inspect.getsource(DBStore.claim_due_scheduled_jobs)
+    source_recover_control = inspect.getsource(DBStore.recover_stale_control_messages)
+
+    assert "conversation_id" in source_create_message
+    assert "idempotency_key" in source_create_message
+    assert "ON CONFLICT (idempotency_key)" in source_create_message
+    assert "FOR UPDATE SKIP LOCKED" in source_claim_jobs
+    assert "status = 'pending'" in source_claim_jobs
+    assert "status = 'claimed'" in source_claim_jobs
+    assert "attempt_count = attempt_count + 1" in source_claim_jobs
+    assert "FOR UPDATE SKIP LOCKED" in source_recover_control
+    assert "processed_at IS NULL" in source_recover_control
+
+
+def test_db_resident_schema_plumbing_constants_are_registered() -> None:
+    import megaplan.store.db as db_module
+
+    assert {
+        "upsert_resident_conversation",
+        "update_resident_conversation",
+        "create_scheduled_job",
+        "update_scheduled_job",
+        "claim_due_scheduled_jobs",
+        "create_cloud_run",
+        "update_cloud_run",
+    }.issubset(db_module._IDEMPOTENT_MUTATORS)
+    assert {"resident_conversations", "scheduled_jobs", "cloud_runs"}.issubset(db_module._COPY_TABLE_COLUMNS)
+    assert {"conversation_id", "idempotency_key"}.issubset(db_module._COPY_TABLE_COLUMNS["messages"])
+    assert {"payload", "metadata", "last_status"}.issubset(db_module._COPY_JSONB_COLUMNS)
+
+
 def test_sprint5_supabase_migration_declares_snapshot_image_and_search_indexes() -> None:
     from pathlib import Path
 
@@ -108,6 +143,41 @@ def test_sprint5_supabase_migration_declares_snapshot_image_and_search_indexes()
         "images_one_active_reference",
         "epics_search_tsv_gin",
         "to_tsvector",
+    ]:
+        assert expected in migration
+
+
+def test_resident_supabase_migration_declares_runtime_tables_and_indexes() -> None:
+    from pathlib import Path
+
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "supabase"
+        / "migrations"
+        / "202605060001_resident_orchestration.sql"
+    ).read_text(encoding="utf-8")
+
+    for expected in [
+        "CREATE TABLE IF NOT EXISTS resident_conversations",
+        "CREATE TABLE IF NOT EXISTS scheduled_jobs",
+        "CREATE TABLE IF NOT EXISTS cloud_runs",
+        "ADD COLUMN IF NOT EXISTS conversation_id",
+        "ADD COLUMN IF NOT EXISTS idempotency_key",
+        "UNIQUE (transport, conversation_key)",
+        "idx_messages_idempotency_key_unique",
+        "idx_messages_conversation_idempotency_unique",
+        "idx_resident_conversations_transport_key",
+        "idx_scheduled_jobs_due_claim",
+        "idx_scheduled_jobs_stale_claim",
+        "idx_cloud_runs_idempotency_key_unique",
+        "idx_cloud_runs_conversation_created",
+        "idx_cloud_runs_status_checked",
+        "idx_control_messages_stale_claim",
+        "idx_control_messages_processor_claimed",
+        "Megaplan Resident Discord Agent",
+        "status = 'pending' AND claimed_at IS NULL",
+        "status = 'claimed' AND claimed_at IS NOT NULL",
+        "processed_at IS NULL AND claimed_at IS NOT NULL",
     ]:
         assert expected in migration
 
