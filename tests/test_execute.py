@@ -2234,3 +2234,62 @@ def test_execute_auto_loop_stops_when_existing_task_is_blocked(
     assert response["blocked_task_ids"] == ["T1"]
     assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
+
+
+def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    monkeypatch.setattr(megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    calls: list[str] = []
+
+    def blocking_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        assert prompt_override is not None
+        calls.append(prompt_override)
+        if "[T2]" in prompt_override:
+            raise AssertionError("execute auto loop must not run later batches after a task is blocked")
+        return WorkerResult(
+            payload={
+                "output": "Batch one blocked.",
+                "files_changed": [],
+                "commands_run": ["checked live prerequisite"],
+                "deviations": [],
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "blocked",
+                        "executor_notes": "Awaiting live canary trigger evidence.",
+                        "files_changed": [],
+                        "commands_run": ["checked live prerequisite"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC1", "executor_note": "Blocked by live prerequisite."}
+                ],
+            },
+            raw_output="batch blocked",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="batch-blocked",
+        ), "codex", "persistent", False
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", blocking_worker)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+    state = load_state(plan_fixture.plan_dir)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+
+    assert response["success"] is False
+    assert response["state"] == megaplan.STATE_FINALIZED
+    assert response["next_step"] == "execute"
+    assert len(calls) == 1
+    assert finalize_data["tasks"][0]["status"] == "blocked"
+    assert finalize_data["tasks"][1]["status"] == "pending"
+    assert (plan_fixture.plan_dir / "execution_batch_1.json").exists()
+    assert not (plan_fixture.plan_dir / "execution_batch_2.json").exists()
+    assert "task(s) reported status=blocked by the worker: T1" in response["summary"]
+    assert state["history"][-1]["result"] == "blocked"

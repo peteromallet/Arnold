@@ -4,7 +4,7 @@ import argparse
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import megaplan.workers as worker_module
 from megaplan._core import (
@@ -308,6 +308,17 @@ def build_blocking_reasons(
     if timeout_reason is not None:
         reasons.append(timeout_reason)
     return reasons
+
+
+def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
+    blocked_ids = sorted({task_id for task_id in task_ids if task_id})
+    if not blocked_ids:
+        return None
+    return (
+        "task(s) reported status=blocked by the worker: "
+        f"{', '.join(blocked_ids)}. Resolve or replan the blocked task(s) "
+        "before continuing."
+    )
 
 
 def _has_code_task_advisory_evidence(task: dict[str, Any]) -> bool:
@@ -793,6 +804,15 @@ def handle_execute_one_batch(
     tracked_tasks = [
         task for task in all_tasks if isinstance(task.get("id"), str)
     ]
+    batch_blocked_ids = [
+        task.get("id")
+        for task in tracked_tasks
+        if task.get("id") in set(batch_task_ids)
+        and task.get("status") == "blocked"
+    ]
+    blocked_task_reason = _blocked_task_reason(batch_blocked_ids)
+    if blocked_task_reason:
+        blocking_reasons.append(blocked_task_reason)
     all_tracked = all(
         task.get("status") in {"done", "skipped"}
         for task in tracked_tasks
@@ -929,16 +949,6 @@ def handle_execute_one_batch(
     if drift is not None and drift.severity != "none":
         summary = f"[scope_drift={drift.severity}] {summary}"
 
-    # Surface worker-reported `status=blocked` tasks prominently. Merged
-    # task_updates have already been written into finalize_data; count tasks
-    # in this batch that ended in 'blocked' so supervisors see the real
-    # reason a batch did not advance instead of just "state=finalized".
-    batch_blocked_ids = [
-        task.get("id")
-        for task in finalize_data.get("tasks", [])
-        if task.get("id") in set(batch_task_ids)
-        and task.get("status") == "blocked"
-    ]
     warnings: list[str] = []
     if blocked:
         warnings.append(summary)
@@ -1193,6 +1203,13 @@ def handle_execute_auto_loop(
                 and isinstance(task.get("id"), str)
             }
         )
+        newly_blocked_task_ids = {
+            task["id"]
+            for task in finalize_data.get("tasks", [])
+            if task.get("status") == "blocked"
+            and isinstance(task.get("id"), str)
+            and task["id"] in set(batch_task_ids)
+        }
         blocking_reasons = build_blocking_reasons(
             tracked_tasks=result.merged_task_count,
             total_tasks=result.total_task_count,
@@ -1200,6 +1217,9 @@ def handle_execute_auto_loop(
             total_checks=result.total_sense_check_count,
             missing_task_evidence=result.missing_task_evidence,
         )
+        blocked_task_reason = _blocked_task_reason(newly_blocked_task_ids)
+        if blocked_task_reason:
+            blocking_reasons.append(blocked_task_reason)
         if blocking_reasons:
             agent = result.agent
             mode = result.mode
@@ -1301,6 +1321,16 @@ def handle_execute_auto_loop(
             else None
         ),
     )
+    active_blocked_task_ids = {
+        task["id"]
+        for task in finalize_data.get("tasks", [])
+        if task.get("status") == "blocked"
+        and isinstance(task.get("id"), str)
+        and task["id"] in active_task_ids
+    }
+    blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
+    if blocked_task_reason:
+        blocking_reasons.append(blocked_task_reason)
     _append_scope_drift_blocker(blocking_reasons, state, drift)
 
     blocked = bool(blocking_reasons)
