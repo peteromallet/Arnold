@@ -37,6 +37,7 @@ from megaplan.types import (
     STATE_BLOCKED,
     STATE_CANCELLED,
     STATE_DONE,
+    STATE_EXECUTED,
     STATE_FAILED,
     STATE_PAUSED,
     STATE_TIEBREAKER_PENDING,
@@ -605,6 +606,50 @@ def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] |
         return {"reconciled": False, "reason": str(error)}
 
 
+def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
+    """Restore a successfully executed plan after an external callback failure."""
+    if plan_dir is None:
+        return False
+    state_path = plan_dir / "state.json"
+    try:
+        with state_path.open(encoding="utf-8") as handle:
+            state_data = json.load(handle)
+        if not isinstance(state_data, dict):
+            return False
+        if state_data.get("current_state") != STATE_FAILED:
+            return False
+        latest_failure = state_data.get("latest_failure")
+        if not isinstance(latest_failure, dict):
+            return False
+        if latest_failure.get("kind") != "phase_callback_failed":
+            return False
+        if latest_failure.get("phase") != "execute":
+            return False
+        reconciliation = latest_failure.get("metadata", {}).get("checkpoint_reconciliation")
+        if not isinstance(reconciliation, dict) or reconciliation.get("reconciled") is not True:
+            return False
+        history = state_data.get("history")
+        if not isinstance(history, list):
+            return False
+        last_execute = next(
+            (
+                entry for entry in reversed(history)
+                if isinstance(entry, dict) and entry.get("step") == "execute"
+            ),
+            None,
+        )
+        if not isinstance(last_execute, dict) or last_execute.get("result") != "success":
+            return False
+        if not (plan_dir / "execution.json").exists():
+            return False
+        state_data["current_state"] = STATE_EXECUTED
+        state_data.pop("active_step", None)
+        state_path.write_text(json.dumps(state_data, indent=2) + "\n", encoding="utf-8")
+        return True
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def drive(
     plan: str,
     *,
@@ -778,6 +823,10 @@ def drive(
             next_step=next_step,
             valid_next=valid_next,
         )
+
+        if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
+            log("recovered successful execute after phase-complete callback failure; resuming")
+            continue
 
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES:
