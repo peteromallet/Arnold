@@ -865,7 +865,7 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
          patch("megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, **_kwargs: commits.append((branch, plan, phase))), \
          patch("megaplan.chain._pr_state", return_value="open"), \
          patch("megaplan.chain._mark_pr_ready") as ready, \
-         patch("megaplan.chain._enable_auto_merge") as merge:
+         patch("megaplan.chain._enable_auto_merge", return_value="open") as merge:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -900,12 +900,13 @@ def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: P
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     with patch("megaplan.chain._run_command", side_effect=fake_run):
-        _enable_auto_merge(tmp_path, 7, writer=messages.append)
+        state = _enable_auto_merge(tmp_path, 7, writer=messages.append)
 
     assert calls == [
         ["gh", "pr", "merge", "7", "--auto", "--squash", "--delete-branch"],
         ["gh", "pr", "merge", "7", "--squash", "--delete-branch"],
     ]
+    assert state == "merged"
     assert "falling back" in "".join(messages)
 
 
