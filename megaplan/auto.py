@@ -39,6 +39,7 @@ from megaplan.types import (
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FAILED,
+    STATE_FINALIZED,
     STATE_PAUSED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
@@ -638,11 +639,16 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
             ),
             None,
         )
-        if not isinstance(last_execute, dict) or last_execute.get("result") != "success":
+        if not isinstance(last_execute, dict):
+            return False
+        execute_result = last_execute.get("result")
+        if execute_result not in {"success", "blocked"}:
             return False
         if not (plan_dir / "execution.json").exists():
             return False
-        state_data["current_state"] = STATE_EXECUTED
+        state_data["current_state"] = (
+            STATE_EXECUTED if execute_result == "success" else STATE_FINALIZED
+        )
         state_data.pop("active_step", None)
         state_path.write_text(json.dumps(state_data, indent=2) + "\n", encoding="utf-8")
         return True
@@ -825,7 +831,7 @@ def drive(
         )
 
         if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
-            log("recovered successful execute after phase-complete callback failure; resuming")
+            log("recovered execute state after phase-complete callback failure; resuming")
             continue
 
         # Terminal: plan reached a final state (or automation-terminal).

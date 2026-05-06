@@ -1084,7 +1084,53 @@ def test_failed_execute_callback_resume_restores_executed_state(tmp_path: Path) 
     assert outcome.status == "done"
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state_data["current_state"] == "done"
-    assert any("recovered successful execute" in event.get("msg", "") for event in outcome.events)
+    assert any("recovered execute state" in event.get("msg", "") for event in outcome.events)
+
+
+def test_failed_execute_callback_resume_restores_blocked_execute_to_finalized(tmp_path: Path) -> None:
+    plan = "callback-blocked-resume"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "failed",
+                "history": [{"step": "execute", "result": "blocked"}],
+                "latest_failure": {
+                    "kind": "phase_callback_failed",
+                    "phase": "execute",
+                    "state": "failed",
+                    "metadata": {
+                        "checkpoint_reconciliation": {"reconciled": True},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execution.json").write_text(json.dumps({"output": "blocked"}), encoding="utf-8")
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state = state_data["current_state"]
+        if state == "finalized":
+            return _execute_status(plan_name, state="finalized")
+        return _terminal_status(plan_name, state=state)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        assert args[0] == "execute"
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state_data["current_state"] = "done"
+        state_data.setdefault("history", []).append({"step": "execute", "result": "success"})
+        (plan_dir / "state.json").write_text(json.dumps(state_data), encoding="utf-8")
+        return 0, "execute ok", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
+
+    assert outcome.status == "done"
+    assert any("recovered execute state" in event.get("msg", "") for event in outcome.events)
 
 
 def test_phase_complete_callback_skipped_after_nonzero_phase(tmp_path: Path) -> None:
