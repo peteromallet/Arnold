@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "PyYAML>=6.0",
+    "pyyaml>=6.0",
     "pydantic>=2.0",
 ]
 
@@ -35,7 +35,6 @@ agent = [
     "httpx",
     "rich",
     "tenacity",
-    "pyyaml",
     "requests",
     "jinja2",
     "prompt_toolkit",
@@ -52,6 +51,13 @@ agent = [
 
 [project.scripts]
 megaplan = "megaplan.cli:cli_entry"
+
+[tool.hatch.build]
+exclude = [
+    "megaplan/cloud/_reference/**",
+    "megaplan/agent/pyproject.toml",
+    "megaplan/agent/auto_improve/iterations/**",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["megaplan"]
