@@ -33,6 +33,13 @@ OVERRIDES_INCLUDE: set[str] = set()
 OVERRIDES_EXCLUDE: set[str] = set()
 
 
+def _node_packs_from_requirements(workflow: VibeWorkflow):
+    from vibecomfy.node_packs import KNOWN_NODE_PACKS
+
+    required = set(workflow.requirements.custom_nodes)
+    return [pack for pack in KNOWN_NODE_PACKS if pack.name in required]
+
+
 @dataclass(slots=True)
 class RunResult:
     run_id: str
@@ -130,7 +137,15 @@ class EmbeddedSession:
             # Dev convenience only; production should pre-stage nodepacks with `vibecomfy nodes ensure`.
             try:
                 packs, _unresolved = missing_packs_for_workflow(workflow)
-            except (FileNotFoundError, ValueError) as exc:
+            except FileNotFoundError as exc:
+                packs = _node_packs_from_requirements(workflow)
+                if not packs:
+                    raise RuntimeError("ensure_packs: " + str(exc)) from exc
+                logger.warning(
+                    "ensure_packs: node index unavailable; falling back to workflow requirements: %s",
+                    ", ".join(pack.name for pack in packs),
+                )
+            except ValueError as exc:
                 raise RuntimeError("ensure_packs: " + str(exc)) from exc
             installed_or_refreshed = False
             lock_entries = {entry.name: entry for entry in read_lockfile()}
