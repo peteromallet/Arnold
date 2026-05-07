@@ -12,8 +12,8 @@ DEFAULT_NEGATIVE = ""
 READY_METADATA = {
     "model_assets": [
         {
-            "name": "ZImageTurbo_bf16.safetensors",
-            "url": "https://huggingface.co/DeepBeepMeep/Z-Image/resolve/main/ZImageTurbo_bf16.safetensors",
+            "name": "z_image_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/diffusion_models/z_image_bf16.safetensors",
             "directory": "diffusion_models",
         },
         {
@@ -48,7 +48,7 @@ def build() -> VibeWorkflow:
     )
 
     input_image = wf.node("LoadImage", image="image_z_image_img2img_input.png")
-    unet = wf.node("UNETLoader", unet_name="ZImageTurbo_bf16.safetensors", weight_dtype="default")
+    unet = wf.node("UNETLoader", unet_name="z_image_bf16.safetensors", weight_dtype="default")
     clip = wf.node("CLIPLoader", clip_name="qwen_3_4b.safetensors", type="lumina2", device="default")
     vae = wf.node("VAELoader", vae_name="ae.safetensors")
     model = wf.node("ModelSamplingAuraFlow", model=unet.out(0), shift=3)
@@ -82,4 +82,3 @@ def build() -> VibeWorkflow:
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
-
