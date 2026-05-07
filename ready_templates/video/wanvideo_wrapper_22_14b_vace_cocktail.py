@@ -29,7 +29,7 @@ READY_METADATA = {
         {
             "name": "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors",
             "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors",
-            "directory": "loras/WanVideo/Lightx2v",
+            "directory": "loras",
         },
         {
             "name": "Wan2_1_VAE_bf16.safetensors",
@@ -87,8 +87,8 @@ def build() -> VibeWorkflow:
     vae = _node(wf, "WanVideoVAELoader", "38", widget_0="wanvideo\\Wan2_1_VAE_bf16.safetensors", widget_1="bf16")
     vace_model = _node(wf, "WanVideoVACEModelSelect", "224", widget_0="WanVideo\\Wan2_1-VACE_module_14B_fp8_e4m3fn.safetensors")
     block_swap = _node(wf, "WanVideoBlockSwap", "39", widget_0=20, widget_1=False, widget_2=False, widget_3=False, widget_4=0, widget_5=0, widget_6=False)
-    high_lora = _node(wf, "WanVideoLoraSelectMulti", "98", widget_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors", widget_1=1.0, widget_2="none", widget_3=1, widget_4="none", widget_5=1, widget_6="none", widget_7=1, widget_8="none", widget_9=1, widget_10=False, widget_11=False)
-    low_lora = _node(wf, "WanVideoLoraSelectMulti", "93", widget_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors", widget_1=1.0, widget_2="none", widget_3=1, widget_4="none", widget_5=1, widget_6="none", widget_7=1, widget_8="none", widget_9=1, widget_10=False, widget_11=False)
+    high_lora = _node(wf, "WanVideoLoraSelectMulti", "98", widget_0="lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors", widget_1=1.0, widget_2="none", widget_3=1, widget_4="none", widget_5=1, widget_6="none", widget_7=1, widget_8="none", widget_9=1, widget_10=False, widget_11=False)
+    low_lora = _node(wf, "WanVideoLoraSelectMulti", "93", widget_0="lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors", widget_1=1.0, widget_2="none", widget_3=1, widget_4="none", widget_5=1, widget_6="none", widget_7=1, widget_8="none", widget_9=1, widget_10=False, widget_11=False)
     high_model_raw = _node(wf, "WanVideoModelLoader", "22", widget_0="WanVideo\\2_2\\Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors", widget_1="fp16_fast", widget_2="fp8_e4m3fn_scaled", widget_3="offload_device", widget_4="sdpa", vace_model=vace_model.out(0))
     low_model_raw = _node(wf, "WanVideoModelLoader", "92", widget_0="WanVideo\\2_2\\Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors", widget_1="fp16_fast", widget_2="fp8_e4m3fn_scaled", widget_3="offload_device", widget_4="sdpa", vace_model=vace_model.out(0))
     high_model_lora = _node(wf, "WanVideoSetLoRAs", "79", model=high_model_raw.out(0), lora=high_lora.out(0))

@@ -79,6 +79,29 @@ def test_ready_template_preserves_materialized_requirements() -> None:
     assert "ComfyUI-KJNodes" in workflow.requirements.custom_nodes
 
 
+@pytest.mark.parametrize(
+    "template_id",
+    ["video/wanvideo_wrapper_22_14b_t2i", "video/wanvideo_wrapper_22_14b_vace_cocktail"],
+)
+def test_wan_2_2_templates_use_comfy_lora_basenames(template_id: str) -> None:
+    workflow = workflow_from_ready(template_id)
+
+    lora_nodes = [
+        node
+        for node in workflow.nodes.values()
+        if node.class_type == "WanVideoLoraSelectMulti"
+    ]
+    assert lora_nodes
+    assert all("\\" not in str(node.inputs["widget_0"]) for node in lora_nodes)
+    assert all("/" not in str(node.inputs["widget_0"]) for node in lora_nodes)
+    assert any(
+        isinstance(asset, dict)
+        and asset.get("name") == "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors"
+        and (asset.get("subdir") or asset.get("directory")) == "loras"
+        for asset in workflow.metadata["model_assets"]
+    )
+
+
 def test_ready_template_requirements_accept_structured_model_assets() -> None:
     workflow = VibeWorkflow("scratchpad", WorkflowSource("scratchpad"))
     workflow.add_node("CheckpointLoaderSimple", widget_0="checkpoint.safetensors")
