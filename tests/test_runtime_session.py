@@ -1157,6 +1157,62 @@ def test_embedded_run_ensure_packs_invokes_install_then_reload_then_queue(
     assert calls == ["install:ExamplePack", "reload:ensure_packs", "queue"]
 
 
+def test_embedded_run_ensure_packs_prefers_lockfile_restore(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    pack = CustomNodePack(
+        name="ExamplePack",
+        repo="https://example.test/example.git",
+        classes=frozenset({"ExampleNode"}),
+    )
+    calls: list[str] = []
+
+    Path("custom_nodes.lock").write_text(
+        "ExamplePack pinnedsha https://example.test/example.git\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", lambda workflow: ([pack], []))
+
+    def fail_install_pack(**_kwargs):
+        raise AssertionError("install_pack must not be called when a lockfile pin exists")
+
+    def fake_restore_pack(entry):
+        calls.append(f"restore:{entry.name}:{entry.git_commit_sha}")
+        return node_packs_install.InstallResult(
+            name=entry.name,
+            status="refreshed",
+            git_commit_sha=entry.git_commit_sha,
+            error=None,
+        )
+
+    async def fake_reload(*, reason: str) -> None:
+        calls.append(f"reload:{reason}")
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure", "outputs": []}
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fail_install_pack)
+    monkeypatch.setattr(node_packs_install, "restore_pack", fake_restore_pack)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        session.reload_for_nodepack_change = fake_reload  # type: ignore[method-assign]
+        try:
+            await session.run(_workflow(), ensure_packs=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == ["restore:ExamplePack:pinnedsha", "reload:ensure_packs", "queue"]
+
+
 def test_embedded_run_ensure_packs_skips_reload_when_nothing_missing(
     fake_comfy,
     tmp_path: Path,

@@ -92,10 +92,11 @@ async def run_embedded(
     *,
     backend: str = "api",
     config: SessionConfig | None = None,
+    ensure_packs: bool = False,
 ) -> RunResult:
     session = EmbeddedSession(config or SessionConfig.from_workflow_metadata(workflow))
     try:
-        return await session.run(workflow, backend=backend)
+        return await session.run(workflow, backend=backend, ensure_packs=ensure_packs)
     finally:
         await session.stop()
 
@@ -105,8 +106,9 @@ def run_embedded_sync(
     *,
     backend: str = "api",
     config: SessionConfig | None = None,
+    ensure_packs: bool = False,
 ) -> RunResult:
-    return asyncio.run(run_embedded(workflow, backend=backend, config=config))
+    return asyncio.run(run_embedded(workflow, backend=backend, config=config, ensure_packs=ensure_packs))
 
 
 async def smoke_runtime(*, server_url: str | None = None) -> dict[str, Any]:

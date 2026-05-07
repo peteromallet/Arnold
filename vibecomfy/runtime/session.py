@@ -124,7 +124,8 @@ class EmbeddedSession:
         if self._inflight_run is not None and not self._inflight_run.done():
             raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
         if ensure_packs:
-            from vibecomfy.node_packs_install import install_pack, missing_packs_for_workflow
+            from vibecomfy.node_packs_install import install_pack, missing_packs_for_workflow, restore_pack
+            from vibecomfy.node_packs_lockfile import read_lockfile
 
             # Dev convenience only; production should pre-stage nodepacks with `vibecomfy nodes ensure`.
             try:
@@ -132,8 +133,10 @@ class EmbeddedSession:
             except (FileNotFoundError, ValueError) as exc:
                 raise RuntimeError("ensure_packs: " + str(exc)) from exc
             installed_or_refreshed = False
+            lock_entries = {entry.name: entry for entry in read_lockfile()}
             for pack in packs:
-                result = install_pack(name=pack.name)
+                lock_entry = lock_entries.get(pack.name)
+                result = restore_pack(lock_entry) if lock_entry is not None else install_pack(name=pack.name)
                 if result.status not in {"installed", "refreshed"}:
                     raise RuntimeError(f"ensure_packs: install failed for {pack.name}: {result.error}")
                 installed_or_refreshed = True
