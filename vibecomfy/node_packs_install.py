@@ -30,8 +30,9 @@ def install_pack(*, name: str | None = None, repo: str | None = None, force: boo
     cm_cli_argv = cm_cli_resolver(install_root, runner)
     if cm_cli_argv is None: return _install_pack_via_clone(pack_name, repo_url, pack, install_dir, lockfile_path, runner)
     try: runner([*cm_cli_argv, "install", pack_name], check=True, capture_output=True, text=True, cwd=install_root.parent)
-    except (OSError, subprocess.CalledProcessError) as exc: return InstallResult(pack_name, "failed", None, _error_text(exc) or f"failed to install {pack_name} with cm-cli")
-    if not (install_dir / ".git").exists(): return InstallResult(pack_name, "failed", None, f"cm-cli succeeded but {install_dir} is not a git checkout")
+    except (OSError, subprocess.CalledProcessError):
+        return _install_pack_via_clone(pack_name, repo_url, pack, install_dir, lockfile_path, runner)
+    if not (install_dir / ".git").exists(): return _install_pack_via_clone(pack_name, repo_url, pack, install_dir, lockfile_path, runner)
     sha = _git_head(install_dir, runner)
     if sha is None: return InstallResult(pack_name, "failed", None, f"failed to read git HEAD for {install_dir}")
     upsert_lockfile_entry(LockEntry(pack_name, sha, repo_url), lockfile_path); return InstallResult(pack_name, "installed", sha, None)

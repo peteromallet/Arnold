@@ -269,27 +269,8 @@ def test_install_uses_cm_cli_when_available(tmp_path: Path) -> None:
     ]
 
 
-def test_install_cm_cli_failed_returns_failed(tmp_path: Path) -> None:
-    runner = FakeRunner(fail_cm_cli=True)
-    lockfile = tmp_path / "custom_nodes.lock"
-    original = "Existing abc https://example.test/existing.git\n"
-    lockfile.write_text(original, encoding="utf-8")
-
-    result = install_pack(
-        name="ComfyUI-VideoHelperSuite",
-        install_root=tmp_path / "custom_nodes",
-        lockfile_path=lockfile,
-        runner=runner,
-        cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
-    )
-
-    assert result.status == "failed"
-    assert "cm-cli failed" in (result.error or "")
-    assert lockfile.read_text(encoding="utf-8") == original
-
-
-def test_install_cm_cli_succeeded_but_no_git_returns_failed(tmp_path: Path) -> None:
-    runner = FakeRunner()
+def test_install_cm_cli_failure_falls_back_to_clone(tmp_path: Path) -> None:
+    runner = FakeRunner(fail_cm_cli=True, sha="fallbackhead")
     lockfile = tmp_path / "custom_nodes.lock"
 
     result = install_pack(
@@ -300,10 +281,50 @@ def test_install_cm_cli_succeeded_but_no_git_returns_failed(tmp_path: Path) -> N
         cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
     )
 
-    assert result.status == "failed"
-    assert "cm-cli succeeded but" in (result.error or "")
-    assert "is not a git checkout" in (result.error or "")
-    assert read_lockfile(lockfile) == []
+    assert result.status == "installed"
+    assert ["cm-cli", "install", "ComfyUI-VideoHelperSuite"] in runner.calls
+    assert [
+        "git",
+        "clone",
+        "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        str(tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"),
+    ] in runner.calls
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-VideoHelperSuite",
+            git_commit_sha="fallbackhead",
+            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        )
+    ]
+
+
+def test_install_cm_cli_succeeded_but_no_git_falls_back_to_clone(tmp_path: Path) -> None:
+    runner = FakeRunner(sha="fallbackhead")
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    result = install_pack(
+        name="ComfyUI-VideoHelperSuite",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=lockfile,
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
+    )
+
+    assert result.status == "installed"
+    assert ["cm-cli", "install", "ComfyUI-VideoHelperSuite"] in runner.calls
+    assert [
+        "git",
+        "clone",
+        "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        str(tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"),
+    ] in runner.calls
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-VideoHelperSuite",
+            git_commit_sha="fallbackhead",
+            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        )
+    ]
 
 
 def test_install_falls_back_to_clone_when_cm_cli_missing(tmp_path: Path) -> None:
