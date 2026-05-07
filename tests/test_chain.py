@@ -910,6 +910,26 @@ def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: P
     assert "falling back" in "".join(messages)
 
 
+def test_enable_auto_merge_records_immediate_auto_merge(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(root, argv, *, writer, timeout, error_code):
+        del root, writer, timeout, error_code
+        calls.append(argv)
+        if argv[:3] == ["gh", "pr", "view"]:
+            return subprocess.CompletedProcess(argv, 0, '{"state":"MERGED"}', "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    with patch("megaplan.chain._run_command", side_effect=fake_run):
+        state = _enable_auto_merge(tmp_path, 7, writer=lambda _m: None)
+
+    assert state == "merged"
+    assert calls == [
+        ["gh", "pr", "merge", "7", "--auto", "--squash", "--delete-branch"],
+        ["gh", "pr", "view", "7", "--json", "state"],
+    ]
+
+
 def test_pr_state_retries_transient_gh_failures(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     messages: list[str] = []
