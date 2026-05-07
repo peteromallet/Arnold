@@ -363,6 +363,82 @@ def test_commit_phase_keeps_preexisting_dirty_claimed_root_files(tmp_path: Path)
     assert "docs/sprint.md" not in status
 
 
+def test_commit_phase_keeps_preexisting_claimed_nested_gitlink(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "checkout", "-b", "branch")
+    (tmp_path / ".gitignore").write_text(".megaplan/\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("root\n", encoding="utf-8")
+    _git(tmp_path, "add", ".gitignore", "README.md")
+    _git(tmp_path, "commit", "-m", "init")
+    origin = tmp_path.parent / f"{tmp_path.name}-origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare")
+    _git(tmp_path, "remote", "add", "origin", str(origin))
+
+    nested_origin = tmp_path.parent / f"{tmp_path.name}-nested-origin.git"
+    nested_origin.mkdir()
+    _git(nested_origin, "init", "--bare")
+    nested_seed = tmp_path.parent / f"{tmp_path.name}-nested-seed"
+    nested_seed.mkdir()
+    _git(nested_seed, "init")
+    _git(nested_seed, "config", "user.email", "test@example.com")
+    _git(nested_seed, "config", "user.name", "Test User")
+    (nested_seed / "claimed.ts").write_text("old\n", encoding="utf-8")
+    _git(nested_seed, "add", "claimed.ts")
+    _git(nested_seed, "commit", "-m", "nested init")
+    _git(nested_seed, "remote", "add", "origin", str(nested_origin))
+    _git(nested_seed, "push", "origin", "HEAD:main")
+
+    _git(tmp_path, "-c", "protocol.file.allow=always", "submodule", "add", str(nested_origin), "reigh-app")
+    _git(tmp_path, "commit", "-m", "add nested")
+    _git(tmp_path, "push", "origin", "branch")
+
+    nested = tmp_path / "reigh-app"
+    (nested / "claimed.ts").write_text("new\n", encoding="utf-8")
+    _git(nested, "add", "claimed.ts")
+    _git(nested, "commit", "-m", "nested claimed")
+    _git(nested, "push", "origin", "HEAD:main")
+
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("user dirty\n", encoding="utf-8")
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution.json").write_text(
+        json.dumps({"files_changed": ["reigh-app/claimed.ts"]}),
+        encoding="utf-8",
+    )
+
+    _commit_and_push_phase(
+        tmp_path,
+        "branch",
+        "plan",
+        "execute",
+        writer=lambda _msg: None,
+        preexisting_dirty_paths=[nested, unrelated],
+    )
+
+    committed = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    status = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert committed == ["reigh-app"]
+    assert "?? unrelated.txt" in status
+
+
 # ---------------------------------------------------------------------------
 # Chain state persistence
 # ---------------------------------------------------------------------------
