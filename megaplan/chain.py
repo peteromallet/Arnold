@@ -575,7 +575,7 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int
     raise CliError("gh_pr_create_failed", f"could not determine PR number for {milestone.branch}")
 
 
-def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str]]:
+def _claimed_paths(root: Path, plan_name: str) -> set[str]:
     plan_dir = root / ".megaplan" / "plans" / plan_name
     claimed_paths: set[str] = set()
     for artifact_name in ("finalize.json", "execution.json"):
@@ -595,10 +595,13 @@ def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str
             for path in task.get("files_changed") or []:
                 if isinstance(path, str) and path.strip():
                     claimed_paths.add(path.strip())
+    return claimed_paths
 
+
+def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str]]:
     repo_paths: dict[Path, set[str]] = {}
     root_abs = root.resolve()
-    for raw_path in claimed_paths:
+    for raw_path in _claimed_paths(root, plan_name):
         path = Path(raw_path)
         if path.is_absolute():
             try:
@@ -613,6 +616,28 @@ def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str
                 repo_paths.setdefault(cursor, set()).add(rel_to_repo.as_posix())
                 break
     return repo_paths
+
+
+def _claimed_root_paths(root: Path, plan_name: str) -> set[str]:
+    root_paths: set[str] = set()
+    root_abs = root.resolve()
+    for raw_path in _claimed_paths(root, plan_name):
+        path = Path(raw_path)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(root_abs)
+            except (OSError, ValueError):
+                continue
+        cursor = root
+        in_nested_repo = False
+        for part in path.parts[:-1]:
+            cursor = cursor / part
+            if (cursor / ".git").exists():
+                in_nested_repo = True
+                break
+        if not in_nested_repo:
+            root_paths.add(path.as_posix())
+    return root_paths
 
 
 def _claimed_nested_repos(root: Path, plan_name: str) -> list[Path]:
@@ -714,7 +739,17 @@ def _commit_and_push_phase(
             "a project_dir rooted at the repository being changed.",
         )
     _run_command(root, ["git", "add", "-A"], writer=writer, error_code="git_commit_failed")
-    _reset_staged_paths(root, preexisting_dirty_paths or [], writer=writer)
+    claimed_root_paths = _claimed_root_paths(root, plan)
+    preexisting_unclaimed: list[Path] = []
+    root_abs = root.resolve()
+    for path in preexisting_dirty_paths or []:
+        try:
+            rel = path.resolve().relative_to(root_abs).as_posix()
+        except (OSError, ValueError):
+            continue
+        if rel not in claimed_root_paths:
+            preexisting_unclaimed.append(path)
+    _reset_staged_paths(root, preexisting_unclaimed, writer=writer)
     staged = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
         cwd=str(root),

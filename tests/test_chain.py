@@ -307,6 +307,62 @@ def test_commit_phase_excludes_preexisting_dirty_root_files(tmp_path: Path) -> N
     assert " M unrelated.txt" in status
 
 
+def test_commit_phase_keeps_preexisting_dirty_claimed_root_files(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "checkout", "-b", "branch")
+    (tmp_path / ".gitignore").write_text(".megaplan/\n", encoding="utf-8")
+    intended = tmp_path / "docs" / "sprint.md"
+    unrelated = tmp_path / "unrelated.txt"
+    intended.parent.mkdir()
+    intended.write_text("base\n", encoding="utf-8")
+    unrelated.write_text("base\n", encoding="utf-8")
+    _git(tmp_path, "add", ".gitignore", "docs/sprint.md", "unrelated.txt")
+    _git(tmp_path, "commit", "-m", "init")
+    origin = tmp_path.parent / f"{tmp_path.name}-origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare")
+    _git(tmp_path, "remote", "add", "origin", str(origin))
+
+    intended.write_text("base\nplanned output\n", encoding="utf-8")
+    unrelated.write_text("base\nuser dirty\n", encoding="utf-8")
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution.json").write_text(
+        json.dumps({"files_changed": ["docs/sprint.md"]}),
+        encoding="utf-8",
+    )
+
+    _commit_and_push_phase(
+        tmp_path,
+        "branch",
+        "plan",
+        "execute",
+        writer=lambda _msg: None,
+        preexisting_dirty_paths=[intended, unrelated],
+    )
+
+    committed = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    status = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert committed == ["docs/sprint.md"]
+    assert " M unrelated.txt" in status
+    assert "docs/sprint.md" not in status
+
+
 # ---------------------------------------------------------------------------
 # Chain state persistence
 # ---------------------------------------------------------------------------
