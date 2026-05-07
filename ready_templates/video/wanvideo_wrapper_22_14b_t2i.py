@@ -60,7 +60,6 @@ def build() -> VibeWorkflow:
         WorkflowSource(id=READY_METADATA["ready_template"], path=__file__, source_type="ready_template"),
     )
 
-    t5 = _node(wf, "LoadWanVideoT5TextEncoder", "11", widget_0="umt5-xxl-enc-bf16.safetensors", widget_1="bf16", widget_2="offload_device", widget_3="disabled")
     vae = _node(wf, "WanVideoVAELoader", "38", widget_0="wanvideo\\Wan2_1_VAE_bf16.safetensors", widget_1="bf16")
     block_swap = _node(wf, "WanVideoBlockSwap", "39", widget_0=30, widget_1=False, widget_2=False, widget_3=False, widget_4=0, widget_5=0, widget_6=False)
     high_lora = _node(wf, "WanVideoLoraSelectMulti", "98", widget_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors", widget_1=1.0, widget_2="none", widget_3=1, widget_4="none", widget_5=1, widget_6="none", widget_7=1, widget_8="none", widget_9=1, widget_10=False, widget_11=False)
@@ -72,7 +71,7 @@ def build() -> VibeWorkflow:
     high_model = _node(wf, "WanVideoSetBlockSwap", "86", model=high_model_lora.out(0), block_swap_args=block_swap.out(0))
     low_model = _node(wf, "WanVideoSetBlockSwap", "91", model=low_model_lora.out(0), block_swap_args=block_swap.out(0))
     embeds = _node(wf, "WanVideoEmptyEmbeds", "78", widget_0=832, widget_1=480, widget_2=1, width=832, height=480, num_frames=1)
-    text = _node(wf, "WanVideoTextEncode", "16", widget_0=DEFAULT_PROMPT, widget_1=DEFAULT_NEGATIVE, widget_2=True, widget_3=False, widget_4="gpu", t5=t5.out(0), model_to_offload=high_model.out(0))
+    text = _node(wf, "WanVideoTextEncodeCached", "16", widget_0="umt5-xxl-enc-bf16.safetensors", widget_1="bf16", widget_2=DEFAULT_PROMPT, widget_3=DEFAULT_NEGATIVE, widget_4="disabled", widget_5=True, widget_6="gpu")
     high_samples = _node(wf, "WanVideoSampler", "27", steps=6, widget_0=6, widget_1=3.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=0, widget_12=2, widget_13=False, model=high_model.out(0), image_embeds=embeds.out(0), text_embeds=text.out(0), end_step=2)
     low_samples = _node(wf, "WanVideoSampler", "87", steps=6, widget_0=6, widget_1=1.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=2, widget_12=-1, widget_13=False, model=low_model.out(0), image_embeds=embeds.out(0), text_embeds=text.out(0), samples=high_samples.out(0), start_step=2)
     decoded = _node(wf, "WanVideoDecode", "28", widget_0=False, widget_1=272, widget_2=272, widget_3=144, widget_4=128, widget_5="default", samples=low_samples.out(0), vae=vae.out(0))
@@ -104,4 +103,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

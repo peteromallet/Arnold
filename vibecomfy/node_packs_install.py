@@ -8,6 +8,7 @@ from vibecomfy.node_packs_lockfile import LockEntry, upsert_lockfile_entry
 from vibecomfy.workflow import VibeWorkflow
 InstallStatus = Literal["installed", "refreshed", "skipped_dirty", "failed"]
 DEFAULT_INSTALL_ROOT = Path("custom_nodes"); """Canonical install root for custom node packs."""
+CORE_COMFY_CLASSES = frozenset({"LoadImage", "SaveImage"})
 class Runner(Protocol):
     def __call__(self, args: Sequence[str], *, check: bool, capture_output: bool, text: bool, cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]: ...
 @dataclass(frozen=True)
@@ -44,14 +45,17 @@ def _install_pack_via_clone(name: str, repo_url: str, pack: CustomNodePack | Non
     upsert_lockfile_entry(LockEntry(name, sha, repo_url), lockfile_path); return InstallResult(name, "installed", sha, None)
 def restore_pack(entry: LockEntry, *, install_root: Path = DEFAULT_INSTALL_ROOT, runner: Runner = subprocess.run) -> InstallResult:
     install_dir = install_root / entry.name
+    pack = _pack_by_name(entry.name)
     if install_dir.exists():
         if (dirty := _git_porcelain(install_dir, runner)) is None or dirty: return InstallResult(entry.name, "failed" if dirty is None else "skipped_dirty", None, f"failed to inspect git status for {install_dir}" if dirty is None else f"{install_dir} has uncommitted changes; restore refused")
         if _git_head(install_dir, runner) == entry.git_commit_sha: return InstallResult(entry.name, "refreshed", entry.git_commit_sha, None)
         try: runner(["git", "-C", str(install_dir), "fetch", "origin"], check=True, capture_output=True, text=True); runner(["git", "-C", str(install_dir), "checkout", entry.git_commit_sha], check=True, capture_output=True, text=True)
         except (OSError, subprocess.CalledProcessError) as exc: return InstallResult(entry.name, "failed", None, _error_text(exc) or f"failed to restore {entry.name}")
+        if (pip_error := _install_pack_pip_packages(entry.name, pack, runner)) is not None: return InstallResult(entry.name, "failed", None, pip_error)
         return InstallResult(entry.name, "refreshed", entry.git_commit_sha, None)
     try: runner(["git", "clone", entry.url, str(install_dir)], check=True, capture_output=True, text=True); runner(["git", "-C", str(install_dir), "checkout", entry.git_commit_sha], check=True, capture_output=True, text=True)
     except (OSError, subprocess.CalledProcessError) as exc: return InstallResult(entry.name, "failed", None, _error_text(exc) or f"failed to restore {entry.name}")
+    if (pip_error := _install_pack_pip_packages(entry.name, pack, runner)) is not None: return InstallResult(entry.name, "failed", None, pip_error)
     return InstallResult(entry.name, "installed", entry.git_commit_sha, None)
 def _refresh_existing(name: str, repo_url: str, install_dir: Path, force: bool, lockfile_path: Path, runner: Runner) -> InstallResult:
     dirty = _git_porcelain(install_dir, runner)
@@ -61,8 +65,13 @@ def _refresh_existing(name: str, repo_url: str, install_dir: Path, force: bool, 
     if sha is None: return InstallResult(name, "failed", None, f"failed to read git HEAD for {install_dir}")
     upsert_lockfile_entry(LockEntry(name, sha, repo_url), lockfile_path); return InstallResult(name, "refreshed", sha, None)
 def missing_packs_for_workflow(workflow: VibeWorkflow) -> tuple[list[CustomNodePack], list[str]]: missing_classes = missing_class_types_for_workflow(workflow); return resolve_node_packs(missing_classes), unresolved_class_types(missing_classes)
-def missing_class_types_for_workflow(workflow: VibeWorkflow) -> set[str]: return {node.class_type for node in workflow.nodes.values()} - _known_schema_classes()
+def missing_class_types_for_workflow(workflow: VibeWorkflow) -> set[str]: return {node.class_type for node in workflow.nodes.values()} - _known_schema_classes() - CORE_COMFY_CLASSES
 def _pack_by_name(name: str | None) -> CustomNodePack | None: return next((pack for pack in KNOWN_NODE_PACKS if pack.name == name), None)
+def _install_pack_pip_packages(name: str, pack: CustomNodePack | None, runner: Runner) -> str | None:
+    if pack is None or not pack.pip_packages: return None
+    try: runner([sys.executable, "-m", "pip", "install", *pack.pip_packages], check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as exc: return _error_text(exc) or f"failed to install pip packages for {name}"
+    return None
 def _pack_name_from_repo(repo: str) -> str: return (name[:-4] if (name := Path((urlparse(repo).path or repo).rstrip("/")).name).endswith(".git") else name)
 def _git(pack_dir: Path, args: list[str], runner: Runner) -> str | None:
     try: return runner(["git", "-C", str(pack_dir), *args], check=True, capture_output=True, text=True).stdout

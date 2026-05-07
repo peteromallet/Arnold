@@ -18,6 +18,7 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         classes=frozenset(
             {
                 "LoadWanVideoT5TextEncoder",
+                "WanVideoBlockSwap",
                 "WanVideoEncode",
                 "WanVideoVAELoader",
                 "WanVideoTorchCompileSettings",
@@ -29,8 +30,15 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "WanVideoEasyCache",
                 "WanVideoSampler",
                 "WanVideoTextEncode",
+                "WanVideoTextEncodeCached",
+                "WanVideoLoraSelectMulti",
+                "WanVideoSetBlockSwap",
+                "WanVideoSetLoRAs",
                 "WanVideoSLG",
                 "WanVideoControlEmbeds",
+                "WanVideoVACEEncode",
+                "WanVideoVACEModelSelect",
+                "WanVideoVACEStartToEndFrame",
             }
         ),
         pip_packages=("onnx", "opencv-python-headless"),

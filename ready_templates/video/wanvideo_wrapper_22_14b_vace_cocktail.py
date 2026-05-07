@@ -84,7 +84,6 @@ def build() -> VibeWorkflow:
         },
     )
 
-    t5 = _node(wf, "LoadWanVideoT5TextEncoder", "11", widget_0="umt5-xxl-enc-bf16.safetensors", widget_1="bf16", widget_2="offload_device", widget_3="disabled")
     vae = _node(wf, "WanVideoVAELoader", "38", widget_0="wanvideo\\Wan2_1_VAE_bf16.safetensors", widget_1="bf16")
     vace_model = _node(wf, "WanVideoVACEModelSelect", "224", widget_0="WanVideo\\Wan2_1-VACE_module_14B_fp8_e4m3fn.safetensors")
     block_swap = _node(wf, "WanVideoBlockSwap", "39", widget_0=20, widget_1=False, widget_2=False, widget_3=False, widget_4=0, widget_5=0, widget_6=False)
@@ -129,7 +128,7 @@ def build() -> VibeWorkflow:
         vace_start_percent=0.0,
         vace_end_percent=1.0,
     )
-    text = _node(wf, "WanVideoTextEncode", "16", widget_0=DEFAULT_PROMPT, widget_1=DEFAULT_NEGATIVE, widget_2=True, widget_3=False, widget_4="gpu", t5=t5.out(0), model_to_offload=high_model.out(0))
+    text = _node(wf, "WanVideoTextEncodeCached", "16", widget_0="umt5-xxl-enc-bf16.safetensors", widget_1="bf16", widget_2=DEFAULT_PROMPT, widget_3=DEFAULT_NEGATIVE, widget_4="disabled", widget_5=True, widget_6="gpu")
     phase_1 = _node(wf, "WanVideoSampler", "27", steps=6, widget_0=6, widget_1=3.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=0, widget_12=2, widget_13=False, model=high_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), end_step=2)
     phase_2 = _node(wf, "WanVideoSampler", "87", steps=6, widget_0=6, widget_1=1.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=2, widget_12=4, widget_13=False, model=high_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), samples=phase_1.out(0), start_step=2, end_step=4)
     phase_3 = _node(wf, "WanVideoSampler", "197", steps=6, widget_0=6, widget_1=1.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=4, widget_12=-1, widget_13=False, model=low_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), samples=phase_2.out(0), start_step=4)

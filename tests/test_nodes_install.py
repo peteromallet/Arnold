@@ -349,6 +349,26 @@ def test_restore_clones_and_checks_out_pinned_sha(tmp_path: Path) -> None:
     ]
 
 
+def test_restore_installs_known_pack_pip_dependencies(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    entry = LockEntry(
+        "ComfyUI-WanVideoWrapper",
+        "pinnedsha",
+        "https://github.com/kijai/ComfyUI-WanVideoWrapper.git",
+    )
+
+    result = restore_pack(entry, install_root=tmp_path / "custom_nodes", runner=runner)
+
+    assert result.status == "installed"
+    assert [
+        "git",
+        "clone",
+        "https://github.com/kijai/ComfyUI-WanVideoWrapper.git",
+        str(tmp_path / "custom_nodes" / "ComfyUI-WanVideoWrapper"),
+    ] in runner.calls
+    assert any(call[1:4] == ["-m", "pip", "install"] and "onnx" in call for call in runner.calls)
+
+
 def test_restore_existing_clean_dir_at_correct_sha_is_noop(tmp_path: Path) -> None:
     install_dir = tmp_path / "custom_nodes" / "ExamplePack"
     install_dir.mkdir(parents=True)
@@ -396,6 +416,22 @@ def test_missing_packs_for_workflow_returns_resolved_and_unresolved(
 
     assert [pack.name for pack in packs] == ["ComfyUI-Qwen3-TTS"]
     assert unresolved == ["UnknownCustomNode"]
+
+
+def test_missing_packs_for_workflow_ignores_core_comfy_classes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("core-classes", WorkflowSource("core-classes"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage")
+    workflow.nodes["2"] = VibeNode("2", "SaveImage")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert packs == []
+    assert unresolved == []
 
 
 def test_known_schema_classes_raises_when_missing(tmp_path: Path) -> None:
