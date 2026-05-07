@@ -105,6 +105,37 @@ def test_wan_2_2_templates_use_canonical_wanvideo_lora_path(template_id: str) ->
     )
 
 
+@pytest.mark.parametrize(
+    "template_id",
+    ["video/wanvideo_wrapper_22_14b_t2i", "video/wanvideo_wrapper_22_14b_vace_cocktail"],
+)
+def test_wan_2_2_templates_use_torch_compatible_precision(template_id: str) -> None:
+    workflow = workflow_from_ready(template_id)
+
+    loader_nodes = [
+        node
+        for node in workflow.nodes.values()
+        if node.class_type == "WanVideoModelLoader"
+    ]
+    assert loader_nodes
+    assert all(node.inputs["widget_1"] == "fp16" for node in loader_nodes)
+
+
+def test_wan_vace_template_uses_root_vace_module_asset() -> None:
+    workflow = workflow_from_ready("video/wanvideo_wrapper_22_14b_vace_cocktail")
+
+    assert any(
+        isinstance(asset, dict)
+        and asset.get("name") == "Wan2_1-VACE_module_14B_fp8_e4m3fn.safetensors"
+        and asset.get("url") == (
+            "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/"
+            "Wan2_1-VACE_module_14B_fp8_e4m3fn.safetensors"
+        )
+        and (asset.get("subdir") or asset.get("directory")) == "diffusion_models/WanVideo"
+        for asset in workflow.metadata["model_assets"]
+    )
+
+
 def test_ready_template_requirements_accept_structured_model_assets() -> None:
     workflow = VibeWorkflow("scratchpad", WorkflowSource("scratchpad"))
     workflow.add_node("CheckpointLoaderSimple", widget_0="checkpoint.safetensors")
