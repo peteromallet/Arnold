@@ -34,10 +34,14 @@ OVERRIDES_EXCLUDE: set[str] = set()
 
 
 def _node_packs_from_requirements(workflow: VibeWorkflow):
-    from vibecomfy.node_packs import KNOWN_NODE_PACKS
+    from vibecomfy.node_packs import KNOWN_NODE_PACKS, resolve_node_packs
 
     required = set(workflow.requirements.custom_nodes)
-    return [pack for pack in KNOWN_NODE_PACKS if pack.name in required]
+    packs = [pack for pack in KNOWN_NODE_PACKS if pack.name in required]
+    if packs:
+        return packs
+    class_types = {node.class_type for node in workflow.nodes.values()}
+    return resolve_node_packs(class_types)
 
 
 @dataclass(slots=True)

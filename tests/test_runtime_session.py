@@ -1316,6 +1316,49 @@ def test_embedded_run_ensure_packs_falls_back_to_declared_requirements(
     assert calls == ["install:ExamplePack", "reload:ensure_packs", "queue"]
 
 
+def test_embedded_run_ensure_packs_falls_back_to_workflow_class_types(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[str] = []
+
+    def missing_index(_workflow):
+        raise FileNotFoundError("node_index.json not found at node_index.json; run `vibecomfy sources sync`")
+
+    def fake_install_pack(*, name):
+        calls.append(f"install:{name}")
+        return node_packs_install.InstallResult(name=name, status="installed", git_commit_sha="abc123", error=None)
+
+    async def fake_reload(*, reason: str) -> None:
+        calls.append(f"reload:{reason}")
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure", "outputs": []}
+
+    workflow = _workflow()
+    workflow.nodes["3"] = VibeNode("3", "WanVideoVAELoader")
+
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", missing_index)
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        session.reload_for_nodepack_change = fake_reload  # type: ignore[method-assign]
+        try:
+            await session.run(workflow, ensure_packs=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == ["install:ComfyUI-WanVideoWrapper", "reload:ensure_packs", "queue"]
+
+
 def test_server_reload_calls_stop_then_start() -> None:
     async def run_case() -> None:
         session = ServerSession()
