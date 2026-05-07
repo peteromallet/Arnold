@@ -7,7 +7,7 @@ from typing import Sequence
 import pytest
 
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
-from vibecomfy.node_packs_install import _known_schema_classes, install_pack, missing_packs_for_workflow, restore_pack
+from vibecomfy.node_packs_install import _known_schema_classes, _resolve_node_index_path, install_pack, missing_packs_for_workflow, restore_pack
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -437,6 +437,16 @@ def test_missing_packs_for_workflow_ignores_core_comfy_classes(
 def test_known_schema_classes_raises_when_missing(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"node_index\.json not found .*vibecomfy sources sync"):
         _known_schema_classes(tmp_path / "node_index.json")
+
+
+def test_resolve_node_index_path_falls_back_to_repo_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    resolved = _resolve_node_index_path(Path("node_index.json"))
+
+    assert resolved.name == "node_index.json"
+    assert resolved.exists()
+    assert resolved != tmp_path / "node_index.json"
 
 
 @pytest.mark.parametrize("content", ["{", '{"class_type": "SaveImage"}'])

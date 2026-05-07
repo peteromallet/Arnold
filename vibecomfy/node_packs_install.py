@@ -79,10 +79,16 @@ def _git(pack_dir: Path, args: list[str], runner: Runner) -> str | None:
 def _git_porcelain(pack_dir: Path, runner: Runner) -> str | None: return _git(pack_dir, ["status", "--porcelain"], runner)
 def _git_head(pack_dir: Path, runner: Runner) -> str | None: return (_git(pack_dir, ["rev-parse", "HEAD"], runner) or "").strip() or None
 def _known_schema_classes(path: Path = Path("node_index.json")) -> set[str]:
+    path = _resolve_node_index_path(path)
     if not path.exists(): raise FileNotFoundError(f"node_index.json not found at {path}; run `vibecomfy sources sync`")
     try: rows = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc: raise ValueError(f"node_index.json at {path} is not valid JSON: {exc}") from exc
     except OSError as exc: raise ValueError(f"failed to read node_index.json at {path}: {exc}") from exc
     if not isinstance(rows, list): raise ValueError(f"node_index.json at {path} must contain a list of node schemas")
     return {str(row.get("class_type")) for row in rows if isinstance(row, dict) and row.get("class_type")}
+def _resolve_node_index_path(path: Path) -> Path:
+    if path.is_absolute() or path.exists() or path != Path("node_index.json"):
+        return path
+    repo_index = Path(__file__).resolve().parents[1] / "node_index.json"
+    return repo_index if repo_index.exists() else path
 def _error_text(exc: BaseException) -> str | None: return next((text.strip() for value in (getattr(exc, "stderr", None), getattr(exc, "stdout", None)) if isinstance((text := value.decode(errors="replace") if isinstance(value, bytes) else value), str) and text.strip()), str(exc) or None)
