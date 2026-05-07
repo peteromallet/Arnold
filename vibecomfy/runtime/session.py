@@ -144,11 +144,15 @@ class EmbeddedSession:
             except FileNotFoundError as exc:
                 packs = _node_packs_from_requirements(workflow)
                 if not packs:
-                    raise RuntimeError("ensure_packs: " + str(exc)) from exc
-                logger.warning(
-                    "ensure_packs: node index unavailable; falling back to workflow requirements: %s",
-                    ", ".join(pack.name for pack in packs),
-                )
+                    logger.warning(
+                        "ensure_packs: node index unavailable and workflow declares no custom nodes; continuing"
+                    )
+                    packs = []
+                else:
+                    logger.warning(
+                        "ensure_packs: node index unavailable; falling back to workflow requirements: %s",
+                        ", ".join(pack.name for pack in packs),
+                    )
             except ValueError as exc:
                 raise RuntimeError("ensure_packs: " + str(exc)) from exc
             installed_or_refreshed = False

@@ -83,7 +83,7 @@ def test_ready_template_preserves_materialized_requirements() -> None:
     "template_id",
     ["video/wanvideo_wrapper_22_14b_t2i", "video/wanvideo_wrapper_22_14b_vace_cocktail"],
 )
-def test_wan_2_2_templates_use_comfy_lora_basenames(template_id: str) -> None:
+def test_wan_2_2_templates_use_canonical_wanvideo_lora_path(template_id: str) -> None:
     workflow = workflow_from_ready(template_id)
 
     lora_nodes = [
@@ -92,12 +92,15 @@ def test_wan_2_2_templates_use_comfy_lora_basenames(template_id: str) -> None:
         if node.class_type == "WanVideoLoraSelectMulti"
     ]
     assert lora_nodes
-    assert all("\\" not in str(node.inputs["widget_0"]) for node in lora_nodes)
-    assert all("/" not in str(node.inputs["widget_0"]) for node in lora_nodes)
+    assert all(
+        node.inputs["widget_0"]
+        == "WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
+        for node in lora_nodes
+    )
     assert any(
         isinstance(asset, dict)
-        and asset.get("name") == "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors"
-        and (asset.get("subdir") or asset.get("directory")) == "loras"
+        and asset.get("name") == "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
+        and (asset.get("subdir") or asset.get("directory")) == "loras/WanVideo/Lightx2v"
         for asset in workflow.metadata["model_assets"]
     )
 

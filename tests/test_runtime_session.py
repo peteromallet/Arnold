@@ -1250,23 +1250,36 @@ def test_embedded_run_ensure_packs_skips_reload_when_nothing_missing(
     assert calls == ["queue"]
 
 
-def test_embedded_run_ensure_packs_raises_when_node_index_missing(
+def test_embedded_run_ensure_packs_continues_without_node_index_for_builtin_workflow(
+    fake_comfy,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[str] = []
 
     def missing_index(_workflow):
         raise FileNotFoundError("node_index.json not found at node_index.json; run `vibecomfy sources sync`")
 
     monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", missing_index)
+    monkeypatch.setattr(session_module, "_node_packs_from_requirements", lambda workflow: [])
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-no-index", "outputs": []}
+
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
 
     async def run_case() -> None:
         session = EmbeddedSession()
-        with pytest.raises(RuntimeError, match="ensure_packs: node_index.json not found"):
+        try:
             await session.run(_workflow(), ensure_packs=True)
+        finally:
+            await session.stop()
 
     asyncio.run(run_case())
+    assert calls == ["queue"]
 
 
 def test_embedded_run_ensure_packs_falls_back_to_declared_requirements(
