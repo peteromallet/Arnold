@@ -44,6 +44,15 @@ def _node_packs_from_requirements(workflow: VibeWorkflow):
     return resolve_node_packs(class_types)
 
 
+def _model_assets_from_workflow(workflow: VibeWorkflow) -> list[dict[str, str]]:
+    from vibecomfy.model_assets import _normalise_requirement_entries
+
+    raw_assets = workflow.metadata.get("model_assets", [])
+    if not isinstance(raw_assets, list):
+        return []
+    return _normalise_requirement_entries(raw_assets)
+
+
 @dataclass(slots=True)
 class RunResult:
     run_id: str
@@ -131,7 +140,14 @@ class EmbeddedSession:
         self._context = Comfy(configuration=_embedded_configuration_for_session(self.config))
         self._comfy = await self._context.__aenter__()
 
-    async def run(self, workflow: VibeWorkflow, *, backend: str = "api", ensure_packs: bool = False) -> RunResult:
+    async def run(
+        self,
+        workflow: VibeWorkflow,
+        *,
+        backend: str = "api",
+        ensure_packs: bool = False,
+        ensure_models: bool = False,
+    ) -> RunResult:
         if self._inflight_run is not None and not self._inflight_run.done():
             raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
         if ensure_packs:
@@ -165,6 +181,15 @@ class EmbeddedSession:
                 installed_or_refreshed = True
             if installed_or_refreshed:
                 await self.reload_for_nodepack_change(reason="ensure_packs")
+        if ensure_models:
+            from vibecomfy import fetch as fetch_assets
+
+            entries = _model_assets_from_workflow(workflow)
+            if entries:
+                try:
+                    fetch_assets.download_many(entries)
+                except Exception as exc:
+                    raise RuntimeError(f"ensure_models: {exc}") from exc
         task = asyncio.current_task()
         self._inflight_run = task
         try:

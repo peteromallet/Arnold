@@ -40,6 +40,7 @@ def _override_unwired_message(workflow_id: str, flag: str, override: str) -> str
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
         ensure_packs = bool(getattr(args, "ensure_packs", False))
+        ensure_models = bool(getattr(args, "ensure_models", False))
         memory_profile = getattr(args, "memory_profile", None)
         session_url = args.server_url
         if memory_profile is not None and args.server_url is not None:
@@ -77,23 +78,29 @@ def _cmd_run(args: argparse.Namespace) -> int:
             )
         if args.runtime == "embedded":
             if override_config is None:
-                result = _run_embedded_command(workflow, backend=args.backend, ensure_packs=ensure_packs)
+                result = _run_embedded_command(workflow, backend=args.backend, ensure_packs=ensure_packs, ensure_models=ensure_models)
             else:
-                result = _run_embedded_command(workflow, backend=args.backend, config=override_config, ensure_packs=ensure_packs)
+                result = _run_embedded_command(workflow, backend=args.backend, config=override_config, ensure_packs=ensure_packs, ensure_models=ensure_models)
         elif args.runtime == "auto":
             if session_url:
                 if ensure_packs:
                     print("run failed: --ensure-packs is only supported for embedded runtime", file=sys.stderr)
                     return 2
+                if ensure_models:
+                    print("run failed: --ensure-models is only supported for embedded runtime", file=sys.stderr)
+                    return 2
                 result = run_sync(workflow, server_url=session_url, backend=args.backend)
             else:
                 if override_config is None:
-                    result = _run_embedded_command(workflow, backend=args.backend, ensure_packs=ensure_packs)
+                    result = _run_embedded_command(workflow, backend=args.backend, ensure_packs=ensure_packs, ensure_models=ensure_models)
                 else:
-                    result = _run_embedded_command(workflow, backend=args.backend, config=override_config, ensure_packs=ensure_packs)
+                    result = _run_embedded_command(workflow, backend=args.backend, config=override_config, ensure_packs=ensure_packs, ensure_models=ensure_models)
         elif args.runtime == "server":
             if ensure_packs:
                 print("run failed: --ensure-packs is only supported for embedded runtime", file=sys.stderr)
+                return 2
+            if ensure_models:
+                print("run failed: --ensure-models is only supported for embedded runtime", file=sys.stderr)
                 return 2
             if override_config is None:
                 result = run_sync(workflow, server_url=session_url, backend=args.backend)
@@ -114,12 +121,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_embedded_command(workflow, *, backend: str, config: SessionConfig | None = None, ensure_packs: bool = False):
+def _run_embedded_command(
+    workflow,
+    *,
+    backend: str,
+    config: SessionConfig | None = None,
+    ensure_packs: bool = False,
+    ensure_models: bool = False,
+):
     kwargs: dict[str, Any] = {"backend": backend}
     if config is not None:
         kwargs["config"] = config
     if ensure_packs:
         kwargs["ensure_packs"] = True
+    if ensure_models:
+        kwargs["ensure_models"] = True
     return run_embedded_sync(workflow, **kwargs)
 
 
@@ -143,4 +159,5 @@ def register(subparsers) -> None:
     run.add_argument("--steps", type=int)
     run.add_argument("--memory-profile", type=int, choices=[1, 2, 3, 4, 5])
     run.add_argument("--ensure-packs", action="store_true")
+    run.add_argument("--ensure-models", action="store_true")
     run.set_defaults(func=_cmd_run)

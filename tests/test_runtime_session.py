@@ -1372,6 +1372,58 @@ def test_embedded_run_ensure_packs_falls_back_to_workflow_class_types(
     assert calls == ["install:ComfyUI-WanVideoWrapper", "reload:ensure_packs", "queue"]
 
 
+def test_embedded_run_ensure_models_downloads_declared_assets(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = _workflow()
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "model.safetensors",
+            "url": "https://example.test/model.safetensors",
+            "directory": "diffusion_models/WanVideo",
+        }
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "model.safetensors",
+                "url": "https://example.test/model.safetensors",
+                "subdir": "diffusion_models/WanVideo",
+            }
+        ],
+        "queue",
+    ]
+
+
 def test_server_reload_calls_stop_then_start() -> None:
     async def run_case() -> None:
         session = ServerSession()
