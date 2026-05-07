@@ -756,7 +756,7 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
             timeout=120,
             error_code="gh_pr_merge_failed",
         )
-        return "open"
+        return "merged" if _pr_state(root, pr_number, writer=writer) == "merged" else "open"
     except CliError as exc:
         combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
         if "Auto merge is not allowed" not in combined:
