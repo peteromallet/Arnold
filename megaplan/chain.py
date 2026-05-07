@@ -740,14 +740,20 @@ def _commit_and_push_phase(
         )
     _run_command(root, ["git", "add", "-A"], writer=writer, error_code="git_commit_failed")
     claimed_root_paths = _claimed_root_paths(root, plan)
-    preexisting_unclaimed: list[Path] = []
+    claimed_nested_repo_roots: set[str] = set()
     root_abs = root.resolve()
+    for repo in _claimed_nested_repos(root, plan):
+        try:
+            claimed_nested_repo_roots.add(repo.resolve().relative_to(root_abs).as_posix())
+        except (OSError, ValueError):
+            continue
+    preexisting_unclaimed: list[Path] = []
     for path in preexisting_dirty_paths or []:
         try:
             rel = path.resolve().relative_to(root_abs).as_posix()
         except (OSError, ValueError):
             continue
-        if rel not in claimed_root_paths:
+        if rel not in claimed_root_paths and rel not in claimed_nested_repo_roots:
             preexisting_unclaimed.append(path)
     _reset_staged_paths(root, preexisting_unclaimed, writer=writer)
     staged = subprocess.run(
