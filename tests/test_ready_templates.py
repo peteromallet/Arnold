@@ -136,6 +136,38 @@ def test_wan_vace_template_uses_root_vace_module_asset() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "template_id",
+    ["video/wanvideo_wrapper_22_14b_t2i", "video/wanvideo_wrapper_22_14b_vace_cocktail"],
+)
+def test_wan_2_2_template_asset_urls_match_upstream_locations(template_id: str) -> None:
+    workflow = workflow_from_ready(template_id)
+    assets = {
+        asset["name"]: asset
+        for asset in workflow.metadata["model_assets"]
+        if isinstance(asset, dict) and isinstance(asset.get("name"), str)
+    }
+
+    assert assets["Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors"]["url"] == (
+        "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/"
+        "T2V/Wan2_2-T2V-A14B_HIGH_fp8_e4m3fn_scaled_KJ.safetensors"
+    )
+    assert assets["Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors"]["url"] == (
+        "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/"
+        "T2V/Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors"
+    )
+    assert assets["lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"]["url"] == (
+        "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/"
+        "Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
+    )
+    assert assets["Wan2_1_VAE_bf16.safetensors"]["url"] == (
+        "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors"
+    )
+    assert assets["umt5-xxl-enc-bf16.safetensors"]["url"] == (
+        "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors"
+    )
+
+
 def test_ready_template_requirements_accept_structured_model_assets() -> None:
     workflow = VibeWorkflow("scratchpad", WorkflowSource("scratchpad"))
     workflow.add_node("CheckpointLoaderSimple", widget_0="checkpoint.safetensors")
