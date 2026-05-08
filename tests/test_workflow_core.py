@@ -113,6 +113,17 @@ def test_compile_drops_video_preview_ui_payloads() -> None:
     assert api["1"]["inputs"]["images"] == ["2", 0]
 
 
+def test_compile_drops_note_nodes_from_api_prompt() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "Note", inputs={"widget_0": "editor-only note"})
+    workflow.nodes["2"] = VibeNode("2", "SaveImage", inputs={"images": ["3", 0]})
+
+    api = workflow.compile("api")
+
+    assert "1" not in api
+    assert api["2"]["class_type"] == "SaveImage"
+
+
 def test_official_index_uses_package_manifest_metadata(tmp_path: Path) -> None:
     repo = tmp_path / "workflow_templates"
     templates = repo / "templates"

@@ -199,9 +199,15 @@ class VibeWorkflow:
             raise ValueError(f"Unknown compile backend: {backend}")
         api: dict[str, Any] = {}
         for node_id, node in self.nodes.items():
+            if _is_ui_only_node(node):
+                continue
             inputs = _compile_node_inputs(node)
             api[str(node_id)] = {"class_type": node.class_type, "inputs": inputs}
         for edge in self.edges:
+            if str(edge.to_node) not in api:
+                continue
+            if str(edge.from_node) not in api:
+                continue
             api[str(edge.to_node)]["inputs"][edge.to_input] = [str(edge.from_node), int(edge.from_output)]
         return api
 
@@ -217,6 +223,8 @@ class VibeWorkflow:
 
         builder = GraphBuilder(prefix="")
         for node_id, node in self.nodes.items():
+            if _is_ui_only_node(node):
+                continue
             inputs = _compile_node_inputs(node)
             inputs.update(edge_inputs.get(str(node_id), {}))
             builder.node(node.class_type, id=str(node_id), **inputs)
@@ -261,3 +269,7 @@ def _is_ui_only_prompt_input(key: str, value: Any) -> bool:
     if key in {"videopreview", "preview", "preview_image"} and isinstance(value, dict):
         return True
     return False
+
+
+def _is_ui_only_node(node: VibeNode) -> bool:
+    return node.class_type in {"Note"}
