@@ -113,6 +113,24 @@ def test_compile_drops_video_preview_ui_payloads() -> None:
     assert api["1"]["inputs"]["images"] == ["2", 0]
 
 
+def test_compile_drops_null_prompt_inputs() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "ImageConcatMulti",
+        inputs={
+            "image_1": ["2", 0],
+            "image_2": ["3", 0],
+            "widget_3": None,
+        },
+    )
+
+    api = workflow.compile("api")
+
+    assert "widget_3" not in api["1"]["inputs"]
+    assert api["1"]["inputs"]["image_1"] == ["2", 0]
+
+
 def test_compile_drops_note_nodes_from_api_prompt() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode("1", "Note", inputs={"widget_0": "editor-only note"})

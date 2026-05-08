@@ -64,6 +64,20 @@ def test_all_ready_templates_load_and_validate() -> None:
         assert workflow.metadata["ready_template"] == template_id
 
 
+def test_ready_template_compile_emits_no_null_api_inputs() -> None:
+    workflow = workflow_from_ready("video/wanvideo_wrapper_22_wan_animate_preprocess_kijai")
+    api = workflow.compile("api")
+
+    null_inputs = [
+        (node_id, node["class_type"], input_name)
+        for node_id, node in api.items()
+        for input_name, value in node.get("inputs", {}).items()
+        if value is None
+    ]
+
+    assert null_inputs == []
+
+
 def test_ready_template_build_has_category_qualified_metadata() -> None:
     workflow = workflow_from_ready("qwen_image_edit")
 
