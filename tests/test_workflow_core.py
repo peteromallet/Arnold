@@ -165,6 +165,43 @@ def test_compile_adds_named_inputs_for_known_custom_node_widgets() -> None:
     assert api["3"]["inputs"]["strength"] == 1.0
 
 
+def test_wan_video_sampler_aliases_skip_seed_control_widget() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "WanVideoSampler",
+        inputs={
+            "model": ["2", 0],
+            "image_embeds": ["3", 0],
+            "widget_0": 6,
+            "widget_1": 1,
+            "widget_2": 8,
+            "widget_3": 43,
+            "widget_4": "fixed",
+            "widget_5": True,
+            "widget_6": "dpm++_sde",
+            "widget_7": 0,
+            "widget_8": 1,
+            "widget_9": False,
+            "widget_10": "comfy",
+            "widget_11": 0,
+            "widget_12": 10,
+            "widget_13": "",
+        },
+    )
+
+    api = workflow.compile("api")
+
+    assert api["1"]["inputs"]["seed"] == 43
+    assert api["1"]["inputs"]["force_offload"] is True
+    assert api["1"]["inputs"]["scheduler"] == "dpm++_sde"
+    assert api["1"]["inputs"]["batched_cfg"] is False
+    assert api["1"]["inputs"]["rope_function"] == "comfy"
+    assert api["1"]["inputs"]["start_step"] == 0
+    assert api["1"]["inputs"]["end_step"] == 10
+    assert "add_noise_to_samples" not in api["1"]["inputs"]
+
+
 def test_official_index_uses_package_manifest_metadata(tmp_path: Path) -> None:
     repo = tmp_path / "workflow_templates"
     templates = repo / "templates"

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from vibecomfy.schema.provider import SchemaProvider
 
 
-_POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str, ...]] = {
+_POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str | None, ...]] = {
     "LoadWanVideoT5TextEncoder": ("model_name", "precision", "load_device", "quantization"),
     "WanVideoTextEncode": (
         "positive_prompt",
@@ -94,6 +94,7 @@ _POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str, ...]] = {
         "cfg",
         "shift",
         "seed",
+        None,
         "force_offload",
         "scheduler",
         "riflex_freq_index",
@@ -102,7 +103,6 @@ _POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str, ...]] = {
         "rope_function",
         "start_step",
         "end_step",
-        "add_noise_to_samples",
     ),
     "CreateCFGScheduleFloatList": (
         "steps",
@@ -399,6 +399,8 @@ def _apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) ->
     if not aliases:
         return
     for index, name in enumerate(aliases):
+        if name is None:
+            continue
         widget_key = f"widget_{index}"
         if name not in inputs and widget_key in inputs:
             inputs[name] = inputs[widget_key]
