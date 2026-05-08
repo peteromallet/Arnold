@@ -420,6 +420,28 @@ models:
         path: diffusion_models/WanVideo/Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors
     tags: [phase:wan_wrapper]
 
+  - id: wan2_2_i2v_a14b_high_fp8_scaled_kj
+    source:
+      kind: huggingface
+      repo: Kijai/WanVideo_comfy_fp8_scaled
+      filename: I2V/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors
+    min_size: 10_000_000_000
+    targets:
+      - node_pack: wan_wrapper
+        path: diffusion_models/WanVideo/2_2/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors
+    tags: [phase:wan_wrapper]
+
+  - id: wan2_2_i2v_a14b_low_fp8_scaled_kj
+    source:
+      kind: huggingface
+      repo: Kijai/WanVideo_comfy_fp8_scaled
+      filename: I2V/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors
+    min_size: 10_000_000_000
+    targets:
+      - node_pack: wan_wrapper
+        path: diffusion_models/WanVideo/2_2/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors
+    tags: [phase:wan_wrapper]
+
   - id: wan2_1_flf2v_14b_720p_fp8
     source:
       kind: huggingface
