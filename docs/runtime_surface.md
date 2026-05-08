@@ -91,6 +91,8 @@ Session methods:
 - `reconfigure(config)` applies a new `SessionConfig`; embedded sessions pass it through to `Comfy.reconfigure()`, and server sessions restart only when the resulting Comfy CLI arguments change.
 - `stop()` closes the embedded context or terminates the managed server process.
 
+Run metadata keeps the legacy `outputs` list as resolved artifact paths. It also exposes `comfy_outputs` for the raw Comfy return payload and `artifact_paths` as an explicit alias for resolved files, using `comfy_configuration.output_directory` when Comfy returns filename-only records.
+
 `SessionConfig` fields:
 
 - `vram_policy`: `auto`, `high`, `low`, or `normal`

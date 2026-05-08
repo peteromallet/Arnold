@@ -242,8 +242,9 @@ class EmbeddedSession:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
         self.last_fingerprint = fp
 
+        comfy_outputs = _raw_comfy_outputs(queued)
         outputs = _collect_output_paths(
-            getattr(queued, "outputs", queued),
+            comfy_outputs,
             output_directory=_configured_output_directory(self.config),
         )
         metadata = _run_metadata(
@@ -251,6 +252,7 @@ class EmbeddedSession:
             workflow=workflow,
             api_dict=api_dict,
             queued=queued,
+            comfy_outputs=comfy_outputs,
             outputs=outputs,
             runtime="embedded",
             config=self.config,
@@ -384,6 +386,7 @@ class ServerSession:
             workflow=workflow,
             api_dict=api_dict,
             queued=queued,
+            comfy_outputs=_raw_comfy_outputs(queued),
             outputs=[],
             runtime="server",
             config=self.config,
@@ -653,8 +656,11 @@ def _run_metadata(
     queued: Any,
     outputs: list[str],
     runtime: str,
+    comfy_outputs: Any = None,
     config: SessionConfig | None = None,
 ) -> dict[str, Any]:
+    if comfy_outputs is None:
+        comfy_outputs = _raw_comfy_outputs(queued)
     serialized = json.dumps(api_dict, sort_keys=True, default=str)
     metadata = {
         "run_id": run_id,
@@ -664,12 +670,22 @@ def _run_metadata(
         "git_sha": _git_sha(),
         "inputs": {name: item.value for name, item in workflow.inputs.items()},
         "queued": queued,
+        "comfy_outputs": comfy_outputs,
+        "artifact_paths": outputs,
         "outputs": outputs,
         "runtime": runtime,
     }
     if config is not None and config.memory_profile is not None:
         metadata.update(MemoryProfile.parse(config.memory_profile).to_telemetry())
     return metadata
+
+
+def _raw_comfy_outputs(queued: Any) -> Any:
+    if hasattr(queued, "outputs"):
+        return getattr(queued, "outputs")
+    if isinstance(queued, dict) and "outputs" in queued:
+        return queued["outputs"]
+    return queued
 
 
 def _git_sha() -> str | None:

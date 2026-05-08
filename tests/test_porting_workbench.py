@@ -204,6 +204,61 @@ def build():
     assert any(issue.detail.get("category") == "schema" for issue in report.diagnostics)
 
 
+def test_analyze_source_warns_when_scratchpad_save_path_escapes_output_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("VIBECOMFY_COMFY_CONFIGURATION", raising=False)
+    output_dir = tmp_path / "configured-output"
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        f"""
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    workflow = VibeWorkflow("scratch", WorkflowSource("scratch"))
+    workflow.metadata["comfy_configuration"] = {{"output_directory": {str(output_dir)!r}}}
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={{"filename_prefix": {str(tmp_path / "elsewhere" / "image")!r}}})
+    return workflow.finalize_metadata()
+""",
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(scratchpad), schema_provider=_provider())
+
+    issue = next(issue for issue in report.diagnostics if issue.code == "save_output_path_outside_output_directory")
+    assert issue.severity == "warning"
+    assert issue.node_id == "1"
+    assert issue.detail["field"] == "filename_prefix"
+    assert issue.detail["output_directory"] == str(output_dir.resolve())
+
+
+def test_analyze_source_allows_relative_save_prefix_under_output_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("VIBECOMFY_COMFY_CONFIGURATION", raising=False)
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        f"""
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    workflow = VibeWorkflow("scratch", WorkflowSource("scratch"))
+    workflow.metadata["comfy_configuration"] = {{"output_directory": {str(tmp_path / "output")!r}}}
+    workflow.nodes["1"] = VibeNode("1", "SaveVideo", widgets={{"widget_0": "video/ComfyUI"}})
+    return workflow.finalize_metadata()
+""",
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(scratchpad), schema_provider=_provider())
+
+    assert "save_output_path_outside_output_directory" not in [issue.code for issue in report.diagnostics]
+
+
 def test_analyze_source_loads_ready_ids() -> None:
     report = analyze_source("image/z_image")
 

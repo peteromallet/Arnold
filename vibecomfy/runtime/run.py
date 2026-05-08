@@ -18,6 +18,7 @@ from .session import (
     _build_schema_provider,
     _embedded_configuration,
     _prepare_prompt_async,
+    _raw_comfy_outputs,
     _run_metadata,
 )
 
@@ -62,6 +63,7 @@ async def run(
         workflow=workflow,
         api_dict=api_dict,
         queued=queued,
+        comfy_outputs=_raw_comfy_outputs(queued),
         outputs=[],
         runtime="server",
         config=managed_config,

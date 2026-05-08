@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from vibecomfy.cli_loader import _ready_id_for
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_shape, normalize_to_api
+from vibecomfy.metadata import OUTPUT_NODE_NAMES
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 from vibecomfy.porting.assets import analyze_model_assets
 from vibecomfy.porting.report import NodePackSuggestion, PortIssue, PortReport
@@ -80,6 +83,7 @@ def analyze_source(
         report.diagnostics.append(_port_issue_from_validation(issue, category="helper"))
 
     report.diagnostics.extend(_materialization_diagnostics(workflow))
+    report.diagnostics.extend(_save_output_mapping_diagnostics(workflow, source_kind=loaded.source_kind))
 
     custom_node_analysis = _custom_node_analysis(workflow, schema_provider=schema_provider)
     report.metadata["custom_node_analysis"] = custom_node_analysis
@@ -193,6 +197,120 @@ def _materialization_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
                 )
             )
     return issues
+
+
+def _save_output_mapping_diagnostics(workflow: VibeWorkflow, *, source_kind: str) -> list[PortIssue]:
+    if source_kind not in {"ready", "scratchpad"}:
+        return []
+    output_directory = _configured_output_directory(workflow)
+    if output_directory is None:
+        return []
+
+    output_root = Path(output_directory).expanduser().resolve()
+    issues: list[PortIssue] = []
+    for node in workflow.runtime_nodes().values():
+        if node.class_type not in OUTPUT_NODE_NAMES:
+            continue
+        values = {**node.widgets, **node.inputs}
+        prefix = values.get("filename_prefix", values.get("widget_0"))
+        if isinstance(prefix, str):
+            issue = _save_prefix_mapping_issue(node.id, node.class_type, prefix, output_root)
+            if issue is not None:
+                issues.append(issue)
+        for field in ("output_directory", "output_dir", "output_path", "save_path", "folder", "folder_path"):
+            value = values.get(field)
+            if isinstance(value, str):
+                issue = _absolute_save_path_mapping_issue(node.id, node.class_type, field, value, output_root)
+                if issue is not None:
+                    issues.append(issue)
+    return issues
+
+
+def _save_prefix_mapping_issue(
+    node_id: str,
+    class_type: str,
+    prefix: str,
+    output_root: Path,
+) -> PortIssue | None:
+    path = Path(prefix).expanduser()
+    if not path.is_absolute() and ".." not in path.parts:
+        return None
+    candidate = path if path.is_absolute() else output_root / path
+    if _is_relative_to(candidate.resolve(), output_root):
+        return None
+    return PortIssue(
+        code="save_output_path_outside_output_directory",
+        message=(
+            f"Save node {node_id} uses filename_prefix {prefix!r}, which resolves outside configured "
+            f"output_directory {str(output_root)!r}."
+        ),
+        severity="warning",
+        node_id=node_id,
+        class_type=class_type,
+        detail={
+            "category": "outputs",
+            "field": "filename_prefix",
+            "value": prefix,
+            "output_directory": str(output_root),
+        },
+        recommendation="Use a relative filename_prefix under output_directory so run metadata can map Comfy outputs to artifacts.",
+    )
+
+
+def _absolute_save_path_mapping_issue(
+    node_id: str,
+    class_type: str,
+    field: str,
+    value: str,
+    output_root: Path,
+) -> PortIssue | None:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        return None
+    if _is_relative_to(path.resolve(), output_root):
+        return None
+    return PortIssue(
+        code="save_output_path_outside_output_directory",
+        message=(
+            f"Save node {node_id} sets {field}={value!r}, which is outside configured "
+            f"output_directory {str(output_root)!r}."
+        ),
+        severity="warning",
+        node_id=node_id,
+        class_type=class_type,
+        detail={
+            "category": "outputs",
+            "field": field,
+            "value": value,
+            "output_directory": str(output_root),
+        },
+        recommendation="Save artifacts under the configured output_directory or mirror that path in comfy_configuration.",
+    )
+
+
+def _configured_output_directory(workflow: VibeWorkflow) -> str | None:
+    values: dict[str, Any] = {}
+    metadata_config = workflow.metadata.get("comfy_configuration")
+    if isinstance(metadata_config, dict):
+        values.update(metadata_config)
+    env_config = os.environ.get("VIBECOMFY_COMFY_CONFIGURATION")
+    if env_config:
+        try:
+            parsed = json.loads(env_config)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            values.update(parsed)
+    output_directory = values.get("output_directory")
+    return str(output_directory) if output_directory else None
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def load_port_source(source: str, *, schema_provider: Any | None = None) -> LoadedPortSource:

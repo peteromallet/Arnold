@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import json
 import sys
 import types
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 
@@ -279,6 +281,20 @@ def test_run_embedded_resolves_comfy_filename_outputs_against_configured_output_
     result = runtime_run_module.run_embedded_sync(_workflow())
 
     assert result.outputs == [str(output_dir / "Wanimate_00001_.mp4")]
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
+    assert metadata["outputs"] == result.outputs
+    assert metadata["artifact_paths"] == result.outputs
+    assert metadata["comfy_outputs"] == {
+        "19": {
+            "images": [
+                {
+                    "filename": "Wanimate_00001_.mp4",
+                    "subfolder": "",
+                    "type": "output",
+                }
+            ]
+        }
+    }
 
 
 def test_cmd_run_prints_clear_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
