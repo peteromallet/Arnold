@@ -242,7 +242,10 @@ class EmbeddedSession:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
         self.last_fingerprint = fp
 
-        outputs = _collect_output_paths(getattr(queued, "outputs", queued))
+        outputs = _collect_output_paths(
+            getattr(queued, "outputs", queued),
+            output_directory=_configured_output_directory(self.config),
+        )
         metadata = _run_metadata(
             run_id=run_id,
             workflow=workflow,
@@ -682,18 +685,48 @@ def _git_sha() -> str | None:
     return result.stdout.strip() or None
 
 
-def _collect_output_paths(value: Any) -> list[str]:
+def _collect_output_paths(value: Any, *, output_directory: str | Path | None = None) -> list[str]:
     paths: list[str] = []
     if isinstance(value, dict):
+        filename = value.get("filename")
+        if isinstance(filename, str):
+            paths.append(_resolve_comfy_output_filename(value, output_directory))
+            return paths
         for key, item in value.items():
             if key in {"abs_path", "path", "fullpath", "filename"} and isinstance(item, str):
                 paths.append(item)
             else:
-                paths.extend(_collect_output_paths(item))
+                paths.extend(_collect_output_paths(item, output_directory=output_directory))
     elif isinstance(value, list):
         for item in value:
-            paths.extend(_collect_output_paths(item))
+            paths.extend(_collect_output_paths(item, output_directory=output_directory))
     return paths
+
+
+def _resolve_comfy_output_filename(value: dict[str, Any], output_directory: str | Path | None) -> str:
+    filename = str(value["filename"])
+    if Path(filename).is_absolute() or output_directory is None:
+        return filename
+    subfolder = value.get("subfolder")
+    if isinstance(subfolder, str) and subfolder.strip():
+        return str(Path(output_directory) / subfolder / filename)
+    return str(Path(output_directory) / filename)
+
+
+def _configured_output_directory(config: SessionConfig | None) -> str | None:
+    values: dict[str, Any] = {}
+    if config is not None:
+        values.update(config.extra)
+    env_config = os.environ.get("VIBECOMFY_COMFY_CONFIGURATION")
+    if env_config:
+        try:
+            parsed = json.loads(env_config)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            values.update(parsed)
+    output_directory = values.get("output_directory")
+    return str(output_directory) if output_directory else None
 
 
 def _embedded_configuration_for_session(config: SessionConfig) -> Configuration | None:

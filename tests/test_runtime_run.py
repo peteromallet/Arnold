@@ -229,11 +229,56 @@ def test_run_embedded_ignores_hiddenswitch_cleanup_bug_after_success(
     monkeypatch.setitem(sys.modules, "comfy.client", types.ModuleType("comfy.client"))
     embedded = types.ModuleType("comfy.client.embedded_comfy_client")
     embedded.Comfy = FakeComfy
+    embedded.default_configuration = lambda: {}
     monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
 
     result = runtime_run_module.run_embedded_sync(_workflow())
 
     assert result.outputs == ["output.mp4"]
+
+
+def test_run_embedded_resolves_comfy_filename_outputs_against_configured_output_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    output_dir = tmp_path / "standard-output"
+
+    class FakeComfy:
+        def __init__(self, configuration=None) -> None:
+            self.configuration = configuration
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def queue_prompt_api(self, api_dict):
+            return {
+                "outputs": {
+                    "19": {
+                        "images": [
+                            {
+                                "filename": "Wanimate_00001_.mp4",
+                                "subfolder": "",
+                                "type": "output",
+                            }
+                        ]
+                    }
+                }
+            }
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIBECOMFY_COMFY_CONFIGURATION", f'{{"output_directory":"{output_dir}"}}')
+    monkeypatch.setitem(sys.modules, "comfy", types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy.client", types.ModuleType("comfy.client"))
+    embedded = types.ModuleType("comfy.client.embedded_comfy_client")
+    embedded.Comfy = FakeComfy
+    embedded.default_configuration = lambda: {}
+    monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
+
+    result = runtime_run_module.run_embedded_sync(_workflow())
+
+    assert result.outputs == [str(output_dir / "Wanimate_00001_.mp4")]
 
 
 def test_cmd_run_prints_clear_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
