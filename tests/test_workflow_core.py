@@ -378,6 +378,74 @@ def test_compile_adds_named_inputs_for_wan_animate_helper_widgets() -> None:
     assert api["5"]["inputs"]["color"] == "0, 0, 0"
 
 
+def test_compile_adds_named_inputs_for_wan_animate_custom_node_widgets() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "DownloadAndLoadSAM2Model",
+        inputs={
+            "widget_0": "sam2.1_hiera_base_plus.safetensors",
+            "widget_1": "video",
+            "widget_2": "cuda",
+            "widget_3": "fp16",
+        },
+    )
+    workflow.nodes["2"] = VibeNode("2", "Sam2Segmentation", inputs={"widget_0": False, "widget_1": False})
+    workflow.nodes["3"] = VibeNode(
+        "3",
+        "OnnxDetectionModelLoader",
+        inputs={
+            "widget_0": "vitpose-l-wholebody.onnx",
+            "widget_1": "yolov10m.onnx",
+            "widget_2": "CUDAExecutionProvider",
+        },
+    )
+    workflow.nodes["4"] = VibeNode(
+        "4",
+        "WanVideoClipVisionEncode",
+        inputs={
+            "widget_0": 1.0,
+            "widget_1": 1.0,
+            "widget_2": "center",
+            "widget_3": True,
+            "widget_4": False,
+        },
+    )
+    workflow.nodes["5"] = VibeNode(
+        "5",
+        "DrawViTPose",
+        inputs={
+            "widget_0": 512,
+            "widget_1": 512,
+            "widget_2": 32,
+            "widget_3": 4,
+            "widget_4": 2,
+            "widget_5": True,
+        },
+    )
+    workflow.nodes["6"] = VibeNode("6", "CLIPVisionLoader", inputs={"widget_0": "clip_vision_h.safetensors"})
+
+    api = workflow.compile("api")
+
+    assert api["1"]["inputs"]["model"] == "sam2.1_hiera_base_plus.safetensors"
+    assert api["1"]["inputs"]["segmentor"] == "video"
+    assert api["1"]["inputs"]["device"] == "cuda"
+    assert api["1"]["inputs"]["precision"] == "fp16"
+    assert api["2"]["inputs"]["keep_model_loaded"] is False
+    assert api["3"]["inputs"]["vitpose_model"] == "vitpose-l-wholebody.onnx"
+    assert api["3"]["inputs"]["yolo_model"] == "yolov10m.onnx"
+    assert api["3"]["inputs"]["onnx_device"] == "CUDAExecutionProvider"
+    assert api["4"]["inputs"]["strength_1"] == 1.0
+    assert api["4"]["inputs"]["crop"] == "center"
+    assert api["4"]["inputs"]["combine_embeds"] is True
+    assert api["4"]["inputs"]["force_offload"] is False
+    assert api["5"]["inputs"]["retarget_padding"] == 32
+    assert api["5"]["inputs"]["body_stick_width"] == 4
+    assert api["5"]["inputs"]["hand_stick_width"] == 2
+    assert api["5"]["inputs"]["draw_head"] is True
+    assert api["6"]["inputs"]["clip_name"] == "clip_vision_h.safetensors"
+
+
 def test_official_index_uses_package_manifest_metadata(tmp_path: Path) -> None:
     repo = tmp_path / "workflow_templates"
     templates = repo / "templates"

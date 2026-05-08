@@ -13,7 +13,7 @@ from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_s
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 from vibecomfy.porting.assets import analyze_model_assets
 from vibecomfy.porting.report import NodePackSuggestion, PortIssue, PortReport
-from vibecomfy.porting.widget_aliases import widget_alias_analysis
+from vibecomfy.porting.widget_aliases import widget_alias_analysis, widget_names_for_class
 from vibecomfy.registry.ready import workflow_from_ready
 from vibecomfy.scratchpad_loader import load_scratchpad
 from vibecomfy.schema import schema_for, schema_registry_empty
@@ -109,6 +109,21 @@ def analyze_source(
                 class_type=alias["class_type"],
                 detail=alias,
                 recommendation="Compare against object_info/widget schema before materializing a ready template.",
+            )
+        )
+    for missing in widget_analysis["missing_compiled_widget_inputs"]:
+        report.diagnostics.append(
+            PortIssue(
+                code="compiled_widget_input_missing",
+                message=(
+                    f"Node {missing['node_id']} ({missing['class_type']}) has positional widget "
+                    f"{missing['widget_key']} but compiled API is missing required input {missing['expected_input']!r}."
+                ),
+                severity="error",
+                node_id=missing["node_id"],
+                class_type=missing["class_type"],
+                detail=missing,
+                recommendation="Add the class to compile-time widget aliasing or update the widget schema before RunPod validation.",
             )
         )
 
@@ -307,7 +322,69 @@ def _widget_analysis(
     raw_workflow: dict[str, Any] | None,
     schema_provider: Any | None,
 ) -> dict[str, Any]:
-    return widget_alias_analysis(api_prompt, raw_workflow=raw_workflow, schema_provider=schema_provider)
+    analysis = widget_alias_analysis(api_prompt, raw_workflow=raw_workflow, schema_provider=schema_provider)
+    analysis["missing_compiled_widget_inputs"] = _missing_compiled_widget_inputs(
+        api_prompt,
+        schema_provider=schema_provider,
+    )
+    return analysis
+
+
+def _missing_compiled_widget_inputs(
+    api_prompt: dict[str, Any] | None,
+    *,
+    schema_provider: Any | None,
+) -> list[dict[str, Any]]:
+    if api_prompt is None:
+        return []
+
+    missing: list[dict[str, Any]] = []
+    for node_id, node in sorted(api_prompt.items(), key=lambda item: _sort_key(item[0])):
+        if not isinstance(node, dict):
+            continue
+        class_type = str(node.get("class_type") or "")
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        names = widget_names_for_class(class_type)
+        if not names:
+            continue
+        required_inputs = _required_schema_inputs(schema_provider, class_type)
+        for index, expected in enumerate(names):
+            if expected is None or expected.startswith("unused_"):
+                continue
+            widget_key = f"widget_{index}"
+            if widget_key not in inputs or expected in inputs:
+                continue
+            if required_inputs is None and not _class_in_known_pack(class_type):
+                continue
+            if required_inputs is not None and expected not in required_inputs:
+                continue
+            missing.append(
+                {
+                    "node_id": str(node_id),
+                    "class_type": class_type,
+                    "widget_key": widget_key,
+                    "expected_input": expected,
+                    "widget_value": inputs[widget_key],
+                    "schema_required": required_inputs is not None,
+                }
+            )
+    return missing
+
+
+def _required_schema_inputs(schema_provider: Any | None, class_type: str) -> set[str] | None:
+    schema = schema_for(schema_provider, class_type)
+    if schema is None:
+        return None
+    inputs = getattr(schema, "inputs", None)
+    if not isinstance(inputs, dict):
+        return None
+    required: set[str] = set()
+    for name, spec in inputs.items():
+        if bool(getattr(spec, "required", False)):
+            required.add(str(name))
+    return required
 
 
 def _sort_key(value: Any) -> tuple[int, str]:

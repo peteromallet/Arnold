@@ -21,6 +21,8 @@ COMPILE_WIDGET_ALIAS_CLASS_TYPES: frozenset[str] = frozenset(
         "WanVideoSampler",
         "CreateCFGScheduleFloatList",
         "WanVideoAnimateEmbeds",
+        "CLIPVisionLoader",
+        "WanVideoClipVisionEncode",
         "ImageResizeKJv2",
         "INTConstant",
         "FloatConstant",
@@ -28,6 +30,11 @@ COMPILE_WIDGET_ALIAS_CLASS_TYPES: frozenset[str] = frozenset(
         "BlockifyMask",
         "DrawMaskOnImage",
         "GrowMaskWithBlur",
+        "DownloadAndLoadSAM2Model",
+        "Sam2Segmentation",
+        "OnnxDetectionModelLoader",
+        "PoseAndFaceDetection",
+        "DrawViTPose",
     }
 )
 
