@@ -315,18 +315,22 @@ class VibeWorkflow:
             return self._compile_graphbuilder()
         if backend != "api":
             raise ValueError(f"Unknown compile backend: {backend}")
+        broadcast_sources = _collect_broadcast_sources(self.nodes, self.edges)
         api: dict[str, Any] = {}
         for node_id, node in self.nodes.items():
             if _is_ui_only_node(node):
                 continue
-            inputs = _compile_node_inputs(node)
+            inputs = _rewrite_broadcast_links(_compile_node_inputs(node), self.nodes, broadcast_sources)
             api[str(node_id)] = {"class_type": node.class_type, "inputs": inputs}
         for edge in self.edges:
             if str(edge.to_node) not in api:
                 continue
-            if str(edge.from_node) not in api:
+            edge_source = _resolve_edge_source(edge, self.nodes, broadcast_sources)
+            if edge_source is None:
                 continue
-            api[str(edge.to_node)]["inputs"][edge.to_input] = [str(edge.from_node), int(edge.from_output)]
+            if str(edge_source[0]) not in api:
+                continue
+            api[str(edge.to_node)]["inputs"][edge.to_input] = edge_source
         return api
 
     def _compile_graphbuilder(self) -> dict[str, Any]:
@@ -335,15 +339,19 @@ class VibeWorkflow:
         except ImportError as exc:
             raise RuntimeError("GraphBuilder backend requires the installed HiddenSwitch ComfyUI runtime.") from exc
 
+        broadcast_sources = _collect_broadcast_sources(self.nodes, self.edges)
         edge_inputs: dict[str, dict[str, Any]] = {}
         for edge in self.edges:
-            edge_inputs.setdefault(str(edge.to_node), {})[edge.to_input] = [str(edge.from_node), int(edge.from_output)]
+            edge_source = _resolve_edge_source(edge, self.nodes, broadcast_sources)
+            if edge_source is None:
+                continue
+            edge_inputs.setdefault(str(edge.to_node), {})[edge.to_input] = edge_source
 
         builder = GraphBuilder(prefix="")
         for node_id, node in self.nodes.items():
             if _is_ui_only_node(node):
                 continue
-            inputs = _compile_node_inputs(node)
+            inputs = _rewrite_broadcast_links(_compile_node_inputs(node), self.nodes, broadcast_sources)
             inputs.update(edge_inputs.get(str(node_id), {}))
             builder.node(node.class_type, id=str(node_id), **inputs)
         return builder.finalize()
@@ -393,7 +401,106 @@ def _is_ui_only_prompt_input(key: str, value: Any) -> bool:
 
 
 def _is_ui_only_node(node: VibeNode) -> bool:
-    return node.class_type in {"Note"}
+    return node.class_type in {"Note", "MarkdownNote", "SetNode", "GetNode"}
+
+
+def _collect_broadcast_sources(
+    nodes: dict[str, VibeNode],
+    edges: list[VibeEdge],
+) -> dict[str, list[Any]]:
+    sources: dict[str, list[Any]] = {}
+    edge_sources_by_target: dict[str, list[Any]] = {}
+    for edge in edges:
+        target_node = nodes.get(str(edge.to_node))
+        if target_node is None or target_node.class_type != "SetNode":
+            continue
+        if edge.to_input == "widget_0":
+            continue
+        edge_sources_by_target[str(edge.to_node)] = [str(edge.from_node), int(edge.from_output)]
+
+    for node_id, node in nodes.items():
+        if node.class_type != "SetNode":
+            continue
+        name = _broadcast_name(node)
+        if not name:
+            continue
+        direct_source = _first_link_input(_compile_node_inputs(node))
+        if direct_source is not None:
+            sources[name] = direct_source
+        elif str(node_id) in edge_sources_by_target:
+            sources[name] = edge_sources_by_target[str(node_id)]
+    return sources
+
+
+def _broadcast_name(node: VibeNode) -> str | None:
+    name = node.inputs.get("widget_0", node.widgets.get("widget_0"))
+    if name is None:
+        return None
+    return str(name)
+
+
+def _first_link_input(inputs: dict[str, Any]) -> list[Any] | None:
+    for key, value in inputs.items():
+        if key == "widget_0":
+            continue
+        if _is_api_link(value):
+            return [str(value[0]), int(value[1])]
+    return None
+
+
+def _rewrite_broadcast_links(
+    inputs: dict[str, Any],
+    nodes: dict[str, VibeNode],
+    broadcast_sources: dict[str, list[Any]],
+) -> dict[str, Any]:
+    return {
+        key: _resolve_link_value(value, nodes, broadcast_sources)
+        for key, value in inputs.items()
+    }
+
+
+def _resolve_edge_source(
+    edge: VibeEdge,
+    nodes: dict[str, VibeNode],
+    broadcast_sources: dict[str, list[Any]],
+) -> list[Any] | None:
+    source_node = nodes.get(str(edge.from_node))
+    if source_node is None:
+        return None
+    if source_node.class_type == "GetNode":
+        name = _broadcast_name(source_node)
+        if name is None:
+            return None
+        return broadcast_sources.get(name)
+    if _is_ui_only_node(source_node):
+        return None
+    return [str(edge.from_node), int(edge.from_output)]
+
+
+def _resolve_link_value(
+    value: Any,
+    nodes: dict[str, VibeNode],
+    broadcast_sources: dict[str, list[Any]],
+) -> Any:
+    if not _is_api_link(value):
+        return value
+    source_node = nodes.get(str(value[0]))
+    if source_node is None or source_node.class_type != "GetNode":
+        return value
+    name = _broadcast_name(source_node)
+    if name is None:
+        return value
+    return broadcast_sources.get(name, value)
+
+
+def _is_api_link(value: Any) -> bool:
+    if not isinstance(value, list) or len(value) != 2:
+        return False
+    try:
+        int(value[1])
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) -> None:

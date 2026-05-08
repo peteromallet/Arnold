@@ -78,6 +78,19 @@ def test_ready_template_compile_emits_no_null_api_inputs() -> None:
     assert null_inputs == []
 
 
+def test_wan_animate_template_compile_emits_executable_api_nodes() -> None:
+    workflow = workflow_from_ready("video/wanvideo_wrapper_22_wan_animate_preprocess_kijai")
+    api = workflow.compile("api")
+
+    helper_nodes = {"Note", "MarkdownNote", "SetNode", "GetNode"}
+    assert {node["class_type"] for node in api.values()} & helper_nodes == set()
+    assert all(
+        not (_is_link(value) and str(value[0]) not in api)
+        for node in api.values()
+        for value in node.get("inputs", {}).values()
+    )
+
+
 def test_wan_animate_template_declares_sam2_node_pack() -> None:
     workflow = workflow_from_ready("video/wanvideo_wrapper_22_wan_animate_preprocess_kijai")
 
@@ -248,7 +261,7 @@ def test_ready_template_uses_real_python_before_comfy_compile() -> None:
     api = workflow.compile("api")
 
     assert workflow.metadata["external_python_marker"] == marker
-    assert any(node["inputs"].get("widget_0") == marker for node in api.values())
+    assert all(node["inputs"].get("widget_0") != marker for node in api.values())
 
 
 @pytest.mark.parametrize("template_id", PROFILE_SMOKE_TEMPLATE_IDS)

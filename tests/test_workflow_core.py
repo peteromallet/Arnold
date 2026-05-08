@@ -142,6 +142,49 @@ def test_compile_drops_note_nodes_from_api_prompt() -> None:
     assert api["2"]["class_type"] == "SaveImage"
 
 
+def test_compile_drops_markdown_note_nodes_from_api_prompt() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "MarkdownNote", inputs={"widget_0": "editor-only note"})
+    workflow.nodes["2"] = VibeNode("2", "SaveImage", inputs={"images": ["3", 0]})
+
+    api = workflow.compile("api")
+
+    assert "1" not in api
+    assert api["2"]["class_type"] == "SaveImage"
+
+
+def test_compile_rewrites_set_get_nodes_to_direct_links() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode(
+        "2",
+        "SetNode",
+        inputs={"IMAGE": ["1", 0], "widget_0": "reference_image"},
+    )
+    workflow.nodes["3"] = VibeNode("3", "GetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["4"] = VibeNode("4", "SaveImage", inputs={})
+    workflow.connect("3.0", "4.images")
+
+    api = workflow.compile("api")
+
+    assert set(api) == {"1", "4"}
+    assert api["4"]["inputs"]["images"] == ["1", 0]
+
+
+def test_compile_rewrites_edge_fed_set_get_nodes_to_direct_links() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "SetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["3"] = VibeNode("3", "GetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["4"] = VibeNode("4", "SaveImage", inputs={"images": ["3", 0]})
+    workflow.connect("1.0", "2.IMAGE")
+
+    api = workflow.compile("api")
+
+    assert set(api) == {"1", "4"}
+    assert api["4"]["inputs"]["images"] == ["1", 0]
+
+
 def test_compile_adds_named_inputs_for_known_custom_node_widgets() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode(
