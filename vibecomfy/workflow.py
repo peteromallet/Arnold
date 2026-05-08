@@ -301,6 +301,8 @@ def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
 def _is_ui_only_prompt_input(key: str, value: Any) -> bool:
     if value is None:
         return True
+    if key == "add_noise_to_samples" and value == "":
+        return True
     if key in {"videopreview", "preview", "preview_image"} and isinstance(value, dict):
         return True
     return False
