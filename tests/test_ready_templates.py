@@ -97,6 +97,22 @@ def test_wan_animate_template_declares_sam2_node_pack() -> None:
     assert "ComfyUI-segment-anything-2" in workflow.requirements.custom_nodes
 
 
+def test_wan_animate_template_declares_pose_preprocess_pack_and_models() -> None:
+    workflow = workflow_from_ready("video/wanvideo_wrapper_22_wan_animate_preprocess_kijai")
+
+    assert "ComfyUI-WanAnimatePreprocess" in workflow.requirements.custom_nodes
+    assert "yolov10m.onnx" in workflow.requirements.models
+    assert "vitpose-l-wholebody.onnx" in workflow.requirements.models
+    assert any(
+        asset.get("name") == "yolov10m.onnx" and asset.get("directory") == "detection"
+        for asset in workflow.metadata.get("model_assets", [])
+    )
+    assert any(
+        asset.get("name") == "vitpose-l-wholebody.onnx" and asset.get("directory") == "detection"
+        for asset in workflow.metadata.get("model_assets", [])
+    )
+
+
 def test_ready_template_build_has_category_qualified_metadata() -> None:
     workflow = workflow_from_ready("qwen_image_edit")
 

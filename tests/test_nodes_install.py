@@ -455,6 +455,22 @@ def test_missing_packs_for_workflow_resolves_sam2_pack(
     assert unresolved == []
 
 
+def test_missing_packs_for_workflow_resolves_wan_animate_preprocess_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("wan-animate-preprocess", WorkflowSource("wan-animate-preprocess"))
+    workflow.nodes["1"] = VibeNode("1", "OnnxDetectionModelLoader")
+    workflow.nodes["2"] = VibeNode("2", "PoseAndFaceDetection")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-WanAnimatePreprocess"]
+    assert unresolved == []
+
+
 def test_missing_packs_for_workflow_ignores_core_comfy_classes(
     tmp_path: Path,
     monkeypatch,

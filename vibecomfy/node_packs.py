@@ -91,6 +91,20 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         pip_packages=("opencv-python-headless",),
     ),
     CustomNodePack(
+        name="ComfyUI-WanAnimatePreprocess",
+        repo="https://github.com/kijai/ComfyUI-WanAnimatePreprocess.git",
+        classes=frozenset(
+            {
+                "OnnxDetectionModelLoader",
+                "PoseAndFaceDetection",
+                "DrawViTPose",
+                "PoseRetargetPromptHelper",
+                "PoseDetectionOneToAllAnimation",
+            }
+        ),
+        pip_packages=("onnx", "onnxruntime-gpu", "opencv-python-headless"),
+    ),
+    CustomNodePack(
         name="comfyui_controlnet_aux",
         repo="https://github.com/Fannovel16/comfyui_controlnet_aux.git",
         classes=frozenset({"DWPreprocessor", "CannyEdgePreprocessor"}),
