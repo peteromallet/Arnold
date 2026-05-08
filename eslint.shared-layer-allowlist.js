@@ -129,6 +129,7 @@ export const sharedLayerAllowlist = [
   'src/shared/hooks/shots/addImageToShotHelpers.ts',
   'src/shared/hooks/shots/cacheUtils.ts',
   'src/shared/hooks/shots/mappers.ts',
+  'src/shared/hooks/shots/useDuplicateShotWithVideos.ts',
   'src/shared/hooks/shots/useShotGenerationMutations.ts',
   'src/shared/hooks/shots/useShotUpdates.ts',
   'src/shared/hooks/shots/useShotsCrud.ts',

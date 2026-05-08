@@ -2038,6 +2038,10 @@ export type Database = {
         Args: { original_shot_id: string; project_id: string }
         Returns: string
       }
+      duplicate_shot_with_videos: {
+        Args: { original_shot_id: string; project_id: string }
+        Returns: Json
+      }
       duplicate_shot_generations: {
         Args: { p_source_shot_id: string; p_target_shot_id: string }
         Returns: {
@@ -2574,7 +2578,7 @@ export type Tables<
       : never
     : never
 
-type TablesInsert<
+export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
@@ -2599,7 +2603,7 @@ type TablesInsert<
       : never
     : never
 
-type TablesUpdate<
+export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
@@ -2641,7 +2645,7 @@ export type Enums<
     ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
     : never
 
-type CompositeTypes<
+export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },

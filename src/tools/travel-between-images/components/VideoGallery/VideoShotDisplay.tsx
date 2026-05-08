@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import type { Shot, GenerationRow } from '@/domains/generation/types';
-import { useUpdateShotName, useDeleteShot, useDuplicateShot } from '@/shared/hooks/shots';
+import { useUpdateShotName, useDeleteShot, useDuplicateShot, useDuplicateShotWithVideos } from '@/shared/hooks/shots';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
@@ -75,6 +75,7 @@ export const VideoShotDisplay: React.FC<VideoShotDisplayProps> = ({
   const updateShotNameMutation = useUpdateShotName();
   const deleteShotMutation = useDeleteShot();
   const duplicateShotMutation = useDuplicateShot();
+  const duplicateShotWithVideosMutation = useDuplicateShotWithVideos();
 
   const isGenerationsPaneLocked = usePanesStore((state) => state.isGenerationsPaneLocked);
   const isMobile = useIsMobile();
@@ -224,6 +225,23 @@ export const VideoShotDisplay: React.FC<VideoShotDisplayProps> = ({
     }
   };
 
+  const handleDuplicateShotWithVideos = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!currentProjectId || isTempShot) {
+      return;
+    }
+
+    try {
+      onDuplicateShot?.();
+      await duplicateShotWithVideosMutation.mutateAsync({
+        shotId: shot.id,
+        projectId: currentProjectId,
+      });
+    } catch (error) {
+      normalizeAndPresentError(error, { context: 'VideoShotDisplay', toastTitle: 'Failed to duplicate shot with videos' });
+    }
+  };
+
   const displayImages = (shot.images || [])
     .filter(img => !isVideoGeneration(img) && isPositioned(img))
     .sort((a, b) => {
@@ -279,10 +297,12 @@ export const VideoShotDisplay: React.FC<VideoShotDisplayProps> = ({
             dragHandleProps={dragHandleProps}
             dragDisabledReason={dragDisabledReason}
             duplicateIsPending={duplicateShotMutation.isPending}
+            duplicateWithVideosIsPending={duplicateShotWithVideosMutation.isPending}
             isHidden={isHidden}
             onVideoClick={() => setVideoModalOpen(true)}
             onEditName={handleNameEditToggle}
             onDuplicate={handleDuplicateShot}
+            onDuplicateWithVideos={handleDuplicateShotWithVideos}
             onToggleHidden={onToggleHidden}
             onDelete={handleDeleteShot}
           />

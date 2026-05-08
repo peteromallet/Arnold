@@ -8,6 +8,7 @@ export {
   useDuplicateShot,
   useReorderShots,
 } from './useShotsCrud';
+export { useDuplicateShotWithVideos } from './useDuplicateShotWithVideos';
 
 // Shot queries
 export { useListShots, useProjectImageStats } from './useShotsQueries';

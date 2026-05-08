@@ -97,6 +97,7 @@ describe('VideoShotDisplayParts', () => {
       onVideoClick: vi.fn(),
       onEditName: vi.fn(),
       onDuplicate: vi.fn(),
+      onDuplicateWithVideos: vi.fn(),
       onDelete: vi.fn(),
     };
 
@@ -108,6 +109,7 @@ describe('VideoShotDisplayParts', () => {
         dragHandleProps={{}}
         dragDisabledReason={undefined}
         duplicateIsPending={false}
+        duplicateWithVideosIsPending={false}
         isHidden={true}
         {...callbacks}
       />,
@@ -116,11 +118,13 @@ describe('VideoShotDisplayParts', () => {
     fireEvent.click(getTooltipButton(/generate video/i));
     fireEvent.click(getTooltipButton(/edit shot name/i));
     fireEvent.click(getTooltipButton(/duplicate shot/i));
+    fireEvent.click(getTooltipButton(/duplicate with videos/i));
     fireEvent.click(getTooltipButton(/delete shot/i));
 
     expect(callbacks.onVideoClick).toHaveBeenCalledTimes(1);
     expect(callbacks.onEditName).toHaveBeenCalledTimes(1);
     expect(callbacks.onDuplicate).toHaveBeenCalledTimes(1);
+    expect(callbacks.onDuplicateWithVideos).toHaveBeenCalledTimes(1);
     expect(callbacks.onDelete).toHaveBeenCalledTimes(1);
 
     rerender(
@@ -131,6 +135,7 @@ describe('VideoShotDisplayParts', () => {
         dragHandleProps={{}}
         dragDisabledReason="Locked"
         duplicateIsPending={false}
+        duplicateWithVideosIsPending={false}
         isHidden={true}
         {...callbacks}
       />,
@@ -147,6 +152,7 @@ describe('VideoShotDisplayParts', () => {
       onVideoClick: vi.fn(),
       onEditName: vi.fn(),
       onDuplicate: vi.fn(),
+      onDuplicateWithVideos: vi.fn(),
       onToggleHidden: vi.fn(),
       onDelete: vi.fn(),
     };
@@ -161,6 +167,7 @@ describe('VideoShotDisplayParts', () => {
           dragHandleProps={{}}
           dragDisabledReason={undefined}
           duplicateIsPending={false}
+          duplicateWithVideosIsPending={false}
           isHidden={false}
           {...callbacks}
         />
@@ -185,6 +192,7 @@ describe('VideoShotDisplayParts', () => {
           dragHandleProps={{}}
           dragDisabledReason={undefined}
           duplicateIsPending={false}
+          duplicateWithVideosIsPending={false}
           isHidden={true}
           {...callbacks}
         />
@@ -196,6 +204,72 @@ describe('VideoShotDisplayParts', () => {
 
     fireEvent.click(getTooltipButton(/delete shot/i));
     expect(callbacks.onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps normal duplicate and Duplicate with videos as distinct accessible controls', () => {
+    const callbacks = {
+      onVideoClick: vi.fn(),
+      onEditName: vi.fn(),
+      onDuplicate: vi.fn(),
+      onDuplicateWithVideos: vi.fn(),
+      onDelete: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <ShotControls
+        isTempShot={false}
+        displayImagesCount={2}
+        isEditingName={false}
+        duplicateIsPending={false}
+        duplicateWithVideosIsPending={false}
+        isHidden={false}
+        {...callbacks}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate shot' }));
+
+    expect(callbacks.onDuplicate).toHaveBeenCalledTimes(1);
+    expect(callbacks.onDuplicateWithVideos).not.toHaveBeenCalled();
+    expect(screen.getByText('Duplicate shot')).toBeInTheDocument();
+    expect(screen.getByText('Duplicate with videos')).toBeInTheDocument();
+
+    callbacks.onDuplicate.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate with videos' }));
+
+    expect(callbacks.onDuplicate).not.toHaveBeenCalled();
+    expect(callbacks.onDuplicateWithVideos).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ShotControls
+        isTempShot={false}
+        displayImagesCount={2}
+        isEditingName={false}
+        duplicateIsPending={true}
+        duplicateWithVideosIsPending={false}
+        isHidden={false}
+        {...callbacks}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Duplicate with videos' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Duplicate shot' })).toBeDisabled();
+
+    rerender(
+      <ShotControls
+        isTempShot={false}
+        displayImagesCount={2}
+        isEditingName={false}
+        duplicateIsPending={false}
+        duplicateWithVideosIsPending={true}
+        isHidden={false}
+        {...callbacks}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Duplicate with videos' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Duplicate shot' })).not.toBeDisabled();
   });
 
   it('renders the final-video preview and toggles back to shot images', () => {

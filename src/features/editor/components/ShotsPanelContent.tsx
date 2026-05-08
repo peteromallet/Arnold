@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { ArrowDownWideNarrow, ArrowUpWideNarrow, Check, Copy, Eye, EyeOff, Loader2, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowUpWideNarrow, Check, Copy, Eye, EyeOff, Loader2, Pencil, Play, Plus, Search, Trash2, Video, X } from 'lucide-react';
 import { useShotCreation } from '@/shared/hooks/shotCreation/useShotCreation';
 import { cn } from '@/shared/components/ui/contracts/cn';
 import { useShots } from '@/shared/contexts/ShotsContext';
@@ -19,6 +19,7 @@ import { isVideoGeneration, isPositioned } from '@/shared/lib/typeGuards';
 import { getDisplayUrl } from '@/shared/lib/media/mediaUrl';
 import { useAddImageToShot } from '@/shared/hooks/shots/useShotGenerationMutations';
 import { useDuplicateShot, useDeleteShot } from '@/shared/hooks/shots/useShotsCrud';
+import { useDuplicateShotWithVideos } from '@/shared/hooks/shots/useDuplicateShotWithVideos';
 import { useUpdateShotName } from '@/shared/hooks/shots/useShotUpdates';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import type { Shot } from '@/domains/generation/types';
@@ -33,10 +34,11 @@ type SortMode = 'ordered' | 'newest' | 'oldest';
 function ShotCard({
   shot,
   finalVideo,
-  projectId,
   isHidden,
   onDoubleClick,
   onDuplicate,
+  onDuplicateWithVideos,
+  duplicateWithVideosIsPending,
   onDelete,
   onRename,
   onToggleHidden,
@@ -44,10 +46,11 @@ function ShotCard({
 }: {
   shot: Shot;
   finalVideo?: ShotFinalVideo;
-  projectId: string;
   isHidden: boolean;
   onDoubleClick: () => void;
   onDuplicate: () => void;
+  onDuplicateWithVideos: () => void;
+  duplicateWithVideosIsPending: boolean;
   onDelete: () => void;
   onRename: (name: string) => void;
   onToggleHidden: () => void;
@@ -148,14 +151,31 @@ function ShotCard({
         >
           <Pencil className="h-2.5 w-2.5" />
         </button>
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
-          className="rounded bg-background/70 p-0.5 text-muted-foreground backdrop-blur-sm hover:text-foreground"
-          title="Duplicate"
-        >
-          <Copy className="h-2.5 w-2.5" />
-        </button>
+        <div className="group/duplicate relative flex">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
+            className="rounded bg-background/70 p-0.5 text-muted-foreground backdrop-blur-sm hover:text-foreground"
+            title="Duplicate"
+            aria-label="Duplicate shot"
+          >
+            <Copy className="h-2.5 w-2.5" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onDuplicateWithVideos(); }}
+            className="absolute -right-1 -top-1 z-20 rounded bg-background/90 p-0.5 text-muted-foreground opacity-0 shadow-sm backdrop-blur-sm transition-opacity hover:text-foreground focus:opacity-100 group-hover/duplicate:opacity-100"
+            title="Duplicate with videos"
+            aria-label="Duplicate with videos"
+            disabled={duplicateWithVideosIsPending}
+          >
+            {duplicateWithVideosIsPending ? (
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+            ) : (
+              <Video className="h-2.5 w-2.5" />
+            )}
+          </button>
+        </div>
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleHidden(); }}
@@ -229,6 +249,7 @@ export function ShotsPanelContent({ projectId }: ShotsPanelContentProps) {
   const { selectedProjectId } = useProjectSelectionContext();
   const addImageToShot = useAddImageToShot();
   const duplicateShot = useDuplicateShot();
+  const duplicateShotWithVideos = useDuplicateShotWithVideos();
   const deleteShot = useDeleteShot();
   const updateShotName = useUpdateShotName();
   const { createShot } = useShotCreation();
@@ -314,6 +335,15 @@ export function ShotsPanelContent({ projectId }: ShotsPanelContentProps) {
       normalizeAndPresentError(error, { context: 'ShotsPanelContent', toastTitle: 'Failed to duplicate shot' });
     }
   }, [duplicateShot, selectedProjectId]);
+
+  const handleDuplicateWithVideos = useCallback(async (shotId: string) => {
+    if (!selectedProjectId) return;
+    try {
+      await duplicateShotWithVideos.mutateAsync({ shotId, projectId: selectedProjectId });
+    } catch (error) {
+      normalizeAndPresentError(error, { context: 'ShotsPanelContent', toastTitle: 'Failed to duplicate shot with videos' });
+    }
+  }, [duplicateShotWithVideos, selectedProjectId]);
 
   const handleDelete = useCallback(async (shotId: string) => {
     if (!selectedProjectId) return;
@@ -422,10 +452,11 @@ export function ShotsPanelContent({ projectId }: ShotsPanelContentProps) {
               <ShotCard
                 shot={shot}
                 finalVideo={finalVideoMap.get(shot.id)}
-                projectId={projectId}
                 isHidden={hiddenIds.has(shot.id)}
                 onDoubleClick={() => setModalShot(shot)}
                 onDuplicate={() => void handleDuplicate(shot.id)}
+                onDuplicateWithVideos={() => void handleDuplicateWithVideos(shot.id)}
+                duplicateWithVideosIsPending={duplicateShotWithVideos.isPending}
                 onDelete={() => void handleDelete(shot.id)}
                 onRename={(name) => void handleRename(shot.id, name)}
                 onToggleHidden={() => toggleHidden(shot.id)}

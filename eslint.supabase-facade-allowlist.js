@@ -65,6 +65,7 @@ export const supabaseFacadeAllowlist = [
   'src/shared/hooks/shots/addImageToShotHelpers.ts',
   'src/shared/hooks/shots/externalImageDrop.ts',
   'src/shared/hooks/shots/useDuplicateAsNewGeneration.ts',
+  'src/shared/hooks/shots/useDuplicateShotWithVideos.ts',
   'src/shared/hooks/shots/useShotCreation.ts',
   'src/shared/hooks/shots/useShotGenerationMutations.ts',
   'src/shared/hooks/shots/useShotUpdates.ts',

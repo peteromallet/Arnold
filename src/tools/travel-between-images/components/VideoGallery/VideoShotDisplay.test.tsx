@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   updateShotName: vi.fn(),
   deleteShot: vi.fn(),
   duplicateShot: vi.fn(),
+  duplicateShotWithVideos: vi.fn(),
   toastError: vi.fn(),
   normalizeAndPresentError: vi.fn(),
   triggerRipple: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('@/shared/hooks/shots', () => ({
   useUpdateShotName: () => ({ mutateAsync: mocks.updateShotName, isPending: false }),
   useDeleteShot: () => ({ mutateAsync: mocks.deleteShot, isPending: false }),
   useDuplicateShot: () => ({ mutateAsync: mocks.duplicateShot, isPending: false }),
+  useDuplicateShotWithVideos: () => ({ mutateAsync: mocks.duplicateShotWithVideos, isPending: false }),
 }));
 
 vi.mock('@/shared/components/ui/runtime/sonner', () => ({
@@ -115,6 +117,8 @@ vi.mock('@/shared/components/ui/checkbox', () => ({
 describe('VideoShotDisplay', () => {
   beforeEach(() => {
     mocks.shotControlsProps = null;
+    mocks.duplicateShot.mockReset();
+    mocks.duplicateShotWithVideos.mockReset();
   });
 
   it('renders hidden styling and forwards hidden controls into ShotControls', () => {
@@ -139,5 +143,70 @@ describe('VideoShotDisplay', () => {
         onToggleHidden,
       }),
     );
+  });
+
+  it('keeps normal duplicate on the image-only mutation path', async () => {
+    const callOrder: string[] = [];
+    const onDuplicateShot = vi.fn(() => callOrder.push('callback'));
+    mocks.duplicateShot.mockImplementation(async () => {
+      callOrder.push('normal');
+      return {};
+    });
+
+    const shot = { id: 'shot-1', name: 'Shot Alpha', images: [], settings: {} } as Shot;
+    render(
+      <VideoShotDisplay
+        shot={shot}
+        onSelectShot={vi.fn()}
+        onDuplicateShot={onDuplicateShot}
+        currentProjectId="project-1"
+      />,
+    );
+
+    const controlsProps = mocks.shotControlsProps as {
+      onDuplicate: (event?: React.MouseEvent) => Promise<void>;
+    };
+
+    await controlsProps.onDuplicate();
+
+    expect(mocks.duplicateShot).toHaveBeenCalledWith({
+      shotId: 'shot-1',
+      projectId: 'project-1',
+    });
+    expect(mocks.duplicateShotWithVideos).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['callback', 'normal']);
+  });
+
+  it('calls onDuplicateShot before Duplicate with videos and uses the new mutation args', async () => {
+    const callOrder: string[] = [];
+    const onDuplicateShot = vi.fn(() => callOrder.push('callback'));
+    mocks.duplicateShotWithVideos.mockImplementation(async () => {
+      callOrder.push('with-videos');
+      return {};
+    });
+
+    const shot = { id: 'shot-1', name: 'Shot Alpha', images: [], settings: {} } as Shot;
+    render(
+      <VideoShotDisplay
+        shot={shot}
+        onSelectShot={vi.fn()}
+        onDuplicateShot={onDuplicateShot}
+        currentProjectId="project-1"
+      />,
+    );
+
+    const controlsProps = mocks.shotControlsProps as {
+      onDuplicateWithVideos: (event?: React.MouseEvent) => Promise<void>;
+    };
+
+    await controlsProps.onDuplicateWithVideos();
+
+    expect(onDuplicateShot).toHaveBeenCalledTimes(1);
+    expect(mocks.duplicateShot).not.toHaveBeenCalled();
+    expect(mocks.duplicateShotWithVideos).toHaveBeenCalledWith({
+      shotId: 'shot-1',
+      projectId: 'project-1',
+    });
+    expect(callOrder).toEqual(['callback', 'with-videos']);
   });
 });

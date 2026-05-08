@@ -19,10 +19,12 @@ interface ActionButtonsRowProps {
   };
   dragDisabledReason?: string;
   duplicateIsPending: boolean;
+  duplicateWithVideosIsPending: boolean;
   isHidden?: boolean;
   onVideoClick: () => void;
   onEditName: (e?: React.MouseEvent) => void;
   onDuplicate: (e?: React.MouseEvent) => void;
+  onDuplicateWithVideos: (e?: React.MouseEvent) => void;
   onToggleHidden?: (e?: React.MouseEvent) => void;
   onDelete: (e?: React.MouseEvent) => void;
 }
@@ -34,10 +36,12 @@ const ActionButtonsRow: React.FC<ActionButtonsRowProps> = ({
   dragHandleProps,
   dragDisabledReason,
   duplicateIsPending,
+  duplicateWithVideosIsPending,
   isHidden = false,
   onVideoClick,
   onEditName,
   onDuplicate,
+  onDuplicateWithVideos,
   onToggleHidden,
   onDelete,
 }) => (
@@ -131,28 +135,56 @@ const ActionButtonsRow: React.FC<ActionButtonsRowProps> = ({
         </Tooltip>
       </TooltipProvider>
     )}
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onDuplicate}
-            className="h-8 w-8"
-            disabled={duplicateIsPending || isTempShot}
-          >
-            {duplicateIsPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>{isTempShot ? 'Saving...' : duplicateIsPending ? 'Duplicating...' : 'Duplicate shot'}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <div className="group/duplicate relative flex">
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDuplicate}
+              className="h-8 w-8"
+              disabled={duplicateIsPending || isTempShot}
+              aria-label="Duplicate shot"
+              title="Duplicate shot"
+            >
+              {duplicateIsPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{isTempShot ? 'Saving...' : duplicateIsPending ? 'Duplicating...' : 'Duplicate shot'}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDuplicateWithVideos}
+              className="absolute -right-1 -top-1 z-10 h-5 w-5 rounded-full bg-background/90 opacity-0 shadow-sm transition-opacity focus:opacity-100 group-hover/duplicate:opacity-100"
+              disabled={duplicateIsPending || duplicateWithVideosIsPending || isTempShot}
+              aria-label="Duplicate with videos"
+              title="Duplicate with videos"
+            >
+              {duplicateWithVideosIsPending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Video className="h-3 w-3" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{isTempShot ? 'Saving...' : duplicateWithVideosIsPending ? 'Duplicating with videos...' : 'Duplicate with videos'}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
     {onToggleHidden && (
       <TooltipProvider>
         <Tooltip>
@@ -499,10 +531,12 @@ interface ShotControlsProps {
   };
   dragDisabledReason?: string;
   duplicateIsPending: boolean;
+  duplicateWithVideosIsPending: boolean;
   isHidden?: boolean;
   onVideoClick: () => void;
   onEditName: (e?: React.MouseEvent) => void;
   onDuplicate: (e?: React.MouseEvent) => void;
+  onDuplicateWithVideos: (e?: React.MouseEvent) => void;
   onToggleHidden?: (e?: React.MouseEvent) => void;
   onDelete: (e?: React.MouseEvent) => void;
 }
