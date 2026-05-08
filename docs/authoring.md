@@ -4,6 +4,17 @@
 
 `VibeWorkflow` is the only editable IR. Blocks and patches mutate that object; API JSON is an escape hatch produced by `wf.compile("api")`, not an authoring surface.
 
+## Port Before Manual Editing
+
+When starting from a ComfyUI JSON export, indexed workflow, or failing ready template, run the porting workbench before hand-editing graph code or launching RunPod:
+
+```bash
+python -m vibecomfy.cli port check <workflow> --json
+python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py --json
+```
+
+`port check` is the cheap preflight for helper/UI nodes, missing custom-node packs, missing required inputs, widget alias drift, and model asset problems. `port convert` turns the source into Python scratchpad form by default; add `--ready-id <kind>/<name>` only when you are intentionally creating a ready-template candidate. See [template_porting_workbench.md](template_porting_workbench.md) for the full workflow and when to use `doctor`, `validate`, `nodes install-plan`, `fetch`, and `--head-check-models`.
+
 ## Blocks
 
 A block is a small function that mutates a workflow and returns `Handles`. Most blocks use `workflow.add_node()` plus `workflow.connect()`, but blocks may use any `VibeWorkflow` method — including `disconnect()` and `replace_edge()` for blocks that splice into existing topology. The contract is "mutate and return handles," not "add_node/connect only."
@@ -172,7 +183,7 @@ The UUID-opaque `flux2_klein_9b_gguf_t2i`, `qwen_image_edit`, and `flux2_klein_4
 
 ## JSON Output
 
-The commands `workflows list`, `nodes list`, `inspect`, `doctor`, `sources sync`, `analyze info`, and `analyze diff` support `--json`. Text output remains the default compatibility surface. `inspect --json` includes `applicable_patches`; `doctor --json` includes `suggested_patches`. For `analyze info` and `analyze diff`, `--json` is an alias for `--format json`, and an explicit `--format` wins.
+The commands `workflows list`, `nodes list`, `inspect`, `port check`, `port convert`, `doctor`, `sources sync`, `analyze info`, and `analyze diff` support `--json`. Text output remains the default compatibility surface. `inspect --json` includes `applicable_patches`; `doctor --json` includes `suggested_patches`; `port check --json` emits the full port report for preflight automation. For `analyze info` and `analyze diff`, `--json` is an alias for `--format json`, and an explicit `--format` wins.
 
 ## Escape Hatches
 

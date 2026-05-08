@@ -158,6 +158,45 @@ printf 'id\tmedia\tstatus\tbaseline_seconds\tconvert_seconds\tvalidate_seconds\t
 clean_failure() {{
   tail -80 "$1" | tr '\\t\\n' '  ' | tr -cd '\\11\\12\\15\\40-\\176' | cut -c1-900
 }}
+write_port_report() {{
+  local id="$1"
+  local workflow="$2"
+  local report="out/corpus_matrix/logs/${{id}}.port_report.json"
+  local log="out/corpus_matrix/logs/${{id}}.port_check.log"
+  local status="ok"
+  if ! "$PY" -m vibecomfy.cli port check "$workflow" --json >"$report" 2>"$log"; then
+    status="needs_attention"
+  fi
+  "$PY" - "$id" "$status" "$report" >> out/corpus_matrix/live.log <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+workflow_id, status, path = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+try:
+    report = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"port_report id={{workflow_id}} status=failed error={{type(exc).__name__}}:{{exc}}")
+    raise SystemExit(0)
+counts = {{"error": 0, "warning": 0, "info": 0}}
+for issue in report.get("diagnostics", []):
+    counts[issue.get("severity", "warning")] = counts.get(issue.get("severity", "warning"), 0) + 1
+print(
+    "port_report "
+    f"id={{workflow_id}} status={{status}} "
+    f"errors={{counts.get('error', 0)}} warnings={{counts.get('warning', 0)}} "
+    f"assets={{len(report.get('asset_candidates', []))}} packs={{len(report.get('node_pack_suggestions', []))}}"
+)
+PY
+}}
+run_port_convert_preview() {{
+  local id="$1"
+  local workflow="$2"
+  local out="out/corpus_matrix/logs/${{id}}.port_scratchpad.py"
+  local json_log="out/corpus_matrix/logs/${{id}}.port_convert.json"
+  local err_log="out/corpus_matrix/logs/${{id}}.port_convert.log"
+  "$PY" -m vibecomfy.cli port convert "$workflow" --out "$out" --json >"$json_log" 2>"$err_log" || true
+}}
 count_media_files() {{
   find "$@" -type f \\( -name '*.png' -o -name '*.webp' -o -name '*.mp4' -o -name '*.webm' -o -name '*.mp3' -o -name '*.glb' \\) 2>/dev/null | wc -l | tr -d ' '
 }}
@@ -242,6 +281,7 @@ while IFS=$'\\t' read -r id wf media; do
     continue
   fi
   cp "$work_wf" "out/corpus_matrix/logs/${{id}}.prepared.json" || true
+  write_port_report "$id" "$work_wf"
   comfy_extra_args=""
   vibe_config='{{"preview_method":"none"}}'
   workflow_override_args=(--steps 1 --seed 123 --prompt "a compact red cube on a neutral background")
@@ -313,6 +353,7 @@ while IFS=$'\\t' read -r id wf media; do
   if "$PY" -m vibecomfy.cli convert "$work_wf" --out "out/scratchpads/$id.py" >"$convert_log" 2>&1; then
     convert_seconds=$(( $(date +%s) - start ))
     cp "out/scratchpads/$id.py" "out/corpus_matrix/logs/${{id}}.scratchpad.py" || true
+    run_port_convert_preview "$id" "$work_wf"
   else
     convert_seconds=$(( $(date +%s) - start ))
     failure=$(clean_failure "$convert_log")

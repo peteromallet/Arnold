@@ -25,7 +25,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tools._widget_schema import WIDGET_SCHEMA, resolve_widget_name
+from vibecomfy.porting.widget_aliases import resolve_widget_name
+from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -582,6 +583,28 @@ def _apply_overrides(nodes: dict, edges_in: dict, patches: list[dict]) -> None:
             for key in patch.get("remove_inputs") or []:
                 node.widgets.pop(key, None)
                 node.inputs.pop(key, None)
+
+
+def format_as_python(
+    workflow,
+    *,
+    ready_metadata: dict,
+    ready_requirements: dict,
+    template_id: str,
+    registered_inputs: dict[str, tuple[str, str]] | None = None,
+    apply_overrides: dict | None = None,
+) -> str:
+    """Compatibility wrapper for the package ready-template emitter."""
+    from vibecomfy.porting.emitter import emit_ready_template_python
+
+    return emit_ready_template_python(
+        workflow,
+        ready_metadata=ready_metadata,
+        ready_requirements=ready_requirements,
+        template_id=template_id,
+        registered_inputs=registered_inputs,
+        apply_overrides=apply_overrides,
+    )
 
 
 # --- CLI -----------------------------------------------------------------------

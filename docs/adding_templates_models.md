@@ -9,6 +9,8 @@ Every runnable template should move through this pipeline:
 ```text
 raw Comfy workflow JSON
   -> workflow_corpus/... source file
+  -> port check report
+  -> port-converted Python scratchpad
   -> workflow_corpus/manifests/coverage.json entry
   -> scripts/materialize_ready_templates.py policy, if needed
   -> ready_templates/<media>/<id>.py
@@ -19,19 +21,30 @@ raw Comfy workflow JSON
 
 Raw JSON remains import material. `ready_templates/` is the reusable VibeComfy surface. A ready template is only "ready" after it validates locally and has a plausible runtime path for its node packs and models.
 
+Run the porting workbench before manual edits and before RunPod validation:
+
+```bash
+python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json
+python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scratchpads/<id>.py --json
+```
+
+Use `--head-check-models` only when you intentionally want model URL HEAD checks. Normal `port check`, `doctor`, `validate`, `fetch`, and `run` paths stay offline by default.
+
 ## Checklist
 
 1. Pick a stable template id.
 2. Add the raw source workflow under `workflow_corpus/`.
-3. Add or update custom-node catalog entries.
-4. Add model registry entries or workflow metadata for model staging.
-5. Add a manifest row.
-6. Add a materializer policy when the raw workflow is not directly smoke-runnable.
-7. Regenerate ready templates.
-8. Run local validation and tests.
-9. Add or update a focused RunPod scope.
-10. Run the focused RunPod matrix.
-11. Document any new incompatibility or structural issue.
+3. Run `port check` and inspect the report before editing.
+4. Add or update custom-node catalog entries.
+5. Add model registry entries or workflow metadata for model staging.
+6. Convert to a Python scratchpad, then decide whether a ready-template candidate is warranted.
+7. Add a manifest row.
+8. Add a materializer policy when the raw workflow is not directly smoke-runnable.
+9. Regenerate ready templates.
+10. Run local validation and tests.
+11. Add or update a focused RunPod scope.
+12. Run the focused RunPod matrix.
+13. Document any new incompatibility or structural issue.
 
 ## 1. Template Id
 
@@ -76,6 +89,7 @@ Then update `custom_nodes.lock` when the pack should be pinned. Pinning by commi
 Run:
 
 ```bash
+uv run python -m vibecomfy.cli port check workflow_corpus/custom_nodes/.../<id>.json --json
 uv run python -m vibecomfy.cli nodes install-plan workflow_corpus/custom_nodes/.../<id>.json
 uv run python -m vibecomfy.cli doctor workflow_corpus/custom_nodes/.../<id>.json
 ```
@@ -131,6 +145,13 @@ uv run python scripts/materialize_ready_templates.py
 
 ## 7. Local Validation
 
+First confirm the port report is clean enough to edit and convert:
+
+```bash
+uv run python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json
+uv run python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scratchpads/<id>.py --json
+```
+
 Run validation on the generated ready template:
 
 ```bash
@@ -150,12 +171,13 @@ For a new scope, add a unit test in `tests/test_runpod_matrix.py` so the selecte
 Use focused scopes. Do not run the full matrix while iterating on one family:
 
 ```bash
+uv run python -m vibecomfy.cli port check video/wanvideo_wrapper_22_wan_animate_preprocess_kijai --json
 VIBECOMFY_MATRIX_SCOPE=qwen_tts uv run python scripts/runpod_corpus_matrix.py
 VIBECOMFY_MATRIX_SCOPE=flux2_4b uv run python scripts/runpod_corpus_matrix.py
 VIBECOMFY_MATRIX_SCOPE=wan_creation_types uv run python scripts/runpod_corpus_matrix.py
 ```
 
-The matrix launches a fresh pod, uploads the checkout, installs VibeComfy and HiddenSwitch ComfyUI, syncs sources, installs selected custom nodes, stages models, executes baseline `comfyui run-workflow`, converts the workflow, runs the generated VibeComfy scratchpad, downloads artifacts, and terminates the launched pod in `finally`.
+The matrix launches a fresh pod, uploads the checkout, installs VibeComfy and HiddenSwitch ComfyUI, syncs sources, installs selected custom nodes, stages models, executes baseline `comfyui run-workflow`, converts the workflow, runs the generated VibeComfy scratchpad, downloads artifacts, and terminates the launched pod in `finally`. It also writes an offline `port check --json` report and port-convert preview artifacts beside the existing logs so GPU failures can be compared with the cheap local preflight.
 
 That means the machine should not require hand setup for a checked-in matrix scope. If an agent has to SSH in and run ad hoc commands, convert that into code in one of these places:
 
@@ -171,6 +193,7 @@ That means the machine should not require hand setup for a checked-in matrix sco
 Already automatic:
 
 - source indexing via `vibecomfy sources sync`;
+- port reports for helper nodes, custom-node packs, model assets, schema issues, and widget aliases;
 - UI JSON to API JSON normalization;
 - API JSON to `VibeWorkflow`;
 - ready template generation for required rows and `ready_template: true` rows;

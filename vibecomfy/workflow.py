@@ -4,151 +4,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from vibecomfy.handles import Handle
+from vibecomfy.porting import helpers as porting_helpers
+from vibecomfy.porting.widget_aliases import apply_positional_widget_aliases
 
 if TYPE_CHECKING:
     from vibecomfy.schema.provider import SchemaProvider
-
-
-_POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str | None, ...]] = {
-    "LoadWanVideoT5TextEncoder": ("model_name", "precision", "load_device", "quantization"),
-    "WanVideoTextEncode": (
-        "positive_prompt",
-        "negative_prompt",
-        "force_offload",
-        "use_disk_cache",
-        "device",
-    ),
-    "WanVideoTextEncodeCached": (
-        "model_name",
-        "precision",
-        "positive_prompt",
-        "negative_prompt",
-        "quantization",
-        "use_disk_cache",
-        "device",
-    ),
-    "WanVideoModelLoader": (
-        "model",
-        "base_precision",
-        "quantization",
-        "load_device",
-        "attention_mode",
-    ),
-    "WanVideoBlockSwap": (
-        "blocks_to_swap",
-        "offload_img_emb",
-        "offload_txt_emb",
-        "use_non_blocking",
-        "vace_blocks_to_swap",
-        "prefetch_blocks",
-        "block_swap_debug",
-    ),
-    "WanVideoTorchCompileSettings": (
-        "backend",
-        "fullgraph",
-        "mode",
-        "dynamic",
-        "dynamo_cache_size_limit",
-        "compile_transformer_blocks_only",
-        "dynamo_recompile_limit",
-        "force_parameter_static_shapes",
-        "allow_unmerged_lora_compile",
-    ),
-    "WanVideoLoraSelect": ("lora", "strength", "low_mem_load", "merge_loras"),
-    "WanVideoLoraSelectMulti": (
-        "lora_0",
-        "strength_0",
-        "lora_1",
-        "strength_1",
-        "lora_2",
-        "strength_2",
-        "lora_3",
-        "strength_3",
-        "lora_4",
-        "strength_4",
-        "low_mem_load",
-        "merge_loras",
-    ),
-    "WanVideoImageToVideoEncode": (
-        "width",
-        "height",
-        "num_frames",
-        "noise_aug_strength",
-        "start_latent_strength",
-        "end_latent_strength",
-        "force_offload",
-        "tiled_vae",
-        "fun_or_fl2v_model",
-    ),
-    "WanVideoVAELoader": ("model_name", "precision"),
-    "WanVideoDecode": (
-        "enable_vae_tiling",
-        "tile_x",
-        "tile_y",
-        "tile_stride_x",
-        "tile_stride_y",
-        "normalization",
-    ),
-    "WanVideoSampler": (
-        "steps",
-        "cfg",
-        "shift",
-        "seed",
-        None,
-        "force_offload",
-        "scheduler",
-        "riflex_freq_index",
-        "denoise_strength",
-        "batched_cfg",
-        "rope_function",
-        "start_step",
-        "end_step",
-    ),
-    "CreateCFGScheduleFloatList": (
-        "steps",
-        "cfg_scale_start",
-        "cfg_scale_end",
-        "interpolation",
-        "start_percent",
-        "end_percent",
-    ),
-    "WanVideoAnimateEmbeds": (
-        "width",
-        "height",
-        "num_frames",
-        "force_offload",
-        "frame_window_size",
-        "colormatch",
-        "face_strength",
-        "pose_strength",
-        "unused_8",
-    ),
-    "ImageResizeKJv2": (
-        "width",
-        "height",
-        "upscale_method",
-        "keep_proportion",
-        "pad_color",
-        "crop_position",
-        "divisible_by",
-        "device",
-    ),
-    "INTConstant": ("value",),
-    "FloatConstant": ("value",),
-    "ImageConcatMulti": ("inputcount", "direction", "match_image_size", "unused_3"),
-    "BlockifyMask": ("block_size",),
-    "DrawMaskOnImage": ("color",),
-    "GrowMaskWithBlur": (
-        "expand",
-        "incremental_expandrate",
-        "tapered_corners",
-        "flip_input",
-        "blur_radius",
-        "lerp_alpha",
-        "decay_factor",
-        "unused_7",
-    ),
-}
 
 
 @dataclass(slots=True)
@@ -334,12 +194,33 @@ class VibeWorkflow:
                 issues.extend(validate_api_link_shapes(api, schema_provider))
         return ValidationReport(ok=not any(issue.severity == "error" for issue in issues), issues=issues)
 
+    def runtime_nodes(self) -> dict[str, VibeNode]:
+        return porting_helpers.helper_stripped_nodes(self.nodes)
+
+    def runtime_class_types(self) -> list[str]:
+        return porting_helpers.helper_stripped_class_types(self.nodes)
+
+    def helper_diagnostics(self) -> list[ValidationIssue]:
+        return [
+            ValidationIssue(
+                diagnostic.code,
+                diagnostic.message,
+                severity=diagnostic.severity,
+                detail={
+                    **diagnostic.detail,
+                    "node_id": diagnostic.node_id,
+                    "class_type": diagnostic.class_type,
+                },
+            )
+            for diagnostic in porting_helpers.collect_helper_diagnostics(self.nodes, self.edges)
+        ]
+
     def compile(self, backend: str = "api") -> dict[str, Any]:
         if backend == "graphbuilder":
             return self._compile_graphbuilder()
         if backend != "api":
             raise ValueError(f"Unknown compile backend: {backend}")
-        broadcast_sources = _collect_broadcast_sources(self.nodes, self.edges)
+        broadcast_sources = porting_helpers.collect_broadcast_sources(self.nodes, self.edges)
         api: dict[str, Any] = {}
         for node_id, node in self.nodes.items():
             if _is_ui_only_node(node):
@@ -352,7 +233,7 @@ class VibeWorkflow:
             edge_source = _resolve_edge_source(edge, self.nodes, broadcast_sources)
             if edge_source is None:
                 continue
-            if str(edge_source[0]) not in api:
+            if str(edge_source[0]) in self.nodes and str(edge_source[0]) not in api:
                 continue
             api[str(edge.to_node)]["inputs"][edge.to_input] = edge_source
         return api
@@ -363,7 +244,7 @@ class VibeWorkflow:
         except ImportError as exc:
             raise RuntimeError("GraphBuilder backend requires the installed HiddenSwitch ComfyUI runtime.") from exc
 
-        broadcast_sources = _collect_broadcast_sources(self.nodes, self.edges)
+        broadcast_sources = porting_helpers.collect_broadcast_sources(self.nodes, self.edges)
         edge_inputs: dict[str, dict[str, Any]] = {}
         for edge in self.edges:
             edge_source = _resolve_edge_source(edge, self.nodes, broadcast_sources)
@@ -426,51 +307,15 @@ def _is_ui_only_prompt_input(key: str, value: Any) -> bool:
 
 
 def _is_ui_only_node(node: VibeNode) -> bool:
-    return node.class_type in {"Note", "MarkdownNote", "SetNode", "GetNode"}
-
-
-def _collect_broadcast_sources(
-    nodes: dict[str, VibeNode],
-    edges: list[VibeEdge],
-) -> dict[str, list[Any]]:
-    sources: dict[str, list[Any]] = {}
-    edge_sources_by_target: dict[str, list[Any]] = {}
-    for edge in edges:
-        target_node = nodes.get(str(edge.to_node))
-        if target_node is None or target_node.class_type != "SetNode":
-            continue
-        if edge.to_input == "widget_0":
-            continue
-        edge_sources_by_target[str(edge.to_node)] = [str(edge.from_node), int(edge.from_output)]
-
-    for node_id, node in nodes.items():
-        if node.class_type != "SetNode":
-            continue
-        name = _broadcast_name(node)
-        if not name:
-            continue
-        direct_source = _first_link_input(_compile_node_inputs(node))
-        if direct_source is not None:
-            sources[name] = direct_source
-        elif str(node_id) in edge_sources_by_target:
-            sources[name] = edge_sources_by_target[str(node_id)]
-    return sources
+    return porting_helpers.is_helper_class_type(node.class_type)
 
 
 def _broadcast_name(node: VibeNode) -> str | None:
-    name = node.inputs.get("widget_0", node.widgets.get("widget_0"))
-    if name is None:
-        return None
-    return str(name)
+    return porting_helpers.broadcast_name(node)
 
 
 def _first_link_input(inputs: dict[str, Any]) -> list[Any] | None:
-    for key, value in inputs.items():
-        if key == "widget_0":
-            continue
-        if _is_api_link(value):
-            return [str(value[0]), int(value[1])]
-    return None
+    return porting_helpers.first_link_input(inputs)
 
 
 def _rewrite_broadcast_links(
@@ -491,7 +336,7 @@ def _resolve_edge_source(
 ) -> list[Any] | None:
     source_node = nodes.get(str(edge.from_node))
     if source_node is None:
-        return None
+        return [str(edge.from_node), int(edge.from_output)]
     if source_node.class_type == "GetNode":
         name = _broadcast_name(source_node)
         if name is None:
@@ -524,25 +369,11 @@ def _resolve_link_value(
 
 
 def _is_api_link(value: Any) -> bool:
-    if not isinstance(value, list) or len(value) != 2:
-        return False
-    try:
-        int(value[1])
-    except (TypeError, ValueError):
-        return False
-    return True
+    return porting_helpers.is_api_link(value)
 
 
 def _apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) -> None:
-    aliases = _POSITIONAL_WIDGET_ALIASES.get(class_type)
-    if not aliases:
-        return
-    for index, name in enumerate(aliases):
-        if name is None:
-            continue
-        widget_key = f"widget_{index}"
-        if name not in inputs and widget_key in inputs:
-            inputs[name] = inputs[widget_key]
+    apply_positional_widget_aliases(inputs, class_type)
 
 
 def _drop_unused_positional_aliases(inputs: dict[str, Any]) -> None:

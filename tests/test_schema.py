@@ -138,7 +138,7 @@ def test_normalize_to_api_maps_widgets_to_schema_input_names() -> None:
             {
                 "id": 1,
                 "type": "PromptNode",
-                "widgets_values": ["hello", "clip-ref", "model.safetensors"],
+                "widgets_values": ["hello", "model.safetensors"],
                 "inputs": [],
             }
         ],
@@ -147,7 +147,37 @@ def test_normalize_to_api_maps_widgets_to_schema_input_names() -> None:
 
     api = normalize_to_api(raw, schema_provider=provider)
 
-    assert api["1"]["inputs"] == {"text": "hello", "clip": "clip-ref", "ckpt_name": "model.safetensors"}
+    assert api["1"]["inputs"] == {"text": "hello", "ckpt_name": "model.safetensors"}
+
+
+def test_normalize_to_api_uses_widget_only_schema_so_link_inputs_do_not_shift_positions() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "CheckpointLoaderSimple": _schema(
+                "CheckpointLoaderSimple",
+                inputs={
+                    "model": InputSpec("MODEL"),
+                    "clip": InputSpec("CLIP"),
+                    "ckpt_name": InputSpec("STRING"),
+                },
+            )
+        }
+    )
+    raw = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "CheckpointLoaderSimple",
+                "widgets_values": ["model.safetensors"],
+                "inputs": [],
+            }
+        ],
+        "links": [],
+    }
+
+    api = normalize_to_api(raw, schema_provider=provider)
+
+    assert api["1"]["inputs"] == {"ckpt_name": "model.safetensors"}
 
 
 def test_normalize_to_api_without_schema_provider_preserves_widget_keys() -> None:

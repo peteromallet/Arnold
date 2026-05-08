@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
 from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore
+from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert
 import vibecomfy.node_packs_install as node_packs_install
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
@@ -62,6 +64,7 @@ def test_cli_command_registry_is_explicit_and_ordered() -> None:
         "analyze",
         "search",
         "inspect",
+        "port",
         "convert",
         "validate",
         "doctor",
@@ -80,6 +83,47 @@ def test_build_parser_registers_all_known_commands() -> None:
     parser = build_parser()
 
     assert _top_level_commands(parser) == [spec.name for spec in COMMANDS]
+
+
+def test_port_help_explains_check_convert_and_related_commands(capsys: pytest.CaptureFixture[str]) -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["port", "--help"])
+
+    assert exc_info.value.code == 0
+    help_text = capsys.readouterr().out
+    for text in [
+        "port check",
+        "port convert",
+        "doctor",
+        "validate",
+        "nodes install-plan",
+        "fetch",
+        "--head-check-models",
+        "RunPod",
+    ]:
+        assert text in help_text
+
+
+def test_port_subcommand_help_is_discoverable(capsys: pytest.CaptureFixture[str]) -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as check_help:
+        parser.parse_args(["port", "check", "--help"])
+    check_text = capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as convert_help:
+        parser.parse_args(["port", "convert", "--help"])
+    convert_text = capsys.readouterr().out
+
+    assert check_help.value.code == 0
+    assert convert_help.value.code == 0
+    assert "before manual template editing or expensive RunPod validation" in check_text
+    assert "--head-check-models" in check_text
+    assert "turn source workflows into Python scratchpads" in convert_text
+    assert "--ready-id" in convert_text
+    assert "--head-check-models" in convert_text
 
 
 def test_validate_no_schema_skips_schema_provider(
@@ -109,6 +153,151 @@ def build():
 
     assert validate_cmd._cmd_validate(argparse.Namespace(path=str(scratchpad), backend="api", no_schema=True)) == 0
     assert capsys.readouterr().out == "ok\n"
+
+
+def _write_port_node_index(tmp_path: Path) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps(
+            [
+                {
+                    "class_type": "LoadImage",
+                    "pack": "core",
+                    "inputs": {"image": {"type": "STRING", "required": True}},
+                    "outputs": [{"type": "IMAGE", "name": "image"}],
+                },
+                {
+                    "class_type": "SaveImage",
+                    "pack": "core",
+                    "inputs": {
+                        "images": {"type": "IMAGE", "required": True},
+                        "filename_prefix": {"type": "STRING", "required": True},
+                    },
+                    "outputs": [],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_port_workflow(tmp_path: Path) -> Path:
+    workflow_path = tmp_path / "port_workflow.json"
+    workflow_path.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+                "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0], "filename_prefix": "out/port"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return workflow_path
+
+
+def _load_emitted_provenance(path: Path) -> dict[str, object]:
+    spec = importlib.util.spec_from_file_location(f"test_emitted_{path.stem}", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.build().source.provenance
+
+
+def test_port_check_json_returns_zero_for_clean_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_check(argparse.Namespace(workflow=str(workflow_path), json=True, head_check_models=False))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["ok"] is True
+    assert payload["provenance"]["source_kind"] == "raw_json"
+
+
+def test_port_check_returns_nonzero_for_hard_port_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = tmp_path / "bad_port_workflow.json"
+    workflow_path.write_text(json.dumps({"1": {"class_type": "UnknownRuntimeNode", "inputs": {}}}), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_check(argparse.Namespace(workflow=str(workflow_path), json=False, head_check_models=False))
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "unresolved_runtime_class" in captured.out
+
+
+def test_port_convert_emits_importable_scratchpad_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    out = tmp_path / "out" / "scratchpads" / "converted.py"
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            out=str(out),
+            ready_id=None,
+            json=True,
+            head_check_models=False,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert payload["conversion"]["mode"] == "scratchpad"
+    text = out.read_text(encoding="utf-8")
+    assert "source_type='scratchpad'" in text
+    assert "READY_METADATA" not in text
+    provenance = _load_emitted_provenance(out)
+    assert provenance["source_hash"] == payload["report"]["source_hash"]
+    assert provenance["workflow_shape"] == payload["report"]["workflow_shape"]
+    assert provenance["output_mode"] == "scratchpad"
+
+
+def test_port_convert_ready_template_mode_requires_ready_id_and_writes_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    out = tmp_path / "candidate.py"
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            out=str(out),
+            ready_id="image/ported",
+            json=True,
+            head_check_models=False,
+        )
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    text = out.read_text(encoding="utf-8")
+    assert "READY_METADATA =" in text
+    assert "'ready_template': 'image/ported'" in text
+    provenance = _load_emitted_provenance(out)
+    assert provenance["ready_id"] == "image/ported"
+    assert provenance["source_hash"] == payload["report"]["source_hash"]
+    assert provenance["workflow_shape"] == payload["report"]["workflow_shape"]
+    assert provenance["output_mode"] == "ready_template"
 
 
 def test_fetch_cli_dry_run_lists_entries_without_downloading(
@@ -290,6 +479,38 @@ def build():
     captured = capsys.readouterr()
     assert "Suggested custom node packs:" in captured.out
     assert "comfyui_controlnet_aux" in captured.out
+    assert "vibecomfy port check" in captured.out
+
+
+def test_doctor_points_helper_diagnostics_to_port_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratchpad = tmp_path / "helper_issue.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="helper", source=WorkflowSource(id="helper"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="GetNode", inputs={"widget_0": "missing"})
+    workflow.nodes["2"] = VibeNode(id="2", class_type="SaveImage", inputs={"filename_prefix": "out/helper"})
+    workflow.edges.append(VibeEdge("1", "0", "2", "images"))
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from vibecomfy.commands.doctor import _cmd_doctor
+
+    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
+    assert _cmd_doctor(argparse.Namespace(path=str(scratchpad), json=False, lint=False, allow_drift=False)) == 1
+
+    captured = capsys.readouterr()
+    assert "Porting helper diagnostics" in captured.out
+    assert f"vibecomfy port check {scratchpad} --json" in captured.out
 
 
 def test_nodes_install_plan_suggests_pack_for_missing_class(

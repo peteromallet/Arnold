@@ -36,10 +36,27 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print("Layer: Python scratchpad import/build")
         print(f"Error: {type(exc).__name__}: {exc}")
         print("Next: fix the Python file until build() returns a VibeWorkflow.")
+        print(f"Port preflight: vibecomfy port check {args.path} --json")
         return 1
     if lint:
         for warning in _lint_untyped_raw_refs(Path(args.path)):
             print(f"- untyped_raw_ref: {warning}")
+    helper_issues = workflow.helper_diagnostics()
+    if helper_issues:
+        payload = {
+            "status": "error",
+            "layer": "Porting helper diagnostics",
+            "errors": [issue.message for issue in helper_issues],
+            "recommended_command": f"vibecomfy port check {args.path} --json",
+        }
+        if json_output:
+            emit(payload, json=True, text_renderer=_render_doctor_error)
+        else:
+            print("Layer: Porting helper diagnostics")
+            for issue in helper_issues:
+                print(f"- {issue.message}")
+            print(f"Next: {payload['recommended_command']}")
+        return 1
     suggested_patches = _patch_suggestions(workflow)
     drift_warnings, drift_errors = _nodepack_lockfile_drift()
     if drift_errors:
@@ -61,6 +78,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "errors": validation_issues,
             "nodepack_warnings": drift_warnings,
             "suggested_patches": suggested_patches,
+            "recommended_command": f"vibecomfy port check {args.path} --json",
         }
         if json_output:
             emit(payload, json=True, text_renderer=_render_doctor_error)
@@ -68,6 +86,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             print("Layer: VibeWorkflow validation")
             for issue in validation_issues:
                 print(f"- {issue}")
+            print(f"Next: {payload['recommended_command']}")
         if json_output:
             return 1
         missing_classes = {
@@ -90,7 +109,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         return 1
     missing_models = _missing_model_warnings(workflow, args.path)
     if missing_models:
-        payload = {"status": "error", "missing_models": missing_models, "nodepack_warnings": drift_warnings, "suggested_patches": suggested_patches}
+        payload = {
+            "status": "error",
+            "missing_models": missing_models,
+            "nodepack_warnings": drift_warnings,
+            "suggested_patches": suggested_patches,
+            "recommended_command": f"vibecomfy port check {args.path} --json",
+        }
         emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Missing models", data["missing_models"], data))
         return 1
     warnings = _doctor_warnings(workflow)
@@ -120,6 +145,11 @@ def _render_suggested_patches(payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_recommended_command(payload: dict[str, Any]) -> list[str]:
+    command = payload.get("recommended_command")
+    return [f"Next: {command}"] if command else []
+
+
 def _render_doctor_ok(payload: dict[str, Any]) -> str:
     return "\n".join([payload["message"], *_render_suggested_patches(payload)])
 
@@ -134,6 +164,7 @@ def _render_doctor_error(payload: dict[str, Any]) -> str:
     lines = [f"Layer: {payload.get('layer', 'doctor')}"]
     lines.extend(f"- {error}" for error in payload.get("errors", []))
     lines.extend(_render_suggested_patches(payload))
+    lines.extend(_render_recommended_command(payload))
     return "\n".join(lines)
 
 
@@ -141,6 +172,7 @@ def _render_list_section(title: str, items: list[str], payload: dict[str, Any]) 
     lines = [f"{title}:"]
     lines.extend(f"- {item}" for item in items)
     lines.extend(_render_suggested_patches(payload))
+    lines.extend(_render_recommended_command(payload))
     return "\n".join(lines)
 
 

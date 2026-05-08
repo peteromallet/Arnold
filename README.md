@@ -23,6 +23,17 @@ Please set up VibeComfy for me:
 
 That's the whole install. The bundled skill at [`.claude/skills/vibecomfy/SKILL.md`](.claude/skills/vibecomfy/SKILL.md) teaches the agent the full surface — discovery, loading, editing, patches, blocks, recipes, and the embedded / server / RunPod runtimes.
 
+## Porting ComfyUI workflows
+
+Before manually editing a raw Comfy workflow, converting it into a template, or spending RunPod time, run the porting preflight:
+
+```bash
+python -m vibecomfy.cli port check <workflow> --json
+python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py --json
+```
+
+`port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, and model asset issues while staying offline by default. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies. See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
+
 ## Thanks
 
 VibeComfy is a thin Python authoring layer. The real work belongs to:

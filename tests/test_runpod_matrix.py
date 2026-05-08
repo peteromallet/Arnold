@@ -542,6 +542,17 @@ def test_corpus_matrix_patches_wan_headless_preview_crash() -> None:
     assert "node_id = serv.last_node_id or '0'" in script
 
 
+def test_corpus_matrix_records_offline_port_reports_and_preview_artifacts() -> None:
+    script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
+
+    assert 'vibecomfy.cli port check "$workflow" --json' in script
+    assert 'out/corpus_matrix/logs/${{id}}.port_report.json' in script
+    assert "port_report id=" in script
+    assert 'vibecomfy.cli port convert "$workflow" --out "$out" --json' in script
+    assert 'out/corpus_matrix/logs/${{id}}.port_scratchpad.py' in script
+    assert "--head-check-models" not in script
+
+
 def test_corpus_matrix_handles_flux_custom_scheduler_overrides_and_assets() -> None:
     script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
 

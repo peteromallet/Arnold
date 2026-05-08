@@ -185,6 +185,46 @@ def test_compile_rewrites_edge_fed_set_get_nodes_to_direct_links() -> None:
     assert api["4"]["inputs"]["images"] == ["1", 0]
 
 
+def test_helper_diagnostics_report_unresolved_broadcasts_before_compile() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "GetNode", inputs={"widget_0": "missing_image"})
+    workflow.nodes["3"] = VibeNode("3", "SaveImage", inputs={})
+    workflow.connect("2.0", "3.images")
+
+    diagnostics = workflow.helper_diagnostics()
+    api = workflow.compile("api")
+
+    assert set(api) == {"1", "3"}
+    assert "images" not in api["3"]["inputs"]
+    assert [(issue.code, issue.severity, issue.detail["node_id"]) for issue in diagnostics] == [
+        ("helper_broadcast_unresolved", "warning", "2")
+    ]
+
+
+def test_runtime_views_strip_helper_nodes_without_changing_compile_rewrite() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "MarkdownNote", inputs={"widget_0": "editor-only note"})
+    workflow.nodes["2"] = VibeNode("2", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["3"] = VibeNode("3", "SetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["4"] = VibeNode("4", "GetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["5"] = VibeNode("5", "SaveImage", inputs={"images": ["4", 0]})
+    workflow.connect("2.0", "3.IMAGE")
+
+    api = workflow.compile("api")
+    diagnostics = workflow.helper_diagnostics()
+
+    assert sorted(workflow.runtime_nodes()) == ["2", "5"]
+    assert workflow.runtime_class_types() == ["LoadImage", "SaveImage"]
+    assert set(api) == {"2", "5"}
+    assert api["5"]["inputs"]["images"] == ["2", 0]
+    assert [(issue.code, issue.severity) for issue in diagnostics] == [
+        ("ui_only_node_stripped", "info"),
+        ("helper_broadcast_resolved", "info"),
+        ("helper_broadcast_resolved", "info"),
+    ]
+
+
 def test_compile_rewrites_set_node_passthrough_outputs_to_direct_links() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})

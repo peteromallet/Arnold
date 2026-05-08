@@ -1,0 +1,242 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from vibecomfy.porting.workbench import analyze_source
+from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
+
+
+class FakeSchemaProvider:
+    def __init__(self, schemas: dict[str, NodeSchema]) -> None:
+        self._schemas = schemas
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        return self._schemas.get(class_type)
+
+
+def _provider() -> FakeSchemaProvider:
+    return FakeSchemaProvider(
+        {
+            "LoadImage": NodeSchema(
+                class_type="LoadImage",
+                pack=None,
+                inputs={"image": InputSpec("STRING", required=True)},
+                outputs=[OutputSpec("IMAGE", "image")],
+            ),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={"images": InputSpec("IMAGE", required=True), "filename_prefix": InputSpec("STRING", required=True)},
+                outputs=[],
+            ),
+            "CheckpointLoaderSimple": NodeSchema(
+                class_type="CheckpointLoaderSimple",
+                pack=None,
+                inputs={"ckpt_name": InputSpec("STRING", required=True)},
+                outputs=[OutputSpec("MODEL", "model")],
+            ),
+            "PromptNode": NodeSchema(
+                class_type="PromptNode",
+                pack=None,
+                inputs={"text": InputSpec("STRING", required=True)},
+                outputs=[],
+            ),
+        }
+    )
+
+
+def _api_workflow() -> dict[str, dict]:
+    return {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+        "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+        "3": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}},
+        "4": {"class_type": "PromptNode", "inputs": {"widget_0": "hello"}},
+    }
+
+
+def test_analyze_source_reports_raw_json_provenance_assets_schema_and_widget_data(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(json.dumps(_api_workflow()), encoding="utf-8")
+
+    report = analyze_source(str(path), schema_provider=_provider())
+    payload = report.to_json()
+
+    assert payload["provenance"]["source_kind"] == "raw_json"
+    assert payload["provenance"]["source_path"] == str(path)
+    assert payload["source_hash"].startswith("sha256:")
+    assert payload["workflow_shape"]["nodes"] == 4
+    assert payload["node_counts"]["SaveImage"] == 1
+    assert payload["metadata"]["schema_validation"]["schema_provider"] is True
+    assert payload["metadata"]["widget_analysis"]["unresolved_widget_aliases"] == [
+        {"node_id": "4", "class_type": "PromptNode", "input": "widget_0"}
+    ]
+    assert payload["metadata"]["custom_node_analysis"]["runtime_class_types"] == [
+        "CheckpointLoaderSimple",
+        "LoadImage",
+        "PromptNode",
+        "SaveImage",
+    ]
+    assert [(candidate["name"], candidate["source"]) for candidate in payload["asset_candidates"]] == [
+        ("model.safetensors", "api_prompt")
+    ]
+    codes = [issue["code"] for issue in payload["diagnostics"]]
+    assert "filename_only_asset_candidate" in codes
+    assert "widget_alias_unresolved" in codes
+    assert "missing_required_input" in codes
+    assert "unknown_input" in codes
+    assert any("port convert" in item for item in payload["recommendations"])
+
+
+def test_analyze_source_resolves_indexed_workflow_references(tmp_path: Path, monkeypatch) -> None:
+    workflow_path = tmp_path / "indexed.json"
+    workflow = _api_workflow()
+    workflow["2"]["inputs"]["filename_prefix"] = "out/indexed"
+    workflow["4"]["inputs"] = {"text": "hello"}
+    workflow_path.write_text(json.dumps(workflow), encoding="utf-8")
+    (tmp_path / "workflow_index.json").write_text(
+        json.dumps([{"id": "indexed/sample", "path": str(workflow_path)}]),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    report = analyze_source("indexed/sample", schema_provider=_provider())
+
+    assert report.provenance["source_kind"] == "indexed_json"
+    assert report.provenance["indexed_id"] == "indexed/sample"
+    assert report.workflow_id == "indexed/sample"
+    assert report.metadata["schema_validation"]["ok"] is True
+
+
+def test_analyze_source_loads_scratchpads_and_reports_helper_diagnostics(tmp_path: Path) -> None:
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    workflow = VibeWorkflow("scratch", WorkflowSource("scratch"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "input.png"})
+    workflow.nodes["2"] = VibeNode("2", "GetNode", inputs={"widget_0": "missing_image"})
+    workflow.nodes["3"] = VibeNode("3", "SaveImage", inputs={"filename_prefix": "out/scratch"})
+    workflow.edges.append(VibeEdge("2", "0", "3", "images"))
+    return workflow
+""",
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(scratchpad), schema_provider=_provider())
+
+    assert report.provenance["source_kind"] == "scratchpad"
+    assert report.workflow_shape["helper_nodes"] == 1
+    assert [issue.code for issue in report.diagnostics[:1]] == ["helper_broadcast_unresolved"]
+    assert any(issue.detail.get("category") == "schema" for issue in report.diagnostics)
+
+
+def test_analyze_source_loads_ready_ids() -> None:
+    report = analyze_source("image/z_image")
+
+    assert report.provenance["source_kind"] == "ready"
+    assert report.provenance["indexed_id"] == "image/z_image"
+    assert report.workflow_id == "image/z_image"
+    assert report.source_hash is not None
+
+
+def test_analyze_source_covers_simple_template_and_wan_animate_target() -> None:
+    simple = analyze_source("image/z_image").to_json()
+    wan = analyze_source("video/wanvideo_wrapper_22_wan_animate_preprocess_kijai").to_json()
+
+    assert simple["ok"] is True
+    assert simple["provenance"]["source_kind"] == "ready"
+    assert simple["workflow_id"] == "image/z_image"
+    assert simple["workflow_shape"]["helper_nodes"] == 0
+    assert "source_hash" in simple
+    assert any("port convert" in item for item in simple["recommendations"])
+
+    assert wan["ok"] is True
+    assert wan["provenance"]["source_kind"] == "ready"
+    assert wan["workflow_id"] == "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai"
+    assert wan["workflow_shape"]["runtime_nodes"] > 0
+    assert wan["workflow_shape"]["helper_nodes"] > 0
+    assert "ComfyUI-WanAnimatePreprocess" in {pack["pack_name"] for pack in wan["node_pack_suggestions"]}
+    assert "ComfyUI-WanVideoWrapper" in {pack["pack_name"] for pack in wan["node_pack_suggestions"]}
+    assert "ui_only_node_stripped" in {issue["code"] for issue in wan["diagnostics"]}
+    assert all(
+        issue["class_type"] not in {"Note", "MarkdownNote", "SetNode", "GetNode"}
+        for issue in wan["diagnostics"]
+        if issue["code"] == "unresolved_runtime_class"
+    )
+
+
+def test_analyze_source_infers_node_packs_from_runtime_classes_only(tmp_path: Path) -> None:
+    path = tmp_path / "custom_nodes.json"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "Note", "inputs": {"widget_0": "UI note"}},
+                "2": {"class_type": "WanVideoSampler", "inputs": {}},
+                "3": {"class_type": "UnknownRuntimeNode", "inputs": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=FakeSchemaProvider({}))
+    payload = report.to_json()
+
+    assert payload["metadata"]["custom_node_analysis"]["helper_class_types_excluded"] == ["Note"]
+    assert payload["metadata"]["custom_node_analysis"]["missing_runtime_class_types"] == [
+        "UnknownRuntimeNode",
+        "WanVideoSampler",
+    ]
+    assert [(pack["pack_name"], pack["matched_classes"], pack["pip_packages"]) for pack in payload["node_pack_suggestions"]] == [
+        ("ComfyUI-WanVideoWrapper", ["WanVideoSampler"], ["onnx", "opencv-python-headless"])
+    ]
+    custom_node_errors = [
+        issue for issue in payload["diagnostics"] if issue["code"] == "unresolved_runtime_class"
+    ]
+    assert custom_node_errors == [
+        {
+            "code": "unresolved_runtime_class",
+            "message": "Runtime class 'UnknownRuntimeNode' is not present in schema data and no known node pack maps it.",
+            "severity": "error",
+            "node_id": None,
+            "class_type": "UnknownRuntimeNode",
+            "detail": {"category": "custom_nodes", "runtime_class_type": "UnknownRuntimeNode"},
+            "recommendation": "Add this class to node-pack metadata or install/update object_info before RunPod validation.",
+        }
+    ]
+
+
+def test_analyze_source_can_include_opt_in_model_head_checks(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": 1,
+                        "type": "UNETLoader",
+                        "properties": {
+                            "models": [
+                                {"name": "model.safetensors", "url": "https://example.test/model.safetensors"}
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(
+        str(path),
+        head_check_models=True,
+        head_client=lambda url, timeout: {"status_code": 403, "url": url},
+    )
+
+    assert [(check.url, check.ok, check.status_code, check.error) for check in report.asset_checks] == [
+        ("https://example.test/model.safetensors", False, 403, "license_gated_or_forbidden")
+    ]
+    assert "model_asset_head_check_failed" in [issue.code for issue in report.diagnostics]

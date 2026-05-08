@@ -50,7 +50,7 @@ def _canonical_key(class_type: str, key: str) -> str | None:
     if not key.startswith("widget_"):
         return key
     try:
-        from tools._widget_schema import resolve_widget_name
+        from vibecomfy.porting.widget_aliases import resolve_widget_name
     except Exception:
         return key
     try:

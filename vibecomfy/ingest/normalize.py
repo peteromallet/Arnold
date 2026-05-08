@@ -8,6 +8,7 @@ from vibecomfy.metadata import (
     _infer_requirements,
     _register_common_inputs,
 )
+from vibecomfy.porting.widget_aliases import widget_names_from_schema
 from vibecomfy.schema import SchemaProvider, schema_for
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
@@ -130,7 +131,4 @@ def _is_link(value: Any) -> bool:
 
 def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
     schema = schema_for(schema_provider, class_type)
-    inputs = getattr(schema, "inputs", None)
-    if not isinstance(inputs, dict):
-        return []
-    return list(inputs)
+    return [name for name in widget_names_from_schema(class_type, schema) if name is not None]
