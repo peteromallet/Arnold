@@ -213,7 +213,7 @@ READY_REQUIREMENTS = {
             "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors",
         },
         {
-            "directory": "sams",
+            "directory": "sam2",
             "name": "sam2_hiera_base_plus.safetensors",
             "url": "https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2_hiera_base_plus.safetensors",
         },
