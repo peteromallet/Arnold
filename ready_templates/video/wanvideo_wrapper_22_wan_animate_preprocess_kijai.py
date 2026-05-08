@@ -1652,7 +1652,11 @@ READY_METADATA = {'approach': 'Kijai WanAnimate preprocessing workflow using ref
                     'width': '150.widget_0'},
  'workflow_template': 'wanvideo_wrapper_22_wan_animate_preprocess_kijai'}
 
-READY_REQUIREMENTS = {'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper', 'comfyui_controlnet_aux'],
+READY_REQUIREMENTS = {'custom_nodes': ['ComfyUI-KJNodes',
+                  'ComfyUI-VideoHelperSuite',
+                  'ComfyUI-WanVideoWrapper',
+                  'ComfyUI-segment-anything-2',
+                  'comfyui_controlnet_aux'],
  'models': [{'directory': 'diffusion_models/WanVideo/2_2',
              'name': 'Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
              'url': 'https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/Wan22Animate/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'},

@@ -78,6 +78,12 @@ def test_ready_template_compile_emits_no_null_api_inputs() -> None:
     assert null_inputs == []
 
 
+def test_wan_animate_template_declares_sam2_node_pack() -> None:
+    workflow = workflow_from_ready("video/wanvideo_wrapper_22_wan_animate_preprocess_kijai")
+
+    assert "ComfyUI-segment-anything-2" in workflow.requirements.custom_nodes
+
+
 def test_ready_template_build_has_category_qualified_metadata() -> None:
     workflow = workflow_from_ready("qwen_image_edit")
 

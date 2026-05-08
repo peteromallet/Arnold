@@ -76,6 +76,21 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         classes=frozenset({"VHS_LoadVideo", "VHS_VideoCombine"}),
     ),
     CustomNodePack(
+        name="ComfyUI-segment-anything-2",
+        repo="https://github.com/kijai/ComfyUI-segment-anything-2.git",
+        classes=frozenset(
+            {
+                "DownloadAndLoadSAM2Model",
+                "Sam2Segmentation",
+                "Sam2AutoSegmentation",
+                "Sam2VideoSegmentation",
+                "Sam2VideoSegmentationAddPoints",
+                "Florence2toCoordinates",
+            }
+        ),
+        pip_packages=("segment-anything-2", "opencv-python-headless"),
+    ),
+    CustomNodePack(
         name="comfyui_controlnet_aux",
         repo="https://github.com/Fannovel16/comfyui_controlnet_aux.git",
         classes=frozenset({"DWPreprocessor", "CannyEdgePreprocessor"}),

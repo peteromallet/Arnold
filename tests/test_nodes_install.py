@@ -439,6 +439,22 @@ def test_missing_packs_for_workflow_returns_resolved_and_unresolved(
     assert unresolved == ["UnknownCustomNode"]
 
 
+def test_missing_packs_for_workflow_resolves_sam2_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("sam2", WorkflowSource("sam2"))
+    workflow.nodes["1"] = VibeNode("1", "DownloadAndLoadSAM2Model")
+    workflow.nodes["2"] = VibeNode("2", "Sam2Segmentation")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-segment-anything-2"]
+    assert unresolved == []
+
+
 def test_missing_packs_for_workflow_ignores_core_comfy_classes(
     tmp_path: Path,
     monkeypatch,
