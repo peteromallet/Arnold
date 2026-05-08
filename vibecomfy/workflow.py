@@ -112,6 +112,17 @@ _POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str | None, ...]] = {
         "start_percent",
         "end_percent",
     ),
+    "WanVideoAnimateEmbeds": (
+        "width",
+        "height",
+        "num_frames",
+        "force_offload",
+        "frame_window_size",
+        "colormatch",
+        "face_strength",
+        "pose_strength",
+        "unused_8",
+    ),
     "ImageResizeKJv2": (
         "width",
         "height",
@@ -124,6 +135,19 @@ _POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str | None, ...]] = {
     ),
     "INTConstant": ("value",),
     "FloatConstant": ("value",),
+    "ImageConcatMulti": ("inputcount", "direction", "match_image_size", "unused_3"),
+    "BlockifyMask": ("block_size",),
+    "DrawMaskOnImage": ("color",),
+    "GrowMaskWithBlur": (
+        "expand",
+        "incremental_expandrate",
+        "tapered_corners",
+        "flip_input",
+        "blur_radius",
+        "lerp_alpha",
+        "decay_factor",
+        "unused_7",
+    ),
 }
 
 
@@ -385,6 +409,7 @@ def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
     inputs = dict(node.widgets)
     inputs.update(node.inputs)
     _apply_positional_widget_aliases(inputs, node.class_type)
+    _drop_unused_positional_aliases(inputs)
     return {
         key: value
         for key, value in inputs.items()
@@ -472,6 +497,11 @@ def _resolve_edge_source(
         if name is None:
             return None
         return broadcast_sources.get(name)
+    if source_node.class_type == "SetNode":
+        name = _broadcast_name(source_node)
+        if name is None:
+            return None
+        return broadcast_sources.get(name)
     if _is_ui_only_node(source_node):
         return None
     return [str(edge.from_node), int(edge.from_output)]
@@ -485,7 +515,7 @@ def _resolve_link_value(
     if not _is_api_link(value):
         return value
     source_node = nodes.get(str(value[0]))
-    if source_node is None or source_node.class_type != "GetNode":
+    if source_node is None or source_node.class_type not in {"GetNode", "SetNode"}:
         return value
     name = _broadcast_name(source_node)
     if name is None:
@@ -513,3 +543,9 @@ def _apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) ->
         widget_key = f"widget_{index}"
         if name not in inputs and widget_key in inputs:
             inputs[name] = inputs[widget_key]
+
+
+def _drop_unused_positional_aliases(inputs: dict[str, Any]) -> None:
+    for key in list(inputs):
+        if key.startswith("unused_"):
+            inputs.pop(key, None)

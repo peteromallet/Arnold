@@ -185,6 +185,20 @@ def test_compile_rewrites_edge_fed_set_get_nodes_to_direct_links() -> None:
     assert api["4"]["inputs"]["images"] == ["1", 0]
 
 
+def test_compile_rewrites_set_node_passthrough_outputs_to_direct_links() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "SetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["3"] = VibeNode("3", "SaveImage", inputs={})
+    workflow.connect("1.0", "2.IMAGE")
+    workflow.connect("2.0", "3.images")
+
+    api = workflow.compile("api")
+
+    assert set(api) == {"1", "3"}
+    assert api["3"]["inputs"]["images"] == ["1", 0]
+
+
 def test_compile_adds_named_inputs_for_known_custom_node_widgets() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode(
@@ -261,6 +275,67 @@ def test_wan_video_sampler_aliases_skip_seed_control_widget() -> None:
     assert api["1"]["inputs"]["start_step"] == 0
     assert api["1"]["inputs"]["end_step"] == 10
     assert "add_noise_to_samples" not in api["1"]["inputs"]
+
+
+def test_compile_adds_named_inputs_for_wan_animate_helper_widgets() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "WanVideoAnimateEmbeds",
+        inputs={
+            "widget_0": 832,
+            "widget_1": 480,
+            "widget_2": 49,
+            "widget_3": True,
+            "widget_4": 77,
+            "widget_5": "disabled",
+            "widget_6": 1,
+            "widget_7": 1,
+            "widget_8": False,
+        },
+    )
+    workflow.nodes["2"] = VibeNode(
+        "2",
+        "GrowMaskWithBlur",
+        inputs={
+            "widget_0": 10,
+            "widget_1": 0,
+            "widget_2": True,
+            "widget_3": False,
+            "widget_4": 0,
+            "widget_5": 1,
+            "widget_6": 1,
+            "widget_7": False,
+        },
+    )
+    workflow.nodes["3"] = VibeNode("3", "ImageConcatMulti", inputs={"widget_0": 4, "widget_1": "down", "widget_2": True, "widget_3": None})
+    workflow.nodes["4"] = VibeNode("4", "BlockifyMask", inputs={"widget_0": 32})
+    workflow.nodes["5"] = VibeNode("5", "DrawMaskOnImage", inputs={"widget_0": "0, 0, 0"})
+
+    api = workflow.compile("api")
+
+    assert api["1"]["inputs"]["width"] == 832
+    assert api["1"]["inputs"]["height"] == 480
+    assert api["1"]["inputs"]["num_frames"] == 49
+    assert api["1"]["inputs"]["force_offload"] is True
+    assert api["1"]["inputs"]["frame_window_size"] == 77
+    assert api["1"]["inputs"]["colormatch"] == "disabled"
+    assert api["1"]["inputs"]["face_strength"] == 1
+    assert api["1"]["inputs"]["pose_strength"] == 1
+    assert "unused_8" not in api["1"]["inputs"]
+    assert api["2"]["inputs"]["expand"] == 10
+    assert api["2"]["inputs"]["incremental_expandrate"] == 0
+    assert api["2"]["inputs"]["tapered_corners"] is True
+    assert api["2"]["inputs"]["flip_input"] is False
+    assert api["2"]["inputs"]["blur_radius"] == 0
+    assert api["2"]["inputs"]["lerp_alpha"] == 1
+    assert api["2"]["inputs"]["decay_factor"] == 1
+    assert "unused_7" not in api["2"]["inputs"]
+    assert api["3"]["inputs"]["inputcount"] == 4
+    assert api["3"]["inputs"]["direction"] == "down"
+    assert api["3"]["inputs"]["match_image_size"] is True
+    assert api["4"]["inputs"]["block_size"] == 32
+    assert api["5"]["inputs"]["color"] == "0, 0, 0"
 
 
 def test_official_index_uses_package_manifest_metadata(tmp_path: Path) -> None:
