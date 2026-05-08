@@ -199,8 +199,7 @@ class VibeWorkflow:
             raise ValueError(f"Unknown compile backend: {backend}")
         api: dict[str, Any] = {}
         for node_id, node in self.nodes.items():
-            inputs = dict(node.inputs)
-            inputs.update(node.widgets)
+            inputs = _compile_node_inputs(node)
             api[str(node_id)] = {"class_type": node.class_type, "inputs": inputs}
         for edge in self.edges:
             api[str(edge.to_node)]["inputs"][edge.to_input] = [str(edge.from_node), int(edge.from_output)]
@@ -218,8 +217,7 @@ class VibeWorkflow:
 
         builder = GraphBuilder(prefix="")
         for node_id, node in self.nodes.items():
-            inputs = dict(node.inputs)
-            inputs.update(node.widgets)
+            inputs = _compile_node_inputs(node)
             inputs.update(edge_inputs.get(str(node_id), {}))
             builder.node(node.class_type, id=str(node_id), **inputs)
         return builder.finalize()
@@ -247,3 +245,19 @@ class _NodeBuilder:
                 "pass an integer slot for P1."
             ) from exc
         return Handle(node_id=self.node.id, output_slot=slot)
+
+
+def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
+    inputs = dict(node.widgets)
+    inputs.update(node.inputs)
+    return {
+        key: value
+        for key, value in inputs.items()
+        if not _is_ui_only_prompt_input(key, value)
+    }
+
+
+def _is_ui_only_prompt_input(key: str, value: Any) -> bool:
+    if key in {"videopreview", "preview", "preview_image"} and isinstance(value, dict):
+        return True
+    return False

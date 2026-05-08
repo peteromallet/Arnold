@@ -77,6 +77,42 @@ def test_graphbuilder_backend_matches_api_backend() -> None:
     assert workflow.compile("graphbuilder") == workflow.compile("api")
 
 
+def test_explicit_inputs_override_imported_widget_values_at_compile_time() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "LoadImage",
+        inputs={"widget_0": "scratchpad.png", "image": "scratchpad.png"},
+        widgets={"widget_0": "imported.png"},
+    )
+
+    api = workflow.compile("api")
+
+    assert api["1"]["inputs"]["widget_0"] == "scratchpad.png"
+    assert api["1"]["inputs"]["image"] == "scratchpad.png"
+
+
+def test_compile_drops_video_preview_ui_payloads() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "VHS_VideoCombine",
+        inputs={
+            "images": ["2", 0],
+            "videopreview": {
+                "hidden": False,
+                "params": {"filename": "preview.mp4"},
+                "paused": False,
+            },
+        },
+    )
+
+    api = workflow.compile("api")
+
+    assert "videopreview" not in api["1"]["inputs"]
+    assert api["1"]["inputs"]["images"] == ["2", 0]
+
+
 def test_official_index_uses_package_manifest_metadata(tmp_path: Path) -> None:
     repo = tmp_path / "workflow_templates"
     templates = repo / "templates"
