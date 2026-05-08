@@ -146,6 +146,26 @@ def test_entries_from_scratchpad_path_reads_materialized_requirements(tmp_path: 
     ]
 
 
+def test_entries_from_scratchpad_path_respects_explicit_subdir_for_non_split_asset(tmp_path: Path) -> None:
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        "READY_REQUIREMENTS = {'models': ["
+        "{'name': 'flux-2-klein-4b-fp8.safetensors', "
+        "'url': 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors', "
+        "'subdir': 'diffusion_models'}"
+        "], 'custom_nodes': []}\n",
+        encoding="utf-8",
+    )
+
+    assert entries_from_scratchpad_path(scratchpad) == [
+        {
+            "name": "flux-2-klein-4b-fp8.safetensors",
+            "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
+            "subdir": "diffusion_models",
+        }
+    ]
+
+
 def test_real_wan_t2v_extracts_three_assets() -> None:
     entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/official/video/wan_t2v.json"))
 

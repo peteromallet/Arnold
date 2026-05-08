@@ -123,6 +123,9 @@ def _subdir_for_model(model: Mapping[str, Any], *, class_type: str, url: str) ->
     directory = model.get("directory")
     if isinstance(directory, str) and directory:
         return directory
+    subdir = model.get("subdir")
+    if isinstance(subdir, str) and subdir:
+        return subdir
     split_subdir = _hf_split_files_subdir(url)
     if split_subdir is not None:
         return split_subdir
