@@ -66,6 +66,35 @@ python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
 
 The converter validates emitted Python by importing the module, calling `build()`, compiling API output, and running schema validation when a provider is available.
 
+## From JSON To Checked-In Python
+
+Use this path for workflows that should become reusable templates:
+
+1. Keep the raw JSON in `workflow_corpus/.../<id>.json` when it is useful source material.
+2. Run `port check <json> --json` and resolve hard diagnostics before conversion.
+3. Convert to an editable scratchpad first when the graph needs investigation.
+4. Convert with `--ready-id <kind>/<id>` or hand-author `ready_templates/<kind>/<id>.py` when the workflow becomes reusable.
+5. Add or update the `workflow_corpus/manifests/coverage.json` row with `id`, `path`, `media`, `task`, `coverage_tier`, and `ready_template: true`.
+6. Refresh the static discovery index:
+
+```bash
+python -m tools.refresh_template_index
+python -m tools.refresh_template_index --check
+```
+
+Then validate the Python template:
+
+```bash
+python -m vibecomfy.cli validate ready_templates/<kind>/<id>.py
+python -m pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_cli.py
+```
+
+Editing internals of a Python template does not require a manifest or index
+change unless its identity, category, task, coverage tier, custom-node
+requirements, model requirements, or reusable capability changes. Adding,
+renaming, or removing a ready template must update `coverage.json` and
+`template_index.json`; `tools.refresh_template_index --check` catches drift.
+
 ## Live Validation Loop
 
 Run this order while porting:

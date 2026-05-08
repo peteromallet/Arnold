@@ -12,8 +12,8 @@ raw Comfy workflow JSON
   -> port check report
   -> port-converted Python scratchpad
   -> workflow_corpus/manifests/coverage.json entry
-  -> scripts/materialize_ready_templates.py policy, if needed
-  -> ready_templates/<media>/<id>.py
+  -> port-converted or hand-authored ready_templates/<media>/<id>.py
+  -> tools.refresh_template_index
   -> local validate
   -> focused RunPod matrix scope
   -> checked-in artifact notes/docs if it exposes a new compatibility issue
@@ -39,8 +39,8 @@ Use `--head-check-models` only when you intentionally want model URL HEAD checks
 5. Add model registry entries or workflow metadata for model staging.
 6. Convert to a Python scratchpad, then decide whether a ready-template candidate is warranted.
 7. Add a manifest row.
-8. Add a materializer policy when the raw workflow is not directly smoke-runnable.
-9. Regenerate ready templates.
+8. Create the ready template with `port convert --ready-id`, or hand-author it when the reusable template needs clearer runtime behavior.
+9. Refresh the ready-template index.
 10. Run local validation and tests.
 11. Add or update a focused RunPod scope.
 12. Run the focused RunPod matrix.
@@ -69,7 +69,7 @@ workflow_corpus/custom_nodes/<node_pack>/<source>/<id>.json
 workflow_corpus/community/<source>/<id>.json
 ```
 
-Prefer official Comfy templates when they exist. Use custom-node examples when the capability only exists there. Keep the raw JSON as close to upstream as possible; runtime-smoke edits belong in the materializer policy, not in the source file, unless the source is a small hand-authored API smoke fixture.
+Prefer official Comfy templates when they exist. Use custom-node examples when the capability only exists there. Keep the raw JSON as close to upstream as possible; runtime-smoke edits belong in the ready template, not in the source file, unless the source is a small hand-authored API smoke fixture.
 
 ## 3. Custom Nodes
 
@@ -98,7 +98,8 @@ uv run python -m vibecomfy.cli doctor workflow_corpus/custom_nodes/.../<id>.json
 
 There are two model paths:
 
-1. Workflow-embedded model URLs: keep them in workflow metadata. `scripts/materialize_ready_templates.py` extracts them into `READY_REQUIREMENTS["models"]`.
+1. Workflow-embedded model URLs: keep them in workflow metadata or the ready
+   template `READY_REQUIREMENTS["models"]`.
 2. Node-pack-specific model layouts: add them to `vibecomfy/registry/models.yaml` so staging can hardlink or symlink the same downloaded asset into every path expected by each node pack.
 
 Use the registry when a model has aliases, multiple target directories, custom-node naming conventions, or a minimum-size sanity check. The matrix should not hide model staging inside one-off shell snippets long term.
@@ -122,11 +123,25 @@ Add a row to `workflow_corpus/manifests/coverage.json`:
 }
 ```
 
-`coverage_tier: required` means it runs in the default matrix. `supplemental` needs an explicit scope unless it belongs to an existing scoped family. Use `ready_template: true` when it should materialize into checked-in Python.
+`coverage_tier: required` means it runs in the default matrix. `supplemental` needs an explicit scope unless it belongs to an existing scoped family. Use `ready_template: true` when it should have checked-in Python.
 
-## 6. Materializer Policy
+## 6. Python Ready Template
 
-Add a policy in `scripts/materialize_ready_templates.py` when a source workflow needs smoke-time normalization:
+Create `ready_templates/<media>/<id>.py` by converting source JSON or by
+hand-authoring a `VibeWorkflow` builder.
+
+Use conversion when the raw workflow is already close to executable:
+
+```bash
+uv run python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json \
+  --ready-id <media>/<id> \
+  --out ready_templates/<media>/<id>.py \
+  --json
+```
+
+Hand-author when the reusable template needs clearer parameters, loops,
+conditional patching, or model/runtime decisions that are awkward in raw JSON.
+Either way, use the ready template to make smoke-time normalization explicit:
 
 - reduce resolution, duration, frame count, steps, or batch size;
 - replace gated/huge models with public smoke variants;
@@ -137,10 +152,12 @@ Add a policy in `scripts/materialize_ready_templates.py` when a source workflow 
 
 Do not use the policy to paper over missing custom-node or model declarations. Those belong in `node_packs.py`, `custom_nodes.lock`, or `models.yaml`.
 
-Regenerate:
+Refresh the static ready-template index after adding, renaming, or removing a
+ready template:
 
 ```bash
-uv run python scripts/materialize_ready_templates.py
+uv run python -m tools.refresh_template_index
+uv run python -m tools.refresh_template_index --check
 ```
 
 ## 7. Local Validation
@@ -166,6 +183,12 @@ uv run pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests
 
 For a new scope, add a unit test in `tests/test_runpod_matrix.py` so the selected rows cannot silently disappear.
 
+If the workflow is used by Reigh app parity, also update the worker-side
+capability contract in `../reigh-worker/scripts/capability_contracts/` and run
+that repo's `python -m scripts.capability_contracts.report validate`. VibeComfy
+owns graph/template validity; the worker contract owns product route, variant,
+artifact, app-inventory, and live-evidence claims.
+
 ## 8. RunPod Validation
 
 Use focused scopes. Do not run the full matrix while iterating on one family:
@@ -184,7 +207,8 @@ That means the machine should not require hand setup for a checked-in matrix sco
 - custom-node install: `vibecomfy/node_packs.py`, `custom_nodes.lock`, or `scripts/runpod_corpus_matrix.py`;
 - model staging: `vibecomfy/registry/models.yaml` and `vibecomfy.registry.models_loader`;
 - workflow patching: `scripts/runpod_matrix_remote.py`;
-- ready-template policy: `scripts/materialize_ready_templates.py`;
+- ready-template conversion: `python -m vibecomfy.cli port convert ... --ready-id ...`;
+- ready-template index: `python -m tools.refresh_template_index`;
 - fixtures: `workflow_corpus/input/` and `vibecomfy.fixtures`;
 - override behavior: matrix scope policy or the family-aware override layer.
 

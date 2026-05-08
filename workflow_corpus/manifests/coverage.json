@@ -9,7 +9,8 @@
       "model_family": "qwen-image-edit",
       "task": "image_edit",
       "media": "image",
-      "coverage_tier": "required"
+      "coverage_tier": "required",
+      "ready_template": "edit/qwen_image_edit"
     },
     {
       "id": "qwen_image_2512",
@@ -19,7 +20,8 @@
       "task": "text_to_image",
       "media": "image",
       "coverage_tier": "required",
-      "approach": "official Qwen-Image-2512 text-to-image workflow using the 4-step Lightning LoRA path for smoke/runtime validation"
+      "approach": "official Qwen-Image-2512 text-to-image workflow using the 4-step Lightning LoRA path for smoke/runtime validation",
+      "ready_template": "image/qwen_image_2512"
     },
     {
       "id": "z_image",
@@ -28,7 +30,8 @@
       "model_family": "z-image",
       "task": "text_to_image",
       "media": "image",
-      "coverage_tier": "required"
+      "coverage_tier": "required",
+      "ready_template": "image/z_image"
     },
     {
       "id": "wan_t2v",
@@ -37,7 +40,8 @@
       "model_family": "wan",
       "task": "text_to_video",
       "media": "video",
-      "coverage_tier": "required"
+      "coverage_tier": "required",
+      "ready_template": "video/wan_t2v"
     },
     {
       "id": "wan_i2v",
@@ -46,7 +50,8 @@
       "model_family": "wan",
       "task": "image_to_video",
       "media": "video",
-      "coverage_tier": "required"
+      "coverage_tier": "required",
+      "ready_template": "video/wan_i2v"
     },
     {
       "id": "wanvideo_wrapper_21_14b_t2v",
@@ -243,7 +248,8 @@
       "task": "text_to_video",
       "media": "video",
       "coverage_tier": "required",
-      "note": "Runtime gate uses the expanded official Lightricks single-stage workflow so VibeComfy can patch a 24GB low-VRAM smoke shape. The Comfy-Org template remains in the corpus as source material, but its main body is a subgraph node."
+      "note": "Runtime gate uses the expanded official Lightricks single-stage workflow so VibeComfy can patch a 24GB low-VRAM smoke shape. The Comfy-Org template remains in the corpus as source material, but its main body is a subgraph node.",
+      "ready_template": "video/ltx2_3_t2v"
     },
     {
       "id": "ltx2_3_i2v",
@@ -253,7 +259,8 @@
       "task": "image_to_video",
       "media": "video",
       "coverage_tier": "required",
-      "note": "Runtime gate uses the expanded official Lightricks single-stage workflow with the I2V branch enabled. The Comfy-Org template remains in the corpus as source material, but its main body is a subgraph node."
+      "note": "Runtime gate uses the expanded official Lightricks single-stage workflow with the I2V branch enabled. The Comfy-Org template remains in the corpus as source material, but its main body is a subgraph node.",
+      "ready_template": "video/ltx2_3_i2v"
     },
     {
       "id": "ltx2_3_lightricks_single_stage",
@@ -263,6 +270,11 @@
       "task": "text_or_image_to_video",
       "media": "video",
       "coverage_tier": "supplemental",
+      "source_only": true,
+      "ready_template_consumers": [
+        "video/ltx2_3_t2v",
+        "video/ltx2_3_i2v"
+      ],
       "note": "Shared source workflow used by the required LTX T2V and I2V smoke variants."
     },
     {
@@ -441,7 +453,8 @@
       "model_family": "flux2-klein-4b",
       "task": "text_to_image",
       "media": "image",
-      "coverage_tier": "required"
+      "coverage_tier": "required",
+      "ready_template": "image/flux2_klein_4b_t2i"
     },
     {
       "id": "flux2_klein_9b_t2i",
@@ -462,7 +475,7 @@
       "task": "image_edit",
       "media": "image",
       "coverage_tier": "supplemental",
-      "ready_template": true,
+      "ready_template": "edit/flux2_klein_4b_image_edit_base",
       "approach": "official Flux.2 Klein 4B base image-edit workflow"
     },
     {
@@ -472,7 +485,8 @@
       "model_family": "flux2-klein-4b",
       "task": "image_edit",
       "media": "image",
-      "coverage_tier": "required"
+      "coverage_tier": "required",
+      "ready_template": "edit/flux2_klein_4b_image_edit_distilled"
     },
     {
       "id": "flux2_klein_9b_image_edit_base",
@@ -482,7 +496,7 @@
       "task": "image_edit",
       "media": "image",
       "coverage_tier": "supplemental",
-      "ready_template": true,
+      "ready_template": "edit/flux2_klein_9b_image_edit_base",
       "approach": "official Flux.2 Klein 9B base image-edit workflow"
     },
     {
@@ -493,7 +507,7 @@
       "task": "image_edit",
       "media": "image",
       "coverage_tier": "supplemental",
-      "ready_template": true,
+      "ready_template": "edit/flux2_klein_9b_image_edit_distilled",
       "approach": "official Flux.2 Klein 9B distilled image-edit workflow"
     },
     {
@@ -504,7 +518,8 @@
       "task": "text_to_image",
       "media": "image",
       "coverage_tier": "required",
-      "note": "Official 9B safetensors are gated without HF_TOKEN, so this runtime variant uses the public Unsloth GGUF quantization through ComfyUI-GGUF while preserving the official workflow shape."
+      "note": "Official 9B safetensors are gated without HF_TOKEN, so this runtime variant uses the public Unsloth GGUF quantization through ComfyUI-GGUF while preserving the official workflow shape.",
+      "ready_template": "image/flux2_klein_9b_gguf_t2i"
     },
     {
       "id": "ace_step_1_5_t2a_song",
@@ -553,6 +568,90 @@
       "ready_template": true,
       "approach": "reference-audio voice cloning with a bundled smoke fixture",
       "runtime_note": "Uses workflow_corpus/input/speech_smoke.wav as the reference clip for repeatable validation."
+    },
+    {
+      "id": "basic_image_upscale",
+      "path": "ready_templates/image/basic_image_upscale.py",
+      "source": "VibeComfy manual Reigh parity template",
+      "model_family": "comfy-core",
+      "task": "image_upscale",
+      "media": "image",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "Core ComfyUI lanczos ImageScaleBy; maps Reigh image-upscale parameters without external API calls.",
+      "runtime_note": "This preserves the task contract but is not FlashVSR/RealESRGAN model super-resolution."
+    },
+    {
+      "id": "z_image_img2img",
+      "path": "ready_templates/image/z_image_img2img.py",
+      "source": "VibeComfy manual Reigh parity template from Wan2GP/defaults/z_image_img2img.json",
+      "model_family": "z-image",
+      "task": "image_to_image",
+      "media": "image",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "Z-Image Turbo img2img via VAEEncode init latent and KSampler denoise strength",
+      "runtime_note": "Intended to match Reigh z_image_turbo_i2i production semantics."
+    },
+    {
+      "id": "basic_video_enhance",
+      "path": "ready_templates/video/basic_video_enhance.py",
+      "source": "VibeComfy manual Reigh parity template",
+      "model_family": "comfy-core-videohelpersuite",
+      "task": "video_enhance",
+      "media": "video",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "VHS_LoadVideo -> ImageScaleBy -> VHS_VideoCombine, avoiding gated model downloads.",
+      "runtime_note": "Frame interpolation is intentionally not enabled in the default app-active route because the prior GIMM-VFI asset is license-gated without HF_TOKEN."
+    },
+    {
+      "id": "wan22_animate_native_first_stage",
+      "path": "ready_templates/video/wan22_animate_native_first_stage.py",
+      "source": "Comfy-Org/workflow_templates video_wan2_2_14B_animate adapted as native VibeComfy parity template",
+      "model_family": "wan-2.2-animate",
+      "task": "animate_character",
+      "media": "video",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "Native ComfyUI Wan 2.2 Animate first-stage replacement workflow using DWPose, SAM2 masking, and native WanAnimateToVideo.",
+      "runtime_note": "Worker scratchpads patch reference image, motion video, prompt, negative prompt, seed, steps, width, height, frame count, and output options."
+    },
+    {
+      "id": "wanvideo_wrapper_22_14b_t2i",
+      "path": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py",
+      "source": "ComfyUI-WanVideoWrapper example workflow adapted as Reigh parity template",
+      "model_family": "wanvideo-wrapper-2.2-14b",
+      "task": "text_to_image_single_frame",
+      "media": "video",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "Wan 2.2 14B high/low two-phase text-to-video graph decoded as one image frame",
+      "runtime_note": "Intended to match Reigh wan_2_2_t2i, which forces video_length=1 and returns PNG."
+    },
+    {
+      "id": "wanvideo_wrapper_22_14b_i2v_kijai",
+      "path": "ready_templates/video/wanvideo_wrapper_22_14b_i2v_kijai.py",
+      "source": "kijai/ComfyUI-WanVideoWrapper wanvideo_2_2_I2V_A14B_example_WIP",
+      "model_family": "wanvideo-wrapper-2.2-14b",
+      "task": "image_to_video",
+      "media": "video",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "Kijai WanVideoWrapper Wan 2.2 A14B I2V high/low two-phase workflow with Lightx2v LoRA",
+      "runtime_note": "Worker scratchpads patch image, prompt, seed, resolution, frame count, and force VHS output saving."
+    },
+    {
+      "id": "wanvideo_wrapper_22_14b_vace_cocktail",
+      "path": "ready_templates/video/wanvideo_wrapper_22_14b_vace_cocktail.py",
+      "source": "ComfyUI-WanVideoWrapper VACE plus Wan2GP VACE baseline adapted as Reigh parity template",
+      "model_family": "wanvideo-wrapper-2.2-14b-vace",
+      "task": "video_vace_travel_join",
+      "media": "video",
+      "coverage_tier": "supplemental",
+      "ready_template": true,
+      "approach": "Wan 2.2 14B VACE high/high/low cocktail with first/last frame and optional control-video conditioning",
+      "runtime_note": "Matches Reigh Wan2GP VACE baseline shape: 81 frames, 6 Euler steps, CFG 3/1/1, flow shift 5."
     }
   ]
 }

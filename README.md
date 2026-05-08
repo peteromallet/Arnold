@@ -34,6 +34,17 @@ python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py 
 
 `port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, and model asset issues while staying offline by default. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies. See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
 
+For reusable workflows, the checked-in surface is Python, not raw JSON. Keep upstream/source workflows in `workflow_corpus/`, convert or author the reusable version in `ready_templates/<kind>/<id>.py`, record it in `workflow_corpus/manifests/coverage.json`, and refresh the static discovery index:
+
+```bash
+python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out ready_templates/<kind>/<id>.py --ready-id <kind>/<id> --json
+python -m tools.refresh_template_index
+python -m tools.refresh_template_index --check
+python -m vibecomfy.cli validate ready_templates/<kind>/<id>.py
+```
+
+The manifest/index tests catch missing ready-template rows, stale `template_index.json`, and manifest entries that point at Python templates that do not exist.
+
 ## Thanks
 
 VibeComfy is a thin Python authoring layer. The real work belongs to:

@@ -47,6 +47,17 @@ def test_ready_template_ids_include_curated_workflows() -> None:
     assert all(not template_id.rsplit("/", 1)[-1].startswith("_") for template_id in ids)
 
 
+def test_template_index_matches_ready_template_discovery() -> None:
+    from tools.refresh_template_index import build_template_index
+
+    expected = build_template_index()
+    actual = json.loads(Path("template_index.json").read_text(encoding="utf-8"))
+
+    assert actual["template_count"] == expected["template_count"]
+    assert [item["id"] for item in actual["templates"]] == [item["id"] for item in expected["templates"]]
+    assert actual["templates"] == expected["templates"]
+
+
 def test_ready_template_loads_vibe_workflow() -> None:
     workflow = workflow_from_ready("edit/qwen_image_edit")
 

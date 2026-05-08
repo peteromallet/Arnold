@@ -17,13 +17,14 @@ Each entry defines:
 - `task`: text-to-image, image-edit, text-to-video, image-to-video, etc.
 - `media`: expected output media.
 - `coverage_tier`: `required` means RunPod validation must attempt baseline Comfy and VibeComfy execution.
-- `ready_template`: `true` means the workflow is materialized as a Python ready template even when it is supplemental runtime coverage.
+- `ready_template`: `true` means the workflow has a checked-in Python ready template even when it is supplemental runtime coverage. A string value points at the category-qualified Python template id when it differs from the manifest id.
+- `source_only`: `true` means the row is retained as upstream source material and is intentionally not a runnable template row. Use `ready_template_consumers` to list the Python ready templates that consume that source.
 
 Status language:
 
 - `raw_json`: imported source material only.
 - `converted`: raw JSON normalizes into API JSON and VibeWorkflow.
-- `ready_template`: materialized Python template that can be loaded and structurally validated.
+- `ready_template`: checked-in Python template that can be loaded and structurally validated.
 - `runtime_ready`: all node packs, model files, and input media are declared and staged for a RunPod attempt.
 - `runtime_green`: baseline Comfy and VibeComfy both generated the expected media on RunPod.
 

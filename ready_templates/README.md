@@ -8,7 +8,7 @@ Templates are organized by category (`edit/`, `image/`, `video`) and expose cate
 
 Some legacy templates still keep the API workflow, ready metadata, and ready requirements in the template file while delegating shared build/policy behavior to `vibecomfy.registry.ready_template`. Those remain supported until they are refactored.
 
-The current checked-in ready corpus covers 46 templates:
+The current checked-in ready corpus covers 59 templates:
 
 - Image/edit: Z-Image, Qwen image edit, Flux.2 Klein 4B and 9B T2I/edit variants, plus the Flux.2 Klein 9B GGUF T2I runtime fallback.
 - Wan: official Wan T2V/I2V plus the representative Kijai WanVideoWrapper matrix.
@@ -24,8 +24,16 @@ Use `vibecomfy nodes install-plan <template.py>` when a ready template fails on 
 
 Ready templates change handles. Recipes in `recipes/` decorate handles for specific runs by applying patches, seeds, or extra placeholder chains.
 
-Validate the library with:
+After adding, moving, or deleting a ready template, update the manifest row and refresh the static index:
 
 ```bash
-python3 scripts/runpod_corpus_matrix.py
+python -m tools.refresh_template_index
+python -m tools.refresh_template_index --check
+pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py
+```
+
+Validate the runtime matrix with a focused scope while iterating, then broaden it:
+
+```bash
+VIBECOMFY_MATRIX_SCOPE=<family> python scripts/runpod_corpus_matrix.py
 ```

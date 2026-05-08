@@ -62,6 +62,33 @@ def test_corpus_matrix_plan_splits_required_workflows(tmp_path: Path) -> None:
     assert format_ready_rows(plan.ready_rows, tmp_path) == "core\tready_templates/image/core.py\timage"
 
 
+def test_coverage_manifest_ready_template_rows_resolve_to_checked_in_python() -> None:
+    manifest = json.loads(Path("workflow_corpus/manifests/coverage.json").read_text(encoding="utf-8"))
+    ready_ids = {
+        path.relative_to("ready_templates").with_suffix("").as_posix()
+        for path in Path("ready_templates").rglob("*.py")
+        if path.name != "__init__.py" and not path.name.startswith("_")
+    }
+
+    missing: list[tuple[str, object]] = []
+    unmarked: list[tuple[str, str]] = []
+    for item in manifest["workflows"]:
+        ready_template = item.get("ready_template")
+        if ready_template:
+            candidates = _ready_template_candidates(item)
+            if not any(candidate in ready_ids for candidate in candidates):
+                missing.append((item["id"], ready_template))
+        elif item.get("source_only"):
+            consumers = item.get("ready_template_consumers", [])
+            if not consumers or not all(isinstance(consumer, str) and consumer in ready_ids for consumer in consumers):
+                missing.append((item["id"], "source_only consumers"))
+        elif any(candidate in ready_ids for candidate in _ready_template_candidates(item)):
+            unmarked.append((item["id"], item["path"]))
+
+    assert missing == []
+    assert unmarked == []
+
+
 def test_corpus_matrix_plan_scope_can_skip_core_rows(tmp_path: Path) -> None:
     manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
@@ -553,6 +580,13 @@ def test_corpus_matrix_records_offline_port_reports_and_preview_artifacts() -> N
     assert "--head-check-models" not in script
 
 
+def test_corpus_matrix_checks_ready_template_index_instead_of_materializer() -> None:
+    script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
+
+    assert "tools.refresh_template_index --check" in script
+    assert "scripts/materialize_ready_templates.py" not in script
+
+
 def test_corpus_matrix_handles_flux_custom_scheduler_overrides_and_assets() -> None:
     script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
 
@@ -746,3 +780,20 @@ def _ltx_api() -> dict[str, dict]:
         "3940": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "ltx-2.3-22b-dev.safetensors"}},
         "text_encoder": {"class_type": "CLIPLoader", "inputs": {"clip_name": "comfy_gemma_3_12B_it.safetensors"}},
     }
+
+
+def _ready_template_candidates(item: dict) -> tuple[str, ...]:
+    candidates: list[str] = []
+    ready_template = item.get("ready_template")
+    if isinstance(ready_template, str):
+        candidates.append(ready_template)
+    workflow_id = item.get("id")
+    media = item.get("media")
+    if isinstance(workflow_id, str):
+        candidates.append(workflow_id)
+        if isinstance(media, str):
+            candidates.append(f"{media}/{workflow_id}")
+        path = item.get("path")
+        if isinstance(path, str) and "/edit/" in path:
+            candidates.append(f"edit/{workflow_id}")
+    return tuple(dict.fromkeys(candidates))

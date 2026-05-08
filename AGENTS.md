@@ -357,11 +357,12 @@ The full operating path lives in **`docs/adding_templates_models.md`**. Read it 
 5. **Declare models**: workflow-embedded URLs go in workflow metadata; node-pack-specific layouts go in `vibecomfy/registry/models.yaml`.
 6. **Convert to Python** with `python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scratchpads/<id>.py --json`; use `--ready-id <kind>/<name>` only for ready-template candidates.
 7. **Add a manifest row** in `workflow_corpus/manifests/coverage.json` with `id`, `path`, `media`, `task`, `coverage_tier`, `ready_template: true`.
-8. **Optional materializer policy** in `scripts/materialize_ready_templates.py` if the source needs smoke-time normalization (lower res / steps, fixture injection, deterministic seeds).
-9. **Generate** the ready Python file with `uv run python scripts/materialize_ready_templates.py` (or hand-author it under `ready_templates/<media>/<id>.py` for full control — see `ready_templates/image/z_image.py` for the canonical hand-authored shape).
-10. **Validate locally**: `vibecomfy validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
+8. **Create the Python ready template** with `python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --ready-id <media>/<id> --out ready_templates/<media>/<id>.py --json`, or hand-author it under `ready_templates/<media>/<id>.py` for full control.
+9. **Refresh static discovery** with `python -m tools.refresh_template_index` and verify it with `python -m tools.refresh_template_index --check`.
+10. **Validate locally**: `python -m vibecomfy.cli validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
 11. **Validate on RunPod** with a focused scope: `VIBECOMFY_MATRIX_SCOPE=<family> uv run python scripts/runpod_corpus_matrix.py`. Don't run the full matrix while iterating.
-12. **Document failures** in `docs/hiddenswitch_incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.
+12. **For Reigh app parity**, update `../reigh-worker/scripts/capability_contracts/` after the VibeComfy template is valid. The worker contract records route, app, variant, artifact, and live evidence; VibeComfy records workflow validity.
+13. **Document failures** in `docs/hiddenswitch_incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.
 
 For a one-off composition (combining existing workflows), prefer a **recipe** under `recipes/` — that's flow 5 and doesn't need a manifest entry.
 
