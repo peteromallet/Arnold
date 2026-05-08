@@ -172,6 +172,37 @@ def test_normalize_to_api_without_schema_provider_preserves_widget_keys() -> Non
     }
 
 
+def test_normalize_to_api_preserves_dict_widget_values() -> None:
+    raw = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "VHS_LoadVideo",
+                "widgets_values": {
+                    "video": "motion.mp4",
+                    "force_rate": 16,
+                    "custom_width": 832,
+                    "custom_height": 480,
+                    "save_output": True,
+                },
+                "inputs": [
+                    {"name": "custom_width", "link": 1},
+                ],
+            },
+            {"id": 2, "type": "INTConstant", "widgets_values": [512], "inputs": []},
+        ],
+        "links": [[1, 2, 0, 1, 0, "INT"]],
+    }
+
+    api = normalize_to_api(raw)
+
+    assert api["1"]["inputs"]["video"] == "motion.mp4"
+    assert api["1"]["inputs"]["force_rate"] == 16
+    assert api["1"]["inputs"]["custom_width"] == ["2", 0]
+    assert api["1"]["inputs"]["custom_height"] == 480
+    assert api["1"]["inputs"]["save_output"] is True
+
+
 def test_local_schema_provider_missing_index_is_empty(tmp_path) -> None:
     provider = LocalSchemaProvider(tmp_path / "missing_node_index.json")
 

@@ -57,7 +57,12 @@ def normalize_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | N
             if name and link_id in link_map:
                 inputs[name] = [link_map[link_id][0], link_map[link_id][1]]
         widgets = node.get("widgets_values", [])
-        if isinstance(widgets, list):
+        if isinstance(widgets, dict):
+            for name, value in widgets.items():
+                if name in inputs:
+                    continue
+                inputs[str(name)] = value
+        elif isinstance(widgets, list):
             widget_names = _schema_input_names(schema_provider, class_type)
             for idx, value in enumerate(widgets):
                 name = widget_names[idx] if idx < len(widget_names) else f"widget_{idx}"
