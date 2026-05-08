@@ -113,6 +113,12 @@ def test_wan_animate_template_declares_pose_preprocess_pack_and_models() -> None
     )
 
 
+def test_native_wan_animate_template_declares_frame_count_binding() -> None:
+    workflow = workflow_from_ready("video/wan22_animate_native_first_stage")
+
+    assert workflow.metadata["unbound_inputs"]["num_frames"] == "232:62.length"
+
+
 def test_ready_template_build_has_category_qualified_metadata() -> None:
     workflow = workflow_from_ready("qwen_image_edit")
 
