@@ -12,7 +12,7 @@ from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
 from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore
-from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert
+from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_widgets
 import vibecomfy.node_packs_install as node_packs_install
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
@@ -174,6 +174,16 @@ def _write_port_node_index(tmp_path: Path) -> None:
                     },
                     "outputs": [],
                 },
+                {
+                    "class_type": "PromptNode",
+                    "pack": "core",
+                    "inputs": {
+                        "clip": {"type": "CLIP", "required": True},
+                        "text": {"type": "STRING", "required": True},
+                        "mode": {"type": "STRING", "required": False},
+                    },
+                    "outputs": [],
+                },
             ]
         ),
         encoding="utf-8",
@@ -234,6 +244,54 @@ def test_port_check_returns_nonzero_for_hard_port_errors(
     captured = capsys.readouterr()
     assert code == 1
     assert "unresolved_runtime_class" in captured.out
+
+
+def test_port_widgets_json_suggests_widget_only_schema_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = tmp_path / "widgets_workflow.json"
+    workflow_path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": 1,
+                        "type": "PromptNode",
+                        "widgets_values": ["hello", "fast", {"collapsed": True}],
+                        "inputs": [],
+                    }
+                ],
+                "links": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_widgets(argparse.Namespace(workflow=str(workflow_path), json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["unresolved_widget_aliases"] == [{"node_id": "1", "class_type": "PromptNode", "input": "widget_2"}]
+    assert payload["suggestions"] == [
+        {
+            "class_type": "PromptNode",
+            "nodes": [
+                {
+                    "node_id": "1",
+                    "unresolved_inputs": ["widget_2"],
+                    "widgets_values": ["hello", "fast", {"collapsed": True}],
+                }
+            ],
+            "observed_widget_count": 3,
+            "schema_source": "schema_provider",
+            "suggested_schema_entry": ["text", "mode", None],
+            "python": "'PromptNode': ['text', 'mode', None]",
+        }
+    ]
 
 
 def test_port_convert_emits_importable_scratchpad_by_default(

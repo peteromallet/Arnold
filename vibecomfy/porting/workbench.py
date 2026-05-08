@@ -13,7 +13,7 @@ from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_s
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 from vibecomfy.porting.assets import analyze_model_assets
 from vibecomfy.porting.report import NodePackSuggestion, PortIssue, PortReport
-from vibecomfy.porting.widget_aliases import unresolved_widget_aliases
+from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.registry.ready import workflow_from_ready
 from vibecomfy.scratchpad_loader import load_scratchpad
 from vibecomfy.schema import schema_for, schema_registry_empty
@@ -97,7 +97,7 @@ def analyze_source(
     report.asset_checks.extend(asset_analysis.checks)
     report.diagnostics.extend(asset_analysis.diagnostics)
 
-    widget_analysis = _widget_analysis(api_prompt)
+    widget_analysis = _widget_analysis(api_prompt, raw_workflow=loaded.raw_workflow, schema_provider=schema_provider)
     report.metadata["widget_analysis"] = widget_analysis
     for alias in widget_analysis["unresolved_widget_aliases"]:
         report.diagnostics.append(
@@ -301,8 +301,13 @@ def _class_in_known_pack(class_type: str) -> bool:
     return bool(resolve_node_packs({class_type}))
 
 
-def _widget_analysis(api_prompt: dict[str, Any] | None) -> dict[str, Any]:
-    return {"unresolved_widget_aliases": unresolved_widget_aliases(api_prompt)}
+def _widget_analysis(
+    api_prompt: dict[str, Any] | None,
+    *,
+    raw_workflow: dict[str, Any] | None,
+    schema_provider: Any | None,
+) -> dict[str, Any]:
+    return widget_alias_analysis(api_prompt, raw_workflow=raw_workflow, schema_provider=schema_provider)
 
 
 def _sort_key(value: Any) -> tuple[int, str]:

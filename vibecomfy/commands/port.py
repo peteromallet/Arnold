@@ -85,6 +85,30 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
     return 0 if payload["status"] == "ok" else 1
 
 
+def _cmd_port_widgets(args: argparse.Namespace) -> int:
+    schema_provider = get_schema_provider("local")
+    try:
+        report = analyze_source(
+            args.workflow,
+            schema_provider=schema_provider,
+            head_check_models=False,
+        )
+    except Exception as exc:
+        print(f"port widgets failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    widget_analysis = report.metadata.get("widget_analysis", {})
+    payload = {
+        "source": report.source,
+        "source_hash": report.source_hash,
+        **widget_analysis,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(_render_widgets(payload))
+    return 0
+
+
 def _render_check(report: Any) -> str:
     counts = {"error": 0, "warning": 0, "info": 0}
     for issue in report.diagnostics:
@@ -137,6 +161,28 @@ def _emit_convert_payload(payload: dict[str, Any], *, json_output: bool) -> None
         print(f"- {issue['severity']}: {issue['code']}: {issue['message']}", file=sys.stderr)
 
 
+def _render_widgets(payload: dict[str, Any]) -> str:
+    unresolved = payload.get("unresolved_widget_aliases") or []
+    suggestions = payload.get("suggestions") or []
+    lines = [
+        f"port widgets: {len(unresolved)} unresolved positional widget alias"
+        f"{'' if len(unresolved) == 1 else 'es'}",
+        f"source: {payload.get('source')}",
+    ]
+    if not unresolved:
+        return "\n".join(lines)
+    for group in suggestions:
+        lines.append(f"- {group['class_type']}: {len(group['nodes'])} node(s), source={group['schema_source']}")
+        if group.get("python"):
+            lines.append(f"  schema: {group['python']}")
+        else:
+            lines.append("  schema: unavailable from local object_info/node_index")
+        for node in group["nodes"][:5]:
+            inputs = ", ".join(node["unresolved_inputs"])
+            lines.append(f"  node {node['node_id']}: {inputs}")
+    return "\n".join(lines)
+
+
 def register(subparsers) -> None:
     port = subparsers.add_parser(
         "port",
@@ -170,5 +216,17 @@ def register(subparsers) -> None:
     convert.add_argument("--head-check-models", action="store_true", help="Opt in to non-downloading HEAD checks for model URLs.")
     convert.set_defaults(func=_cmd_port_convert)
 
+    widgets = port_subparsers.add_parser(
+        "widgets",
+        help="Suggest widget-only schema entries for unresolved positional aliases.",
+        description=(
+            "Report widget_alias_unresolved diagnostics grouped by class and suggest "
+            "widget-only schema entries from local node_index/object_info data when available."
+        ),
+    )
+    widgets.add_argument("workflow")
+    widgets.add_argument("--json", action="store_true")
+    widgets.set_defaults(func=_cmd_port_widgets)
 
-__all__ = ["register", "_cmd_port_check", "_cmd_port_convert"]
+
+__all__ = ["register", "_cmd_port_check", "_cmd_port_convert", "_cmd_port_widgets"]
