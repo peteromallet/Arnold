@@ -9,6 +9,124 @@ if TYPE_CHECKING:
     from vibecomfy.schema.provider import SchemaProvider
 
 
+_POSITIONAL_WIDGET_ALIASES: dict[str, tuple[str, ...]] = {
+    "LoadWanVideoT5TextEncoder": ("model_name", "precision", "load_device", "quantization"),
+    "WanVideoTextEncode": (
+        "positive_prompt",
+        "negative_prompt",
+        "force_offload",
+        "use_disk_cache",
+        "device",
+    ),
+    "WanVideoTextEncodeCached": (
+        "model_name",
+        "precision",
+        "positive_prompt",
+        "negative_prompt",
+        "quantization",
+        "use_disk_cache",
+        "device",
+    ),
+    "WanVideoModelLoader": (
+        "model",
+        "base_precision",
+        "quantization",
+        "load_device",
+        "attention_mode",
+    ),
+    "WanVideoBlockSwap": (
+        "blocks_to_swap",
+        "offload_img_emb",
+        "offload_txt_emb",
+        "use_non_blocking",
+        "vace_blocks_to_swap",
+        "prefetch_blocks",
+        "block_swap_debug",
+    ),
+    "WanVideoTorchCompileSettings": (
+        "backend",
+        "fullgraph",
+        "mode",
+        "dynamic",
+        "dynamo_cache_size_limit",
+        "compile_transformer_blocks_only",
+        "dynamo_recompile_limit",
+        "force_parameter_static_shapes",
+        "allow_unmerged_lora_compile",
+    ),
+    "WanVideoLoraSelect": ("lora", "strength", "low_mem_load", "merge_loras"),
+    "WanVideoLoraSelectMulti": (
+        "lora_0",
+        "strength_0",
+        "lora_1",
+        "strength_1",
+        "lora_2",
+        "strength_2",
+        "lora_3",
+        "strength_3",
+        "lora_4",
+        "strength_4",
+        "low_mem_load",
+        "merge_loras",
+    ),
+    "WanVideoImageToVideoEncode": (
+        "width",
+        "height",
+        "num_frames",
+        "noise_aug_strength",
+        "start_latent_strength",
+        "end_latent_strength",
+        "force_offload",
+        "tiled_vae",
+        "fun_or_fl2v_model",
+    ),
+    "WanVideoVAELoader": ("model_name", "precision"),
+    "WanVideoDecode": (
+        "enable_vae_tiling",
+        "tile_x",
+        "tile_y",
+        "tile_stride_x",
+        "tile_stride_y",
+        "normalization",
+    ),
+    "WanVideoSampler": (
+        "steps",
+        "cfg",
+        "shift",
+        "seed",
+        "force_offload",
+        "scheduler",
+        "riflex_freq_index",
+        "denoise_strength",
+        "batched_cfg",
+        "rope_function",
+        "start_step",
+        "end_step",
+        "add_noise_to_samples",
+    ),
+    "CreateCFGScheduleFloatList": (
+        "steps",
+        "cfg_scale_start",
+        "cfg_scale_end",
+        "interpolation",
+        "start_percent",
+        "end_percent",
+    ),
+    "ImageResizeKJv2": (
+        "width",
+        "height",
+        "upscale_method",
+        "keep_proportion",
+        "pad_color",
+        "crop_position",
+        "divisible_by",
+        "device",
+    ),
+    "INTConstant": ("value",),
+    "FloatConstant": ("value",),
+}
+
+
 @dataclass(slots=True)
 class WorkflowSource:
     id: str
@@ -258,6 +376,7 @@ class _NodeBuilder:
 def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
     inputs = dict(node.widgets)
     inputs.update(node.inputs)
+    _apply_positional_widget_aliases(inputs, node.class_type)
     return {
         key: value
         for key, value in inputs.items()
@@ -273,3 +392,13 @@ def _is_ui_only_prompt_input(key: str, value: Any) -> bool:
 
 def _is_ui_only_node(node: VibeNode) -> bool:
     return node.class_type in {"Note"}
+
+
+def _apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) -> None:
+    aliases = _POSITIONAL_WIDGET_ALIASES.get(class_type)
+    if not aliases:
+        return
+    for index, name in enumerate(aliases):
+        widget_key = f"widget_{index}"
+        if name not in inputs and widget_key in inputs:
+            inputs[name] = inputs[widget_key]

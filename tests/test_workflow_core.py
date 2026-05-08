@@ -124,6 +124,47 @@ def test_compile_drops_note_nodes_from_api_prompt() -> None:
     assert api["2"]["class_type"] == "SaveImage"
 
 
+def test_compile_adds_named_inputs_for_known_custom_node_widgets() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "WanVideoImageToVideoEncode",
+        inputs={
+            "widget_0": 832,
+            "widget_1": 480,
+            "widget_2": 81,
+            "widget_3": 0,
+            "widget_4": 1,
+            "widget_5": 1,
+            "widget_6": True,
+        },
+    )
+    workflow.nodes["2"] = VibeNode("2", "INTConstant", inputs={"widget_0": 6})
+    workflow.nodes["3"] = VibeNode(
+        "3",
+        "WanVideoLoraSelect",
+        inputs={
+            "widget_0": "WanVideo\\Lightx2v\\example.safetensors",
+            "widget_1": 1.0,
+            "widget_2": False,
+            "widget_3": False,
+        },
+    )
+
+    api = workflow.compile("api")
+
+    assert api["1"]["inputs"]["width"] == 832
+    assert api["1"]["inputs"]["height"] == 480
+    assert api["1"]["inputs"]["num_frames"] == 81
+    assert api["1"]["inputs"]["noise_aug_strength"] == 0
+    assert api["1"]["inputs"]["start_latent_strength"] == 1
+    assert api["1"]["inputs"]["end_latent_strength"] == 1
+    assert api["1"]["inputs"]["force_offload"] is True
+    assert api["2"]["inputs"]["value"] == 6
+    assert api["3"]["inputs"]["lora"] == "WanVideo\\Lightx2v\\example.safetensors"
+    assert api["3"]["inputs"]["strength"] == 1.0
+
+
 def test_official_index_uses_package_manifest_metadata(tmp_path: Path) -> None:
     repo = tmp_path / "workflow_templates"
     templates = repo / "templates"
