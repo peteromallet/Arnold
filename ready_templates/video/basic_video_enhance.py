@@ -1,5 +1,5 @@
 # vibecomfy: manual
-"""VideoHelperSuite + GIMM-VFI video enhancement template for Reigh video_enhance parity."""
+"""Public-asset video enhancement template for Reigh video_enhance."""
 from __future__ import annotations
 
 from vibecomfy.registry.ready_template import apply_ready_template_policy
@@ -7,31 +7,24 @@ from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
 READY_METADATA = {
-    "model_assets": [
-        {
-            "name": "gimmvfi_r_arb_lpips_fp32.safetensors",
-            "url": "https://huggingface.co/Kijai/GIMM-VFI/resolve/main/gimmvfi_r_arb_lpips_fp32.safetensors",
-            "directory": "checkpoints",
-        },
-    ],
+    "model_assets": [],
     "unbound_inputs": {
         "video": "1.video",
         "scale_factor": "4.scale_by",
-        "interpolation_multiplier": "3.widget_1",
     },
     "ready_template": "video/basic_video_enhance",
     "workflow_template": "basic_video_enhance",
     "capability": "video_enhance",
     "source_role": "reigh_parity_manual_template",
-    "source_workflow": "Kijai GIMM-VFI pattern adapted from wanvideo_wrapper_22_s2v_context_window.py",
-    "coverage_tier": "production_parity_candidate",
-    "approach": "VHS_LoadVideo -> optional GIMM-VFI interpolation -> ImageScaleBy -> VHS_VideoCombine.",
-    "runtime_note": "Worker scratchpads can bypass interpolation or upscale by redirecting graph edges.",
+    "source_workflow": "ComfyUI core + VideoHelperSuite public-node baseline",
+    "coverage_tier": "production_baseline",
+    "approach": "VHS_LoadVideo -> ImageScaleBy -> VHS_VideoCombine, avoiding gated model downloads.",
+    "runtime_note": "Frame interpolation is intentionally not enabled in the default app-active route because the prior GIMM-VFI asset is license-gated without HF_TOKEN.",
 }
 
 READY_REQUIREMENTS = {
     "models": READY_METADATA["model_assets"],
-    "custom_nodes": ["ComfyUI-VideoHelperSuite", "ComfyUI-KJNodes", "ComfyUI-WanVideoWrapper"],
+    "custom_nodes": ["ComfyUI-VideoHelperSuite"],
 }
 
 
@@ -52,31 +45,11 @@ def build() -> VibeWorkflow:
         skip_first_frames=0,
         select_every_nth=1,
     )
-    model = _node(
-        wf,
-        "DownloadAndLoadGIMMVFIModel",
-        "2",
-        widget_0="gimmvfi_r_arb_lpips_fp32.safetensors",
-        widget_1="fp16",
-        widget_2=False,
-    )
-    interpolated = _node(
-        wf,
-        "GIMMVFI_interpolate",
-        "3",
-        widget_0=1,
-        widget_1=2,
-        widget_2=0,
-        widget_3="fixed",
-        widget_4=False,
-        gimmvfi_model=model.out(0),
-        images=video.out(0),
-    )
     upscaled = _node(
         wf,
         "ImageScaleBy",
         "4",
-        image=interpolated.out(0),
+        image=video.out(0),
         upscale_method="lanczos",
         scale_by=2.0,
     )
