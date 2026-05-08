@@ -62,10 +62,13 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         repo="https://github.com/kijai/ComfyUI-KJNodes.git",
         classes=frozenset(
             {
+                "BlockifyMask",
+                "DrawMaskOnImage",
                 "ImageResizeKJv2",
                 "PreviewAnimation",
                 "GetImageRangeFromBatch",
                 "INTConstant",
+                "PointsEditor",
             }
         ),
         pip_packages=("matplotlib",),

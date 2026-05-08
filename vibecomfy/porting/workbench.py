@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,11 @@ from vibecomfy.registry.ready import workflow_from_ready
 from vibecomfy.scratchpad_loader import load_scratchpad
 from vibecomfy.schema import schema_for, schema_registry_empty
 from vibecomfy.workflow import ValidationIssue, VibeWorkflow
+
+
+_OPAQUE_COMPONENT_CLASS_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 
 @dataclass(slots=True)
@@ -72,6 +78,8 @@ def analyze_source(
 
     for issue in workflow.helper_diagnostics():
         report.diagnostics.append(_port_issue_from_validation(issue, category="helper"))
+
+    report.diagnostics.extend(_materialization_diagnostics(workflow))
 
     custom_node_analysis = _custom_node_analysis(workflow, schema_provider=schema_provider)
     report.metadata["custom_node_analysis"] = custom_node_analysis
@@ -142,6 +150,49 @@ def analyze_source(
         report.recommendations.append("Resolve error diagnostics before spending RunPod GPU time.")
 
     return report
+
+
+def _materialization_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
+    issues: list[PortIssue] = []
+    for node in workflow.nodes.values():
+        class_type = str(node.class_type)
+        if class_type == "None":
+            issues.append(
+                PortIssue(
+                    code="unmaterialized_node_class",
+                    message=(
+                        f"Node {node.id} has class_type 'None'; the workflow was converted without a real "
+                        "runtime node class for this operation."
+                    ),
+                    severity="error",
+                    node_id=node.id,
+                    class_type=class_type,
+                    detail={"category": "materialization"},
+                    recommendation=(
+                        "Re-export with all custom/core nodes available, or replace this source with a fully "
+                        "materialized API workflow before conversion or RunPod validation."
+                    ),
+                )
+            )
+        elif _OPAQUE_COMPONENT_CLASS_RE.match(class_type):
+            issues.append(
+                PortIssue(
+                    code="opaque_component_node_class",
+                    message=(
+                        f"Node {node.id} uses opaque component class {class_type!r}; headless API execution "
+                        "will not know this class unless the component is inlined."
+                    ),
+                    severity="error",
+                    node_id=node.id,
+                    class_type=class_type,
+                    detail={"category": "materialization"},
+                    recommendation=(
+                        "Inline component/subgraph definitions with graphbuilder or ComfyUI's converter before "
+                        "materializing a ready template."
+                    ),
+                )
+            )
+    return issues
 
 
 def load_port_source(source: str, *, schema_provider: Any | None = None) -> LoadedPortSource:

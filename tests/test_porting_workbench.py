@@ -115,6 +115,49 @@ def test_analyze_source_reports_widget_schema_that_compile_did_not_apply(
     assert payload["ok"] is False
 
 
+def test_analyze_source_rejects_unmaterialized_none_nodes(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+                "2": {"class_type": "None", "inputs": {"UNKNOWN": "missing node"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=_provider())
+    payload = report.to_json()
+
+    assert payload["ok"] is False
+    issue = next(issue for issue in payload["diagnostics"] if issue["code"] == "unmaterialized_node_class")
+    assert issue["node_id"] == "2"
+    assert issue["severity"] == "error"
+
+
+def test_analyze_source_rejects_opaque_component_nodes(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    component_class = "90db3fa1-b7fd-4c97-90a4-3e9533589dce"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+                "2": {"class_type": component_class, "inputs": {"image": ["1", 0]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=_provider())
+    payload = report.to_json()
+
+    assert payload["ok"] is False
+    issue = next(issue for issue in payload["diagnostics"] if issue["code"] == "opaque_component_node_class")
+    assert issue["node_id"] == "2"
+    assert issue["class_type"] == component_class
+
+
 def test_analyze_source_resolves_indexed_workflow_references(tmp_path: Path, monkeypatch) -> None:
     workflow_path = tmp_path / "indexed.json"
     workflow = _api_workflow()
