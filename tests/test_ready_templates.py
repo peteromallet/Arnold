@@ -159,6 +159,45 @@ def test_ready_template_preserves_materialized_requirements() -> None:
     assert "ComfyUI-KJNodes" in workflow.requirements.custom_nodes
 
 
+def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> None:
+    workflow = workflow_from_ready("video/ltx2_3_first_last_frame_travel_iclora_control")
+    api = workflow.compile("api")
+
+    assert workflow.validate().ok
+    assert workflow.metadata["source_role"] == "manual_ready_python_template"
+    assert workflow.inputs["start_image"].node_id == "45"
+    assert workflow.inputs["end_image"].node_id == "47"
+    assert workflow.inputs["control_video"].node_id == "5001"
+    assert workflow.inputs["prompt"].node_id == "16"
+    assert workflow.inputs["negative"].node_id == "11"
+    assert workflow.inputs["seed"].node_id == "14"
+    assert workflow.inputs["frames"].node_id == "2078"
+    assert workflow.inputs["width"].node_id == "2080"
+    assert workflow.inputs["height"].node_id == "2079"
+    assert workflow.inputs["fps"].node_id == "2076"
+    assert workflow.inputs["strength"].node_id == "5012"
+    assert workflow.inputs["ic_lora_filename"].node_id == "5011"
+    assert workflow.inputs["ic_lora_strength"].node_id == "5011"
+
+    assert api["45"]["class_type"] == "LoadImage"
+    assert api["47"]["class_type"] == "LoadImage"
+    assert api["5001"]["class_type"] == "LoadVideo"
+    assert api["5000"]["class_type"] == "GetVideoComponents"
+    assert api["5011"]["class_type"] == "LTXICLoRALoaderModelOnly"
+    assert api["5012"]["class_type"] == "LTXAddVideoICLoRAGuide"
+    assert api["5012"]["inputs"]["image"] == ["5028", 0]
+    assert api["210"]["class_type"] == "LTXVImgToVideoInplaceKJ"
+    assert api["210"]["inputs"]["num_images.image_1"] == ["2084", 0]
+    assert api["210"]["inputs"]["num_images.image_2"] == ["50", 0]
+    assert api["6101"]["class_type"] == "ResizeImageMaskNode"
+    assert api["4986"]["class_type"] == "DWPreprocessor"
+    assert api["6102"]["inputs"]["input"] == ["4986", 0]
+    assert api["5061"]["class_type"] == "DepthAnything_V2"
+    assert api["6103"]["inputs"]["input"] == ["5061", 0]
+    assert api["4991"]["class_type"] == "CannyEdgePreprocessor"
+    assert api["5028"]["inputs"]["input"] == ["4991", 0]
+
+
 @pytest.mark.parametrize(
     "template_id",
     ["video/wanvideo_wrapper_22_14b_t2i", "video/wanvideo_wrapper_22_14b_vace_cocktail"],

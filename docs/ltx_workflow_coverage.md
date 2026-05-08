@@ -22,6 +22,7 @@ Runtime-gated official templates:
 - `video/ltx2_3_lightricks_iclora_hdr`: official HDR IC-LoRA video-guide workflow.
 - `video/ltx2_3_lightricks_iclora_motion_track`: official motion-track IC-LoRA image-anchor workflow.
 - `video/ltx2_3_lightricks_iclora_union_control`: official union-control guide workflow with depth/pose preprocessing.
+- `video/ltx2_3_first_last_frame_travel_iclora_control`: manual first/last-frame travel workflow with full-length raw/pose/depth/canny IC-LoRA guide branches.
 
 Supplemental ready templates:
 

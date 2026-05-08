@@ -326,6 +326,18 @@
       "runtime_note": "Requires additional VideoDepthAnything/DWPose model setup beyond the core LTX smoke stack."
     },
     {
+      "id": "ltx2_3_first_last_frame_travel_iclora_control",
+      "path": "manual",
+      "source": "VibeComfy",
+      "model_family": "ltx-2.3",
+      "task": "first_last_frame_control_video",
+      "media": "video",
+      "coverage_tier": "required",
+      "ready_template": "video/ltx2_3_first_last_frame_travel_iclora_control",
+      "approach": "manual Runexx first/last-frame anchor graph composed with Lightricks IC-LoRA full-length guide control",
+      "runtime_note": "Default Canny guide branch; worker may rewire node 5012 image to raw, pose, or depth guide outputs."
+    },
+    {
       "id": "ltx2_3_runexx_first_last_frame",
       "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json",
       "source": "RuneXX/LTX-2.3-Workflows",
