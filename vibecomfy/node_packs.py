@@ -88,7 +88,7 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "Florence2toCoordinates",
             }
         ),
-        pip_packages=("segment-anything-2", "opencv-python-headless"),
+        pip_packages=("opencv-python-headless",),
     ),
     CustomNodePack(
         name="comfyui_controlnet_aux",
