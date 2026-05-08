@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Loader2, MessageSquareText, Mic, Send, Square, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, Mic, Send, Square, X } from 'lucide-react';
 import type { GenerationRow } from '@/domains/generation/types/index.ts';
 import { MediaLightbox } from '@/domains/media-lightbox/MediaLightbox.tsx';
 import { Button } from '@/shared/components/ui/button.tsx';
@@ -520,8 +520,13 @@ export function AgentChatPanel() {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div className="flex items-center gap-2">
-          <MessageSquareText className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Timeline Agent</span>
+          <img
+            src="/astrid-avatar.png"
+            alt=""
+            aria-hidden="true"
+            className="h-5 w-5 rounded-full object-cover"
+          />
+          <span className="text-sm font-medium">Astrid</span>
           {isProcessing && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
         <div className="flex items-center gap-1">
