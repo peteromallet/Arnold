@@ -58,6 +58,20 @@ def test_template_index_matches_ready_template_discovery() -> None:
     assert actual["templates"] == expected["templates"]
 
 
+def test_ready_templates_are_pure_python_builders() -> None:
+    ready_root = Path("ready_templates")
+    offenders: list[str] = []
+
+    for path in sorted(ready_root.rglob("*.py")):
+        if path.name == "__init__.py" or path.name.startswith("_"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "API_WORKFLOW =" in text or "build_api_ready_workflow" in text:
+            offenders.append(path.relative_to(ready_root).with_suffix("").as_posix())
+
+    assert offenders == []
+
+
 def test_ready_template_loads_vibe_workflow() -> None:
     workflow = workflow_from_ready("edit/qwen_image_edit")
 

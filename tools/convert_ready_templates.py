@@ -92,15 +92,16 @@ def _classify_shape(path: Path) -> tuple[str, str]:
     """Return (shape, note). Shapes: legacy | authored | manual | converted | unknown."""
     text = _read_module_source(path)
     first_line = text.splitlines()[0] if text.splitlines() else ""
-    if "vibecomfy: manual" in first_line:
-        return ("manual", "manual marker on first line")
-    if "vibecomfy: generated" in first_line:
-        return ("converted", "previously generated")
     # Inspect symbol presence.
     has_api = re.search(r"^API_WORKFLOW\s*=", text, re.MULTILINE)
     has_nodes = re.search(r"^NODES\s*=", text, re.MULTILINE)
     if has_api:
-        return ("legacy", "")
+        note = "manual marker ignored for legacy API_WORKFLOW" if "vibecomfy: manual" in first_line else ""
+        return ("legacy", note)
+    if "vibecomfy: manual" in first_line:
+        return ("manual", "manual marker on first line")
+    if "vibecomfy: generated" in first_line:
+        return ("converted", "previously generated")
     if has_nodes:
         return ("authored", "")
     # Neither symbol — treat as already-converted (no overwrite).

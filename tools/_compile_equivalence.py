@@ -74,14 +74,37 @@ def _widget_value_counter(api: dict) -> Counter[tuple[str, str, str]]:
         class_type = node.get("class_type")
         if _is_ui_only(class_type):
             continue
+        seen_for_node: set[tuple[str, str]] = set()
         for key, value in node.get("inputs", {}).items():
             if _is_link(value):
                 continue
             canonical = _canonical_key(class_type, key)
             if canonical is None:
                 continue  # UI-only widget; drop from both sides for stable equivalence
-            values[(class_type, canonical, repr(value))] += 1
+            if _is_runtime_ignored_input(canonical, value):
+                continue
+            # Some legacy API fixtures contain both widget_N and the schema
+            # alias for the same Comfy input. Generated Python intentionally
+            # emits the canonical field once, so equivalence must not count
+            # the duplicate legacy representation twice.
+            value_repr = repr(value)
+            if (canonical, value_repr) in seen_for_node:
+                continue
+            seen_for_node.add((canonical, value_repr))
+            values[(class_type, canonical, value_repr)] += 1
     return values
+
+
+def _is_runtime_ignored_input(key: str, value: Any) -> bool:
+    if value is None:
+        return True
+    if key == "add_noise_to_samples" and value == "":
+        return True
+    if key.startswith("unused_"):
+        return True
+    if key in {"videopreview", "preview", "preview_image"} and isinstance(value, dict):
+        return True
+    return False
 
 
 def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
