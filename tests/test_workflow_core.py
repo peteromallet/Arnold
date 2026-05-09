@@ -153,6 +153,20 @@ def test_compile_drops_markdown_note_nodes_from_api_prompt() -> None:
     assert api["2"]["class_type"] == "SaveImage"
 
 
+def test_validate_rejects_opaque_component_class_types() -> None:
+    workflow = VibeWorkflow(id="test", source=WorkflowSource(id="test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "19e3f7e8-881c-4a61-a360-1c463734043a",
+    )
+
+    report = workflow.validate()
+
+    assert report.ok
+    assert [issue.code for issue in report.issues] == ["opaque_component_class_type"]
+    assert [issue.severity for issue in report.issues] == ["warning"]
+
+
 def test_compile_rewrites_set_get_nodes_to_direct_links() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})

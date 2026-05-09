@@ -232,6 +232,7 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["2152"]["inputs"]["strength"] == ["6102", 0]
     assert "LTXICLoRALoaderModelOnly" not in {node["class_type"] for node in api.values()}
     assert "LTXAddVideoICLoRAGuide" not in {node["class_type"] for node in api.values()}
+    assert _opaque_component_nodes(api) == []
 
 
 @pytest.mark.parametrize(
@@ -461,3 +462,13 @@ def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
 
 def _is_link(value: object) -> bool:
     return isinstance(value, list) and len(value) == 2 and str(value[0]).isdigit()
+
+
+def _opaque_component_nodes(api: dict[str, dict]) -> list[tuple[str, str]]:
+    return [
+        (node_id, node["class_type"])
+        for node_id, node in api.items()
+        if isinstance(node.get("class_type"), str)
+        and len(node["class_type"]) == 36
+        and node["class_type"].count("-") == 4
+    ]

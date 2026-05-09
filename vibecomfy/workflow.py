@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import TYPE_CHECKING, Any
 
 from vibecomfy.handles import Handle
@@ -9,6 +10,12 @@ from vibecomfy.porting.widget_aliases import apply_positional_widget_aliases
 
 if TYPE_CHECKING:
     from vibecomfy.schema.provider import SchemaProvider
+
+
+OPAQUE_COMPONENT_CLASS_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -164,6 +171,27 @@ class VibeWorkflow:
                 return True
         return False
 
+    def remove_node(self, node_id: str) -> "VibeWorkflow":
+        """Remove a node and all edges attached to it."""
+        node_id = str(node_id)
+        self.nodes.pop(node_id, None)
+        self.edges = [
+            edge
+            for edge in self.edges
+            if str(edge.from_node) != node_id and str(edge.to_node) != node_id
+        ]
+        self.inputs = {
+            name: target
+            for name, target in self.inputs.items()
+            if str(target.node_id) != node_id
+        }
+        self.outputs = [
+            output
+            for output in self.outputs
+            if str(output.node_id) != node_id
+        ]
+        return self
+
     def replace_edge(self, to_ref: str, new_from_ref: str) -> "VibeWorkflow":
         """Redirect the edge feeding ``to_ref`` so it now originates from ``new_from_ref``.
 
@@ -177,6 +205,19 @@ class VibeWorkflow:
         issues: list[ValidationIssue] = []
         if not self.nodes:
             issues.append(ValidationIssue("empty_workflow", "Workflow contains no nodes."))
+        for node_id, node in self.nodes.items():
+            if OPAQUE_COMPONENT_CLASS_RE.match(node.class_type):
+                issues.append(
+                    ValidationIssue(
+                        "opaque_component_class_type",
+                        (
+                            f"Node {node_id} has opaque component class_type "
+                            f"{node.class_type!r}; inline or replace the subgraph before runtime."
+                        ),
+                        severity="warning",
+                        detail={"node_id": str(node_id), "class_type": node.class_type},
+                    )
+                )
         for edge in self.edges:
             if edge.from_node not in self.nodes:
                 issues.append(ValidationIssue("missing_edge_source", f"Missing source node {edge.from_node}."))

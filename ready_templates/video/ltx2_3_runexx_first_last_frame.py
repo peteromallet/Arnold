@@ -389,6 +389,9 @@ def build() -> VibeWorkflow:
         text=n_8fa4f93a_67ee_463f_ba43_249580c0bfb1.out(0),
         clip=getnode_9.out(0),
     )
+    wf.replace_edge('16.text', primitivestringmultiline.out(0))
+    wf.remove_node('2070')
+    wf.remove_node('2102')
     imagescaleby = _node(wf, 'ImageScaleBy', '26',
         widget_0='lanczos',
         widget_1=0.5,
@@ -634,4 +637,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-
