@@ -198,6 +198,42 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
     assert api["5028"]["inputs"]["input"] == ["4991", 0]
 
 
+def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
+    workflow = workflow_from_ready("video/ltx2_3_runexx_first_last_raw_video_guide")
+    api = workflow.compile("api")
+
+    assert workflow.validate().ok
+    assert workflow.metadata["source_role"] == "manual_ready_python_template"
+    assert workflow.inputs["start_image"].node_id == "45"
+    assert workflow.inputs["end_image"].node_id == "47"
+    assert workflow.inputs["control_video"].node_id == "5001"
+    assert workflow.inputs["prompt"].node_id == "2103"
+    assert workflow.inputs["negative"].node_id == "11"
+    assert workflow.inputs["seed"].node_id == "14"
+    assert workflow.inputs["frames"].node_id == "2078"
+    assert workflow.inputs["width"].node_id == "2080"
+    assert workflow.inputs["height"].node_id == "2079"
+    assert workflow.inputs["fps"].node_id == "2076"
+    assert workflow.inputs["strength"].node_id == "6102"
+    assert workflow.inputs["first_frame_strength"].node_id == "2110"
+    assert workflow.inputs["last_frame_strength"].node_id == "2108"
+
+    assert api["45"]["class_type"] == "LoadImage"
+    assert api["47"]["class_type"] == "LoadImage"
+    assert api["5001"]["class_type"] == "LoadVideo"
+    assert api["5000"]["class_type"] == "GetVideoComponents"
+    assert api["6101"]["class_type"] == "ResizeImageMaskNode"
+    assert api["6101"]["inputs"]["input"] == ["5000", 0]
+    assert api["6101"]["inputs"]["width"] == ["2080", 0]
+    assert api["6101"]["inputs"]["height"] == ["2079", 0]
+    assert api["6102"]["class_type"] == "PrimitiveFloat"
+    assert api["2152"]["class_type"] == "LTXVAddGuide"
+    assert api["2152"]["inputs"]["image"] == ["6101", 0]
+    assert api["2152"]["inputs"]["strength"] == ["6102", 0]
+    assert "LTXICLoRALoaderModelOnly" not in {node["class_type"] for node in api.values()}
+    assert "LTXAddVideoICLoRAGuide" not in {node["class_type"] for node in api.values()}
+
+
 @pytest.mark.parametrize(
     "template_id",
     ["video/wanvideo_wrapper_22_14b_t2i", "video/wanvideo_wrapper_22_14b_vace_cocktail"],
