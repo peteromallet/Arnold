@@ -231,6 +231,19 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["6102"]["class_type"] == "PrimitiveFloat"
     assert api["2152"]["class_type"] == "LTXVAddGuide"
     assert api["2152"]["inputs"]["frame_idx"] == -1
+    assert api["175"]["inputs"]["vae_name"] == "LTX23_audio_vae_bf16.safetensors"
+    assert api["175"]["inputs"]["device"] == "main_device"
+    assert api["175"]["inputs"]["weight_dtype"] == "bf16"
+    assert api["215"]["inputs"]["sigmas"].startswith("1.0, 0.99375")
+    assert api["216"]["inputs"]["sigmas"] == "0.85, 0.7250, 0.4219, 0.0"
+    assert api["92"]["inputs"]["expression"] == "a"
+    assert api["2077"]["inputs"]["expression"].startswith("((round((a * b -1)")
+    assert api["9"]["inputs"]["batch_size"] == 1
+    assert api["26"]["inputs"]["upscale_method"] == "lanczos"
+    assert api["26"]["inputs"]["scale_by"] == 0.5
+    assert api["226"]["inputs"]["sage_attention"] == "auto"
+    assert api["226"]["inputs"]["allow_compile"] is False
+    assert api["227"]["inputs"]["triton_kernels"] is True
     assert api["228"]["inputs"]["chunks"] == 2
     assert api["228"]["inputs"]["dim_threshold"] == 4096
     assert api["229"]["inputs"]["triton_kernels"] is True
@@ -241,6 +254,7 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert {asset["name"] for asset in workflow.metadata["model_assets"]} >= {
         "ltx-2.3_text_projection_bf16.safetensors",
         "taeltx2_3.safetensors",
+        "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
     }
     assert api["2152"]["inputs"]["image"] == ["6101", 0]
     assert api["2152"]["inputs"]["strength"] == ["6102", 0]

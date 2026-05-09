@@ -22,8 +22,11 @@ HF_SPLIT_FILES_DIRS = {
 _CLASS_TYPE_SUBDIRS = {
     "CheckpointLoaderSimple": "checkpoints",
     "CLIPLoader": "text_encoders",
+    "DualCLIPLoaderGGUF": "text_encoders",
     "VAELoader": "vae",
+    "VAELoaderKJ": "vae",
     "LoraLoader": "loras",
+    "LoraLoaderModelOnly": "loras",
     "ControlNetLoader": "controlnet",
     "UNETLoader": "diffusion_models",
     "UnetLoaderGGUF": "diffusion_models",

@@ -30,7 +30,7 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
             schema_provider=schema_provider,
             head_check_models=args.head_check_models,
         )
-        if args.strict_ready_template:
+        if getattr(args, "strict_ready_template", False):
             _apply_strict_ready_template_gate(report)
     except Exception as exc:
         print(f"port check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -51,7 +51,7 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
             schema_provider=schema_provider,
             head_check_models=args.head_check_models,
         )
-        if args.strict_ready_template or args.ready_id:
+        if getattr(args, "strict_ready_template", False) or args.ready_id:
             _apply_strict_ready_template_gate(report)
         if report.has_errors:
             payload = {
