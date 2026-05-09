@@ -134,6 +134,20 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         pip_packages=("gguf",),
     ),
     CustomNodePack(
+        name="rgthree-comfy",
+        repo="https://github.com/rgthree/rgthree-comfy.git",
+        classes=frozenset(
+            {
+                "Any Switch (rgthree)",
+                "Fast Groups Bypasser (rgthree)",
+                "Fast Groups Muter (rgthree)",
+                "Label (rgthree)",
+                "Power Lora Loader (rgthree)",
+                "Seed (rgthree)",
+            }
+        ),
+    ),
+    CustomNodePack(
         name="ComfyUI-Qwen3-TTS",
         repo="https://github.com/DarioFT/ComfyUI-Qwen3-TTS.git",
         classes=frozenset(

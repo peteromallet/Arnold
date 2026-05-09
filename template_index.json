@@ -280,7 +280,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },
@@ -293,7 +294,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },
@@ -306,7 +308,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },
@@ -319,7 +322,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },
@@ -332,7 +336,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },
@@ -346,7 +351,8 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite",
-        "comfyui_controlnet_aux"
+        "comfyui_controlnet_aux",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },
@@ -359,7 +365,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },
@@ -373,7 +380,8 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
         "ComfyUI-QwenTTS",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0
     },

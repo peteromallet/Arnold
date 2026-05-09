@@ -203,6 +203,7 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     api = workflow.compile("api")
 
     assert workflow.validate().ok
+    assert "rgthree-comfy" in workflow.requirements.custom_nodes
     assert workflow.metadata["source_role"] == "manual_ready_python_template"
     assert workflow.inputs["start_image"].node_id == "45"
     assert workflow.inputs["end_image"].node_id == "47"

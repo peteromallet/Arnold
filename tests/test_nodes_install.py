@@ -471,6 +471,22 @@ def test_missing_packs_for_workflow_resolves_wan_animate_preprocess_pack(
     assert unresolved == []
 
 
+def test_missing_packs_for_workflow_resolves_rgthree_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("rgthree", WorkflowSource("rgthree"))
+    workflow.nodes["1"] = VibeNode("1", "Power Lora Loader (rgthree)")
+    workflow.nodes["2"] = VibeNode("2", "Fast Groups Bypasser (rgthree)")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["rgthree-comfy"]
+    assert unresolved == []
+
+
 def test_missing_packs_for_workflow_ignores_core_comfy_classes(
     tmp_path: Path,
     monkeypatch,
@@ -496,10 +512,14 @@ def test_resolve_node_index_path_falls_back_to_repo_index(tmp_path: Path, monkey
     monkeypatch.chdir(tmp_path)
 
     resolved = _resolve_node_index_path(Path("node_index.json"))
+    repo_index = Path(__file__).resolve().parents[1] / "node_index.json"
 
     assert resolved.name == "node_index.json"
-    assert resolved.exists()
-    assert resolved != tmp_path / "node_index.json"
+    if repo_index.exists():
+        assert resolved.exists()
+        assert resolved == repo_index
+    else:
+        assert resolved == Path("node_index.json")
 
 
 @pytest.mark.parametrize("content", ["{", '{"class_type": "SaveImage"}'])

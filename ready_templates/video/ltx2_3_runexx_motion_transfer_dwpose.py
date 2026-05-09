@@ -33,7 +33,8 @@ READY_REQUIREMENTS = {'models': [],
                   'ComfyUI-KJNodes',
                   'ComfyUI-LTXVideo',
                   'ComfyUI-VideoHelperSuite',
-                  'comfyui_controlnet_aux']}
+                  'comfyui_controlnet_aux',
+                  'rgthree-comfy']}
 
 
 def build() -> VibeWorkflow:
@@ -866,4 +867,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

@@ -50,6 +50,7 @@ READY_REQUIREMENTS = {
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy",
     ],
 }
 
