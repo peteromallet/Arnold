@@ -225,8 +225,9 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["5000"]["class_type"] == "GetVideoComponents"
     assert api["6101"]["class_type"] == "ResizeImageMaskNode"
     assert api["6101"]["inputs"]["input"] == ["5000", 0]
-    assert api["6101"]["inputs"]["width"] == ["2080", 0]
-    assert api["6101"]["inputs"]["height"] == ["2079", 0]
+    assert api["6101"]["inputs"]["resize_type"] == "scale dimensions"
+    assert api["6101"]["inputs"]["resize_type.width"] == ["2080", 0]
+    assert api["6101"]["inputs"]["resize_type.height"] == ["2079", 0]
     assert api["6101"]["inputs"]["scale_method"] == "lanczos"
     assert api["6102"]["class_type"] == "PrimitiveFloat"
     assert api["2152"]["class_type"] == "LTXVAddGuide"

@@ -112,13 +112,14 @@ def build() -> VibeWorkflow:
         wf,
         "ResizeImageMaskNode",
         "6101",
-        widget_0="resize",
-        widget_1=256,
-        widget_2="lanczos",
+        resize_type="scale dimensions",
+        scale_method="lanczos",
         crop="center",
-        height=Handle("2079", "0"),
         input=components.out(0),
-        width=Handle("2080", "0"),
+        _extras={
+            "resize_type.width": Handle("2080", "0"),
+            "resize_type.height": Handle("2079", "0"),
+        },
     )
     wf.replace_edge("2152.image", guide_resized.out(0))
     guide_strength = _node(wf, "PrimitiveFloat", "6102", value=1)
