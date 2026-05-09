@@ -42,11 +42,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         for warning in _lint_untyped_raw_refs(Path(args.path)):
             print(f"- untyped_raw_ref: {warning}")
     helper_issues = workflow.helper_diagnostics()
-    if helper_issues:
+    helper_blockers = [issue for issue in helper_issues if issue.severity != "info"]
+    if helper_blockers:
         payload = {
             "status": "error",
             "layer": "Porting helper diagnostics",
-            "errors": [issue.message for issue in helper_issues],
+            "errors": [issue.message for issue in helper_blockers],
             "recommended_command": f"vibecomfy port check {args.path} --json",
         }
         if json_output:

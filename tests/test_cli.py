@@ -571,6 +571,52 @@ def build():
     assert f"vibecomfy port check {scratchpad} --json" in captured.out
 
 
+def test_strict_ready_template_gate_escalates_unresolved_widgets() -> None:
+    from vibecomfy.commands.port import _apply_strict_ready_template_gate
+    from vibecomfy.porting.report import PortReport
+
+    report = PortReport(
+        source="ready_templates/video/example.py",
+        workflow_shape={"outputs": 1},
+        metadata={
+            "widget_analysis": {
+                "unresolved_widget_aliases": [
+                    {"node_id": "1", "class_type": "ExampleNode", "input": "widget_0"}
+                ],
+                "suggestions": [
+                    {
+                        "class_type": "ExampleNode",
+                        "schema_source": "committed_widget_schema",
+                        "suggested_schema_entry": ["value"],
+                    }
+                ],
+            }
+        },
+    )
+
+    _apply_strict_ready_template_gate(report)
+
+    assert report.has_errors
+    assert report.diagnostics[0].code == "strict_ready_unresolved_widgets"
+    assert report.diagnostics[0].detail["count"] == 1
+
+
+def test_strict_ready_template_gate_requires_output_contract() -> None:
+    from vibecomfy.commands.port import _apply_strict_ready_template_gate
+    from vibecomfy.porting.report import PortReport
+
+    report = PortReport(
+        source="ready_templates/video/example.py",
+        workflow_shape={"outputs": 0},
+        metadata={"widget_analysis": {"unresolved_widget_aliases": [], "suggestions": []}},
+    )
+
+    _apply_strict_ready_template_gate(report)
+
+    assert report.has_errors
+    assert report.diagnostics[0].code == "strict_ready_missing_output_contract"
+
+
 def test_nodes_install_plan_suggests_pack_for_missing_class(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

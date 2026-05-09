@@ -245,19 +245,40 @@ def metadata_from_python_module(path: str | Path) -> tuple[dict[str, Any], dict[
     module_ast = ast.parse(Path(path).read_text(encoding="utf-8"), filename=str(path))
     metadata: dict[str, Any] = {}
     requirements: dict[str, Any] = {}
+    constants: dict[str, Any] = {}
     for node in module_ast.body:
         if not isinstance(node, ast.Assign):
             continue
         names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+        try:
+            value = _literal_eval_with_constants(node.value, constants)
+        except (ValueError, TypeError):
+            continue
+        for name in names:
+            constants[name] = value
         if "READY_METADATA" in names:
-            value = ast.literal_eval(node.value)
             if isinstance(value, Mapping):
                 metadata = dict(value)
         if "READY_REQUIREMENTS" in names:
-            value = ast.literal_eval(node.value)
             if isinstance(value, Mapping):
                 requirements = dict(value)
     return metadata, requirements
+
+
+def _literal_eval_with_constants(node: ast.AST, constants: Mapping[str, Any]) -> Any:
+    if isinstance(node, ast.Name) and node.id in constants:
+        return constants[node.id]
+    if isinstance(node, ast.Dict):
+        return {
+            _literal_eval_with_constants(key, constants): _literal_eval_with_constants(value, constants)
+            for key, value in zip(node.keys, node.values)
+            if key is not None
+        }
+    if isinstance(node, ast.List):
+        return [_literal_eval_with_constants(element, constants) for element in node.elts]
+    if isinstance(node, ast.Tuple):
+        return tuple(_literal_eval_with_constants(element, constants) for element in node.elts)
+    return ast.literal_eval(node)
 
 
 def filename_only_warnings(candidates: Iterable[AssetCandidate]) -> list[PortIssue]:

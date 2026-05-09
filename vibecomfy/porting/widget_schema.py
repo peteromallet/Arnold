@@ -46,6 +46,18 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "LoadAudio": ["audio"],
     "LoadImage": ["image", None],
     "LoraLoaderModelOnly": ["lora_name", "strength_model"],
+    "LTX2AttentionTunerPatch": [
+        "blocks",
+        "video_scale",
+        "audio_scale",
+        "video_to_audio_scale",
+        "audio_to_video_scale",
+        "triton_kernels",
+    ],
+    "LTX2_NAG": ["nag_scale", "nag_alpha", "nag_tau", None],
+    "LTX2SamplingPreviewOverride": ["preview_rate"],
+    "LTXVAddGuide": ["frame_idx", "strength"],
+    "LTXVChunkFeedForward": ["chunks", "dim_threshold"],
     "ModelSamplingAuraFlow": ["shift"],
     "ModelSamplingFlux": ["max_shift", "base_shift", "width", "height"],
     "ModelSamplingSD3": ["shift"],
@@ -219,7 +231,7 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
         "normalize",
     ],
     "CLIPVisionEncode": ["crop"],
-    "LoadVideo": ["file"],
+    "LoadVideo": ["file", None],
     "PixelPerfectResolution": ["resize_mode"],
     "GrowMaskWithBlur": [
         "expand",
@@ -236,6 +248,15 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "OnnxDetectionModelLoader": ["vitpose_model", "yolo_model", "onnx_device"],
     "PoseAndFaceDetection": ["width", "height", "face_padding"],
     "DrawViTPose": ["width", "height", "retarget_padding", "body_stick_width", "hand_stick_width", "draw_head"],
+    "ResizeImageMaskNode": [None, None, "scale_method"],
+    "VHS_VideoCombine": [
+        "frame_rate",
+        "loop_count",
+        "filename_prefix",
+        "format",
+        "pingpong",
+        "save_output",
+    ],
 }
 
 

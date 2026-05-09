@@ -37,10 +37,17 @@ COMPILE_WIDGET_ALIAS_CLASS_TYPES: frozenset[str] = frozenset(
         "PointsEditor",
         "CLIPVisionEncode",
         "LoadVideo",
+        "LTX2AttentionTunerPatch",
+        "LTX2_NAG",
+        "LTX2SamplingPreviewOverride",
+        "LTXVAddGuide",
+        "LTXVChunkFeedForward",
         "PixelPerfectResolution",
+        "ResizeImageMaskNode",
         "OnnxDetectionModelLoader",
         "PoseAndFaceDetection",
         "DrawViTPose",
+        "VHS_VideoCombine",
     }
 )
 
@@ -80,11 +87,14 @@ def apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) -> 
     if not names:
         return
     for index, name in enumerate(names):
-        if name is None:
-            continue
         widget_key = f"widget_{index}"
+        if name is None:
+            inputs.pop(widget_key, None)
+            continue
         if name not in inputs and widget_key in inputs:
             inputs[name] = inputs[widget_key]
+        if name != widget_key:
+            inputs.pop(widget_key, None)
 
 
 def resolve_widget_key(class_type: str, key: str) -> str | None:

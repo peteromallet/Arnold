@@ -1,6 +1,17 @@
 # Adding Templates And Models
 
-This is the operating path for adding a new model family, workflow template, or custom-node workflow to VibeComfy. The goal is that a contributed template becomes a reusable Python ready template, declares its node/model requirements, and can be validated on RunPod without an agent hand-editing the machine.
+This is the operating path for adding, fixing, forking, or promoting a model family, workflow template, or custom-node workflow in VibeComfy. The goal is that a contributed workflow becomes a reusable Python ready template when appropriate, declares its node/model/output requirements, and can be validated on RunPod without an agent hand-editing the machine.
+
+## Lifecycle Entry Points
+
+The same gates apply from four starting points:
+
+- **Raw Comfy JSON**: save the upstream source under `workflow_corpus/...`, run `port check`, then convert or hand-author.
+- **Existing ready template**: inspect current metadata, requirements, outputs, and patch points before editing; rerun strict readiness before RunPod.
+- **Fork of a ready template**: use a recipe or patch for run-specific decoration; create a new ready template only when graph shape, model family, required inputs, output semantics, custom nodes, or app capability changes.
+- **From-scratch Python workflow**: author with `VibeWorkflow`, blocks, or patches, then promote only after the same model/node/output/index/test/live-evidence gates.
+
+Programmatic gates catch structure, schema, node packs, model assets, output contracts, index freshness, and live execution. Agent judgment is still required for source quality, model provenance, custom-node legitimacy, smoke-size adaptations, app/Wan2GP parity, and documenting intentional differences.
 
 ## Target Shape
 
@@ -26,6 +37,7 @@ Run the porting workbench before manual edits and before RunPod validation:
 ```bash
 python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json
 python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scratchpads/<id>.py --json
+python -m vibecomfy.cli port check ready_templates/<media>/<id>.py --strict-ready-template --json
 ```
 
 Use `--head-check-models` only when you intentionally want model URL HEAD checks. Normal `port check`, `doctor`, `validate`, `fetch`, and `run` paths stay offline by default.
@@ -173,7 +185,10 @@ Run validation on the generated ready template:
 
 ```bash
 uv run python -m vibecomfy.cli validate ready_templates/<media>/<id>.py
+uv run python -m vibecomfy.cli port check ready_templates/<media>/<id>.py --strict-ready-template --json
 ```
+
+`--strict-ready-template` is the promotion gate for production/app-parity templates. It fails schema-backed unresolved positional widgets and missing workflow outputs locally, while still reporting unavailable-schema community widgets as porting warnings until object_info or committed widget aliases exist.
 
 Then run targeted tests:
 
@@ -188,6 +203,13 @@ capability contract in `../reigh-worker/scripts/capability_contracts/` and run
 that repo's `python -m scripts.capability_contracts.report validate`. VibeComfy
 owns graph/template validity; the worker contract owns product route, variant,
 artifact, app-inventory, and live-evidence claims.
+
+Worker-side patches should target semantic fields exposed by the ready template
+(`prompt`, `seed`, `width`, `height`, `control_video`, LoRA slots, etc.). Treat
+new worker code that writes arbitrary `widget_N` fields as a migration smell:
+either move the alias into VibeComfy widget schema/template code, expose a named
+input, or document a temporary deferral in the worker capability contract with
+the source node/class and removal condition.
 
 ## 8. RunPod Validation
 

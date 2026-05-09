@@ -227,8 +227,21 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["6101"]["inputs"]["input"] == ["5000", 0]
     assert api["6101"]["inputs"]["width"] == ["2080", 0]
     assert api["6101"]["inputs"]["height"] == ["2079", 0]
+    assert api["6101"]["inputs"]["scale_method"] == "lanczos"
     assert api["6102"]["class_type"] == "PrimitiveFloat"
     assert api["2152"]["class_type"] == "LTXVAddGuide"
+    assert api["2152"]["inputs"]["frame_idx"] == -1
+    assert api["228"]["inputs"]["chunks"] == 2
+    assert api["228"]["inputs"]["dim_threshold"] == 4096
+    assert api["229"]["inputs"]["triton_kernels"] is True
+    assert api["197"]["inputs"]["nag_scale"] == 11
+    assert api["198"]["inputs"]["preview_rate"] == 8
+    assert api["43"]["inputs"]["filename_prefix"] == "reigh_vibecomfy_ltx_raw_guide"
+    assert api["43"]["inputs"]["save_output"] is True
+    assert {asset["name"] for asset in workflow.metadata["model_assets"]} >= {
+        "ltx-2.3_text_projection_bf16.safetensors",
+        "taeltx2_3.safetensors",
+    }
     assert api["2152"]["inputs"]["image"] == ["6101", 0]
     assert api["2152"]["inputs"]["strength"] == ["6102", 0]
     assert "LTXICLoRALoaderModelOnly" not in {node["class_type"] for node in api.values()}

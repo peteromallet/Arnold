@@ -107,6 +107,7 @@ When a workflow comes from raw Comfy JSON, an indexed corpus entry, a scratchpad
 
 ```bash
 python -m vibecomfy.cli port check <workflow> --json
+python -m vibecomfy.cli port check <workflow> --strict-ready-template --json
 python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py --json
 python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<name> --out ready_templates/<kind>/<name>.py --json
 ```
@@ -114,6 +115,8 @@ python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<name> --out r
 Use `port check` to surface helper/UI nodes (`Note`, `MarkdownNote`, `SetNode`, `GetNode`), unresolved helper broadcasts, missing real runtime classes, custom-node pack suggestions, model asset warnings, missing required inputs, schema mismatches, invalid link shapes, and unresolved positional `widget_N` aliases. Helper/UI classes should produce helper diagnostics, not missing-pack work.
 
 Use `port convert` to produce Python. Scratchpad mode is the default while investigating. Ready-template mode requires `--ready-id <kind>/<name>` because it creates a curated candidate.
+
+Use `--strict-ready-template` before promoting or RunPod-testing a production/app-parity template. It escalates schema-backed unresolved positional widgets and missing output contracts to hard errors while leaving unknown community-node widgets as porting warnings until object_info or committed widget schema is available.
 
 Use `--head-check-models` only when you intentionally want model URL HEAD checks. It checks status, redirects, timeouts, and likely gated/404 URLs without downloading bodies. Normal `port check`, `doctor`, `validate`, `fetch`, and `run` should stay offline by default.
 
@@ -126,7 +129,7 @@ Decision map:
 | Curating a checked-in template | `port convert <workflow> --ready-id <kind>/<name> --out ready_templates/<kind>/<name>.py --json` |
 | Unknown runtime classes | `port check`, then `nodes install-plan` |
 | Missing model files or asset URLs | `port check`, then `fetch`; add `--head-check-models` only for URL reachability |
-| RunPod validation | `port check` first, then focused matrix only after hard porting errors are handled |
+| RunPod validation | `port check --strict-ready-template` first, then focused matrix only after hard porting errors are handled |
 
 ### 2. Load
 
@@ -346,6 +349,20 @@ result = router.pick("video", "i2v", model="ltx")    # RouterResult(template_id,
 | "Inspect why an imported or converted workflow doesn't run" | `port check <workflow> --json`, then `nodes install-plan`, `fetch`, `validate`, or `doctor` based on the report |
 | "Inspect why authored Python doesn't run" | `inspect`, `doctor`, `analyze info/trace/path/values`, then `validate` |
 
+## Workflow lifecycle
+
+Use this same gate sequence whether you are importing raw JSON, fixing an existing ready template, forking a ready template, or authoring from scratch:
+
+1. **Identify intent**: media type, task, model family, required inputs, expected output artifact, and whether this is Reigh app parity or supplemental coverage.
+2. **Pick the right entry path**:
+   - raw Comfy JSON: save the upstream source under `workflow_corpus/...` and run `port check`;
+   - existing ready template: load by id/path, inspect metadata/requirements/outputs, then run strict checks before editing;
+   - fork: decide recipe/patch vs new ready template. If graph shape, model family, required inputs, outputs, or app capability changes, make a new ready template;
+   - from scratch: author with `VibeWorkflow`/blocks, then promote only after the same strict checks.
+3. **Programmatic gates**: `port check --json`, `port widgets` when aliases remain, `nodes install-plan`, model metadata/registry updates, `validate`, `doctor`, `port check --strict-ready-template --json`, template-index check, and focused tests.
+4. **Agentic checks**: source quality, model provenance, custom-node legitimacy, smoke-size adaptations, LoRA/control/input patch points, Wan2GP/app parity, and intentional differences.
+5. **Evidence**: for app parity, update worker capability contracts and record successful focused RunPod evidence. Do not mark a workflow validated from local checks alone.
+
 ## Adding a new workflow
 
 The full operating path lives in **`docs/adding_templates_models.md`**. Read it before adding a new family. The short version:
@@ -359,7 +376,7 @@ The full operating path lives in **`docs/adding_templates_models.md`**. Read it 
 7. **Add a manifest row** in `workflow_corpus/manifests/coverage.json` with `id`, `path`, `media`, `task`, `coverage_tier`, `ready_template: true`.
 8. **Create the Python ready template** with `python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --ready-id <media>/<id> --out ready_templates/<media>/<id>.py --json`, or hand-author it under `ready_templates/<media>/<id>.py` for full control.
 9. **Refresh static discovery** with `python -m tools.refresh_template_index` and verify it with `python -m tools.refresh_template_index --check`.
-10. **Validate locally**: `python -m vibecomfy.cli validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
+10. **Validate locally**: `python -m vibecomfy.cli validate ready_templates/<media>/<id>.py`, `python -m vibecomfy.cli port check ready_templates/<media>/<id>.py --strict-ready-template --json`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
 11. **Validate on RunPod** with a focused scope: `VIBECOMFY_MATRIX_SCOPE=<family> uv run python scripts/runpod_corpus_matrix.py`. Don't run the full matrix while iterating.
 12. **For Reigh app parity**, update `../reigh-worker/scripts/capability_contracts/` after the VibeComfy template is valid. The worker contract records route, app, variant, artifact, and live evidence; VibeComfy records workflow validity.
 13. **Document failures** in `docs/hiddenswitch_incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.

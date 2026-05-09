@@ -8,8 +8,37 @@ from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
+LTX_RUNEXX_MODEL_ASSETS = [
+    {
+        "name": "ltx-2.3_text_projection_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+        "subdir": "text_encoders",
+    },
+    {
+        "name": "LTX23_video_vae_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "LTX23_audio_vae_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "taeltx2_3.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+        "subdir": "diffusion_models",
+    },
+]
+
+
 READY_METADATA = {
-    "model_assets": [],
+    "model_assets": LTX_RUNEXX_MODEL_ASSETS,
     "unbound_inputs": {
         "seed": "14.noise_seed",
         "start_image": "45.image",
@@ -44,7 +73,7 @@ READY_METADATA = {
 }
 
 READY_REQUIREMENTS = {
-    "models": [],
+    "models": LTX_RUNEXX_MODEL_ASSETS,
     "custom_nodes": [
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
@@ -89,6 +118,7 @@ def build() -> VibeWorkflow:
     wf.replace_edge("2152.image", guide_resized.out(0))
     guide_strength = _node(wf, "PrimitiveFloat", "6102", value=1)
     wf.replace_edge("2152.strength", guide_strength.out(0))
+    _apply_runtime_schema_defaults(wf)
 
     wf.finalize_metadata()
     wf.register_input("start_image", "45", "image", "example.png")
@@ -107,6 +137,19 @@ def build() -> VibeWorkflow:
 
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
+
+
+def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
+    if "43" in wf.nodes:
+        wf.nodes["43"].inputs.update(
+            {
+                "filename_prefix": "reigh_vibecomfy_ltx_raw_guide",
+                "format": "video/h264-mp4",
+                "loop_count": 0,
+                "pingpong": False,
+                "save_output": True,
+            }
+        )
 
 
 def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):

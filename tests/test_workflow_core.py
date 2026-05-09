@@ -239,6 +239,19 @@ def test_runtime_views_strip_helper_nodes_without_changing_compile_rewrite() -> 
     ]
 
 
+def test_compile_replaces_known_positional_widget_aliases() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "LTXVChunkFeedForward",
+        inputs={"widget_0": 2, "widget_1": 4096},
+    )
+
+    api = workflow.compile("api")
+
+    assert api["1"]["inputs"] == {"chunks": 2, "dim_threshold": 4096}
+
+
 def test_compile_rewrites_set_node_passthrough_outputs_to_direct_links() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})

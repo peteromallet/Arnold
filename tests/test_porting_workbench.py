@@ -286,7 +286,7 @@ def test_analyze_source_covers_simple_template_and_wan_animate_target() -> None:
     assert wan["workflow_shape"]["helper_nodes"] > 0
     assert "ComfyUI-WanAnimatePreprocess" in {pack["pack_name"] for pack in wan["node_pack_suggestions"]}
     assert "ComfyUI-WanVideoWrapper" in {pack["pack_name"] for pack in wan["node_pack_suggestions"]}
-    assert "ui_only_node_stripped" in {issue["code"] for issue in wan["diagnostics"]}
+    assert "helper_broadcast_resolved" in {issue["code"] for issue in wan["diagnostics"]}
     assert all(
         issue["class_type"] not in {"Note", "MarkdownNote", "SetNode", "GetNode"}
         for issue in wan["diagnostics"]

@@ -29,10 +29,11 @@ Before manually editing a raw Comfy workflow, converting it into a template, or 
 
 ```bash
 python -m vibecomfy.cli port check <workflow> --json
+python -m vibecomfy.cli port check <workflow> --strict-ready-template --json
 python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py --json
 ```
 
-`port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, and model asset issues while staying offline by default. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies. See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
+`port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, output-contract gaps, and model asset issues while staying offline by default. Use `--strict-ready-template` before promoting or RunPod-testing production/app-parity templates; it turns schema-backed unresolved widgets and missing workflow outputs into hard errors. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies. See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
 
 For reusable workflows, the checked-in surface is Python, not raw JSON. Keep upstream/source workflows in `workflow_corpus/`, convert or author the reusable version in `ready_templates/<kind>/<id>.py`, record it in `workflow_corpus/manifests/coverage.json`, and refresh the static discovery index:
 
@@ -41,9 +42,12 @@ python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out ready_t
 python -m tools.refresh_template_index
 python -m tools.refresh_template_index --check
 python -m vibecomfy.cli validate ready_templates/<kind>/<id>.py
+python -m vibecomfy.cli port check ready_templates/<kind>/<id>.py --strict-ready-template --json
 ```
 
 The manifest/index tests catch missing ready-template rows, stale `template_index.json`, and manifest entries that point at Python templates that do not exist.
+
+The same lifecycle applies when fixing, forking, or authoring workflows from scratch: identify the intended task and output artifact, choose recipe/patch vs new ready template, run the programmatic gates, then use agent judgment for source quality, model provenance, custom-node legitimacy, smoke adaptations, and app/Wan2GP parity before recording live evidence.
 
 ## Thanks
 

@@ -58,12 +58,20 @@ def entries_from_scratchpad_path(path: str | Path) -> list[dict[str, str]]:
     """Read structured model assets from a materialized ready scratchpad."""
 
     module_ast = ast.parse(Path(path).read_text(encoding="utf-8"), filename=str(path))
+    constants: dict[str, Any] = {}
     for node in module_ast.body:
         if not isinstance(node, ast.Assign):
             continue
-        if not any(isinstance(target, ast.Name) and target.id == "READY_REQUIREMENTS" for target in node.targets):
+        names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+        try:
+            value = _literal_eval_with_constants(node.value, constants)
+        except (ValueError, TypeError):
             continue
-        requirements = ast.literal_eval(node.value)
+        for name in names:
+            constants[name] = value
+        if "READY_REQUIREMENTS" not in names:
+            continue
+        requirements = value
         if not isinstance(requirements, Mapping):
             return []
         models = requirements.get("models", [])
@@ -71,6 +79,22 @@ def entries_from_scratchpad_path(path: str | Path) -> list[dict[str, str]]:
             return []
         return _normalise_requirement_entries(models)
     return []
+
+
+def _literal_eval_with_constants(node: ast.AST, constants: Mapping[str, Any]) -> Any:
+    if isinstance(node, ast.Name) and node.id in constants:
+        return constants[node.id]
+    if isinstance(node, ast.Dict):
+        return {
+            _literal_eval_with_constants(key, constants): _literal_eval_with_constants(value, constants)
+            for key, value in zip(node.keys, node.values)
+            if key is not None
+        }
+    if isinstance(node, ast.List):
+        return [_literal_eval_with_constants(element, constants) for element in node.elts]
+    if isinstance(node, ast.Tuple):
+        return tuple(_literal_eval_with_constants(element, constants) for element in node.elts)
+    return ast.literal_eval(node)
 
 
 def _entries_from_node(node: Mapping[str, Any]) -> Iterable[dict[str, str]]:

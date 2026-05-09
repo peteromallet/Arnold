@@ -30,6 +30,8 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
             schema_provider=schema_provider,
             head_check_models=args.head_check_models,
         )
+        if args.strict_ready_template:
+            _apply_strict_ready_template_gate(report)
     except Exception as exc:
         print(f"port check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
@@ -49,6 +51,8 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
             schema_provider=schema_provider,
             head_check_models=args.head_check_models,
         )
+        if args.strict_ready_template or args.ready_id:
+            _apply_strict_ready_template_gate(report)
         if report.has_errors:
             payload = {
                 "status": "error",
@@ -107,6 +111,44 @@ def _cmd_port_widgets(args: argparse.Namespace) -> int:
     else:
         print(_render_widgets(payload))
     return 0
+
+
+def _apply_strict_ready_template_gate(report: Any) -> None:
+    widget_analysis = (report.metadata or {}).get("widget_analysis") or {}
+    unresolved = widget_analysis.get("unresolved_widget_aliases") or []
+    schema_backed_classes = {
+        str(group.get("class_type"))
+        for group in widget_analysis.get("suggestions", [])
+        if group.get("schema_source") != "unavailable" or group.get("suggested_schema_entry") is not None
+    }
+    blocked = [alias for alias in unresolved if str(alias.get("class_type")) in schema_backed_classes]
+    if blocked:
+        report.add_issue(
+            "strict_ready_unresolved_widgets",
+            (
+                f"Strict ready-template gate found {len(blocked)} unresolved schema-backed positional widget alias"
+                f"{'' if len(blocked) == 1 else 'es'}."
+            ),
+            severity="error",
+            detail={
+                "category": "strict_ready_template",
+                "count": len(blocked),
+                "examples": blocked[:20],
+                "unresolved_total": len(unresolved),
+            },
+            recommendation=(
+                "Run `vibecomfy port widgets <workflow> --json`, add schema aliases, or rewrite the template "
+                "with named inputs before RunPod validation."
+            ),
+        )
+    if int((report.workflow_shape or {}).get("outputs") or 0) < 1:
+        report.add_issue(
+            "strict_ready_missing_output_contract",
+            "Strict ready-template gate requires at least one declared workflow output.",
+            severity="error",
+            detail={"category": "strict_ready_template"},
+            recommendation="Register the expected artifact with `workflow.register_output(...)` or equivalent ready-template policy before RunPod validation.",
+        )
 
 
 def _render_check(report: Any) -> str:
@@ -201,6 +243,11 @@ def register(subparsers) -> None:
     check.add_argument("workflow")
     check.add_argument("--json", action="store_true")
     check.add_argument("--head-check-models", action="store_true", help="Opt in to non-downloading HEAD checks for model URLs.")
+    check.add_argument(
+        "--strict-ready-template",
+        action="store_true",
+        help="Escalate unresolved positional widget aliases to errors before promotion or RunPod validation.",
+    )
     check.set_defaults(func=_cmd_port_check)
 
     convert = port_subparsers.add_parser(
@@ -214,6 +261,11 @@ def register(subparsers) -> None:
     convert.add_argument("--ready-id", help="Emit ready-template candidate mode; must have kind/name shape.")
     convert.add_argument("--json", action="store_true")
     convert.add_argument("--head-check-models", action="store_true", help="Opt in to non-downloading HEAD checks for model URLs.")
+    convert.add_argument(
+        "--strict-ready-template",
+        action="store_true",
+        help="Escalate unresolved positional widget aliases to errors. Ready-template conversion enables this by default.",
+    )
     convert.set_defaults(func=_cmd_port_convert)
 
     widgets = port_subparsers.add_parser(

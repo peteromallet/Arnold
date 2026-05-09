@@ -79,6 +79,25 @@ def test_porting_asset_analysis_merges_sources_and_warns_on_filename_only_candid
     assert shared["metadata"]["sources"] == ["ui_properties", "scratchpad_ready_requirements"]
 
 
+def test_python_metadata_extractor_resolves_literal_module_constants(tmp_path: Path) -> None:
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        "MODEL_ASSETS = ["
+        "{'name': 'from_constant.safetensors', 'url': 'https://example.test/from_constant.safetensors', 'subdir': 'vae'}"
+        "]\n"
+        "READY_METADATA = {'model_assets': MODEL_ASSETS}\n"
+        "READY_REQUIREMENTS = {'models': MODEL_ASSETS, 'custom_nodes': ['ComfyUI-Test']}\n",
+        encoding="utf-8",
+    )
+
+    analysis = analyze_model_assets(scratchpad_path=scratchpad)
+    payload = analysis.to_json()
+
+    assert [(candidate["name"], candidate["subdir"], candidate["source"]) for candidate in payload["candidates"]] == [
+        ("from_constant.safetensors", "vae", "scratchpad_metadata")
+    ]
+
+
 def test_legacy_raw_workflow_extractor_still_returns_only_url_bearing_assets() -> None:
     raw = {
         "nodes": [
