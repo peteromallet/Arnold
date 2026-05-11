@@ -169,7 +169,7 @@ def build() -> VibeWorkflow:
         widget_3=True,
         model=preview_model.out(0),
     )
-    sage = _node(wf, "PathchSageAttentionKJ", "226", widget_0="auto", widget_1=False, model=distilled_lora.out(0))
+    sage = _node(wf, "PathchSageAttentionKJ", "226", widget_0="disabled", widget_1=False, model=distilled_lora.out(0))
     memory = _node(wf, "LTX2MemoryEfficientSageAttentionPatch", "227", widget_0=True, model=sage.out(0))
     chunked = _node(wf, "LTXVChunkFeedForward", "228", widget_0=2, widget_1=4096, model=memory.out(0))
     tuned = _node(

@@ -466,7 +466,7 @@ def build() -> VibeWorkflow:
         },
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '226',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )

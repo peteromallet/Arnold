@@ -599,7 +599,7 @@ def build() -> VibeWorkflow:
         input=imageresizekjv2.out(0),
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '5231',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=ltxicloraloadermodelonly.out(0),
     )

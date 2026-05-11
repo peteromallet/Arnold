@@ -394,7 +394,7 @@ def build() -> VibeWorkflow:
         video_info=vhs_loadvideo.out(3),
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '520',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )
@@ -708,4 +708,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

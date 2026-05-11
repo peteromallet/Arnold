@@ -115,6 +115,7 @@ def analyze_source(
         report.diagnostics.append(compile_issue)
     report.diagnostics.extend(_known_runtime_required_input_diagnostics(api_prompt))
     report.diagnostics.extend(_known_dynamic_combo_selector_diagnostics(api_prompt))
+    report.diagnostics.extend(_known_runtime_compatibility_diagnostics(api_prompt))
 
     asset_analysis = analyze_model_assets(
         raw_workflow=loaded.raw_workflow,
@@ -299,6 +300,44 @@ def _known_dynamic_combo_selector_diagnostics(api_prompt: dict[str, Any] | None)
                     ),
                 )
             )
+    return issues
+
+
+def _known_runtime_compatibility_diagnostics(api_prompt: dict[str, Any] | None) -> list[PortIssue]:
+    if api_prompt is None:
+        return []
+
+    issues: list[PortIssue] = []
+    for node_id, node in sorted(api_prompt.items(), key=lambda item: _sort_key(item[0])):
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") != "PathchSageAttentionKJ":
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        sage_attention = inputs.get("sage_attention", inputs.get("widget_0"))
+        if sage_attention in {None, "disabled"}:
+            continue
+        issues.append(
+            PortIssue(
+                code="optional_acceleration_requires_unavailable_package",
+                message=(
+                    f"Node {node_id} (PathchSageAttentionKJ) enables sageattention mode "
+                    f"{sage_attention!r}; the standard RunPod image does not install sageattention."
+                ),
+                severity="error",
+                node_id=str(node_id),
+                class_type="PathchSageAttentionKJ",
+                detail={
+                    "category": "runtime_contract",
+                    "input": "sage_attention",
+                    "value": sage_attention,
+                    "missing_package": "sageattention",
+                },
+                recommendation="Set sage_attention to 'disabled' for portable 4090 RunPod validation.",
+            )
+        )
     return issues
 
 

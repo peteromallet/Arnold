@@ -410,7 +410,7 @@ def build() -> VibeWorkflow:
         video_info=vhs_loadvideoffmpeg.out(3),
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '520',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )

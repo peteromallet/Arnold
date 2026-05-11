@@ -487,7 +487,7 @@ def build() -> VibeWorkflow:
         nag_cond_video=getnode_17.out(0),
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '226',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )
@@ -572,18 +572,12 @@ def build() -> VibeWorkflow:
         IMAGE=imageresizekjv2_3.out(0),
     )
     ltxvaddguidemulti_2 = _node(wf, 'LTXVAddGuideMulti', '2221',
-        widget_0='3',
-        widget_1=0,
-        widget_2=0.7,
-        widget_3=0,
-        widget_4=0.25,
-        widget_5=-1,
-        widget_6=1,
         latent=emptyltxvlatentvideo.out(0),
         negative=ltxvconditioning.out(1),
+        num_guides='3',
         positive=ltxvconditioning.out(0),
         vae=getnode_42.out(0),
-        _extras={'num_guides.frame_idx_2': simplecalculatorkj_3.out(1), 'num_guides.image_1': ltxvpreprocess_2.out(0), 'num_guides.image_2': ltxvpreprocess_3.out(0), 'num_guides.image_3': ltxvpreprocess.out(0), 'num_guides.strength_1': getnode_46.out(0), 'num_guides.strength_2': getnode_48.out(0), 'num_guides.strength_3': getnode_47.out(0)},
+        _extras={'num_guides.frame_idx_1': 0, 'num_guides.frame_idx_2': simplecalculatorkj_3.out(1), 'num_guides.frame_idx_3': -1, 'num_guides.image_1': ltxvpreprocess_2.out(0), 'num_guides.image_2': ltxvpreprocess_3.out(0), 'num_guides.image_3': ltxvpreprocess.out(0), 'num_guides.strength_1': getnode_46.out(0), 'num_guides.strength_2': getnode_48.out(0), 'num_guides.strength_3': getnode_47.out(0)},
     )
     ltxvconcatavlatent = _node(wf, 'LTXVConcatAVLatent', '24',
         audio_latent=getnode_39.out(0),
@@ -653,16 +647,12 @@ def build() -> VibeWorkflow:
         positive=getnode_44.out(0),
     )
     ltxvaddguidemulti = _node(wf, 'LTXVAddGuideMulti', '2182',
-        widget_0='2',
-        widget_1=0,
-        widget_2=1,
-        widget_3=-1,
-        widget_4=1,
         latent=ltxvcropguides_2.out(2),
         negative=ltxvcropguides_2.out(1),
+        num_guides='2',
         positive=ltxvcropguides_2.out(0),
         vae=getnode_30.out(0),
-        _extras={'num_guides.image_1': getnode_40.out(0), 'num_guides.image_2': getnode_28.out(0), 'num_guides.strength_1': getnode_45.out(0), 'num_guides.strength_2': getnode_41.out(0)},
+        _extras={'num_guides.frame_idx_1': 0, 'num_guides.frame_idx_2': -1, 'num_guides.image_1': getnode_40.out(0), 'num_guides.image_2': getnode_28.out(0), 'num_guides.strength_1': getnode_45.out(0), 'num_guides.strength_2': getnode_41.out(0)},
     )
     cfgguider = _node(wf, 'CFGGuider', '8',
         cfg=2.5,

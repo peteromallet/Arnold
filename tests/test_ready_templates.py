@@ -72,6 +72,22 @@ def test_ready_templates_are_pure_python_builders() -> None:
     assert offenders == []
 
 
+def test_ready_templates_do_not_enable_uncontracted_sageattention() -> None:
+    offenders: list[tuple[str, str, str]] = []
+
+    for template_id in ready_template_ids():
+        api = workflow_from_ready(template_id).compile("api")
+        offenders.extend(
+            (template_id, node_id, inputs.get("sage_attention"))
+            for node_id, node in api.items()
+            if node.get("class_type") == "PathchSageAttentionKJ"
+            for inputs in [node.get("inputs", {})]
+            if inputs.get("sage_attention") not in {None, "disabled"}
+        )
+
+    assert offenders == []
+
+
 def test_ready_template_loads_vibe_workflow() -> None:
     workflow = workflow_from_ready("edit/qwen_image_edit")
 
@@ -242,7 +258,7 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["9"]["inputs"]["batch_size"] == 1
     assert api["26"]["inputs"]["upscale_method"] == "lanczos"
     assert api["26"]["inputs"]["scale_by"] == 0.5
-    assert api["226"]["inputs"]["sage_attention"] == "auto"
+    assert api["226"]["inputs"]["sage_attention"] == "disabled"
     assert api["226"]["inputs"]["allow_compile"] is False
     assert api["227"]["inputs"]["triton_kernels"] is True
     assert api["228"]["inputs"]["chunks"] == 2

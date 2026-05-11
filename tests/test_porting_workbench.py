@@ -186,6 +186,34 @@ def test_analyze_source_rejects_known_dynamic_combo_without_selector(tmp_path: P
     assert payload["ok"] is False
 
 
+def test_analyze_source_rejects_sageattention_patch_for_standard_runpod(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {
+                    "class_type": "PathchSageAttentionKJ",
+                    "inputs": {"model": ["2", 0], "sage_attention": "auto", "allow_compile": False},
+                },
+                "2": {"class_type": "ModelSource", "inputs": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=FakeSchemaProvider({}))
+    payload = report.to_json()
+
+    issue = next(
+        issue
+        for issue in payload["diagnostics"]
+        if issue["code"] == "optional_acceleration_requires_unavailable_package"
+    )
+    assert issue["node_id"] == "1"
+    assert issue["detail"]["missing_package"] == "sageattention"
+    assert payload["ok"] is False
+
+
 def test_analyze_source_rejects_unmaterialized_none_nodes(tmp_path: Path) -> None:
     path = tmp_path / "workflow.json"
     path.write_text(
