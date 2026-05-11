@@ -31,6 +31,7 @@ from megaplan.execute.core import (
 from megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _check_done_task_evidence,
+    _check_done_task_evidence_by_kind,
     _collect_execute_claimed_paths,
     _collect_quality_deviations,
     _normalize_execute_claimed_path,

@@ -282,6 +282,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "description": {"type": "string"},
                         "depends_on": {"type": "array", "items": {"type": "string"}},
                         "status": {"type": "string", "enum": ["pending", "done", "skipped", "blocked"]},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["code", "audit", "test", "docs", "research"],
+                        },
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},

@@ -79,7 +79,7 @@ def _run_check(
             enabled_toolsets=_toolsets_for_phase("critique"),
             session_id=str(uuid.uuid4()),
             session_db=SessionDB(),
-            max_tokens=8192,
+            max_tokens=32768,
             reasoning_config=_reasoning_off,
             **kw,
         )

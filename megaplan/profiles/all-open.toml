@@ -1,13 +1,13 @@
-# kimi-k2.6: plan/prep/revise/gate/finalize/loop_plan - glm-5.1: critique/execute/review/loop_execute/tiebreakers
+# kimi-k2p6 (Fireworks): plan/prep/revise/gate/finalize/loop_plan - glm-5.1: critique/execute/review/loop_execute/tiebreakers
 [profiles.all-open]
-plan     = "hermes:moonshotai/kimi-k2.6"
-prep     = "hermes:moonshotai/kimi-k2.6"
+plan     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+prep     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 critique = "hermes:glm-5.1"
-revise   = "hermes:moonshotai/kimi-k2.6"
-gate     = "hermes:moonshotai/kimi-k2.6"
-finalize = "hermes:moonshotai/kimi-k2.6"
+revise   = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+gate     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+finalize = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 execute  = "hermes:glm-5.1"
-loop_plan    = "hermes:moonshotai/kimi-k2.6"
+loop_plan    = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 loop_execute = "hermes:glm-5.1"
 review   = "hermes:glm-5.1"
 tiebreaker_researcher = "hermes:glm-5.1"

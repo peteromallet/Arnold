@@ -1,0 +1,40 @@
+# `led` — tier 2 (led). One premium model writes the plan; everything else
+# stays cheap.
+#
+# Claude (default vendor) handles `plan`, `loop_plan`, and the two tiebreaker
+# slots — the phases where real architectural thinking maps the work. DeepSeek
+# V4 Pro handles every mechanical phase (prep, revise, gate, finalize,
+# execute, loop_execute). Kimi critiques+reviews.
+#
+# Use when the *planning* is the hard part but the implementation is mechanical
+# once mapped out — complex schema migrations where step ordering matters,
+# multi-step refactors that follow patterns, greenfield features with non-
+# trivial architecture but well-shaped pieces. "Give me a smart plan; the
+# rest is following instructions."
+#
+# Flag interactions:
+#
+#   * `--vendor codex` — flips the four `claude:low` slots (plan, loop_plan,
+#     tiebreakers) to `codex:low`. Everything else stays put.
+#   * `--vendor claude` — explicit no-op (matches the default).
+#   * `--critic kimi` — Kimi already critiques+reviews; no-op.
+#   * `--critic cross` — flips critique+review to the *other* premium relative
+#     to the resolved vendor. Note: this brings a premium into the critic
+#     role at tier 2, which is heavier than `led`'s usual shape; consider
+#     `thoughtful` if you want premium reasoning end-to-end.
+#   * `--phase-model phase=spec` — always honored.
+#
+# See docs/megaplan-rubric.md for the full rubric.
+[profiles.led]
+plan                  = "claude:low"
+prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique              = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+revise                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+loop_plan             = "claude:low"
+loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+review                = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+tiebreaker_researcher = "claude:low"
+tiebreaker_challenger = "claude:low"

@@ -19,6 +19,7 @@ from megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _capture_git_status_snapshot_recursive,
     _check_done_task_evidence,
+    _check_done_task_evidence_by_kind,
 )
 from megaplan.workers import WorkerResult
 from tests.conftest import (
@@ -113,6 +114,178 @@ def test_done_task_evidence_requires_files_or_commands() -> None:
     ]
 
     assert _missing_code_task_evidence(tasks) == ["T1", "T2"]
+
+
+def _audit_notes(length: int = 120) -> str:
+    return "x" * length
+
+
+def test_by_kind_audit_task_with_substantial_notes_not_flagged() -> None:
+    tasks = [
+        {
+            "id": "T1",
+            "kind": "audit",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "executor_notes": _audit_notes(150),
+        }
+    ]
+    issues: list[str] = []
+    missing = _check_done_task_evidence_by_kind(
+        tasks,
+        issues=issues,
+        should_classify=lambda _t: True,
+    )
+    assert missing == []
+    assert issues == []
+
+
+def test_by_kind_audit_task_with_empty_notes_flagged() -> None:
+    tasks = [
+        {
+            "id": "T1",
+            "kind": "audit",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "executor_notes": "",
+        }
+    ]
+    issues: list[str] = []
+    missing = _check_done_task_evidence_by_kind(
+        tasks,
+        issues=issues,
+        should_classify=lambda _t: True,
+    )
+    assert missing == ["T1"]
+    assert any("audit/research" in issue for issue in issues)
+
+
+def test_by_kind_audit_task_with_brief_notes_advisory_only() -> None:
+    tasks = [
+        {
+            "id": "T1",
+            "kind": "audit",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "executor_notes": "found one issue",
+        }
+    ]
+    issues: list[str] = []
+    missing = _check_done_task_evidence_by_kind(
+        tasks,
+        issues=issues,
+        should_classify=lambda _t: True,
+    )
+    assert missing == []
+    assert any("Advisory" in issue for issue in issues)
+
+
+def test_by_kind_code_task_without_files_flagged() -> None:
+    tasks = [
+        {
+            "id": "T1",
+            "kind": "code",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "executor_notes": "",
+        }
+    ]
+    issues: list[str] = []
+    missing = _check_done_task_evidence_by_kind(
+        tasks,
+        issues=issues,
+        should_classify=lambda _t: True,
+    )
+    assert missing == ["T1"]
+
+
+def test_by_kind_test_task_with_pytest_commands_not_flagged() -> None:
+    tasks = [
+        {
+            "id": "T1",
+            "kind": "test",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": ["python3 -m pytest tests/test_foo.py"],
+            "executor_notes": "ran tests",
+        }
+    ]
+    issues: list[str] = []
+    missing = _check_done_task_evidence_by_kind(
+        tasks,
+        issues=issues,
+        should_classify=lambda _t: True,
+    )
+    assert missing == []
+    assert issues == []
+
+
+def test_by_kind_missing_kind_field_treated_as_code() -> None:
+    # No `kind` -> default code -> requires files_changed.
+    tasks = [
+        {
+            "id": "T1",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "executor_notes": "",
+        }
+    ]
+    issues: list[str] = []
+    missing = _check_done_task_evidence_by_kind(
+        tasks,
+        issues=issues,
+        should_classify=lambda _t: True,
+    )
+    assert missing == ["T1"]
+
+
+def test_by_kind_mixed_kinds_each_group_evaluated_separately() -> None:
+    tasks = [
+        {
+            "id": "T_audit_ok",
+            "kind": "audit",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "executor_notes": _audit_notes(200),
+        },
+        {
+            "id": "T_code_bad",
+            "kind": "code",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": [],
+            "executor_notes": "",
+        },
+        {
+            "id": "T_test_ok",
+            "kind": "test",
+            "status": "done",
+            "files_changed": [],
+            "commands_run": ["pytest tests/"],
+            "executor_notes": "",
+        },
+        {
+            "id": "T_docs_ok",
+            "kind": "docs",
+            "status": "done",
+            "files_changed": ["docs/foo.md"],
+            "commands_run": [],
+            "executor_notes": "",
+        },
+    ]
+    issues: list[str] = []
+    missing = _check_done_task_evidence_by_kind(
+        tasks,
+        issues=issues,
+        should_classify=lambda _t: True,
+    )
+    assert missing == ["T_code_bad"]
 
 
 def test_auto_attribute_multiple_done_tasks_share_unclaimed_paths(tmp_path: Path) -> None:
@@ -2234,6 +2407,11 @@ def test_execute_auto_loop_stops_when_existing_task_is_blocked(
     assert response["blocked_task_ids"] == ["T1"]
     assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
+    # Verify phase_result.json is written with correct exit_kind
+    from megaplan.phase_result import read_phase_result
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None, "phase_result.json must be written for every execute exit"
+    assert pr.exit_kind == "blocked_by_prereq"
 
 
 def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
@@ -2284,6 +2462,11 @@ def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
         entry for entry in reversed(state.get("history", [])) if entry.get("step") == "execute"
     )
     assert last_execute["result"] != "blocked"
+    # Verify phase_result.json is written with success exit_kind
+    from megaplan.phase_result import read_phase_result
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None, "phase_result.json must be written for every execute exit"
+    assert pr.exit_kind == "success"
 
 
 def test_execute_auto_loop_short_circuits_when_flag_unset(
@@ -2324,6 +2507,11 @@ def test_execute_auto_loop_short_circuits_when_flag_unset(
     assert t1["files_changed"] == ["stale.py"]
     assert response["blocked_task_ids"] == ["T1"]
     assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
+    # Verify phase_result.json is written with blocked_by_prereq exit_kind
+    from megaplan.phase_result import read_phase_result
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None, "phase_result.json must be written for every execute exit"
+    assert pr.exit_kind == "blocked_by_prereq"
 
 
 def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
@@ -2383,6 +2571,13 @@ def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
     assert not (plan_fixture.plan_dir / "execution_batch_2.json").exists()
     assert "task(s) reported status=blocked by the worker: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
+    # Verify phase_result.json is written with blocked_by_prereq and blocked_task_ids
+    from megaplan.phase_result import read_phase_result
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None, "phase_result.json must be written for every execute exit"
+    assert pr.exit_kind == "blocked_by_prereq"
+    assert len(pr.blocked_tasks) >= 1
+    assert any(bt.task_id == "T1" for bt in pr.blocked_tasks)
 
 
 def test_blocked_task_counts_as_tracked_in_batch_coverage(

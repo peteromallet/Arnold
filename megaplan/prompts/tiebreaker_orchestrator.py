@@ -214,6 +214,36 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
     )
+    parser.add_argument(
+        "--vendor",
+        choices=["claude", "codex"],
+        default=None,
+        help="Pick the premium vendor for tier-2-through-4 profile slots. "
+             "Defaults to ~/.config/megaplan/config.toml [defaults].vendor (or 'claude').",
+    )
+    parser.add_argument(
+        "--depth",
+        choices=["minimal", "low", "medium", "high", "xhigh", "max"],
+        default=None,
+        help="Set author-phase thinking depth (plan / revise / loop_plan / "
+             "tiebreaker_*). Rewrites claude:X / codex:X effort suffix on "
+             "author slots only; critic + mechanical phases plateau.",
+    )
+    parser.add_argument(
+        "--critic",
+        choices=["kimi", "cross"],
+        default=None,
+        help="Override the critique+review pair: 'kimi' swaps in Kimi (Fireworks kimi-k2p6); "
+             "'cross' swaps to the other premium vendor (relative to --vendor).",
+    )
+    parser.add_argument(
+        "--with-prep",
+        action="store_true",
+        default=False,
+        help="Force the visible prep phase into the workflow regardless of "
+             "--robustness. Off by default (only robust/superrobust include prep). "
+             "Use when the planner needs explicit discovery before committing.",
+    )
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--persist", action="store_true")
     parser.add_argument("--ephemeral", action="store_true")

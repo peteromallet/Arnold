@@ -142,15 +142,15 @@ When routing or behavior depends on config, check `megaplan config show` and res
 Settable execution keys: `execution.auto_approve`, `execution.robustness`.
 ## Profiles
 A profile is a named preset that maps each workflow phase to an agent/model spec. Pass `--profile <name>` to any command that accepts `--phase-model` (`init`, `loop-init`, `tiebreaker`, etc.) to apply the preset.
-Built-ins: `standard` (claude/codex mix — the default routing) and `all-open` (hermes-routed Kimi K2.6 + GLM 5.1 mix).
+Built-ins: `standard` (claude/codex mix — the default routing) and `all-open` (hermes-routed Kimi (Fireworks kimi-k2p6) + GLM 5.1 mix).
 Resolution order, later overrides earlier within the same name: built-in (`megaplan/profiles/*.toml`) → user (`~/.config/megaplan/profiles.toml`, or `$XDG_CONFIG_HOME/megaplan/profiles.toml`) → project (`<project_dir>/.megaplan/profiles.toml`).
 Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
-File format: TOML with a `[profiles.<name>]` table. Keys are phase names (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `loop_plan`, `loop_execute`, `review`, `tiebreaker_researcher`, `tiebreaker_challenger`); values are agent specs like `"claude"`, `"codex"`, `"hermes:moonshotai/kimi-k2.6"`, `"hermes:glm-5.1"`. Example:
+File format: TOML with a `[profiles.<name>]` table. Keys are phase names (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `loop_plan`, `loop_execute`, `review`, `tiebreaker_researcher`, `tiebreaker_challenger`); values are agent specs like `"claude"`, `"codex"`, `"hermes:fireworks:accounts/fireworks/models/kimi-k2p6"`, `"hermes:glm-5.1"`. Example:
 ```toml
 [profiles.my-mix]
 plan     = "claude"
 critique = "codex"
-execute  = "hermes:moonshotai/kimi-k2.6"
+execute  = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 review   = "codex"
 ```
 `--phase-model` overrides on the CLI stack on top of any profile.
@@ -174,6 +174,41 @@ Lifecycle:
 Subcommands: `init`, `build`, `deploy`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
 Typical flow: `megaplan cloud init` scaffolds `cloud.yaml`; edit it; export the secrets it lists; `megaplan cloud deploy`; then use `status`, `logs`, and `attach` to observe.
 See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), secret handling, and troubleshooting.
+## Tickets
+`megaplan ticket new` creates a repo-scoped issue ticket. Use it when:
+- During epic/plan work you notice an out-of-scope problem, bug, or rough edge
+- A user explicitly asks you to capture something for later attention
+- You want to log an observation that doesn't block the current task but should be tracked
+
+The command prints only a ULID to stdout on success. Tickets live as `.megaplan/tickets/{ulid}-{slug}.md` files and are auto-discovered by the planner for future epics. Link them to epics with `megaplan ticket link <ticket> <epic> --resolves` so they auto-address when the epic completes.
+## Feedback
+`megaplan feedback --plan <name>` scaffolds a `feedback.md` file in the plan directory and opens it in `$EDITOR` (or `$VISUAL`). The file has one section per workflow stage — `prep`, `plan`, `critique`, `revise`, `gate`, `tiebreaker`, `finalize`, `execute`, `review` — plus an `Overall` section. Each section has a `rating:` (integer 0–10) and a free-form `comment:` field; leave any field blank to skip it.
+
+This is **user feedback**, owned by the human after a run finishes — megaplan only scaffolds the template and parses it back on load, it never overwrites edits. Old plans without a `feedback.md` simply have no feedback attached; running `megaplan feedback --plan <name>` on an older plan scaffolds the template on demand (backwards compatible).
+
+Use `megaplan feedback --plan <name> --show` to print the parsed summary, and `--no-edit` to just scaffold the template and print the path without launching an editor. Parsed feedback is exposed on the in-memory `Plan` record as `Plan.feedback` (a dict shaped `{"overall": {...}, "stages": {stage: {...}}}`), so downstream tooling can read it the same way as any other artifact. When `--actor`/`MEGAPLAN_ACTOR_ID` is set, parsed feedback is also written to the `plans.feedback` jsonb column so the DB and file backends stay in sync.
+
+### Filling feedback with subagents
+Recommended process when an agent (rather than the human) is producing the initial assessment:
+
+1. **Scaffold**: run `megaplan feedback --plan <name> --no-edit` to create the empty `feedback.md`. Note the plan directory it prints — that is where the per-stage artifacts live (`plan_v*.md`, `critique*.json`, `gate.json`, `tiebreaker_*.json`, `finalize.json`, `execution*.json`, `review.json`, etc.).
+2. **Per-stage assessment**: dispatch one read-only subagent per stage that actually ran (skip stages with no artifacts). Brief each subagent narrowly — give it the plan idea, the stage name, and the artifact filenames for that stage only. Ask it to return a 0–10 rating plus a 1–3 sentence comment grounded in what the artifacts show (what worked, what was weak, what was missed). Run these in parallel; they have no dependencies on each other.
+3. **Synthesize Overall**: after the per-stage results come back, *you* (the orchestrating agent, not a subagent) read the per-stage ratings and comments together with the final outcome (`final.md`, `review.json`, any `latest_failure`) and decide an Overall rating and comment. The Overall is a judgment call about whether the run delivered the goal, not an average of stage ratings.
+4. **Write**: edit `feedback.md` with the ratings and comments. Leave a stage blank if it didn't run or you can't form a defensible opinion — empty is better than guessed. Run `megaplan feedback --plan <name> --show` to confirm the parser picked everything up.
+
+Keep comments grounded in specific artifact evidence ("critique flagged X but reviewer didn't catch the regression in Y") rather than vibes. The point of feedback is signal for future runs, not a participation score.
+
+### Searching feedback across plans
+`megaplan feedback search` queries every plan with non-empty feedback across both backends — local `feedback.md` files in this project tree plus, when an actor is configured, the `plans.feedback` jsonb column in the DB. Duplicates between backends are de-duped by (plan name, project_dir). Use this to answer "which profile actually scored well on this repo?" or "where did the executor get a 6 or below?". Filters:
+- `--profile <substr>` — substring match on the plan's profile (e.g. `--profile claude` matches `all-claude`, `claude-led`, etc.).
+- `--repo <substr>` — substring match on the plan's `project_dir` / repo path.
+- `--min-rating N` / `--max-rating N` — bounds on the Overall rating.
+- `--stage <name>` — only plans that recorded a rating for that stage (`plan`, `critique`, `execute`, …).
+- `--has-comment` — only plans whose Overall comment is non-empty.
+- `--all` — scan every megaplan project root on this machine, not just the current tree.
+- `--json` — emit raw rows instead of a table.
+
+Default output is a compact table (plan, profile, overall rating, backend, repo, plus the first line of the Overall comment). Combine with `megaplan feedback show --plan <name>` to drill into a specific match.
 ## Commands
 ```bash
 megaplan status --plan <name>
@@ -208,4 +243,15 @@ megaplan bakeoff pick --exp <id> --profile <name> --rationale "..."
 megaplan bakeoff merge --exp <id>
 megaplan bakeoff resume --exp <id>
 megaplan bakeoff abandon --exp <id>
+megaplan ticket new "title" -b "body"
+megaplan ticket list [--status <s>] [--tags <t>] [--json]
+megaplan ticket show <id> [--json]
+megaplan ticket edit <id> [--title <t>] [--body <b>] [--status <s>]
+megaplan ticket link <ticket> <epic> [--resolves]
+megaplan ticket unlink <ticket> <epic>
+megaplan ticket addressed <id> [--note <n>]
+megaplan ticket dismiss <id> --reason "..."
+megaplan ticket reopen <id>
+megaplan feedback --plan <name> [--show] [--no-edit]
+megaplan feedback search [--profile <s>] [--repo <s>] [--min-rating N] [--max-rating N] [--stage <name>] [--has-comment] [--all] [--json]
 ```

@@ -58,6 +58,7 @@ PlanArtifactRole = Literal[
     "human_verifications",
     "tiebreaker_decisions",
     "tiebreaker_payload",
+    "feedback",
 ]
 WorkerKind = Literal["local_cli", "cloud_worker", "auto_driver"]
 ScheduledJobStatus = Literal["pending", "claimed", "fired", "cancelled", "failed"]
@@ -233,6 +234,7 @@ class Plan(StorageModel):
     latest_failure: dict[str, Any] | None = None
     resume_cursor: dict[str, Any] | None = None
     artifacts: list[PlanArtifact] = Field(default_factory=list)
+    feedback: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -251,6 +253,7 @@ class Plan(StorageModel):
         latest_execution: dict[str, Any] | None = None,
         latest_failure: dict[str, Any] | None = None,
         resume_cursor: dict[str, Any] | None = None,
+        feedback: dict[str, Any] | None = None,
         updated_at: datetime | None = None,
     ) -> Plan:
         raw = deepcopy(dict(state))
@@ -278,6 +281,7 @@ class Plan(StorageModel):
             latest_failure=latest_failure if latest_failure is not None else raw.get("latest_failure"),
             resume_cursor=resume_cursor if resume_cursor is not None else raw.get("resume_cursor"),
             artifacts=artifacts or [],
+            feedback=feedback,
             created_at=created_at,
             updated_at=updated_at or created_at,
         )

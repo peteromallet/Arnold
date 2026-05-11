@@ -1,0 +1,22 @@
+# `marlowe` (legacy) — functionally identical to `spade-claude` in the
+# detective cluster. Opus 4.7 --effort low plans/revises/gates/reviews; Kimi
+# Kimi K2 critiques; DeepSeek prep/finalize/execute. Cost-quality winner from the
+# 2026-05 ArtAgents bake-off (~3-4x cheaper than pure Claude pipelines).
+# Kept as an alias so existing scripts and shorthand keep working — either
+# `marlowe` or `spade-claude` resolves to this shape. Bump
+# --phase-model plan=claude:high when the brief is unfamiliar or the
+# codebase area is new.
+# (Personality: Philip Marlowe — hard-boiled gumshoe, gets the job done day after day.)
+[profiles.marlowe]
+plan                  = "claude:low"
+prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique              = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+revise                = "claude:low"
+gate                  = "claude:low"
+finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+loop_plan             = "claude:low"
+loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+review                = "claude:low"
+tiebreaker_researcher = "claude:low"
+tiebreaker_challenger = "claude:low"

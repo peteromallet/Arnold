@@ -629,18 +629,33 @@ def _trusted_container() -> bool:
     }
 
 
-def _codex_child_env() -> dict[str, str]:
+def _codex_child_env(
+    turn_id: str | None = None,
+    actor_id: str | None = None,
+) -> dict[str, str]:
     env = strip_progress_env(os.environ.copy())
     # Nested Codex workers should not inherit the parent Codex session state.
     # Those variables can cause the child to attach to the outer thread/CI
     # context instead of behaving like an isolated worker invocation.
     env.pop("CODEX_THREAD_ID", None)
     env.pop("CODEX_CI", None)
+    if turn_id is not None:
+        env["MEGAPLAN_TURN_ID"] = turn_id
+    if actor_id is not None:
+        env["MEGAPLAN_ACTOR_ID"] = actor_id
     return env
 
 
-def _external_worker_env() -> dict[str, str]:
-    return strip_progress_env(os.environ.copy())
+def _external_worker_env(
+    turn_id: str | None = None,
+    actor_id: str | None = None,
+) -> dict[str, str]:
+    env = strip_progress_env(os.environ.copy())
+    if turn_id is not None:
+        env["MEGAPLAN_TURN_ID"] = turn_id
+    if actor_id is not None:
+        env["MEGAPLAN_ACTOR_ID"] = actor_id
+    return env
 
 
 def _merge_partial_output(raw_output: str, output_path: Path) -> str:
@@ -1112,6 +1127,10 @@ def _recover_codex_payload(
 
 
 def validate_payload(step: str, payload: dict[str, Any]) -> None:
+    if step == "phase_result":
+        from megaplan.phase_result import validate_phase_result
+        validate_phase_result(payload)
+        return
     if step == "execute":
         full_required = _STEP_REQUIRED_KEYS.get(step, [])
         missing_full = [key for key in full_required if key not in payload]
@@ -1766,7 +1785,7 @@ def run_claude_step(
             command,
             cwd=work_dir,
             stdin_text=prompt,
-            env=_external_worker_env(),
+            env=_external_worker_env(turn_id=f'plan_worker_{state["name"]}'),
             activity_callback=_activity_callback_for_state(state, plan_dir),
         )
     except CliError as error:
@@ -1971,7 +1990,7 @@ def run_codex_step(
             command,
             cwd=Path.cwd(),
             stdin_text=prompt,
-            env=_codex_child_env(),
+            env=_codex_child_env(turn_id=f'plan_worker_{state["name"]}'),
             timeout=timeout_seconds,
             activity_callback=_activity_callback_for_state(state, plan_dir),
         )

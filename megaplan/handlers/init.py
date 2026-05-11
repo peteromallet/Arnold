@@ -151,6 +151,19 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     }
     if getattr(args, "profile", None):
         state["config"]["profile"] = args.profile
+    # Persist --vendor / --critic so subprocess phases (which don't re-pass
+    # the original CLI flags) keep applying the same profile rewrites at
+    # step time. apply_profile_expansion bakes the rewrite into the
+    # resolved phase_models too, but persisting the dials directly keeps
+    # the override observable / debuggable.
+    if getattr(args, "vendor", None):
+        state["config"]["vendor"] = args.vendor
+    if getattr(args, "critic", None):
+        state["config"]["critic"] = args.critic
+    if getattr(args, "depth", None):
+        state["config"]["depth"] = args.depth
+    if getattr(args, "with_prep", False):
+        state["config"]["with_prep"] = True
     if normalized_output_path is not None:
         state["config"]["output_path"] = normalized_output_path
     if raw_form:

@@ -980,6 +980,18 @@ def _snapshot_dir(epic_id: str) -> Path:
     return Path.home() / ".megaplan" / "snapshots" / f"{epic_id}-{timestamp}"
 
 
+def handle_ticket(args: argparse.Namespace) -> int:
+    """Dispatch ``megaplan ticket ...`` subcommands."""
+    from megaplan.handlers.tickets import TICKET_DISPATCH
+
+    action = args.ticket_action
+    handler = TICKET_DISPATCH.get(action)
+    if handler is None:
+        print(f"Error: unknown ticket action {action!r}", file=sys.stderr)
+        return 1
+    return handler(args)
+
+
 def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
     action = args.epic_action
     if action == "snapshot":
@@ -1109,9 +1121,359 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
             close()
 
 
+def _collect_feedback_rows(
+    root: Path,
+    *,
+    all_system: bool = False,
+    include_db: bool = True,
+) -> list[dict[str, Any]]:
+    """Gather feedback rows from file-mode plan trees and (optionally) the DB.
+
+    Each row is a dict with: ``plan``, ``profile``, ``repo``, ``state``,
+    ``backend`` (``file`` or ``db``), ``feedback_path`` (file mode only),
+    ``feedback`` (parsed dict from PlanFeedback.to_dict), ``plan_id`` (DB only).
+    Duplicates between file and DB are de-duped by (plan name, repo).
+    """
+
+    from megaplan._core.io import read_json
+    from megaplan.feedback import feedback_path, load_feedback
+
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    # --- File backend: walk known megaplan project roots and read feedback.md
+    for search_root in _collect_megaplan_roots(root, tree=not all_system, all_system=all_system):
+        for plan_dir in active_plan_dirs(search_root):
+            fb = load_feedback(plan_dir)
+            if fb is None or fb.is_empty():
+                continue
+            try:
+                state = read_json(plan_dir / "state.json")
+            except (FileNotFoundError, OSError):
+                continue
+            config = state.get("config") or {}
+            profile = config.get("profile") if isinstance(config, dict) else None
+            repo = config.get("project_dir") if isinstance(config, dict) else None
+            key = (state.get("name", plan_dir.name), str(repo or search_root))
+            seen.add(key)
+            rows.append({
+                "plan": state.get("name", plan_dir.name),
+                "profile": profile,
+                "repo": repo or str(search_root),
+                "state": state.get("current_state"),
+                "backend": "file",
+                "feedback_path": str(feedback_path(plan_dir)),
+                "feedback": fb.to_dict(),
+            })
+
+    # --- DB backend: if an actor is configured, pull rows with non-empty feedback
+    if include_db and (os.environ.get("MEGAPLAN_ACTOR_ID") or getattr(_collect_feedback_rows, "_actor_override", None)):
+        actor_id = getattr(_collect_feedback_rows, "_actor_override", None) or os.environ["MEGAPLAN_ACTOR_ID"]
+        try:
+            store = build_epic_store(root, actor_id=actor_id)
+        except Exception:
+            store = None
+        if store is not None:
+            try:
+                for plan in store.list_plans(include_orphans=True):
+                    fb_dict = getattr(plan, "feedback", None)
+                    if not fb_dict:
+                        continue
+                    config = plan.config or {}
+                    profile = config.get("profile") if isinstance(config, dict) else None
+                    repo = config.get("project_dir") if isinstance(config, dict) else None
+                    key = (plan.name, str(repo or ""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows.append({
+                        "plan": plan.name,
+                        "profile": profile,
+                        "repo": repo,
+                        "state": plan.current_state,
+                        "backend": "db",
+                        "plan_id": plan.id,
+                        "feedback": fb_dict,
+                    })
+            finally:
+                close = getattr(store, "close", None)
+                if callable(close):
+                    close()
+    return rows
+
+
+def _filter_feedback_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[dict[str, Any]]:
+    profile = (getattr(args, "profile", None) or "").lower() or None
+    repo = (getattr(args, "repo", None) or "").lower() or None
+    min_rating = getattr(args, "min_rating", None)
+    max_rating = getattr(args, "max_rating", None)
+    stage = (getattr(args, "stage", None) or "").lower() or None
+    has_comment = getattr(args, "has_comment", False)
+
+    def _keep(row: dict[str, Any]) -> bool:
+        if profile and profile not in (str(row.get("profile") or "")).lower():
+            return False
+        if repo and repo not in (str(row.get("repo") or "")).lower():
+            return False
+        fb = row.get("feedback") or {}
+        overall = (fb.get("overall") or {})
+        rating = overall.get("rating")
+        if min_rating is not None and (rating is None or rating < min_rating):
+            return False
+        if max_rating is not None and (rating is None or rating > max_rating):
+            return False
+        if has_comment and not (overall.get("comment") or "").strip():
+            return False
+        if stage:
+            stage_entry = (fb.get("stages") or {}).get(stage)
+            if not stage_entry or stage_entry.get("rating") is None:
+                return False
+        return True
+
+    return [r for r in rows if _keep(r)]
+
+
+def _render_feedback_table(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "(no matches)"
+    lines: list[str] = []
+    header = f"{'PLAN':<28} {'PROFILE':<14} {'OVR':>4}  {'BK':<4} REPO"
+    lines.append(header)
+    lines.append("-" * len(header))
+    for row in rows:
+        fb = row.get("feedback") or {}
+        overall = (fb.get("overall") or {})
+        rating = overall.get("rating")
+        rating_s = f"{rating}/10" if rating is not None else "—"
+        repo = str(row.get("repo") or "")
+        if len(repo) > 40:
+            repo = "…" + repo[-39:]
+        lines.append(
+            f"{(row.get('plan') or '')[:28]:<28} "
+            f"{(row.get('profile') or '—')[:14]:<14} "
+            f"{rating_s:>4}  "
+            f"{(row.get('backend') or '?'):<4} {repo}"
+        )
+        comment = (overall.get("comment") or "").strip()
+        if comment:
+            first_line = comment.splitlines()[0]
+            if len(first_line) > 70:
+                first_line = first_line[:67] + "…"
+            lines.append(f"  └ {first_line}")
+    return "\n".join(lines) + "\n"
+
+
+def _push_feedback_to_db(root: Path, *, plan_name: str, feedback_dict: dict[str, Any]) -> dict[str, Any]:
+    """Push a parsed feedback dict to the DB plan row, if a DB actor is configured.
+
+    Returns a small status dict describing what happened. A missing actor or
+    missing DB row is a soft skip — file-mode users shouldn't need a DB at all.
+    """
+
+    actor_id = getattr(_push_feedback_to_db, "_actor_override", None) or os.environ.get("MEGAPLAN_ACTOR_ID")
+    if not actor_id:
+        return {"db_synced": False, "reason": "no actor configured"}
+    store = build_epic_store(root, actor_id=actor_id)
+    try:
+        match = next((p for p in store.list_plans(include_orphans=True) if p.name == plan_name), None)
+        if match is None:
+            return {"db_synced": False, "reason": f"no DB plan named {plan_name!r}"}
+        store.update_plan(match.id, expected_revision=match.revision, feedback=feedback_dict)
+        return {"db_synced": True, "plan_id": match.id}
+    finally:
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+
+
+def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Scaffold, edit, or display ``feedback.md`` for a plan.
+
+    The local ``feedback.md`` is always the editor surface. If a DB actor is
+    configured (``--actor`` or ``MEGAPLAN_ACTOR_ID``), parsed feedback is also
+    pushed to the ``plans.feedback`` column so backends stay in sync.
+    """
+
+    import subprocess
+
+    from megaplan._core.io import atomic_write_text
+    from megaplan.feedback import (
+        FEEDBACK_FILENAME,
+        feedback_path,
+        format_summary,
+        load_feedback,
+        render_template,
+    )
+
+    actor_override = getattr(args, "actor", None)
+    if actor_override:
+        _push_feedback_to_db._actor_override = actor_override  # type: ignore[attr-defined]
+        _collect_feedback_rows._actor_override = actor_override  # type: ignore[attr-defined]
+
+    operation = getattr(args, "operation", "edit")
+    if getattr(args, "show", False):
+        operation = "show"
+
+    # --- search: scan plans across backends, apply filters, render
+    if operation == "search":
+        rows = _collect_feedback_rows(root, all_system=getattr(args, "all", False))
+        filtered = _filter_feedback_rows(rows, args)
+        if getattr(args, "emit_json", False):
+            return {
+                "success": True,
+                "step": "feedback",
+                "operation": "search",
+                "count": len(filtered),
+                "scanned": len(rows),
+                "rows": filtered,
+            }
+        return {
+            "success": True,
+            "step": "feedback",
+            "operation": "search",
+            "count": len(filtered),
+            "scanned": len(rows),
+            "rows": filtered,
+            "summary": (
+                f"{len(filtered)} of {len(rows)} plans with feedback match.\n\n"
+                + _render_feedback_table(filtered)
+            ),
+        }
+
+    # edit / show both require --plan
+    if not getattr(args, "plan", None):
+        raise CliError("invalid_args", "feedback edit/show require --plan <name>")
+
+    plan_dir, state = load_plan(root, args.plan)
+    path = feedback_path(plan_dir)
+
+    if operation == "show":
+        fb = load_feedback(plan_dir)
+        if fb is None:
+            return {
+                "success": True,
+                "step": "feedback",
+                "plan": state["name"],
+                "plan_dir": str(plan_dir),
+                "feedback_path": str(path),
+                "feedback_present": False,
+                "summary": f"No {FEEDBACK_FILENAME} for this plan yet.",
+            }
+        return {
+            "success": True,
+            "step": "feedback",
+            "plan": state["name"],
+            "plan_dir": str(plan_dir),
+            "feedback_path": str(path),
+            "feedback_present": True,
+            "summary": format_summary(fb),
+            "feedback": fb.to_dict(),
+        }
+
+    created = False
+    if not path.exists():
+        template = render_template(state["name"], idea=state.get("idea"))
+        atomic_write_text(path, template)
+        created = True
+
+    opened = False
+    if not getattr(args, "no_edit", False):
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+        if editor:
+            try:
+                subprocess.run([*editor.split(), str(path)], check=False)
+                opened = True
+            except (FileNotFoundError, OSError):
+                opened = False
+
+    fb = load_feedback(plan_dir)
+    db_status = {"db_synced": False, "reason": "no edits to push"}
+    if fb is not None and not fb.is_empty():
+        try:
+            db_status = _push_feedback_to_db(root, plan_name=state["name"], feedback_dict=fb.to_dict())
+        except Exception as exc:  # noqa: BLE001 — surface failure but don't break editor flow
+            db_status = {"db_synced": False, "reason": f"db push failed: {exc}"}
+
+    msg_parts: list[str] = []
+    msg_parts.append("Created" if created else "Found existing")
+    msg_parts.append(FEEDBACK_FILENAME)
+    if opened:
+        msg_parts.append("(opened in $EDITOR)")
+    if db_status.get("db_synced"):
+        msg_parts.append("→ synced to DB")
+    return {
+        "success": True,
+        "step": "feedback",
+        "plan": state["name"],
+        "plan_dir": str(plan_dir),
+        "feedback_path": str(path),
+        "feedback_present": path.exists(),
+        "created": created,
+        "opened_in_editor": opened,
+        "db_status": db_status,
+        "summary": f"{' '.join(msg_parts)} at {path}",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Parser and dispatch
 # ---------------------------------------------------------------------------
+
+
+def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
+    """Wire ``--vendor``, ``--depth``, and ``--critic`` onto a subparser.
+
+    Kept as one helper so the wiring stays consistent across the five
+    subcommands that take a ``--profile``. All flags default to
+    ``None`` so ``apply_profile_expansion`` can distinguish "user
+    didn't say" from "user explicitly picked claude/kimi/etc." and
+    consult the config default in the former case.
+    """
+    parser.add_argument(
+        "--vendor",
+        choices=["claude", "codex"],
+        default=None,
+        help="Pick the premium vendor for tier-2-through-4 profile slots. "
+             "Swaps claude:X <-> codex:X at the same effort tier; hermes specs "
+             "untouched. Defaults to ~/.config/megaplan/config.toml "
+             "[defaults].vendor (or 'claude'). Silently ignored when the "
+             "active profile is vendor_locked = true.",
+    )
+    parser.add_argument(
+        "--depth",
+        choices=["minimal", "low", "medium", "high", "xhigh", "max"],
+        default=None,
+        help="Set author-phase thinking depth (plan / revise / loop_plan / "
+             "tiebreaker_researcher / tiebreaker_challenger). Rewrites the "
+             "effort suffix on claude:X / codex:X slots; critic and "
+             "mechanical phases are not touched (asymmetry principle). "
+             "hermes specs and profiles with no premium author slots are a "
+             "silent no-op. Defaults to whatever depth the profile already "
+             "sets (usually :low). Honored on vendor_locked profiles.",
+    )
+    parser.add_argument(
+        "--critic",
+        choices=["kimi", "cross"],
+        default=None,
+        help="Override the critique+review pair (the critique == review "
+             "invariant — same mind pre- and post-execution). 'kimi' swaps "
+             "in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other "
+             "premium vendor relative to --vendor. Silently ignored on "
+             "vendor_locked profiles.",
+    )
+    parser.add_argument(
+        "--with-prep",
+        action="store_true",
+        default=False,
+        help="Force the visible prep phase into the workflow regardless of "
+             "--robustness. By default, prep only runs at --robustness "
+             "robust|superrobust; this flag adds prep to standard / light / "
+             "tiny so the planner can do explicit research before committing "
+             "to a plan. Useful for unfamiliar libraries, novel external "
+             "APIs, research-heavy briefs, or ambiguous requirements. "
+             "Redundant on --robustness robust|superrobust (no-op).",
+    )
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Megaplan orchestration CLI")
@@ -1176,6 +1538,7 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
     init_parser.add_argument("--profile", default=None,
                              help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    _add_vendor_critic_args(init_parser)
     init_parser.add_argument(
         "--from-arnold-epic",
         default=None,
@@ -1216,6 +1579,64 @@ def build_parser() -> argparse.ArgumentParser:
     epic_export_parser.add_argument("--allow-missing-blobs", action="store_true")
     epic_export_parser.add_argument("--project-dir", default=None)
 
+    # --- ticket subcommand group ---
+    ticket_parser = subparsers.add_parser("ticket", help="Manage repo-scoped issue/problem tickets")
+    ticket_sub = ticket_parser.add_subparsers(dest="ticket_action", required=True)
+
+    # ticket new
+    ticket_new_parser = ticket_sub.add_parser("new", help="Create a new ticket")
+    ticket_new_parser.add_argument("title", help="Ticket title")
+    ticket_new_body_group = ticket_new_parser.add_mutually_exclusive_group(required=True)
+    ticket_new_body_group.add_argument("-b", dest="body", default=None, metavar="BODY", help="Body text")
+    ticket_new_body_group.add_argument("--edit", action="store_true", help="Open $EDITOR for body")
+    ticket_new_body_group.add_argument("-", dest="stdin_body", action="store_true", help="Read body from stdin")
+    ticket_new_parser.add_argument("--tags", default=None, help="Comma-separated tags")
+
+    # ticket list
+    ticket_list_parser = ticket_sub.add_parser("list", help="List tickets")
+    ticket_list_parser.add_argument("--status", default=None, help="Filter by status")
+    ticket_list_parser.add_argument("--tags", default=None, help="Filter by tags (comma-separated)")
+    ticket_list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # ticket show
+    ticket_show_parser = ticket_sub.add_parser("show", help="Show a single ticket")
+    ticket_show_parser.add_argument("ticket_id", help="Ticket ULID")
+    ticket_show_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # ticket edit
+    ticket_edit_parser = ticket_sub.add_parser("edit", help="Edit a ticket")
+    ticket_edit_parser.add_argument("ticket_id", help="Ticket ULID")
+    ticket_edit_parser.add_argument("--title", default=None, help="New title")
+    ticket_edit_parser.add_argument("--body", default=None, help="New body")
+    ticket_edit_parser.add_argument("--status", default=None, help="New status")
+    ticket_edit_parser.add_argument("--add-tag", default=None, help="Tag to add")
+    ticket_edit_parser.add_argument("--remove-tag", default=None, help="Tag to remove")
+
+    # ticket link
+    ticket_link_parser = ticket_sub.add_parser("link", help="Link a ticket to an epic")
+    ticket_link_parser.add_argument("ticket_id", help="Ticket ULID")
+    ticket_link_parser.add_argument("epic_id", help="Epic ID")
+    ticket_link_parser.add_argument("--resolves", action="store_true", help="Epic completion resolves this ticket")
+
+    # ticket unlink
+    ticket_unlink_parser = ticket_sub.add_parser("unlink", help="Unlink a ticket from an epic")
+    ticket_unlink_parser.add_argument("ticket_id", help="Ticket ULID")
+    ticket_unlink_parser.add_argument("epic_id", help="Epic ID")
+
+    # ticket addressed
+    ticket_addressed_parser = ticket_sub.add_parser("addressed", help="Mark ticket as addressed")
+    ticket_addressed_parser.add_argument("ticket_id", help="Ticket ULID")
+    ticket_addressed_parser.add_argument("--note", default=None, help="Resolution note")
+
+    # ticket dismiss
+    ticket_dismiss_parser = ticket_sub.add_parser("dismiss", help="Dismiss a ticket")
+    ticket_dismiss_parser.add_argument("ticket_id", help="Ticket ULID")
+    ticket_dismiss_parser.add_argument("--reason", default=None, help="Reason for dismissal")
+
+    # ticket reopen
+    ticket_reopen_parser = ticket_sub.add_parser("reopen", help="Reopen a ticket")
+    ticket_reopen_parser.add_argument("ticket_id", help="Ticket ULID")
+
     migrate_local_parser = subparsers.add_parser("migrate-local-plans", help="Import legacy ~/.megaplan/<project>/plans trees")
     migrate_local_parser.add_argument("--source-home", default=str(Path.home()))
     migrate_local_parser.add_argument("--source-project", default=None)
@@ -1230,6 +1651,37 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "status":
             step_parser.add_argument("--pending-human", action="store_true",
                                      help="List plans awaiting human verification")
+
+    feedback_parser = subparsers.add_parser(
+        "feedback",
+        help="Scaffold, edit, or search external feedback.md for plans (per-stage 0-10 ratings + comments)",
+    )
+    feedback_parser.add_argument(
+        "operation",
+        nargs="?",
+        default="edit",
+        choices=["edit", "show", "search"],
+        help="edit (default): scaffold/open feedback.md. show: print parsed summary. search: query feedback across plans",
+    )
+    feedback_parser.add_argument("--plan", required=False, help="Plan name (required for edit/show)")
+    feedback_parser.add_argument(
+        "--show",
+        action="store_true",
+        help="(legacy alias) equivalent to: feedback show --plan <name>",
+    )
+    feedback_parser.add_argument(
+        "--no-edit",
+        action="store_true",
+        help="edit: just scaffold the template (if missing) and print the path; do not open $EDITOR",
+    )
+    feedback_parser.add_argument("--profile", default=None, help="search: substring match on plan profile (e.g. 'claude', 'poirot')")
+    feedback_parser.add_argument("--repo", default=None, help="search: substring match on plan project_dir / repo path")
+    feedback_parser.add_argument("--min-rating", type=int, default=None, help="search: only show plans with Overall rating >= N")
+    feedback_parser.add_argument("--max-rating", type=int, default=None, help="search: only show plans with Overall rating <= N")
+    feedback_parser.add_argument("--stage", default=None, help="search: only show plans that have a rating for this stage")
+    feedback_parser.add_argument("--has-comment", action="store_true", help="search: only show plans whose Overall comment is non-empty")
+    feedback_parser.add_argument("--all", action="store_true", help="search: scan all megaplan project roots on this machine, not just the current tree")
+    feedback_parser.add_argument("--json", dest="emit_json", action="store_true", help="search: emit raw JSON instead of a table")
 
     resume_parser = subparsers.add_parser("resume", help="Resume a failed or blocked plan from its stored cursor")
     resume_parser.add_argument("--plan", required=True)
@@ -1256,6 +1708,7 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
         step_parser.add_argument("--profile", default=None,
                                  help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+        _add_vendor_critic_args(step_parser)
         step_parser.add_argument("--fresh", action="store_true")
         step_parser.add_argument("--persist", action="store_true")
         step_parser.add_argument("--ephemeral", action="store_true")
@@ -1378,6 +1831,7 @@ def build_parser() -> argparse.ArgumentParser:
                                   help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5")
     loop_init_parser.add_argument("--profile", default=None,
                                   help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    _add_vendor_critic_args(loop_init_parser)
     loop_init_parser.add_argument("--fresh", action="store_true")
     loop_init_parser.add_argument("--persist", action="store_true")
     loop_init_parser.add_argument("--ephemeral", action="store_true")
@@ -1397,6 +1851,7 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5")
     loop_run_parser.add_argument("--profile", default=None,
                                  help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    _add_vendor_critic_args(loop_run_parser)
     loop_run_parser.add_argument("--fresh", action="store_true")
     loop_run_parser.add_argument("--persist", action="store_true")
     loop_run_parser.add_argument("--ephemeral", action="store_true")
@@ -1454,6 +1909,7 @@ def build_parser() -> argparse.ArgumentParser:
     tb_run_parser.add_argument("--phase-model", action="append", default=[])
     tb_run_parser.add_argument("--profile", default=None,
                                help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    _add_vendor_critic_args(tb_run_parser)
     tb_run_parser.add_argument("--fresh", action="store_true")
     tb_run_parser.add_argument("--persist", action="store_true")
     tb_run_parser.add_argument("--ephemeral", action="store_true")
@@ -1476,12 +1932,14 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "progress": handle_progress,
     "watch": handle_watch,
     "resume": handle_resume,
+    "feedback": handle_feedback,
     "list": handle_list,
     "loop-init": handle_loop_init,
     "loop-run": handle_loop_run,
     "loop-status": handle_loop_status,
     "loop-pause": handle_loop_pause,
     "debt": handle_debt,
+    "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,
     "step": handle_step,
@@ -1669,6 +2127,9 @@ def main(argv: list[str] | None = None) -> int:
         handler = COMMAND_HANDLERS.get(args.command)
         if handler is None:
             raise CliError("invalid_command", f"Unknown command {args.command!r}")
+        # Ticket handler has a different signature (no root, returns int)
+        if args.command == "ticket":
+            return handler(args)
         from megaplan.progress import ProgressEmitter
         args.progress_emitter = ProgressEmitter.from_env()
         if args.command == "override" and remaining:

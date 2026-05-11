@@ -1323,6 +1323,31 @@ class FileStore(Store):
             occurred_at=utc_now(),
         )
         self._commit_event(epic_id, event.model_dump(mode="json"))
+
+        # Auto-address hook: flip tickets linked with resolves_on_complete=true
+        # FileStore.root is the Arnold/epic backend directory, which may
+        # differ from the git working tree where .megaplan/tickets/ lives.
+        # Try self.root first, fall back to os.getcwd(); skip file walk if
+        # neither contains a tickets directory (address_resolved_by_epic
+        # handles None/absent-dir cleanly).
+        if (
+            event_type == "state_change"
+            and post_state
+            and post_state.get("state") == "done"
+        ):
+            from megaplan.tickets import address_resolved_by_epic
+
+            import os as _os
+
+            repo_root = self.root
+            if not (repo_root / ".megaplan" / "tickets").is_dir():
+                cwd = Path(_os.getcwd())
+                if (cwd / ".megaplan" / "tickets").is_dir():
+                    repo_root = cwd
+                else:
+                    repo_root = None
+            address_resolved_by_epic(epic_id, store=self, repo_root=repo_root)
+
         return event
 
     def list_epic_events(

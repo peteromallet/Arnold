@@ -58,6 +58,8 @@ from megaplan.schemas import (
     Sprint,
     SprintItem,
     SystemLog,
+    Ticket,
+    TicketEpicLink,
     ToolCall,
 )
 from megaplan.store.base import (
@@ -156,6 +158,11 @@ _IDEMPOTENT_MUTATORS = frozenset({
     "update_migration_run",
     "heartbeat_migration",
     "claim_expired_migration",
+    "create_ticket",
+    "update_ticket",
+    "link_ticket_to_epic",
+    "unlink_ticket_from_epic",
+    "address_tickets_resolved_by_epic",
 })
 _REPLAY_MODEL_TYPES = {
     model.__name__: model
@@ -184,6 +191,8 @@ _REPLAY_MODEL_TYPES = {
         Sprint,
         SprintItem,
         SystemLog,
+        Ticket,
+        TicketEpicLink,
         ToolCall,
         MigrationRun,
     )
@@ -211,12 +220,13 @@ _PLAN_COLUMNS = (
     "id", "name", "epic_id", "sprint_id", "revision", "idea", "current_state",
     "iteration", "config", "sessions", "plan_versions", "history", "meta",
     "last_gate", "active_step", "clarification", "latest_finalize",
-    "latest_review", "latest_execution", "latest_failure", "resume_cursor", "created_at", "updated_at",
+    "latest_review", "latest_execution", "latest_failure", "resume_cursor",
+    "feedback", "created_at", "updated_at",
 )
 _PLAN_JSONB = frozenset({
     "config", "sessions", "plan_versions", "history", "meta", "last_gate",
     "active_step", "clarification", "latest_finalize", "latest_review",
-    "latest_execution", "latest_failure", "resume_cursor",
+    "latest_execution", "latest_failure", "resume_cursor", "feedback",
 })
 _ARTIFACT_VALID_FIELDS = frozenset({
     "name", "kind", "role", "version", "batch", "phase",
@@ -235,7 +245,7 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "bot_turns": frozenset({"id", "epic_id", "triggered_by_message_ids", "prompt_snapshot", "prompt_version", "state_at_turn", "status", "started_at", "completed_at", "model_version", "warnings_issued"}),
     "checklist_items": frozenset({"id", "epic_id", "content", "status", "position", "source", "skip_reason", "superseded_by_item_id", "created_at", "completed_at"}),
     "code_artifacts": frozenset({"id", "codebase_id", "epic_id", "kind", "source", "file_path", "line_range", "scope", "content", "content_summary", "metadata", "created_at", "last_used_at", "expires_at"}),
-    "codebases": frozenset({"id", "owner", "name", "repo_url", "repo_workspace", "default_branch", "scope", "group_name", "associated_epic_id", "added_at", "added_via", "last_accessed_at", "verified_accessible_at", "notes"}),
+    "codebases": frozenset({"id", "owner", "name", "repo_url", "repo_workspace", "default_branch", "scope", "group_name", "associated_epic_id", "root_commit_sha", "added_at", "added_via", "last_accessed_at", "verified_accessible_at", "notes"}),
     "control_messages": frozenset({"id", "epic_id", "actor_id", "intent", "target_id", "payload", "idempotency_key", "created_at", "processor_id", "claimed_at", "processed_at", "result"}),
     "cloud_runs": frozenset({"id", "operation", "status", "conversation_id", "epic_id", "sprint_id", "plan_id", "provider", "provider_run_id", "target_id", "command_summary", "progress_summary", "last_status", "metadata", "idempotency_key", "started_by_actor_id", "started_at", "last_checked_at", "completed_at", "created_at", "updated_at"}),
     "epic_events": frozenset({
@@ -266,13 +276,15 @@ _COPY_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "sprint_items": frozenset({"id", "sprint_id", "content", "estimated_complexity", "status", "source_section", "position", "created_at"}),
     "sprints": frozenset({"id", "epic_id", "sprint_number", "name", "goal", "status", "queue_position", "pending_reason", "target_weeks", "revision", "created_at", "updated_at", "queued_at"}),
     "system_logs": frozenset({"id", "level", "category", "event_type", "message", "details", "turn_id", "epic_id", "occurred_at"}),
+    "ticket_epics": frozenset({"ticket_id", "epic_id", "resolves_on_complete", "linked_at"}),
+    "tickets": frozenset({"id", "codebase_id", "title", "body", "status", "source", "tags", "filed_by_actor_id", "filed_in_turn_id", "slug", "created_at", "last_edited_at", "resolution_note", "addressed_at"}),
     "tool_calls": frozenset({"id", "turn_id", "tool_name", "operation_kind", "arguments", "result", "duration_ms", "called_at"}),
 }
 _COPY_JSONB_COLUMNS = frozenset({
     "active_step", "arguments", "blob_copy_progress", "clarification", "config",
     "context_snapshot", "copied_ids", "details", "error_details", "focus_areas",
     "granted_epic_ids", "history", "in_burst_with", "last_gate", "last_status",
-    "latest_execution", "latest_failure", "latest_finalize", "latest_review",
+    "feedback", "latest_execution", "latest_failure", "latest_finalize", "latest_review",
     "line_range", "manifest", "meta", "metadata", "payload",
     "plan_versions", "post_state", "pre_state", "prior_state", "prompt_snapshot",
     "provider_response_summary", "request_body", "request_summary", "result",
@@ -1787,6 +1799,7 @@ class DBStore:
         scope: str = "global",
         group_name: str | None = None,
         associated_epic_id: str | None = None,
+        root_commit_sha: str | None = None,
         added_via: str = "manual",
         verified_accessible_at: str | None = None,
         notes: str | None = None,
@@ -1798,14 +1811,14 @@ class DBStore:
             """
             INSERT INTO codebases
                 (id, owner, name, repo_url, repo_workspace, default_branch, scope, group_name,
-                 associated_epic_id, added_via, verified_accessible_at, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 associated_epic_id, root_commit_sha, added_via, verified_accessible_at, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             [
                 codebase_id or str(uuid.uuid4()),
                 owner.lower(), name.lower(), repo_url, repo_workspace, default_branch, scope, group_name,
-                associated_epic_id, added_via, verified_accessible_at, notes,
+                associated_epic_id, root_commit_sha, added_via, verified_accessible_at, notes,
             ],
         ).fetchone()
         return Codebase(**row)
@@ -1821,6 +1834,7 @@ class DBStore:
         scope: str = "global",
         group_name: str | None = None,
         associated_epic_id: str | None = None,
+        root_commit_sha: str | None = None,
         added_via: str = "manual",
         verified_accessible_at: str | None = None,
         notes: str | None = None,
@@ -1831,8 +1845,8 @@ class DBStore:
             """
             INSERT INTO codebases
                 (id, owner, name, repo_url, repo_workspace, default_branch, scope, group_name,
-                 associated_epic_id, added_via, verified_accessible_at, notes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 associated_epic_id, root_commit_sha, added_via, verified_accessible_at, notes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (lower(owner), lower(name)) DO UPDATE SET
                 repo_url             = EXCLUDED.repo_url,
                 repo_workspace       = EXCLUDED.repo_workspace,
@@ -1840,6 +1854,7 @@ class DBStore:
                 scope                = EXCLUDED.scope,
                 group_name           = EXCLUDED.group_name,
                 associated_epic_id   = EXCLUDED.associated_epic_id,
+                root_commit_sha      = EXCLUDED.root_commit_sha,
                 added_via            = EXCLUDED.added_via,
                 verified_accessible_at = EXCLUDED.verified_accessible_at,
                 notes                = EXCLUDED.notes
@@ -1848,7 +1863,7 @@ class DBStore:
             [
                 str(uuid.uuid4()),
                 owner.lower(), name.lower(), repo_url, repo_workspace, default_branch, scope, group_name,
-                associated_epic_id, added_via, verified_accessible_at, notes,
+                associated_epic_id, root_commit_sha, added_via, verified_accessible_at, notes,
             ],
         ).fetchone()
         return Codebase(**row)
@@ -1956,6 +1971,193 @@ class DBStore:
             values,
         ).fetchone()
         return Codebase(**row)
+
+    # ------------------------------------------------------------------
+    # Codebase lookup helpers
+    # ------------------------------------------------------------------
+
+    def load_codebase_by_associated_epic(self, epic_id: str) -> Codebase | None:
+        """Return the codebase whose associated_epic_id matches, or None."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM codebases WHERE associated_epic_id = %s",
+            [epic_id],
+        ).fetchone()
+        return Codebase(**row) if row else None
+
+    def resolve_codebase_by_root_sha(self, root_commit_sha: str) -> Codebase | None:
+        """Find a codebase by its root_commit_sha."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM codebases WHERE root_commit_sha = %s",
+            [root_commit_sha],
+        ).fetchone()
+        return Codebase(**row) if row else None
+
+    # ------------------------------------------------------------------
+    # Tickets CRUD
+    # ------------------------------------------------------------------
+
+    def create_ticket(
+        self,
+        *,
+        codebase_id: str,
+        title: str,
+        body: str = "",
+        source: str = "human",
+        tags: list[str] | None = None,
+        filed_by_actor_id: str | None = None,
+        filed_in_turn_id: str | None = None,
+        slug: str,
+        ticket_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Ticket:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            INSERT INTO tickets
+                (id, codebase_id, title, body, status, source, tags,
+                 filed_by_actor_id, filed_in_turn_id, slug)
+            VALUES (%s, %s, %s, %s, 'open', %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            [
+                ticket_id or str(uuid.uuid4()),
+                codebase_id, title, body, source,
+                tags or [], filed_by_actor_id, filed_in_turn_id, slug,
+            ],
+        ).fetchone()
+        return Ticket(**row)
+
+    def load_ticket(self, ticket_id: str) -> Ticket | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM tickets WHERE id = %s", [ticket_id]
+        ).fetchone()
+        return Ticket(**row) if row else None
+
+    def list_tickets(
+        self,
+        *,
+        codebase_id: str | None = None,
+        status: str | None = None,
+        tags: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[Ticket]:
+        conn = self._get_conn()
+        conditions: list[str] = []
+        values: list[Any] = []
+        if codebase_id is not None:
+            conditions.append("codebase_id = %s")
+            values.append(codebase_id)
+        if status is not None:
+            conditions.append("status = %s")
+            values.append(status)
+        if tags is not None:
+            conditions.append("tags && %s")
+            values.append(list(tags))
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql = f"SELECT * FROM tickets{where} ORDER BY created_at DESC"
+        if limit is not None:
+            sql += " LIMIT %s"
+            values.append(limit)
+        rows = conn.execute(sql, values).fetchall()
+        return [Ticket(**row) for row in rows]
+
+    def update_ticket(self, ticket_id: str, *, idempotency_key: str | None = None,
+        **changes: Any) -> Ticket:
+        conn = self._get_conn()
+        set_parts = [f"{k} = %s" for k in changes]
+        values: list[Any] = list(changes.values())
+        # Always bump last_edited_at (LWW)
+        set_parts.append("last_edited_at = now()")
+        values.append(ticket_id)
+        row = conn.execute(
+            f"UPDATE tickets SET {', '.join(set_parts)} WHERE id = %s RETURNING *",
+            values,
+        ).fetchone()
+        return Ticket(**row)
+
+    def link_ticket_to_epic(
+        self,
+        *,
+        ticket_id: str,
+        epic_id: str,
+        resolves_on_complete: bool = False,
+        idempotency_key: str | None = None,
+    ) -> TicketEpicLink:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            INSERT INTO ticket_epics
+                (ticket_id, epic_id, resolves_on_complete)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (ticket_id, epic_id) DO UPDATE SET
+                resolves_on_complete = EXCLUDED.resolves_on_complete
+            RETURNING *
+            """,
+            [ticket_id, epic_id, resolves_on_complete],
+        ).fetchone()
+        return TicketEpicLink(**row)
+
+    def unlink_ticket_from_epic(
+        self,
+        *,
+        ticket_id: str,
+        epic_id: str,
+        idempotency_key: str | None = None,
+    ) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "DELETE FROM ticket_epics WHERE ticket_id = %s AND epic_id = %s",
+            [ticket_id, epic_id],
+        )
+
+    def list_ticket_epic_links(
+        self,
+        *,
+        ticket_id: str | None = None,
+        epic_id: str | None = None,
+    ) -> list[TicketEpicLink]:
+        conn = self._get_conn()
+        conditions: list[str] = []
+        values: list[Any] = []
+        if ticket_id is not None:
+            conditions.append("ticket_id = %s")
+            values.append(ticket_id)
+        if epic_id is not None:
+            conditions.append("epic_id = %s")
+            values.append(epic_id)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        rows = conn.execute(
+            f"SELECT * FROM ticket_epics{where} ORDER BY linked_at DESC",
+            values,
+        ).fetchall()
+        return [TicketEpicLink(**row) for row in rows]
+
+    def address_tickets_resolved_by_epic(self, epic_id: str) -> list[str]:
+        """Flip open tickets linked to *epic_id* with resolves_on_complete=true to 'addressed'.
+
+        Returns the list of ticket ids that were updated (empty if none).
+        Idempotent: already-addressed tickets are skipped by the status='open' filter.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            UPDATE tickets
+            SET status = 'addressed',
+                resolution_note = %s,
+                addressed_at = now()
+            FROM ticket_epics
+            WHERE ticket_epics.epic_id = %s
+              AND ticket_epics.resolves_on_complete = true
+              AND tickets.status = 'open'
+              AND tickets.id = ticket_epics.ticket_id
+            RETURNING tickets.id
+            """,
+            [f"Resolved by epic {epic_id} completing.", epic_id],
+        ).fetchall()
+        return [row["id"] for row in rows]
 
     # ------------------------------------------------------------------
     # T9: Code Artifacts
@@ -2328,7 +2530,21 @@ class DBStore:
                 pre_state_sha256, post_state_sha256, turn_id,
             ],
         ).fetchone()
-        return EpicEvent(**row)
+        event = EpicEvent(**row)
+
+        # Auto-address hook: flip tickets linked with resolves_on_complete=true
+        if (
+            event_type == "state_change"
+            and post_state
+            and post_state.get("state") == "done"
+        ):
+            from megaplan.tickets import address_resolved_by_epic
+
+            cb = self.load_codebase_by_associated_epic(epic_id)
+            repo_root = cb.repo_workspace if cb else None
+            address_resolved_by_epic(epic_id, store=self, repo_root=repo_root)
+
+        return event
 
     def list_epic_events(
         self,

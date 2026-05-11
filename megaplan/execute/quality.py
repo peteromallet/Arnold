@@ -50,6 +50,158 @@ def _check_done_task_evidence(
     return missing_task_ids
 
 
+# Minimum length of executor_notes to count as substantive evidence for
+# audit / research style tasks (which intentionally produce no files_changed).
+_AUDIT_NOTES_MIN_LEN = 100
+_DOCS_NOTES_ADVISORY_MIN_LEN = 50
+
+
+def _task_kind(task: dict[str, Any]) -> str:
+    """Return the declared task kind, defaulting to ``code`` for back-compat."""
+    kind = task.get("kind")
+    if isinstance(kind, str) and kind:
+        return kind
+    return "code"
+
+
+def _has_audit_or_research_evidence(task: dict[str, Any]) -> bool:
+    notes = (task.get("executor_notes") or "").strip()
+    return len(notes) >= _AUDIT_NOTES_MIN_LEN
+
+
+def _has_audit_or_research_advisory(task: dict[str, Any]) -> bool:
+    return bool((task.get("executor_notes") or "").strip())
+
+
+def _has_test_task_evidence(task: dict[str, Any]) -> bool:
+    if task.get("files_changed"):
+        return True
+    cmds = task.get("commands_run") or []
+    for cmd in cmds:
+        text = str(cmd).lower()
+        if "pytest" in text or "test" in text:
+            return True
+    return False
+
+
+def _has_test_task_advisory(task: dict[str, Any]) -> bool:
+    return bool(task.get("commands_run"))
+
+
+def _has_docs_task_evidence(task: dict[str, Any]) -> bool:
+    return bool(task.get("files_changed"))
+
+
+def _has_docs_task_advisory(task: dict[str, Any]) -> bool:
+    if task.get("commands_run"):
+        return True
+    notes = (task.get("executor_notes") or "").strip()
+    return len(notes) >= _DOCS_NOTES_ADVISORY_MIN_LEN
+
+
+def _has_code_task_evidence(task: dict[str, Any]) -> bool:
+    return bool(task.get("files_changed"))
+
+
+def _has_code_task_advisory(task: dict[str, Any]) -> bool:
+    return bool(task.get("commands_run"))
+
+
+def _evidence_check_for_kind(
+    kind: str,
+) -> tuple[
+    Callable[[dict[str, Any]], bool],
+    Callable[[dict[str, Any]], bool],
+    str,
+    str,
+]:
+    """Return ``(has_evidence, has_advisory, missing_msg, advisory_msg)`` for a kind."""
+    if kind in ("audit", "research"):
+        return (
+            _has_audit_or_research_evidence,
+            _has_audit_or_research_advisory,
+            "Done audit/research tasks missing substantial executor_notes "
+            f"(need >={_AUDIT_NOTES_MIN_LEN} chars): ",
+            "Advisory: audit/research task has brief executor_notes: ",
+        )
+    if kind == "test":
+        return (
+            _has_test_task_evidence,
+            _has_test_task_advisory,
+            "Done test tasks missing files_changed or pytest commands_run: ",
+            "Advisory: test task has commands_run but no files_changed: ",
+        )
+    if kind == "docs":
+        return (
+            _has_docs_task_evidence,
+            _has_docs_task_advisory,
+            "Done docs tasks missing files_changed: ",
+            "Advisory: docs task has notes but no files_changed: ",
+        )
+    # code (default)
+    return (
+        _has_code_task_evidence,
+        _has_code_task_advisory,
+        "Done tasks missing both files_changed and commands_run: ",
+        "Advisory: done tasks rely on non-file evidence (FLAG-006 softening): ",
+    )
+
+
+def _check_done_task_evidence_by_kind(
+    tasks: list[dict[str, Any]],
+    *,
+    issues: list[str],
+    should_classify: Callable[[dict[str, Any]], bool],
+    code_has_evidence: Callable[[dict[str, Any]], bool] | None = None,
+    code_has_advisory: Callable[[dict[str, Any]], bool] | None = None,
+    code_missing_message: str | None = None,
+    code_advisory_message: str | None = None,
+) -> list[str]:
+    """Per-kind dispatch over ``_check_done_task_evidence``.
+
+    Buckets eligible done tasks by their declared ``kind`` and applies the
+    appropriate evidence-check shape for each. Tasks without a ``kind`` are
+    treated as ``code`` (preserving the prior default behaviour).
+
+    The ``code_*`` overrides allow callers (e.g. prose mode, callers with
+    bespoke messages) to override the evidence shape for the ``code`` bucket
+    only — ``audit``/``research``/``test``/``docs`` always use the
+    kind-specific defaults.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for task in tasks:
+        if task.get("status") != "done" or not should_classify(task):
+            continue
+        groups.setdefault(_task_kind(task), []).append(task)
+
+    missing: list[str] = []
+    for kind, group_tasks in groups.items():
+        has_evidence, has_advisory, missing_msg, advisory_msg = _evidence_check_for_kind(
+            kind
+        )
+        if kind == "code":
+            if code_has_evidence is not None:
+                has_evidence = code_has_evidence
+            if code_has_advisory is not None:
+                has_advisory = code_has_advisory
+            if code_missing_message is not None:
+                missing_msg = code_missing_message
+            if code_advisory_message is not None:
+                advisory_msg = code_advisory_message
+        missing.extend(
+            _check_done_task_evidence(
+                group_tasks,
+                issues=issues,
+                should_classify=lambda _task: True,
+                has_evidence=has_evidence,
+                has_advisory_evidence=has_advisory,
+                missing_message=missing_msg,
+                advisory_message=advisory_msg,
+            )
+        )
+    return missing
+
+
 def _format_auto_attributed_paths(paths: list[str]) -> str:
     displayed = paths[:AUTO_ATTRIBUTION_PATH_LIST_LIMIT]
     if len(paths) > AUTO_ATTRIBUTION_PATH_LIST_LIMIT:

@@ -61,6 +61,7 @@ from .shared import (
     attach_agent_fallback,
     worker_module,
 )
+from megaplan.phase_result import _emit_phase_result
 
 log = logging.getLogger(__name__)
 
@@ -451,6 +452,12 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     "issues": issues,
                     "rework_items": list(worker.payload.get("rework_items", [])),
                 }
+                _emit_phase_result(
+                    phase="review",
+                    state=state,
+                    plan_dir=plan_dir,
+                    exit_kind="success",
+                )
                 _attach_next_step_runtime(response)
                 attach_agent_fallback(response, args)
                 return response
@@ -603,6 +610,12 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             "issues": issues,
             "rework_items": list(worker.payload.get("rework_items", [])),
         }
+        _emit_phase_result(
+            phase="review",
+            state=state,
+            plan_dir=plan_dir,
+            exit_kind="success",
+        )
         _attach_next_step_runtime(response)
         attach_agent_fallback(response, args)
         return response

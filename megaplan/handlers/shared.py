@@ -17,6 +17,13 @@ from megaplan.receipts import build_receipt
 from megaplan.receipts.writer import write_receipt
 from megaplan.step_edit import next_plan_artifact_name
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
+from megaplan.phase_result import (
+    _emit_phase_result,
+    phase_result_guard,
+    BlockedTask,
+    Deviation,
+    ExitKind,
+)
 from megaplan._core import (
     append_history,
     apply_session_update,
@@ -162,20 +169,21 @@ def _run_worker(
     # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
     save_state_merge_meta(plan_dir, state)
     try:
-        run_step_kwargs: dict[str, Any] = {
-            "root": root,
-            "resolved": (agent, mode, refreshed, model),
-            "prompt_override": prompt_override,
-        }
-        if prompt_kwargs is not None and _supports_prompt_kwargs(worker_module.run_step_with_worker):
-            run_step_kwargs["prompt_kwargs"] = prompt_kwargs
-        return worker_module.run_step_with_worker(
-            step,
-            state,
-            plan_dir,
-            args,
-            **run_step_kwargs,
-        )
+        with phase_result_guard(plan_dir):
+            run_step_kwargs: dict[str, Any] = {
+                "root": root,
+                "resolved": (agent, mode, refreshed, model),
+                "prompt_override": prompt_override,
+            }
+            if prompt_kwargs is not None and _supports_prompt_kwargs(worker_module.run_step_with_worker):
+                run_step_kwargs["prompt_kwargs"] = prompt_kwargs
+            return worker_module.run_step_with_worker(
+                step,
+                state,
+                plan_dir,
+                args,
+                **run_step_kwargs,
+            )
     except CliError as error:
         clear_active_step(state, run_id=run_id)
         record_step_failure(plan_dir, state, step=step, iteration=failure_iteration, error=error)
@@ -217,6 +225,61 @@ def _build_gate_prompt_override(
         "blocking flag, return ITERATE or ESCALATE instead."
     )
     return f"{base_prompt}\n\n{addendum}"
+
+
+# ---------------------------------------------------------------------------
+# Phase-result helpers for funneled handlers
+# ---------------------------------------------------------------------------
+
+
+def _derive_exit_kind_funneled(step: str, result: str, state: PlanState) -> str:
+    """Derive ``exit_kind`` for the 6 funneled handlers.
+
+    * ``step == "gate"`` and the result indicates a quality-gate block →
+      ``blocked_by_quality``.
+    * Everything else → ``success`` (funneled handlers don't have prereq
+      blocks / timeouts — those come from execute).
+    """
+    if step == "gate" and result not in ("success",):
+        return ExitKind.blocked_by_quality.value
+    return ExitKind.success.value
+
+
+def _extract_deviations_from_state(state: PlanState) -> tuple[Deviation, ...]:
+    """Extract quality-gate deviation objects from *state*.
+
+    Pulls from ``last_gate.warnings``; returns an empty tuple when there
+    is nothing to report.
+    """
+    last_gate = state.get("last_gate")
+    if not isinstance(last_gate, dict):
+        return ()
+    warnings = last_gate.get("warnings")
+    if not isinstance(warnings, list) or not warnings:
+        return ()
+    return tuple(
+        Deviation(kind="quality_gate", message=str(w), task_id=None)
+        for w in warnings
+    )
+
+
+def _snapshot_cli_provenance(state: PlanState) -> dict[str, Any]:
+    """Snapshot CLI-originated config keys so the driver can rehydrate them."""
+    config = state.get("config", {})
+    return {
+        k: config.get(k)
+        for k in (
+            "phase_model",
+            "profile",
+            "auto_approve",
+            "mode",
+            "robustness",
+        )
+        if k in config
+    }
+
+
+# ---------------------------------------------------------------------------
 
 
 def _finish_step(
@@ -296,6 +359,17 @@ def _finish_step(
         response.update(response_fields)
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
+    # Emit the canonical phase_result.json for the auto driver
+    _emit_phase_result(
+        phase=step,
+        state=state,
+        plan_dir=plan_dir,
+        exit_kind=_derive_exit_kind_funneled(step, result, state),
+        blocked_tasks=(),
+        deviations=_extract_deviations_from_state(state),
+        artifacts_written=tuple(artifacts),
+        cli_provenance=_snapshot_cli_provenance(state),
+    )
     return response
 
 

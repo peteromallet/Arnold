@@ -128,6 +128,12 @@ def test_gate_proceed_with_accepted_tradeoffs_creates_debt(
     assert response["debt_entries_added"] == 1
     assert len(registry["entries"]) == 1
     assert registry["entries"][0]["flag_ids"] == [flag["id"]]
+    # Verify phase_result.json is written via _finish_step
+    from megaplan.phase_result import read_phase_result
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None, "phase_result.json must be written after gate"
+    assert pr.exit_kind == "success"
+    assert pr.phase == "gate"
 
 
 def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
@@ -161,6 +167,12 @@ def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
 
     assert response["debt_entries_added"] == 0
     assert not debt_registry_path(plan_fixture.root).exists()
+    # Verify phase_result.json is written for ITERATE gate too
+    from megaplan.phase_result import read_phase_result
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None, "phase_result.json must be written after gate"
+    assert pr.exit_kind == "success"
+    assert pr.phase == "gate"
 
 
 def test_gate_proceed_partial_resolutions_still_missing_after_reprompt_downgrades_to_iterate(

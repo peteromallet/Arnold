@@ -3537,6 +3537,15 @@ class AIAgent:
             or getattr(self, "_stream_callback", None) is not None
         )
 
+    def _provider_requires_streaming(self) -> bool:
+        # Fireworks rejects non-streaming chat.completions when max_tokens > 4096
+        # with HTTP 400: "Requests with max_tokens > 4096 must have stream=true".
+        base_url = getattr(self, "base_url", "") or ""
+        if "api.fireworks.ai" not in base_url:
+            return False
+        mt = getattr(self, "max_tokens", None)
+        return bool(mt and mt > 4096)
+
     def _interruptible_streaming_api_call(
         self, api_kwargs: dict, *, on_first_delta: callable = None
     ):
@@ -5785,7 +5794,7 @@ class AIAgent:
                     if os.getenv("HERMES_DUMP_REQUESTS", "").strip().lower() in {"1", "true", "yes", "on"}:
                         self._dump_api_request_debug(api_kwargs, reason="preflight")
 
-                    if self._has_stream_consumers():
+                    if self._has_stream_consumers() or self._provider_requires_streaming():
                         # Streaming path: fire delta callbacks for real-time
                         # token delivery to CLI display, gateway, or TTS.
                         def _stop_spinner():

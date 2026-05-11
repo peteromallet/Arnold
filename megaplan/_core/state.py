@@ -430,6 +430,9 @@ def set_active_step(
         if isinstance(session_id, str) and session_id:
             active_step["session_id"] = session_id
     state["active_step"] = active_step
+    from megaplan.phase_result import generate_invocation_id
+
+    state.setdefault("meta", {})["current_invocation_id"] = generate_invocation_id()
     return resolved_run_id
 
 
