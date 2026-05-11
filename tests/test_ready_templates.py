@@ -116,6 +116,28 @@ def test_ready_templates_do_not_use_headless_incompatible_ltx_preview_override()
     assert offenders == []
 
 
+@pytest.mark.parametrize(
+    "template_id",
+    [
+        "video/ltx2_3_runexx_first_last_frame",
+        "video/ltx2_3_runexx_first_last_raw_video_guide",
+        "video/ltx2_3_first_last_frame_travel_iclora_control",
+        "video/ltx2_3_runexx_first_middle_last_frame",
+    ],
+)
+def test_ltx_travel_segment_outputs_omit_synthetic_audio(template_id: str) -> None:
+    api = workflow_from_ready(template_id).compile("api")
+
+    video_combine_nodes = [
+        node
+        for node in api.values()
+        if node.get("class_type") == "VHS_VideoCombine"
+    ]
+
+    assert video_combine_nodes
+    assert all("audio" not in node.get("inputs", {}) for node in video_combine_nodes)
+
+
 def test_ready_template_loads_vibe_workflow() -> None:
     workflow = workflow_from_ready("edit/qwen_image_edit")
 

@@ -321,7 +321,6 @@ def build() -> VibeWorkflow:
         clip=getnode_8.out(0),
     )
     vhs_videocombine = _node(wf, 'VHS_VideoCombine', '43',
-        audio=getnode_21.out(0),
         filename_prefix='reigh_vibecomfy_ltx_first_middle_last',
         format='video/h264-mp4',
         frame_rate=getnode_13.out(0),

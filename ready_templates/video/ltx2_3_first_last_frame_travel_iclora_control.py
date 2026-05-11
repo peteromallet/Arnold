@@ -430,7 +430,6 @@ def build() -> VibeWorkflow:
         wf,
         "VHS_VideoCombine",
         "43",
-        audio=decoded_audio.out(0),
         filename_prefix="reigh_vibecomfy_ltx_control_first_last",
         format="video/h264-mp4",
         frame_rate=fps.out(0),
