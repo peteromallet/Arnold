@@ -220,7 +220,6 @@ def build() -> VibeWorkflow:
     primitiveboolean = _node(wf, 'PrimitiveBoolean', '2082',
         value=True,
     )
-    n_19e3f7e8_881c_4a61_a360_1c463734043a = _node(wf, '19e3f7e8-881c-4a61-a360-1c463734043a', '2102')
     primitivestringmultiline = _node(wf, 'PrimitiveStringMultiline', '2103',
         value="Make this image come alive with cinematic motion, smooth animation. \n\nA foggy night in in 1700's Amsterdam. The fog is thick and swirling, illuminating by streetlights. we see a bridge over a canal, cobblestone streets, canal buildings lining the canal The vibe is uneasy, moody, slightly dangerous.\n\nThe camera crane down high angle to a low angle ending with a close up of a vampire's hand with leather gloves on holding a walking cane.  Single continuous camera shot ",
     )
@@ -338,11 +337,6 @@ def build() -> VibeWorkflow:
         model=getnode_8.out(0),
         vae=getnode_18.out(0),
     )
-    n_8fa4f93a_67ee_463f_ba43_249580c0bfb1 = _node(wf, '8fa4f93a-67ee-463f-ba43-249580c0bfb1', '2070',
-        _1=primitivestringmultiline.out(0),
-        clip=getnode_32.out(0),
-        image=n_19e3f7e8_881c_4a61_a360_1c463734043a.out(0),
-    )
     setnode_17 = _node(wf, 'SetNode', '2072',
         widget_0='height',
         INT=intconstant_2.out(0),
@@ -386,7 +380,7 @@ def build() -> VibeWorkflow:
     )
     cliptextencode_2 = _node(wf, 'CLIPTextEncode', '16',
         widget_0='= enhanced prompt = ',
-        text=n_8fa4f93a_67ee_463f_ba43_249580c0bfb1.out(0),
+        text=primitivestringmultiline.out(0),
         clip=getnode_9.out(0),
     )
     wf.replace_edge('16.text', primitivestringmultiline.out(0))
