@@ -49,11 +49,22 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         classes=frozenset(
             {
                 "LTXAVTextEncoderLoader",
+                "LTX2AttentionTunerPatch",
+                "LTX2_NAG",
                 "LTXVConditioning",
                 "LTXVImgToVideo",
+                "LTXVImgToVideoInplaceKJ",
                 "EmptyLTXVLatentVideo",
                 "LTXVAudioVAELoader",
+                "LTXVAudioVAEDecode",
+                "LTXVChunkFeedForward",
+                "LTXVConcatAVLatent",
+                "LTXVCropGuides",
                 "LTXVEmptyLatentAudio",
+                "LTXVPreprocess",
+                "LTXVScheduler",
+                "LTXVSeparateAVLatent",
+                "LatentUpscaleModelLoader",
             }
         ),
     ),
@@ -67,8 +78,14 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "ImageResizeKJv2",
                 "PreviewAnimation",
                 "GetImageRangeFromBatch",
+                "GetImageSize",
                 "INTConstant",
+                "LTXVAddGuide",
+                "PathchSageAttentionKJ",
                 "PointsEditor",
+                "ResizeImagesByLongerEdge",
+                "SimpleCalculatorKJ",
+                "VAELoaderKJ",
             }
         ),
         pip_packages=("matplotlib",),
@@ -130,7 +147,7 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
     CustomNodePack(
         name="ComfyUI-GGUF",
         repo="https://github.com/city96/ComfyUI-GGUF.git",
-        classes=frozenset({"UnetLoaderGGUF"}),
+        classes=frozenset({"DualCLIPLoaderGGUF", "UnetLoaderGGUF"}),
         pip_packages=("gguf",),
     ),
     CustomNodePack(
@@ -141,9 +158,11 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "Any Switch (rgthree)",
                 "Fast Groups Bypasser (rgthree)",
                 "Fast Groups Muter (rgthree)",
+                "GetNode",
                 "Label (rgthree)",
                 "Power Lora Loader (rgthree)",
                 "Seed (rgthree)",
+                "SetNode",
             }
         ),
     ),

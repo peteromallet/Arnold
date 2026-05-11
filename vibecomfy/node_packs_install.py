@@ -8,7 +8,27 @@ from vibecomfy.node_packs_lockfile import LockEntry, upsert_lockfile_entry
 from vibecomfy.workflow import VibeWorkflow
 InstallStatus = Literal["installed", "refreshed", "skipped_dirty", "failed"]
 DEFAULT_INSTALL_ROOT = Path("custom_nodes"); """Canonical install root for custom node packs."""
-CORE_COMFY_CLASSES = frozenset({"LoadImage", "SaveImage"})
+CORE_COMFY_CLASSES = frozenset(
+    {
+        "CFGGuider",
+        "CLIPTextEncode",
+        "DualCLIPLoader",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "SamplerCustomAdvanced",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecodeTiled",
+        "VAELoader",
+    }
+)
 class Runner(Protocol):
     def __call__(self, args: Sequence[str], *, check: bool, capture_output: bool, text: bool, cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]: ...
 @dataclass(frozen=True)
@@ -65,7 +85,23 @@ def _refresh_existing(name: str, repo_url: str, install_dir: Path, force: bool, 
     sha = _git_head(install_dir, runner)
     if sha is None: return InstallResult(name, "failed", None, f"failed to read git HEAD for {install_dir}")
     upsert_lockfile_entry(LockEntry(name, sha, repo_url), lockfile_path); return InstallResult(name, "refreshed", sha, None)
-def missing_packs_for_workflow(workflow: VibeWorkflow) -> tuple[list[CustomNodePack], list[str]]: missing_classes = missing_class_types_for_workflow(workflow); return resolve_node_packs(missing_classes), unresolved_class_types(missing_classes)
+def missing_packs_for_workflow(workflow: VibeWorkflow) -> tuple[list[CustomNodePack], list[str]]:
+    missing_classes = missing_class_types_for_workflow(workflow)
+    packs = resolve_node_packs(missing_classes)
+    unresolved = unresolved_class_types(missing_classes)
+    return _merge_declared_requirement_packs(workflow, packs), unresolved
+
+
+def _merge_declared_requirement_packs(workflow: VibeWorkflow, packs: list[CustomNodePack]) -> list[CustomNodePack]:
+    by_name = {pack.name: pack for pack in KNOWN_NODE_PACKS}
+    merged = {pack.name: pack for pack in packs}
+    for name in workflow.requirements.custom_nodes:
+        pack = by_name.get(name)
+        if pack is not None:
+            merged.setdefault(pack.name, pack)
+    return sorted(merged.values(), key=lambda pack: pack.name.lower())
+
+
 def missing_class_types_for_workflow(workflow: VibeWorkflow) -> set[str]: return {node.class_type for node in workflow.nodes.values()} - _known_schema_classes() - CORE_COMFY_CLASSES
 def _pack_by_name(name: str | None) -> CustomNodePack | None: return next((pack for pack in KNOWN_NODE_PACKS if pack.name == name), None)
 def _install_pack_pip_packages(name: str, pack: CustomNodePack | None, runner: Runner) -> str | None:

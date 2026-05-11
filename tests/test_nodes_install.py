@@ -503,6 +503,25 @@ def test_missing_packs_for_workflow_ignores_core_comfy_classes(
     assert unresolved == []
 
 
+def test_missing_packs_for_workflow_includes_declared_requirements_even_when_schema_knows_nodes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        '[{"class_type": "VHS_VideoCombine", "pack": "ComfyUI-VideoHelperSuite", "inputs": {}, "outputs": []}]',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("declared-pack", WorkflowSource("declared-pack"))
+    workflow.nodes["1"] = VibeNode("1", "VHS_VideoCombine")
+    workflow.requirements.custom_nodes.append("ComfyUI-VideoHelperSuite")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-VideoHelperSuite"]
+    assert unresolved == []
+
+
 def test_known_schema_classes_raises_when_missing(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"node_index\.json not found .*vibecomfy sources sync"):
         _known_schema_classes(tmp_path / "node_index.json")
