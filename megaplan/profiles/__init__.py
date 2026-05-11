@@ -148,26 +148,62 @@ def apply_profile_expansion(
     if getattr(args, "_profile_applied", False):
         return args
 
+    # Snapshot live CLI --phase-model entries *before* we splice in profile
+    # defaults. This is what lets us keep CLI > profile precedence even when
+    # auto.py spawns step subprocesses without re-passing the original CLI
+    # flags: the persisted state below is merged using the same precedence
+    # rule (live CLI > persisted CLI > profile).
+    cli_phase_models = list(getattr(args, "phase_model", None) or [])
+    cli_steps = {pm.split("=", 1)[0] for pm in cli_phase_models if "=" in pm}
+
+    phase_models = list(cli_phase_models)
+
     profile_name = getattr(args, "profile", None)
     if profile_name is None and state is not None:
         profile_name = (state.get("config") or {}).get("profile")
-    phase_models = list(getattr(args, "phase_model", None) or [])
 
+    profile_steps: set[str] = set()
     if profile_name:
         profiles = load_profiles(project_dir=project_dir)
         resolved = resolve_profile(profile_name, profiles)
-        phase_models.extend(profile_to_phase_models(resolved))
+        for pm in profile_to_phase_models(resolved):
+            if "=" not in pm:
+                continue
+            step = pm.split("=", 1)[0]
+            # Live CLI always wins over profile defaults for the same phase.
+            if step in cli_steps:
+                continue
+            phase_models.append(pm)
+            profile_steps.add(step)
         args.profile = profile_name
 
-    # Merge persisted --phase-model overrides from plan state. CLI flags on the
-    # current step invocation take precedence; persisted values fill in gaps for
-    # steps not specified on the CLI.
+    # Merge persisted --phase-model overrides from plan state. Effective
+    # precedence is: live CLI args > persisted CLI > profile. Persisted
+    # phases that are neither on the live CLI nor in the profile get
+    # appended; persisted phases that the profile already covered must
+    # *win* over the profile entry, so they get prepended after the live
+    # CLI block (i.e. before the profile block) to take advantage of
+    # resolve_agent_mode's first-match-wins lookup.
     if state is not None:
         persisted = list((state.get("config") or {}).get("phase_model") or [])
-        cli_steps = {pm.split("=", 1)[0] for pm in phase_models if "=" in pm}
+        # Index where profile defaults start (right after live CLI entries).
+        profile_block_start = len(cli_phase_models)
         for pm in persisted:
-            if "=" in pm and pm.split("=", 1)[0] not in cli_steps:
+            if "=" not in pm:
+                continue
+            step = pm.split("=", 1)[0]
+            if step in cli_steps:
+                # Live CLI already covers this phase on the current invocation.
+                continue
+            if step in profile_steps:
+                # Persisted CLI override must beat the profile default.
+                phase_models.insert(profile_block_start, pm)
+                profile_block_start += 1
+                cli_steps.add(step)
+            else:
+                # No conflict — just fill the gap.
                 phase_models.append(pm)
+                cli_steps.add(step)
 
     args.phase_model = phase_models
     args._profile_applied = True
