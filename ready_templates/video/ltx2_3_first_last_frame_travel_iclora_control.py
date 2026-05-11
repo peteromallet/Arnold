@@ -158,7 +158,6 @@ def build() -> VibeWorkflow:
         strength_model=0.6,
         model=unet.out(0),
     )
-    preview_model = _node(wf, "LTX2SamplingPreviewOverride", "198", widget_0=8, model=unet.out(0), vae=tiny_vae.out(0))
     nag_model = _node(
         wf,
         "LTX2_NAG",
@@ -167,7 +166,7 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=preview_model.out(0),
+        model=unet.out(0),
     )
     sage = _node(wf, "PathchSageAttentionKJ", "226", widget_0="disabled", widget_1=False, model=distilled_lora.out(0))
     chunked = _node(wf, "LTXVChunkFeedForward", "228", widget_0=2, widget_1=4096, model=sage.out(0))

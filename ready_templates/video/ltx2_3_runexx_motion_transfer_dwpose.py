@@ -410,11 +410,6 @@ def build() -> VibeWorkflow:
         strength_model=0.6,
         model=unetloader.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '5187',
-        widget_0=8,
-        model=getnode_31.out(0),
-        vae=getnode_32.out(0),
-    )
     vhs_loadvideoffmpeg = _node(wf, 'VHS_LoadVideoFFmpeg', '5192',
         force_rate=getnode_41.out(0),
         frame_load_cap=getnode_40.out(0),
@@ -540,7 +535,7 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_31.out(0),
         nag_cond_audio=getnode_47.out(0),
         nag_cond_video=getnode_47.out(0),
     )

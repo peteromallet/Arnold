@@ -371,11 +371,6 @@ def build() -> VibeWorkflow:
         widget_0='clip',
         CLIP=dualcliploader.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '198',
-        widget_0=8,
-        model=getnode_8.out(0),
-        vae=getnode_18.out(0),
-    )
     setnode_17 = _node(wf, 'SetNode', '2072',
         widget_0='height',
         INT=intconstant_2.out(0),
@@ -448,7 +443,7 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_8.out(0),
         nag_cond_audio=getnode_19.out(0),
         nag_cond_video=getnode_19.out(0),
     )

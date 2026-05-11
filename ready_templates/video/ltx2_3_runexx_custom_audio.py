@@ -348,11 +348,6 @@ def build() -> VibeWorkflow:
         widget_0='vae_tiny',
         VAE=vaeloader_2.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '337',
-        widget_0=8,
-        model=getnode_28.out(0),
-        vae=getnode_27.out(0),
-    )
     stringconcatenate = _node(wf, 'StringConcatenate', '347',
         widget_0='',
         widget_1='',
@@ -427,7 +422,7 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_28.out(0),
         nag_cond_audio=getnode_30.out(0),
         nag_cond_video=getnode_30.out(0),
     )

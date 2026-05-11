@@ -336,6 +336,29 @@ def _known_runtime_compatibility_diagnostics(api_prompt: dict[str, Any] | None) 
                 )
             )
             continue
+        if class_type == "LTX2SamplingPreviewOverride":
+            issues.append(
+                PortIssue(
+                    code="headless_preview_override_not_supported",
+                    message=(
+                        f"Node {node_id} (LTX2SamplingPreviewOverride) installs a live preview callback "
+                        "that depends on ComfyUI frontend server state; headless RunPod execution can crash "
+                        "when that state is absent."
+                    ),
+                    severity="error",
+                    node_id=str(node_id),
+                    class_type="LTX2SamplingPreviewOverride",
+                    detail={
+                        "category": "runtime_contract",
+                        "capability": "ltx2_live_sampling_preview",
+                    },
+                    recommendation=(
+                        "Remove this preview override for headless validation and route the model directly "
+                        "to the downstream sampling/NAG nodes."
+                    ),
+                )
+            )
+            continue
         if class_type != "PathchSageAttentionKJ":
             continue
         inputs = node.get("inputs")

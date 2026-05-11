@@ -307,11 +307,6 @@ def build() -> VibeWorkflow:
         negative=getnode_19.out(0),
         positive=getnode_18.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '368',
-        widget_0=19,
-        model=getnode_11.out(0),
-        vae=getnode_12.out(0),
-    )
     resizeimagemasknode = _node(wf, 'ResizeImageMaskNode', '436',
         widget_0='scale by multiplier',
         widget_1=256,
@@ -416,14 +411,14 @@ def build() -> VibeWorkflow:
     )
     modelsamplingsd3 = _node(wf, 'ModelSamplingSD3', '526',
         shift=13,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_11.out(0),
     )
     ltx2_nag = _node(wf, 'LTX2_NAG', '563',
         widget_0=11,
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_11.out(0),
         nag_cond_audio=cliptextencode_3.out(0),
         nag_cond_video=cliptextencode.out(0),
     )

@@ -331,11 +331,6 @@ def build() -> VibeWorkflow:
         negative=getnode_22.out(0),
         positive=getnode_23.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '1858',
-        widget_0=8,
-        model=getnode_26.out(0),
-        vae=getnode_25.out(0),
-    )
     setnode_19 = _node(wf, 'SetNode', '1861',
         widget_0='t2v_mode',
         BOOLEAN=primitiveboolean.out(0),
@@ -399,7 +394,7 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_26.out(0),
         nag_cond_audio=getnode_29.out(0),
         nag_cond_video=getnode_29.out(0),
     )

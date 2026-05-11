@@ -102,6 +102,20 @@ def test_ready_templates_do_not_use_uncontracted_ltx_memory_efficient_sage_patch
     assert offenders == []
 
 
+def test_ready_templates_do_not_use_headless_incompatible_ltx_preview_override() -> None:
+    offenders: list[tuple[str, str]] = []
+
+    for template_id in ready_template_ids():
+        api = workflow_from_ready(template_id).compile("api")
+        offenders.extend(
+            (template_id, node_id)
+            for node_id, node in api.items()
+            if node.get("class_type") == "LTX2SamplingPreviewOverride"
+        )
+
+    assert offenders == []
+
+
 def test_ready_template_loads_vibe_workflow() -> None:
     workflow = workflow_from_ready("edit/qwen_image_edit")
 
@@ -279,7 +293,6 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["228"]["inputs"]["model"] == ["226", 0]
     assert api["229"]["inputs"]["triton_kernels"] is True
     assert api["197"]["inputs"]["nag_scale"] == 11
-    assert api["198"]["inputs"]["preview_rate"] == 8
     assert api["43"]["inputs"]["filename_prefix"] == "reigh_vibecomfy_ltx_raw_guide"
     assert api["43"]["inputs"]["save_output"] is True
     assert {asset["name"] for asset in workflow.metadata["model_assets"]} >= {
