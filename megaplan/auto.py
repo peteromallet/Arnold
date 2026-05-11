@@ -313,7 +313,19 @@ def _phase_command(next_step: str) -> list[str]:
     argparse rejects it with `invalid choice`.
     """
     if next_step == "execute":
-        return ["execute", "--confirm-destructive", "--user-approved"]
+        # --retry-blocked-tasks is safe to pass on every iteration. Within a
+        # single auto session, tasks that report status=blocked terminate the
+        # auto loop via STATE_AWAITING_HUMAN (see eb4ac447), so re-dispatch
+        # only happens on a *fresh* `megaplan auto` invocation — which is the
+        # user's signal that any external prereq has been resolved and stale
+        # blocked statuses should be retried instead of short-circuiting.
+        # If there are no blocked tasks, the flag is a no-op.
+        return [
+            "execute",
+            "--confirm-destructive",
+            "--user-approved",
+            "--retry-blocked-tasks",
+        ]
     return shlex.split(next_step)
 
 

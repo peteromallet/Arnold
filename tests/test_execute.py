@@ -2236,6 +2236,96 @@ def test_execute_auto_loop_stops_when_existing_task_is_blocked(
     assert state["history"][-1]["result"] == "blocked"
 
 
+def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh `megaplan auto` invocation (which always passes
+    --retry-blocked-tasks) must clear stale blocked statuses persisted from a
+    prior session, so the executor LLM gets a fresh attempt instead of the
+    short-circuit replaying old notes.
+    """
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"][0]["status"] = "blocked"
+    finalize_data["tasks"][0]["executor_notes"] = "Stale notes from prior session."
+    finalize_data["tasks"][0]["files_changed"] = ["stale.py"]
+    finalize_data["tasks"][0]["commands_run"] = ["grep stale"]
+    finalize_data["tasks"][0]["evidence_files"] = ["stale.log"]
+    finalize_data["tasks"][0]["reviewer_verdict"] = "stale verdict"
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: ({}, None)
+    )
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
+
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        confirm_destructive=True,
+        user_approved=True,
+        retry_blocked_tasks=True,
+    )
+    response = megaplan.handle_execute(plan_fixture.root, args)
+    state = load_state(plan_fixture.plan_dir)
+    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+
+    # Short-circuit did NOT fire: blocked task got retried and reported done.
+    t1 = finalize_after["tasks"][0]
+    assert t1["status"] == "done"
+    # The blocked task's per-attempt stale fields were replaced by the new
+    # worker's output (mocked _batch_worker returns done with batch1.py).
+    assert "stale.py" not in t1.get("files_changed", [])
+    assert "Stale notes" not in t1.get("executor_notes", "")
+    # The execute history entry is no longer the short-circuit "blocked" exit.
+    last_execute = next(
+        entry for entry in reversed(state.get("history", [])) if entry.get("step") == "execute"
+    )
+    assert last_execute["result"] != "blocked"
+
+
+def test_execute_auto_loop_short_circuits_when_flag_unset(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative case: without --retry-blocked-tasks, a persisted blocked task
+    still short-circuits the auto loop. This preserves the existing
+    safety/cost behaviour for callers that don't opt in.
+    """
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"][0]["status"] = "blocked"
+    finalize_data["tasks"][0]["executor_notes"] = "Stale notes from prior session."
+    finalize_data["tasks"][0]["files_changed"] = ["stale.py"]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    def worker_should_not_run(*_args, **_kwargs):
+        raise AssertionError("worker must not run when retry-blocked-tasks is unset")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker_should_not_run)
+
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        confirm_destructive=True,
+        user_approved=True,
+        retry_blocked_tasks=False,
+    )
+    response = megaplan.handle_execute(plan_fixture.root, args)
+    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+
+    # Short-circuit fired: blocked status (and stale fields) preserved.
+    t1 = finalize_after["tasks"][0]
+    assert t1["status"] == "blocked"
+    assert t1["executor_notes"] == "Stale notes from prior session."
+    assert t1["files_changed"] == ["stale.py"]
+    assert response["blocked_task_ids"] == ["T1"]
+    assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
+
+
 def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,

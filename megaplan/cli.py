@@ -1267,6 +1267,16 @@ def build_parser() -> argparse.ArgumentParser:
             step_parser.add_argument("--confirm-destructive", action="store_true")
             step_parser.add_argument("--user-approved", action="store_true")
             step_parser.add_argument("--batch", type=int, default=None, help="Execute a specific global batch number (1-indexed)")
+            step_parser.add_argument(
+                "--retry-blocked-tasks",
+                action="store_true",
+                help=(
+                    "Reset any tasks persisted at status=blocked back to pending "
+                    "before computing batches. Use when re-running execute after "
+                    "resolving an external prerequisite that previously blocked a "
+                    "task. The auto-driver passes this on every fresh invocation."
+                ),
+            )
         if name == "review":
             step_parser.add_argument("--confirm-self-review", action="store_true")
 
