@@ -24,7 +24,7 @@ from megaplan.execute.quality import (
     _check_done_task_evidence,
     _normalize_execute_claimed_path,
 )
-from megaplan.execute.merge import _validate_and_merge_batch
+from megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
 from megaplan.types import CliError, PlanState, STATE_FINALIZED, StepResponse
 from megaplan.workers import WorkerResult
 
@@ -157,7 +157,7 @@ def _merge_timeout_checkpoint(
         issues=issues,
         validation_label=f"{checkpoint_name}.task_updates",
         merge_label="checkpoint task_update",
-        enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
+        enum_fields={"status": set(TERMINAL_TASK_STATUSES)},
         nonempty_fields={"executor_notes"},
         array_fields=array_fields,
     )

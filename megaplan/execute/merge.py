@@ -3,6 +3,20 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+# All terminal statuses an executor may report for a task. "Tracked" means
+# the executor reported back on the task — including reporting it blocked
+# on a user prerequisite. This is distinct from "executed successfully",
+# which is the subset {"done", "skipped"} used to gate STATE_EXECUTED.
+#
+# The enum on the task_updates schema validator and the coverage filters
+# that ask "did the executor report on this task?" MUST use this constant
+# so they don't drift (drift was the root cause of the false
+# "tracking is incomplete" message when a task came back status=blocked).
+TERMINAL_TASK_STATUSES: frozenset[str] = frozenset(
+    {"done", "skipped", "completed", "blocked"}
+)
+
+
 # Common field name aliases that models use instead of the canonical names.
 # Models often use finalize.json's field names (e.g. "id") instead of the
 # execute schema's names (e.g. "task_id").
