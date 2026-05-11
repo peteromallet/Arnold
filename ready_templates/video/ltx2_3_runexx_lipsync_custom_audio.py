@@ -515,10 +515,6 @@ def build() -> VibeWorkflow:
         widget_0='(a > c) or (b > c) ',
         _extras={'variables.a': vhs_videoinfo.out(8), 'variables.b': vhs_videoinfo.out(9), 'variables.c': getnode_15.out(0)},
     )
-    ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '521',
-        widget_0=True,
-        model=pathchsageattentionkj.out(0),
-    )
     setnode_18 = _node(wf, 'SetNode', '651',
         widget_0='model_n_nag',
         MODEL=ltx2_nag.out(0),
@@ -561,7 +557,7 @@ def build() -> VibeWorkflow:
     ltxvchunkfeedforward = _node(wf, 'LTXVChunkFeedForward', '522',
         widget_0=2,
         widget_1=4096,
-        model=ltx2memoryefficientsageattentionpatch.out(0),
+        model=pathchsageattentionkj.out(0),
     )
     resizeimagemasknode_2 = _node(wf, 'ResizeImageMaskNode', '717',
         widget_0='match size',

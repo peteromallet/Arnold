@@ -311,7 +311,32 @@ def _known_runtime_compatibility_diagnostics(api_prompt: dict[str, Any] | None) 
     for node_id, node in sorted(api_prompt.items(), key=lambda item: _sort_key(item[0])):
         if not isinstance(node, dict):
             continue
-        if node.get("class_type") != "PathchSageAttentionKJ":
+        class_type = node.get("class_type")
+        if class_type == "LTX2MemoryEfficientSageAttentionPatch":
+            issues.append(
+                PortIssue(
+                    code="optional_acceleration_requires_unavailable_package",
+                    message=(
+                        f"Node {node_id} (LTX2MemoryEfficientSageAttentionPatch) requires a "
+                        "sageattention-capable CUDA environment; the standard RunPod image does not "
+                        "provide that contract."
+                    ),
+                    severity="error",
+                    node_id=str(node_id),
+                    class_type="LTX2MemoryEfficientSageAttentionPatch",
+                    detail={
+                        "category": "runtime_contract",
+                        "missing_package": "sageattention",
+                        "capability": "ltx2_memory_efficient_sage_attention",
+                    },
+                    recommendation=(
+                        "Remove this patch for portable 4090 RunPod validation, or declare and "
+                        "install a sageattention-capable environment explicitly."
+                    ),
+                )
+            )
+            continue
+        if class_type != "PathchSageAttentionKJ":
             continue
         inputs = node.get("inputs")
         if not isinstance(inputs, dict):

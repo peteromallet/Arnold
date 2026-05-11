@@ -503,10 +503,6 @@ def build() -> VibeWorkflow:
         widget_0='model_nag',
         MODEL=ltx2_nag.out(0),
     )
-    ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '227',
-        widget_0=True,
-        model=pathchsageattentionkj.out(0),
-    )
     setnode_24 = _node(wf, 'SetNode', '2129',
         widget_0='lastframe_resized',
         IMAGE=imageresizekjv2_2.out(0),
@@ -550,7 +546,7 @@ def build() -> VibeWorkflow:
     ltxvchunkfeedforward = _node(wf, 'LTXVChunkFeedForward', '228',
         widget_0=2,
         widget_1=4096,
-        model=ltx2memoryefficientsageattentionpatch.out(0),
+        model=pathchsageattentionkj.out(0),
     )
     ltxvseparateavlatent = _node(wf, 'LTXVSeparateAVLatent', '18',
         av_latent=samplercustomadvanced.out(0),

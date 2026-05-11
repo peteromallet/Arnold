@@ -88,6 +88,20 @@ def test_ready_templates_do_not_enable_uncontracted_sageattention() -> None:
     assert offenders == []
 
 
+def test_ready_templates_do_not_use_uncontracted_ltx_memory_efficient_sage_patch() -> None:
+    offenders: list[tuple[str, str]] = []
+
+    for template_id in ready_template_ids():
+        api = workflow_from_ready(template_id).compile("api")
+        offenders.extend(
+            (template_id, node_id)
+            for node_id, node in api.items()
+            if node.get("class_type") == "LTX2MemoryEfficientSageAttentionPatch"
+        )
+
+    assert offenders == []
+
+
 def test_ready_template_loads_vibe_workflow() -> None:
     workflow = workflow_from_ready("edit/qwen_image_edit")
 
@@ -260,9 +274,9 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["26"]["inputs"]["scale_by"] == 0.5
     assert api["226"]["inputs"]["sage_attention"] == "disabled"
     assert api["226"]["inputs"]["allow_compile"] is False
-    assert api["227"]["inputs"]["triton_kernels"] is True
     assert api["228"]["inputs"]["chunks"] == 2
     assert api["228"]["inputs"]["dim_threshold"] == 4096
+    assert api["228"]["inputs"]["model"] == ["226", 0]
     assert api["229"]["inputs"]["triton_kernels"] is True
     assert api["197"]["inputs"]["nag_scale"] == 11
     assert api["198"]["inputs"]["preview_rate"] == 8

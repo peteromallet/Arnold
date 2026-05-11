@@ -214,6 +214,35 @@ def test_analyze_source_rejects_sageattention_patch_for_standard_runpod(tmp_path
     assert payload["ok"] is False
 
 
+def test_analyze_source_rejects_ltx_memory_efficient_sage_patch_for_standard_runpod(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {
+                    "class_type": "LTX2MemoryEfficientSageAttentionPatch",
+                    "inputs": {"model": ["2", 0], "triton_kernels": True},
+                },
+                "2": {"class_type": "ModelSource", "inputs": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=FakeSchemaProvider({}))
+    payload = report.to_json()
+
+    issue = next(
+        issue
+        for issue in payload["diagnostics"]
+        if issue["code"] == "optional_acceleration_requires_unavailable_package"
+    )
+    assert issue["node_id"] == "1"
+    assert issue["class_type"] == "LTX2MemoryEfficientSageAttentionPatch"
+    assert issue["detail"]["capability"] == "ltx2_memory_efficient_sage_attention"
+    assert payload["ok"] is False
+
+
 def test_analyze_source_rejects_unmaterialized_none_nodes(tmp_path: Path) -> None:
     path = tmp_path / "workflow.json"
     path.write_text(
