@@ -151,6 +151,41 @@ def test_analyze_source_rejects_known_runtime_required_inputs_without_schema(tmp
     assert payload["ok"] is False
 
 
+def test_analyze_source_rejects_known_dynamic_combo_without_selector(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {
+                    "class_type": "LTXVImgToVideoInplaceKJ",
+                    "inputs": {
+                        "latent": ["2", 0],
+                        "vae": ["3", 0],
+                        "num_images.image_1": ["4", 0],
+                    },
+                },
+                "2": {"class_type": "LatentSource", "inputs": {}},
+                "3": {"class_type": "VaeSource", "inputs": {}},
+                "4": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=FakeSchemaProvider({}))
+    payload = report.to_json()
+
+    issue = next(
+        issue
+        for issue in payload["diagnostics"]
+        if issue["code"] == "dynamic_combo_selector_missing"
+    )
+    assert issue["node_id"] == "1"
+    assert issue["detail"]["selector"] == "num_images"
+    assert issue["detail"]["dotted_inputs"] == ["num_images.image_1"]
+    assert payload["ok"] is False
+
+
 def test_analyze_source_rejects_unmaterialized_none_nodes(tmp_path: Path) -> None:
     path = tmp_path / "workflow.json"
     path.write_text(

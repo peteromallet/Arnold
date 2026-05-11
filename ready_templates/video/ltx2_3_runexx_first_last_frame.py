@@ -453,14 +453,17 @@ def build() -> VibeWorkflow:
         nag_cond_video=getnode_19.out(0),
     )
     ltxvimgtovideoinplacekj = _node(wf, 'LTXVImgToVideoInplaceKJ', '210',
-        widget_0='2',
-        widget_1=0.7,
-        widget_2=0.7,
-        widget_3=0,
-        widget_4=-1,
         latent=emptyltxvlatentvideo.out(0),
+        num_images='2',
         vae=getnode_5.out(0),
-        _extras={'num_images.image_1': ltxvpreprocess_2.out(0), 'num_images.image_2': ltxvpreprocess.out(0)},
+        _extras={
+            'num_images.image_1': ltxvpreprocess_2.out(0),
+            'num_images.image_2': ltxvpreprocess.out(0),
+            'num_images.index_1': 0,
+            'num_images.index_2': -1,
+            'num_images.strength_1': 0.7,
+            'num_images.strength_2': 0.7,
+        },
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '226',
         widget_0='auto',
@@ -562,12 +565,14 @@ def build() -> VibeWorkflow:
         model=ltxvchunkfeedforward.out(0),
     )
     ltxvimgtovideoinplacekj_2 = _node(wf, 'LTXVImgToVideoInplaceKJ', '2105',
-        widget_0='1',
-        widget_1=1,
-        widget_2=0,
         latent=ltxvseparateavlatent.out(0),
+        num_images='1',
         vae=getnode_39.out(0),
-        _extras={'num_images.image_1': getnode_13.out(0), 'num_images.strength_1': getnode_35.out(0)},
+        _extras={
+            'num_images.image_1': getnode_13.out(0),
+            'num_images.index_1': 0,
+            'num_images.strength_1': getnode_35.out(0),
+        },
     )
     power_lora_loader__rgthree_ = _node(wf, 'Power Lora Loader (rgthree)', '2107',
         widget_3='',

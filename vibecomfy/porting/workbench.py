@@ -44,6 +44,11 @@ _KNOWN_RUNTIME_REQUIRED_INPUTS: dict[str, frozenset[str]] = {
     ),
 }
 
+_KNOWN_DYNAMIC_COMBO_SELECTORS: dict[str, frozenset[str]] = {
+    "LTXVImgToVideoInplaceKJ": frozenset({"num_images"}),
+    "LTXVAddGuideMulti": frozenset({"num_guides"}),
+}
+
 
 @dataclass(slots=True)
 class LoadedPortSource:
@@ -109,6 +114,7 @@ def analyze_source(
     if compile_issue is not None:
         report.diagnostics.append(compile_issue)
     report.diagnostics.extend(_known_runtime_required_input_diagnostics(api_prompt))
+    report.diagnostics.extend(_known_dynamic_combo_selector_diagnostics(api_prompt))
 
     asset_analysis = analyze_model_assets(
         raw_workflow=loaded.raw_workflow,
@@ -247,6 +253,50 @@ def _known_runtime_required_input_diagnostics(api_prompt: dict[str, Any] | None)
                         "source": "committed_runtime_required_inputs",
                     },
                     recommendation="Materialize the input explicitly in the Python workflow before RunPod validation.",
+                )
+            )
+    return issues
+
+
+def _known_dynamic_combo_selector_diagnostics(api_prompt: dict[str, Any] | None) -> list[PortIssue]:
+    if api_prompt is None:
+        return []
+
+    issues: list[PortIssue] = []
+    for node_id, node in sorted(api_prompt.items(), key=lambda item: _sort_key(item[0])):
+        if not isinstance(node, dict):
+            continue
+        class_type = str(node.get("class_type") or "")
+        selectors = _KNOWN_DYNAMIC_COMBO_SELECTORS.get(class_type)
+        if not selectors:
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            inputs = {}
+        for selector in sorted(selectors):
+            dotted_inputs = sorted(name for name in inputs if name.startswith(f"{selector}."))
+            if not dotted_inputs or selector in inputs:
+                continue
+            issues.append(
+                PortIssue(
+                    code="dynamic_combo_selector_missing",
+                    message=(
+                        f"Node {node_id} ({class_type}) has dynamic inputs for {selector!r} "
+                        "but is missing the selector input; Comfy will pass flat dotted inputs at execution."
+                    ),
+                    severity="error",
+                    node_id=str(node_id),
+                    class_type=class_type,
+                    detail={
+                        "category": "runtime_contract",
+                        "selector": selector,
+                        "dotted_inputs": dotted_inputs,
+                        "source": "committed_dynamic_combo_contract",
+                    },
+                    recommendation=(
+                        f"Materialize {selector!r} with the selected option count alongside the "
+                        f"{selector}.* dynamic inputs."
+                    ),
                 )
             )
     return issues
