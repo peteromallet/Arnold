@@ -45,7 +45,7 @@ from megaplan.execute.timeout import (
     _recover_execute_timeout,
     _resolve_execute_approval_mode,
 )
-from megaplan.execute.merge import _validate_and_merge_batch
+from megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
 from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
 from megaplan.forms.provocations import select_active_checks
 from megaplan.forms.stance import validate_stance
@@ -266,7 +266,7 @@ def _count_execute_tracking(
         1
         for task in finalize_data.get("tasks", [])
         if task.get("id") in active_task_ids
-        and task.get("status") in {"done", "skipped"}
+        and task.get("status") in TERMINAL_TASK_STATUSES
     )
     acknowledged_checks = sum(
         1
@@ -389,17 +389,21 @@ def _merge_batch_results(
         merge_label="task_update",
         # Don't flag incomplete based on all tasks — check batch coverage below
         incomplete_message=None,
-        enum_fields={"status": {"done", "skipped", "completed", "blocked"}},
+        enum_fields={"status": set(TERMINAL_TASK_STATUSES)},
         nonempty_fields={"executor_notes"},
         array_fields=array_fields,
         object_fields=object_fields,
     )
     # Check batch-specific coverage: how many of THIS batch's tasks got updates?
+    # Any terminal status counts as "tracked" — the executor reported back.
+    # "blocked" / "completed" specifically used to be left out of this filter,
+    # which produced a false "tracking is incomplete" message when the
+    # executor legitimately blocked on a user prerequisite.
     total_batch_tasks = len(batch_task_id_set)
     batch_merged = sum(
         1
         for tid in batch_task_id_set
-        if all_tasks_by_id.get(tid, {}).get("status") in ("done", "skipped")
+        if all_tasks_by_id.get(tid, {}).get("status") in TERMINAL_TASK_STATUSES
     )
     if batch_merged < total_batch_tasks:
         issues.append(

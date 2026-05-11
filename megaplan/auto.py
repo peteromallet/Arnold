@@ -391,6 +391,61 @@ def _read_execute_blocking_deviations(plan_dir: Path | None) -> list[str]:
     ]
 
 
+def _read_execute_blocked_task_notes(
+    plan_dir: Path | None,
+) -> list[tuple[str, str]]:
+    """Return ``[(task_id, executor_notes), ...]`` for tasks the executor
+    reported as ``status: "blocked"`` in the most recent execution batch.
+
+    This is the auto-driver's signal that a batch hit a real
+    awaiting-human boundary — typically an unmet user prerequisite (env
+    var, manual setup step). Retrying execute is pointless in that case;
+    the executor has already told the user what to do. The driver uses
+    this list to route to ``awaiting_human`` instead of consuming a
+    blocked-retry attempt.
+    """
+    if plan_dir is None:
+        return []
+    try:
+        batches = sorted(
+            (
+                p
+                for p in plan_dir.iterdir()
+                if p.name.startswith("execution_batch_") and p.suffix == ".json"
+            ),
+            key=lambda p: p.name,
+        )
+    except OSError:
+        return []
+    if not batches:
+        return []
+    try:
+        with batches[-1].open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    updates = payload.get("task_updates")
+    if not isinstance(updates, list):
+        return []
+    blocked: list[tuple[str, str]] = []
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        if update.get("status") != "blocked":
+            continue
+        # Some models emit "id" instead of "task_id"; both should surface.
+        task_id = update.get("task_id") or update.get("id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        notes = update.get("executor_notes") or update.get("notes") or ""
+        if not isinstance(notes, str):
+            notes = str(notes)
+        blocked.append((task_id, notes.strip()))
+    return blocked
+
+
 def _latest_versioned_artifact(plan_dir: Path | None, prefix: str) -> Path | None:
     """Return the highest-numbered versioned artifact (``<prefix>v<N>.json``)."""
     if plan_dir is None:
@@ -1301,6 +1356,47 @@ def drive(
         if next_step == "execute" and code in (0, None) and max_blocked_retries >= 0:
             execute_result = _last_history_step_result(plan_dir, "execute")
             if execute_result == "blocked":
+                # Awaiting-human path: the executor reported one or more
+                # tasks as status=blocked, which means it ran into a real
+                # external prerequisite (env var, manual setup) that no
+                # number of retries can resolve. Surface the executor's
+                # notes and exit cleanly without burning a retry. This is
+                # distinct from "quality gates blocked the batch", which
+                # is what the retry loop below was designed for.
+                blocked_task_notes = _read_execute_blocked_task_notes(plan_dir)
+                if blocked_task_notes:
+                    blocked_summaries = [
+                        (
+                            f"{task_id} (executor: {notes})"
+                            if notes
+                            else task_id
+                        )
+                        for task_id, notes in blocked_task_notes
+                    ]
+                    reason = (
+                        "execute reported blocked tasks awaiting user action: "
+                        + "; ".join(blocked_summaries)
+                    )
+                    log(
+                        "execute reported task(s) blocked awaiting user action — "
+                        "exiting as awaiting_human without consuming a retry",
+                        blocked_retries_used=blocked_retry_count,
+                        max_blocked_retries=max_blocked_retries,
+                        blocked_task_ids=[tid for tid, _ in blocked_task_notes],
+                    )
+                    return _outcome(
+                        "awaiting_human",
+                        final_state=STATE_FINALIZED,
+                        iterations=iteration,
+                        reason=reason,
+                        last_phase=last_phase,
+                        blocking_reasons=[
+                            f"task {task_id} reported status=blocked by executor: {notes}"
+                            if notes
+                            else f"task {task_id} reported status=blocked by executor"
+                            for task_id, notes in blocked_task_notes
+                        ],
+                    )
                 deviations = _read_execute_blocking_deviations(plan_dir)
                 if blocked_retry_count >= max_blocked_retries:
                     log(

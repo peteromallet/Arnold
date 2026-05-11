@@ -916,6 +916,99 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
     assert state_data["resume_cursor"]["phase"] == "execute"
 
 
+def _write_blocked_task_update_batch(
+    plan_dir: Path,
+    *,
+    task_id: str = "T10",
+    notes: str = "DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
+) -> None:
+    """Persist an execution_batch_1.json whose task_updates reports the named
+    task as ``status: "blocked"`` with executor notes. Mirrors what the real
+    execute handler writes when a task hits an unmet user prerequisite.
+    """
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": task_id,
+                        "status": "blocked",
+                        "executor_notes": notes,
+                        "files_changed": [],
+                        "commands_run": ["env_check"],
+                    }
+                ],
+                "deviations": [
+                    f"task(s) reported status=blocked by the worker: {task_id}. "
+                    "Resolve or replan the blocked task(s) before continuing.",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
+    tmp_path: Path,
+) -> None:
+    """Regression: when the executor legitimately reports a task as
+    status=blocked (e.g. an unmet user prerequisite), the auto driver must
+    exit cleanly as awaiting_human, surface the executor notes, and NOT
+    consume a blocked-retry attempt. Retrying execute won't unblock the
+    user — only the user can.
+    """
+    plan = "execute-blocked-awaiting-human"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    # Stamp the history result the auto driver looks for.
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data.setdefault("history", []).append(
+        {"step": "execute", "result": "blocked", "cost_usd": 0.16}
+    )
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+    _write_blocked_task_update_batch(plan_dir)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 0, "", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            # max_blocked_retries=1 would normally permit one retry — the fix
+            # must NOT consume one for awaiting-human blocked tasks.
+            max_blocked_retries=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "awaiting_human", (
+        f"expected awaiting_human, got {outcome.status!r} with reason={outcome.reason!r}"
+    )
+    assert outcome.blocked_retries_used == 0, (
+        "awaiting-human exit must not burn a retry attempt; "
+        f"got blocked_retries_used={outcome.blocked_retries_used}"
+    )
+    assert outcome.final_state == "finalized"
+    # Reason must surface the task id and executor notes.
+    assert "T10" in outcome.reason
+    assert "DEV_LIVE_UPDATE_CHANNEL_ID" in outcome.reason
+    assert "execute reported blocked tasks awaiting user action" in outcome.reason
+    # blocking_reasons should carry the per-task notes for downstream
+    # consumers (CI dashboards, oncall hand-off summaries).
+    joined = " | ".join(outcome.blocking_reasons)
+    assert "T10" in joined
+    assert "DEV_LIVE_UPDATE_CHANNEL_ID" in joined
+    # And the false-positive "tracking is incomplete" message must be absent.
+    assert not any(
+        "tracking is incomplete" in r for r in outcome.blocking_reasons
+    )
+
+
 def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:
     plan = "worker-blocked-zero"
     plan_dir = _make_plan_dir(tmp_path, plan)

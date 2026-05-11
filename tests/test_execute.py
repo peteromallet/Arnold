@@ -2293,3 +2293,138 @@ def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
     assert not (plan_fixture.plan_dir / "execution_batch_2.json").exists()
     assert "task(s) reported status=blocked by the worker: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
+
+
+def test_blocked_task_counts_as_tracked_in_batch_coverage(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a task that legitimately reports status=blocked counts as
+    "tracked" for batch coverage purposes — the executor *did* report on it,
+    just with a blocked outcome. The "tracking is incomplete" deviation must
+    NOT be raised in that case, because nothing is actually missing.
+
+    Before the fix, the coverage filter only counted {"done", "skipped"} as
+    tracked, so a blocked task tripped a false-positive "1/1 batch tasks have
+    no executor update" deviation that bubbled up to the auto driver and
+    caused futile retries.
+    """
+    _setup_two_batch_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: ({}, None)
+    )
+
+    def blocking_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        return WorkerResult(
+            payload={
+                "output": "Blocked on prerequisite.",
+                "files_changed": [],
+                "commands_run": ["check_env.sh"],
+                "deviations": [],
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "blocked",
+                        "executor_notes": "DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
+                        "files_changed": [],
+                        "commands_run": ["check_env.sh"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC1", "executor_note": "Cannot verify; blocked."}
+                ],
+            },
+            raw_output="batch blocked",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="batch-blocked-coverage",
+        ), "codex", "persistent", False
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", blocking_worker)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True
+        ),
+    )
+
+    execution_batch = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    deviations = execution_batch.get("deviations") or []
+    assert not any(
+        "tracking is incomplete" in str(d) for d in deviations
+    ), (
+        "Blocked task must not trigger a false 'tracking is incomplete' "
+        f"deviation; got deviations={deviations!r}"
+    )
+    # The proper blocked-by-worker signal still surfaces on the response summary.
+    assert "task(s) reported status=blocked by the worker: T1" in response["summary"]
+
+
+def test_completed_status_counts_as_tracked_in_batch_coverage(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: 'completed' is a synonym the schema validator normalizes,
+    but the coverage filter used to drop it on the floor. Asserting at the
+    deviations layer keeps us honest if the alias normalization ever changes.
+    """
+    _setup_two_batch_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: ({}, None)
+    )
+
+    def completed_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        # Two tasks both end up tracked across this single batch invocation
+        # (T1 'completed', T2 'done'). Neither should produce a "tracking is
+        # incomplete" deviation.
+        return WorkerResult(
+            payload={
+                "output": "Both batches handled in one pass.",
+                "files_changed": ["a.py", "b.py"],
+                "commands_run": ["pytest"],
+                "deviations": [],
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "completed",
+                        "executor_notes": "First task done (reported as completed alias).",
+                        "files_changed": ["a.py"],
+                        "commands_run": ["pytest"],
+                    },
+                    {
+                        "task_id": "T2",
+                        "status": "done",
+                        "executor_notes": "Second task done.",
+                        "files_changed": ["b.py"],
+                        "commands_run": ["pytest"],
+                    },
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC1", "executor_note": "ok"},
+                    {"sense_check_id": "SC2", "executor_note": "ok"},
+                ],
+            },
+            raw_output="batch completed",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="batch-completed-coverage",
+        ), "codex", "persistent", False
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", completed_worker)
+
+    megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True
+        ),
+    )
+
+    execution_batch = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    deviations = execution_batch.get("deviations") or []
+    assert not any(
+        "tracking is incomplete" in str(d) for d in deviations
+    ), (
+        "Completed/done tasks must not trigger 'tracking is incomplete'; "
+        f"got deviations={deviations!r}"
+    )
