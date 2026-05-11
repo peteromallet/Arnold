@@ -1000,6 +1000,37 @@ def handle_execute_one_batch(
     return response
 
 
+def _reset_blocked_tasks_to_pending(finalize_data: dict[str, Any]) -> list[str]:
+    """Flip tasks at status="blocked" back to "pending" and clear per-attempt fields.
+
+    Returns the sorted list of task IDs that were reset. The mutation is
+    in-place on ``finalize_data``; the caller is responsible for atomic
+    persistence.
+
+    The fields cleared mirror the per-attempt fields written by the merge
+    layer when a task reports back (executor_notes, files_changed, etc.) so
+    the next execute attempt sees a clean slate and isn't biased by stale
+    notes from the prior session.
+    """
+    reset_ids: list[str] = []
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str):
+            continue
+        if task.get("status") != "blocked":
+            continue
+        task["status"] = "pending"
+        task["executor_notes"] = ""
+        task["files_changed"] = []
+        task["commands_run"] = []
+        task["evidence_files"] = []
+        task["reviewer_verdict"] = ""
+        reset_ids.append(task_id)
+    return sorted(reset_ids)
+
+
 def handle_execute_auto_loop(
     *,
     root: Path,
@@ -1017,6 +1048,26 @@ def handle_execute_auto_loop(
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
     tasks = finalize_data.get("tasks", [])
+
+    # Cross-session blocked-task reset: when the caller (typically `megaplan auto`)
+    # opts in via --retry-blocked-tasks, any task persisted at status="blocked"
+    # from a prior run is flipped back to "pending" so the executor LLM gets a
+    # fresh attempt. The auto-driver always passes this flag because each fresh
+    # `megaplan auto` invocation is the user's signal that whatever external
+    # prereq was missing has been resolved. Within-session retries don't reach
+    # this code path with blocked tasks — eb4ac447 routes task-level
+    # status=blocked to awaiting_human, which terminates the auto loop.
+    if getattr(args, "retry_blocked_tasks", False):
+        reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
+        if reset_ids:
+            atomic_write_json(plan_dir / "finalize.json", finalize_data)
+            log.info(
+                "retry-blocked-tasks: reset %d task(s) from blocked -> pending: %s",
+                len(reset_ids),
+                ", ".join(reset_ids),
+            )
+            tasks = finalize_data.get("tasks", [])
+
     all_task_ids = [
         task["id"]
         for task in tasks

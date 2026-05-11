@@ -59,7 +59,7 @@ def test_resume_execute_uses_phase_command_and_plan_flag(monkeypatch) -> None:
     assert run_cloud_cli(Path("/tmp/project"), args) == 0
     provider.status_payload.assert_called_once_with(plan="plan-x", workspace="/workspace/custom")
     provider.ssh_exec.assert_called_once_with(
-        "cd /workspace/custom && megaplan execute --confirm-destructive --user-approved --plan plan-x"
+        "cd /workspace/custom && megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan plan-x"
     )
 
 

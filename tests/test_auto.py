@@ -313,11 +313,14 @@ def test_phase_command_splits_multi_token_next_step() -> None:
     # Single-token phases unchanged.
     assert auto._phase_command("review") == ["review"]
     assert auto._phase_command("step") == ["step"]
-    # Execute keeps its auto-mode flags.
+    # Execute keeps its auto-mode flags. --retry-blocked-tasks is always
+    # passed because a fresh `megaplan auto` invocation is the user's signal
+    # that any external prereq blocking a prior session has been resolved.
     assert auto._phase_command("execute") == [
         "execute",
         "--confirm-destructive",
         "--user-approved",
+        "--retry-blocked-tasks",
     ]
 
 
