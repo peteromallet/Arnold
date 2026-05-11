@@ -1,4 +1,4 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
+# vibecomfy: manual
 # Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
 # marker on the first line if hand-editing is required.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
@@ -8,7 +8,41 @@ from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 
 
-READY_METADATA = {'model_assets': [],
+LTX_RUNEXX_MODEL_ASSETS = [
+    {
+        "name": "ltx-2.3_text_projection_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+        "subdir": "text_encoders",
+    },
+    {
+        "name": "LTX23_video_vae_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "LTX23_audio_vae_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "taeltx2_3.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+        "subdir": "diffusion_models",
+    },
+    {
+        "name": "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+        "subdir": "loras",
+    },
+]
+
+
+READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
  'unbound_inputs': {'seed': 4831},
  'ready_template': 'video/ltx2_3_runexx_first_middle_last_frame',
  'workflow_template': 'ltx2_3_runexx_first_middle_last_frame',
@@ -288,8 +322,13 @@ def build() -> VibeWorkflow:
     )
     vhs_videocombine = _node(wf, 'VHS_VideoCombine', '43',
         audio=getnode_21.out(0),
+        filename_prefix='reigh_vibecomfy_ltx_first_middle_last',
+        format='video/h264-mp4',
         frame_rate=getnode_13.out(0),
         images=getnode_20.out(0),
+        loop_count=0,
+        pingpong=False,
+        save_output=True,
     )
     imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '44',
         widget_0=960,

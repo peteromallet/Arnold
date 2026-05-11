@@ -115,6 +115,42 @@ def test_analyze_source_reports_widget_schema_that_compile_did_not_apply(
     assert payload["ok"] is False
 
 
+def test_analyze_source_rejects_known_runtime_required_inputs_without_schema(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {
+                    "class_type": "VHS_VideoCombine",
+                    "inputs": {
+                        "images": ["2", 0],
+                        "frame_rate": 8,
+                    },
+                },
+                "2": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=FakeSchemaProvider({}))
+    payload = report.to_json()
+
+    missing = [
+        issue
+        for issue in payload["diagnostics"]
+        if issue["code"] == "known_runtime_required_input_missing"
+    ]
+    assert {issue["detail"]["input"] for issue in missing} == {
+        "filename_prefix",
+        "format",
+        "loop_count",
+        "pingpong",
+        "save_output",
+    }
+    assert payload["ok"] is False
+
+
 def test_analyze_source_rejects_unmaterialized_none_nodes(tmp_path: Path) -> None:
     path = tmp_path / "workflow.json"
     path.write_text(

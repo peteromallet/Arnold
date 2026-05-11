@@ -28,6 +28,22 @@ _OPAQUE_COMPONENT_CLASS_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
+_KNOWN_RUNTIME_REQUIRED_INPUTS: dict[str, frozenset[str]] = {
+    # VideoHelperSuite validates these at Comfy queue time. Keep this local
+    # contract so port checks fail even when object_info/node_index is missing.
+    "VHS_VideoCombine": frozenset(
+        {
+            "filename_prefix",
+            "format",
+            "frame_rate",
+            "images",
+            "loop_count",
+            "pingpong",
+            "save_output",
+        }
+    ),
+}
+
 
 @dataclass(slots=True)
 class LoadedPortSource:
@@ -92,6 +108,7 @@ def analyze_source(
 
     if compile_issue is not None:
         report.diagnostics.append(compile_issue)
+    report.diagnostics.extend(_known_runtime_required_input_diagnostics(api_prompt))
 
     asset_analysis = analyze_model_assets(
         raw_workflow=loaded.raw_workflow,
@@ -194,6 +211,42 @@ def _materialization_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
                         "Inline component/subgraph definitions with graphbuilder or ComfyUI's converter before "
                         "materializing a ready template."
                     ),
+                )
+            )
+    return issues
+
+
+def _known_runtime_required_input_diagnostics(api_prompt: dict[str, Any] | None) -> list[PortIssue]:
+    if api_prompt is None:
+        return []
+
+    issues: list[PortIssue] = []
+    for node_id, node in sorted(api_prompt.items(), key=lambda item: _sort_key(item[0])):
+        if not isinstance(node, dict):
+            continue
+        class_type = str(node.get("class_type") or "")
+        required_inputs = _KNOWN_RUNTIME_REQUIRED_INPUTS.get(class_type)
+        if not required_inputs:
+            continue
+        inputs = node.get("inputs")
+        provided = set(inputs) if isinstance(inputs, dict) else set()
+        for input_name in sorted(required_inputs - provided):
+            issues.append(
+                PortIssue(
+                    code="known_runtime_required_input_missing",
+                    message=(
+                        f"Node {node_id} ({class_type}) is missing runtime-required input "
+                        f"{input_name!r}; Comfy will reject this prompt at queue time."
+                    ),
+                    severity="error",
+                    node_id=str(node_id),
+                    class_type=class_type,
+                    detail={
+                        "category": "runtime_contract",
+                        "input": input_name,
+                        "source": "committed_runtime_required_inputs",
+                    },
+                    recommendation="Materialize the input explicitly in the Python workflow before RunPod validation.",
                 )
             )
     return issues
