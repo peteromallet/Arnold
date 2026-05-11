@@ -100,6 +100,13 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           - `status`: always `"pending"` at finalize time
           - `executor_notes`: always `""` at finalize time
           - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
         - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
         - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
           - `id`: short stable ID like `SC1`

@@ -34,6 +34,8 @@ from .models import (
     SprintItem,
     StorageModel,
     SystemLog,
+    Ticket,
+    TicketEpicLink,
     ToolCall,
     utc_now,
 )
@@ -78,6 +80,8 @@ __all__ = [
     "STOP_SIGNAL_SCHEMA",
     "StorageModel",
     "SystemLog",
+    "Ticket",
+    "TicketEpicLink",
     "ToolCall",
     "get_execution_schema_key",
     "strict_schema",

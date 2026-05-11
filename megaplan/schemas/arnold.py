@@ -379,6 +379,7 @@ class Codebase(StorageModel):
     last_accessed_at: datetime | None = None
     verified_accessible_at: datetime | None = None
     notes: str | None = None
+    root_commit_sha: str | None = None
 
     @field_validator("owner", "name")
     @classmethod
@@ -386,6 +387,34 @@ class Codebase(StorageModel):
         if not value or value != value.lower():
             raise ValueError("codebase owner and name must be non-empty lowercase strings")
         return value
+
+
+class Ticket(StorageModel):
+    """A repo-scoped note on an issue/problem that may become work."""
+
+    id: str
+    codebase_id: str
+    title: str
+    body: str = ""
+    status: str = "open"
+    source: str = "human"
+    tags: list[str] = Field(default_factory=list)
+    filed_by_actor_id: str | None = None
+    filed_in_turn_id: str | None = None
+    slug: str
+    created_at: datetime = Field(default_factory=utc_now)
+    last_edited_at: datetime = Field(default_factory=utc_now)
+    resolution_note: str | None = None
+    addressed_at: datetime | None = None
+
+
+class TicketEpicLink(StorageModel):
+    """Many-to-many join between tickets and epics."""
+
+    ticket_id: str
+    epic_id: str
+    resolves_on_complete: bool = False
+    linked_at: datetime = Field(default_factory=utc_now)
 
 
 class CodeArtifact(StorageModel):

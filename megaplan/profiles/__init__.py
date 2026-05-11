@@ -7,9 +7,44 @@ from pathlib import Path
 from typing import Any
 
 from .._core.io import config_dir
+from .._core import user_config as _user_config_module
+from .._core.user_config import VALID_VENDORS
 from ..types import CliError, DEFAULT_AGENT_ROUTING, KNOWN_AGENTS, parse_agent_spec
 
+
+def _resolve_default_vendor() -> str:
+    """Module-local hop to the user-config default.
+
+    Indirection exists so tests can ``monkeypatch.setattr(profiles, "_resolve_default_vendor", ...)``
+    without having to reach into ``megaplan._core.user_config``. Production
+    callers go through here, never call ``user_config.default_vendor`` directly.
+    """
+    return _user_config_module.default_vendor()
+
 VALID_PHASE_KEYS = frozenset(DEFAULT_AGENT_ROUTING.keys())
+
+# Profile-level metadata keys that are *not* phase mappings. These are
+# stripped before validation so the loader doesn't complain about them,
+# and surfaced via ``ProfileSource.metadata`` for downstream consumers
+# (currently just ``--vendor`` / ``--critic`` rejection on locked profiles).
+PROFILE_METADATA_KEYS = frozenset({"vendor_locked"})
+
+VALID_CRITIC_CHOICES = ("kimi", "cross")
+VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
+KIMI_SPEC = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+_PREMIUM_VENDORS = frozenset({"claude", "codex"})
+
+# Author-side phases that ``--depth`` rewrites. Critic phases (critique,
+# gate, review) and mechanical phases (prep, finalize, execute,
+# loop_execute) are intentionally excluded — see the asymmetry principle
+# in docs/megaplan-rubric.md.
+DEPTH_AUTHOR_PHASES = frozenset({
+    "plan",
+    "revise",
+    "loop_plan",
+    "tiebreaker_researcher",
+    "tiebreaker_challenger",
+})
 
 
 def _known_profiles_text(profiles: dict[str, dict[str, str]]) -> str:
@@ -24,14 +59,52 @@ def _raise_invalid_profile(path: Any, profile_name: str, key: str, message: str)
     )
 
 
-def _validate_profile_map(path: Any, profile_name: str, raw_profile: Any) -> dict[str, str]:
+def _split_profile_dict(
+    path: Any, profile_name: str, raw_profile: Any
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split a raw profile table into (phase_map, metadata).
+
+    Phase entries are everything whose key is a known phase from
+    ``VALID_PHASE_KEYS``. Metadata entries are the recognised
+    profile-level keys from ``PROFILE_METADATA_KEYS`` (currently just
+    ``vendor_locked``). Anything else is an error — surfaced by the
+    existing validator.
+    """
     if not isinstance(raw_profile, dict):
         raise CliError(
             "invalid_profile",
             f"Invalid profile '{profile_name}' in {path}: expected a TOML table of phase keys",
         )
+    phase_map: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+    for key, value in raw_profile.items():
+        if key in PROFILE_METADATA_KEYS:
+            metadata[str(key)] = value
+        else:
+            phase_map[str(key)] = value
+    return phase_map, metadata
+
+
+def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    validated: dict[str, Any] = {}
+    for key, value in metadata.items():
+        if key == "vendor_locked":
+            if not isinstance(value, bool):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"expected a boolean for 'vendor_locked', got {type(value).__name__}",
+                )
+            validated["vendor_locked"] = value
+        # Future metadata keys go here.
+    return validated
+
+
+def _validate_profile_map(path: Any, profile_name: str, raw_profile: Any) -> dict[str, str]:
+    phase_map, _metadata = _split_profile_dict(path, profile_name, raw_profile)
     validated: dict[str, str] = {}
-    for phase, raw_spec in raw_profile.items():
+    for phase, raw_spec in phase_map.items():
         if phase not in VALID_PHASE_KEYS:
             _raise_invalid_profile(
                 path,
@@ -53,31 +126,45 @@ def _validate_profile_map(path: Any, profile_name: str, raw_profile: Any) -> dic
     return validated
 
 
-def _parse_profiles_doc(path: Any, content: str) -> dict[str, dict[str, str]]:
+def _parse_profiles_doc(
+    path: Any, content: str
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
+    """Return (profiles_phase_maps, profiles_metadata).
+
+    Both dicts are keyed by profile name. Metadata is empty when a
+    profile declares no metadata keys.
+    """
     try:
         data = tomllib.loads(content)
     except tomllib.TOMLDecodeError as exc:
         raise CliError("invalid_profile", f"Malformed TOML in {path}: {exc}") from exc
     if not data:
-        return {}
+        return {}, {}
     if not isinstance(data, dict):
         raise CliError("invalid_profile", f"Invalid profile file {path}: expected a TOML object at the top level")
     raw_profiles = data.get("profiles", {})
     if raw_profiles in ({}, None):
-        return {}
+        return {}, {}
     if not isinstance(raw_profiles, dict):
         raise CliError("invalid_profile", f"Invalid profile file {path}: [profiles] must be a TOML table")
     profiles: dict[str, dict[str, str]] = {}
+    metadata: dict[str, dict[str, Any]] = {}
     for profile_name, raw_profile in raw_profiles.items():
+        _phase_map, raw_metadata = _split_profile_dict(path, profile_name, raw_profile)
         profiles[profile_name] = _validate_profile_map(path, profile_name, raw_profile)
-    return profiles
+        validated_metadata = _validate_metadata(path, profile_name, raw_metadata)
+        if validated_metadata:
+            metadata[profile_name] = validated_metadata
+    return profiles, metadata
 
 
-def _load_profiles_file(path: Any) -> dict[str, dict[str, str]]:
+def _load_profiles_file(
+    path: Any,
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
     try:
         content = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {}
+        return {}, {}
     except OSError as exc:
         raise CliError("invalid_profile", f"Unable to read profile file {path}: {exc}") from exc
     return _parse_profiles_doc(path, content)
@@ -101,16 +188,19 @@ def load_profile_sources(
     sources: list[tuple[str, str, dict[str, str]]] = []
 
     for path in _built_in_profile_files():
-        for profile_name, phase_map in _load_profiles_file(path).items():
+        profile_maps, _metadata = _load_profiles_file(path)
+        for profile_name, phase_map in profile_maps.items():
             sources.append(("built-in", profile_name, dict(phase_map)))
 
     user_path = config_dir(home) / "profiles.toml"
-    for profile_name, phase_map in _load_profiles_file(user_path).items():
+    user_profiles, _user_metadata = _load_profiles_file(user_path)
+    for profile_name, phase_map in user_profiles.items():
         sources.append(("user", profile_name, dict(phase_map)))
 
     if project_dir is not None:
         project_path = Path(project_dir) / ".megaplan" / "profiles.toml"
-        for profile_name, phase_map in _load_profiles_file(project_path).items():
+        project_profiles, _project_metadata = _load_profiles_file(project_path)
+        for profile_name, phase_map in project_profiles.items():
             sources.append(("project", profile_name, dict(phase_map)))
 
     return sources
@@ -126,6 +216,35 @@ def load_profiles(
     return profiles
 
 
+def load_profile_metadata(
+    home: Path | None = None,
+    project_dir: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Return per-profile metadata (the non-phase keys, e.g. ``vendor_locked``).
+
+    Later layers override earlier ones, mirroring ``load_profiles``.
+    """
+    metadata: dict[str, dict[str, Any]] = {}
+
+    for path in _built_in_profile_files():
+        _profiles, file_meta = _load_profiles_file(path)
+        for profile_name, meta in file_meta.items():
+            metadata[profile_name] = dict(meta)
+
+    user_path = config_dir(home) / "profiles.toml"
+    _user_profiles, user_meta = _load_profiles_file(user_path)
+    for profile_name, meta in user_meta.items():
+        metadata[profile_name] = dict(meta)
+
+    if project_dir is not None:
+        project_path = Path(project_dir) / ".megaplan" / "profiles.toml"
+        _project_profiles, project_meta = _load_profiles_file(project_path)
+        for profile_name, meta in project_meta.items():
+            metadata[profile_name] = dict(meta)
+
+    return metadata
+
+
 def resolve_profile(name: str, profiles: dict[str, dict[str, str]]) -> dict[str, str]:
     try:
         return dict(profiles[name])
@@ -138,6 +257,126 @@ def resolve_profile(name: str, profiles: dict[str, dict[str, str]]) -> dict[str,
 
 def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
     return [f"{phase}={spec}" for phase, spec in profile.items()]
+
+
+# ---------------------------------------------------------------------------
+# Vendor / critic rewrite logic
+# ---------------------------------------------------------------------------
+
+
+def _swap_premium_spec(spec: str, target_vendor: str) -> str:
+    """Swap claude:X <-> codex:X to match ``target_vendor``.
+
+    Non-premium specs (hermes, anything without a known prefix) are
+    returned unchanged. The effort suffix (e.g. ``:medium``) is
+    preserved verbatim.
+    """
+    agent, model = parse_agent_spec(spec)
+    if agent not in _PREMIUM_VENDORS:
+        return spec
+    if agent == target_vendor:
+        return spec
+    return f"{target_vendor}:{model}" if model is not None else target_vendor
+
+
+def apply_vendor_rewrite(
+    profile: dict[str, str],
+    vendor: str,
+) -> dict[str, str]:
+    """Return a copy of ``profile`` with premium slots swapped to ``vendor``.
+
+    Profiles with no claude/codex slots are a silent no-op. Caller is
+    responsible for rejecting vendor-locked profiles before getting here.
+    """
+    if vendor not in VALID_VENDORS:
+        raise CliError(
+            "invalid_vendor",
+            f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
+        )
+    return {phase: _swap_premium_spec(spec, vendor) for phase, spec in profile.items()}
+
+
+def apply_critic_rewrite(
+    profile: dict[str, str],
+    critic: str,
+    *,
+    vendor: str,
+    profile_name: str | None = None,
+) -> dict[str, str]:
+    """Return a copy of ``profile`` with critique+review rewritten per ``critic``.
+
+    ``vendor`` is the *post-vendor-rewrite* vendor — i.e. the result of
+    ``apply_vendor_rewrite``. For ``--critic cross`` we pick the
+    opposite of ``vendor`` so the critic disagrees with the author by
+    construction. Effort tiers are preserved from whatever the profile
+    already had for each of the two phases.
+    """
+    if critic not in VALID_CRITIC_CHOICES:
+        raise CliError(
+            "invalid_critic",
+            f"--critic must be one of {', '.join(VALID_CRITIC_CHOICES)}; got {critic!r}",
+        )
+    missing = [phase for phase in ("critique", "review") if phase not in profile]
+    if missing:
+        suffix = f" in profile '{profile_name}'" if profile_name else ""
+        raise CliError(
+            "invalid_critic",
+            f"--critic requires both 'critique' and 'review' phases{suffix}; "
+            f"missing: {', '.join(missing)}",
+        )
+
+    if critic == "kimi":
+        result = dict(profile)
+        result["critique"] = KIMI_SPEC
+        result["review"] = KIMI_SPEC
+        return result
+
+    # critic == "cross": flip premium vendor on critique+review only.
+    other = "codex" if vendor == "claude" else "claude"
+    result = dict(profile)
+    for phase in ("critique", "review"):
+        agent, model = parse_agent_spec(profile[phase])
+        # Preserve hermes specs as-is when crossing — only premium slots
+        # have a meaningful "other vendor."
+        if agent not in _PREMIUM_VENDORS:
+            continue
+        result[phase] = f"{other}:{model}" if model is not None else other
+    return result
+
+
+def apply_depth_rewrite(
+    profile: dict[str, str],
+    depth: str,
+) -> dict[str, str]:
+    """Return a copy of ``profile`` with author-phase effort set to ``depth``.
+
+    Only rewrites slots whose agent is claude/codex *and* whose phase is in
+    :data:`DEPTH_AUTHOR_PHASES`. Critic phases plateau at their existing
+    depth (asymmetry principle); hermes specs are never touched; bare
+    ``claude`` (no effort suffix) becomes ``claude:<depth>``.
+    """
+    if depth not in VALID_DEPTH_CHOICES:
+        raise CliError(
+            "invalid_depth",
+            f"--depth must be one of {', '.join(VALID_DEPTH_CHOICES)}; got {depth!r}",
+        )
+    result = dict(profile)
+    for phase, spec in profile.items():
+        if phase not in DEPTH_AUTHOR_PHASES:
+            continue
+        agent, _model = parse_agent_spec(spec)
+        if agent not in _PREMIUM_VENDORS:
+            continue
+        result[phase] = f"{agent}:{depth}"
+    return result
+
+
+def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
+    for spec in profile.values():
+        agent, _model = parse_agent_spec(spec)
+        if agent in _PREMIUM_VENDORS:
+            return True
+    return False
 
 
 def apply_profile_expansion(
@@ -165,7 +404,70 @@ def apply_profile_expansion(
     profile_steps: set[str] = set()
     if profile_name:
         profiles = load_profiles(project_dir=project_dir)
+        metadata = load_profile_metadata(project_dir=project_dir)
         resolved = resolve_profile(profile_name, profiles)
+        profile_meta = metadata.get(profile_name, {})
+        vendor_locked = bool(profile_meta.get("vendor_locked", False))
+
+        # Resolve vendor + critic + depth with CLI > state > config-default precedence.
+        cli_vendor = getattr(args, "vendor", None)
+        cli_critic = getattr(args, "critic", None)
+        cli_depth = getattr(args, "depth", None)
+        state_vendor = None
+        state_critic = None
+        state_depth = None
+        if state is not None:
+            cfg = state.get("config") or {}
+            state_vendor = cfg.get("vendor")
+            state_critic = cfg.get("critic")
+            state_depth = cfg.get("depth")
+        effective_vendor_flag = cli_vendor or state_vendor
+        effective_critic_flag = cli_critic or state_critic
+        effective_depth_flag = cli_depth or state_depth
+
+        # Vendor-locked profiles silently ignore --vendor and --critic.
+        # The lock is about which vendor, not which depth — --depth is
+        # honored on locked profiles per dial-3 (high-stakes work that
+        # warrants poirot may also warrant deep thinking).
+        # Resolution order: vendor → depth → critic.
+        if not vendor_locked:
+            # Always pick a vendor (CLI > state > config default) — even
+            # when the profile has no premium slots, picking it is cheap
+            # and the rewrite is a no-op. Done this way so the resolved
+            # vendor is observable / persistable downstream.
+            vendor = effective_vendor_flag
+            if vendor is None:
+                vendor = _resolve_default_vendor()
+            if vendor not in VALID_VENDORS:
+                raise CliError(
+                    "invalid_vendor",
+                    f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
+                )
+            if _profile_has_premium_slots(resolved):
+                resolved = apply_vendor_rewrite(resolved, vendor)
+            # Depth rewrite runs against the *post-vendor* state so
+            # ``--vendor codex --depth high`` lands on ``codex:high`` for
+            # author phases. Honored on locked profiles too (see below).
+            if effective_depth_flag is not None:
+                resolved = apply_depth_rewrite(resolved, effective_depth_flag)
+            # Critic rewrite always runs against the *post-vendor* state.
+            if effective_critic_flag is not None:
+                if effective_critic_flag not in VALID_CRITIC_CHOICES:
+                    raise CliError(
+                        "invalid_critic",
+                        f"--critic must be one of {', '.join(VALID_CRITIC_CHOICES)}; got {effective_critic_flag!r}",
+                    )
+                resolved = apply_critic_rewrite(
+                    resolved,
+                    effective_critic_flag,
+                    vendor=vendor,
+                    profile_name=profile_name,
+                )
+        elif effective_depth_flag is not None:
+            # vendor_locked profile: --vendor / --critic are no-ops, but
+            # --depth is still applied to author phases.
+            resolved = apply_depth_rewrite(resolved, effective_depth_flag)
+
         for pm in profile_to_phase_models(resolved):
             if "=" not in pm:
                 continue
@@ -211,8 +513,16 @@ def apply_profile_expansion(
 
 
 __all__ = [
+    "DEPTH_AUTHOR_PHASES",
+    "VALID_CRITIC_CHOICES",
+    "VALID_DEPTH_CHOICES",
     "VALID_PHASE_KEYS",
+    "PROFILE_METADATA_KEYS",
+    "apply_critic_rewrite",
+    "apply_depth_rewrite",
     "apply_profile_expansion",
+    "apply_vendor_rewrite",
+    "load_profile_metadata",
     "load_profile_sources",
     "load_profiles",
     "profile_to_phase_models",

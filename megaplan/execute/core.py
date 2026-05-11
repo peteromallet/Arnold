@@ -37,6 +37,7 @@ from megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _capture_git_status_snapshot_recursive,
     _check_done_task_evidence,
+    _check_done_task_evidence_by_kind,
     _collect_execute_claimed_paths,
     _collect_quality_deviations,
     _observe_git_changes,
@@ -65,6 +66,13 @@ from megaplan.types import (
 from megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
+
+# Private marker set: dispatcher return paths stamp one of these four values.
+# Handlers later read _phase_outcome to derive the correct ExitKind for
+# phase_result.json emission.
+_PHASE_OUTCOMES = frozenset(
+    {"success", "blocked_by_quality", "blocked_by_prereq", "timeout"}
+)
 
 
 @dataclass
@@ -617,14 +625,10 @@ def _run_and_merge_batch(
             advisory_message="",
         )
     else:
-        missing_task_evidence = _check_done_task_evidence(
+        missing_task_evidence = _check_done_task_evidence_by_kind(
             finalize_data.get("tasks", []),
             issues=deviations,
             should_classify=lambda task: task.get("id") in batch_task_id_set,
-            has_evidence=lambda task: bool(task.get("files_changed")),
-            has_advisory_evidence=_has_code_task_advisory_evidence,
-            missing_message="Done tasks missing both files_changed and commands_run: ",
-            advisory_message="Advisory: done tasks rely on non-file evidence (FLAG-006 softening): ",
         )
     execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
     if attribution_result.records:
@@ -770,7 +774,7 @@ def handle_execute_one_batch(
         )
     except CliError as error:
         if error.code == "worker_timeout":
-            return _recover_execute_timeout(
+            timeout_resp = _recover_execute_timeout(
                 plan_dir=plan_dir,
                 state=state,
                 error=error,
@@ -781,6 +785,8 @@ def handle_execute_one_batch(
                 args=args,
                 batch_number=batch_number,
             )
+            timeout_resp["_phase_outcome"] = "timeout"
+            return timeout_resp
         record_step_failure(
             plan_dir, state, step="execute", iteration=state["iteration"], error=error
         )
@@ -962,6 +968,7 @@ def handle_execute_one_batch(
             "— investigate executor_notes before continuing"
         )
 
+    phase_outcome = "blocked_by_quality" if blocked else "success"
     response: StepResponse = {
         "success": not blocked,
         "step": "execute",
@@ -979,6 +986,7 @@ def handle_execute_one_batch(
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
         "blocked_task_ids": batch_blocked_ids,
+        "_phase_outcome": phase_outcome,
     }
     if next_step == "execute" and not blocked:
         response["guidance"] = f"Run --batch {batch_number + 1}"
@@ -1094,39 +1102,85 @@ def handle_execute_auto_loop(
         if task.get("status") == "pending" and isinstance(task.get("id"), str)
     ]
     if blocked_task_ids:
-        blocked_list = ", ".join(sorted(blocked_task_ids))
-        summary = (
-            f"Blocked: existing blocked task(s) prevent dependent execution: {blocked_list}. "
-            "Resolve or replan the blocked task(s) before continuing."
-        )
-        append_history(
-            state,
-            make_history_entry(
-                "execute",
-                duration_ms=0,
-                cost_usd=0.0,
-                result="blocked",
-                message=summary,
-            ),
-        )
-        save_state_merge_meta(plan_dir, state)
-        response: StepResponse = {
-            "success": False,
-            "step": "execute",
-            "summary": summary,
-            "artifacts": ["finalize.json", "final.md"],
-            "monitor_hint": build_monitor_hint(plan_dir),
-            "next_step": "execute",
-            "state": STATE_FINALIZED,
-            "files_changed": [],
-            "deviations": [],
-            "warnings": [summary],
-            "auto_approve": auto_approve,
-            "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
-            "blocked_task_ids": sorted(blocked_task_ids),
-        }
-        _attach_next_step_runtime(response)
-        return response
+        # Cross-session retry detection: if any blocked task was recorded
+        # under a *different* invocation_id, this is a fresh session and we
+        # should reset the blocked tasks → pending instead of short-circuiting.
+        current_inv_id = (state.get("meta") or {}).get("current_invocation_id", "")
+        cross_session = False
+        if current_inv_id:
+            for task in tasks:
+                if (
+                    isinstance(task, dict)
+                    and task.get("id") in blocked_task_ids
+                ):
+                    recorded = task.get("recorded_invocation_id")
+                    if isinstance(recorded, str) and recorded and recorded != current_inv_id:
+                        cross_session = True
+                        break
+                    # Legacy blocked task without invocation stamp: treat as
+                    # within-session (the conservative default). The
+                    # --retry-blocked-tasks path above already handles the
+                    # explicit cross-session opt-in.
+        if cross_session:
+            log.info(
+                "Cross-session retry detected (invocation_id mismatch) — "
+                "resetting blocked tasks to pending"
+            )
+            for task in tasks:
+                if (
+                    isinstance(task, dict)
+                    and task.get("id") in blocked_task_ids
+                ):
+                    task["status"] = "pending"
+                    task["executor_notes"] = ""
+                    task["files_changed"] = []
+                    task["commands_run"] = []
+                    task["evidence_files"] = []
+                    task["reviewer_verdict"] = ""
+                    task.pop("recorded_invocation_id", None)
+            atomic_write_json(plan_dir / "finalize.json", finalize_data)
+            # Recompute blocked_task_ids after reset — should now be empty
+            blocked_task_ids = {
+                task["id"]
+                for task in tasks
+                if task.get("status") == "blocked" and isinstance(task.get("id"), str)
+            }
+        # Now, only short-circuit if blocked tasks remain (within-session)
+        if blocked_task_ids:
+            blocked_list = ", ".join(sorted(blocked_task_ids))
+            summary = (
+                f"Blocked: existing blocked task(s) prevent dependent execution: {blocked_list}. "
+                "Resolve or replan the blocked task(s) before continuing."
+            )
+            append_history(
+                state,
+                make_history_entry(
+                    "execute",
+                    duration_ms=0,
+                    cost_usd=0.0,
+                    result="blocked",
+                    message=summary,
+                ),
+            )
+            save_state_merge_meta(plan_dir, state)
+            response: StepResponse = {
+                "success": False,
+                "step": "execute",
+                "summary": summary,
+                "artifacts": ["finalize.json", "final.md"],
+                "monitor_hint": build_monitor_hint(plan_dir),
+                "next_step": "execute",
+                "state": STATE_FINALIZED,
+                "files_changed": [],
+                "deviations": [],
+                "warnings": [summary],
+                "auto_approve": auto_approve,
+                "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+                "blocked_task_ids": sorted(blocked_task_ids),
+                "_phase_outcome": "blocked_by_prereq",
+            }
+            _attach_next_step_runtime(response)
+            return response
 
     pending_batches = compute_task_batches(
         pending_tasks, completed_ids=completed_task_ids
@@ -1265,6 +1319,16 @@ def handle_execute_auto_loop(
             and isinstance(task.get("id"), str)
             and task["id"] in set(batch_task_ids)
         }
+        # Stamp each newly-blocked task with the current invocation_id so the
+        # short-circuit can distinguish within-session from cross-session blocks.
+        current_inv_id = (state.get("meta") or {}).get("current_invocation_id", "")
+        if newly_blocked_task_ids and current_inv_id:
+            for task in finalize_data.get("tasks", []):
+                if (
+                    isinstance(task, dict)
+                    and task.get("id") in newly_blocked_task_ids
+                ):
+                    task["recorded_invocation_id"] = current_inv_id
         blocking_reasons = build_blocking_reasons(
             tracked_tasks=result.merged_task_count,
             total_tasks=result.total_task_count,
@@ -1355,14 +1419,10 @@ def handle_execute_auto_loop(
             advisory_message="",
         )
     else:
-        missing_task_evidence = _check_done_task_evidence(
+        missing_task_evidence = _check_done_task_evidence_by_kind(
             finalize_data.get("tasks", []),
             issues=deviations,
             should_classify=lambda task: task.get("id") in active_task_ids,
-            has_evidence=lambda task: bool(task.get("files_changed")),
-            has_advisory_evidence=_has_code_task_advisory_evidence,
-            missing_message="Done tasks missing both files_changed and commands_run: ",
-            advisory_message="Advisory: done tasks rely on non-file evidence (FLAG-006 softening): ",
         )
     blocking_reasons = build_blocking_reasons(
         tracked_tasks=tracked_tasks,
@@ -1483,6 +1543,26 @@ def handle_execute_auto_loop(
         summary = aggregate_payload["output"] + tracking_note
     if drift.severity != "none":
         summary = f"[scope_drift={drift.severity}] {summary}"
+    # Determine _phase_outcome with priority: timeout > prereq > quality > success
+    if timeout_error is not None:
+        phase_outcome = "timeout"
+    elif active_blocked_task_ids:
+        phase_outcome = "blocked_by_prereq"
+    elif blocked:
+        phase_outcome = "blocked_by_quality"
+    else:
+        phase_outcome = "success"
+
+    # Collect blocked task notes for blocked_by_prereq path
+    blocked_task_notes: dict[str, str] = {}
+    if active_blocked_task_ids:
+        for task in finalize_data.get("tasks", []):
+            tid = task.get("id")
+            if isinstance(tid, str) and tid in active_blocked_task_ids:
+                notes = task.get("executor_notes") or ""
+                if notes:
+                    blocked_task_notes[tid] = str(notes)
+
     response: StepResponse = {
         "success": not blocked and timeout_error is None,
         "step": "execute",
@@ -1498,6 +1578,11 @@ def handle_execute_auto_loop(
         "warnings": [summary] if blocked or timeout_error is not None else [],
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
+        "_phase_outcome": phase_outcome,
     }
+    if active_blocked_task_ids:
+        response["blocked_task_ids"] = sorted(active_blocked_task_ids)
+    if blocked_task_notes:
+        response["blocked_task_notes"] = blocked_task_notes
     _attach_next_step_runtime(response)
     return response

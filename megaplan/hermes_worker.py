@@ -464,9 +464,9 @@ def run_hermes_step(
             session_id=session_id,
             session_db=SessionDB(),
             # Cap output tokens to prevent repetition loops (Qwen generates 330K+
-            # of repeated text without a limit). 8192 is plenty for any megaplan
-            # phase response. Execute gets more since it may include verbose output.
-            max_tokens=16384 if step == "execute" else 8192,
+            # of repeated text without a limit). Sized to fit large finalize.json
+            # task graphs and multi-batch execute outputs on plans with ~15+ tasks.
+            max_tokens=65536 if step == "execute" else 32768,
             reasoning_config=_reasoning_off,
             **extra_kwargs,
         )

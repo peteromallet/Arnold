@@ -13,6 +13,7 @@ from .shared import (
     _merge_imported_decision_criteria,
     _write_json_artifact,
     _write_plan_version,
+    phase_result_guard,
 )
 
 def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -23,81 +24,83 @@ def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
                 "invalid_state",
                 "joke mode requires a primary_criterion — declare via --primary-criterion or in the prep brief",
             )
-        rerun = state["current_state"] == STATE_PLANNED
-        version = state["iteration"] if rerun else state["iteration"] + 1
-        worker, agent, mode, refreshed = _pkg._run_worker(
-            "plan",
-            state,
-            plan_dir,
-            args,
-            root=root,
-            iteration=version,
-        )
-        payload = worker.payload
-        payload["success_criteria"] = _merge_imported_decision_criteria(
-            state,
-            payload["success_criteria"],
-        )
-        plan_filename, meta_filename, meta = _write_plan_version(
-            plan_dir=plan_dir,
-            state=state,
-            step="plan",
-            version=version,
-            worker=worker,
-            plan_text=payload["plan"].rstrip() + "\n",
-            meta_fields={
-                "questions": payload["questions"],
-                "success_criteria": payload["success_criteria"],
-                "assumptions": payload["assumptions"],
-            },
-        )
-        state["iteration"], state["current_state"] = version, STATE_PLANNED
-        state["meta"].pop("user_approved_gate", None)
-        state["last_gate"] = {}
-        state["plan_versions"].append({
-            "version": version, "file": plan_filename,
-            "hash": meta["hash"], "timestamp": meta["timestamp"],
-        })
-        verb = "Refined" if rerun else "Generated"
-        return _finish_step(
-            plan_dir, state, args,
-            step="plan",
-            worker=worker, agent=agent, mode=mode, refreshed=refreshed,
-            summary=f"{verb} plan v{version} with {len(payload['questions'])} questions and {len(payload['success_criteria'])} success criteria.",
-            artifacts=[plan_filename, meta_filename],
-            output_file=plan_filename,
-            artifact_hash=meta["hash"],
-            response_fields={
-                "iteration": version,
-                "questions": payload["questions"],
-                "assumptions": payload["assumptions"],
-                "success_criteria": payload["success_criteria"],
-            },
-        )
+        with phase_result_guard(plan_dir):
+            rerun = state["current_state"] == STATE_PLANNED
+            version = state["iteration"] if rerun else state["iteration"] + 1
+            worker, agent, mode, refreshed = _pkg._run_worker(
+                "plan",
+                state,
+                plan_dir,
+                args,
+                root=root,
+                iteration=version,
+            )
+            payload = worker.payload
+            payload["success_criteria"] = _merge_imported_decision_criteria(
+                state,
+                payload["success_criteria"],
+            )
+            plan_filename, meta_filename, meta = _write_plan_version(
+                plan_dir=plan_dir,
+                state=state,
+                step="plan",
+                version=version,
+                worker=worker,
+                plan_text=payload["plan"].rstrip() + "\n",
+                meta_fields={
+                    "questions": payload["questions"],
+                    "success_criteria": payload["success_criteria"],
+                    "assumptions": payload["assumptions"],
+                },
+            )
+            state["iteration"], state["current_state"] = version, STATE_PLANNED
+            state["meta"].pop("user_approved_gate", None)
+            state["last_gate"] = {}
+            state["plan_versions"].append({
+                "version": version, "file": plan_filename,
+                "hash": meta["hash"], "timestamp": meta["timestamp"],
+            })
+            verb = "Refined" if rerun else "Generated"
+            return _finish_step(
+                plan_dir, state, args,
+                step="plan",
+                worker=worker, agent=agent, mode=mode, refreshed=refreshed,
+                summary=f"{verb} plan v{version} with {len(payload['questions'])} questions and {len(payload['success_criteria'])} success criteria.",
+                artifacts=[plan_filename, meta_filename],
+                output_file=plan_filename,
+                artifact_hash=meta["hash"],
+                response_fields={
+                    "iteration": version,
+                    "questions": payload["questions"],
+                    "assumptions": payload["assumptions"],
+                    "success_criteria": payload["success_criteria"],
+                },
+            )
 
 def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="prep") as (plan_dir, state):
         require_state(state, "prep", {STATE_INITIALIZED})
-        worker, agent, mode, refreshed = _pkg._run_worker("prep", state, plan_dir, args, root=root)
-        prep_filename = "prep.json"
-        artifact_hash = _write_json_artifact(plan_dir, prep_filename, worker.payload)
-        if state["config"].get("mode") == "joke" and not state["config"].get("primary_criterion"):
-            primary_criterion = worker.payload.get("primary_criterion")
-            if isinstance(primary_criterion, str) and primary_criterion.strip():
-                state["config"]["primary_criterion"] = primary_criterion.strip()
-        code_refs = len(worker.payload.get("relevant_code", []))
-        test_refs = len(worker.payload.get("test_expectations", []))
-        state["current_state"] = STATE_PREPPED
-        return _finish_step(
-            plan_dir, state, args,
-            step="prep",
-            worker=worker, agent=agent, mode=mode, refreshed=refreshed,
-            summary=f"Prep complete: captured {code_refs} relevant code reference(s) and {test_refs} test expectation(s).",
-            artifacts=[prep_filename],
-            output_file=prep_filename,
-            artifact_hash=artifact_hash,
-            response_fields={"iteration": state["iteration"]},
-        )
+        with phase_result_guard(plan_dir):
+            worker, agent, mode, refreshed = _pkg._run_worker("prep", state, plan_dir, args, root=root)
+            prep_filename = "prep.json"
+            artifact_hash = _write_json_artifact(plan_dir, prep_filename, worker.payload)
+            if state["config"].get("mode") == "joke" and not state["config"].get("primary_criterion"):
+                primary_criterion = worker.payload.get("primary_criterion")
+                if isinstance(primary_criterion, str) and primary_criterion.strip():
+                    state["config"]["primary_criterion"] = primary_criterion.strip()
+            code_refs = len(worker.payload.get("relevant_code", []))
+            test_refs = len(worker.payload.get("test_expectations", []))
+            state["current_state"] = STATE_PREPPED
+            return _finish_step(
+                plan_dir, state, args,
+                step="prep",
+                worker=worker, agent=agent, mode=mode, refreshed=refreshed,
+                summary=f"Prep complete: captured {code_refs} relevant code reference(s) and {test_refs} test expectation(s).",
+                artifacts=[prep_filename],
+                output_file=prep_filename,
+                artifact_hash=artifact_hash,
+                response_fields={"iteration": state["iteration"]},
+            )
 
 def _build_verifiability_flags(
     success_criteria: list[dict[str, Any]],

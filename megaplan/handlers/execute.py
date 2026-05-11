@@ -37,6 +37,7 @@ from megaplan._core import (
 from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
 
 from .shared import _emit_phase_notice, attach_agent_fallback, worker_module
+from megaplan.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
 def _is_rework_reexecution(state: PlanState) -> bool:
     """Check if the last completed step was a review with needs_rework."""
@@ -100,32 +101,34 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)
+        response: StepResponse | None = None
         try:
-            if getattr(args, "batch", None) is not None:
-                response = dispatch_execute_one_batch(
-                    root=root,
-                    plan_dir=plan_dir,
-                    state=state,
-                    args=args,
-                    batch_number=args.batch,
-                    auto_approve=auto_approve,
-                    agent=agent,
-                    mode=mode,
-                    refreshed=refreshed,
-                    model=model,
-                )
-            else:
-                response = dispatch_execute_auto_loop(
-                    root=root,
-                    plan_dir=plan_dir,
-                    state=state,
-                    args=args,
-                    auto_approve=auto_approve,
-                    agent=agent,
-                    mode=mode,
-                    refreshed=refreshed,
-                    model=model,
-                )
+            with phase_result_guard(plan_dir):
+                if getattr(args, "batch", None) is not None:
+                    response = dispatch_execute_one_batch(
+                        root=root,
+                        plan_dir=plan_dir,
+                        state=state,
+                        args=args,
+                        batch_number=args.batch,
+                        auto_approve=auto_approve,
+                        agent=agent,
+                        mode=mode,
+                        refreshed=refreshed,
+                        model=model,
+                    )
+                else:
+                    response = dispatch_execute_auto_loop(
+                        root=root,
+                        plan_dir=plan_dir,
+                        state=state,
+                        args=args,
+                        auto_approve=auto_approve,
+                        agent=agent,
+                        mode=mode,
+                        refreshed=refreshed,
+                        model=model,
+                    )
         except CliError:
             clear_active_step(state, run_id=run_id)
             save_state_merge_meta(plan_dir, state)
@@ -198,4 +201,45 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         else:
             save_state_merge_meta(plan_dir, state)
         attach_agent_fallback(response, args)
+        # Emit phase_result.json from the dispatcher's _phase_outcome marker
+        if response is not None:
+            outcome = response.get("_phase_outcome", "success")
+            bt_ids: list[str] = list(response.get("blocked_task_ids", []))
+            bt_notes: dict[str, str] = response.get("blocked_task_notes", {})
+            if isinstance(bt_notes, dict):
+                pass
+            else:
+                bt_notes = {}
+            blocked = tuple(
+                BlockedTask(task_id=tid, reason="blocked_by_prereq",
+                            notes=bt_notes.get(tid, ""))
+                for tid in bt_ids
+            ) if outcome == "blocked_by_prereq" else ()
+
+            dev_raw = response.get("deviations", [])
+            if outcome == "blocked_by_quality" and dev_raw:
+                devs: tuple[Deviation, ...] = tuple(
+                    Deviation.from_string(d) if isinstance(d, str)
+                    else Deviation(
+                        kind=str(d.get("kind", "quality_gate")),
+                        message=str(d.get("message", "")),
+                        task_id=d.get("task_id"),
+                    )
+                    for d in dev_raw
+                    if isinstance(d, (str, dict))
+                )
+            else:
+                devs = ()
+
+            _emit_phase_result(
+                phase="execute",
+                state=state,
+                plan_dir=plan_dir,
+                exit_kind=outcome,
+                blocked_tasks=blocked,
+                deviations=devs,
+                artifacts_written=tuple(response.get("artifacts", [])),
+            )
+            response.pop("_phase_outcome", None)
+            response.pop("blocked_task_notes", None)
         return response

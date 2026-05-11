@@ -179,6 +179,18 @@ def _workflow_robustness_from_state(state: PlanState) -> str:
     return _normalize_workflow_robustness(config.get("robustness", "standard"))
 
 
+def _with_prep_from_state(state: PlanState) -> bool:
+    """Read the ``with_prep`` flag persisted at init.
+
+    Returns ``False`` when the key is missing or the config block is
+    malformed — matches the flag's default-off semantics.
+    """
+    config = state.get("config", {})
+    if not isinstance(config, dict):
+        return False
+    return bool(config.get("with_prep", False))
+
+
 def _resolve_overrides(robustness: str, *, creative: bool) -> dict[str, list[Transition]]:
     if not creative:
         return _ROBUSTNESS_OVERRIDES.get(robustness, {})
@@ -197,11 +209,22 @@ def _resolve_overrides(robustness: str, *, creative: bool) -> dict[str, list[Tra
     return _ROBUSTNESS_OVERRIDES.get(robustness, {})
 
 
-def _workflow_for_robustness(robustness: str, *, creative: bool = False) -> dict[str, list[Transition]]:
+def _workflow_for_robustness(
+    robustness: str,
+    *,
+    creative: bool = False,
+    with_prep: bool = False,
+) -> dict[str, list[Transition]]:
     normalized = _normalize_workflow_robustness(robustness)
     merged = dict(WORKFLOW)
     for level in _ROBUSTNESS_WORKFLOW_LEVELS.get(normalized, _ROBUSTNESS_WORKFLOW_LEVELS["standard"]):
         merged.update(_resolve_overrides(level, creative=creative and normalized != "tiny"))
+    # When --with-prep was set at init, prep must run regardless of the
+    # robustness level. The standard/light/tiny override chain replaces
+    # STATE_INITIALIZED -> prep with STATE_INITIALIZED -> plan; we undo
+    # that replacement here so the default WORKFLOW transition wins.
+    if with_prep:
+        merged[STATE_INITIALIZED] = list(WORKFLOW[STATE_INITIALIZED])
     return merged
 
 
@@ -227,10 +250,10 @@ def _transition_matches(state: PlanState, condition: str) -> bool:
     return False
 
 
-def workflow_includes_step(robustness: str, step: str) -> bool:
+def workflow_includes_step(robustness: str, step: str, *, with_prep: bool = False) -> bool:
     if step == "step":
         return True
-    workflow = _workflow_for_robustness(robustness)
+    workflow = _workflow_for_robustness(robustness, with_prep=with_prep)
     return any(
         transition.next_step == step
         for transitions in workflow.values()
@@ -245,6 +268,7 @@ def workflow_transition(state: PlanState, step: str) -> Transition | None:
     workflow = _workflow_for_robustness(
         _workflow_robustness_from_state(state),
         creative=is_creative_mode(state),
+        with_prep=_with_prep_from_state(state),
     )
     for transition in workflow.get(current, []):
         if transition.next_step == step and _transition_matches(state, transition.condition):
@@ -259,6 +283,7 @@ def workflow_next(state: PlanState) -> list[str]:
     workflow = _workflow_for_robustness(
         _workflow_robustness_from_state(state),
         creative=is_creative_mode(state),
+        with_prep=_with_prep_from_state(state),
     )
     next_steps = [
         transition.next_step

@@ -1,0 +1,19 @@
+# `all-claude` — Opus 4.7 default-effort for every phase. Pair with
+# --robustness robust for extremely complex projects. Use for kernel-invariant
+# changes, contract definition, anything where regression = production
+# incident. Pick over `all-codex` based on user preference, credits, or
+# which model has done better on similar work.
+# (Personality: Adrian Monk — solo virtuoso obsessed with thoroughness.)
+[profiles.all-claude]
+plan                  = "claude"
+prep                  = "claude"
+critique              = "claude"
+revise                = "claude"
+gate                  = "claude"
+finalize              = "claude"
+execute               = "claude"
+loop_plan             = "claude"
+loop_execute          = "claude"
+review                = "claude"
+tiebreaker_researcher = "claude"
+tiebreaker_challenger = "claude"

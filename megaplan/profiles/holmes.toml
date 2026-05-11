@@ -1,0 +1,23 @@
+# `holmes` (legacy with cross-model gate) — Opus 4.7 --effort medium
+# plans+revises; codex:medium gates+reviews; Kimi critiques; DeepSeek
+# executes. Belt-and-braces: pairs Opus authoring depth with codex's analytical
+# post-iteration check. NOT identical to `watson-claude` in the detective
+# cluster — `holmes` keeps the cross-model gate, while `watson-claude` uses
+# claude:medium throughout the reasoning phases. Use this profile when the
+# cross-model gate is the point; reach for `watson-claude` (or any other
+# cluster cell) when a single-author-model pipeline is preferred. Bump
+# --phase-model plan=claude:high for hard plans.
+# (Personality: Sherlock Holmes — meticulous master, leaves nothing to chance.)
+[profiles.holmes]
+plan                  = "claude:medium"
+prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique              = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+revise                = "claude:medium"
+gate                  = "codex:medium"
+finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+loop_plan             = "claude:medium"
+loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+review                = "codex:medium"
+tiebreaker_researcher = "claude:medium"
+tiebreaker_challenger = "codex:medium"

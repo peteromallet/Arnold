@@ -22,6 +22,7 @@ from megaplan._core import (
 from megaplan.evaluation import validate_execution_evidence
 from megaplan.execute.quality import (
     _check_done_task_evidence,
+    _check_done_task_evidence_by_kind,
     _normalize_execute_claimed_path,
 )
 from megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
@@ -62,14 +63,13 @@ def _reset_timeout_invalid_tasks(
             advisory_message="",
         )
     else:
-        missing_task_ids = _check_done_task_evidence(
+        missing_task_ids = _check_done_task_evidence_by_kind(
             finalize_data.get("tasks", []),
             issues=issues,
             should_classify=lambda task: True,
-            has_evidence=lambda task: bool(task.get("files_changed")),
-            has_advisory_evidence=_has_code_task_advisory_evidence,
-            missing_message="Done tasks missing files_changed, commands_run, evidence_files, and executor_notes during timeout recovery: ",
-            advisory_message="Advisory: done tasks rely on non-file evidence during timeout recovery: ",
+            code_has_advisory=_has_code_task_advisory_evidence,
+            code_missing_message="Done tasks missing files_changed, commands_run, evidence_files, and executor_notes during timeout recovery: ",
+            code_advisory_message="Advisory: done tasks rely on non-file evidence during timeout recovery: ",
         )
     for task_id in missing_task_ids:
         if is_prose_mode(mode_state):

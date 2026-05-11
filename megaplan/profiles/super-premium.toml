@@ -1,0 +1,44 @@
+# `super-premium` — tier 5 (super-premium). Both Claude *and* Codex
+# contributing to the same job. Apex tier; vendor-locked.
+#
+# This is the canonical Claude/Codex split, mirroring `poirot` (kept as a
+# personality-named alias). Claude handles the author/repo-reading roles
+# (plan, prep, revise, gate, finalize, loop_plan); Codex handles the
+# critique/structural-analysis roles (critique, execute, review,
+# loop_execute, tiebreakers). The whole point of this tier is combining
+# their different strengths, so vendor choice doesn't apply.
+#
+# Use when one premium model's depth isn't enough and you want two minds
+# working together: concurrency primitives, schemas downstream sprints will
+# build on, wire formats, multi-system migration decisions, big architectural
+# choices where downstream sprints all depend on the outcome here. Trigger
+# conditions are (1) high stakes — regression = production incident or worse
+# — or (2) the sprint is *making* a big architectural decision, not just
+# implementing one already made.
+#
+# Flag interactions:
+#
+#   * `--vendor claude|codex` — REJECTED. This tier is vendor-locked; the
+#     Claude/Codex split is the whole rationale and can't be collapsed to a
+#     single vendor. The loader raises `vendor_locked_profile`.
+#   * `--critic kimi|cross` — REJECTED for the same reason. The Codex critic
+#     is structural to the recipe; swapping it would change the tier's
+#     identity, not its tuning.
+#   * `--phase-model phase=spec` — still honored; it's the legitimate way to
+#     bump depth on a specific phase (e.g. `plan=claude:high` for hard plans).
+#
+# See docs/megaplan-rubric.md for the full rubric.
+[profiles.super-premium]
+vendor_locked         = true
+plan                  = "claude"
+prep                  = "claude"
+critique              = "codex"
+revise                = "claude"
+gate                  = "claude"
+finalize              = "claude"
+execute               = "codex"
+loop_plan             = "claude"
+loop_execute          = "codex"
+review                = "codex"
+tiebreaker_researcher = "codex"
+tiebreaker_challenger = "codex"

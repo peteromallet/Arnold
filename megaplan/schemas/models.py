@@ -21,6 +21,8 @@ from .arnold import (
     Sprint,
     SprintItem,
     SystemLog,
+    Ticket,
+    TicketEpicLink,
     ToolCall,
 )
 from .base import HomeBackend, StorageModel, utc_now
@@ -66,6 +68,8 @@ __all__ = [
     "SprintItem",
     "StorageModel",
     "SystemLog",
+    "Ticket",
+    "TicketEpicLink",
     "ToolCall",
     "utc_now",
 ]

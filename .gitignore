@@ -43,3 +43,6 @@ megaplan/agent/rl_cli.py
 megaplan/agent/setup-hermes.sh
 megaplan/agent/tinker-atropos
 megaplan/agent/website/
+
+# Supabase CLI local cache
+supabase/.temp/

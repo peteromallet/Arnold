@@ -1,0 +1,19 @@
+# `nancy` — light/quick verify tier. DeepSeek leads + executes; codex:medium
+# does prep/critique/gate/review. Cheapest viable profile (~$1-3/arm).
+# Codex-as-prep effectively steers DeepSeek to read the repo first, recognising
+# already-done state. Use for verification, smoke tests, runbook authoring,
+# doc-mode plans, anything mostly text.
+# (Personality: Nancy Drew — sharp-eyed light-touch detective.)
+[profiles.nancy]
+plan                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+prep                  = "codex:medium"
+critique              = "codex:medium"
+revise                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+gate                  = "codex:medium"
+finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+loop_plan             = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+review                = "codex:medium"
+tiebreaker_researcher = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+tiebreaker_challenger = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"

@@ -1,0 +1,794 @@
+"""Core ticket operations — mode-aware dispatch.
+
+Local-only mode: writes/reads ``.megaplan/tickets/*.md`` files only.
+Cloud-configured mode: writes files **and** mirrors to DB via
+:class:`~megaplan.store.db.DBStore`.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Sequence
+
+from ulid import ULID
+
+from megaplan.schemas import Ticket, TicketEpicLink
+from megaplan.store import Store
+
+from .files import (
+    _FRONTMATTER_FIELDS,
+    iterate_ticket_files,
+    read_ticket_file,
+    slugify,
+    ticket_file_path,
+    tickets_dir,
+    write_ticket_file,
+)
+from .identity import repo_root_sha
+
+
+# ---------------------------------------------------------------------------
+# Mode detection
+# ---------------------------------------------------------------------------
+
+
+def is_cloud_store(store: Store) -> bool:
+    """Return *True* when *store* is a :class:`~megaplan.store.db.DBStore`.
+
+    This is the **single canonical predicate** used by every operation to
+    decide whether to hit the database in addition to the file system.
+    """
+    from megaplan.store.db import DBStore  # lazy to avoid import cycle
+
+    return isinstance(store, DBStore)
+
+
+# ---------------------------------------------------------------------------
+# Store resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_store() -> Store | None:
+    """Return the currently configured store, or *None* for local-only.
+
+    Reuses megaplan's existing ``build_store`` convention: checks
+    ``MEGAPLAN_BACKEND`` env and ``--backend`` CLI args by inspecting
+    the CLI context if available, otherwise falls back to env.
+    """
+    backend = os.environ.get("MEGAPLAN_BACKEND")
+    if backend == "db":
+        from megaplan.store import DBStore, require_actor_id, resolve_actor_id
+
+        actor_id = require_actor_id(resolve_actor_id(None))
+        return DBStore(actor_id=actor_id)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Source derivation
+# ---------------------------------------------------------------------------
+
+
+def _derive_source() -> tuple[str, str | None, str | None]:
+    """Return ``(source, filed_in_turn_id, filed_by_actor_id)``.
+
+    - ``MEGAPLAN_TURN_ID`` set  → ``source = 'agent'``, ``filed_in_turn_id`` populated.
+    - Unset                     → ``source = 'human'``.
+    - ``MEGAPLAN_ACTOR_ID``     → ``filed_by_actor_id`` populated.
+    """
+    turn_id = os.environ.get("MEGAPLAN_TURN_ID")
+    actor_id = os.environ.get("MEGAPLAN_ACTOR_ID")
+    if turn_id:
+        return ("agent", turn_id, actor_id or None)
+    return ("human", None, actor_id or None)
+
+
+# ---------------------------------------------------------------------------
+# Codebase identity resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_codebase_id(store: Store | None, cwd: Path | None = None) -> str | None:
+    """Determine the codebase identity from the current working directory.
+
+    Returns a ``codebase_id`` string, or *None* if we're in local-only mode
+    and identity doesn't matter for file-only storage.
+    """
+    if store is None or not is_cloud_store(store):
+        return None  # local-only: no codebase_id needed
+    try:
+        sha = repo_root_sha(cwd)
+    except Exception:
+        sha = None
+
+    from megaplan.store.db import DBStore
+
+    assert isinstance(store, DBStore)
+    if sha:
+        existing = store.resolve_codebase_by_root_sha(sha)
+        if existing:
+            return existing.id
+    return None
+
+
+def _ensure_codebase(
+    store: Store,
+    cwd: Path | None = None,
+) -> str:
+    """Ensure a ``codebases`` row exists for the current repo and return its id.
+
+    Auto-registers if needed (with ``root_commit_sha`` populated).
+    Only meaningful in cloud mode; raises in local-only.
+    """
+    from megaplan.store.db import DBStore
+
+    assert is_cloud_store(store)
+    db: DBStore = store  # type: ignore[assignment]
+
+    try:
+        sha = repo_root_sha(cwd)
+    except Exception:
+        sha = None
+
+    if sha:
+        existing = db.resolve_codebase_by_root_sha(sha)
+        if existing:
+            return existing.id
+
+    # Auto-register
+    from .identity import repo_owner_name
+
+    owner, name = repo_owner_name(cwd)
+    if not owner or not name:
+        owner, name = "unknown", "unknown"
+
+    cb = db.upsert_codebase(
+        owner=owner,
+        name=name,
+        root_commit_sha=sha,
+    )
+    return cb.id
+
+
+# ---------------------------------------------------------------------------
+# Public API — create
+# ---------------------------------------------------------------------------
+
+
+def new(
+    title: str,
+    *,
+    body: str = "",
+    tags: Sequence[str] | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> str:
+    """Create a new ticket and return its ULID.
+
+    Parameters
+    ----------
+    title:
+        Ticket title (required).
+    body:
+        Markdown body.  ``"-"`` means read from stdin (empty input is rejected).
+    tags:
+        Optional tags.
+    store:
+        Explicit store.  If *None*, resolved from environment.
+    cwd:
+        Working directory for git operations.
+
+    Returns
+    -------
+    str
+        The ULID of the newly created ticket (printed to stdout).
+    """
+    # Handle stdin body
+    if body == "-":
+        body = sys.stdin.read()
+        if not body.strip():
+            raise ValueError("stdin body is empty — body is required")
+
+    if store is None:
+        store = _resolve_store()
+
+    source, turn_id, actor_id = _derive_source()
+    ticket_id = str(ULID())
+    slug = slugify(title)
+    now = datetime.now(timezone.utc)
+
+    # Determine codebase_id (cloud mode only)
+    codebase_id: str | None
+    if store is not None and is_cloud_store(store):
+        codebase_id = _ensure_codebase(store, cwd)
+    else:
+        codebase_id = None
+
+    # Build record dict for file
+    record: dict[str, Any] = {
+        "id": ticket_id,
+        "title": title,
+        "status": "open",
+        "source": source,
+        "tags": list(tags or []),
+        "filed_by_actor_id": actor_id,
+        "filed_in_turn_id": turn_id,
+        "codebase_id": codebase_id,
+        "created_at": now,
+        "last_edited_at": now,
+        "resolution_note": None,
+        "addressed_at": None,
+        "epics": [],
+        "__body__": body,
+    }
+
+    # Write file (both modes)
+    if cwd:
+        repo_root = str(cwd)
+    else:
+        repo_root = os.getcwd()
+    fpath = ticket_file_path(repo_root, ticket_id, slug)
+    write_ticket_file(fpath, record)
+
+    # Cloud: write DB row
+    if store is not None and is_cloud_store(store) and codebase_id:
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        db.create_ticket(
+            codebase_id=codebase_id,
+            title=title,
+            body=body,
+            source=source,
+            tags=list(tags or []),
+            filed_by_actor_id=actor_id,
+            filed_in_turn_id=turn_id,
+            slug=slug,
+            ticket_id=ticket_id,
+        )
+
+    # Print only the ULID to stdout (per spec)
+    print(ticket_id, flush=True)
+    return ticket_id
+
+
+# ---------------------------------------------------------------------------
+# Public API — list
+# ---------------------------------------------------------------------------
+
+
+def list_tickets(
+    *,
+    status: str | None = None,
+    tags: Sequence[str] | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
+    json_output: bool = False,
+) -> list[dict[str, Any]]:
+    """List tickets, optionally filtered.
+
+    In local-only mode reads from ``.megaplan/tickets/*.md``.
+    In cloud mode queries the DB.
+    """
+    if store is None:
+        store = _resolve_store()
+
+    results: list[dict[str, Any]] = []
+
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        codebase_id = _resolve_codebase_id(store, cwd)
+        tickets = db.list_tickets(
+            codebase_id=codebase_id,
+            status=status,
+            tags=tags,
+        )
+        for t in tickets:
+            d = {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "source": t.source,
+                "tags": t.tags,
+                "slug": t.slug,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "last_edited_at": t.last_edited_at.isoformat() if t.last_edited_at else None,
+                "resolution_note": t.resolution_note,
+            }
+            # Enrich with file body if available
+            if cwd:
+                fpath = ticket_file_path(cwd, t.id, t.slug)
+                fm = read_ticket_file(fpath)
+                if fm:
+                    d["body"] = fm.get("__body__", "")
+            results.append(d)
+    else:
+        repo_root = str(cwd) if cwd else os.getcwd()
+        for fpath, fm in iterate_ticket_files(repo_root):
+            if status and fm.get("status") != status:
+                continue
+            if tags:
+                file_tags = set(fm.get("tags") or [])
+                if not file_tags.intersection(tags):
+                    continue
+            d: dict[str, Any] = {
+                "id": fm.get("id"),
+                "title": fm.get("title"),
+                "status": fm.get("status"),
+                "source": fm.get("source"),
+                "tags": fm.get("tags", []),
+                "slug": slugify(fm.get("title", "")),
+                "created_at": _iso(fm.get("created_at")),
+                "last_edited_at": _iso(fm.get("last_edited_at")),
+                "resolution_note": fm.get("resolution_note"),
+                "body": fm.get("__body__", ""),
+                "epics": fm.get("epics", []),
+            }
+            results.append(d)
+
+    if json_output:
+        import json
+
+        print(json.dumps(results, indent=2, default=str))
+    return results
+
+
+def show(
+    ticket_id: str,
+    *,
+    store: Store | None = None,
+    cwd: Path | None = None,
+    json_output: bool = False,
+) -> dict[str, Any] | None:
+    """Show a single ticket by id."""
+    if store is None:
+        store = _resolve_store()
+
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        t = db.load_ticket(ticket_id)
+        if t is None:
+            return None
+        result: dict[str, Any] = {
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "source": t.source,
+            "tags": t.tags,
+            "slug": t.slug,
+            "codebase_id": t.codebase_id,
+            "filed_by_actor_id": t.filed_by_actor_id,
+            "filed_in_turn_id": t.filed_in_turn_id,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "last_edited_at": t.last_edited_at.isoformat() if t.last_edited_at else None,
+            "resolution_note": t.resolution_note,
+            "addressed_at": t.addressed_at.isoformat() if t.addressed_at else None,
+        }
+        # Enrich body from file
+        if cwd:
+            fpath = ticket_file_path(cwd, t.id, t.slug)
+            fm = read_ticket_file(fpath)
+            if fm:
+                result["body"] = fm.get("__body__", "")
+                result["epics"] = fm.get("epics", [])
+        if json_output:
+            import json
+
+            print(json.dumps(result, indent=2, default=str))
+        return result
+    else:
+        repo_root = str(cwd) if cwd else os.getcwd()
+        for fpath, fm in iterate_ticket_files(repo_root):
+            if fm.get("id") == ticket_id:
+                result = {
+                    "id": fm.get("id"),
+                    "title": fm.get("title"),
+                    "status": fm.get("status"),
+                    "source": fm.get("source"),
+                    "tags": fm.get("tags", []),
+                    "slug": slugify(fm.get("title", "")),
+                    "codebase_id": fm.get("codebase_id"),
+                    "filed_by_actor_id": fm.get("filed_by_actor_id"),
+                    "filed_in_turn_id": fm.get("filed_in_turn_id"),
+                    "created_at": _iso(fm.get("created_at")),
+                    "last_edited_at": _iso(fm.get("last_edited_at")),
+                    "resolution_note": fm.get("resolution_note"),
+                    "addressed_at": _iso(fm.get("addressed_at")),
+                    "body": fm.get("__body__", ""),
+                    "epics": fm.get("epics", []),
+                }
+                if json_output:
+                    import json
+
+                    print(json.dumps(result, indent=2, default=str))
+                return result
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Public API — edit
+# ---------------------------------------------------------------------------
+
+
+def edit(
+    ticket_id: str,
+    *,
+    title: str | None = None,
+    body: str | None = None,
+    status: str | None = None,
+    add_tag: str | None = None,
+    remove_tag: str | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
+    """Edit a ticket's fields.  Frontmatter always updated; DB updated in cloud mode."""
+    if store is None:
+        store = _resolve_store()
+
+    repo_root = str(cwd) if cwd else os.getcwd()
+
+    # Find the file
+    found_path: Path | None = None
+    found_fm: dict | None = None
+    for fpath, fm in iterate_ticket_files(repo_root):
+        if fm.get("id") == ticket_id:
+            found_path = fpath
+            found_fm = fm
+            break
+
+    if found_fm is None:
+        return None
+
+    # Apply changes
+    if title is not None:
+        found_fm["title"] = title
+        # Update slug in the filename
+        new_slug = slugify(title)
+        if new_slug != found_fm.get("slug", slugify(found_fm.get("title", ""))):
+            found_fm["slug"] = new_slug
+            new_fpath = ticket_file_path(repo_root, ticket_id, new_slug)
+            if found_path:
+                found_path.rename(new_fpath)
+                found_path = new_fpath
+
+    if body is not None:
+        found_fm["__body__"] = body
+
+    if status is not None:
+        found_fm["status"] = status
+
+    if add_tag is not None:
+        tags = list(found_fm.get("tags") or [])
+        if add_tag not in tags:
+            tags.append(add_tag)
+            found_fm["tags"] = tags
+
+    if remove_tag is not None:
+        tags = list(found_fm.get("tags") or [])
+        if remove_tag in tags:
+            tags.remove(remove_tag)
+            found_fm["tags"] = tags
+
+    found_fm["last_edited_at"] = datetime.now(timezone.utc)
+
+    # Write file
+    if found_path:
+        write_ticket_file(found_path, found_fm)
+
+    # Cloud: update DB
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        db_changes: dict[str, Any] = {}
+        if title is not None:
+            db_changes["title"] = title
+            db_changes["slug"] = slugify(title)
+        if body is not None:
+            db_changes["body"] = body
+        if status is not None:
+            db_changes["status"] = status
+        if add_tag is not None or remove_tag is not None:
+            # Build new tags list
+            tags_now = list(found_fm.get("tags") or [])
+            db_changes["tags"] = tags_now
+        if db_changes:
+            db.update_ticket(ticket_id, **db_changes)
+
+    return found_fm
+
+
+# ---------------------------------------------------------------------------
+# Public API — link / unlink
+# ---------------------------------------------------------------------------
+
+
+def link(
+    ticket_id: str,
+    epic_id: str,
+    *,
+    resolves: bool = False,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
+    """Link a ticket to an epic.  Updates frontmatter ``epics`` list and DB join."""
+    if store is None:
+        store = _resolve_store()
+
+    repo_root = str(cwd) if cwd else os.getcwd()
+
+    # Find and update file
+    found_path: Path | None = None
+    found_fm: dict | None = None
+    for fpath, fm in iterate_ticket_files(repo_root):
+        if fm.get("id") == ticket_id:
+            found_path = fpath
+            found_fm = fm
+            break
+
+    if found_fm is None:
+        return None
+
+    epics: list[dict[str, Any]] = list(found_fm.get("epics") or [])
+    # Remove existing entry for this epic if present (idempotent re-link)
+    epics = [e for e in epics if e.get("epic_id") != epic_id]
+    epics.append({"epic_id": epic_id, "resolves_on_complete": resolves, "linked_at": datetime.now(timezone.utc).isoformat()})
+    found_fm["epics"] = epics
+    found_fm["last_edited_at"] = datetime.now(timezone.utc)
+
+    if found_path:
+        write_ticket_file(found_path, found_fm)
+
+    # Cloud: DB join
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        db.link_ticket_to_epic(
+            ticket_id=ticket_id,
+            epic_id=epic_id,
+            resolves_on_complete=resolves,
+        )
+
+    return found_fm
+
+
+def unlink(
+    ticket_id: str,
+    epic_id: str,
+    *,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
+    """Unlink a ticket from an epic.  Updates frontmatter and DB."""
+    if store is None:
+        store = _resolve_store()
+
+    repo_root = str(cwd) if cwd else os.getcwd()
+
+    found_path: Path | None = None
+    found_fm: dict | None = None
+    for fpath, fm in iterate_ticket_files(repo_root):
+        if fm.get("id") == ticket_id:
+            found_path = fpath
+            found_fm = fm
+            break
+
+    if found_fm is None:
+        return None
+
+    epics: list[dict[str, Any]] = list(found_fm.get("epics") or [])
+    epics = [e for e in epics if e.get("epic_id") != epic_id]
+    found_fm["epics"] = epics
+    found_fm["last_edited_at"] = datetime.now(timezone.utc)
+
+    if found_path:
+        write_ticket_file(found_path, found_fm)
+
+    # Cloud: DB delete
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        db.unlink_ticket_from_epic(ticket_id=ticket_id, epic_id=epic_id)
+
+    return found_fm
+
+
+# ---------------------------------------------------------------------------
+# Public API — status transitions
+# ---------------------------------------------------------------------------
+
+
+def _change_status(
+    ticket_id: str,
+    new_status: str,
+    *,
+    note: str | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
+    """Common status-change helper.  Flips status in file + DB."""
+    if store is None:
+        store = _resolve_store()
+
+    repo_root = str(cwd) if cwd else os.getcwd()
+
+    found_path: Path | None = None
+    found_fm: dict | None = None
+    for fpath, fm in iterate_ticket_files(repo_root):
+        if fm.get("id") == ticket_id:
+            found_path = fpath
+            found_fm = fm
+            break
+
+    if found_fm is None:
+        return None
+
+    found_fm["status"] = new_status
+    found_fm["last_edited_at"] = datetime.now(timezone.utc)
+    if new_status == "addressed":
+        found_fm["addressed_at"] = datetime.now(timezone.utc)
+        if note:
+            found_fm["resolution_note"] = note
+    elif new_status == "dismissed":
+        if note:
+            found_fm["resolution_note"] = note
+    elif new_status == "open":
+        found_fm["addressed_at"] = None
+        found_fm["resolution_note"] = None
+
+    if found_path:
+        write_ticket_file(found_path, found_fm)
+
+    # Cloud: DB update
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        db_changes: dict[str, Any] = {"status": new_status}
+        if new_status == "addressed":
+            db_changes["addressed_at"] = datetime.now(timezone.utc)
+            if note:
+                db_changes["resolution_note"] = note
+        elif new_status == "dismissed":
+            if note:
+                db_changes["resolution_note"] = note
+        elif new_status == "open":
+            db_changes["resolution_note"] = None
+            db_changes["addressed_at"] = None
+        db.update_ticket(ticket_id, **db_changes)
+
+    return found_fm
+
+
+def addressed(
+    ticket_id: str,
+    *,
+    note: str | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
+    """Mark a ticket as addressed."""
+    return _change_status(ticket_id, "addressed", note=note, store=store, cwd=cwd)
+
+
+def dismiss(
+    ticket_id: str,
+    *,
+    reason: str | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
+    """Mark a ticket as dismissed."""
+    return _change_status(ticket_id, "dismissed", note=reason, store=store, cwd=cwd)
+
+
+def reopen(
+    ticket_id: str,
+    *,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> dict[str, Any] | None:
+    """Reopen a previously addressed/dismissed ticket."""
+    return _change_status(ticket_id, "open", store=store, cwd=cwd)
+
+
+# ---------------------------------------------------------------------------
+# Auto-address hook
+# ---------------------------------------------------------------------------
+
+
+def address_resolved_by_epic(
+    epic_id: str,
+    *,
+    store: Store | None = None,
+    repo_root: str | Path | None = None,
+) -> list[str]:
+    """Flip every open ticket linked to *epic_id* with ``resolves_on_complete=true``
+    to ``'addressed'``.
+
+    Parameters
+    ----------
+    epic_id:
+        The epic that just completed.
+    store:
+        Explicit store (resolved from env if *None*).
+    repo_root:
+        Path to the repo for file walking.  If *None* or the
+        ``.megaplan/tickets/`` directory does not exist, the file
+        walk is skipped cleanly.
+
+    Returns
+    -------
+    list[str]
+        The ULIDs of tickets that were updated (empty if none).
+        Idempotent — only ``status='open'`` tickets are affected.
+    """
+    if store is None:
+        store = _resolve_store()
+
+    updated: list[str] = []
+
+    # Cloud mode: SQL update (single atomic op, idempotent)
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+
+        db: DBStore = store  # type: ignore[assignment]
+        updated = db.address_tickets_resolved_by_epic(epic_id)
+
+    # File walk (both modes, but only if repo_root is set and dir exists)
+    if repo_root is not None:
+        # We still walk in cloud mode because files may exist even when DB
+        # is the primary store — the file is always written.
+        if not tickets_dir(repo_root).is_dir():
+            return updated
+
+        for fpath, fm in iterate_ticket_files(repo_root):
+            if fm.get("status") != "open":
+                continue
+            epics: list[dict[str, Any]] = fm.get("epics") or []
+            matched = any(
+                e.get("epic_id") == epic_id and e.get("resolves_on_complete") is True
+                for e in epics
+            )
+            if not matched:
+                continue
+            fm["status"] = "addressed"
+            fm["addressed_at"] = datetime.now(timezone.utc)
+            fm["resolution_note"] = f"Resolved by epic {epic_id} completing."
+            fm["last_edited_at"] = datetime.now(timezone.utc)
+            write_ticket_file(fpath, fm)
+            tid = fm.get("id")
+            if tid and tid not in updated:
+                updated.append(tid)
+
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def _iso(val: object) -> str | None:
+    """Convert a datetime to ISO string, or return *None*."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.isoformat()
+    return str(val) if val else None
+
+
+# ---------------------------------------------------------------------------
+# create_ticket alias (used by planner / agent contexts)
+# ---------------------------------------------------------------------------
+
+create_ticket = new

@@ -29,6 +29,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import find_plan_dir
+from megaplan.phase_result import (
+    ExitKind,
+    PhaseResult,
+    read_phase_result,
+)
 from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
@@ -73,6 +78,9 @@ DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
 DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
+PHASE_NAMES = frozenset(
+    {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
+)
 
 
 @dataclass
@@ -334,128 +342,7 @@ def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
     return find_plan_dir(cwd or Path.cwd(), plan)
 
 
-def _last_history_step_result(plan_dir: Path | None, step: str) -> str | None:
-    """Return the `result` field on the most recent history entry whose step matches.
 
-    Used to detect when a phase completed successfully at the subprocess level
-    but recorded `result: "blocked"` in state.json — the worker shipped output
-    but the executor's own quality checks rejected it (e.g. done tasks missing
-    files_changed). Returns None when state.json is missing/malformed or no
-    matching entry exists.
-    """
-    if plan_dir is None:
-        return None
-    try:
-        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
-            state_data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(state_data, dict):
-        return None
-    history = state_data.get("history") or []
-    for entry in reversed(history):
-        if isinstance(entry, dict) and entry.get("step") == step:
-            result = entry.get("result")
-            return result if isinstance(result, str) else None
-    return None
-
-
-def _read_execute_blocking_deviations(plan_dir: Path | None) -> list[str]:
-    """Return the most recent execute-batch's blocking deviations (best-effort).
-
-    The auto-driver uses these to surface *why* execute was blocked when the
-    final history entry's `result` is `blocked`. Reads the highest-numbered
-    execution_batch_<n>.json and pulls the `deviations` array, filtering for
-    the strings that build_blocking_reasons emits (advisory deviations are
-    excluded from the surfaced reason list).
-    """
-    if plan_dir is None:
-        return []
-    try:
-        batches = sorted(
-            (p for p in plan_dir.iterdir() if p.name.startswith("execution_batch_") and p.suffix == ".json"),
-            key=lambda p: p.name,
-        )
-    except OSError:
-        return []
-    if not batches:
-        return []
-    try:
-        with batches[-1].open(encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, dict):
-        return []
-    deviations = payload.get("deviations") or []
-    if not isinstance(deviations, list):
-        return []
-    blocking_prefixes = (
-        "tasks have no executor update",
-        "sense checks have no executor acknowledgment",
-        "done tasks missing both files_changed and commands_run",
-        "Done tasks missing sections_written",
-    )
-    return [
-        str(d)
-        for d in deviations
-        if isinstance(d, str) and any(prefix in d for prefix in blocking_prefixes)
-    ]
-
-
-def _read_execute_blocked_task_notes(
-    plan_dir: Path | None,
-) -> list[tuple[str, str]]:
-    """Return ``[(task_id, executor_notes), ...]`` for tasks the executor
-    reported as ``status: "blocked"`` in the most recent execution batch.
-
-    This is the auto-driver's signal that a batch hit a real
-    awaiting-human boundary — typically an unmet user prerequisite (env
-    var, manual setup step). Retrying execute is pointless in that case;
-    the executor has already told the user what to do. The driver uses
-    this list to route to ``awaiting_human`` instead of consuming a
-    blocked-retry attempt.
-    """
-    if plan_dir is None:
-        return []
-    try:
-        batches = sorted(
-            (
-                p
-                for p in plan_dir.iterdir()
-                if p.name.startswith("execution_batch_") and p.suffix == ".json"
-            ),
-            key=lambda p: p.name,
-        )
-    except OSError:
-        return []
-    if not batches:
-        return []
-    try:
-        with batches[-1].open(encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, dict):
-        return []
-    updates = payload.get("task_updates")
-    if not isinstance(updates, list):
-        return []
-    blocked: list[tuple[str, str]] = []
-    for update in updates:
-        if not isinstance(update, dict):
-            continue
-        if update.get("status") != "blocked":
-            continue
-        # Some models emit "id" instead of "task_id"; both should surface.
-        task_id = update.get("task_id") or update.get("id")
-        if not isinstance(task_id, str) or not task_id:
-            continue
-        notes = update.get("executor_notes") or update.get("notes") or ""
-        if not isinstance(notes, str):
-            notes = str(notes)
-        blocked.append((task_id, notes.strip()))
-    return blocked
 
 
 def _latest_versioned_artifact(plan_dir: Path | None, prefix: str) -> Path | None:
@@ -786,7 +673,7 @@ def drive(
         events.append({"msg": msg, **fields})
         writer(f"[auto {plan}] {msg}\n")
 
-    def _run_phase(cmd: list[str]) -> tuple[int, str, str]:
+    def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
         run_kwargs: dict[str, Any] = {
             "cwd": cwd,
             "timeout": phase_timeout,
@@ -796,7 +683,7 @@ def drive(
         if progress_env:
             run_kwargs["progress_env"] = progress_env
         try:
-            return _run_megaplan(cmd, **run_kwargs)
+            code, out, err = _run_megaplan(cmd, **run_kwargs)
         except TypeError as error:
             # Several unit tests monkeypatch _run_megaplan with the pre-idle-timeout
             # signature. Keep that surface compatible without weakening the real path.
@@ -804,7 +691,53 @@ def drive(
                 raise
             run_kwargs.pop("idle_timeout", None)
             run_kwargs.pop("liveness_plan_dir", None)
-            return _run_megaplan(cmd, **run_kwargs)
+            code, out, err = _run_megaplan(cmd, **run_kwargs)
+
+        # Read structured phase_result.json if it exists
+        result: object | None = read_phase_result(plan_dir)
+
+        if result is not None:
+            return code, out, err, result
+
+        # Synthesize a PhaseResult when the file is missing
+        if code == PHASE_TIMEOUT_EXIT_CODE:
+            result = PhaseResult(
+                phase=next_step,
+                invocation_id="synthesized",
+                exit_kind=ExitKind.timeout.value,
+            )
+        elif "idle timed out" in (err or ""):
+            result = PhaseResult(
+                phase=next_step,
+                invocation_id="synthesized",
+                exit_kind=ExitKind.timeout.value,
+            )
+        elif CONTEXT_EXHAUSTION_FRAGMENT.lower() in ((out or "") + (err or "")).lower():
+            result = PhaseResult(
+                phase=next_step,
+                invocation_id="synthesized",
+                exit_kind=ExitKind.context_exhausted.value,
+            )
+        elif next_step not in PHASE_NAMES:
+            # Non-phase commands (e.g. 'override add-note') — no synthesis
+            result = None
+        elif code == 0:
+            # Subprocess exited cleanly but didn't write phase_result.json.
+            # Synthesis as 'success' — in production all 8 handlers now emit,
+            # so this branch only fires for legacy plans and test mocks.
+            result = PhaseResult(
+                phase=next_step,
+                invocation_id="synthesized",
+                exit_kind=ExitKind.success.value,
+            )
+        else:
+            result = PhaseResult(
+                phase=next_step,
+                invocation_id="synthesized",
+                exit_kind=ExitKind.internal_error.value,
+            )
+
+        return code, out, err, result
 
     def _outcome(
         status: str,
@@ -1242,17 +1175,19 @@ def drive(
             cmd = _phase_command(next_step) + ["--plan", plan]
             last_phase = next_step
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
-        code, out, err = _run_phase(cmd)
+        code, out, err, result = _run_phase(cmd, next_step)
         if next_step == "override add-note" and last_phase == "override add-note":
             if code != 0:
                 add_note_failures += 1
             else:
                 add_note_failures = 0
+        # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
+        # not by string-matching captured stdout.
         if max_context_retries > 0:
             while (
                 next_step == "execute"
-                and code != 0
-                and CONTEXT_EXHAUSTION_FRAGMENT.lower() in ((out or "") + (err or "")).lower()
+                and result is not None
+                and getattr(result, "exit_kind", None) == ExitKind.context_exhausted.value
             ):
                 if context_retry_count >= max_context_retries:
                     log(
@@ -1291,18 +1226,15 @@ def drive(
                 context_retry_count += 1
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
-                code, out, err = _run_phase(cmd)
-        if code == PHASE_TIMEOUT_EXIT_CODE:
-            timeout_kind = "idle timeout" if "idle timed out" in (err or "") else "timeout"
-            log(f"phase '{next_step}' hit {timeout_kind} — stall detection will enforce the cap")
+                code, out, err, result = _run_phase(cmd, next_step)
+
+        # Timeout detection: read from PhaseResult.exit_kind, not exit code.
+        if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
+            log(f"phase '{next_step}' timed out — stall detection will enforce the cap")
             _record_failure(
                 plan_dir=plan_dir,
-                kind="phase_idle_timeout" if timeout_kind == "idle timeout" else "phase_timeout",
-                message=(
-                    f"phase '{next_step}' idle timed out after {phase_idle_timeout}s"
-                    if timeout_kind == "idle timeout"
-                    else f"phase '{next_step}' timed out after {phase_timeout}s"
-                ),
+                kind="phase_timeout",
+                message=f"phase '{next_step}' timed out after {phase_timeout}s",
                 current_state=STATE_FAILED,
                 phase=next_step,
                 resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
@@ -1310,20 +1242,35 @@ def drive(
                 suggested_action="Investigate the timed-out phase and resume from the phase cursor.",
                 metadata={"timeout_seconds": phase_timeout, "idle_timeout_seconds": phase_idle_timeout, "iteration": iteration},
             )
-        elif code != 0:
+        elif result is not None and getattr(result, "exit_kind", None) == ExitKind.internal_error.value:
             # Don't bail immediately — megaplan often records a partial failure
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
-            log(f"phase '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+            log(f"phase '{next_step}' exited with internal_error: {err.strip() or out.strip()[-400:]}")
             _record_failure(
                 plan_dir=plan_dir,
                 kind="phase_failed",
-                message=f"phase '{next_step}' exited {code}",
+                message=f"phase '{next_step}' internal_error",
                 current_state=STATE_FAILED,
                 phase=next_step,
                 resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                 last_artifact=_latest_artifact_name(plan_dir),
                 suggested_action="Inspect phase output and resume from the failed phase.",
+                metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
+            )
+        elif result is None and code != 0:
+            # Non-phase commands (e.g. 'override add-note') that failed —
+            # preserve existing exit-code-based handling.
+            log(f"command '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="phase_failed",
+                message=f"command '{next_step}' exited {code}",
+                current_state=STATE_FAILED,
+                phase=next_step,
+                resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action="Inspect command output and resume from the failed phase.",
                 metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
             )
 
@@ -1360,30 +1307,30 @@ def drive(
                     last_phase=last_phase,
                 )
 
-        # Worker-blocked detection: execute exited 0 (or returned partial work)
-        # but state.json's latest execute history entry has `result: "blocked"`.
-        # Without this guard the driver would re-run execute every iteration
-        # (state stays `finalized`) until stall-threshold finally kills it —
-        # which we observed in IRL bake-offs with hermes-based executors.
-        if next_step == "execute" and code in (0, None) and max_blocked_retries >= 0:
-            execute_result = _last_history_step_result(plan_dir, "execute")
-            if execute_result == "blocked":
-                # Awaiting-human path: the executor reported one or more
-                # tasks as status=blocked, which means it ran into a real
-                # external prerequisite (env var, manual setup) that no
-                # number of retries can resolve. Surface the executor's
-                # notes and exit cleanly without burning a retry. This is
-                # distinct from "quality gates blocked the batch", which
-                # is what the retry loop below was designed for.
-                blocked_task_notes = _read_execute_blocked_task_notes(plan_dir)
-                if blocked_task_notes:
+        # Post-execute routing: consume PhaseResult.exit_kind exclusively.
+        # Delete the old pathways that read state["history"], globbed
+        # execution_batch_*.json, captured stdout tails, and deviation
+        # prefix-matching tables. Those surfaces still exist for user-visible
+        # logging, but the driver no longer consults them for decisions.
+        if next_step == "execute" and result is not None and max_blocked_retries >= 0:
+            ek = getattr(result, "exit_kind", None)
+            if ek == ExitKind.success.value:
+                # Executor succeeded — continue to next phase without retry.
+                pass
+            elif ek == ExitKind.blocked_by_prereq.value:
+                # Executor reported tasks blocked by prereq — exit as
+                # awaiting_human. Use result.blocked_tasks directly, no
+                # batch globbing or string prefix matching.
+                blocked_tasks: tuple[Any, ...] = getattr(result, "blocked_tasks", ())
+                if blocked_tasks:
                     blocked_summaries = [
                         (
-                            f"{task_id} (executor: {notes})"
-                            if notes
-                            else task_id
+                            f"{getattr(bt, 'task_id', '?')} "
+                            f"(executor: {getattr(bt, 'notes', '')})"
+                            if getattr(bt, "notes", "")
+                            else getattr(bt, "task_id", "?")
                         )
-                        for task_id, notes in blocked_task_notes
+                        for bt in blocked_tasks
                     ]
                     reason = (
                         "execute reported blocked tasks awaiting user action: "
@@ -1394,7 +1341,7 @@ def drive(
                         "exiting as awaiting_human without consuming a retry",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
-                        blocked_task_ids=[tid for tid, _ in blocked_task_notes],
+                        blocked_task_ids=[getattr(bt, "task_id", "?") for bt in blocked_tasks],
                     )
                     return _outcome(
                         "awaiting_human",
@@ -1403,25 +1350,33 @@ def drive(
                         reason=reason,
                         last_phase=last_phase,
                         blocking_reasons=[
-                            f"task {task_id} reported status=blocked by executor: {notes}"
-                            if notes
-                            else f"task {task_id} reported status=blocked by executor"
-                            for task_id, notes in blocked_task_notes
+                            (
+                                f"task {getattr(bt, 'task_id', '?')} reported "
+                                f"status=blocked by executor: {getattr(bt, 'notes', '')}"
+                                if getattr(bt, "notes", "")
+                                else f"task {getattr(bt, 'task_id', '?')} reported status=blocked by executor"
+                            )
+                            for bt in blocked_tasks
                         ],
                     )
-                deviations = _read_execute_blocking_deviations(plan_dir)
+                # No blocked tasks but still blocked_by_prereq — treat as
+                # quality blocking via deviations.
+                deviations_list: list[str] = [
+                    getattr(dv, "message", str(dv))
+                    for dv in getattr(result, "deviations", ())
+                ]
                 if blocked_retry_count >= max_blocked_retries:
                     log(
                         f"execute blocked by quality gates and retry cap reached "
                         f"({max_blocked_retries}) — bailing",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
-                        blocking_reasons=deviations,
+                        blocking_reasons=deviations_list,
                     )
                     _record_failure(
                         plan_dir=plan_dir,
                         kind="execution_blocked",
-                        message="execute returned result=blocked from quality gates",
+                        message="execute blocked_by_prereq with no blocked tasks — treating as quality block",
                         current_state=STATE_BLOCKED,
                         phase=next_step,
                         resume_cursor={
@@ -1434,7 +1389,7 @@ def drive(
                         metadata={
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,
-                            "blocking_reasons": deviations,
+                            "blocking_reasons": deviations_list,
                         },
                     )
                     return _outcome(
@@ -1442,12 +1397,12 @@ def drive(
                         final_state=state,
                         iterations=iteration,
                         reason=(
-                            "execute returned result=blocked from quality gates "
+                            "execute blocked by quality gates "
                             f"after {blocked_retry_count + 1} attempt(s); "
                             f"retry cap {max_blocked_retries} reached"
                         ),
                         last_phase=last_phase,
-                        blocking_reasons=deviations,
+                        blocking_reasons=deviations_list,
                     )
                 blocked_retry_count += 1
                 log(
@@ -1455,8 +1410,63 @@ def drive(
                     f"({blocked_retry_count}/{max_blocked_retries})",
                     blocked_retries_used=blocked_retry_count,
                     max_blocked_retries=max_blocked_retries,
-                    blocking_reasons=deviations,
+                    blocking_reasons=deviations_list,
                 )
+            elif ek == ExitKind.blocked_by_quality.value:
+                # Quality-gate block — retry with cap, using result.deviations
+                # directly (no string prefix matching).
+                deviations_list = [
+                    getattr(dv, "message", str(dv))
+                    for dv in getattr(result, "deviations", ())
+                ]
+                if blocked_retry_count >= max_blocked_retries:
+                    log(
+                        f"execute blocked by quality gates and retry cap reached "
+                        f"({max_blocked_retries}) — bailing",
+                        blocked_retries_used=blocked_retry_count,
+                        max_blocked_retries=max_blocked_retries,
+                        blocking_reasons=deviations_list,
+                    )
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind="execution_blocked",
+                        message="execute blocked by quality gates",
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={
+                            "phase": next_step,
+                            "batch_index": None,
+                            "retry_strategy": "fresh_session",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action="Review blocking deviations and resume execute with a fresh session.",
+                        metadata={
+                            "blocked_retries_used": blocked_retry_count,
+                            "max_blocked_retries": max_blocked_retries,
+                            "blocking_reasons": deviations_list,
+                        },
+                    )
+                    return _outcome(
+                        "worker_blocked",
+                        final_state=state,
+                        iterations=iteration,
+                        reason=(
+                            "execute blocked by quality gates "
+                            f"after {blocked_retry_count + 1} attempt(s); "
+                            f"retry cap {max_blocked_retries} reached"
+                        ),
+                        last_phase=last_phase,
+                        blocking_reasons=deviations_list,
+                    )
+                blocked_retry_count += 1
+                log(
+                    f"execute blocked by quality gates — retrying "
+                    f"({blocked_retry_count}/{max_blocked_retries})",
+                    blocked_retries_used=blocked_retry_count,
+                    max_blocked_retries=max_blocked_retries,
+                    blocking_reasons=deviations_list,
+                )
+            # timeout, context_exhausted, internal_error already handled above.
 
         if poll_sleep > 0:
             time.sleep(poll_sleep)

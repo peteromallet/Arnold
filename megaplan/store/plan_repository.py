@@ -17,6 +17,7 @@ from megaplan._core.io import (
     plan_search_roots,
     read_json,
 )
+from megaplan.feedback import load_feedback
 from megaplan.schemas import Plan, PlanArtifact
 from megaplan.store.base import ProgressEventInput
 
@@ -262,6 +263,8 @@ class PlanRepository:
             return "tiebreaker_decisions"
         if name == "tiebreaker_payload.json":
             return "tiebreaker_payload"
+        if name == "feedback.md":
+            return "feedback"
         if name.endswith(".tmpl") or name.endswith(".template"):
             return "template"
         if name.startswith("research") or name.endswith(".research.json"):
@@ -343,6 +346,8 @@ class PlanRepository:
             if timestamps
             else datetime.fromisoformat(now_utc().replace("Z", "+00:00"))
         )
+        feedback = load_feedback(self.plan_dir)
+        feedback_dict = feedback.to_dict() if feedback is not None else None
         return Plan.from_plan_state(
             state,
             plan_id=self.plan_name,
@@ -352,6 +357,7 @@ class PlanRepository:
             latest_execution=execution if isinstance(execution, dict) else None,
             latest_failure=latest_failure,
             resume_cursor=resume_cursor,
+            feedback=feedback_dict,
             updated_at=updated_at,
         )
 

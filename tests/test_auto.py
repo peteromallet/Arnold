@@ -882,19 +882,33 @@ def _write_blocked_execute_history(plan_dir: Path, deviations: list[str] | None 
 def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) -> None:
     plan = "worker-blocked-cap"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_blocked_execute_history(
+    # Write phase_result.json with blocked_by_quality so the auto driver
+    # sees the structured outcome directly — replaces the old state.json
+    # history + execution_batch_*.json globbing path.
+    from megaplan.phase_result import Deviation
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(
         plan_dir,
-        deviations=[
-            "done tasks missing both files_changed and commands_run: T1, T2",
-            "Advisory: done tasks rely on commands_run without files_changed (FLAG-006 softening): T3",
-        ],
+        exit_kind="blocked_by_quality",
+        deviations=(
+            Deviation(
+                kind="quality_gate",
+                message="done tasks missing both files_changed and commands_run: T1, T2",
+            ),
+        ),
+    )
+    # Also write execution_batch for last_artifact assertion
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps({"deviations": ["done tasks missing both files_changed and commands_run: T1, T2"]}),
+        encoding="utf-8",
     )
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
 
     def fake_run(args, cwd=None, timeout=None):
-        # Worker exits 0; the result=blocked is observable via history.
+        # Worker exits 0; PhaseResult on disk carries the exit_kind.
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
@@ -909,9 +923,8 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
 
     assert outcome.status == "worker_blocked"
     assert outcome.blocked_retries_used == 1
-    # Only the BLOCKING deviations surface, not the FLAG-006 advisory.
+    # Deviations from PhaseResult surface directly — no more prefix filtering.
     assert any("missing both files_changed" in r for r in outcome.blocking_reasons)
-    assert not any("FLAG-006 softening" in r for r in outcome.blocking_reasons)
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state_data["current_state"] == "blocked"
     assert state_data["latest_failure"]["kind"] == "execution_blocked"
@@ -962,13 +975,22 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     """
     plan = "execute-blocked-awaiting-human"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Stamp the history result the auto driver looks for.
-    state_path = plan_dir / "state.json"
-    state_data = json.loads(state_path.read_text(encoding="utf-8"))
-    state_data.setdefault("history", []).append(
-        {"step": "execute", "result": "blocked", "cost_usd": 0.16}
+    # Write phase_result.json with blocked_by_prereq + BlockedTask entries
+    # so the auto driver reads the structured outcome directly.
+    from megaplan.phase_result import BlockedTask
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(
+        plan_dir,
+        exit_kind="blocked_by_prereq",
+        blocked_tasks=(
+            BlockedTask(
+                task_id="T10",
+                reason="blocked",
+                notes="DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
+            ),
+        ),
     )
-    state_path.write_text(json.dumps(state_data), encoding="utf-8")
     _write_blocked_task_update_batch(plan_dir)
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
@@ -1015,7 +1037,11 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
 def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:
     plan = "worker-blocked-zero"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_blocked_execute_history(plan_dir)
+    # Write phase_result.json directly — auto driver reads it instead of
+    # state.json history / execution_batch globbing.
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(plan_dir, exit_kind="blocked_by_quality")
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
@@ -1041,9 +1067,10 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     """A clean execute (result=success) must NOT trigger the worker_blocked path."""
     plan = "execute-success-no-blocked"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    state_data.setdefault("history", []).append({"step": "execute", "result": "success", "cost_usd": 0.5})
-    (plan_dir / "state.json").write_text(json.dumps(state_data), encoding="utf-8")
+    # Write phase_result.json with success exit_kind — auto driver reads it.
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(plan_dir, exit_kind="success")
     statuses = [_execute_status(plan), _done_status(plan)]
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
@@ -1256,7 +1283,7 @@ def test_phase_complete_callback_skipped_after_nonzero_phase(tmp_path: Path) -> 
 
     assert outcome.status == "cap"
     assert callback_calls == []
-    assert any("phase 'critique' exited 1" in event.get("msg", "") for event in outcome.events)
+    assert any("phase 'critique'" in event.get("msg", "") for event in outcome.events)
 
 
 def test_plan_liveness_mtime_uses_state_and_execution_batches(tmp_path: Path) -> None:
@@ -1317,24 +1344,7 @@ def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -
     assert "strict-notes" in outcome.reason
 
 
-def test_last_history_step_result_handles_missing_and_corrupt(tmp_path: Path) -> None:
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    assert auto._last_history_step_result(plan_dir, "execute") is None
-    (plan_dir / "state.json").write_text("{bad json", encoding="utf-8")
-    assert auto._last_history_step_result(plan_dir, "execute") is None
-    (plan_dir / "state.json").write_text(
-        json.dumps({"history": [
-            {"step": "plan", "result": "success"},
-            {"step": "execute", "result": "blocked"},
-            {"step": "review", "result": "approved"},
-            {"step": "execute", "result": "success"},
-        ]}),
-        encoding="utf-8",
-    )
-    # Most recent execute wins; intervening review is ignored for the execute query.
-    assert auto._last_history_step_result(plan_dir, "execute") == "success"
-    assert auto._last_history_step_result(plan_dir, "review") == "approved"
+
 
 
 def _critiqued_status_with_overrides(plan: str) -> dict:

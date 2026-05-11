@@ -19,6 +19,74 @@ from megaplan.types import PlanState
 
 from ._shared import _render_prep_block
 
+
+def _render_open_tickets(state: PlanState, plan_dir: Path) -> str:
+    """Return a prompt block listing open tickets for the current repo.
+
+    Tickets are ranked by **tag overlap** with the idea / goal description
+    (not the title), then by ``created_at`` descending.  At most 20 tickets
+    are shown.  The planner may **propose** links with
+    ``resolves_on_complete=true``, but actual linking happens via the
+    explicit ``megaplan ticket link`` CLI — the planner never directly links.
+    """
+    try:
+        from megaplan.tickets import list_tickets as _tickets_list
+        from megaplan.tickets.core import _resolve_store, is_cloud_store
+
+        store = _resolve_store()
+        tickets_raw = _tickets_list(
+            store=store,
+            status="open",
+        )
+    except Exception:
+        return ""
+
+    if not tickets_raw:
+        return ""
+
+    goal_desc = (state.get("idea") or "").lower()
+    goal_words: set[str] = set()
+    if goal_desc:
+        goal_words = set(goal_desc.split())
+
+    def _tag_overlap(t: dict) -> int:
+        ttags = [tag.lower() for tag in (t.get("tags") or [])]
+        if not ttags or not goal_words:
+            return 0
+        scored = 0
+        for tag in ttags:
+            tag_parts = set(tag.replace("-", " ").replace("_", " ").split())
+            scored += len(tag_parts & goal_words)
+        return scored
+
+    def _created_sort_key(t: dict) -> str:
+        return t.get("created_at") or ""
+
+    ranked = sorted(
+        tickets_raw,
+        key=lambda t: (-_tag_overlap(t), _created_sort_key(t)),
+    )
+    ranked = ranked[:20]
+
+    lines: list[str] = [
+        "Open tickets for this repo:",
+        "",
+    ]
+    for t in ranked:
+        tid = t.get("id", "?")
+        title = t.get("title", "(untitled)")
+        tags = ", ".join(t.get("tags") or [])
+        lines.append(f"- {tid} — {title}  [{tags}]")
+
+    lines.append("")
+    lines.append(
+        "The planner may PROPOSE linking tickets to this plan with "
+        "`resolves_on_complete=true` in the plan output, but the actual "
+        "linking is performed via the explicit `megaplan ticket link` CLI "
+        "after planning — the planner never directly links tickets."
+    )
+    return "\n".join(lines)
+
 PLAN_TEMPLATE = textwrap.dedent(
     """
     Plan template — simple format (adapt to the actual repo and scope):
@@ -160,6 +228,9 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
         prior_doc_block = "\n".join(prior_doc_lines)
     else:
         prior_doc_block = ""
+    # --- Open tickets for this repo (planner discovery) ---
+    tickets_block = _render_open_tickets(state, plan_dir)
+
     return textwrap.dedent(
         f"""
         You are creating an implementation plan for the following idea.
@@ -178,6 +249,8 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
         {prior_doc_block}
 
         {clarification_block}
+
+        {tickets_block}
 
         Requirements:
         - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.

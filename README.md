@@ -78,8 +78,8 @@ megaplan init --profile all-open --phase-model execute=claude "your idea"   # ov
 Built-in profiles:
 
 - **standard** — Claude for planning/revision, Codex for execution and critique (mirrors the default routing)
-- **all-open** — `moonshotai/kimi-k2.6` for planning/revision, `glm-5.1` for execution and critique (via Hermes)
-- **all-deepseek-pro** — native DeepSeek `deepseek-v4-pro` for every phase (via Hermes)
+- **all-open** — Fireworks-hosted Kimi `kimi-k2p6` for planning/revision, `glm-5.1` for execution and critique (via Hermes)
+- **all-deepseek-pro** — `deepseek-v4-pro` for every phase (via Fireworks)
 - **all-deepseek-flash** — native DeepSeek `deepseek-v4-flash` for every phase (via Hermes)
 - **all-fireworks-deepseek** — Fireworks-hosted DeepSeek for every phase (via Hermes)
 
@@ -87,14 +87,14 @@ Define your own in `.megaplan/profiles.toml` (per-project) or `~/.config/megapla
 
 ```toml
 [profiles.my-mix]
-plan     = "hermes:moonshotai/kimi-k2.6"
+plan     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 execute  = "hermes:glm-5.1"
 review   = "codex"
 ```
 
 Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
 
-Model strings take the form `<agent>[:<model>]`. Agents are `claude`, `codex`, or `hermes`. After `hermes:`, a slug with a slash (`moonshotai/kimi-k2.6`) routes via OpenRouter; a prefixed direct model (`deepseek:deepseek-v4-pro`, `fireworks:accounts/fireworks/models/deepseek-v3p2`) uses that provider directly; a bare name (`glm-5.1`) uses the matching direct provider. Direct-provider keys live in `~/.hermes/.env`:
+Model strings take the form `<agent>[:<model>]`. Agents are `claude`, `codex`, or `hermes`. After `hermes:`, a slug with a slash (e.g. `meta-llama/llama-3.3-70b`) routes via OpenRouter; a prefixed direct model (`deepseek:deepseek-v4-pro`, `hermes:fireworks:accounts/fireworks/models/kimi-k2p6`) uses that provider directly; a bare name (`glm-5.1`) uses the matching direct provider. Direct-provider keys live in `~/.hermes/.env`:
 
 ```bash
 OPENROUTER_API_KEY=...

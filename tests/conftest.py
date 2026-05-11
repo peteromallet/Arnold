@@ -14,6 +14,12 @@ import megaplan
 import megaplan.cli
 import megaplan._core
 import megaplan._core.io as io_module
+from megaplan.phase_result import (
+    BlockedTask,
+    Deviation,
+    PhaseResult,
+    atomic_write_phase_result,
+)
 from megaplan.workers import WorkerResult
 
 
@@ -269,3 +275,67 @@ def make_worker_sequence(
         return next(iterator)
 
     return _run_step_with_worker
+
+
+# ---------------------------------------------------------------------------
+# PhaseResult test fixtures (T13)
+# ---------------------------------------------------------------------------
+
+
+def make_fake_phase_result(
+    plan_dir: Path,
+    *,
+    phase: str = "execute",
+    exit_kind: str = "success",
+    invocation_id: str = "fake-invocation-id",
+    blocked_tasks: tuple[BlockedTask, ...] = (),
+    deviations: tuple[Deviation, ...] = (),
+    artifacts_written: tuple[str, ...] = (),
+    cli_provenance: dict[str, object] | None = None,
+) -> PhaseResult:
+    """Write a synthetic ``phase_result.json`` to *plan_dir*.
+
+    Returns the written ``PhaseResult`` so callers can inspect what was stored.
+    """
+    result = PhaseResult(
+        phase=phase,
+        invocation_id=invocation_id,
+        exit_kind=exit_kind,
+        blocked_tasks=blocked_tasks,
+        deviations=deviations,
+        artifacts_written=artifacts_written,
+        cli_provenance=cli_provenance or {},
+    )
+    atomic_write_phase_result(plan_dir, result)
+    return result
+
+
+def fake_run_with_phase_result(
+    plan_dir: Path,
+    *,
+    exit_kind: str = "success",
+    code: int = 0,
+    stdout: str = "",
+    stderr: str = "",
+    **kwargs: object,
+):
+    """Return a callable matching ``_run_megaplan(cmd, ...) → (int, str, str)``.
+
+    The callable also writes a synthetic ``phase_result.json`` alongside so
+    that ``_run_phase`` can pick it up.  Returns ``(code, stdout, stderr)``
+    on every call.
+    """
+
+    def _runner(
+        cmd: list[str],
+        *,
+        cwd=None,
+        timeout=None,
+        idle_timeout=None,
+        progress_env=None,
+        liveness_plan_dir=None,
+    ) -> tuple[int, str, str]:
+        make_fake_phase_result(plan_dir, exit_kind=exit_kind, **kwargs)
+        return code, stdout, stderr
+
+    return _runner
