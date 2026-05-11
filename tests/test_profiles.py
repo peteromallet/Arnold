@@ -204,6 +204,65 @@ def test_apply_profile_expansion_preserves_ad_hoc_precedence_and_is_idempotent(
     assert model == "glm-5.1"
 
 
+def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on_step_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: when init persists a CLI --phase-model override that the
+    profile also specifies, a later step subprocess (which auto.py spawns
+    without re-passing CLI flags) must honor the persisted CLI override,
+    not the profile default.
+    """
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+
+    # Step 1: simulate `megaplan init --profile all-open --phase-model plan=claude`.
+    # all-open's profile default for `plan` is hermes:moonshotai/kimi-k2.6;
+    # the CLI override pins it to claude.
+    init_args = _worker_args(profile="all-open", phase_model=["plan=claude"])
+    apply_profile_expansion(init_args, None)
+
+    # init resolves plan -> claude in-process (first-match-wins).
+    with patch("megaplan.workers._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("plan", init_args)
+    assert agent == "claude"
+    assert model is None
+
+    # Step 2: persist the expanded list into plan state, as handlers/init.py would.
+    persisted_state = {
+        "config": {
+            "profile": "all-open",
+            "phase_model": list(init_args.phase_model),
+        }
+    }
+
+    # Step 3: simulate the step subprocess auto.py spawns: profile is in state,
+    # but `args.phase_model` is empty because the CLI flags weren't re-passed.
+    step_args = _worker_args(profile=None, phase_model=[])
+    apply_profile_expansion(step_args, None, state=persisted_state)
+
+    # Persisted CLI override must beat the profile default.
+    with patch("megaplan.workers._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("plan", step_args)
+    assert agent == "claude", (
+        f"Step subprocess clobbered persisted CLI override: resolved plan to "
+        f"{agent!r} with model={model!r} instead of claude. "
+        f"phase_model={step_args.phase_model!r}"
+    )
+    assert model is None
+
+    # And: the override entry must precede any profile entry for the same phase
+    # in the resolved list, since resolve_agent_mode is first-match-wins.
+    plan_entries = [pm for pm in step_args.phase_model if pm.startswith("plan=")]
+    assert plan_entries, f"expected a plan= entry, got {step_args.phase_model!r}"
+    assert plan_entries[0] == "plan=claude", (
+        f"persisted CLI override must appear before profile default; got {plan_entries!r}"
+    )
+
+
 def test_apply_profile_expansion_falls_back_to_state_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
