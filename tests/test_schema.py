@@ -13,6 +13,7 @@ from vibecomfy.schema import (
     OutputSpec,
     RuntimeSchemaProvider,
     SchemaIndexError,
+    SourceSchemaProvider,
     get_schema_provider,
     schema_for,
     schema_registry_empty,
@@ -357,6 +358,41 @@ def test_runtime_schema_provider_fetches_and_writes_object_info_cache(tmp_path, 
     assert schema.inputs["strength"].default == 1.0
     assert schema.inputs["strength"].min == 0
     assert schema.inputs["strength"].max == 2
+
+
+def test_source_schema_provider_reads_input_types_from_custom_node_source(tmp_path) -> None:
+    node_source = tmp_path / "custom_pack" / "nodes"
+    node_source.mkdir(parents=True)
+    (node_source / "image_nodes.py").write_text(
+        """
+class ImageResizeKJv2:
+    upscale_methods = ["nearest-exact", "lanczos"]
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "width": ("INT", {"default": 512, "min": 0}),
+                "upscale_method": (cls.upscale_methods,),
+            },
+            "optional": {"device": (["cpu", "gpu"],)},
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+""",
+        encoding="utf-8",
+    )
+
+    schema = SourceSchemaProvider([tmp_path]).get_schema("ImageResizeKJv2")
+
+    assert schema is not None
+    assert schema.inputs["image"].required is True
+    assert schema.inputs["width"].type == "INT"
+    assert schema.inputs["upscale_method"].choices == ["nearest-exact", "lanczos"]
+    assert schema.inputs["device"].required is False
+    assert schema.outputs == [OutputSpec(type="IMAGE", name="image")]
 
 
 def test_get_schema_provider_auto_selection(tmp_path, monkeypatch) -> None:

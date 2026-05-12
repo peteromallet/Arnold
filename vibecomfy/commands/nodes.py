@@ -11,7 +11,7 @@ import sys
 from vibecomfy.commands._output import emit
 from vibecomfy.commands.index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.registry import load_workflow_reference
-from vibecomfy.schema import SchemaIndexError, get_schema_provider
+from vibecomfy.schema import SchemaIndexError, SourceSchemaProvider, get_schema_provider
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
 
@@ -37,7 +37,12 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
         print(f"{exc}; run `vibecomfy sources sync` to rebuild indexes.")
         return 1
     if schema is None:
-        print(f"node schema not found for {args.class_type!r}; run `vibecomfy sources sync` or start a runtime with /object_info")
+        schema = SourceSchemaProvider().get_schema(args.class_type)
+    if schema is None:
+        print(
+            f"node schema not found for {args.class_type!r}; run `vibecomfy sources sync`, "
+            "start a runtime with /object_info, or install the custom node source locally"
+        )
         return 1
     print(json.dumps(asdict(schema), indent=2, sort_keys=True))
     return 0

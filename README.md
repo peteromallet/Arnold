@@ -35,6 +35,14 @@ python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py 
 
 `port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, output-contract gaps, and model asset issues while staying offline by default. Use `--strict-ready-template` before promoting or RunPod-testing production/app-parity templates; it turns schema-backed unresolved widgets and missing workflow outputs into hard errors. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies. See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
 
+When replacing or hand-authoring a node, inspect the node's real accepted inputs first:
+
+```bash
+python -m vibecomfy.cli nodes spec ImageResizeKJv2
+```
+
+`nodes spec` reads the local index when available and falls back to installed custom-node source with `INPUT_TYPES`, so it is useful before swapping a node class or translating a JSON widget payload into explicit Python keyword arguments.
+
 For reusable workflows, the checked-in surface is Python, not raw JSON. Keep upstream/source workflows in `workflow_corpus/`, convert or author the reusable version in `ready_templates/<kind>/<id>.py`, record it in `workflow_corpus/manifests/coverage.json`, and refresh the static discovery index:
 
 ```bash

@@ -110,17 +110,17 @@ def build() -> VibeWorkflow:
     components = _node(wf, "GetVideoComponents", "5000", video=control_video.out(0))
     guide_resized = _node(
         wf,
-        "ResizeImageMaskNode",
+        "ImageResizeKJv2",
         "6101",
-        resize_type="scale dimensions",
-        scale_method="lanczos",
-        crop="center",
-        input=components.out(0),
-        _extras={
-            "resize_type.width": Handle("2080", "0"),
-            "resize_type.height": Handle("2079", "0"),
-            "resize_type.crop": "center",
-        },
+        width=Handle("2080", "0"),
+        height=Handle("2079", "0"),
+        upscale_method="lanczos",
+        keep_proportion="stretch",
+        pad_color="0, 0, 0",
+        crop_position="center",
+        divisible_by=32,
+        device="cpu",
+        image=components.out(0),
     )
     wf.replace_edge("2152.image", guide_resized.out(0))
     guide_strength = _node(wf, "PrimitiveFloat", "6102", value=1)

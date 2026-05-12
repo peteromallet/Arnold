@@ -22,6 +22,7 @@ This skill teaches an agent how to use it. The user wants to: **grab a template,
 - Sync indexes only when a task or test requires it: `python -m vibecomfy.cli sources sync`.
 - Before manually editing an imported workflow, converting raw JSON into a template, or launching RunPod validation, run `python -m vibecomfy.cli port check <workflow> --json` and use the report to resolve helper nodes, custom-node packs, schema issues, widget aliases, and model assets.
 - `vibecomfy run` reconciles model assets by default for embedded runs: it inspects the final built workflow, resolves model-picker values through `vibecomfy/registry/models.yaml`, downloads/stages what it can, and fails before queueing when a referenced asset is unresolved. Use `--no-ensure-models` only for compile-only/local work where downloads are intentionally disabled.
+- Before replacing a node class or hand-authoring node kwargs, run `python -m vibecomfy.cli nodes spec <ClassType>`. It reads the generated index when available and falls back to installed custom-node source with `INPUT_TYPES`, which avoids guessing accepted inputs.
 
 ## CLI implementation guidance
 
@@ -96,6 +97,7 @@ python -m vibecomfy.cli workflows list                # indexed JSON corpus
 python -m vibecomfy.cli search wan --task i2v         # weighted search; tasks: i2v, t2v, t2i, controlnet, audio_reactive, ...
 python -m vibecomfy.cli nodes list                    # node classes (Comfy core + installed packs)
 python -m vibecomfy.cli nodes spec KSampler           # input/output schema for a node
+python -m vibecomfy.cli nodes spec ImageResizeKJv2    # fallback-inspect installed custom-node INPUT_TYPES
 python -m vibecomfy.cli inspect image/z_image         # metadata, requirements, runnable status
 python -m vibecomfy.cli analyze info <wf>             # full graph dump (also: trace, path, values, diff, subgraph, unconnected)
 ```

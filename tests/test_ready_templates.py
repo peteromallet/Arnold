@@ -282,18 +282,21 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
     assert api["210"]["class_type"] == "LTXVImgToVideoInplaceKJ"
     assert api["210"]["inputs"]["num_images.image_1"] == ["2084", 0]
     assert api["210"]["inputs"]["num_images.image_2"] == ["50", 0]
-    assert api["6101"]["class_type"] == "ResizeImageMaskNode"
+    assert api["6101"]["class_type"] == "ImageResizeKJv2"
     for resize_node_id in ("5026", "6101", "5028", "6102", "6103"):
-        assert api[resize_node_id]["inputs"]["resize_type.width"] == ["2080", 0]
-        assert api[resize_node_id]["inputs"]["resize_type.height"] == ["2079", 0]
-        assert api[resize_node_id]["inputs"]["resize_type.crop"] == "center"
-        assert "resize_type.multiple" not in api[resize_node_id]["inputs"]
+        assert api[resize_node_id]["class_type"] == "ImageResizeKJv2"
+        assert api[resize_node_id]["inputs"]["width"] == ["2080", 0]
+        assert api[resize_node_id]["inputs"]["height"] == ["2079", 0]
+        assert api[resize_node_id]["inputs"]["upscale_method"] == "lanczos"
+        assert api[resize_node_id]["inputs"]["keep_proportion"] == "stretch"
+        assert api[resize_node_id]["inputs"]["crop_position"] == "center"
+        assert not any(key.startswith("resize_type") for key in api[resize_node_id]["inputs"])
     assert api["4986"]["class_type"] == "DWPreprocessor"
-    assert api["6102"]["inputs"]["input"] == ["4986", 0]
+    assert api["6102"]["inputs"]["image"] == ["4986", 0]
     assert api["5061"]["class_type"] == "DepthAnything_V2"
-    assert api["6103"]["inputs"]["input"] == ["5061", 0]
+    assert api["6103"]["inputs"]["image"] == ["5061", 0]
     assert api["4991"]["class_type"] == "CannyEdgePreprocessor"
-    assert api["5028"]["inputs"]["input"] == ["4991", 0]
+    assert api["5028"]["inputs"]["image"] == ["4991", 0]
 
 
 def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
@@ -321,13 +324,14 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["47"]["class_type"] == "LoadImage"
     assert api["5001"]["class_type"] == "LoadVideo"
     assert api["5000"]["class_type"] == "GetVideoComponents"
-    assert api["6101"]["class_type"] == "ResizeImageMaskNode"
-    assert api["6101"]["inputs"]["input"] == ["5000", 0]
-    assert api["6101"]["inputs"]["resize_type"] == "scale dimensions"
-    assert api["6101"]["inputs"]["resize_type.width"] == ["2080", 0]
-    assert api["6101"]["inputs"]["resize_type.height"] == ["2079", 0]
-    assert api["6101"]["inputs"]["resize_type.crop"] == "center"
-    assert api["6101"]["inputs"]["scale_method"] == "lanczos"
+    assert api["6101"]["class_type"] == "ImageResizeKJv2"
+    assert api["6101"]["inputs"]["image"] == ["5000", 0]
+    assert api["6101"]["inputs"]["width"] == ["2080", 0]
+    assert api["6101"]["inputs"]["height"] == ["2079", 0]
+    assert api["6101"]["inputs"]["upscale_method"] == "lanczos"
+    assert api["6101"]["inputs"]["keep_proportion"] == "stretch"
+    assert api["6101"]["inputs"]["crop_position"] == "center"
+    assert not any(key.startswith("resize_type") for key in api["6101"]["inputs"])
     assert api["6102"]["class_type"] == "PrimitiveFloat"
     assert api["2152"]["class_type"] == "LTXVAddGuide"
     assert api["2152"]["inputs"]["frame_idx"] == -1

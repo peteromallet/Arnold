@@ -18,64 +18,74 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
 
     issues: list[ValidationIssue] = []
     schema_by_node: dict[str, Any] = {}
-    incoming = _incoming_inputs(workflow)
+    try:
+        api_dict = workflow.compile(backend="api")
+    except Exception as exc:
+        return [ValidationIssue("api_compile_failed", str(exc), severity="warning")]
 
-    for node_id, node in workflow.nodes.items():
-        schema = schema_for(provider, node.class_type)
+    for node_id, node in api_dict.items():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type")
+        if not isinstance(class_type, str):
+            continue
+        schema = schema_for(provider, class_type)
         if schema is None:
             issues.append(
                 ValidationIssue(
                     "unknown_class_type",
-                    f"Unknown class_type {node.class_type} on node {node_id}.",
-                    detail={"node_id": node_id, "class_type": node.class_type},
+                    f"Unknown class_type {class_type} on node {node_id}.",
+                    detail={"node_id": str(node_id), "class_type": class_type},
                 )
             )
             continue
 
-        schema_by_node[node_id] = schema
+        schema_by_node[str(node_id)] = schema
         raw_schema_inputs = getattr(schema, "inputs", {}) or {}
         declared_inputs = set(raw_schema_inputs)
-        provided_inputs = set(node.inputs) | set(node.widgets)
-        connected_inputs = incoming.get(node_id, set())
+        payload_inputs = node.get("inputs") or {}
+        if not isinstance(payload_inputs, dict):
+            payload_inputs = {}
+        provided_inputs = set(payload_inputs)
 
         if not raw_schema_inputs:
             continue
 
         for name, spec in raw_schema_inputs.items():
-            if getattr(spec, "required", False) and name not in provided_inputs and name not in connected_inputs:
+            if getattr(spec, "required", False) and name not in provided_inputs:
                 issues.append(
                     ValidationIssue(
                         "missing_required_input",
-                        f"Node {node_id} ({node.class_type}) is missing required input {name}.",
-                        detail={"node_id": node_id, "class_type": node.class_type, "input": name},
+                        f"Node {node_id} ({class_type}) is missing required input {name}.",
+                        detail={"node_id": str(node_id), "class_type": class_type, "input": name},
                     )
                 )
 
         for name in sorted(provided_inputs - declared_inputs):
-            if not _issue_suppressed(node.class_type, "unknown_input"):
+            if not _issue_suppressed(class_type, "unknown_input"):
                 issues.append(
                     ValidationIssue(
                         "unknown_input",
-                        f"Node {node_id} ({node.class_type}) has unknown input {name}.",
-                        detail={"node_id": node_id, "class_type": node.class_type, "input": name},
+                        f"Node {node_id} ({class_type}) has unknown input {name}.",
+                        detail={"node_id": str(node_id), "class_type": class_type, "input": name},
                     )
                 )
 
         for name in sorted(provided_inputs & declared_inputs):
-            value = node.inputs[name] if name in node.inputs else node.widgets[name]
+            value = payload_inputs[name]
             if _is_api_link(value):
                 continue
             spec = raw_schema_inputs[name]
             choices = getattr(spec, "choices", None) or []
-            if choices and value not in choices and not _issue_suppressed(node.class_type, "value_not_in_enum"):
+            if choices and value not in choices and not _issue_suppressed(class_type, "value_not_in_enum"):
                 issues.append(
                     ValidationIssue(
                         "value_not_in_enum",
-                        f"Node {node_id} ({node.class_type}) input {name} value {_truncate(value)} is not one of the declared choices.",
+                        f"Node {node_id} ({class_type}) input {name} value {_truncate(value)} is not one of the declared choices.",
                         severity="error",
                         detail={
-                            "node_id": node_id,
-                            "class_type": node.class_type,
+                            "node_id": str(node_id),
+                            "class_type": class_type,
                             "input": name,
                             "value": _truncate(value),
                             "choices": choices,
@@ -85,9 +95,7 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
 
             min_value = getattr(spec, "min", None)
             max_value = getattr(spec, "max", None)
-            if (min_value is not None or max_value is not None) and not _issue_suppressed(
-                node.class_type, "value_out_of_range"
-            ):
+            if (min_value is not None or max_value is not None) and not _issue_suppressed(class_type, "value_out_of_range"):
                 try:
                     numeric_value = float(value)
                 except (TypeError, ValueError):
@@ -98,11 +106,11 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                     issues.append(
                         ValidationIssue(
                             "value_out_of_range",
-                            f"Node {node_id} ({node.class_type}) input {name} value {_truncate(value)} is outside the declared range.",
+                            f"Node {node_id} ({class_type}) input {name} value {_truncate(value)} is outside the declared range.",
                             severity="error",
                             detail={
-                                "node_id": node_id,
-                                "class_type": node.class_type,
+                                "node_id": str(node_id),
+                                "class_type": class_type,
                                 "input": name,
                                 "value": _truncate(value),
                                 "min": min_value,
@@ -111,32 +119,38 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                         )
                     )
 
-    for edge in workflow.edges:
-        from_schema = schema_by_node.get(edge.from_node)
-        to_schema = schema_by_node.get(edge.to_node)
-        if from_schema is None or to_schema is None:
+    for to_node_id, node in api_dict.items():
+        if not isinstance(node, dict):
             continue
-        output_type = _edge_output_type(from_schema, edge.from_output)
-        input_type = _edge_input_type(to_schema, edge.to_input)
-        if output_type and input_type and not _types_compatible(output_type, input_type):
-            issues.append(
-                ValidationIssue(
-                    "type_mismatch",
-                    (
-                        f"Edge {edge.from_node}.{edge.from_output} -> {edge.to_node}.{edge.to_input} "
-                        f"connects {output_type} to {input_type}."
-                    ),
-                    severity="warning",
-                    detail={
-                        "from_node": edge.from_node,
-                        "from_output": edge.from_output,
-                        "to_node": edge.to_node,
-                        "to_input": edge.to_input,
-                        "output_type": output_type,
-                        "input_type": input_type,
-                    },
+        to_schema = schema_by_node.get(str(to_node_id))
+        inputs = node.get("inputs") or {}
+        if to_schema is None or not isinstance(inputs, dict):
+            continue
+        for input_name, value in inputs.items():
+            if not _is_api_link(value):
+                continue
+            from_node, from_output = str(value[0]), str(value[1])
+            from_schema = schema_by_node.get(from_node)
+            if from_schema is None:
+                continue
+            output_type = _edge_output_type(from_schema, from_output)
+            input_type = _edge_input_type(to_schema, input_name)
+            if output_type and input_type and not _types_compatible(output_type, input_type):
+                issues.append(
+                    ValidationIssue(
+                        "type_mismatch",
+                        f"Edge {from_node}.{from_output} -> {to_node_id}.{input_name} connects {output_type} to {input_type}.",
+                        severity="warning",
+                        detail={
+                            "from_node": from_node,
+                            "from_output": from_output,
+                            "to_node": str(to_node_id),
+                            "to_input": input_name,
+                            "output_type": output_type,
+                            "input_type": input_type,
+                        },
+                    )
                 )
-            )
 
     return issues
 

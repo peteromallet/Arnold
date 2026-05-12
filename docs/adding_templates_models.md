@@ -42,6 +42,15 @@ python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scr
 python -m vibecomfy.cli port check ready_templates/<media>/<id>.py --strict-ready-template --json
 ```
 
+When replacing a node or hand-authoring a Python template, inspect the target node schema before writing kwargs:
+
+```bash
+python -m vibecomfy.cli nodes spec <ClassType>
+python -m vibecomfy.cli validate ready_templates/<media>/<id>.py
+```
+
+`nodes spec` uses the generated node index when present and falls back to installed custom-node source that exposes `INPUT_TYPES`. `validate` checks the compiled API graph, not just the pre-compile Python IR, so missing required inputs and unexpected inputs are reported against the payload Comfy will actually receive when schema data is available.
+
 Use `--head-check-models` only when you intentionally want model URL HEAD checks. Normal `port check`, `doctor`, `validate`, `fetch`, and `run` paths stay offline by default.
 
 ## Checklist
