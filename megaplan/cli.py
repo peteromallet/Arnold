@@ -670,6 +670,22 @@ description: AI agent harness for coordinating Claude and GPT to make and execut
 
 """
 
+_TICKETS_SKILL_HEADER = """\
+---
+name: megaplan-tickets
+description: File and manage megaplan tickets — short, repo-scoped notes on problems or observations that get folded into epics and auto-addressed when the resolving epic completes.
+---
+
+"""
+
+_RUBRIC_SKILL_HEADER = """\
+---
+name: megaplan-rubric
+description: Pick the right megaplan profile, thinking-strength tier, and robustness level for the work in front of you — for both Codex and Claude harnesses. Consult before invoking megaplan.
+---
+
+"""
+
 _CURSOR_HEADER = """\
 ---
 description: Use megaplan for high-rigor planning on complex, high-risk, or multi-stage tasks.
@@ -704,7 +720,19 @@ def _codex_subagent_appendix() -> str:
     return _subagent_appendix("codex_subagent_appendix.md")
 
 
+def _canonical_tickets_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "tickets_skill.md").read_text(encoding="utf-8")
+
+
+def _canonical_rubric_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "rubric_skill.md").read_text(encoding="utf-8")
+
+
 def bundled_global_file(name: str) -> str:
+    if name == "tickets_skill.md":
+        return _TICKETS_SKILL_HEADER + _canonical_tickets_skill()
+    if name == "rubric_skill.md":
+        return _RUBRIC_SKILL_HEADER + _canonical_rubric_skill()
     content = _canonical_instructions()
     if name == "claude_skill.md":
         return _SKILL_HEADER + content + "\n\n" + _claude_subagent_appendix()
@@ -721,6 +749,10 @@ _GLOBAL_TARGETS = [
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan/SKILL.md", "data": "claude_skill.md"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan/SKILL.md", "data": "codex_skill.md"},
     {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "cursor_rule.mdc"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-rubric/SKILL.md", "data": "rubric_skill.md"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-rubric/SKILL.md", "data": "rubric_skill.md"},
 ]
 
 
