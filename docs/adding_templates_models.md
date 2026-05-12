@@ -51,6 +51,8 @@ python -m vibecomfy.cli validate ready_templates/<media>/<id>.py
 
 `nodes spec` uses the generated node index when present and falls back to installed custom-node source that exposes `INPUT_TYPES`. `validate` checks the compiled API graph, not just the pre-compile Python IR, so missing required inputs and unexpected inputs are reported against the payload Comfy will actually receive when schema data is available.
 
+Validation also carries small runtime-compatibility gates for issues schema alone cannot express. One example is LTX audio VAE loading: use `LTXVAudioVAELoader` with the file staged under `checkpoints`; the known-bad `VAELoaderKJ` plus `LTX*_audio_vae*.safetensors` pairing is rejected before RunPod because KJNodes can misclassify that file shape as a normal VAE.
+
 Use `--head-check-models` only when you intentionally want model URL HEAD checks. Normal `port check`, `doctor`, `validate`, `fetch`, and `run` paths stay offline by default.
 
 ## Checklist

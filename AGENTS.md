@@ -271,6 +271,8 @@ python -m vibecomfy.cli run image/z_image --ready --prompt "..." --seed 7 --step
 
 Embedded runs reconcile model assets by default. If the final workflow contains a model-picker value such as `ckpt_name`, `vae_name`, `unet_name`, or `lora_name`, the runner resolves it against authored `model_assets` and `vibecomfy/registry/models.yaml` before queueing. Missing registry/authored coverage is a pre-run failure, not a Comfy queue failure. Use `--no-ensure-models` only when deliberately avoiding downloads.
 
+Loader folders are part of the runtime contract. If an LTX audio VAE is loaded through `LTXVAudioVAELoader`, stage it as a `checkpoints` asset. Do not load `LTX*_audio_vae*.safetensors` with `VAELoaderKJ`; `validate` rejects that pairing because current KJNodes can misclassify the file and crash at runtime.
+
 ```python
 from vibecomfy.runtime import run_embedded_sync
 result = run_embedded_sync(wf)            # blocking

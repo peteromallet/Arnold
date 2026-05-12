@@ -218,6 +218,21 @@ class VibeWorkflow:
                         detail={"node_id": str(node_id), "class_type": node.class_type},
                     )
                 )
+            if node.class_type == "VAELoaderKJ":
+                vae_name = node.inputs.get("vae_name") or node.inputs.get("widget_0")
+                if isinstance(vae_name, str):
+                    normalized_vae_name = vae_name.lower().replace("\\", "/")
+                    if "ltx" in normalized_vae_name and "audio" in normalized_vae_name:
+                        issues.append(
+                            ValidationIssue(
+                                "ltx_audio_vae_wrong_loader",
+                                (
+                                    f"Node {node_id} loads LTX audio VAE {vae_name!r} with VAELoaderKJ; "
+                                    "use LTXVAudioVAELoader and stage the file under checkpoints."
+                                ),
+                                detail={"node_id": str(node_id), "class_type": node.class_type, "vae_name": vae_name},
+                            )
+                        )
         for edge in self.edges:
             if edge.from_node not in self.nodes:
                 issues.append(ValidationIssue("missing_edge_source", f"Missing source node {edge.from_node}."))

@@ -20,7 +20,7 @@ LTX_RUNEXX_MODEL_ASSETS = [
     {
         "name": "LTX23_audio_vae_bf16.safetensors",
         "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
-        "subdir": "vae",
+        "subdir": "checkpoints",
     },
     {
         "name": "taeltx2_3.safetensors",
@@ -143,14 +143,7 @@ def build() -> VibeWorkflow:
 
     video_vae = _node(wf, "VAELoader", "181", vae_name="LTX23_video_vae_bf16.safetensors")
     tiny_vae = _node(wf, "VAELoader", "180", vae_name="taeltx2_3.safetensors")
-    audio_vae = _node(
-        wf,
-        "VAELoaderKJ",
-        "175",
-        widget_0="LTX23_audio_vae_bf16.safetensors",
-        widget_1="main_device",
-        widget_2="bf16",
-    )
+    audio_vae = _node(wf, "LTXVAudioVAELoader", "175", ckpt_name="LTX23_audio_vae_bf16.safetensors")
     unet = _node(
         wf,
         "UNETLoader",

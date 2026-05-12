@@ -167,6 +167,20 @@ def test_validate_rejects_opaque_component_class_types() -> None:
     assert [issue.severity for issue in report.issues] == ["warning"]
 
 
+def test_validate_rejects_kj_loader_for_ltx_audio_vae() -> None:
+    workflow = VibeWorkflow("ltx-audio", WorkflowSource("ltx-audio"))
+    workflow.nodes["175"] = VibeNode(
+        "175",
+        "VAELoaderKJ",
+        inputs={"vae_name": "LTX23_audio_vae_bf16.safetensors"},
+    )
+
+    report = workflow.validate()
+
+    assert not report.ok
+    assert [issue.code for issue in report.issues] == ["ltx_audio_vae_wrong_loader"]
+
+
 def test_compile_rewrites_set_get_nodes_to_direct_links() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})

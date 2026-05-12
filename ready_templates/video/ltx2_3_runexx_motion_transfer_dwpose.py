@@ -81,10 +81,8 @@ def build() -> VibeWorkflow:
         type='ltxv',
         device='default',
     )
-    vaeloaderkj = _node(wf, 'VAELoaderKJ', '5127',
-        widget_0='LTX23_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj = _node(wf, 'LTXVAudioVAELoader', '5127',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     vaeloader_2 = _node(wf, 'VAELoader', '5129',
         vae_name='taeltx2_3.safetensors',

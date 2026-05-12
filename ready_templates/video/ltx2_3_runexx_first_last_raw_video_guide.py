@@ -22,7 +22,7 @@ LTX_RUNEXX_MODEL_ASSETS = [
     {
         "name": "LTX23_audio_vae_bf16.safetensors",
         "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
-        "subdir": "vae",
+        "subdir": "checkpoints",
     },
     {
         "name": "taeltx2_3.safetensors",
@@ -97,6 +97,7 @@ def build() -> VibeWorkflow:
         path=__file__,
         source_type="ready_template",
     )
+    _use_ltx_audio_vae_loader(wf)
 
     control_video = _node(
         wf,
@@ -144,6 +145,12 @@ def build() -> VibeWorkflow:
 
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
+
+
+def _use_ltx_audio_vae_loader(wf: VibeWorkflow) -> None:
+    if "175" in wf.nodes:
+        wf.nodes["175"].class_type = "LTXVAudioVAELoader"
+        wf.nodes["175"].inputs = {"ckpt_name": "LTX23_audio_vae_bf16.safetensors"}
 
 
 def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:

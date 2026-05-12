@@ -1474,6 +1474,54 @@ def test_embedded_run_ensure_models_resolves_registry_assets_from_final_workflow
     ]
 
 
+def test_embedded_run_ensure_models_does_not_cross_resolve_same_basename_between_model_dirs(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-resolution", WorkflowSource("asset-resolution"))
+    workflow.nodes["175"] = VibeNode(
+        "175",
+        "LTXVAudioVAELoader",
+        inputs={"ckpt_name": "LTX23_audio_vae_bf16.safetensors"},
+    )
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "LTX23_audio_vae_bf16.safetensors",
+            "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
+            "subdir": "checkpoints",
+        }
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-resolved-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [workflow.metadata["model_assets"], "queue"]
+
+
 def test_embedded_run_ensure_models_matches_declared_assets_with_normalized_paths(
     fake_comfy,
     tmp_path: Path,

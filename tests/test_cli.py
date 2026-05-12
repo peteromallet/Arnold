@@ -505,6 +505,19 @@ def test_doctor_warns_about_optional_video_audio_edge() -> None:
     assert any("CreateVideo node 2 has optional audio input connected from 1:LTXVAudioVAEDecode" in item for item in warnings)
 
 
+def test_doctor_warns_about_kj_ltx_audio_vae_loader() -> None:
+    workflow = VibeWorkflow("audio-vae", WorkflowSource("audio-vae"))
+    workflow.nodes["175"] = VibeNode(
+        "175",
+        "VAELoaderKJ",
+        inputs={"vae_name": "LTX23_audio_vae_bf16.safetensors"},
+    )
+
+    warnings = _doctor_warnings(workflow)
+
+    assert any("Use LTXVAudioVAELoader with the file staged under checkpoints" in item for item in warnings)
+
+
 def test_doctor_suggests_custom_node_pack_for_unknown_class(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

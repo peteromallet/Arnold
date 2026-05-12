@@ -327,6 +327,7 @@ def _doctor_warnings(workflow: VibeWorkflow) -> list[str]:
     warnings: list[str] = []
     warnings.extend(_embedded_configuration_warnings())
     warnings.extend(_video_audio_warnings(workflow))
+    warnings.extend(_ltx_audio_vae_loader_warnings(workflow))
     return warnings
 
 
@@ -403,6 +404,25 @@ def _video_audio_warnings(workflow: VibeWorkflow) -> list[str]:
             "CreateVideo node "
             f"{node_id} has optional audio input connected"
             f"{f' from {source}' if source else ''}; for smoke tests, remove this edge if SaveVideo fails with AAC NaN/Inf."
+        )
+    return warnings
+
+
+def _ltx_audio_vae_loader_warnings(workflow: VibeWorkflow) -> list[str]:
+    warnings: list[str] = []
+    for node_id, node in sorted(workflow.nodes.items()):
+        if node.class_type != "VAELoaderKJ":
+            continue
+        vae_name = node.inputs.get("vae_name") or node.inputs.get("widget_0")
+        if not isinstance(vae_name, str):
+            continue
+        normalized = vae_name.lower().replace("\\", "/")
+        if "ltx" not in normalized or "audio" not in normalized:
+            continue
+        warnings.append(
+            "VAELoaderKJ node "
+            f"{node_id} loads {vae_name!r}; current KJNodes may misclassify LTX audio VAE files. "
+            "Use LTXVAudioVAELoader with the file staged under checkpoints."
         )
     return warnings
 

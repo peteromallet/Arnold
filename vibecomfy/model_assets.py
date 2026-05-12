@@ -201,7 +201,9 @@ def _asset_for_reference(
     for entry in registry:
         for target in entry.targets:
             target_path = target.path.replace("\\", "/")
-            if target_path not in expected_paths and not target_path.endswith(f"/{value}"):
+            if target_path not in expected_paths and not (
+                target_path.startswith(f"{subdir}/") and target_path.endswith(f"/{value}")
+            ):
                 continue
             url = _url_for_registry_entry(entry)
             if not url:

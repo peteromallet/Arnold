@@ -256,9 +256,13 @@ models:
     targets:
       - node_pack: kijai_ltx
         path: vae/LTX23_audio_vae_bf16.safetensors
+      - node_pack: comfy_core
+        path: checkpoints/LTX23_audio_vae_bf16.safetensors
     aliases:
       - LTX23_audio_vae_bf16_KJ.safetensors
       - LTX23_audio_vae_bf16.safetensors
+      - LTX2_audio_vae_bf16.safetensors
+      - ltx-2.3-22b-dev_audio_vae.safetensors
     tags: [phase:ltx, ltx_lean_excluded]
 
   - id: ltx_2_3_preview_vae

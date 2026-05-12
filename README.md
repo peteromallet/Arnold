@@ -49,6 +49,8 @@ Some custom nodes download annotator or preprocessor weights into their own pack
 {"name": "yolox_l.onnx", "url": "...", "subdir": "controlnet_aux", "target_path": "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx"}
 ```
 
+Loader-specific model folders matter. For example, LTX audio VAE files used by `LTXVAudioVAELoader` must be staged under `checkpoints`, not `vae`; `validate` rejects the known-bad `VAELoaderKJ` plus LTX audio VAE pairing before runtime.
+
 For reusable workflows, the checked-in surface is Python, not raw JSON. Keep upstream/source workflows in `workflow_corpus/`, convert or author the reusable version in `ready_templates/<kind>/<id>.py`, record it in `workflow_corpus/manifests/coverage.json`, and refresh the static discovery index:
 
 ```bash

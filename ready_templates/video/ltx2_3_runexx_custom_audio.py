@@ -76,10 +76,8 @@ def build() -> VibeWorkflow:
         type='ltxv',
         device='default',
     )
-    vaeloaderkj = _node(wf, 'VAELoaderKJ', '196',
-        widget_0='LTX23_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj = _node(wf, 'LTXVAudioVAELoader', '196',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     getnode = _node(wf, 'GetNode', '205',
         widget_0='frames',

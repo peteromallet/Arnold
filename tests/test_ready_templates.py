@@ -297,11 +297,14 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
     assert api["6103"]["inputs"]["image"] == ["5061", 0]
     assert api["4991"]["class_type"] == "CannyEdgePreprocessor"
     assert api["5028"]["inputs"]["image"] == ["4991", 0]
+    assert api["175"]["class_type"] == "LTXVAudioVAELoader"
+    assert api["175"]["inputs"]["ckpt_name"] == "LTX23_audio_vae_bf16.safetensors"
     assets = {
         asset["name"]: asset
         for asset in workflow.metadata["model_assets"]
         if isinstance(asset, dict) and isinstance(asset.get("name"), str)
     }
+    assert assets["LTX23_audio_vae_bf16.safetensors"]["subdir"] == "checkpoints"
     assert assets["depth_anything_v2_vits_fp32.safetensors"]["subdir"] == "depthanything"
     assert assets["yolox_l.onnx"]["target_path"] == (
         "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx"
@@ -348,9 +351,8 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["6102"]["class_type"] == "PrimitiveFloat"
     assert api["2152"]["class_type"] == "LTXVAddGuide"
     assert api["2152"]["inputs"]["frame_idx"] == -1
-    assert api["175"]["inputs"]["vae_name"] == "LTX23_audio_vae_bf16.safetensors"
-    assert api["175"]["inputs"]["device"] == "main_device"
-    assert api["175"]["inputs"]["weight_dtype"] == "bf16"
+    assert api["175"]["class_type"] == "LTXVAudioVAELoader"
+    assert api["175"]["inputs"]["ckpt_name"] == "LTX23_audio_vae_bf16.safetensors"
     assert api["215"]["inputs"]["sigmas"].startswith("1.0, 0.99375")
     assert api["216"]["inputs"]["sigmas"] == "0.85, 0.7250, 0.4219, 0.0"
     assert api["92"]["inputs"]["expression"] == "a"
