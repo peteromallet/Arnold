@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -1295,9 +1296,13 @@ def _render_feedback_table(rows: list[dict[str, Any]]) -> str:
         fb = row.get("feedback") or {}
         overall = (fb.get("overall") or {})
         rating = overall.get("rating")
+        ai_only = rating is None
         if rating is None:
             rating = overall.get("ai_rating")
-        rating_s = f"{rating}/10" if rating is not None else "—"
+        if rating is None:
+            rating_s = "—"
+        else:
+            rating_s = f"{rating}/10 (AI)" if ai_only else f"{rating}/10"
         repo = str(row.get("repo") or "")
         if len(repo) > 40:
             repo = "…" + repo[-39:]
@@ -1307,13 +1312,118 @@ def _render_feedback_table(rows: list[dict[str, Any]]) -> str:
             f"{rating_s:>4}  "
             f"{(row.get('backend') or '?'):<4} {repo}"
         )
-        comment = (overall.get("comment") or "").strip() or (overall.get("ai_comment") or "").strip()
+        user_comment = (overall.get("comment") or "").strip()
+        ai_comment = (overall.get("ai_comment") or "").strip()
+        if user_comment:
+            comment = user_comment
+            comment_prefix = ""
+        elif ai_comment:
+            comment = ai_comment
+            comment_prefix = "(AI) "
+        else:
+            comment = ""
+            comment_prefix = ""
         if comment:
-            first_line = comment.splitlines()[0]
+            first_line = comment_prefix + comment.splitlines()[0]
             if len(first_line) > 70:
                 first_line = first_line[:67] + "…"
             lines.append(f"  └ {first_line}")
     return "\n".join(lines) + "\n"
+
+
+def _parse_ai_feedback(payload: Any, raw_output: str) -> Any:
+    """Coerce a worker payload (preferred) or raw JSON output into a PlanFeedback.
+
+    Returns None when neither source yields a parseable feedback structure.
+    Reads ``overall.rating/comment`` and ``stages.<name>.rating/comment``.
+    """
+    from megaplan.feedback import PlanFeedback, StageFeedback
+
+    data: Any = payload if isinstance(payload, dict) and payload else None
+    if data is None:
+        try:
+            data = json.loads(raw_output)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(data, dict):
+        return None
+    overall = data.get("overall")
+    stages = data.get("stages") or {}
+    if not isinstance(overall, dict) or not isinstance(stages, dict):
+        return None
+
+    def _coerce_rating(v: Any) -> int | None:
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, int) and 0 <= v <= 10:
+            return v
+        return None
+
+    def _coerce_comment(v: Any) -> str | None:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return None
+
+    fb = PlanFeedback()
+    fb.overall = StageFeedback(
+        ai_rating=_coerce_rating(overall.get("rating")),
+        ai_comment=_coerce_comment(overall.get("comment")),
+    )
+    for stage_name, entry in stages.items():
+        if not isinstance(stage_name, str) or not isinstance(entry, dict):
+            continue
+        fb.stages[stage_name.lower()] = StageFeedback(
+            ai_rating=_coerce_rating(entry.get("rating")),
+            ai_comment=_coerce_comment(entry.get("comment")),
+        )
+    return fb if not fb.is_empty() else None
+
+
+def _merge_feedback(existing: Any, ai_fb: Any) -> Any:
+    """Return a PlanFeedback with user fields from ``existing`` and ai_* from ``ai_fb``.
+
+    Either or both may be None. User ``rating`` / ``comment`` always win; AI
+    fields are taken from ``ai_fb`` when present, else fall back to existing.
+    """
+    from megaplan.feedback import PlanFeedback, StageFeedback
+
+    merged = PlanFeedback()
+
+    def _merge_stage(user_sf: StageFeedback | None, ai_sf: StageFeedback | None) -> StageFeedback:
+        rating = user_sf.rating if user_sf else None
+        comment = user_sf.comment if user_sf else None
+        if ai_sf is not None and ai_sf.ai_rating is not None:
+            ai_rating = ai_sf.ai_rating
+        elif user_sf is not None:
+            ai_rating = user_sf.ai_rating
+        else:
+            ai_rating = None
+        if ai_sf is not None and ai_sf.ai_comment:
+            ai_comment = ai_sf.ai_comment
+        elif user_sf is not None:
+            ai_comment = user_sf.ai_comment
+        else:
+            ai_comment = None
+        return StageFeedback(
+            rating=rating, comment=comment,
+            ai_rating=ai_rating, ai_comment=ai_comment,
+        )
+
+    user_overall = existing.overall if existing else None
+    ai_overall = ai_fb.overall if ai_fb else None
+    merged.overall = _merge_stage(user_overall, ai_overall)
+
+    stage_names: set[str] = set()
+    if existing:
+        stage_names.update(existing.stages.keys())
+    if ai_fb:
+        stage_names.update(ai_fb.stages.keys())
+    for name in stage_names:
+        merged.stages[name] = _merge_stage(
+            existing.stages.get(name) if existing else None,
+            ai_fb.stages.get(name) if ai_fb else None,
+        )
+    return merged
 
 
 def _push_feedback_to_db(root: Path, *, plan_name: str, feedback_dict: dict[str, Any]) -> dict[str, Any]:
@@ -1352,6 +1462,8 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
     from megaplan._core.io import atomic_write_text
     from megaplan.feedback import (
         FEEDBACK_FILENAME,
+        PlanFeedback,
+        StageFeedback,
         feedback_path,
         format_summary,
         load_feedback,
@@ -1400,7 +1512,7 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
     plan_dir, state = load_plan(root, args.plan)
     path = feedback_path(plan_dir)
 
-    # --- workflow: non-interactive scaffold for auto-driver
+    # --- workflow: AI-rated feedback for the auto-driver
     if operation == "workflow":
         current_state = state.get("current_state")
         if current_state != STATE_REVIEWED:
@@ -1409,13 +1521,56 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
                 f"feedback workflow requires plan in {STATE_REVIEWED!r} state, "
                 f"but plan is in {current_state!r}",
             )
-        created = False
-        if not path.exists():
-            template = render_template(state["name"], idea=state.get("idea"))
-            atomic_write_text(path, template)
-            created = True
+
+        existing_fb: PlanFeedback | None = load_feedback(plan_dir) if path.exists() else None
+        force = bool(getattr(args, "force", False))
+
+        def _has_user_fields(fb: PlanFeedback | None) -> bool:
+            if fb is None:
+                return False
+            if fb.overall.rating is not None or (fb.overall.comment or "").strip():
+                return True
+            for sf in fb.stages.values():
+                if sf.rating is not None or (sf.comment or "").strip():
+                    return True
+            return False
+
+        if _has_user_fields(existing_fb) and not force:
+            state["current_state"] = STATE_DONE
+            save_state(plan_dir, state)
+            return {
+                "success": True,
+                "step": "feedback",
+                "operation": "workflow",
+                "plan": state["name"],
+                "plan_dir": str(plan_dir),
+                "feedback_path": str(path),
+                "feedback_present": True,
+                "ai_filled": False,
+                "state": "done",
+                "summary": "skipped AI pass — user feedback already exists",
+            }
+
+        ai_filled = False
+        ai_fb: PlanFeedback | None = None
+        try:
+            from megaplan.handlers.shared import _run_worker
+
+            worker, _agent, _mode, _refreshed = _run_worker(
+                "feedback", state, plan_dir, args, root=root
+            )
+            ai_fb = _parse_ai_feedback(worker.payload, worker.raw_output)
+            ai_filled = ai_fb is not None
+        except Exception as exc:  # noqa: BLE001 — feedback failure must not sink the plan
+            sys.stderr.write(f"[feedback] worker failed, scaffolding empty template: {exc}\n")
+
+        merged = _merge_feedback(existing_fb, ai_fb)
+        template = render_template(state["name"], idea=state.get("idea"), prefilled=merged)
+        atomic_write_text(path, template)
+
         state["current_state"] = STATE_DONE
         save_state(plan_dir, state)
+
         return {
             "success": True,
             "step": "feedback",
@@ -1424,9 +1579,13 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
             "plan_dir": str(plan_dir),
             "feedback_path": str(path),
             "feedback_present": True,
-            "created": created,
+            "ai_filled": ai_filled,
             "state": "done",
-            "summary": "scaffolded feedback.md — fill in whenever",
+            "summary": (
+                "populated AI ratings — review and edit anytime"
+                if ai_filled
+                else "scaffolded feedback.md — fill in whenever"
+            ),
         }
 
     if operation == "show":
@@ -1817,6 +1976,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-edit",
         action="store_true",
         help="edit: just scaffold the template (if missing) and print the path; do not open $EDITOR",
+    )
+    feedback_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="workflow: re-run the AI rating pass even if feedback.md already has user fields. "
+             "Overwrites ai_rating/ai_comment only; never touches user rating:/comment:.",
     )
     feedback_parser.add_argument("--profile", default=None, help="search: substring match on plan profile (e.g. 'claude', 'poirot')")
     feedback_parser.add_argument("--repo", default=None, help="search: substring match on plan project_dir / repo path")
