@@ -148,6 +148,17 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             assemble_doc(plan_dir, output_path, finalize_data)
         robustness = configured_robustness(state)
         if not workflow_includes_step(robustness, "review") and response.get("state") == STATE_EXECUTED:
+            if robustness == "tiny":
+                # tiny skips review entirely — no stub artifact, no deferred-must check.
+                # If any success criteria need human verification, they'll surface
+                # through the normal awaiting-human path on the next run.
+                state["current_state"] = STATE_DONE
+                save_state_merge_meta(plan_dir, state)
+                response["state"] = STATE_DONE
+                response["next_step"] = None
+                response.pop("next_step_runtime", None)
+                attach_agent_fallback(response, args)
+                return response
             from megaplan.audits.capabilities import get_worker_capabilities
             from megaplan.audits.verifiability import classify_criteria
 

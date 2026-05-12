@@ -292,13 +292,22 @@ def test_workflow_walk_matches_documented_light_flow() -> None:
     assert actual_steps == ["plan", "critique", "revise", "finalize", "execute"]
 
 
-def test_all_robustness_levels_route_planned_to_critique() -> None:
-    """All robustness levels go directly from planned to critique."""
-    for level in ("tiny", "light", "standard", "robust", "superrobust"):
+def test_non_tiny_robustness_levels_route_planned_to_critique() -> None:
+    """All robustness levels except tiny go directly from planned to critique.
+    Tiny skips critique entirely and routes planned -> finalize."""
+    for level in ("light", "standard", "robust", "superrobust"):
         state = {"current_state": megaplan.STATE_PLANNED, "last_gate": {}, "config": {"robustness": level}}
         next_steps = workflow_next(state)
         assert "critique" in next_steps, f"{level} should offer critique"
         assert "research" not in next_steps, f"{level} should not offer research"
+
+
+def test_tiny_robustness_routes_planned_to_finalize() -> None:
+    """At tiny robustness, planned -> finalize directly (critique is bypassed)."""
+    state = {"current_state": megaplan.STATE_PLANNED, "last_gate": {}, "config": {"robustness": "tiny"}}
+    next_steps = workflow_next(state)
+    assert "finalize" in next_steps, "tiny should offer finalize from planned"
+    assert "critique" not in next_steps, "tiny should not offer critique"
 
 
 def test_handle_plan_sets_and_clears_active_step(

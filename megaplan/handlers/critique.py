@@ -13,6 +13,7 @@ from megaplan.evaluation import build_gate_artifact, build_orchestrator_guidance
 from megaplan.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
+    CliError,
     FLAG_BLOCKING_STATUSES,
     PlanState,
     STATE_CRITIQUED,
@@ -54,68 +55,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         state["last_gate"] = {}
         critique_filename = f"critique_v{iteration}.json"
         if robustness == "tiny":
-            from megaplan.audits.capabilities import get_worker_capabilities
-            from megaplan.audits.verifiability import audit_criteria, validate_requires
-
-            plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
-            success_criteria = plan_meta.get("success_criteria", [])
-            worker_caps = get_worker_capabilities(state)
-
-            verifiability_flags = _build_verifiability_flags(success_criteria, worker_caps)
-
-            stub_critique = {
-                "checks": [],
-                "flags": verifiability_flags,
-                "verified_flag_ids": [],
-                "disputed_flag_ids": [],
-            }
-            validate_payload("critique", stub_critique)
-            atomic_write_json(plan_dir / critique_filename, stub_critique)
-            save_flag_registry(plan_dir, {"flags": verifiability_flags})
-            minimal_gate: dict[str, Any] = {
-                "recommendation": "ITERATE",
-                "rationale": "Tiny robustness: critique stubbed; advancing directly to gated.",
-                "signals_assessment": "",
-                "warnings": [],
-                "settled_decisions": [],
-            }
-            atomic_write_json(plan_dir / "gate.json", minimal_gate)
-            state["last_gate"] = {"recommendation": "ITERATE"}
-            state["current_state"] = STATE_GATED
-            stub_worker = WorkerResult(
-                payload=stub_critique,
-                raw_output="",
-                duration_ms=0,
-                cost_usd=0.0,
-                session_id=None,
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-            )
-            agent, _mode, _refreshed, _model = _pkg.resolve_agent_mode("critique", args)
-            open_flags_detail = [
-                {"id": f["id"], "concern": f["concern"], "category": f["category"], "severity": f.get("severity", "unknown")}
-                for f in verifiability_flags
-            ]
-            return _finish_step(
-                plan_dir, state, args,
-                step="critique",
-                worker=stub_worker,
-                agent=agent,
-                mode="stub",
-                refreshed=False,
-                summary=f"Tiny robustness: critique stubbed with {len(verifiability_flags)} verifiability flag(s).",
-                artifacts=[critique_filename, "faults.json", "gate.json"],
-                output_file=critique_filename,
-                artifact_hash=sha256_file(plan_dir / critique_filename),
-                response_fields={
-                    "iteration": iteration,
-                    "checks": [],
-                    "verified_flags": [],
-                    "open_flags": open_flags_detail,
-                    "scope_creep_flags": [],
-                },
-                history_fields={"flags_count": len(verifiability_flags)},
+            raise CliError(
+                "tiny_skips_critique",
+                "tiny robustness skips critique entirely; the workflow routes plan -> finalize directly. "
+                "Run `megaplan finalize` instead, or use --robustness light if you want a critique pass.",
             )
         active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
         expected_ids = [check["id"] for check in active_checks]

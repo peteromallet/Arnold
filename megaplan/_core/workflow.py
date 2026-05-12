@@ -107,7 +107,16 @@ _ROBUSTNESS_OVERRIDES: dict[str, dict[str, list[Transition]]] = {
         ],
         STATE_EXECUTED: [],
     },
-    "tiny": {},
+    # tiny inherits light's skip-prep + skip-review, then adds its own
+    # STATE_PLANNED override to bypass critique entirely. Auto-mode flow
+    # at tiny is: INITIALIZED -> plan -> PLANNED -> finalize -> GATED ->
+    # finalize -> FINALIZED -> execute -> EXECUTED. No critique handler
+    # is called; no review handler is called.
+    "tiny": {
+        STATE_PLANNED: [
+            Transition("finalize", STATE_GATED),
+        ],
+    },
 }
 
 _ROBUSTNESS_WORKFLOW_LEVELS: dict[str, tuple[str, ...]] = {
@@ -218,7 +227,7 @@ def _workflow_for_robustness(
     normalized = _normalize_workflow_robustness(robustness)
     merged = dict(WORKFLOW)
     for level in _ROBUSTNESS_WORKFLOW_LEVELS.get(normalized, _ROBUSTNESS_WORKFLOW_LEVELS["standard"]):
-        merged.update(_resolve_overrides(level, creative=creative and normalized != "tiny"))
+        merged.update(_resolve_overrides(level, creative=creative))
     # When --with-prep was set at init, prep must run regardless of the
     # robustness level. The standard/light/tiny override chain replaces
     # STATE_INITIALIZED -> prep with STATE_INITIALIZED -> plan; we undo
