@@ -51,15 +51,15 @@ def _model_assets_from_workflow(workflow: VibeWorkflow) -> list[dict[str, str]]:
     authored = _normalise_requirement_entries(raw_assets) if isinstance(raw_assets, list) else []
     resolved, unresolved = resolve_referenced_assets(workflow)
     authored_keys = {
-        (entry["name"], entry["subdir"])
+        (entry["name"].replace("\\", "/"), entry["subdir"].replace("\\", "/"))
         for entry in authored
         if isinstance(entry.get("name"), str) and isinstance(entry.get("subdir"), str)
     }
     unresolved = [
         item
         for item in unresolved
-        if (item["value"], item["subdir"]) not in authored_keys
-        and (Path(item["value"]).name, item["subdir"]) not in authored_keys
+        if (item["value"].replace("\\", "/"), item["subdir"].replace("\\", "/")) not in authored_keys
+        and (Path(item["value"].replace("\\", "/")).name, item["subdir"].replace("\\", "/")) not in authored_keys
     ]
     if unresolved:
         summary = ", ".join(

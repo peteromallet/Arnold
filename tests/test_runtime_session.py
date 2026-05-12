@@ -1474,6 +1474,113 @@ def test_embedded_run_ensure_models_resolves_registry_assets_from_final_workflow
     ]
 
 
+def test_embedded_run_ensure_models_matches_declared_assets_with_normalized_paths(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-normalization", WorkflowSource("asset-normalization"))
+    workflow.nodes["186"] = VibeNode(
+        "186",
+        "LoraLoaderModelOnly",
+        inputs={"lora_name": r"LTX\v2\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors"},
+    )
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+            "url": "https://example.test/ltx-runexx.safetensors",
+            "subdir": "loras",
+        }
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-normalized-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+                "url": "https://example.test/ltx-runexx.safetensors",
+                "subdir": "loras",
+            }
+        ],
+        "queue",
+    ]
+
+
+def test_embedded_run_ensure_models_resolves_cameraman_iclora_override(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-cameraman", WorkflowSource("asset-cameraman"))
+    workflow.nodes["5011"] = VibeNode(
+        "5011",
+        "LTXICLoRALoaderModelOnly",
+        inputs={"lora_name": "ltxv/ltx2/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors"},
+    )
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-cameraman-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "ltxv/ltx2/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors",
+                "url": "https://huggingface.co/Cseti/LTX2.3-22B_IC-LoRA-Cameraman_v1/resolve/main/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors",
+                "subdir": "loras",
+            }
+        ],
+        "queue",
+    ]
+
+
 def test_server_reload_calls_stop_then_start() -> None:
     async def run_case() -> None:
         session = ServerSession()

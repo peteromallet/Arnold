@@ -348,6 +348,19 @@ models:
         path: loras/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
     tags: [phase:ltx]
 
+  - id: ltx_2_3_ic_lora_cameraman
+    source:
+      kind: huggingface
+      repo: Cseti/LTX2.3-22B_IC-LoRA-Cameraman_v1
+      filename: LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors
+    min_size: 10_000_000
+    targets:
+      - node_pack: ltx
+        path: loras/ltxv/ltx2/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors
+      - node_pack: ltx
+        path: loras/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors
+    tags: [phase:ltx]
+
   - id: ltx_2_3_ic_lora_hdr
     source:
       kind: huggingface
