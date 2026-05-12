@@ -322,6 +322,7 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "critique": "codex",
     "revise": "claude",
     "gate": "claude",
+    "feedback": "claude:low",
     "finalize": "claude",
     "execute": "codex",
     "loop_plan": "claude",

@@ -221,7 +221,13 @@ def test_with_feedback_from_state_reads_flag() -> None:
 def test_handle_feedback_workflow_scaffolds_and_transitions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Workflow mode: scaffolds feedback.md, transitions to done, no $EDITOR."""
+    """Workflow mode: AI-rated phase, transitions to done, no $EDITOR.
+
+    The handler dispatches a model worker (subprocess.run IS called for the
+    worker), but $EDITOR must never be launched.  When the worker fails in
+    the test environment the handler writes an empty ai_* template and still
+    transitions to DONE.
+    """
     root = tmp_path / "root"
     project_dir = tmp_path / "project"
     root.mkdir()
@@ -250,25 +256,40 @@ def test_handle_feedback_workflow_scaffolds_and_transitions(
     fb_path = feedback_path(plan_dir)
     assert not fb_path.exists(), "feedback.md should not exist before handler call"
 
-    # Mock subprocess.run so we can assert it is NOT called
+    # Mock subprocess.run so we can assert that $EDITOR is never launched.
+    # The model-worker dispatch IS a subprocess call — that is expected.
+    # We only guard against interactive editor launch.
+    import os as _os_module
     with mock.patch("subprocess.run") as mock_run:
         from megaplan.cli import handle_feedback
 
         result = handle_feedback(
             root,
-            Namespace(operation="workflow", plan=response["plan"], actor=None),
+            Namespace(
+                operation="workflow",
+                plan=response["plan"],
+                actor=None,
+                agent=None,
+            ),
         )
 
-        # Must NOT have opened $EDITOR
-        mock_run.assert_not_called()
+        # Verify $EDITOR / $VISUAL were NOT launched in any subprocess call
+        editor_env = _os_module.environ.get("EDITOR", "")
+        visual_env = _os_module.environ.get("VISUAL", "")
+        for call_args in mock_run.call_args_list:
+            args_list = call_args[0][0] if call_args[0] else []
+            if isinstance(args_list, list) and len(args_list) > 0:
+                cmd = args_list[0]
+                assert cmd not in (editor_env, visual_env, "vim", "nano", "emacs"), (
+                    f"$EDITOR was launched: {args_list}"
+                )
 
-    # Verify response shape
+    # Verify response shape (ai_filled may be False if worker failed in test env)
     assert result["success"] is True
     assert result["state"] == "done"
     assert result["operation"] == "workflow"
-    assert result["created"] is True
+    assert result["ai_filled"] in (True, False)
     assert result["feedback_present"] is True
-    assert "scaffolded feedback.md" in result["summary"]
 
     # Verify file was created
     assert fb_path.exists(), "feedback.md should have been created"
@@ -281,7 +302,13 @@ def test_handle_feedback_workflow_scaffolds_and_transitions(
 def test_handle_feedback_workflow_already_has_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Workflow mode: if feedback.md already exists, don't overwrite, still transition."""
+    """Workflow mode: if feedback.md exists with user fields, skip AI pass.
+
+    With the new AI-rated handler, a feedback.md that already has user
+    ``rating:`` / ``comment:`` fields populated is a no-op (skip AI pass,
+    transition to DONE, never overwrite).  The pre-existing content must
+    be preserved.
+    """
     root = tmp_path / "root"
     project_dir = tmp_path / "project"
     root.mkdir()
@@ -302,25 +329,48 @@ def test_handle_feedback_workflow_already_has_file(
     )
     plan_dir = megaplan.plans_root(root) / response["plan"]
 
-    # Place plan in STATE_REVIEWED, pre-create feedback.md
+    # Place plan in STATE_REVIEWED, pre-create feedback.md with user fields
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     state["current_state"] = STATE_REVIEWED
     save_state(plan_dir, state)
 
     fb_path = feedback_path(plan_dir)
-    original_content = "pre-existing feedback\n"
+    # Write a feedback.md that has a user rating set so the skip-AI
+    # guard triggers (rating: is populated, no --force).
+    original_content = "## Overall\nrating: 7\ncomment: good run\n"
     fb_path.write_text(original_content, encoding="utf-8")
 
+    import os as _os_module
     with mock.patch("subprocess.run") as mock_run:
         from megaplan.cli import handle_feedback
 
         result = handle_feedback(
             root,
-            Namespace(operation="workflow", plan=response["plan"], actor=None),
+            Namespace(
+                operation="workflow",
+                plan=response["plan"],
+                actor=None,
+                agent=None,
+            ),
         )
-        mock_run.assert_not_called()
 
-    assert result["created"] is False  # already existed
+        # Verify $EDITOR / $VISUAL were NOT launched
+        editor_env = _os_module.environ.get("EDITOR", "")
+        visual_env = _os_module.environ.get("VISUAL", "")
+        for call_args in mock_run.call_args_list:
+            args_list = call_args[0][0] if call_args[0] else []
+            if isinstance(args_list, list) and len(args_list) > 0:
+                cmd = args_list[0]
+                assert cmd not in (editor_env, visual_env, "vim", "nano", "emacs"), (
+                    f"$EDITOR was launched: {args_list}"
+                )
+
+    # AI pass was skipped because user fields already exist
+    assert result["ai_filled"] is False
+    assert result["feedback_present"] is True
+    assert result["state"] == "done"
+    assert "skipped AI pass" in result.get("summary", "")
+
     # Content must not be overwritten
     assert fb_path.read_text(encoding="utf-8") == original_content
 

@@ -48,9 +48,16 @@ _STAGE_BLURBS: dict[str, str] = {
 class StageFeedback:
     rating: int | None = None
     comment: str | None = None
+    ai_rating: int | None = None
+    ai_comment: str | None = None
 
     def is_empty(self) -> bool:
-        return self.rating is None and not (self.comment and self.comment.strip())
+        return (
+            self.rating is None
+            and not (self.comment and self.comment.strip())
+            and self.ai_rating is None
+            and not (self.ai_comment and self.ai_comment.strip())
+        )
 
 
 @dataclass
@@ -60,7 +67,12 @@ class PlanFeedback:
 
     def to_dict(self) -> dict[str, dict[str, int | str | None]]:
         def _one(sf: StageFeedback) -> dict[str, int | str | None]:
-            return {"rating": sf.rating, "comment": sf.comment}
+            return {
+                "rating": sf.rating,
+                "comment": sf.comment,
+                "ai_rating": sf.ai_rating,
+                "ai_comment": sf.ai_comment,
+            }
 
         return {
             "overall": _one(self.overall),
@@ -75,8 +87,19 @@ def feedback_path(plan_dir: Path) -> Path:
     return Path(plan_dir) / FEEDBACK_FILENAME
 
 
-def render_template(plan_name: str, *, idea: str | None = None) -> str:
-    """Render a fresh feedback.md template with all stage fields blank."""
+def render_template(
+    plan_name: str,
+    *,
+    idea: str | None = None,
+    prefilled: PlanFeedback | None = None,
+) -> str:
+    """Render a fresh feedback.md template.
+
+    When ``prefilled`` is provided the ``ai_rating:`` / ``ai_comment:``
+    lines are populated for every stage (including ``tiebreaker``) and the
+    Overall block, while the user-editable ``rating:`` / ``comment:`` lines
+    are left blank.
+    """
 
     lines: list[str] = [
         f"# Feedback for plan: {plan_name}",
@@ -90,28 +113,71 @@ def render_template(plan_name: str, *, idea: str | None = None) -> str:
     if idea:
         lines.extend([f"> {idea.strip()}", ""])
 
-    lines.extend(
-        [
-            "## Overall",
-            "",
-            "rating:",
-            "comment:",
-            "",
-        ]
-    )
+    _prefilled: PlanFeedback = prefilled or PlanFeedback()
 
+    # ── Overall ──────────────────────────────────────────────────────
+    lines.extend(["## Overall", ""])
+    _append_stage_lines(lines, _prefilled.overall)
+
+    # ── Per-stage ────────────────────────────────────────────────────
     for stage in STAGES:
         blurb = _STAGE_BLURBS.get(stage, "")
         heading = f"## {stage}"
         if blurb:
             heading = f"{heading}  <!-- {blurb} -->"
-        lines.extend([heading, "", "rating:", "comment:", ""])
+        lines.extend([heading, ""])
+        sf = _prefilled.stages.get(stage, StageFeedback())
+        _append_stage_lines(lines, sf)
 
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _append_stage_lines(lines: list[str], sf: StageFeedback) -> None:
+    """Append ai_rating/ai_comment (populated) and rating/comment.
+
+    User ``rating`` / ``comment`` are written when set so that ``--force``
+    merges can preserve existing user values alongside updated ai_* fields.
+    """
+    ai_rating_str = str(sf.ai_rating) if sf.ai_rating is not None else ""
+    ai_comment_str = sf.ai_comment if sf.ai_comment else ""
+    rating_str = str(sf.rating) if sf.rating is not None else ""
+    comment_str = sf.comment if sf.comment else ""
+    lines.extend(
+        [
+            f"ai_rating: {ai_rating_str}",
+            f"ai_comment: {ai_comment_str}",
+            f"rating: {rating_str}",
+            f"comment: {comment_str}",
+            "",
+        ]
+    )
+
+
 _HEADING_RE = re.compile(r"^##\s+(\S+)", re.MULTILINE)
-_RATING_RE = re.compile(r"^rating\s*:\s*(.*?)\s*$", re.IGNORECASE | re.MULTILINE)
+_AI_RATING_RE = re.compile(
+    r"^ai_rating[^\S\n]*:[^\S\n]*(.*?)[^\S\n]*$", re.IGNORECASE | re.MULTILINE
+)
+_AI_COMMENT_RE = re.compile(
+    r"^ai_comment[^\S\n]*:[^\S\n]*(.*)$", re.IGNORECASE | re.MULTILINE
+)
+_RATING_RE = re.compile(
+    r"^rating[^\S\n]*:[^\S\n]*(.*?)[^\S\n]*$", re.IGNORECASE | re.MULTILINE
+)
+_COMMENT_RE = re.compile(
+    r"^comment[^\S\n]*:[^\S\n]*(.*)$", re.IGNORECASE | re.MULTILINE
+)
+
+
+def effective_rating(sf: StageFeedback) -> int | None:
+    """Return the user rating if set, otherwise the AI rating."""
+    return sf.rating if sf.rating is not None else sf.ai_rating
+
+
+def effective_comment(sf: StageFeedback) -> str | None:
+    """Return the user comment if set, otherwise the AI comment."""
+    if sf.comment is not None and sf.comment.strip():
+        return sf.comment
+    return sf.ai_comment
 
 
 def _parse_rating(raw: str) -> int | None:
@@ -134,6 +200,18 @@ def _parse_rating(raw: str) -> int | None:
 def _parse_section(body: str) -> StageFeedback:
     """Parse the body under a single `## <name>` heading."""
 
+    # Match ai_rating / ai_comment first (anchored with ^ai_ so they
+    # never accidentally match plain rating:/comment: lines).
+    ai_rating: int | None = None
+    ai_rating_match = _AI_RATING_RE.search(body)
+    if ai_rating_match is not None:
+        ai_rating = _parse_rating(ai_rating_match.group(1))
+
+    ai_comment: str | None = None
+    ai_comment_match = _AI_COMMENT_RE.search(body)
+    if ai_comment_match is not None:
+        ai_comment = ai_comment_match.group(1).strip() or None
+
     rating: int | None = None
     rating_match = _RATING_RE.search(body)
     rating_end = 0
@@ -144,11 +222,7 @@ def _parse_section(body: str) -> StageFeedback:
     # Comment: everything after `comment:` until end of section. If `comment:`
     # is missing, treat the section as no comment.
     comment: str | None = None
-    comment_match = re.search(
-        r"^comment\s*:\s*(.*)$",
-        body[rating_end:],
-        re.IGNORECASE | re.MULTILINE,
-    )
+    comment_match = _COMMENT_RE.search(body[rating_end:])
     if comment_match is not None:
         first_line = comment_match.group(1).strip()
         rest_start = rating_end + comment_match.end()
@@ -161,7 +235,12 @@ def _parse_section(body: str) -> StageFeedback:
         joined = "\n".join(parts).strip()
         comment = joined or None
 
-    return StageFeedback(rating=rating, comment=comment)
+    return StageFeedback(
+        rating=rating,
+        comment=comment,
+        ai_rating=ai_rating,
+        ai_comment=ai_comment,
+    )
 
 
 def parse_feedback(text: str) -> PlanFeedback:
@@ -204,10 +283,18 @@ def format_summary(fb: PlanFeedback) -> str:
     lines: list[str] = []
 
     def _fmt(name: str, sf: StageFeedback) -> None:
-        rating = f"{sf.rating}/10" if sf.rating is not None else "—"
+        er = effective_rating(sf)
+        ec = effective_comment(sf)
+        is_ai_only = sf.rating is None and sf.ai_rating is not None
+
+        if er is not None:
+            suffix = " (AI)" if is_ai_only else ""
+            rating = f"{er}/10{suffix}"
+        else:
+            rating = "—"
         lines.append(f"  {name:<10} {rating}")
-        if sf.comment:
-            for cline in sf.comment.splitlines():
+        if ec:
+            for cline in ec.splitlines():
                 lines.append(f"             {cline}")
 
     lines.append("Overall:")

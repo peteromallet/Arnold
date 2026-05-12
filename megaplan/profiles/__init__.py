@@ -293,7 +293,12 @@ def apply_vendor_rewrite(
             "invalid_vendor",
             f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
         )
-    return {phase: _swap_premium_spec(spec, vendor) for phase, spec in profile.items()}
+    # feedback is locked at claude:low for cross-run comparability
+    return {
+        phase: _swap_premium_spec(spec, vendor)
+        for phase, spec in profile.items()
+        if phase != "feedback"
+    } | {"feedback": profile.get("feedback", "claude:low")}
 
 
 def apply_critic_rewrite(
