@@ -14,6 +14,7 @@ from scripts.runpod_matrix_remote import (
     LTX_TEXT_PROJECTION,
     LTX_VIDEO_VAE,
     patch_workflow_api,
+    resolve_attention_profile,
 )
 
 
@@ -26,6 +27,52 @@ def test_runpod_matrix_model_constants_match_registry_contract() -> None:
     assert LTX_PREVIEW_VAE == "taeltx2_3.safetensors"
     assert GGUF_MODEL == "flux-2-klein-9b-Q4_K_M.gguf"
     assert FLUX_VAE == "flux2-vae.safetensors"
+
+
+def test_attention_profile_defaults_to_portable_sdpa() -> None:
+    assert resolve_attention_profile(None) == "portable"
+    assert resolve_attention_profile("default") == "portable"
+    assert resolve_attention_profile("optimized") == "sage"
+
+
+def test_wanvideo_wrapper_patch_downgrades_sageattn_for_portable_profile() -> None:
+    api = {
+        "1": {
+            "class_type": "WanVideoModelLoader",
+            "inputs": {
+                "base_precision": "fp16_fast",
+                "widget_1": "fp16_fast",
+                "attention_mode": "sageattn",
+                "widget_4": "sageattn",
+            },
+        }
+    }
+
+    assert patch_workflow_api("wanvideo_wrapper_example", api, attention_profile="portable")
+
+    inputs = api["1"]["inputs"]
+    assert inputs["base_precision"] == "fp16"
+    assert inputs["widget_1"] == "fp16"
+    assert inputs["attention_mode"] == "sdpa"
+    assert inputs["widget_4"] == "sdpa"
+
+
+def test_wanvideo_wrapper_patch_preserves_sageattn_for_sage_profile() -> None:
+    api = {
+        "1": {
+            "class_type": "WanVideoModelLoader",
+            "inputs": {
+                "attention_mode": "sageattn",
+                "widget_4": "sageattn",
+            },
+        }
+    }
+
+    assert patch_workflow_api("wanvideo_wrapper_example", api, attention_profile="sage")
+
+    inputs = api["1"]["inputs"]
+    assert inputs["attention_mode"] == "sageattn"
+    assert inputs["widget_4"] == "sageattn"
 
 
 def test_corpus_matrix_plan_splits_required_workflows(tmp_path: Path) -> None:

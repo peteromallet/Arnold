@@ -88,6 +88,23 @@ def test_ready_templates_do_not_enable_uncontracted_sageattention() -> None:
     assert offenders == []
 
 
+def test_wanvideo_model_loaders_use_portable_runpod_attention_contract() -> None:
+    offenders: list[tuple[str, str, str, str]] = []
+
+    for template_id in ready_template_ids():
+        api = workflow_from_ready(template_id).compile("api")
+        for node_id, node in api.items():
+            if node.get("class_type") != "WanVideoModelLoader":
+                continue
+            inputs = node.get("inputs", {})
+            attention_mode = inputs.get("attention_mode")
+            base_precision = inputs.get("base_precision")
+            if attention_mode == "sageattn" or base_precision == "fp16_fast":
+                offenders.append((template_id, node_id, str(attention_mode), str(base_precision)))
+
+    assert offenders == []
+
+
 def test_ready_templates_do_not_use_uncontracted_ltx_memory_efficient_sage_patch() -> None:
     offenders: list[tuple[str, str]] = []
 
@@ -242,16 +259,26 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
     assert workflow.inputs["height"].node_id == "2079"
     assert workflow.inputs["fps"].node_id == "2076"
     assert workflow.inputs["strength"].node_id == "5012"
+    assert workflow.inputs["strength"].field == "strength"
     assert workflow.inputs["ic_lora_filename"].node_id == "5011"
     assert workflow.inputs["ic_lora_strength"].node_id == "5011"
+    assert workflow.inputs["ic_lora_strength"].field == "strength_model"
 
     assert api["45"]["class_type"] == "LoadImage"
     assert api["47"]["class_type"] == "LoadImage"
     assert api["5001"]["class_type"] == "LoadVideo"
     assert api["5000"]["class_type"] == "GetVideoComponents"
     assert api["5011"]["class_type"] == "LTXICLoRALoaderModelOnly"
+    assert api["5011"]["inputs"]["lora_name"] == "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors"
+    assert api["5011"]["inputs"]["strength_model"] == 1
     assert api["5012"]["class_type"] == "LTXAddVideoICLoRAGuide"
     assert api["5012"]["inputs"]["image"] == ["5028", 0]
+    assert api["5012"]["inputs"]["frame_idx"] == 0
+    assert api["5012"]["inputs"]["strength"] == 1
+    assert api["5012"]["inputs"]["crop"] == "center"
+    assert api["5012"]["inputs"]["use_tiled_encode"] == "disabled"
+    assert api["5012"]["inputs"]["tile_size"] == 128
+    assert api["5012"]["inputs"]["tile_overlap"] == 32
     assert api["210"]["class_type"] == "LTXVImgToVideoInplaceKJ"
     assert api["210"]["inputs"]["num_images.image_1"] == ["2084", 0]
     assert api["210"]["inputs"]["num_images.image_2"] == ["50", 0]

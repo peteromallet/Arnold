@@ -45,6 +45,13 @@ fi
 
 def _remote_script() -> str:
     scope = os.environ.get("VIBECOMFY_MATRIX_SCOPE", "all")
+    attention_profile = os.environ.get("VIBECOMFY_ATTENTION_PROFILE", "portable").strip().lower() or "portable"
+    if attention_profile in {"default", "sdpa"}:
+        attention_profile = "portable"
+    elif attention_profile in {"optimized", "sageattn", "sageattention"}:
+        attention_profile = "sage"
+    if attention_profile not in {"portable", "sage"}:
+        raise ValueError("VIBECOMFY_ATTENTION_PROFILE must be 'portable' or 'sage'")
     core_stage_phase = "qwen_image" if scope in {"qwen_image", "qwen_image_2512"} else "core"
     ltx_lean_model_scope = scope in {"ltx_official", "ltx_official_public", "ltx_lightricks", "ltx_iclora", "ltx_iclora_public"}
     hf_token = _load_hf_token()
@@ -68,6 +75,7 @@ export PIP_CACHE_DIR=/workspace/.cache/pip
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export VIBECOMFY_ATTENTION_PROFILE={shlex.quote(attention_profile)}
 {registry_legacy_export}
 mkdir -p "$XDG_CACHE_HOME" "$UV_CACHE_DIR" "$HF_HOME" "$PIP_CACHE_DIR"
 find "$HF_HOME" -type f -name '*.incomplete' -delete 2>/dev/null || true
@@ -92,6 +100,17 @@ $PY -m pip install --prefer-binary click rich typer pydantic pydantic-settings p
 $PY -m pip install --no-deps --force-reinstall 'comfyui@git+https://github.com/hiddenswitch/ComfyUI.git'
 if [ "{scope}" = "wan_creation_types" ] || [ "{scope}" = "wan_infinitetalk" ]; then
   $PY -m pip install --index-url https://download.pytorch.org/whl/cu124 --upgrade torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0
+fi
+if [ "{attention_profile}" = "sage" ]; then
+  rm -rf /tmp/sageattention
+  git clone --depth 1 https://github.com/thu-ml/SageAttention.git /tmp/sageattention
+  $PY -m pip install --no-build-isolation /tmp/sageattention
+  "$PY" - <<'PY'
+import sageattention
+if not callable(getattr(sageattention, "sageattn", None)):
+    raise RuntimeError("sageattention import succeeded but sageattn is missing")
+print("sageattention verified")
+PY
 fi
 "$PY" - <<'PY'
 from pathlib import Path

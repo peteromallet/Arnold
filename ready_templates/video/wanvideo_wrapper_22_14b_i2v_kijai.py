@@ -135,10 +135,10 @@ def build() -> VibeWorkflow:
     )
     wanvideomodelloader = _node(wf, 'WanVideoModelLoader', '22',
         model='WanVideo\\2_2\\Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors',
-        base_precision='fp16_fast',
+        base_precision='fp16',
         quantization='fp8_e4m3fn_scaled',
         load_device='offload_device',
-        attention_mode='sageattn',
+        attention_mode='sdpa',
         compile_args=wanvideotorchcompilesettings.out(0),
     )
     cliptextencode = _node(wf, 'CLIPTextEncode', '49',
@@ -162,10 +162,10 @@ def build() -> VibeWorkflow:
     )
     wanvideomodelloader_2 = _node(wf, 'WanVideoModelLoader', '71',
         model='WanVideo\\2_2\\Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors',
-        base_precision='fp16_fast',
+        base_precision='fp16',
         quantization='fp8_e4m3fn_scaled',
         load_device='offload_device',
-        attention_mode='sageattn',
+        attention_mode='sdpa',
         compile_args=wanvideotorchcompilesettings.out(0),
     )
     createcfgschedulefloatlist = _node(wf, 'CreateCFGScheduleFloatList', '95',
@@ -313,4 +313,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

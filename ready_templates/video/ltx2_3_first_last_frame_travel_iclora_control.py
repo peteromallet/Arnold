@@ -54,9 +54,9 @@ READY_METADATA = {
         "width": "2080.widget_0",
         "height": "2079.widget_0",
         "fps": "2076.value",
-        "strength": "5012.widget_1",
+        "strength": "5012.strength",
         "ic_lora_filename": "5011.lora_name",
-        "ic_lora_strength": "5011.widget_1",
+        "ic_lora_strength": "5011.strength_model",
     },
     "ready_template": "video/ltx2_3_first_last_frame_travel_iclora_control",
     "workflow_template": "ltx2_3_first_last_frame_travel_iclora_control",
@@ -186,9 +186,8 @@ def build() -> VibeWorkflow:
         wf,
         "LTXICLoRALoaderModelOnly",
         "5011",
-        lora_name="ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
-        widget_0="ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
-        widget_1=1,
+        lora_name="ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+        strength_model=1,
         model=tuned.out(0),
     )
 
@@ -371,13 +370,12 @@ def build() -> VibeWorkflow:
         wf,
         "LTXAddVideoICLoRAGuide",
         "5012",
-        widget_0=0,
-        widget_1=1,
-        widget_2=1,
-        widget_3="disabled",
-        widget_4=False,
-        widget_5=128,
-        widget_6=32,
+        frame_idx=0,
+        strength=1,
+        crop="center",
+        use_tiled_encode="disabled",
+        tile_size=128,
+        tile_overlap=32,
         image=guide_canny.out(0),
         latent=anchored_latent.out(0),
         latent_downscale_factor=ic_lora.out(1),
@@ -451,9 +449,9 @@ def build() -> VibeWorkflow:
     wf.register_input("width", "2080", "widget_0", 256)
     wf.register_input("height", "2079", "widget_0", 256)
     wf.register_input("fps", "2076", "value", 8)
-    wf.register_input("strength", "5012", "widget_1", 1)
-    wf.register_input("ic_lora_filename", "5011", "lora_name", "ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors")
-    wf.register_input("ic_lora_strength", "5011", "widget_1", 1)
+    wf.register_input("strength", "5012", "strength", 1)
+    wf.register_input("ic_lora_filename", "5011", "lora_name", "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors")
+    wf.register_input("ic_lora_strength", "5011", "strength_model", 1)
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
 

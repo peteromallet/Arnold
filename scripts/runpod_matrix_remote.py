@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,20 @@ LTX_PREVIEW_VAE = canonical_filename("ltx_2_3_preview_vae", registry=_REGISTRY)
 GGUF_MODEL = canonical_filename("flux2_klein_9b_q4_k_m_gguf", registry=_REGISTRY)
 FLUX_VAE = canonical_filename("flux2_vae_from_klein_9b", registry=_REGISTRY)
 
+PORTABLE_ATTENTION_PROFILE = "portable"
+SAGE_ATTENTION_PROFILE = "sage"
+VALID_ATTENTION_PROFILES = frozenset((PORTABLE_ATTENTION_PROFILE, SAGE_ATTENTION_PROFILE))
+
+
+def resolve_attention_profile(raw: str | None = None) -> str:
+    value = (raw if raw is not None else os.environ.get("VIBECOMFY_ATTENTION_PROFILE", "")).strip().lower()
+    if value in {"", "default", "portable", "sdpa"}:
+        return PORTABLE_ATTENTION_PROFILE
+    if value in {"optimized", "sage", "sageattn", "sageattention"}:
+        return SAGE_ATTENTION_PROFILE
+    allowed = ", ".join(sorted(VALID_ATTENTION_PROFILES))
+    raise ValueError(f"VIBECOMFY_ATTENTION_PROFILE must be one of: {allowed}")
+
 
 def prepare_workflow(workflow_id: str, source: Path, output: Path) -> Path:
     api = normalize_to_api(load_workflow_json(source))
@@ -31,7 +46,8 @@ def prepare_workflow(workflow_id: str, source: Path, output: Path) -> Path:
     return output
 
 
-def patch_workflow_api(workflow_id: str, api: dict[str, Any]) -> bool:
+def patch_workflow_api(workflow_id: str, api: dict[str, Any], *, attention_profile: str | None = None) -> bool:
+    attention_profile = resolve_attention_profile(attention_profile)
     if workflow_id == "ltx2_3_t2v":
         _patch_ltx(api, image_to_video=False)
         return True
@@ -51,7 +67,7 @@ def patch_workflow_api(workflow_id: str, api: dict[str, Any]) -> bool:
         _patch_qwen_image_2512(api)
         return True
     if workflow_id.startswith("wanvideo_wrapper"):
-        _patch_wanvideo_wrapper(api)
+        _patch_wanvideo_wrapper(api, attention_profile=attention_profile)
         return True
     if workflow_id.startswith("ace_step"):
         _patch_ace_step(api)
@@ -384,7 +400,7 @@ def _patch_gguf(api: dict[str, Any]) -> None:
             inputs["vae_name"] = FLUX_VAE
 
 
-def _patch_wanvideo_wrapper(api: dict[str, Any]) -> None:
+def _patch_wanvideo_wrapper(api: dict[str, Any], *, attention_profile: str) -> None:
     _strip_ui_only_nodes(api)
     for node in api.values():
         if not isinstance(node, dict):
@@ -399,9 +415,9 @@ def _patch_wanvideo_wrapper(api: dict[str, Any]) -> None:
                 inputs["base_precision"] = "fp16"
             if inputs.get("widget_1") == "fp16_fast":
                 inputs["widget_1"] = "fp16"
-            if inputs.get("attention_mode") == "sageattn":
+            if attention_profile == PORTABLE_ATTENTION_PROFILE and inputs.get("attention_mode") == "sageattn":
                 inputs["attention_mode"] = "sdpa"
-            if inputs.get("widget_4") == "sageattn":
+            if attention_profile == PORTABLE_ATTENTION_PROFILE and inputs.get("widget_4") == "sageattn":
                 inputs["widget_4"] = "sdpa"
         elif class_type == "ImageResizeKJv2":
             inputs.update({"width": 256, "height": 256, "widget_0": 256, "widget_1": 256})

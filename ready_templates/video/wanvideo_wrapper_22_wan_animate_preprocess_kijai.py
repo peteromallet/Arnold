@@ -240,10 +240,10 @@ def build() -> VibeWorkflow:
     )
     wanvideomodelloader = _node(wf, 'WanVideoModelLoader', '22',
         model='WanVideo\\2_2\\Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
-        base_precision='fp16_fast',
+        base_precision='fp16',
         quantization='disabled',
         load_device='offload_device',
-        attention_mode='sageattn',
+        attention_mode='sdpa',
         rms_norm_function='default',
         compile_args=wanvideotorchcompilesettings.out(0),
     )
@@ -543,4 +543,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

@@ -43,6 +43,8 @@ COMPILE_WIDGET_ALIAS_CLASS_TYPES: frozenset[str] = frozenset(
         "LTX2MemoryEfficientSageAttentionPatch",
         "LTX2_NAG",
         "LTX2SamplingPreviewOverride",
+        "LTXAddVideoICLoRAGuide",
+        "LTXICLoRALoaderModelOnly",
         "LTXVAddGuide",
         "LTXVChunkFeedForward",
         "LTXVConditioning",

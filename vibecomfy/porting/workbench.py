@@ -42,6 +42,23 @@ _KNOWN_RUNTIME_REQUIRED_INPUTS: dict[str, frozenset[str]] = {
             "save_output",
         }
     ),
+    "LTXICLoRALoaderModelOnly": frozenset({"lora_name", "model", "strength_model"}),
+    "LTXAddVideoICLoRAGuide": frozenset(
+        {
+            "crop",
+            "frame_idx",
+            "image",
+            "latent",
+            "latent_downscale_factor",
+            "negative",
+            "positive",
+            "strength",
+            "tile_overlap",
+            "tile_size",
+            "use_tiled_encode",
+            "vae",
+        }
+    ),
 }
 
 _KNOWN_DYNAMIC_COMBO_SELECTORS: dict[str, frozenset[str]] = {

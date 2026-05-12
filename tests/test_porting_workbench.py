@@ -243,6 +243,50 @@ def test_analyze_source_rejects_ltx_memory_efficient_sage_patch_for_standard_run
     assert payload["ok"] is False
 
 
+def test_analyze_source_rejects_missing_ltx_iclora_runtime_inputs(tmp_path: Path) -> None:
+    path = tmp_path / "workflow.json"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {
+                    "class_type": "LTXICLoRALoaderModelOnly",
+                    "inputs": {"model": ["3", 0], "lora_name": "ltxv/ltx2/control.safetensors"},
+                },
+                "2": {
+                    "class_type": "LTXAddVideoICLoRAGuide",
+                    "inputs": {
+                        "image": ["4", 0],
+                        "latent": ["5", 0],
+                        "latent_downscale_factor": ["1", 1],
+                        "negative": ["6", 1],
+                        "positive": ["6", 0],
+                        "vae": ["7", 0],
+                    },
+                },
+                "3": {"class_type": "ModelSource", "inputs": {}},
+                "4": {"class_type": "ImageSource", "inputs": {}},
+                "5": {"class_type": "LatentSource", "inputs": {}},
+                "6": {"class_type": "ConditioningSource", "inputs": {}},
+                "7": {"class_type": "VaeSource", "inputs": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_source(str(path), schema_provider=FakeSchemaProvider({}))
+    payload = report.to_json()
+    missing = {
+        (issue["class_type"], issue["detail"]["input"])
+        for issue in payload["diagnostics"]
+        if issue["code"] == "known_runtime_required_input_missing"
+    }
+
+    assert ("LTXICLoRALoaderModelOnly", "strength_model") in missing
+    for input_name in {"crop", "frame_idx", "strength", "tile_overlap", "tile_size", "use_tiled_encode"}:
+        assert ("LTXAddVideoICLoRAGuide", input_name) in missing
+    assert payload["ok"] is False
+
+
 def test_analyze_source_rejects_ltx_preview_override_for_headless_runpod(tmp_path: Path) -> None:
     path = tmp_path / "workflow.json"
     path.write_text(
