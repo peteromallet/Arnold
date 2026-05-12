@@ -832,6 +832,43 @@ def extract_session_id(raw: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _extract_claude_usage(envelope: dict[str, Any] | None) -> tuple[int, int]:
+    """Return ``(prompt_tokens, completion_tokens)`` from a Claude envelope.
+
+    The Claude CLI emits a ``usage`` dict like::
+
+        {
+            "input_tokens": 123,
+            "cache_read_input_tokens": 456,
+            "cache_creation_input_tokens": 78,
+            "output_tokens": 90,
+        }
+
+    Cached and uncached input are summed into ``prompt_tokens``. Missing or
+    non-numeric fields default to ``0``. Returns ``(0, 0)`` if ``envelope``
+    is missing or lacks a ``usage`` dict.
+    """
+    if not isinstance(envelope, dict):
+        return 0, 0
+    usage = envelope.get("usage")
+    if not isinstance(usage, dict):
+        return 0, 0
+
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    prompt_tokens = (
+        _safe_int(usage.get("input_tokens"))
+        + _safe_int(usage.get("cache_read_input_tokens"))
+        + _safe_int(usage.get("cache_creation_input_tokens"))
+    )
+    completion_tokens = _safe_int(usage.get("output_tokens"))
+    return prompt_tokens, completion_tokens
+
+
 def parse_claude_envelope(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
         envelope = json.loads(raw)
@@ -1848,6 +1885,7 @@ def run_claude_step(
         validate_payload(step, payload)
     except CliError as error:
         raise CliError(error.code, error.message, extra={"raw_output": raw}) from error
+    prompt_tokens, completion_tokens = _extract_claude_usage(envelope)
     return WorkerResult(
         payload=payload,
         raw_output=raw,
@@ -1855,6 +1893,9 @@ def run_claude_step(
         cost_usd=float(envelope.get("total_cost_usd", 0.0) or 0.0),
         session_id=str(envelope.get("session_id") or session_id),
         rendered_prompt=prompt,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
     )
 
 

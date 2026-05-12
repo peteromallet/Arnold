@@ -1206,6 +1206,9 @@ def handle_execute_auto_loop(
     trace_chunks: list[str] = []
     total_duration_ms = 0
     total_cost_usd = 0.0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_total_tokens = 0
     timeout_error: CliError | None = None
     latest_session_id: str | None = None
     blocking_reasons: list[str] = []
@@ -1288,6 +1291,9 @@ def handle_execute_auto_loop(
 
         total_duration_ms += result.worker.duration_ms
         total_cost_usd += result.worker.cost_usd
+        total_prompt_tokens += int(result.worker.prompt_tokens or 0)
+        total_completion_tokens += int(result.worker.completion_tokens or 0)
+        total_total_tokens += int(result.worker.total_tokens or 0)
         latest_session_id = result.worker.session_id
         apply_session_update(
             state,
@@ -1477,6 +1483,9 @@ def handle_execute_auto_loop(
         cost_usd=total_cost_usd,
         session_id=latest_session_id,
         trace_output="".join(trace_chunks) if trace_chunks else None,
+        prompt_tokens=total_prompt_tokens,
+        completion_tokens=total_completion_tokens,
+        total_tokens=total_total_tokens,
     )
     receipt_metrics = execute_metrics(aggregate_payload, drift)
     receipt_metrics["batches"] = batch_payloads

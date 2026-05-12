@@ -701,6 +701,45 @@ def test_auto_attribute_auto_loop_hermes_style_reaches_executed(
     )
 
 
+def test_auto_loop_aggregates_worker_tokens_into_receipt(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: dispatch_execute_auto_loop must sum per-batch worker tokens
+    into the aggregate step_receipt_execute_v*.json. Previously the auto-loop
+    dropped prompt_tokens / completion_tokens on the floor (always recorded 0)
+    even when the underlying hermes worker reported real usage."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+
+    base_worker = _hermes_style_worker(plan_fixture.project_dir)
+
+    def token_emitting_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        worker_result, agent, mode, refreshed = base_worker(
+            step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override
+        )
+        # Simulate a real hermes/deepseek invocation reporting token usage.
+        worker_result.prompt_tokens = 12_345
+        worker_result.completion_tokens = 678
+        worker_result.total_tokens = 13_023
+        return worker_result, agent, mode, refreshed
+
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        token_emitting_worker,
+    )
+
+    response = _execute_auto_loop_direct(plan_fixture)
+    assert response["success"] is True
+
+    receipt_path = plan_fixture.plan_dir / "step_receipt_execute_v1.json"
+    assert receipt_path.exists(), "execute receipt was not written"
+    receipt = read_json(receipt_path)
+    assert receipt["prompt_tokens"] == 12_345, receipt
+    assert receipt["completion_tokens"] == 678, receipt
+
+
 def test_auto_attribute_robust_auto_loop_avoids_scope_drift_blocker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -18,6 +18,7 @@ from megaplan.workers import (
     _codex_child_env,
     _codex_timeout_for_step,
     _external_worker_env,
+    _extract_claude_usage,
     _merge_partial_output,
     WorkerResult,
     extract_session_id,
@@ -50,6 +51,32 @@ def test_parse_claude_envelope_prefers_structured_output() -> None:
     envelope, payload = parse_claude_envelope(raw)
     assert envelope["total_cost_usd"] == 0.01
     assert payload == {"plan": "x"}
+
+
+def test_extract_claude_usage_sums_input_and_cache_tokens() -> None:
+    envelope = {
+        "usage": {
+            "input_tokens": 100,
+            "cache_read_input_tokens": 400,
+            "cache_creation_input_tokens": 50,
+            "output_tokens": 200,
+        }
+    }
+    prompt, completion = _extract_claude_usage(envelope)
+    assert prompt == 550
+    assert completion == 200
+
+
+def test_extract_claude_usage_handles_missing_or_invalid() -> None:
+    # No envelope.
+    assert _extract_claude_usage(None) == (0, 0)
+    # No usage key.
+    assert _extract_claude_usage({}) == (0, 0)
+    # usage is not a dict.
+    assert _extract_claude_usage({"usage": "bogus"}) == (0, 0)
+    # Partial / non-numeric fields default to 0.
+    envelope = {"usage": {"input_tokens": "55", "output_tokens": None}}
+    assert _extract_claude_usage(envelope) == (55, 0)
 
 
 def test_external_worker_env_strips_progress_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1066,6 +1093,12 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
         "structured_output": plan_payload,
         "total_cost_usd": 0.05,
         "session_id": "sess-abc",
+        "usage": {
+            "input_tokens": 1000,
+            "cache_read_input_tokens": 4000,
+            "cache_creation_input_tokens": 500,
+            "output_tokens": 250,
+        },
     })
     fake_result = CommandResult(
         command=["claude"],
@@ -1081,6 +1114,9 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
     assert result.cost_usd == 0.05
     assert result.session_id == "sess-abc"
     assert result.duration_ms == 500
+    assert result.prompt_tokens == 5500
+    assert result.completion_tokens == 250
+    assert result.total_tokens == 5750
 
 
 def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
