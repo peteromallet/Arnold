@@ -70,6 +70,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from megaplan.fireworks_pricing import FIREWORKS_PRICING, cost_from_usage  # noqa: E402
+from megaplan.claude_pricing import (  # noqa: E402
+    DEFAULT_PROMPT_COMPLETION_RATIO,
+    estimate_tokens_from_cost,
+)
 
 
 DEFAULT_SCAN_ROOTS = [
@@ -88,6 +92,9 @@ class Summary:
     hermes_cost_total_usd: float = 0.0
     execute_tokens_filled: int = 0
     execute_tokens_total: int = 0
+    claude_tokens_estimated: int = 0
+    claude_tokens_estimated_total: int = 0
+    claude_tokens_estimated_total_cost_usd: float = 0.0
     claude_tokens_unrecoverable: int = 0
     already_backfilled: int = 0
     skipped_unknown_model: dict[str, int] = field(default_factory=lambda: defaultdict(int))
@@ -145,7 +152,16 @@ def _try_aggregate_batches(plan_dir: Path) -> tuple[int, int] | None:
     return total_prompt, total_completion
 
 
-def _enrich_receipt(receipt_path: Path, dry_run: bool, summary: Summary, verbose: bool) -> bool:
+def _enrich_receipt(
+    receipt_path: Path,
+    dry_run: bool,
+    summary: Summary,
+    verbose: bool,
+    *,
+    estimate_claude_tokens: bool = False,
+    claude_ratio: float = DEFAULT_PROMPT_COMPLETION_RATIO,
+    assume_claude_model: str = "claude-opus-4",
+) -> bool:
     """Returns True if a change was made (or would be in dry-run)."""
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -209,9 +225,31 @@ def _enrich_receipt(receipt_path: Path, dry_run: bool, summary: Summary, verbose
                         summary.hermes_cost_filled += 1
                         summary.hermes_cost_total_usd += computed
 
-    # --- 3. Claude tokens — flag, do not invent ---
+    # --- 3. Claude tokens — estimate from cost (lossy) ---
     if agent == "claude" and cost > 0.0 and p_tok == 0 and c_tok == 0:
-        summary.claude_tokens_unrecoverable += 1
+        if estimate_claude_tokens:
+            # Use model_actual if it's a real model id; otherwise assume default family.
+            # Strings like "claude", "claude:low", "claude:high" are profile slots,
+            # not model ids — fall back to the assumed family for those.
+            model_for_estimate = model if (model and "-" in (model.rsplit("/", 1)[-1])) else assume_claude_model
+            estimate = estimate_tokens_from_cost(cost, model_for_estimate, ratio=claude_ratio)
+            if estimate is not None:
+                est_p, est_c = estimate
+                updates["prompt_tokens_backfilled"] = est_p
+                updates["completion_tokens_backfilled"] = est_c
+                updates["total_tokens_backfilled"] = est_p + est_c
+                updates["claude_estimate_ratio"] = claude_ratio
+                updates["claude_estimate_model"] = model_for_estimate
+                sources.append(
+                    f"claude_pricing_estimate(ratio={claude_ratio:g}:1,model={model_for_estimate})"
+                )
+                summary.claude_tokens_estimated += 1
+                summary.claude_tokens_estimated_total += est_p + est_c
+                summary.claude_tokens_estimated_total_cost_usd += cost
+            else:
+                summary.claude_tokens_unrecoverable += 1
+        else:
+            summary.claude_tokens_unrecoverable += 1
 
     if not updates:
         return False
@@ -274,6 +312,33 @@ def main() -> int:
         action="store_true",
         help="Print every receipt that gets a change.",
     )
+    parser.add_argument(
+        "--estimate-claude-tokens",
+        action="store_true",
+        help=(
+            "Reverse-estimate prompt/completion tokens for Claude receipts that "
+            "captured cost_usd but no tokens. Lossy — assumes a fixed "
+            "prompt:completion ratio. Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--claude-ratio",
+        type=float,
+        default=DEFAULT_PROMPT_COMPLETION_RATIO,
+        help=(
+            "Prompt:completion token ratio assumed when estimating Claude "
+            f"tokens from cost. Default {DEFAULT_PROMPT_COMPLETION_RATIO:g}:1."
+        ),
+    )
+    parser.add_argument(
+        "--assume-claude-model",
+        default="claude-opus-4",
+        help=(
+            "Claude model family to assume when model_actual is missing or "
+            "generic (e.g. 'claude:low'). Default 'claude-opus-4' (megaplan's "
+            "default premium slot)."
+        ),
+    )
     args = parser.parse_args()
 
     roots = args.root or DEFAULT_SCAN_ROOTS
@@ -284,7 +349,15 @@ def main() -> int:
     summary = Summary()
     changed = 0
     for receipt_path in receipts:
-        if _enrich_receipt(receipt_path, dry_run=not args.apply, summary=summary, verbose=args.verbose):
+        if _enrich_receipt(
+            receipt_path,
+            dry_run=not args.apply,
+            summary=summary,
+            verbose=args.verbose,
+            estimate_claude_tokens=args.estimate_claude_tokens,
+            claude_ratio=args.claude_ratio,
+            assume_claude_model=args.assume_claude_model,
+        ):
             changed += 1
 
     print()
@@ -304,6 +377,11 @@ def main() -> int:
     print(f"  receipts:                     {summary.execute_tokens_filled}")
     print(f"  total tokens recovered:       {summary.execute_tokens_total:,}")
     print()
+    if summary.claude_tokens_estimated > 0:
+        print("Claude tokens estimated (lossy — ratio-based reverse):")
+        print(f"  receipts:                     {summary.claude_tokens_estimated}")
+        print(f"  total tokens estimated:       {summary.claude_tokens_estimated_total:,}")
+        print(f"  total cost covered:           ${summary.claude_tokens_estimated_total_cost_usd:,.2f}")
     print(f"Claude receipts missing tokens (unrecoverable): {summary.claude_tokens_unrecoverable}")
     if summary.skipped_unknown_model:
         print()
