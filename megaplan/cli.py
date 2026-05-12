@@ -1260,15 +1260,24 @@ def _filter_feedback_rows(rows: list[dict[str, Any]], args: argparse.Namespace) 
         fb = row.get("feedback") or {}
         overall = (fb.get("overall") or {})
         rating = overall.get("rating")
+        if rating is None:
+            rating = overall.get("ai_rating")
         if min_rating is not None and (rating is None or rating < min_rating):
             return False
         if max_rating is not None and (rating is None or rating > max_rating):
             return False
-        if has_comment and not (overall.get("comment") or "").strip():
-            return False
+        if has_comment:
+            comment = (overall.get("comment") or "").strip() or (overall.get("ai_comment") or "").strip()
+            if not comment:
+                return False
         if stage:
             stage_entry = (fb.get("stages") or {}).get(stage)
-            if not stage_entry or stage_entry.get("rating") is None:
+            if not stage_entry:
+                return False
+            stage_rating = stage_entry.get("rating")
+            if stage_rating is None:
+                stage_rating = stage_entry.get("ai_rating")
+            if stage_rating is None:
                 return False
         return True
 
@@ -1286,6 +1295,8 @@ def _render_feedback_table(rows: list[dict[str, Any]]) -> str:
         fb = row.get("feedback") or {}
         overall = (fb.get("overall") or {})
         rating = overall.get("rating")
+        if rating is None:
+            rating = overall.get("ai_rating")
         rating_s = f"{rating}/10" if rating is not None else "—"
         repo = str(row.get("repo") or "")
         if len(repo) > 40:
@@ -1296,7 +1307,7 @@ def _render_feedback_table(rows: list[dict[str, Any]]) -> str:
             f"{rating_s:>4}  "
             f"{(row.get('backend') or '?'):<4} {repo}"
         )
-        comment = (overall.get("comment") or "").strip()
+        comment = (overall.get("comment") or "").strip() or (overall.get("ai_comment") or "").strip()
         if comment:
             first_line = comment.splitlines()[0]
             if len(first_line) > 70:

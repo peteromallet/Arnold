@@ -596,6 +596,31 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["diagnosis", "fix_description", "files_to_change", "confidence", "outcome", "should_pause"],
     },
+    "feedback.json": {
+        "type": "object",
+        "properties": {
+            "overall": {
+                "type": "object",
+                "properties": {
+                    "rating": {"type": "integer", "minimum": 0, "maximum": 10},
+                    "comment": {"type": "string"},
+                },
+                "required": ["rating", "comment"],
+            },
+            "stages": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "rating": {"type": "integer", "minimum": 0, "maximum": 10},
+                        "comment": {"type": "string"},
+                    },
+                    "required": ["rating", "comment"],
+                },
+            },
+        },
+        "required": ["overall", "stages"],
+    },
     "review.json": {
         "x-preserve-explicit-required": True,
         "type": "object",

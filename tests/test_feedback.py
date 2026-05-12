@@ -81,7 +81,7 @@ def test_load_feedback_returns_none_when_missing(tmp_path: Path) -> None:
 
 def test_load_feedback_round_trip(tmp_path: Path) -> None:
     (tmp_path / FEEDBACK_FILENAME).write_text(
-        render_template("p").replace("## Overall\n\nrating:", "## Overall\n\nrating: 7"),
+        render_template("p").replace("## Overall\n\nai_rating:", "## Overall\n\nrating: 7\nai_rating:"),
         encoding="utf-8",
     )
     fb = load_feedback(tmp_path)
