@@ -164,6 +164,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["depth"] = args.depth
     if getattr(args, "with_prep", False):
         state["config"]["with_prep"] = True
+    if getattr(args, "with_feedback", False):
+        state["config"]["with_feedback"] = True
     if normalized_output_path is not None:
         state["config"]["output_path"] = normalized_output_path
     if raw_form:

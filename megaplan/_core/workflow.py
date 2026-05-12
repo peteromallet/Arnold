@@ -22,6 +22,7 @@ from megaplan.types import (
     STATE_INITIALIZED,
     STATE_PLANNED,
     STATE_PREPPED,
+    STATE_REVIEWED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
@@ -200,6 +201,18 @@ def _with_prep_from_state(state: PlanState) -> bool:
     return bool(config.get("with_prep", False))
 
 
+def _with_feedback_from_state(state: PlanState) -> bool:
+    """Read the ``with_feedback`` flag persisted at init.
+
+    Returns ``False`` when the key is missing or the config block is
+    malformed — matches the flag's default-off semantics.
+    """
+    config = state.get("config", {})
+    if not isinstance(config, dict):
+        return False
+    return bool(config.get("with_feedback", False))
+
+
 def _resolve_overrides(robustness: str, *, creative: bool) -> dict[str, list[Transition]]:
     if not creative:
         return _ROBUSTNESS_OVERRIDES.get(robustness, {})
@@ -223,6 +236,7 @@ def _workflow_for_robustness(
     *,
     creative: bool = False,
     with_prep: bool = False,
+    with_feedback: bool = False,
 ) -> dict[str, list[Transition]]:
     normalized = _normalize_workflow_robustness(robustness)
     merged = dict(WORKFLOW)
@@ -234,6 +248,14 @@ def _workflow_for_robustness(
     # that replacement here so the default WORKFLOW transition wins.
     if with_prep:
         merged[STATE_INITIALIZED] = list(WORKFLOW[STATE_INITIALIZED])
+    # When --with-feedback was set at init, feedback runs regardless of
+    # robustness. Light/tiny set STATE_EXECUTED: [] to skip review; we
+    # undo that so review can run (feedback needs it). We also rewire
+    # STATE_EXECUTED → review → STATE_REVIEWED (instead of STATE_DONE)
+    # and add STATE_REVIEWED → feedback → STATE_DONE.
+    if with_feedback:
+        merged[STATE_EXECUTED] = [Transition("review", STATE_REVIEWED)]
+        merged[STATE_REVIEWED] = [Transition("feedback", STATE_DONE)]
     return merged
 
 
@@ -259,10 +281,16 @@ def _transition_matches(state: PlanState, condition: str) -> bool:
     return False
 
 
-def workflow_includes_step(robustness: str, step: str, *, with_prep: bool = False) -> bool:
+def workflow_includes_step(
+    robustness: str,
+    step: str,
+    *,
+    with_prep: bool = False,
+    with_feedback: bool = False,
+) -> bool:
     if step == "step":
         return True
-    workflow = _workflow_for_robustness(robustness, with_prep=with_prep)
+    workflow = _workflow_for_robustness(robustness, with_prep=with_prep, with_feedback=with_feedback)
     return any(
         transition.next_step == step
         for transitions in workflow.values()
@@ -278,6 +306,7 @@ def workflow_transition(state: PlanState, step: str) -> Transition | None:
         _workflow_robustness_from_state(state),
         creative=is_creative_mode(state),
         with_prep=_with_prep_from_state(state),
+        with_feedback=_with_feedback_from_state(state),
     )
     for transition in workflow.get(current, []):
         if transition.next_step == step and _transition_matches(state, transition.condition):
@@ -293,6 +322,7 @@ def workflow_next(state: PlanState) -> list[str]:
         _workflow_robustness_from_state(state),
         creative=is_creative_mode(state),
         with_prep=_with_prep_from_state(state),
+        with_feedback=_with_feedback_from_state(state),
     )
     next_steps = [
         transition.next_step
@@ -337,6 +367,7 @@ _RESUME_ACTIVE_STATES: dict[str, str] = {
     "finalize": "gated",
     "execute": "finalized",
     "review": "executed",
+    "feedback": "reviewed",
 }
 
 
