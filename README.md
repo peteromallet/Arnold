@@ -164,6 +164,52 @@ megaplan config set orchestration.mode subagent   # default
 megaplan config set orchestration.mode inline      # switch back
 ```
 
+## Database mode
+
+By default megaplan keeps state in `.megaplan/` on local disk. Switch to a Supabase Postgres database when you want shared state across machines, cloud runs, or multi-agent setups. Paste this to your agent:
+
+```
+Please set megaplan up in database mode.
+
+0. Install the DB extra (psycopg lives behind it):
+
+     pip install 'megaplan-harness[db]'
+
+1. Connection string. If SUPABASE_DB_URL isn't already exported, ask me which
+   Supabase project to use, then walk me through fetching it:
+     Supabase dashboard → Project Settings → Database → Connection string.
+   Use the **Direct connection** URI (port 5432) — NOT the transaction-mode
+   pooler (port 6543), which drops the session config var that `set_actor`
+   relies on. The password is the one I picked when I created the project;
+   I can reset it from the same page if I've forgotten it. Export it as
+   SUPABASE_DB_URL.
+
+2. Schema. Apply every file in supabase/migrations/*.sql, in filename order,
+   against SUPABASE_DB_URL. Use `supabase db push` if I have the Supabase CLI
+   linked; otherwise loop `psql "$SUPABASE_DB_URL" -f <file>`.
+
+3. Register me as an actor. Pick a short slug for me (e.g. my GitHub handle),
+   then run:
+
+     python -c "import uuid; from megaplan.store.db import DBStore; \
+     DBStore().create_automation_actor(actor_id='<slug>', name='<my name>', \
+     granted_epic_ids='*', actor_kind='human', idempotency_key=str(uuid.uuid4()))"
+
+   Add `export MEGAPLAN_ACTOR_ID=<slug>` to my shell profile. That env var
+   alone is enough to switch megaplan into DB mode — no per-command flag.
+
+4. Optional — blob uploads. To stash large artifacts in Supabase Storage
+   instead of `.megaplan/db-blobs/`, first create a bucket under the
+   dashboard's Storage tab (private is fine), then export:
+     - SUPABASE_URL              → Project Settings → API → Project URL
+     - SUPABASE_SERVICE_ROLE_KEY → Project Settings → API → `service_role` key
+       (sensitive; server-side only — never commit or expose to a browser)
+     - SUPABASE_STORAGE_BUCKET   → the bucket name from the step above
+
+Confirm by running `megaplan init "test idea"` and checking that a row lands
+in the `epics` table.
+```
+
 ## Configuration & Defaults
 
 View all settings with `megaplan config show`. Override with `megaplan config set <key> <value>`. Reset with `megaplan config reset`.
