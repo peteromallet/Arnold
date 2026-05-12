@@ -708,7 +708,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=True,
+        widget_5=False,
         model=ltxvchunkfeedforward.out(0),
     )
     setnode_34 = _node(wf, 'SetNode', '5293',

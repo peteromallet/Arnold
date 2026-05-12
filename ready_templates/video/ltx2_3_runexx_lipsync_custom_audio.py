@@ -467,7 +467,7 @@ def build() -> VibeWorkflow:
         widget_20='#222222',
         widget_3=True,
         widget_4=True,
-        widget_5=True,
+        widget_5=False,
         widget_6=True,
         widget_7=True,
         widget_8=True,
@@ -580,7 +580,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=True,
+        widget_5=False,
         model=ltxvchunkfeedforward.out(0),
     )
     ltxvpreprocessmasks = _node(wf, 'LTXVPreprocessMasks', '720',

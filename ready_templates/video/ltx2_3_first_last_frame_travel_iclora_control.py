@@ -189,7 +189,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=True,
+        widget_5=False,
         model=chunked.out(0),
     )
     ic_lora = _node(

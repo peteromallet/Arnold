@@ -53,6 +53,8 @@ python -m vibecomfy.cli validate ready_templates/<media>/<id>.py
 
 Validation also carries small runtime-compatibility gates for issues schema alone cannot express. One example is LTX audio VAE loading: use `LTXVAudioVAELoader` with the file staged under `checkpoints`; the known-bad `VAELoaderKJ` plus `LTX*_audio_vae*.safetensors` pairing is rejected before RunPod because KJNodes can misclassify that file shape as a normal VAE.
 
+For LTX 2.3 templates that use `LTX2AttentionTunerPatch`, keep `triton_kernels=False` unless that acceleration path has been separately validated on the target RunPod image. The default RTX 4090 validation profile prioritizes portable execution over optional Triton speedups.
+
 Use `--head-check-models` only when you intentionally want model URL HEAD checks. Normal `port check`, `doctor`, `validate`, `fetch`, and `run` paths stay offline by default.
 
 ## Checklist
