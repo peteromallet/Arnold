@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
@@ -31,6 +31,23 @@ _CLASS_TYPE_SUBDIRS = {
     "UNETLoader": "diffusion_models",
     "UnetLoaderGGUF": "diffusion_models",
 }
+
+_MODEL_INPUT_SUBDIRS = {
+    "ckpt_name": "checkpoints",
+    "clip_name": "text_encoders",
+    "clip_name1": "text_encoders",
+    "clip_name2": "text_encoders",
+    "lora_name": "loras",
+    "model_name": "diffusion_models",
+    "text_encoder": "text_encoders",
+    "unet_name": "diffusion_models",
+    "upscale_model": "upscale_models",
+    "vae_name": "vae",
+}
+
+if TYPE_CHECKING:
+    from vibecomfy.registry.models_loader import ModelEntry
+    from vibecomfy.workflow import VibeWorkflow
 
 _HF_SPLIT_FILES_RE = re.compile(r"/split_files/([^/]+)/[^/]+$")
 
@@ -84,6 +101,37 @@ def entries_from_scratchpad_path(path: str | Path) -> list[dict[str, str]]:
     return []
 
 
+def resolve_referenced_assets(
+    workflow: VibeWorkflow,
+    *,
+    registry: Sequence[ModelEntry] | None = None,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Resolve model-picker inputs in a built workflow to downloadable assets.
+
+    Authored ``model_assets`` is still the preferred place for bespoke URLs, but
+    runtime workflows can patch model picker fields dynamically. This resolver
+    prevents those final values from drifting away from the files staged by
+    ``--ensure-models``.
+    """
+    from vibecomfy.registry.models_loader import load_registry
+
+    entries = tuple(registry) if registry is not None else load_registry()
+    resolved: list[dict[str, str]] = []
+    unresolved: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for reference in _referenced_model_values(workflow):
+        asset = _asset_for_reference(reference, registry=entries)
+        if asset is None:
+            unresolved.append(reference)
+            continue
+        key = (asset["name"], asset["subdir"])
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(asset)
+    return resolved, unresolved
+
+
 def _literal_eval_with_constants(node: ast.AST, constants: Mapping[str, Any]) -> Any:
     if isinstance(node, ast.Name) and node.id in constants:
         return constants[node.id]
@@ -114,6 +162,71 @@ def _entries_from_node(node: Mapping[str, Any]) -> Iterable[dict[str, str]]:
         if entry is not None:
             entries.append(entry)
     return entries
+
+
+def _referenced_model_values(workflow: VibeWorkflow) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for node in workflow.runtime_nodes().values():
+        for field, value in node.inputs.items():
+            if field not in _MODEL_INPUT_SUBDIRS or not isinstance(value, str) or not value:
+                continue
+            if _looks_like_runtime_input(value):
+                continue
+            subdir = _MODEL_INPUT_SUBDIRS[field]
+            key = (node.id, node.class_type, field, value)
+            if key in seen:
+                continue
+            seen.add(key)
+            references.append(
+                {
+                    "node_id": node.id,
+                    "class_type": node.class_type,
+                    "field": field,
+                    "value": value,
+                    "subdir": subdir,
+                }
+            )
+    return references
+
+
+def _asset_for_reference(
+    reference: Mapping[str, str],
+    *,
+    registry: Sequence[ModelEntry],
+) -> dict[str, str] | None:
+    value = reference["value"].replace("\\", "/")
+    subdir = reference["subdir"].replace("\\", "/")
+    expected_paths = {f"{subdir}/{value}", f"{subdir}/{Path(value).name}"}
+    for entry in registry:
+        for target in entry.targets:
+            target_path = target.path.replace("\\", "/")
+            if target_path not in expected_paths and not target_path.endswith(f"/{value}"):
+                continue
+            url = _url_for_registry_entry(entry)
+            if not url:
+                return None
+            if target_path.startswith(f"{subdir}/"):
+                name = target_path[len(subdir) + 1 :]
+                asset_subdir = subdir
+            else:
+                name = Path(target_path).name
+                asset_subdir = str(Path(target_path).parent)
+            return {"name": name, "url": url, "subdir": asset_subdir}
+    return None
+
+
+def _url_for_registry_entry(entry: ModelEntry) -> str | None:
+    source = entry.source
+    if source.url:
+        return source.url
+    if source.kind == "huggingface" and source.repo and source.filename:
+        return f"https://huggingface.co/{source.repo}/resolve/main/{source.filename}"
+    return None
+
+
+def _looks_like_runtime_input(value: str) -> bool:
+    return value.startswith(("http://", "https://", "/", "./", "../")) or value in {"none", "None"}
 
 
 def _normalise_requirement_entries(models: Iterable[Any]) -> list[dict[str, str]]:
@@ -225,4 +338,9 @@ def _node_class_type(node: Mapping[str, Any]) -> str:
     return ""
 
 
-__all__ = ["HF_SPLIT_FILES_DIRS", "entries_from_scratchpad_path", "extract_from_raw_workflow"]
+__all__ = [
+    "HF_SPLIT_FILES_DIRS",
+    "entries_from_scratchpad_path",
+    "extract_from_raw_workflow",
+    "resolve_referenced_assets",
+]

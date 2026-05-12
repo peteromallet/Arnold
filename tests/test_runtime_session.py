@@ -1384,9 +1384,9 @@ def test_embedded_run_ensure_models_downloads_declared_assets(
     workflow = _workflow()
     workflow.metadata["model_assets"] = [
         {
-            "name": "model.safetensors",
+            "name": "model-a.safetensors",
             "url": "https://example.test/model.safetensors",
-            "directory": "diffusion_models/WanVideo",
+            "directory": "checkpoints",
         }
     ]
 
@@ -1415,9 +1415,59 @@ def test_embedded_run_ensure_models_downloads_declared_assets(
     assert calls == [
         [
             {
-                "name": "model.safetensors",
+                "name": "model-a.safetensors",
                 "url": "https://example.test/model.safetensors",
-                "subdir": "diffusion_models/WanVideo",
+                "subdir": "checkpoints",
+            }
+        ],
+        "queue",
+    ]
+
+
+def test_embedded_run_ensure_models_resolves_registry_assets_from_final_workflow(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-resolution", WorkflowSource("asset-resolution"))
+    workflow.nodes["5011"] = VibeNode(
+        "5011",
+        "LTXICLoRALoaderModelOnly",
+        inputs={"lora_name": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors"},
+    )
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-resolved-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+                "url": "https://huggingface.co/qqceqqq/LTX-2.3-22b-IC-LoRA-Union-Control/resolve/main/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+                "subdir": "loras",
             }
         ],
         "queue",

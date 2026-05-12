@@ -24,10 +24,13 @@ Use `<workflow>` as a ready id, scratchpad path, raw JSON path, or indexed workf
 | Validate an authored scratchpad or ready template | `python -m vibecomfy.cli validate <scratchpad-or-template.py>` |
 | Diagnose runtime readiness and suggested fixes | `python -m vibecomfy.cli doctor <workflow>` |
 | See custom-node packs to install | `python -m vibecomfy.cli nodes install-plan <workflow>` |
-| Fetch declared model assets | `python -m vibecomfy.cli fetch <workflow>` |
+| Reconcile and fetch final runtime model assets | `python -m vibecomfy.cli run <workflow> --runtime embedded` |
+| Fetch authored model asset metadata only | `python -m vibecomfy.cli fetch <workflow>` |
 | Check model URLs without downloading bodies | `python -m vibecomfy.cli port check <workflow> --head-check-models --json` |
 
 `--head-check-models` is opt-in. It performs HEAD requests only, follows redirects, records status codes, and does not download model bodies. Keep normal `run`, `doctor`, `validate`, and `fetch` behavior offline unless you intentionally ask for URL checks.
+
+Embedded `run` reconciles model assets by default. It inspects the final built workflow after scratchpad patches, resolves model-picker values such as `ckpt_name`, `vae_name`, `unet_name`, and `lora_name` through authored `model_assets` and `vibecomfy/registry/models.yaml`, downloads/stages resolved files, and fails before queueing if a referenced asset cannot be resolved. Use `--no-ensure-models` only for compile-only work where downloads are intentionally disabled.
 
 ## What `port check` Reports
 

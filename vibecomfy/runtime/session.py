@@ -45,12 +45,38 @@ def _node_packs_from_requirements(workflow: VibeWorkflow):
 
 
 def _model_assets_from_workflow(workflow: VibeWorkflow) -> list[dict[str, str]]:
-    from vibecomfy.model_assets import _normalise_requirement_entries
+    from vibecomfy.model_assets import _normalise_requirement_entries, resolve_referenced_assets
 
     raw_assets = workflow.metadata.get("model_assets", [])
-    if not isinstance(raw_assets, list):
-        return []
-    return _normalise_requirement_entries(raw_assets)
+    authored = _normalise_requirement_entries(raw_assets) if isinstance(raw_assets, list) else []
+    resolved, unresolved = resolve_referenced_assets(workflow)
+    authored_keys = {
+        (entry["name"], entry["subdir"])
+        for entry in authored
+        if isinstance(entry.get("name"), str) and isinstance(entry.get("subdir"), str)
+    }
+    unresolved = [
+        item
+        for item in unresolved
+        if (item["value"], item["subdir"]) not in authored_keys
+        and (Path(item["value"]).name, item["subdir"]) not in authored_keys
+    ]
+    if unresolved:
+        summary = ", ".join(
+            f"{item['class_type']} {item['node_id']}.{item['field']}={item['value']!r}"
+            for item in unresolved[:8]
+        )
+        more = "" if len(unresolved) <= 8 else f" (+{len(unresolved) - 8} more)"
+        raise RuntimeError(f"unresolved workflow model assets: {summary}{more}")
+    entries: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in [*authored, *resolved]:
+        key = (entry["name"], entry["subdir"])
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(entry)
+    return entries
 
 
 @dataclass(slots=True)

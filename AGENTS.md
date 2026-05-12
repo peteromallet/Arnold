@@ -21,6 +21,7 @@ This skill teaches an agent how to use it. The user wants to: **grab a template,
 - Exercise the CLI locally with `python -m vibecomfy.cli ...`.
 - Sync indexes only when a task or test requires it: `python -m vibecomfy.cli sources sync`.
 - Before manually editing an imported workflow, converting raw JSON into a template, or launching RunPod validation, run `python -m vibecomfy.cli port check <workflow> --json` and use the report to resolve helper nodes, custom-node packs, schema issues, widget aliases, and model assets.
+- `vibecomfy run` reconciles model assets by default for embedded runs: it inspects the final built workflow, resolves model-picker values through `vibecomfy/registry/models.yaml`, downloads/stages what it can, and fails before queueing when a referenced asset is unresolved. Use `--no-ensure-models` only for compile-only/local work where downloads are intentionally disabled.
 
 ## CLI implementation guidance
 
@@ -238,7 +239,9 @@ python -m vibecomfy.cli nodes restore                   # match the lockfile
 
 **Models.** Stage models declared in `vibecomfy/registry/models.yaml`:
 ```bash
-python -m vibecomfy.cli fetch <wf>                      # fetch this workflow's declared assets
+python -m vibecomfy.cli run <wf> --runtime embedded     # reconciles/downloads model assets by default
+python -m vibecomfy.cli run <wf> --runtime embedded --no-ensure-models  # opt out only for compile-only work
+python -m vibecomfy.cli fetch <wf>                      # fetch this workflow's declared authored assets
 python -m vibecomfy.cli models stage --select-phase core
 ```
 
@@ -262,6 +265,8 @@ python -m vibecomfy.cli run out/scratchpads/<name>.py --runtime embedded
 python -m vibecomfy.cli run image/z_image --ready                 # run a ready template by id
 python -m vibecomfy.cli run image/z_image --ready --prompt "..." --seed 7 --steps 20
 ```
+
+Embedded runs reconcile model assets by default. If the final workflow contains a model-picker value such as `ckpt_name`, `vae_name`, `unet_name`, or `lora_name`, the runner resolves it against authored `model_assets` and `vibecomfy/registry/models.yaml` before queueing. Missing registry/authored coverage is a pre-run failure, not a Comfy queue failure. Use `--no-ensure-models` only when deliberately avoiding downloads.
 
 ```python
 from vibecomfy.runtime import run_embedded_sync

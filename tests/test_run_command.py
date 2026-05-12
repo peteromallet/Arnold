@@ -28,6 +28,9 @@ def _make_args(**overrides) -> argparse.Namespace:
         prompt=None,
         seed=None,
         steps=None,
+        memory_profile=None,
+        ensure_packs=False,
+        ensure_models=None,
     )
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -71,8 +74,8 @@ def _image_workflow() -> VibeWorkflow:
     return workflow
 
 
-def _stub_run(monkeypatch: pytest.MonkeyPatch, workflow: VibeWorkflow) -> list[VibeWorkflow]:
-    runs: list[VibeWorkflow] = []
+def _stub_run(monkeypatch: pytest.MonkeyPatch, workflow: VibeWorkflow) -> list[tuple[VibeWorkflow, dict]]:
+    runs: list[tuple[VibeWorkflow, dict]] = []
 
     monkeypatch.setattr("vibecomfy.commands.run.find_active_session", lambda _id: None)
     monkeypatch.setattr(
@@ -84,8 +87,8 @@ def _stub_run(monkeypatch: pytest.MonkeyPatch, workflow: VibeWorkflow) -> list[V
         lambda *args, **kwargs: workflow,
     )
 
-    def fake_run_embedded_sync(wf: VibeWorkflow, *, backend: str):
-        runs.append(wf)
+    def fake_run_embedded_sync(wf: VibeWorkflow, **kwargs):
+        runs.append((wf, kwargs))
         return types.SimpleNamespace(
             run_id="r",
             prompt_id="p",
@@ -141,7 +144,7 @@ def test_cmd_run_seed_remains_universal_for_unwired_overrides(
     rc = _cmd_run(_make_args(seed=123))
 
     assert rc == 0
-    assert runs == [workflow]
+    assert runs == [(workflow, {"backend": "api", "ensure_models": True})]
     assert capsys.readouterr().err == ""
 
 
@@ -154,7 +157,19 @@ def test_cmd_run_applies_prompt_and_steps_for_image_workflow(
     rc = _cmd_run(_make_args(prompt="a red cube", steps=8, seed=42))
 
     assert rc == 0
-    assert runs == [workflow]
+    assert runs == [(workflow, {"backend": "api", "ensure_models": True})]
     assert workflow.nodes["1"].inputs["text"] == "a red cube"
     assert workflow.nodes["2"].inputs["steps"] == 8
     assert workflow.nodes["2"].inputs["seed"] == 42
+
+
+def test_cmd_run_can_opt_out_of_default_model_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = _image_workflow()
+    runs = _stub_run(monkeypatch, workflow)
+
+    rc = _cmd_run(_make_args(ensure_models=False))
+
+    assert rc == 0
+    assert runs == [(workflow, {"backend": "api"})]

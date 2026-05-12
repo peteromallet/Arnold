@@ -255,21 +255,29 @@ def build() -> VibeWorkflow:
         wf,
         "ResizeImageMaskNode",
         "5026",
-        widget_0="scale to multiple",
-        widget_1=256,
+        widget_0="scale dimensions",
+        widget_1=1280,
         widget_2="lanczos",
         input=components.out(0),
-        _extras={"resize_type.multiple": ic_lora.out(1)},
+        _extras={
+            "resize_type.width": width.out(0),
+            "resize_type.height": height.out(0),
+            "resize_type.crop": "center",
+        },
     )
     guide_raw = _node(
         wf,
         "ResizeImageMaskNode",
         "6101",
-        widget_0="scale to multiple",
-        widget_1=256,
+        widget_0="scale dimensions",
+        widget_1=1280,
         widget_2="lanczos",
         input=guide_resized.out(0),
-        _extras={"resize_type.multiple": ic_lora.out(1)},
+        _extras={
+            "resize_type.width": width.out(0),
+            "resize_type.height": height.out(0),
+            "resize_type.crop": "center",
+        },
     )
     guide_pose = _node(
         wf,
@@ -299,31 +307,43 @@ def build() -> VibeWorkflow:
         wf,
         "ResizeImageMaskNode",
         "5028",
-        widget_0="scale to multiple",
-        widget_1=256,
+        widget_0="scale dimensions",
+        widget_1=1280,
         widget_2="lanczos",
         input=guide_canny_edges.out(0),
-        _extras={"resize_type.multiple": ic_lora.out(1)},
+        _extras={
+            "resize_type.width": width.out(0),
+            "resize_type.height": height.out(0),
+            "resize_type.crop": "center",
+        },
     )
     guide_pose_sized = _node(
         wf,
         "ResizeImageMaskNode",
         "6102",
-        widget_0="scale to multiple",
-        widget_1=256,
+        widget_0="scale dimensions",
+        widget_1=1280,
         widget_2="lanczos",
         input=guide_pose.out(0),
-        _extras={"resize_type.multiple": ic_lora.out(1)},
+        _extras={
+            "resize_type.width": width.out(0),
+            "resize_type.height": height.out(0),
+            "resize_type.crop": "center",
+        },
     )
     guide_depth_sized = _node(
         wf,
         "ResizeImageMaskNode",
         "6103",
-        widget_0="scale to multiple",
-        widget_1=256,
+        widget_0="scale dimensions",
+        widget_1=1280,
         widget_2="lanczos",
         input=guide_depth.out(0),
-        _extras={"resize_type.multiple": ic_lora.out(1)},
+        _extras={
+            "resize_type.width": width.out(0),
+            "resize_type.height": height.out(0),
+            "resize_type.crop": "center",
+        },
     )
 
     latent = _node(

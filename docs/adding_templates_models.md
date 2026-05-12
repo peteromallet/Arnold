@@ -13,6 +13,8 @@ The same gates apply from four starting points:
 
 Programmatic gates catch structure, schema, node packs, model assets, output contracts, index freshness, and live execution. Agent judgment is still required for source quality, model provenance, custom-node legitimacy, smoke-size adaptations, app/Wan2GP parity, and documenting intentional differences.
 
+Embedded `vibecomfy run` reconciles model assets by default. It checks the final built workflow, including scratchpad or fork patches, and resolves model-picker fields against authored `model_assets` plus `vibecomfy/registry/models.yaml` before queueing. If a referenced model cannot be resolved, fix the registry or authored metadata before RunPod instead of waiting for Comfy to reject the prompt.
+
 ## Target Shape
 
 Every runnable template should move through this pipeline:

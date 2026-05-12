@@ -312,7 +312,7 @@ def test_cmd_run_prints_clear_failure(monkeypatch: pytest.MonkeyPatch, capsys: p
     monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: _workflow())
     monkeypatch.setattr(
         "vibecomfy.commands.run.run_embedded_sync",
-        lambda workflow, *, backend: (_ for _ in ()).throw(ValueError("Workflow build failed: bad backend")),
+        lambda workflow, **_kwargs: (_ for _ in ()).throw(ValueError("Workflow build failed: bad backend")),
     )
 
     assert _cmd_run(args) == 1
@@ -389,7 +389,7 @@ def test_cmd_run_auto_without_active_session_falls_back_to_embedded(
         steps=None,
     )
     schema_calls: list[tuple[str, str | None]] = []
-    embedded_calls: list[tuple[VibeWorkflow, str]] = []
+    embedded_calls: list[tuple[VibeWorkflow, dict]] = []
 
     monkeypatch.setattr("vibecomfy.commands.run.find_active_session", lambda _id: None)
     monkeypatch.setattr(
@@ -402,8 +402,8 @@ def test_cmd_run_auto_without_active_session_falls_back_to_embedded(
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("server should not run")),
     )
 
-    def fake_run_embedded_sync(workflow: VibeWorkflow, *, backend: str):
-        embedded_calls.append((workflow, backend))
+    def fake_run_embedded_sync(workflow: VibeWorkflow, **kwargs):
+        embedded_calls.append((workflow, kwargs))
         return types.SimpleNamespace(
             run_id="run-embedded",
             prompt_id="prompt-embedded",
@@ -417,7 +417,7 @@ def test_cmd_run_auto_without_active_session_falls_back_to_embedded(
     assert _cmd_run(args) == 0
 
     assert schema_calls == [("auto", None)]
-    assert embedded_calls[0][1] == "api"
+    assert embedded_calls[0][1] == {"backend": "api", "ensure_models": True}
     assert "run_id: run-embedded" in capsys.readouterr().out
 
 
@@ -490,7 +490,15 @@ def test_cmd_run_memory_profile_overrides_embedded_config(
     monkeypatch.setattr("vibecomfy.commands.run.get_schema_provider", lambda prefer, *, server_url=None: object())
     monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: workflow)
 
-    def fake_run_embedded_sync(workflow: VibeWorkflow, *, backend: str, config: SessionConfig):
+    def fake_run_embedded_sync(
+        workflow: VibeWorkflow,
+        *,
+        backend: str,
+        config: SessionConfig,
+        ensure_models: bool,
+    ):
+        assert backend == "api"
+        assert ensure_models is True
         embedded_configs.append(config)
         return types.SimpleNamespace(
             run_id="run-embedded",

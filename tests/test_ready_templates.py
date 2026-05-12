@@ -283,6 +283,11 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
     assert api["210"]["inputs"]["num_images.image_1"] == ["2084", 0]
     assert api["210"]["inputs"]["num_images.image_2"] == ["50", 0]
     assert api["6101"]["class_type"] == "ResizeImageMaskNode"
+    for resize_node_id in ("5026", "6101", "5028", "6102", "6103"):
+        assert api[resize_node_id]["inputs"]["resize_type.width"] == ["2080", 0]
+        assert api[resize_node_id]["inputs"]["resize_type.height"] == ["2079", 0]
+        assert api[resize_node_id]["inputs"]["resize_type.crop"] == "center"
+        assert "resize_type.multiple" not in api[resize_node_id]["inputs"]
     assert api["4986"]["class_type"] == "DWPreprocessor"
     assert api["6102"]["inputs"]["input"] == ["4986", 0]
     assert api["5061"]["class_type"] == "DepthAnything_V2"
