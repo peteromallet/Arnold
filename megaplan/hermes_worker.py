@@ -625,6 +625,19 @@ def run_hermes_step(
     completion_tokens = int(result.get("completion_tokens", 0) or 0)
     total_tokens = int(result.get("total_tokens", 0) or 0)
 
+    # hermes_cli currently reports estimated_cost_usd=0 for Fireworks-hosted
+    # models (no pricing wired in). Fall back to our local pricing table so
+    # phase receipts carry a non-zero cost. We only override a *zero* cost —
+    # if hermes itself returned a positive figure we trust it.
+    if cost_usd == 0.0 and (prompt_tokens > 0 or completion_tokens > 0):
+        model_actual = result.get("model")
+        if model_actual:
+            from megaplan import fireworks_pricing
+
+            cost_usd = fireworks_pricing.cost_from_usage(
+                prompt_tokens, completion_tokens, model_actual
+            )
+
     return WorkerResult(
         payload=payload,
         raw_output=raw_output,
