@@ -2040,14 +2040,39 @@ class DBStore:
         self,
         *,
         codebase_id: str | None = None,
+        codebase_ids: Sequence[str] | None = None,
         status: str | None = None,
         tags: Sequence[str] | None = None,
+        keywords: Sequence[str] | None = None,
+        keywords_all: bool = False,
+        sort: str = "created",
+        order: str = "desc",
         limit: int | None = None,
     ) -> list[Ticket]:
+        """List tickets with optional keyword / multi-project / sort filters.
+
+        Parameters
+        ----------
+        codebase_id:
+            Single-codebase filter (legacy).  Ignored if *codebase_ids* given.
+        codebase_ids:
+            Restrict to these codebases (cross-project search).
+        keywords:
+            Case-insensitive substring matches across title, body, tags,
+            and resolution_note.  Default semantics: OR (any keyword
+            matches).  Pass *keywords_all=True* for AND semantics.
+        sort:
+            One of ``created``, ``edited``, ``length``, ``title``.
+        order:
+            ``asc`` or ``desc``.
+        """
         conn = self._get_conn()
         conditions: list[str] = []
         values: list[Any] = []
-        if codebase_id is not None:
+        if codebase_ids is not None:
+            conditions.append("codebase_id = ANY(%s)")
+            values.append(list(codebase_ids))
+        elif codebase_id is not None:
             conditions.append("codebase_id = %s")
             values.append(codebase_id)
         if status is not None:
@@ -2056,8 +2081,30 @@ class DBStore:
         if tags is not None:
             conditions.append("tags && %s")
             values.append(list(tags))
+        if keywords:
+            kw_clauses: list[str] = []
+            for kw in keywords:
+                pat = f"%{kw}%"
+                # tags: array_to_string lets us substring-match tag values
+                kw_clauses.append(
+                    "(title ILIKE %s OR body ILIKE %s "
+                    "OR COALESCE(resolution_note, '') ILIKE %s "
+                    "OR array_to_string(COALESCE(tags, ARRAY[]::text[]), ' ') ILIKE %s)"
+                )
+                values.extend([pat, pat, pat, pat])
+            joiner = " AND " if keywords_all else " OR "
+            conditions.append("(" + joiner.join(kw_clauses) + ")")
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
-        sql = f"SELECT * FROM tickets{where} ORDER BY created_at DESC"
+
+        sort_col = {
+            "created": "created_at",
+            "edited": "last_edited_at",
+            "length": "LENGTH(COALESCE(body, ''))",
+            "title": "title",
+        }.get(sort, "created_at")
+        order_kw = "ASC" if order.lower() == "asc" else "DESC"
+
+        sql = f"SELECT * FROM tickets{where} ORDER BY {sort_col} {order_kw}"
         if limit is not None:
             sql += " LIMIT %s"
             values.append(limit)

@@ -352,15 +352,13 @@ class TestAgentEnv:
 
 
 class TestTicketSubparserRegistration:
-    """Verify the 'ticket' subcommand is registered with all 9 verbs."""
+    """Verify the 'ticket' subcommand is registered with every expected verb."""
 
     def test_ticket_subparser_has_all_verbs(self) -> None:
-        """The ticket subparser registers all 9 verbs."""
         import argparse
         from megaplan.cli import build_parser
 
         parser = build_parser()
-        # Find the ticket subparser
         ticket_parser = None
         for action in parser._actions:
             if isinstance(action, argparse._SubParsersAction):
@@ -370,11 +368,13 @@ class TestTicketSubparserRegistration:
 
         assert ticket_parser is not None, "ticket subparser not registered"
 
-        # Find the ticket_action subparser
         for action in ticket_parser._actions:
             if isinstance(action, argparse._SubParsersAction):
                 verbs = set(action.choices.keys())
-                expected = {"new", "list", "show", "edit", "link", "unlink", "addressed", "dismiss", "reopen"}
+                expected = {
+                    "new", "list", "show", "edit", "link", "unlink",
+                    "addressed", "dismiss", "reopen", "search",
+                }
                 assert verbs == expected, f"Got verbs: {verbs}"
                 return
 

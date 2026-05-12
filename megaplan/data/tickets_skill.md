@@ -41,9 +41,38 @@ EOF
 ```bash
 megaplan ticket list   [--status open|addressed|dismissed] [--tags t1,t2] [--json]
 megaplan ticket show   <id> [--json]
+megaplan ticket search [KW ...] [--all] [--project P]... [--all-projects]
+                       [--status ...] [--tags ...]
+                       [--sort created|edited|length|title] [--asc]
+                       [--limit N] [--json] [--no-snippet]
 ```
 
 `--json` on read commands emits structured output; safe for piping.
+
+### Searching across repos
+
+`ticket search` is the cross-cutting reader. Defaults:
+
+- **Scope** — current repo. Pass `--all-projects` to scan every known repo (locally: the auto-maintained `~/.config/megaplan/known_repos.json` registry; cloud: every codebase). Pass `--project PATH|owner/name|name` (repeatable) to scope to specific repos.
+- **Keywords** — multiple positional args. Default is **OR** (any keyword matches). Pass `--all` to require all keywords. Match is case-insensitive substring across **title, body, tags, and resolution_note**.
+- **Sort** — `--sort {created,edited,length,title}`; `--asc` flips to ascending. Default: created, descending.
+- **Snippets** — human output shows a 120-char snippet around the first match. `--no-snippet` to hide.
+
+Examples:
+
+```bash
+# Anything mentioning "stderr" or "timeout" in this repo:
+megaplan ticket search stderr timeout
+
+# Same, but require BOTH terms:
+megaplan ticket search stderr timeout --all
+
+# Across every repo on this machine, only open, sorted by longest body first:
+megaplan ticket search redis --all-projects --status open --sort length --json
+
+# Scoped to two specific repos:
+megaplan ticket search auth --project ~/Documents/reigh-app --project banodoco/megaplan
+```
 
 ## Editing and linking
 
@@ -105,6 +134,8 @@ When a new epic is created or refined for the current repo, the planner automati
 | File a ticket | `megaplan ticket new "title" -b "body" [--tags t1,t2]` |
 | Pipe a multi-line body | `cat body.md \| megaplan ticket new "title" -` |
 | List open tickets | `megaplan ticket list --status open --json` |
+| Search by keyword in this repo | `megaplan ticket search foo bar` |
+| Search across every repo | `megaplan ticket search foo --all-projects` |
 | Link a ticket to an epic so it auto-closes | `megaplan ticket link <tid> <eid> --resolves` |
 | Mark addressed manually | `megaplan ticket addressed <tid> --note "..."` |
 | Reopen a closed ticket | `megaplan ticket reopen <tid>` |

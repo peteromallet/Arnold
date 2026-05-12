@@ -1018,6 +1018,13 @@ def _snapshot_dir(epic_id: str) -> Path:
 def handle_ticket(args: argparse.Namespace) -> int:
     """Dispatch ``megaplan ticket ...`` subcommands."""
     from megaplan.handlers.tickets import TICKET_DISPATCH
+    from megaplan.tickets.registry import touch as _registry_touch
+
+    # Passive registry maintenance — best-effort, never raises.
+    try:
+        _registry_touch(Path.cwd())
+    except Exception:
+        pass
 
     action = args.ticket_action
     handler = TICKET_DISPATCH.get(action)
@@ -1711,6 +1718,57 @@ def build_parser() -> argparse.ArgumentParser:
     # ticket reopen
     ticket_reopen_parser = ticket_sub.add_parser("reopen", help="Reopen a ticket")
     ticket_reopen_parser.add_argument("ticket_id", help="Ticket ULID")
+
+    # ticket search
+    ticket_search_parser = ticket_sub.add_parser(
+        "search",
+        help="Search tickets across local and cloud, multi-project, multi-keyword",
+    )
+    ticket_search_parser.add_argument(
+        "keywords",
+        nargs="*",
+        help="Keywords to match (case-insensitive substring across title, body, tags, resolution_note). Default OR; pass --all for AND.",
+    )
+    ticket_search_parser.add_argument(
+        "--all",
+        dest="keywords_all",
+        action="store_true",
+        help="Require ALL keywords to match (AND). Default is OR (any).",
+    )
+    ticket_search_parser.add_argument(
+        "--project",
+        dest="projects",
+        action="append",
+        default=None,
+        help="Repo to search — path, owner/name, or bare name. Repeatable.",
+    )
+    ticket_search_parser.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Search every known repo (local) or every codebase (cloud).",
+    )
+    ticket_search_parser.add_argument("--status", default=None, help="Filter by status")
+    ticket_search_parser.add_argument("--tags", default=None, help="Filter by tags (comma-separated)")
+    ticket_search_parser.add_argument(
+        "--sort",
+        choices=["created", "edited", "length", "title"],
+        default="created",
+        help="Sort key (default: created)",
+    )
+    ticket_search_parser.add_argument(
+        "--asc",
+        action="store_true",
+        help="Ascending order (default: descending)",
+    )
+    ticket_search_parser.add_argument("--limit", type=int, default=None, help="Limit number of results")
+    ticket_search_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    ticket_search_parser.add_argument(
+        "--no-snippet",
+        dest="snippet",
+        action="store_false",
+        default=True,
+        help="Hide snippet column in human output",
+    )
 
     migrate_local_parser = subparsers.add_parser("migrate-local-plans", help="Import legacy ~/.megaplan/<project>/plans trees")
     migrate_local_parser.add_argument("--source-home", default=str(Path.home()))
