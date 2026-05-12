@@ -19,6 +19,7 @@ from megaplan.tickets import (
     list_tickets as _core_list,
     new as _core_new,
     reopen as _core_reopen,
+    search as _core_search,
     show as _core_show,
     unlink as _core_unlink,
 )
@@ -134,6 +135,48 @@ def handle_ticket_reopen(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_ticket_search(args: argparse.Namespace) -> int:
+    """Search tickets across local + cloud, multi-project, multi-keyword."""
+    import json as _json
+
+    tags = [t.strip() for t in args.tags.split(",")] if args.tags else None
+    results = _core_search(
+        keywords=args.keywords or None,
+        keywords_all=getattr(args, "keywords_all", False),
+        status=args.status,
+        tags=tags,
+        projects=args.projects,
+        all_projects=args.all_projects,
+        sort=args.sort,
+        order=("asc" if args.asc else "desc"),
+        limit=args.limit,
+        snippet=getattr(args, "snippet", True) and bool(args.keywords),
+    )
+
+    if args.json:
+        print(_json.dumps(results, indent=2, default=str))
+        return 0
+
+    if not results:
+        print("(no tickets matched)", file=sys.stderr)
+        return 0
+
+    multi_project = len({r.get("project") for r in results}) > 1
+    # Width tuned for terminal output; readable, not pretty.
+    for r in results:
+        bits = [r.get("id") or "?"]
+        if multi_project:
+            bits.append((r.get("project") or "?")[:24])
+        bits.append((r.get("status") or "?")[:10])
+        title = (r.get("title") or "").replace("\n", " ")
+        bits.append(title[:60])
+        print("  ".join(bits))
+        snip = r.get("snippet")
+        if snip:
+            print(f"    {snip}")
+    return 0
+
+
 TICKET_DISPATCH: dict[str, Any] = {
     "new": handle_ticket_new,
     "list": handle_ticket_list,
@@ -144,4 +187,5 @@ TICKET_DISPATCH: dict[str, Any] = {
     "addressed": handle_ticket_addressed,
     "dismiss": handle_ticket_dismiss,
     "reopen": handle_ticket_reopen,
+    "search": handle_ticket_search,
 }

@@ -16,6 +16,7 @@ from .core import (
     list_tickets,
     new,
     reopen,
+    search,
     show,
     unlink,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "list_tickets",
     "new",
     "reopen",
+    "search",
     "show",
     "unlink",
 ]

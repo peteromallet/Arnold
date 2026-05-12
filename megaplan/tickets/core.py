@@ -27,7 +27,7 @@ from .files import (
     tickets_dir,
     write_ticket_file,
 )
-from .identity import repo_root_sha
+from .identity import repo_owner_name, repo_root_sha
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +336,272 @@ def list_tickets(
 
         print(json.dumps(results, indent=2, default=str))
     return results
+
+
+# ---------------------------------------------------------------------------
+# Public API — search (cross-project, multi-keyword, sortable)
+# ---------------------------------------------------------------------------
+
+
+_SORT_KEYS = {"created", "edited", "length", "title"}
+
+
+def search(
+    keywords: Sequence[str] | None = None,
+    *,
+    keywords_all: bool = False,
+    status: str | None = None,
+    tags: Sequence[str] | None = None,
+    projects: Sequence[str | Path] | None = None,
+    all_projects: bool = False,
+    sort: str = "created",
+    order: str = "desc",
+    limit: int | None = None,
+    snippet: bool = False,
+    snippet_width: int = 120,
+    store: Store | None = None,
+    cwd: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Search tickets across local files and/or the cloud DB.
+
+    Scope resolution
+    ----------------
+    * ``projects`` given → restrict to those repos (path or known-name).
+    * ``all_projects`` → every known repo (local) or every codebase (cloud).
+    * neither → current repo only (default).
+
+    Keyword matching is case-insensitive substring across title + body +
+    tags + resolution_note.  Default is OR (any keyword matches); set
+    ``keywords_all=True`` for AND semantics.
+
+    Returns a list of result dicts.  Each result includes a ``project``
+    field (path string or ``owner/name``) when results span multiple
+    projects, plus a ``snippet`` field when *snippet* is true and at
+    least one keyword matched.
+    """
+    if sort not in _SORT_KEYS:
+        raise ValueError(f"sort must be one of {_SORT_KEYS!r}, got {sort!r}")
+    if order.lower() not in {"asc", "desc"}:
+        raise ValueError(f"order must be 'asc' or 'desc', got {order!r}")
+
+    if store is None:
+        store = _resolve_store()
+
+    kw_list = [k for k in (keywords or []) if k]
+
+    results: list[dict[str, Any]] = []
+
+    if store is not None and is_cloud_store(store):
+        from megaplan.store.db import DBStore
+        from .registry import resolve_project as _resolve_project
+
+        db: DBStore = store  # type: ignore[assignment]
+        codebase_ids: list[str] | None = None
+        # Map projects → codebase_ids
+        if projects:
+            ids: list[str] = []
+            for p in projects:
+                resolved = _resolve_project_to_codebase(db, p)
+                if resolved:
+                    ids.append(resolved)
+            codebase_ids = ids or [""]  # empty → guaranteed no rows
+        elif not all_projects:
+            cur_id = _resolve_codebase_id(store, cwd)
+            if cur_id:
+                codebase_ids = [cur_id]
+            # else: leave as None (matches none) — but keep behaviour where
+            # missing codebase falls through to "nothing" rather than "all".
+            else:
+                codebase_ids = [""]
+
+        tickets = db.list_tickets(
+            codebase_ids=codebase_ids,
+            status=status,
+            tags=tags,
+            keywords=kw_list or None,
+            keywords_all=keywords_all,
+            sort=sort,
+            order=order,
+            limit=limit,
+        )
+        # Pre-load codebases for project labelling
+        cb_cache: dict[str, str] = {}
+        for t in tickets:
+            project_label = ""
+            if t.codebase_id:
+                if t.codebase_id not in cb_cache:
+                    cb = db.load_codebase(t.codebase_id)
+                    cb_cache[t.codebase_id] = (
+                        f"{cb.owner}/{cb.name}" if cb and cb.owner and cb.name else t.codebase_id
+                    )
+                project_label = cb_cache[t.codebase_id]
+            d = {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "source": t.source,
+                "tags": t.tags,
+                "slug": t.slug,
+                "codebase_id": t.codebase_id,
+                "project": project_label,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "last_edited_at": t.last_edited_at.isoformat() if t.last_edited_at else None,
+                "resolution_note": t.resolution_note,
+                "body": t.body or "",
+            }
+            if snippet and kw_list:
+                d["snippet"] = _make_snippet(t.body or "", t.title or "", kw_list, snippet_width)
+            results.append(d)
+        return results
+
+    # ----- local-only mode -----
+    scan_roots = _resolve_scan_roots(projects=projects, all_projects=all_projects, cwd=cwd)
+
+    for repo_root in scan_roots:
+        project_label = _project_label_for(repo_root)
+        for fpath, fm in iterate_ticket_files(repo_root):
+            if status and fm.get("status") != status:
+                continue
+            if tags:
+                file_tags = set(fm.get("tags") or [])
+                if not file_tags.intersection(tags):
+                    continue
+            title = fm.get("title") or ""
+            body = fm.get("__body__") or ""
+            tag_blob = " ".join(fm.get("tags") or [])
+            res_note = fm.get("resolution_note") or ""
+            if kw_list:
+                haystack = (title + "\n" + body + "\n" + tag_blob + "\n" + res_note).lower()
+                matches = [kw.lower() in haystack for kw in kw_list]
+                if keywords_all:
+                    if not all(matches):
+                        continue
+                else:
+                    if not any(matches):
+                        continue
+            d = {
+                "id": fm.get("id"),
+                "title": title,
+                "status": fm.get("status"),
+                "source": fm.get("source"),
+                "tags": fm.get("tags", []),
+                "slug": slugify(title),
+                "codebase_id": fm.get("codebase_id"),
+                "project": project_label,
+                "created_at": _iso(fm.get("created_at")),
+                "last_edited_at": _iso(fm.get("last_edited_at")),
+                "resolution_note": fm.get("resolution_note"),
+                "body": body,
+                "epics": fm.get("epics", []),
+            }
+            if snippet and kw_list:
+                d["snippet"] = _make_snippet(body, title, kw_list, snippet_width)
+            results.append(d)
+
+    # In-process sort for local mode (matches DB ORDER BY semantics)
+    sort_key = {
+        "created": lambda d: d.get("created_at") or "",
+        "edited": lambda d: d.get("last_edited_at") or "",
+        "length": lambda d: len(d.get("body") or ""),
+        "title": lambda d: (d.get("title") or "").lower(),
+    }[sort]
+    results.sort(key=sort_key, reverse=(order.lower() == "desc"))
+    if limit is not None:
+        results = results[:limit]
+    return results
+
+
+def _resolve_project_to_codebase(db: Any, project: str | Path) -> str | None:
+    """Resolve a project spec to a codebase_id (cloud).
+
+    Accepts: an ``owner/name`` string, a bare ``name`` (must be unique),
+    or a filesystem path (uses git root_commit_sha lookup).
+    """
+    from megaplan.store.db import DBStore  # noqa: F401  (typing hint only)
+
+    spec = str(project)
+    # Path-like first
+    p = Path(spec).expanduser()
+    if p.is_dir():
+        try:
+            sha = repo_root_sha(p)
+        except Exception:
+            sha = None
+        if sha:
+            cb = db.resolve_codebase_by_root_sha(sha)
+            if cb:
+                return cb.id
+    # owner/name
+    if "/" in spec:
+        owner, name = spec.split("/", 1)
+        cb = db.find_codebase(owner, name)
+        if cb:
+            return cb.id
+    # bare name — scan list_codebases
+    matches = [c for c in db.list_codebases() if (c.name or "").lower() == spec.lower()]
+    if len(matches) == 1:
+        return matches[0].id
+    return None
+
+
+def _resolve_scan_roots(
+    *,
+    projects: Sequence[str | Path] | None,
+    all_projects: bool,
+    cwd: Path | None,
+) -> list[Path]:
+    """Determine which repo roots to walk for local-mode search."""
+    from .registry import list_repos, resolve_project
+
+    if projects:
+        out: list[Path] = []
+        for p in projects:
+            resolved = resolve_project(str(p))
+            if resolved and (resolved / ".megaplan" / "tickets").is_dir():
+                out.append(resolved)
+        return out
+    if all_projects:
+        return [
+            Path(r["path"])
+            for r in list_repos()
+            if (Path(r["path"]) / ".megaplan" / "tickets").is_dir()
+        ]
+    here = Path(cwd) if cwd else Path(os.getcwd())
+    return [here]
+
+
+def _project_label_for(repo_root: Path) -> str:
+    """Best-effort label: ``owner/name`` from remote, else basename of path."""
+    try:
+        owner, name = repo_owner_name(repo_root)
+    except Exception:
+        owner, name = None, None
+    if owner and name:
+        return f"{owner}/{name}"
+    return repo_root.name
+
+
+def _make_snippet(body: str, title: str, keywords: Sequence[str], width: int) -> str:
+    """Return a single-line snippet centred on the first keyword hit."""
+    text = (title + " — " + body) if body else title
+    flat = " ".join(text.split())  # collapse whitespace
+    low = flat.lower()
+    idx = -1
+    for kw in keywords:
+        i = low.find(kw.lower())
+        if i >= 0 and (idx < 0 or i < idx):
+            idx = i
+    if idx < 0:
+        return flat[: width] + ("…" if len(flat) > width else "")
+    half = width // 2
+    start = max(0, idx - half)
+    end = min(len(flat), start + width)
+    snippet = flat[start:end]
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(flat):
+        snippet = snippet + "…"
+    return snippet
 
 
 def show(
