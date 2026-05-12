@@ -23,6 +23,7 @@ from megaplan.types import (
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FINALIZED,
+    STATE_REVIEWED,
     StepResponse,
 )
 from megaplan.workers import (
@@ -245,9 +246,16 @@ def _resolve_review_outcome(
             for c in criteria
         )
         if has_deferred_must:
+            # STATE_AWAITING_HUMAN is intentionally NOT modified for with_feedback.
+            # When deferred_must criteria require human verification, the plan is not
+            # considered complete yet — scaffolding feedback.md would be misleading
+            # because the user still needs to verify. Feedback scaffolding is deferred
+            # until the plan actually reaches done (via the existing interactive
+            # 'megaplan feedback edit' path after verification).
             return "success", STATE_AWAITING_HUMAN, None
 
-    return "success", STATE_DONE, None
+    with_feedback = state.get("config", {}).get("with_feedback", False)
+    return "success", STATE_REVIEWED if with_feedback else STATE_DONE, None
 
 _EXPECTED_BY_CHECK_ID = {
     "coverage": "Extend the fix so every concrete failing example, symptom, or 'X should Y' statement in the issue is addressed by at least one diff line.",

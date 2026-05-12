@@ -16,6 +16,8 @@ from megaplan.types import (
     DEFAULTS,
     KNOWN_AGENTS,
     ROBUSTNESS_LEVELS,
+    STATE_DONE,
+    STATE_REVIEWED,
     StepResponse,
     TERMINAL_STATES,
     _SETTABLE_BOOL,
@@ -48,6 +50,7 @@ from megaplan._core import (
     resume_plan,
     save_debt_registry,
     save_config,
+    save_state,
     subsystem_occurrence_total,
     humanize_seconds,
 )
@@ -1374,10 +1377,39 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
 
     # edit / show both require --plan
     if not getattr(args, "plan", None):
-        raise CliError("invalid_args", "feedback edit/show require --plan <name>")
+        raise CliError("invalid_args", "feedback edit/show/workflow require --plan <name>")
 
     plan_dir, state = load_plan(root, args.plan)
     path = feedback_path(plan_dir)
+
+    # --- workflow: non-interactive scaffold for auto-driver
+    if operation == "workflow":
+        current_state = state.get("current_state")
+        if current_state != STATE_REVIEWED:
+            raise CliError(
+                "invalid_state",
+                f"feedback workflow requires plan in {STATE_REVIEWED!r} state, "
+                f"but plan is in {current_state!r}",
+            )
+        created = False
+        if not path.exists():
+            template = render_template(state["name"], idea=state.get("idea"))
+            atomic_write_text(path, template)
+            created = True
+        state["current_state"] = STATE_DONE
+        save_state(plan_dir, state)
+        return {
+            "success": True,
+            "step": "feedback",
+            "operation": "workflow",
+            "plan": state["name"],
+            "plan_dir": str(plan_dir),
+            "feedback_path": str(path),
+            "feedback_present": True,
+            "created": created,
+            "state": "done",
+            "summary": "scaffolded feedback.md — fill in whenever",
+        }
 
     if operation == "show":
         fb = load_feedback(plan_dir)
@@ -1504,6 +1536,17 @@ def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
              "to a plan. Useful for unfamiliar libraries, novel external "
              "APIs, research-heavy briefs, or ambiguous requirements. "
              "Redundant on --robustness robust|superrobust (no-op).",
+    )
+    parser.add_argument(
+        "--with-feedback",
+        action="store_true",
+        default=False,
+        help="Force the visible feedback phase into the workflow regardless "
+             "of --robustness. By default no feedback step runs; this flag "
+             "adds a feedback step between review and done that scaffolds "
+             "feedback.md (a per-stage ratings template) for the user to "
+             "fill in afterward. Runs non-interactively under megaplan auto "
+             "\u2014 never blocks on human input.",
     )
 
 
@@ -1692,7 +1735,7 @@ def build_parser() -> argparse.ArgumentParser:
         "operation",
         nargs="?",
         default="edit",
-        choices=["edit", "show", "search"],
+        choices=["edit", "show", "search", "workflow"],
         help="edit (default): scaffold/open feedback.md. show: print parsed summary. search: query feedback across plans",
     )
     feedback_parser.add_argument("--plan", required=False, help="Plan name (required for edit/show)")

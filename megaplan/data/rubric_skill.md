@@ -136,7 +136,26 @@ A fourth, narrower lever orthogonal to the three dials. `prep` is a visible rese
 
 ---
 
-## Notation for recording profile choices
+## When to add a feedback phase
+
+> **"Do you want a per-stage ratings template waiting on disk when the run finishes?"**
+
+A fifth, narrower lever orthogonal to the three dials. `--with-feedback` adds a `feedback` step between `review` and `done` that scaffolds `feedback.md` (a per-stage ratings template) and then completes the plan. Off by default (most work doesn't need a feedback trail; adding one without intent just leaves a file nobody fills in). Enable with `--with-feedback`.
+
+**Reach for it when at least one of these is true:**
+
+- **You're benchmarking profiles and want per-stage ratings data** — `feedback.md` gives you a structured template to rate each phase (plan quality, critique usefulness, revise effectiveness, execute correctness, review verdict) so you can compare runs across tiers.
+- **The sprint retrospective matters** — you want a written record of what worked and what didn't across each phase of the run, not just a binary pass/fail.
+- **You're teaching someone the rubric** — the feedback template makes the phase-by-phase evaluation explicit rather than implicit.
+- **You're calibrating a new profile** — structured per-stage ratings make it easy to spot where the model mix is weak.
+
+The auto driver runs this non-interactively — never blocks on human input, never opens `$EDITOR`. The file is just left on disk. The user fills in `feedback.md` afterward (or ignores it — no reminders, no prompts).
+
+"Feedback just in case" doesn't earn its cost. The template exists to be used; if nobody is going to rate the run, skip the flag.
+
+---
+
+## Notation for recording profile choices</
 
 For sprint notes, brief headers, commit messages, or anywhere you need to write down a profile choice compactly, use the slash form: **`profile/robustness/depth`** — defaults can be omitted.
 
@@ -162,12 +181,14 @@ For `--vendor`, `--critic`, `--with-prep`, append modifiers without disturbing t
 - `@<vendor>` — vendor override (e.g. `@codex`).
 - `, critic=<kind>` — critic override (e.g. `, critic=kimi`).
 - `+prep` — enable the prep phase.
+- `+feedback` — enable the feedback phase.
 
 | What you decided | Shorthand |
 |---|---|
 | Tier-2 work, prefer codex | `led @codex` |
 | Tier-3 work, Kimi critic | `thoughtful, critic=kimi` |
 | Tier-3 work, needs upfront API discovery | `thoughtful +prep` |
+| Tier-3 work, wants feedback scaffolding | `thoughtful +feedback` |
 | Tier-3 work, novel external API, codex preferred, high depth | `thoughtful//high @codex +prep` |
 | Tier-4 production migration with Kimi critic | `premium/robust/high, critic=kimi` |
 | Apex sprint with prep | `super-premium/robust/high` *(no `+prep` needed — apex includes prep at robust)* |
@@ -181,13 +202,13 @@ The shorthand is for **recording**, not for the CLI. Use it in:
 - Commit messages ("ran as `thoughtful`, defaults")
 - Slack / chat references when describing a sprint setup at a glance
 
-The actual invocation is still `megaplan init --profile … --robustness … --depth …` — see "Running it" below for the mapping.
+The actual invocation is still `megaplan init --profile … --robustness … --depth …` — see "Running it" below for the mapping.</
 
 ---
 
 ## Running it — profile plus the knobs
 
-The invocation has three layers: three flags for the dials, three modifiers for orthogonal toggles, one escape hatch for surgical needs.
+The invocation has three layers: three flags for the dials, four modifiers for orthogonal toggles, one escape hatch for surgical needs.</
 
 ### The three dial flags
 
@@ -200,8 +221,9 @@ The invocation has three layers: three flags for the dials, three modifiers for 
 - **`--vendor claude|codex`** — vendor override at tiers 2-4. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset). Tier 1 ignores it (no premium phases); tier 5 silently ignores it (vendor-locked).
 - **`--critic kimi|cross`** — overrides the critique+review pair (preserving the invariant — see below). `kimi` swaps in Kimi for both phases; `cross` swaps to the other premium vendor relative to `--vendor`. Silently ignored at tier 5.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `robust`/`superrobust`. See "When to add a prep phase" above.
+- **`--with-feedback`** — force the `feedback` phase into the workflow regardless of `--robustness`. Scaffolds `feedback.md` (a per-stage ratings template) between `review` and `done`, then completes the plan non-interactively. Off by default. See "When to add a feedback phase" above.
 
-### The escape hatch
+### The escape hatch</
 
 **`--phase-model phase=spec`**, repeatable. For when `--depth` is too coarse — e.g. bump just `critique` without touching the rest. Most runs don't need it.
 
@@ -258,7 +280,7 @@ The model that critiques the plan also reviews the executed work — same mind p
 > *"Verification sprint, mostly text, lowest-stakes thing in the queue."*
 > `megaplan init <brief> --profile basic --robustness light`
 
-Three pieces of intent → three flags (`--profile`, `--robustness`, `--depth`), plus `--vendor` / `--critic` / `--with-prep` when you need them.
+Three pieces of intent → three flags (`--profile`, `--robustness`, `--depth`), plus `--vendor` / `--critic` / `--with-prep` / `--with-feedback` when you need them.</
 
 ---
 

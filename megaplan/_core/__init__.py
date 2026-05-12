@@ -135,7 +135,7 @@ from .registries import (
 )
 
 # -- workflow.py: state machine, transitions ---------------------------------
-from megaplan.types import ROBUSTNESS_LEVELS  # noqa: F401 — accessed by tests via megaplan._core
+from megaplan.types import ROBUSTNESS_LEVELS, STATE_EXECUTED, STATE_REVIEWED, STATE_DONE  # noqa: F401 — accessed by tests via megaplan._core
 
 from .workflow import (
     WORKFLOW,
@@ -278,4 +278,8 @@ __all__ = [
     "workflow_includes_step",
     "workflow_next",
     "workflow_transition",
+    # State constants (re-exported for convenience)
+    "STATE_EXECUTED",
+    "STATE_REVIEWED",
+    "STATE_DONE",
 ]

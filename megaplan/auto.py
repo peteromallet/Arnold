@@ -334,6 +334,12 @@ def _phase_command(next_step: str) -> list[str]:
             "--user-approved",
             "--retry-blocked-tasks",
         ]
+    if next_step == "feedback":
+        # The auto driver must dispatch the *workflow* operation, not the
+        # default "edit" operation — otherwise the handler would open $EDITOR
+        # and block on human input.  "feedback workflow" scaffolds the file
+        # non-interactively and transitions reviewed → done.
+        return ["feedback", "workflow"]
     return shlex.split(next_step)
 
 
