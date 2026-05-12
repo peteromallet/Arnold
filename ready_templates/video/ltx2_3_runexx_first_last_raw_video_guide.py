@@ -119,6 +119,7 @@ def build() -> VibeWorkflow:
         _extras={
             "resize_type.width": Handle("2080", "0"),
             "resize_type.height": Handle("2079", "0"),
+            "resize_type.crop": "center",
         },
     )
     wf.replace_edge("2152.image", guide_resized.out(0))
