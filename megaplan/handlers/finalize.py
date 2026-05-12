@@ -411,7 +411,8 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
 def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="finalize") as (plan_dir, state):
         allowed_states = {STATE_GATED}
-        if is_creative_mode(state) and configured_robustness(state) == "light":
+        robustness = configured_robustness(state)
+        if robustness == "tiny" or (is_creative_mode(state) and robustness == "light"):
             allowed_states.add(STATE_PLANNED)
         require_state(state, "finalize", allowed_states)
         worker, agent, mode, refreshed = _run_worker("finalize", state, plan_dir, args, root=root)

@@ -82,13 +82,16 @@ The `--robustness` flag. Picks how many phases run and how many critique passes 
 
 | Setting | Workflow | When to use |
 |---|---|---|
-| (skip megaplan) | — | Single-file fix, anything you can hold in your head. Just do the work directly. |
-| `light` | plan → critique → revise → finalize → execute (no prep, no gate, no review) | Small/scoped, well-known feature, low blast radius. ~5 phases instead of 8. |
+| (skip megaplan) | — | Single-file fix, anything you can hold in your head. Just do the work directly — or delegate to a subagent if the work is too big to hold in context but doesn't need any harness rigor. |
+| `tiny` | plan → finalize → execute (no prep, no critique, no gate, no review) | Crisp, well-scoped task where you mostly just want the planner to lay out the steps before the executor runs. No second opinion, no post-mortem. 3 phases. **Strictly cheaper than `light`.** Reach for it when the brief is unambiguous and the work is mechanical enough that critique would be a no-op. |
+| `light` | plan → critique → revise → finalize → execute (no prep, no gate, no review) | Small/scoped, well-known feature, low blast radius — but you want **one** sense-check pass on the plan before committing. ~5 phases instead of 8. |
 | `standard` *(default)* | prep → plan → critique → gate → revise → finalize → execute → review; 4 critique checks | Cross-cutting, unfamiliar code, ambiguous brief. **Fine for almost everything.** |
 | `robust` | Same shape as `standard`, 8 critique checks + parallel critique | Security, data migration, public API contract — anything where a regression = production incident. **Extremely rare.** You should be able to name the specific stakes that warrant it. |
 | `superrobust` | `robust` + parallel review | Both deep critique *and* concurrent review matter. **Vanishingly rare.** Only when the user specifically asks for it. |
 
-`standard` is home base. `light` is a cost optimization for cleanly-scoped work. `robust` should feel exceptional — you're saying "this regression would page someone." `superrobust` is a user-requested override, never a default.
+`standard` is home base. `light` is a cost optimization for cleanly-scoped work that still wants a sense-check. `tiny` is for when even one critique pass is overkill — you're paying for the planner-then-executor split and nothing else. `robust` should feel exceptional — you're saying "this regression would page someone." `superrobust` is a user-requested override, never a default.
+
+**Where `tiny` slots in:** between "skip megaplan" and `light`. Skip megaplan when you can do it inline or hand it to a subagent. Pick `tiny` when the work is multi-step enough to deserve a written plan + an executor pass, but the plan doesn't need a critic. Pick `light` when you want one critique pass on the plan before execution. The hops are real — don't reach past `tiny` reflexively.
 
 Cost bands in the tier table above are at `light`. Roughly 1.5-2× the per-phase cost going from `light` → `standard`, and another ~1.3× going to `robust`.
 

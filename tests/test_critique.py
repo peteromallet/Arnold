@@ -12,18 +12,19 @@ from megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness, load_state
 
 
-def test_tiny_critique_stub_does_not_leak_active_step(
+def test_tiny_critique_is_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """At tiny robustness, calling critique manually errors — the phase is skipped
+    in the workflow, so plan -> finalize is the canonical path."""
+    from megaplan.types import CliError
+
     fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="tiny")
     megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
 
-    response = megaplan.handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
-    state = load_state(fixture.plan_dir)
-
-    assert response["state"] == megaplan.STATE_GATED
-    assert "active_step" not in state
+    with pytest.raises(CliError, match="tiny robustness skips critique"):
+        megaplan.handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
 
 
 def test_light_critique_routes_to_revise(
