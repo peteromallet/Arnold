@@ -256,7 +256,11 @@ def _normalise_model_entry(model: Any, *, class_type: str) -> dict[str, str] | N
     if not isinstance(url, str) or not url:
         return None
     subdir = _subdir_for_model(model, class_type=class_type, url=url)
-    return {"name": name, "url": _strip_download_true(url), "subdir": subdir}
+    entry = {"name": name, "url": _strip_download_true(url), "subdir": subdir}
+    target_path = model.get("target_path")
+    if isinstance(target_path, str) and target_path:
+        entry["target_path"] = target_path
+    return entry
 
 
 def _subdir_for_model(model: Mapping[str, Any], *, class_type: str, url: str) -> str:

@@ -37,6 +37,23 @@ LTX_RUNEXX_MODEL_ASSETS = [
         "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
         "subdir": "loras",
     },
+    {
+        "name": "depth_anything_v2_vits_fp32.safetensors",
+        "url": "https://huggingface.co/Kijai/DepthAnythingV2-safetensors/resolve/main/depth_anything_v2_vits_fp32.safetensors",
+        "subdir": "depthanything",
+    },
+    {
+        "name": "yolox_l.onnx",
+        "url": "https://huggingface.co/yzd-v/DWPose/resolve/main/yolox_l.onnx",
+        "subdir": "controlnet_aux",
+        "target_path": "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx",
+    },
+    {
+        "name": "dw-ll_ucoco_384_bs5.torchscript.pt",
+        "url": "https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt",
+        "subdir": "controlnet_aux",
+        "target_path": "custom_nodes/comfyui_controlnet_aux/ckpts/hr16/DWPose-TorchScript-BatchSize5/dw-ll_ucoco_384_bs5.torchscript.pt",
+    },
 ]
 
 

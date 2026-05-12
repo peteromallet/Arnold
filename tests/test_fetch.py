@@ -66,6 +66,22 @@ def test_download_writes_tmp_then_renames(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert requested["follow_redirects"] is True
 
 
+def test_download_supports_repo_relative_target_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path / "models"))
+    monkeypatch.setattr(fetch.httpx, "stream", lambda *_args, **_kwargs: fake_stream(FakeResponse(chunks=[b"aux"])))
+
+    path = fetch.download(
+        {
+            **ENTRY,
+            "name": "yolox_l.onnx",
+            "target_path": "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx",
+        }
+    )
+
+    assert path == tmp_path / "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx"
+    assert path.read_bytes() == b"aux"
+
+
 def test_download_removes_tmp_after_stream_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
 

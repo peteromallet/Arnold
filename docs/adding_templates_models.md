@@ -125,6 +125,17 @@ There are two model paths:
    template `READY_REQUIREMENTS["models"]`.
 2. Node-pack-specific model layouts: add them to `vibecomfy/registry/models.yaml` so staging can hardlink or symlink the same downloaded asset into every path expected by each node pack.
 
+For one workflow-specific custom-node asset, use `target_path` in the ready template's `model_assets`. `subdir` remains a logical grouping, while `target_path` is the repo-relative destination under the VibeComfy checkout:
+
+```python
+{
+    "name": "dw-ll_ucoco_384_bs5.torchscript.pt",
+    "url": "https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt",
+    "subdir": "controlnet_aux",
+    "target_path": "custom_nodes/comfyui_controlnet_aux/ckpts/hr16/DWPose-TorchScript-BatchSize5/dw-ll_ucoco_384_bs5.torchscript.pt",
+}
+```
+
 Use the registry when a model has aliases, multiple target directories, custom-node naming conventions, or a minimum-size sanity check. The matrix should not hide model staging inside one-off shell snippets long term.
 
 ## 5. Manifest Row

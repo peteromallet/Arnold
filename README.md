@@ -43,6 +43,12 @@ python -m vibecomfy.cli nodes spec ImageResizeKJv2
 
 `nodes spec` reads the local index when available and falls back to installed custom-node source with `INPUT_TYPES`, so it is useful before swapping a node class or translating a JSON widget payload into explicit Python keyword arguments.
 
+Some custom nodes download annotator or preprocessor weights into their own package folders instead of Comfy's `models/` tree. Declare those as `model_assets` with `target_path` so `vibecomfy run` stages them before execution:
+
+```python
+{"name": "yolox_l.onnx", "url": "...", "subdir": "controlnet_aux", "target_path": "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx"}
+```
+
 For reusable workflows, the checked-in surface is Python, not raw JSON. Keep upstream/source workflows in `workflow_corpus/`, convert or author the reusable version in `ready_templates/<kind>/<id>.py`, record it in `workflow_corpus/manifests/coverage.json`, and refresh the static discovery index:
 
 ```bash

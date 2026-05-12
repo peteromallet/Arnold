@@ -22,6 +22,7 @@ This skill teaches an agent how to use it. The user wants to: **grab a template,
 - Sync indexes only when a task or test requires it: `python -m vibecomfy.cli sources sync`.
 - Before manually editing an imported workflow, converting raw JSON into a template, or launching RunPod validation, run `python -m vibecomfy.cli port check <workflow> --json` and use the report to resolve helper nodes, custom-node packs, schema issues, widget aliases, and model assets.
 - `vibecomfy run` reconciles model assets by default for embedded runs: it inspects the final built workflow, resolves model-picker values through `vibecomfy/registry/models.yaml`, downloads/stages what it can, and fails before queueing when a referenced asset is unresolved. Use `--no-ensure-models` only for compile-only/local work where downloads are intentionally disabled.
+- If a custom node expects a model under its own package directory, declare a `model_assets` entry with `target_path` relative to the VibeComfy checkout, such as `custom_nodes/comfyui_controlnet_aux/ckpts/...`. Do not leave these to ad hoc runtime Hugging Face downloads.
 - Before replacing a node class or hand-authoring node kwargs, run `python -m vibecomfy.cli nodes spec <ClassType>`. It reads the generated index when available and falls back to installed custom-node source with `INPUT_TYPES`, which avoids guessing accepted inputs.
 
 ## CLI implementation guidance

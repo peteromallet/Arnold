@@ -23,6 +23,12 @@ def models_root() -> Path:
 
 def local_path(entry: Mapping[str, Any], *, root: Path | None = None) -> Path:
     base = root if root is not None else models_root()
+    target_path = entry.get("target_path")
+    if isinstance(target_path, str) and target_path:
+        target = Path(target_path)
+        if target.is_absolute():
+            return target
+        return base.parent / target
     return base / str(entry["subdir"]) / str(entry["name"])
 
 

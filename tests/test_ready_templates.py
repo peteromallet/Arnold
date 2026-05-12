@@ -297,6 +297,19 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
     assert api["6103"]["inputs"]["image"] == ["5061", 0]
     assert api["4991"]["class_type"] == "CannyEdgePreprocessor"
     assert api["5028"]["inputs"]["image"] == ["4991", 0]
+    assets = {
+        asset["name"]: asset
+        for asset in workflow.metadata["model_assets"]
+        if isinstance(asset, dict) and isinstance(asset.get("name"), str)
+    }
+    assert assets["depth_anything_v2_vits_fp32.safetensors"]["subdir"] == "depthanything"
+    assert assets["yolox_l.onnx"]["target_path"] == (
+        "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx"
+    )
+    assert assets["dw-ll_ucoco_384_bs5.torchscript.pt"]["target_path"] == (
+        "custom_nodes/comfyui_controlnet_aux/ckpts/hr16/DWPose-TorchScript-BatchSize5/"
+        "dw-ll_ucoco_384_bs5.torchscript.pt"
+    )
 
 
 def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
