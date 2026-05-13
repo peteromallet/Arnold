@@ -2,6 +2,7 @@
 """LTX 2.3 first/last-frame travel with full-length IC-LoRA control guide."""
 from __future__ import annotations
 
+from vibecomfy.patches.resize_schema import ensure_resize_image_mask_schema
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
@@ -467,6 +468,7 @@ def build() -> VibeWorkflow:
         save_output=True,
     )
 
+    ensure_resize_image_mask_schema(wf, ("5026", "5028", "6101", "6102", "6103"))
     wf.finalize_metadata()
     wf.register_input("start_image", "45", "image", "example.png")
     wf.register_input("end_image", "47", "image", "egyptian_queen.png")

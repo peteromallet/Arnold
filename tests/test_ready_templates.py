@@ -73,6 +73,29 @@ def test_ready_templates_are_pure_python_builders() -> None:
     assert offenders == []
 
 
+def test_ltx_raw_video_guide_declares_new_resize_schema_inputs() -> None:
+    workflow = workflow_from_ready("video/ltx2_3_runexx_first_last_raw_video_guide")
+
+    inputs = workflow.compile()["6101"]["inputs"]
+    assert inputs["resize_type"] == "scale dimensions"
+    assert inputs["resize_type.crop"] == "center"
+    assert inputs["scale_method"] == "lanczos"
+    assert "resize_type.width" in inputs
+    assert "resize_type.height" in inputs
+
+
+def test_ltx_iclora_control_declares_new_resize_schema_inputs() -> None:
+    workflow = workflow_from_ready("video/ltx2_3_first_last_frame_travel_iclora_control")
+
+    for node_id in ("5026", "5028", "6101", "6102", "6103"):
+        inputs = workflow.compile()[node_id]["inputs"]
+        assert inputs["resize_type"] == "scale dimensions"
+        assert inputs["resize_type.crop"] == "center"
+        assert inputs["scale_method"] == "lanczos"
+        assert "resize_type.width" in inputs
+        assert "resize_type.height" in inputs
+
+
 def test_ready_template_source_info_classifies_pure_python_template() -> None:
     info = ready_template_source_info("image/z_image")
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from vibecomfy.handles import Handle
+from vibecomfy.patches.resize_schema import ensure_resize_image_mask_schema
 from vibecomfy.registry.ready import workflow_from_ready
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
@@ -126,6 +127,7 @@ def build() -> VibeWorkflow:
     wf.replace_edge("2152.image", guide_resized.out(0))
     guide_strength = _node(wf, "PrimitiveFloat", "6102", value=1)
     wf.replace_edge("2152.strength", guide_strength.out(0))
+    ensure_resize_image_mask_schema(wf, ("6101",))
     _apply_runtime_schema_defaults(wf)
 
     wf.finalize_metadata()
