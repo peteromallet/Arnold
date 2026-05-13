@@ -72,6 +72,20 @@ def test_ready_templates_are_pure_python_builders() -> None:
     assert offenders == []
 
 
+def test_ready_loader_applies_authored_metadata_for_manual_python_templates() -> None:
+    workflow = workflow_from_ready("image/z_image")
+
+    assert workflow.metadata["python_policy_applied"] is True
+    assert {asset["name"] for asset in workflow.metadata["model_assets"]} >= {
+        "qwen_3_4b.safetensors",
+        "ae.safetensors",
+        "z_image_bf16.safetensors",
+    }
+    assert {"qwen_3_4b.safetensors", "ae.safetensors", "z_image_bf16.safetensors"} <= set(
+        workflow.requirements.models
+    )
+
+
 def test_ready_templates_do_not_enable_uncontracted_sageattention() -> None:
     offenders: list[tuple[str, str, str]] = []
 

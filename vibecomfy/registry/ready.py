@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import warnings
 
+from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.workflow import VibeWorkflow
 
 
@@ -38,7 +39,19 @@ def workflow_from_ready(template_id: str) -> VibeWorkflow:
     workflow = build()
     if not isinstance(workflow, VibeWorkflow):
         raise TypeError(f"Ready template {template_id} build() must return VibeWorkflow, got {type(workflow).__name__}")
-    workflow.metadata["ready_template"] = _template_id_for_path(path)
+    resolved_template_id = _template_id_for_path(path)
+    if not workflow.metadata.get("python_policy_applied"):
+        ready_metadata = getattr(module, "READY_METADATA", None)
+        if isinstance(ready_metadata, dict):
+            ready_metadata = {**ready_metadata, "ready_template": ready_metadata.get("ready_template") or resolved_template_id}
+            requirements = getattr(module, "READY_REQUIREMENTS", None)
+            workflow = apply_ready_template_policy(
+                workflow,
+                ready_metadata,
+                source_path=str(path),
+                requirements=requirements if isinstance(requirements, dict) else None,
+            )
+    workflow.metadata["ready_template"] = workflow.metadata.get("ready_template") or resolved_template_id
     return workflow
 
 
