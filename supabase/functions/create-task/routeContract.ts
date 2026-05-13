@@ -28,27 +28,50 @@ function asParamsRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function firstString(...candidates: unknown[]): string | null {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.length > 0) return c;
+  }
+  return null;
+}
+
+function firstRecord(...candidates: unknown[]): Record<string, unknown> | null {
+  for (const c of candidates) {
+    if (c && typeof c === "object" && !Array.isArray(c)) return c as Record<string, unknown>;
+  }
+  return null;
+}
+
 function buildRouteContractJSON(
   routeKey: string,
   selectorNamespace: string,
   existing: Record<string, unknown> | undefined,
+  topLevel: TaskInsertObject,
 ): RouteContractJSON {
+  // Workers pass route fields as top-level TaskInsertObject columns (via
+  // route_snapshot_fields → create-task input). Prefer those, then fall back
+  // to an existing params.route_contract (e.g. when an upstream caller has
+  // already stamped one), then null.
   return {
     route_key: routeKey,
     selector_namespace: selectorNamespace,
-    selected_backend: typeof existing?.selected_backend === "string" ? existing.selected_backend : null,
-    selector_version: typeof existing?.selector_version === "string" ? existing.selector_version : null,
-    route_selection_snapshot:
-      existing?.route_selection_snapshot && typeof existing.route_selection_snapshot === "object"
-        ? (existing.route_selection_snapshot as Record<string, unknown>)
-        : null,
-    support_state: typeof existing?.support_state === "string" ? existing.support_state : null,
-    selected_profile: typeof existing?.selected_profile === "string" ? existing.selected_profile : null,
-    selected_template_id:
-      typeof existing?.selected_template_id === "string" ? existing.selected_template_id : null,
-    route_run_id: typeof existing?.route_run_id === "string" ? existing.route_run_id : null,
-    worker_contract_version:
-      typeof existing?.worker_contract_version === "string" ? existing.worker_contract_version : null,
+    selected_backend: firstString(topLevel.selected_backend, existing?.selected_backend),
+    selector_version: firstString(topLevel.selector_version, existing?.selector_version),
+    route_selection_snapshot: firstRecord(
+      topLevel.route_selection_snapshot,
+      existing?.route_selection_snapshot,
+    ),
+    support_state: firstString(topLevel.support_state, existing?.support_state),
+    selected_profile: firstString(topLevel.selected_profile, existing?.selected_profile),
+    selected_template_id: firstString(
+      topLevel.selected_template_id,
+      existing?.selected_template_id,
+    ),
+    route_run_id: firstString(topLevel.route_run_id, existing?.route_run_id),
+    worker_contract_version: firstString(
+      topLevel.worker_contract_version,
+      existing?.worker_contract_version,
+    ),
     derived_at: new Date().toISOString(),
     derived_by: "edge_function",
     derive_route_key_version: DERIVE_ROUTE_KEY_VERSION,
@@ -91,7 +114,7 @@ export async function stampTaskRouteContract(
     ? (params.route_contract as Record<string, unknown>)
     : undefined;
 
-  const contract = buildRouteContractJSON(routeKey, selectorNamespace, existingContract);
+  const contract = buildRouteContractJSON(routeKey, selectorNamespace, existingContract, task);
 
   return {
     ...task,
