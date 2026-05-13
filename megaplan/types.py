@@ -75,6 +75,13 @@ class SessionInfo(TypedDict, total=False):
     created_at: str
     last_used_at: str
     refreshed: bool
+    # Fingerprint of the sandbox-affecting config captured when this session
+    # was created (see megaplan.workers._sandbox_fingerprint). At resume
+    # time we refuse to reuse a session whose fingerprint no longer matches
+    # the current invocation — otherwise codex silently keeps the old
+    # sandbox when the operator toggles MEGAPLAN_TRUSTED_CONTAINER or
+    # changes --work-dir, leading to repeated invisible failures.
+    sandbox_hash: str
 
 
 class ActiveStep(TypedDict, total=False):

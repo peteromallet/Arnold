@@ -1,3 +1,4 @@
+# claude: plan/prep/revise/gate/finalize/loop_plan - codex: critique/execute/review/loop_execute/tiebreakers
 [profiles.standard]
 plan = "claude"
 prep = "claude"

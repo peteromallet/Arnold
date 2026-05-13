@@ -630,6 +630,31 @@ def _trusted_container() -> bool:
     }
 
 
+def _sandbox_fingerprint(work_dir: Path | str) -> str:
+    """Return a stable hash of the sandbox-affecting inputs for codex.
+
+    Captures every input that would change codex's effective sandbox
+    between invocations:
+
+    - ``MEGAPLAN_TRUSTED_CONTAINER`` (toggles ``--dangerously-bypass-...``)
+    - ``work_dir`` (appears in ``-C`` and in
+      ``sandbox_workspace_write.writable_roots``)
+
+    The hash is stored on each session entry when it is created; at resume
+    time we refuse to reuse a session whose fingerprint no longer matches.
+    This prevents the silent drift where an operator sets
+    ``MEGAPLAN_TRUSTED_CONTAINER=1`` *after* a session was created and
+    codex keeps using the locked-in (broken) sandbox forever.
+    """
+    trusted = "1" if _trusted_container() else "0"
+    try:
+        work_resolved = str(Path(work_dir).resolve())
+    except Exception:
+        work_resolved = str(work_dir)
+    payload = f"trusted={trusted}\nwork_dir={work_resolved}\n"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def _codex_child_env(
     turn_id: str | None = None,
     actor_id: str | None = None,
