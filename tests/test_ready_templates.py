@@ -468,7 +468,7 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert not any(key.startswith("resize_type") for key in api["6101"]["inputs"])
     assert api["6102"]["class_type"] == "PrimitiveFloat"
     assert api["2152"]["class_type"] == "LTXVAddGuide"
-    assert api["2152"]["inputs"]["frame_idx"] == -1
+    assert api["2152"]["inputs"]["frame_idx"] == 0
     assert api["175"]["class_type"] == "LTXVAudioVAELoader"
     assert api["175"]["inputs"]["ckpt_name"] == "LTX23_audio_vae_bf16.safetensors"
     assert api["215"]["inputs"]["sigmas"].startswith("1.0, 0.99375")

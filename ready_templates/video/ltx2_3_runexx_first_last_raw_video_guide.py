@@ -124,6 +124,7 @@ def build() -> VibeWorkflow:
         image=components.out(0),
     )
     wf.replace_edge("2152.image", guide_resized.out(0))
+    wf.nodes["2152"].inputs["frame_idx"] = 0
     guide_strength = _node(wf, "PrimitiveFloat", "6102", value=1)
     wf.replace_edge("2152.strength", guide_strength.out(0))
     _apply_runtime_schema_defaults(wf)
