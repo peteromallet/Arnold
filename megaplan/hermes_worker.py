@@ -38,6 +38,48 @@ def _import_hermes_runtime():
     return AIAgent, SessionDB
 
 
+# Fireworks rejects requests with `max_tokens > 4096` unless `stream=true`.
+# When that threshold applies we flip the call to streaming and let
+# run_agent's streaming path reassemble the response into the same shape the
+# rest of megaplan expects.  Streaming lives entirely inside the worker —
+# downstream callers never see streaming semantics.
+_FIREWORKS_STREAM_MAX_TOKENS = 4096
+
+
+def _no_op_stream(_text: str) -> None:
+    """Sentinel callback that activates run_agent's streaming path.
+
+    AIAgent decides between streaming and non-streaming based on whether a
+    stream consumer is registered.  We don't need the deltas, just the side
+    effect of forcing `stream=True` on the underlying chat.completions call.
+    """
+    return None
+_no_op_stream._megaplan_force_stream = True  # type: ignore[attr-defined]
+
+
+def _provider_requires_streaming(model: str | None, max_tokens: int | None) -> bool:
+    """Return True when this provider/max_tokens pair must use streaming.
+
+    Today only Fireworks has this constraint (max_tokens > 4096 must stream).
+    Other providers (OpenRouter, DeepSeek-direct, MiniMax, etc.) accept
+    non-streamed high-max_tokens requests, so we keep the opt-in narrow.
+    """
+    if not model or not isinstance(model, str):
+        return False
+    if not model.startswith("fireworks:"):
+        return False
+    if max_tokens is None:
+        return False
+    return max_tokens > _FIREWORKS_STREAM_MAX_TOKENS
+
+
+def _streaming_run_kwargs(model: str | None, max_tokens: int | None) -> dict:
+    """Build the run_conversation kwargs needed to force streaming when required."""
+    if _provider_requires_streaming(model, max_tokens):
+        return {"stream_callback": _no_op_stream}
+    return {}
+
+
 def _toolsets_for_phase(phase: str) -> list[str] | None:
     """Return toolsets for a given megaplan phase.
 
@@ -147,8 +189,15 @@ def parse_agent_output(
     step: str,
     project_dir: Path,
     plan_dir: Path,
+    run_kwargs: dict | None = None,
 ) -> tuple[dict, str]:
-    """Parse a Hermes agent result into a structured payload."""
+    """Parse a Hermes agent result into a structured payload.
+
+    ``run_kwargs`` is forwarded to any follow-up ``agent.run_conversation``
+    calls (template / summary fallbacks) so providers that require streaming
+    (e.g. Fireworks at high max_tokens) keep streaming on those calls too.
+    """
+    extra_run_kwargs = run_kwargs or {}
     raw_output = result.get("final_response", "") or ""
     messages = result.get("messages", [])
 
@@ -166,6 +215,7 @@ def parse_agent_output(
             summary_result = agent.run_conversation(
                 user_message=summary_prompt,
                 conversation_history=messages,
+                **extra_run_kwargs,
             )
             raw_output = summary_result.get("final_response", "") or ""
             messages = summary_result.get("messages", messages)
@@ -254,6 +304,7 @@ def parse_agent_output(
             summary_result = agent.run_conversation(
                 user_message=summary_prompt,
                 conversation_history=messages,
+                **extra_run_kwargs,
             )
             summary_output = summary_result.get("final_response", "") or ""
             if summary_output.strip():
@@ -454,6 +505,14 @@ def run_hermes_step(
         else None
     )
 
+    # Cap output tokens to prevent repetition loops (Qwen generates 330K+
+    # of repeated text without a limit). Sized to fit large finalize.json
+    # task graphs and multi-batch execute outputs on plans with ~15+ tasks.
+    # Also drives the Fireworks streaming gate below — any value >4096 forces
+    # streaming on `fireworks:*` models because Fireworks rejects >4096 max_tokens
+    # without `stream=true`.
+    agent_max_tokens = 65536 if step == "execute" else 32768
+
     def _make_agent(agent_model: str, extra_kwargs: dict) -> "AIAgent":
         current_agent = AIAgent(
             model=agent_model,
@@ -463,10 +522,7 @@ def run_hermes_step(
             enabled_toolsets=toolsets,
             session_id=session_id,
             session_db=SessionDB(),
-            # Cap output tokens to prevent repetition loops (Qwen generates 330K+
-            # of repeated text without a limit). Sized to fit large finalize.json
-            # task graphs and multi-batch execute outputs on plans with ~15+ tasks.
-            max_tokens=65536 if step == "execute" else 32768,
+            max_tokens=agent_max_tokens,
             reasoning_config=_reasoning_off,
             **extra_kwargs,
         )
@@ -502,10 +558,17 @@ def run_hermes_step(
             return exc.message
         return str(exc) or exc.__class__.__name__
 
-    def _run_attempt(current_agent, current_output_path: Path | None) -> tuple[dict, dict, str]:
+    def _run_attempt(current_agent, current_output_path: Path | None, *, current_model: str | None = None) -> tuple[dict, dict, str]:
+        # Force streaming for providers that require it at this max_tokens
+        # (e.g. Fireworks rejects max_tokens > 4096 unless stream=true).
+        # The streaming response is reassembled inside run_agent into the
+        # same shape non-streaming returns, so the rest of megaplan is
+        # unchanged.
+        run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens)
         current_result = current_agent.run_conversation(
             user_message=prompt,
             conversation_history=conversation_history,
+            **run_kwargs,
         )
         current_payload, current_raw_output = parse_agent_output(
             current_agent,
@@ -515,6 +578,7 @@ def run_hermes_step(
             step=step,
             project_dir=project_dir,
             plan_dir=plan_dir,
+            run_kwargs=run_kwargs,
         )
         clean_parsed_payload(current_payload, schema, step)
         messages = current_result.get("messages", [])
@@ -546,6 +610,17 @@ def run_hermes_step(
     # (Qwen, GLM-5) hang or produce garbage when both are active.
     # The JSON template in the prompt is sufficient; _parse_json_response
     # handles code fences and markdown wrapping.
+
+    # Install the project_dir sandbox whenever a toolset is active.  This
+    # pins TERMINAL_CWD and wraps the terminal/write_file/patch handlers so
+    # the model can't escape the worktree even if its prompt context tells
+    # it to (see megaplan/sandbox.py).  Phases without tools (no toolsets)
+    # don't need it.
+    from contextlib import ExitStack
+    _sandbox_stack = ExitStack()
+    if toolsets:
+        from megaplan.sandbox import install_sandbox
+        _sandbox_stack.enter_context(install_sandbox(project_dir))
 
     # Run — with fallback to OpenRouter for MiniMax if primary API fails
     started = time.monotonic()
@@ -618,6 +693,7 @@ def run_hermes_step(
     finally:
         sys.stdout = real_stdout
         sys.stderr = real_stderr
+        _sandbox_stack.close()
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     cost_usd = result.get("estimated_cost_usd", 0.0) or 0.0

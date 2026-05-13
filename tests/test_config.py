@@ -9,8 +9,9 @@ import pytest
 import megaplan
 import megaplan.cli as cli_module
 import megaplan._core.io as io_module
+import megaplan.profiles as profiles_module
 from megaplan._core import get_effective
-from megaplan.types import DEFAULTS
+from megaplan.types import CliError, DEFAULT_AGENT_ROUTING, DEFAULTS
 
 
 @pytest.fixture
@@ -273,3 +274,78 @@ def test_handle_init_explicit_robustness_beats_config_default(
     assert response["robustness"] == "light"
     assert state["config"]["auto_approve"] is True
     assert state["config"]["robustness"] == "light"
+
+
+def test_handle_config_use_profile_writes_all_phase_keys_and_preserves_unrelated(
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Make sure user-layer profiles.toml lookup also goes through the isolated dir
+    # so a stray real ~/.config/megaplan/profiles.toml can't contaminate the test.
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: isolated_config_dir,
+    )
+
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = isolated_config_dir / "config.json"
+    # Pre-seed unrelated keys to verify they survive, plus a stale agents.plan
+    # value to verify it gets overwritten by the profile.
+    config_path.write_text(
+        json.dumps(
+            {
+                "execution": {"auto_approve": True, "robustness": "robust"},
+                "agents": {"plan": "codex"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = megaplan.handle_config(
+        Namespace(config_action="use-profile", name="standard")
+    )
+
+    assert response["success"] is True
+    assert response["action"] == "use-profile"
+    assert response["profile"] == "standard"
+    # All 12 phases from DEFAULT_AGENT_ROUTING should be present in `applied`.
+    assert set(response["applied"].keys()) == set(DEFAULT_AGENT_ROUTING.keys())
+
+    on_disk = json.loads(config_path.read_text(encoding="utf-8"))
+
+    # Unrelated section preserved verbatim.
+    assert on_disk["execution"] == {"auto_approve": True, "robustness": "robust"}
+
+    # Every phase from the standard profile written, and the stale plan value
+    # was overwritten.
+    for phase in DEFAULT_AGENT_ROUTING:
+        assert phase in on_disk["agents"]
+    assert on_disk["agents"]["plan"] == "claude"
+    # Spec values from `config profiles show standard` should match what was
+    # written to disk.
+    shown = megaplan.handle_config(
+        Namespace(config_action="profiles", profiles_action="show", name="standard")
+    )
+    assert on_disk["agents"] == shown["profile"]
+
+
+def test_handle_config_use_profile_unknown_profile_raises(
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: isolated_config_dir,
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        megaplan.handle_config(
+            Namespace(config_action="use-profile", name="definitely-not-a-profile")
+        )
+
+    assert exc_info.value.code == "unknown_profile"
+    # The error message should list at least one known built-in profile so the
+    # user can recover without consulting docs.
+    assert "standard" in exc_info.value.message

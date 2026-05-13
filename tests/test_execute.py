@@ -1297,7 +1297,8 @@ def test_execute_deduplicates_task_updates_and_blocks_incomplete_coverage(
     assert response["state"] == megaplan.STATE_FINALIZED
     assert response["next_step"] == "execute"
     assert response["summary"] == (
-        "Blocked: 1/2 tasks have no executor update; 1/2 sense checks have no executor acknowledgment. "
+        "[scope_drift=low] Blocked: 1/2 tasks have no executor update; "
+        "1/2 sense checks have no executor acknowledgment. "
         "Re-run execute to complete tracking."
     )
     assert "Duplicate task_update for 'T1' — last entry wins." in response["deviations"]

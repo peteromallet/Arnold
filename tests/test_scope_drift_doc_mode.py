@@ -1,0 +1,111 @@
+"""Regression tests for doc-mode scope-drift handling.
+
+Doc-mode plans declare their deliverable via the init-time ``output_path``
+config and per-task evidence is ``sections_written`` rather than
+``files_changed``. The execute scope-drift detector previously consulted
+only ``payload.files_changed``, so the deliverable was always flagged as
+unclaimed. Under robust+ robustness this blocked the finalized -> executed
+transition with no recovery path.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import megaplan.execute.core as execute_core
+
+
+@pytest.fixture
+def patched_snapshot(monkeypatch: pytest.MonkeyPatch):
+    """Force a known git status snapshot containing the doc deliverable."""
+
+    def _snapshot(_: Path) -> tuple[dict[str, str], str | None]:
+        return ({"docs/foo.md": "deliverable-hash"}, None)
+
+    monkeypatch.setattr(execute_core, "_capture_git_status_snapshot", _snapshot)
+
+
+@pytest.fixture
+def patched_loc(monkeypatch: pytest.MonkeyPatch):
+    """Pretend ``docs/foo.md`` has 264 LOC, well above the 20 LOC threshold."""
+
+    def _loc(_project_dir: Path, paths: set[str]) -> dict[str, int]:
+        return {path: 264 for path in paths}
+
+    monkeypatch.setattr(execute_core, "collect_loc_by_file", _loc)
+
+
+def _empty_payload() -> dict[str, Any]:
+    return {"files_changed": []}
+
+
+def test_doc_mode_output_path_in_files_claimed(
+    tmp_path: Path,
+    patched_snapshot: None,
+    patched_loc: None,
+) -> None:
+    """When mode == doc, the configured output_path is treated as claimed."""
+
+    state: dict[str, Any] = {
+        "config": {
+            "project_dir": str(tmp_path),
+            "mode": "doc",
+            "output_path": "docs/foo.md",
+        }
+    }
+
+    drift = execute_core._compute_execute_scope_drift(
+        tmp_path,
+        _empty_payload(),
+        state,
+    )
+
+    assert drift.files_added == []
+    assert drift.severity != "high"
+    assert drift.loc_added_outside_claimed == 0
+
+
+def test_code_mode_unchanged_unclaimed_doc_still_flagged(
+    tmp_path: Path,
+    patched_snapshot: None,
+    patched_loc: None,
+) -> None:
+    """Code-mode behavior is unchanged: an unclaimed deliverable is still flagged."""
+
+    state: dict[str, Any] = {
+        "config": {
+            "project_dir": str(tmp_path),
+            "mode": "code",
+            # output_path is irrelevant for code mode and must not be auto-claimed
+            "output_path": "docs/foo.md",
+        }
+    }
+
+    drift = execute_core._compute_execute_scope_drift(
+        tmp_path,
+        _empty_payload(),
+        state,
+    )
+
+    assert drift.files_added == ["docs/foo.md"]
+    assert drift.loc_added_outside_claimed == 264
+    assert drift.severity == "high"
+
+
+def test_compute_scope_drift_without_state_is_safe(
+    tmp_path: Path,
+    patched_snapshot: None,
+    patched_loc: None,
+) -> None:
+    """Backwards compatibility: callers may still omit state."""
+
+    drift = execute_core._compute_execute_scope_drift(
+        tmp_path,
+        _empty_payload(),
+    )
+
+    assert drift.files_added == ["docs/foo.md"]
+    assert drift.severity == "high"
