@@ -36,6 +36,22 @@ def test_models_root_prefers_vibecomfy_env(monkeypatch: pytest.MonkeyPatch, tmp_
     assert fetch.models_root() == tmp_path / "vibe"
 
 
+def test_models_root_accepts_directory_extra_model_paths_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("VIBECOMFY_MODELS_ROOT", raising=False)
+    monkeypatch.delenv("COMFY_MODELS_ROOT", raising=False)
+    monkeypatch.setenv("COMFYUI_EXTRA_MODEL_PATHS_PATH", str(tmp_path / "shared-models"))
+
+    assert fetch.models_root() == tmp_path / "shared-models"
+
+
+def test_models_root_ignores_yaml_extra_model_paths_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("VIBECOMFY_MODELS_ROOT", raising=False)
+    monkeypatch.delenv("COMFY_MODELS_ROOT", raising=False)
+    monkeypatch.setenv("COMFYUI_EXTRA_MODEL_PATHS_PATH", str(tmp_path / "extra_model_paths.yaml"))
+
+    assert fetch.models_root() != tmp_path / "extra_model_paths.yaml"
+
+
 def test_download_skips_present_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
     path = tmp_path / "checkpoints" / "model.safetensors"

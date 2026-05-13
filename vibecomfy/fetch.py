@@ -13,6 +13,11 @@ def models_root() -> Path:
         value = os.environ.get(env_name)
         if value:
             return Path(value)
+    extra_model_paths = os.environ.get("COMFYUI_EXTRA_MODEL_PATHS_PATH")
+    if extra_model_paths:
+        path = Path(extra_model_paths)
+        if path.suffix.lower() not in {".yaml", ".yml"}:
+            return path
     try:
         from comfy.cmd.folder_paths import folder_names_and_paths
 
