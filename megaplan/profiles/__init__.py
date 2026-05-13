@@ -389,6 +389,12 @@ def apply_profile_expansion(
     project_dir: Path | None,
     state: dict | None = None,
 ) -> argparse.Namespace:
+    """Expand a --profile into per-phase --phase-model overrides.
+
+    The state fallback is needed because the auto-driver invokes each phase as a
+    fresh subprocess that does not propagate the --profile flag, so handlers must
+    recover the profile name from state['config']['profile'].
+    """
     if getattr(args, "_profile_applied", False):
         return args
 
