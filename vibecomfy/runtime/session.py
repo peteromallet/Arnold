@@ -47,19 +47,28 @@ def _node_packs_from_requirements(workflow: VibeWorkflow):
 def _model_assets_from_workflow(workflow: VibeWorkflow) -> list[dict[str, str]]:
     from vibecomfy.model_assets import _normalise_requirement_entries, resolve_referenced_assets
 
+    def _norm(value: str) -> str:
+        return value.replace("\\", "/")
+
     raw_assets = workflow.metadata.get("model_assets", [])
     authored = _normalise_requirement_entries(raw_assets) if isinstance(raw_assets, list) else []
     resolved, unresolved = resolve_referenced_assets(workflow)
     authored_keys = {
-        (entry["name"].replace("\\", "/"), entry["subdir"].replace("\\", "/"))
+        (_norm(entry["name"]), _norm(entry["subdir"]))
+        for entry in authored
+        if isinstance(entry.get("name"), str) and isinstance(entry.get("subdir"), str)
+    }
+    authored_paths = {
+        f"{_norm(entry['subdir'])}/{_norm(entry['name'])}"
         for entry in authored
         if isinstance(entry.get("name"), str) and isinstance(entry.get("subdir"), str)
     }
     unresolved = [
         item
         for item in unresolved
-        if (item["value"].replace("\\", "/"), item["subdir"].replace("\\", "/")) not in authored_keys
-        and (Path(item["value"].replace("\\", "/")).name, item["subdir"].replace("\\", "/")) not in authored_keys
+        if (_norm(item["value"]), _norm(item["subdir"])) not in authored_keys
+        and (Path(_norm(item["value"])).name, _norm(item["subdir"])) not in authored_keys
+        and f"{_norm(item['subdir'])}/{_norm(item['value'])}" not in authored_paths
     ]
     if unresolved:
         summary = ", ".join(
@@ -72,6 +81,8 @@ def _model_assets_from_workflow(workflow: VibeWorkflow) -> list[dict[str, str]]:
     seen: set[tuple[str, str]] = set()
     for entry in [*authored, *resolved]:
         key = (entry["name"], entry["subdir"])
+        if key not in authored_keys and f"{_norm(entry['subdir'])}/{_norm(entry['name'])}" in authored_paths:
+            continue
         if key in seen:
             continue
         seen.add(key)

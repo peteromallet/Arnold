@@ -11,7 +11,7 @@ from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.resolution import resolution
 from vibecomfy.registry.ready import ready_template_ids, workflow_from_ready
 from vibecomfy.registry.ready_template import apply_ready_template_policy
-from vibecomfy.runtime.session import SessionConfig
+from vibecomfy.runtime.session import SessionConfig, _model_assets_from_workflow
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -450,6 +450,22 @@ def test_wan_vace_template_uses_root_vace_module_asset() -> None:
         and (asset.get("subdir") or asset.get("directory")) == "diffusion_models/WanVideo"
         for asset in workflow.metadata["model_assets"]
     )
+
+
+@pytest.mark.parametrize(
+    "template_id",
+    [
+        "video/wanvideo_wrapper_22_14b_t2i",
+        "video/wanvideo_wrapper_22_14b_i2v_kijai",
+        "video/wan22_animate_native_first_stage",
+    ],
+)
+def test_video_parity_templates_have_resolvable_runtime_model_assets(template_id: str) -> None:
+    workflow = workflow_from_ready(template_id)
+
+    assets = _model_assets_from_workflow(workflow)
+
+    assert assets
 
 
 @pytest.mark.parametrize(

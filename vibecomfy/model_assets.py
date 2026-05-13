@@ -45,6 +45,16 @@ _MODEL_INPUT_SUBDIRS = {
     "vae_name": "vae",
 }
 
+_CLASS_FIELD_SUBDIRS = {
+    ("CLIPVisionLoader", "clip_name"): "clip_vision",
+    ("LoadWanVideoT5TextEncoder", "model_name"): "text_encoders",
+    ("WanVideoTextEncodeCached", "model_name"): "text_encoders",
+    ("WanVideoVAELoader", "model_name"): "vae",
+    ("WanVideoModelLoader", "model_name"): "diffusion_models",
+    ("WanVideoLoraSelect", "lora"): "loras",
+    ("WanVideoLoraSelectMulti", "lora"): "loras",
+}
+
 if TYPE_CHECKING:
     from vibecomfy.registry.models_loader import ModelEntry
     from vibecomfy.workflow import VibeWorkflow
@@ -169,11 +179,11 @@ def _referenced_model_values(workflow: VibeWorkflow) -> list[dict[str, str]]:
     seen: set[tuple[str, str, str, str]] = set()
     for node in workflow.runtime_nodes().values():
         for field, value in node.inputs.items():
-            if field not in _MODEL_INPUT_SUBDIRS or not isinstance(value, str) or not value:
+            subdir = _subdir_for_model_reference(node.class_type, field)
+            if subdir is None or not isinstance(value, str) or not value:
                 continue
             if _looks_like_runtime_input(value):
                 continue
-            subdir = _MODEL_INPUT_SUBDIRS[field]
             key = (node.id, node.class_type, field, value)
             if key in seen:
                 continue
@@ -188,6 +198,10 @@ def _referenced_model_values(workflow: VibeWorkflow) -> list[dict[str, str]]:
                 }
             )
     return references
+
+
+def _subdir_for_model_reference(class_type: str, field: str) -> str | None:
+    return _CLASS_FIELD_SUBDIRS.get((class_type, field), _MODEL_INPUT_SUBDIRS.get(field))
 
 
 def _asset_for_reference(

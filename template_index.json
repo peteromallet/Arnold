@@ -569,7 +569,7 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 5
+      "model_count": 6
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_t2i",

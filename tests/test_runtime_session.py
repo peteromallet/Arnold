@@ -1579,6 +1579,74 @@ def test_embedded_run_ensure_models_matches_declared_assets_with_normalized_path
     ]
 
 
+def test_embedded_run_ensure_models_matches_custom_node_model_directories(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("wan-custom-assets", WorkflowSource("wan-custom-assets"))
+    workflow.nodes["11"] = VibeNode(
+        "11",
+        "LoadWanVideoT5TextEncoder",
+        inputs={"model_name": "umt5-xxl-enc-bf16.safetensors"},
+    )
+    workflow.nodes["38"] = VibeNode(
+        "38",
+        "WanVideoVAELoader",
+        inputs={"model_name": r"wanvideo\Wan2_1_VAE_bf16.safetensors"},
+    )
+    workflow.nodes["4"] = VibeNode(
+        "4",
+        "CLIPVisionLoader",
+        inputs={"clip_name": "clip_vision_h.safetensors"},
+    )
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "umt5-xxl-enc-bf16.safetensors",
+            "url": "https://example.test/umt5-xxl-enc-bf16.safetensors",
+            "subdir": "text_encoders",
+        },
+        {
+            "name": "Wan2_1_VAE_bf16.safetensors",
+            "url": "https://example.test/Wan2_1_VAE_bf16.safetensors",
+            "subdir": "vae/wanvideo",
+        },
+        {
+            "name": "clip_vision_h.safetensors",
+            "url": "https://example.test/clip_vision_h.safetensors",
+            "subdir": "clip_vision",
+        },
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-custom-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [workflow.metadata["model_assets"], "queue"]
+
+
 def test_embedded_run_ensure_models_resolves_cameraman_iclora_override(
     fake_comfy,
     tmp_path: Path,
