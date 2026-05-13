@@ -41,6 +41,7 @@ from megaplan._core import (
     infer_next_steps,
     is_prose_mode,
     json_dump,
+    list_batch_artifacts,
     load_config,
     load_debt_registry,
     load_plan,
@@ -207,6 +208,38 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
     for batch_idx, batch_ids in enumerate(global_batches, start=1):
         for task_id in batch_ids:
             task_id_to_batch[task_id] = batch_idx
+    # In per-batch execute mode, finalize.json is only rewritten after the
+    # final batch — between batches the per-task status overlay lives in
+    # execution_batch_<n>.json. Apply that overlay so progress reflects the
+    # most recent on-disk truth. Single-execute mode produces no batch
+    # artifacts, so this is a no-op there.
+    batch_status_overlay: dict[str, str] = {}
+    batch_artifacts = list_batch_artifacts(plan_dir)
+    for batch_path in batch_artifacts:
+        try:
+            batch_data = read_json(batch_path)
+        except Exception:
+            continue
+        for update in batch_data.get("task_updates", []) or []:
+            if not isinstance(update, dict):
+                continue
+            task_id = update.get("task_id")
+            status = update.get("status")
+            if isinstance(task_id, str) and isinstance(status, str) and status:
+                batch_status_overlay[task_id] = status
+    progress_source = "finalize.json"
+    if batch_status_overlay:
+        merged_tasks: list[dict[str, Any]] = []
+        for task in tasks:
+            tid = task.get("id")
+            if isinstance(tid, str) and tid in batch_status_overlay:
+                merged = dict(task)
+                merged["status"] = batch_status_overlay[tid]
+                merged_tasks.append(merged)
+            else:
+                merged_tasks.append(task)
+        tasks = merged_tasks
+        progress_source = "execution_batch_*.json"
     tasks_done = sum(1 for t in tasks if t.get("status") == "done")
     tasks_skipped = sum(1 for t in tasks if t.get("status") == "skipped")
     tasks_pending = sum(1 for t in tasks if t.get("status") == "pending")
@@ -228,11 +261,19 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         }
         for t in tasks
     ]
+    if progress_source == "execution_batch_*.json":
+        granularity_note = (
+            "Progress reflects per-batch artifacts (latest execution_batch_*.json overlay)."
+        )
+    else:
+        granularity_note = (
+            "Progress reflects the last finalize.json write (between-batch granularity)."
+        )
     return {
         "summary": (
             f"Execution progress: {tasks_done + tasks_skipped}/{tasks_total} tasks tracked, "
             f"{batches_completed}/{len(global_batches)} batches completed. "
-            "Progress reflects the last finalize.json write (between-batch granularity)."
+            f"{granularity_note}"
         ),
         "tasks_total": tasks_total,
         "tasks_done": tasks_done,
@@ -942,6 +983,32 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
                 "profile": resolved,
             }
         raise CliError("invalid_args", f"Unknown profiles action: {profiles_action}")
+    if action == "use-profile":
+        project_dir = Path.cwd()
+        name = args.name
+        profiles = load_profiles(project_dir=project_dir)
+        # resolve_profile raises CliError("unknown_profile", ...) with the list of
+        # known profile names, which is what we want for a clear error.
+        resolved = resolve_profile(name, profiles)
+        config = load_config()
+        agents_section = config.setdefault("agents", {})
+        applied: dict[str, str] = {}
+        for phase, spec in resolved.items():
+            agents_section[phase] = spec
+            applied[phase] = spec
+        save_config(config)
+        return {
+            "success": True,
+            "step": "config",
+            "action": "use-profile",
+            "config_path": str(config_dir() / "config.json"),
+            "profile": name,
+            "applied": applied,
+            "summary": (
+                f"Applied profile '{name}' to user config "
+                f"({len(applied)} agent phase{'s' if len(applied) != 1 else ''} updated)."
+            ),
+        }
     if action == "reset":
         path = config_dir() / "config.json"
         if path.exists():
@@ -2058,6 +2125,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     profiles_show_parser = profiles_sub.add_parser("show", help="Show the fully resolved phase map for one profile")
     profiles_show_parser.add_argument("name")
+    use_profile_parser = config_sub.add_parser(
+        "use-profile",
+        help="Apply a profile as the user-config default agent routing (writes every agents.<phase>)",
+        description=(
+            "Apply a named profile from built-in/user/project layers as the persisted default "
+            "agent routing in ~/.config/megaplan/config.json. Equivalent to running "
+            "'config set agents.<phase> <agent>' for every phase in the profile, but accepts "
+            "agent specs with model qualifiers (e.g. 'hermes:glm-5.1') the same way profiles do."
+        ),
+    )
+    use_profile_parser.add_argument("name", help="Profile name (see 'megaplan config profiles list')")
 
     step_parser = subparsers.add_parser("step", help="Edit plan step sections without hand-editing markdown")
     step_subparsers = step_parser.add_subparsers(dest="step_action", required=True)

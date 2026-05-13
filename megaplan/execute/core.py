@@ -40,6 +40,7 @@ from megaplan.execute.quality import (
     _check_done_task_evidence_by_kind,
     _collect_execute_claimed_paths,
     _collect_quality_deviations,
+    _normalize_execute_claimed_path,
     _observe_git_changes,
 )
 from megaplan.execute.timeout import (
@@ -675,8 +676,20 @@ def _append_trace_output(plan_dir: Path, trace_output: str | None) -> bool:
     return True
 
 
-def _compute_execute_scope_drift(project_dir: Path, aggregate_payload: dict[str, Any]):
+def _compute_execute_scope_drift(
+    project_dir: Path,
+    aggregate_payload: dict[str, Any],
+    state: PlanState | None = None,
+):
     files_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    if state is not None:
+        config = state.get("config") or {}
+        if config.get("mode") == "doc":
+            output_path = config.get("output_path")
+            if isinstance(output_path, str) and output_path.strip():
+                files_claimed.add(
+                    _normalize_execute_claimed_path(output_path, project_dir)
+                )
     try:
         observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
     except Exception:
@@ -731,10 +744,29 @@ def handle_execute_one_batch(
         )
 
     tasks = finalize_data.get("tasks", [])
+    # In per-batch execute mode, finalize.json is only rewritten after the
+    # final batch — between batches the per-task status overlay lives in
+    # execution_batch_<n>.json. Apply that overlay so prerequisite checks
+    # see the most recent on-disk truth.
+    batch_status_overlay: dict[str, str] = {}
+    for batch_path in list_batch_artifacts(plan_dir):
+        try:
+            batch_data = read_json(batch_path)
+        except Exception:
+            continue
+        for update in batch_data.get("task_updates", []) or []:
+            if not isinstance(update, dict):
+                continue
+            tid = update.get("task_id")
+            status = update.get("status")
+            if isinstance(tid, str) and isinstance(status, str) and status:
+                batch_status_overlay[tid] = status
     completed_ids = {
         task["id"]
         for task in tasks
-        if task.get("status") in {"done", "skipped"} and isinstance(task.get("id"), str)
+        if isinstance(task.get("id"), str)
+        and batch_status_overlay.get(task["id"], task.get("status"))
+        in {"done", "skipped"}
     }
     for prior_idx in range(batch_number - 1):
         prior_batch = global_batches[prior_idx]
@@ -851,7 +883,7 @@ def handle_execute_one_batch(
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
         atomic_write_json(plan_dir / "execution.json", aggregate_payload)
-        drift = _compute_execute_scope_drift(project_dir, aggregate_payload)
+        drift = _compute_execute_scope_drift(project_dir, aggregate_payload, state)
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
     blocked = bool(blocking_reasons)
@@ -1399,7 +1431,7 @@ def handle_execute_auto_loop(
         )
     aggregate_payload["deviations"] = deviations
     atomic_write_json(plan_dir / "execution.json", aggregate_payload)
-    drift = _compute_execute_scope_drift(project_dir, aggregate_payload)
+    drift = _compute_execute_scope_drift(project_dir, aggregate_payload, state)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     atomic_write_json(plan_dir / "finalize.json", finalize_data)
     atomic_write_text(
