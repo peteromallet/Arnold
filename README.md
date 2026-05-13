@@ -59,9 +59,17 @@ python -m tools.refresh_template_index
 python -m tools.refresh_template_index --check
 python -m vibecomfy.cli validate ready_templates/<kind>/<id>.py
 python -m vibecomfy.cli port check ready_templates/<kind>/<id>.py --strict-ready-template --json
+python -m vibecomfy.cli doctor ready_templates/<kind>/<id>.py --json
 ```
 
 The manifest/index tests catch missing ready-template rows, stale `template_index.json`, and manifest entries that point at Python templates that do not exist.
+
+`doctor` is the local readiness pass for a built workflow. It reports missing
+model assets, node-pack drift, suggested patches, and runtime warnings that
+schema validation cannot infer. For video workflows, it also flags generated
+frame-count bindings that are paired with uncapped video loaders; either bind
+`frame_load_cap` to the same effective frame count or have the caller
+materialize a capped source clip before runtime.
 
 The same lifecycle applies when fixing, forking, or authoring workflows from scratch: identify the intended task and output artifact, choose recipe/patch vs new ready template, run the programmatic gates, then use agent judgment for source quality, model provenance, custom-node legitimacy, smoke adaptations, and app/Wan2GP parity before recording live evidence.
 

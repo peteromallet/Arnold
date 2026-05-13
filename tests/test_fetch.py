@@ -82,6 +82,13 @@ def test_download_supports_repo_relative_target_path(monkeypatch: pytest.MonkeyP
     assert path.read_bytes() == b"aux"
 
 
+def test_local_path_accepts_ready_template_directory_alias(tmp_path: Path) -> None:
+    assert fetch.local_path(
+        {"name": "model.safetensors", "directory": "diffusion_models"},
+        root=tmp_path,
+    ) == tmp_path / "diffusion_models" / "model.safetensors"
+
+
 def test_download_removes_tmp_after_stream_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
 

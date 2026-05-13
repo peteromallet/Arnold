@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from vibecomfy.commands.doctor import _cmd_doctor
+from vibecomfy.commands.doctor import _cmd_doctor, _video_frame_cap_warnings
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
 MODEL_ENTRY = {
@@ -82,3 +83,19 @@ def test_doctor_passes_when_model_exists(
     captured = capsys.readouterr()
     assert "Missing models:" not in captured.out
     assert "missing model" not in captured.out
+
+
+def test_doctor_warns_when_bounded_video_generation_has_uncapped_loadvideo() -> None:
+    workflow = VibeWorkflow(
+        "video/bounded",
+        WorkflowSource(id="video/bounded"),
+        metadata={"unbound_inputs": {"num_frames": "10.length"}},
+    )
+    workflow.nodes["1"] = VibeNode(id="1", class_type="LoadVideo", inputs={"file": "source.mp4"})
+
+    warnings = _video_frame_cap_warnings(workflow)
+
+    assert warnings == [
+        "LoadVideo node 1 has no frame-load cap, but the workflow exposes a generated frame-count binding; "
+        "the caller must cap or normalize source video before runtime if preprocessing should only consume generated frames."
+    ]

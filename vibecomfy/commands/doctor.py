@@ -108,18 +108,19 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 for class_type in unresolved:
                     print(f"- {class_type}")
         return 1
+    warnings = _doctor_warnings(workflow)
     missing_models = _missing_model_warnings(workflow, args.path)
     if missing_models:
         payload = {
             "status": "error",
             "missing_models": missing_models,
+            "warnings": warnings,
             "nodepack_warnings": drift_warnings,
             "suggested_patches": suggested_patches,
             "recommended_command": f"vibecomfy port check {args.path} --json",
         }
-        emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Missing models", data["missing_models"], data))
+        emit(payload, json=json_output, text_renderer=_render_missing_models)
         return 1
-    warnings = _doctor_warnings(workflow)
     if warnings:
         payload = {"status": "warning", "warnings": warnings, "nodepack_warnings": drift_warnings, "suggested_patches": suggested_patches}
         emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Local checks passed with runtime warnings", data["warnings"], data))
@@ -172,6 +173,18 @@ def _render_doctor_error(payload: dict[str, Any]) -> str:
 def _render_list_section(title: str, items: list[str], payload: dict[str, Any]) -> str:
     lines = [f"{title}:"]
     lines.extend(f"- {item}" for item in items)
+    lines.extend(_render_suggested_patches(payload))
+    lines.extend(_render_recommended_command(payload))
+    return "\n".join(lines)
+
+
+def _render_missing_models(payload: dict[str, Any]) -> str:
+    lines = ["Missing models:"]
+    lines.extend(f"- {item}" for item in payload["missing_models"])
+    warnings = payload.get("warnings") or []
+    if warnings:
+        lines.append("Other warnings:")
+        lines.extend(f"- {item}" for item in warnings)
     lines.extend(_render_suggested_patches(payload))
     lines.extend(_render_recommended_command(payload))
     return "\n".join(lines)
@@ -327,6 +340,7 @@ def _doctor_warnings(workflow: VibeWorkflow) -> list[str]:
     warnings: list[str] = []
     warnings.extend(_embedded_configuration_warnings())
     warnings.extend(_video_audio_warnings(workflow))
+    warnings.extend(_video_frame_cap_warnings(workflow))
     warnings.extend(_ltx_audio_vae_loader_warnings(workflow))
     return warnings
 
@@ -405,6 +419,33 @@ def _video_audio_warnings(workflow: VibeWorkflow) -> list[str]:
             f"{node_id} has optional audio input connected"
             f"{f' from {source}' if source else ''}; for smoke tests, remove this edge if SaveVideo fails with AAC NaN/Inf."
         )
+    return warnings
+
+
+def _video_frame_cap_warnings(workflow: VibeWorkflow) -> list[str]:
+    unbound_inputs = workflow.metadata.get("unbound_inputs")
+    has_generation_frame_binding = isinstance(unbound_inputs, dict) and any(
+        str(name) in {"num_frames", "frames", "frame_count", "video_length"}
+        for name in unbound_inputs
+    )
+    if not has_generation_frame_binding:
+        return []
+
+    warnings: list[str] = []
+    for node_id, node in sorted(workflow.nodes.items()):
+        if node.class_type == "LoadVideo":
+            warnings.append(
+                f"LoadVideo node {node_id} has no frame-load cap, but the workflow exposes a generated frame-count binding; "
+                "the caller must cap or normalize source video before runtime if preprocessing should only consume generated frames."
+            )
+            continue
+        if node.class_type in {"VHS_LoadVideo", "VHS_LoadVideoPath", "VHS_LoadVideoFFmpeg"}:
+            cap = node.inputs.get("frame_load_cap")
+            if cap in (None, 0, "0"):
+                warnings.append(
+                    f"{node.class_type} node {node_id} has frame_load_cap={cap!r} while the workflow exposes a generated frame-count binding; "
+                    "bind frame_load_cap to the same effective frame count or document why the full source clip is required."
+                )
     return warnings
 
 

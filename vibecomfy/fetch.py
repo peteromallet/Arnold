@@ -29,7 +29,10 @@ def local_path(entry: Mapping[str, Any], *, root: Path | None = None) -> Path:
         if target.is_absolute():
             return target
         return base.parent / target
-    return base / str(entry["subdir"]) / str(entry["name"])
+    subdir = entry.get("subdir") or entry.get("directory")
+    if not isinstance(subdir, str) or not subdir:
+        raise KeyError("model asset entry requires 'subdir' or 'directory'")
+    return base / subdir / str(entry["name"])
 
 
 def is_present(entry: Mapping[str, Any], *, root: Path | None = None) -> bool:
