@@ -806,6 +806,9 @@ def _embedded_configuration_for_session(config: SessionConfig) -> Configuration 
         if not isinstance(parsed, dict):
             raise ValueError("VIBECOMFY_COMFY_CONFIGURATION must be a JSON object")
         values.update(parsed)
+    extra_model_paths = Path.cwd() / "extra_model_paths.yaml"
+    if extra_model_paths.is_file():
+        values.setdefault("extra_model_paths_config", [str(extra_model_paths)])
     if not values:
         return None
 
