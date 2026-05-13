@@ -16,7 +16,7 @@ from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_por
 import vibecomfy.node_packs_install as node_packs_install
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
-from vibecomfy.commands.workflows import _cmd_workflows_list
+from vibecomfy.commands.workflows import _cmd_workflows_enrich_targets, _cmd_workflows_list, _cmd_workflows_source_info
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -477,6 +477,67 @@ def test_workflows_list_reports_malformed_index_with_recovery_hint(
     captured = capsys.readouterr()
     assert "workflow_index.json could not be read" in captured.err
     assert "vibecomfy sources sync" in captured.err
+
+
+def test_workflows_source_info_json_reports_pure_python_source(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = _cmd_workflows_source_info(argparse.Namespace(template_id="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["template_id"] == "image/z_image"
+    assert payload["source_mode"] == "pure_python"
+    assert payload["runtime_source_of_truth"] is True
+
+
+def test_workflows_enrich_targets_writes_schema_and_asset_metadata(tmp_path: Path) -> None:
+    targets_path = tmp_path / "targets.json"
+    output_path = tmp_path / "enriched.json"
+    models_root = tmp_path / "models"
+    targets_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "selector": {"backend": "vibecomfy"},
+                "selection": {"case_names": ["z_image_turbo"]},
+                "targets": [
+                    {
+                        "case_name": "z_image_turbo",
+                        "task_type": "z_image_turbo",
+                        "route_key": "z_image_turbo",
+                        "template_id": "image/z_image",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_enrich_targets(
+        argparse.Namespace(
+            targets_json=str(targets_path),
+            output=str(output_path),
+            models_root=models_root,
+        )
+    )
+
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["producer"] == "vibecomfy.workflows.enrich-targets"
+    assert payload["templates"] == ["image/z_image"]
+    target = payload["targets"][0]
+    assert target["source"]["source_mode"] == "pure_python"
+    assert target["schema"]["node_count"] > 0
+    assert "SaveImage" in target["schema"]["class_types"]
+    assets = {asset["name"]: asset for asset in target["assets"]}
+    assert "z_image_bf16.safetensors" in assets
+    assert assets["z_image_bf16.safetensors"]["expected_path"].startswith(str(models_root))
+    assert assets["z_image_bf16.safetensors"]["present"] is False
+    missing_asset_issues = [item for item in target["issues"] if item["code"] == "missing_model_asset"]
+    assert missing_asset_issues
+    assert missing_asset_issues[0]["detail"]["paths_checked"]
+    assert "curl -L" in (missing_asset_issues[0]["detail"]["remediation"] or "")
 
 
 def test_nodes_list_reports_malformed_index_with_recovery_hint(

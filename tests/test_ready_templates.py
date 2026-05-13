@@ -9,7 +9,8 @@ import pytest
 from vibecomfy.ingest.normalize import convert_to_vibe_format
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.resolution import resolution
-from vibecomfy.registry.ready import ready_template_ids, workflow_from_ready
+from vibecomfy.registry import ready as ready_registry
+from vibecomfy.registry.ready import ready_template_ids, ready_template_source_info, workflow_from_ready
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.runtime.session import SessionConfig, _model_assets_from_workflow
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
@@ -70,6 +71,84 @@ def test_ready_templates_are_pure_python_builders() -> None:
             offenders.append(path.relative_to(ready_root).with_suffix("").as_posix())
 
     assert offenders == []
+
+
+def test_ready_template_source_info_classifies_pure_python_template() -> None:
+    info = ready_template_source_info("image/z_image")
+
+    assert info.source_mode == "pure_python"
+    assert info.runtime_source_of_truth is True
+    assert info.diagnostics == []
+    assert info.path.endswith("ready_templates/image/z_image.py")
+
+
+def test_ready_template_source_info_diagnoses_api_dict_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "ready_templates"
+    template_path = root / "image" / "api_wrapper.py"
+    template_path.parent.mkdir(parents=True)
+    template_path.write_text(
+        """
+API_DICT = {"1": {"class_type": "SaveImage", "inputs": {}}}
+
+
+def build():
+    return workflow_from_api(API_DICT)
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ready_registry, "_ready_roots", lambda: [root])
+
+    info = ready_template_source_info("image/api_wrapper")
+
+    assert info.source_mode == "api_dict_wrapper"
+    assert info.runtime_source_of_truth is False
+    assert [item["code"] for item in info.diagnostics] == ["api_dict_runtime_wrapper"]
+
+
+def test_ready_template_source_info_diagnoses_json_runtime_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "ready_templates"
+    template_path = root / "image" / "json_wrapper.py"
+    template_path.parent.mkdir(parents=True)
+    template_path.write_text(
+        """
+import json
+
+
+def build():
+    return load_workflow_json(json.load(open("workflow.json")))
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ready_registry, "_ready_roots", lambda: [root])
+
+    info = ready_template_source_info("image/json_wrapper")
+
+    assert info.source_mode == "json_runtime_wrapper"
+    assert info.runtime_source_of_truth is False
+    assert [item["code"] for item in info.diagnostics] == ["json_runtime_load"]
+
+
+def test_ready_template_source_info_classifies_json_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "ready_templates"
+    template_path = root / "corpus" / "reference.json"
+    template_path.parent.mkdir(parents=True)
+    template_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(ready_registry, "_ready_roots", lambda: [root])
+
+    info = ready_template_source_info("corpus/reference.json")
+
+    assert info.source_mode == "json_reference"
+    assert info.runtime_source_of_truth is False
+    assert [item["code"] for item in info.diagnostics] == ["json_runtime_source"]
 
 
 def test_ready_loader_applies_authored_metadata_for_manual_python_templates() -> None:

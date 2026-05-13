@@ -250,6 +250,43 @@ VIBECOMFY_MATRIX_SCOPE=wan_creation_types uv run python scripts/runpod_corpus_ma
 
 The matrix launches a fresh pod, uploads the checkout, installs VibeComfy and HiddenSwitch ComfyUI, syncs sources, installs selected custom nodes, stages models, executes baseline `comfyui run-workflow`, converts the workflow, runs the generated VibeComfy scratchpad, downloads artifacts, and terminates the launched pod in `finally`. It also writes an offline `port check --json` report and port-convert preview artifacts beside the existing logs so GPU failures can be compared with the cheap local preflight.
 
+For Reigh app-active parity, prefer the prebuilt validation environment once it
+exists. Reigh selects the exact cases/routes/templates; VibeComfy enriches that
+selection with source, schema, and model-asset metadata; `runpod-lifecycle`
+probes or reconciles the attached RunPod volume. Keep the package boundary:
+Reigh must not import VibeComfy to build the target manifest, and
+runpod-lifecycle must not guess assets from plain target JSON.
+
+```bash
+# In reigh-worker: selected targets only.
+python -m scripts.live_test.main --variant fresh --backend vibecomfy \
+  --case z_image_turbo \
+  --emit-targets-json /tmp/reigh-targets.json
+
+# In vibecomfy: source/schema/model asset enrichment.
+python -m vibecomfy.cli workflows enrich-targets \
+  --targets-json /tmp/reigh-targets.json \
+  --output /tmp/reigh-targets.enriched.json \
+  --models-root /workspace/reigh-livetest-prebuilt/models
+
+# In runpod-lifecycle: portable 4090 prebuilt health check.
+rl prebuilt check --data-center <DATA_CENTER_ID> \
+  --attention-profile portable \
+  --enriched-targets-json /tmp/reigh-targets.enriched.json
+```
+
+`rl prebuilt reconcile --dry-run --targets-json ...` should only print the
+enrichment command. Fetch plans require `--enriched-targets-json` or an explicit
+asset manifest so the selected asset name, category/path, paths checked, URL,
+and expected location are all known before RunPod work starts.
+
+Prebuilt is not a second source of workflow truth. The reusable workflow source
+still lives in `ready_templates/<media>/<id>.py`; raw JSON belongs in
+`workflow_corpus/` as source/corpus/import material only. A ready template is
+not app-parity ready until source classification, schema validation, asset
+resolution, a cheap prebuilt health check, a smoke run, and the relevant matrix
+evidence are recorded.
+
 That means the machine should not require hand setup for a checked-in matrix scope. If an agent has to SSH in and run ad hoc commands, convert that into code in one of these places:
 
 - custom-node install: `vibecomfy/node_packs.py`, `custom_nodes.lock`, or `scripts/runpod_corpus_matrix.py`;
