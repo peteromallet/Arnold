@@ -1,6 +1,6 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
-# marker on the first line if hand-editing is required.
+# vibecomfy: manual
+# Converted by tools/convert_ready_templates.py, then hand-edited for the
+# production parity runtime path.
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
@@ -85,15 +85,6 @@ def build() -> VibeWorkflow:
         load_device='offload_device',
         quantization='disabled',
     )
-    wanvideotorchcompilesettings = _node(wf, 'WanVideoTorchCompileSettings', '35',
-        backend='inductor',
-        fullgraph=False,
-        mode='default',
-        dynamic=False,
-        dynamo_cache_size_limit=64,
-        compile_transformer_blocks_only=True,
-        dynamo_recompile_limit=128,
-    )
     wanvideovaeloader = _node(wf, 'WanVideoVAELoader', '38',
         model_name='wanvideo\\Wan2_1_VAE_bf16.safetensors',
         precision='bf16',
@@ -145,7 +136,6 @@ def build() -> VibeWorkflow:
         quantization='fp8_e4m3fn_scaled',
         load_device='offload_device',
         attention_mode='sdpa',
-        compile_args=wanvideotorchcompilesettings.out(0),
     )
     cliptextencode = _node(wf, 'CLIPTextEncode', '49',
         text="high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
@@ -172,7 +162,6 @@ def build() -> VibeWorkflow:
         quantization='fp8_e4m3fn_scaled',
         load_device='offload_device',
         attention_mode='sdpa',
-        compile_args=wanvideotorchcompilesettings.out(0),
     )
     createcfgschedulefloatlist = _node(wf, 'CreateCFGScheduleFloatList', '95',
         cfg_scale_start=2,

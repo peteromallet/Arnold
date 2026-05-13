@@ -73,27 +73,29 @@ def test_ready_templates_are_pure_python_builders() -> None:
     assert offenders == []
 
 
-def test_ltx_raw_video_guide_declares_new_resize_schema_inputs() -> None:
+def test_ltx_raw_video_guide_uses_live_resize_schema_inputs() -> None:
     workflow = workflow_from_ready("video/ltx2_3_runexx_first_last_raw_video_guide")
 
     inputs = workflow.compile()["6101"]["inputs"]
-    assert inputs["resize_type"] == "scale dimensions"
-    assert inputs["resize_type.crop"] == "center"
-    assert inputs["scale_method"] == "lanczos"
-    assert "resize_type.width" in inputs
-    assert "resize_type.height" in inputs
+    assert inputs["width"] == ["2080", 0]
+    assert inputs["height"] == ["2079", 0]
+    assert inputs["upscale_method"] == "lanczos"
+    assert inputs["keep_proportion"] == "stretch"
+    assert inputs["crop_position"] == "center"
+    assert not any(key.startswith("resize_type") for key in inputs)
 
 
-def test_ltx_iclora_control_declares_new_resize_schema_inputs() -> None:
+def test_ltx_iclora_control_uses_live_resize_schema_inputs() -> None:
     workflow = workflow_from_ready("video/ltx2_3_first_last_frame_travel_iclora_control")
 
     for node_id in ("5026", "5028", "6101", "6102", "6103"):
         inputs = workflow.compile()[node_id]["inputs"]
-        assert inputs["resize_type"] == "scale dimensions"
-        assert inputs["resize_type.crop"] == "center"
-        assert inputs["scale_method"] == "lanczos"
-        assert "resize_type.width" in inputs
-        assert "resize_type.height" in inputs
+        assert inputs["width"] == ["2080", 0]
+        assert inputs["height"] == ["2079", 0]
+        assert inputs["upscale_method"] == "lanczos"
+        assert inputs["keep_proportion"] == "stretch"
+        assert inputs["crop_position"] == "center"
+        assert not any(key.startswith("resize_type") for key in inputs)
 
 
 def test_ready_template_source_info_classifies_pure_python_template() -> None:
@@ -495,6 +497,16 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert "LTXICLoRALoaderModelOnly" not in {node["class_type"] for node in api.values()}
     assert "LTXAddVideoICLoRAGuide" not in {node["class_type"] for node in api.values()}
     assert _opaque_component_nodes(api) == []
+
+
+def test_wan_22_i2v_template_uses_eager_model_loaders() -> None:
+    workflow = workflow_from_ready("video/wanvideo_wrapper_22_14b_i2v_kijai")
+    api = workflow.compile("api")
+
+    assert api["22"]["class_type"] == "WanVideoModelLoader"
+    assert api["71"]["class_type"] == "WanVideoModelLoader"
+    assert "compile_args" not in api["22"]["inputs"]
+    assert "compile_args" not in api["71"]["inputs"]
 
 
 @pytest.mark.parametrize(
