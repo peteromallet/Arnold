@@ -161,6 +161,7 @@ def _enrich_target(
                         "detail": {
                             "name": asset["name"],
                             "category": asset["category"],
+                            "expected_path": asset["expected_path"],
                             "paths_checked": asset["paths_checked"],
                             "url": asset.get("url"),
                             "remediation": asset.get("remediation"),

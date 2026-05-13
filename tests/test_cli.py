@@ -536,6 +536,10 @@ def test_workflows_enrich_targets_writes_schema_and_asset_metadata(tmp_path: Pat
     assert assets["z_image_bf16.safetensors"]["present"] is False
     missing_asset_issues = [item for item in target["issues"] if item["code"] == "missing_model_asset"]
     assert missing_asset_issues
+    missing_z_image = next(
+        item for item in missing_asset_issues if item["detail"]["name"] == "z_image_bf16.safetensors"
+    )
+    assert missing_z_image["detail"]["expected_path"] == assets["z_image_bf16.safetensors"]["expected_path"]
     assert missing_asset_issues[0]["detail"]["paths_checked"]
     assert "curl -L" in (missing_asset_issues[0]["detail"]["remediation"] or "")
 
