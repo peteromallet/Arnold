@@ -122,6 +122,8 @@ def ready_template_source_info(template_id: str) -> ReadyTemplateSourceInfo:
 def _classify_ready_template_ast(tree: ast.AST) -> dict[str, Any]:
     has_build = False
     constructs_vibeworkflow = False
+    forks_ready_workflow = False
+    applies_ready_policy = False
     loads_json_runtime = False
     api_dict_wrapper = False
     diagnostics: list[dict[str, Any]] = []
@@ -132,6 +134,10 @@ def _classify_ready_template_ast(tree: ast.AST) -> dict[str, Any]:
             call_name = _ast_call_name(node.func)
             if call_name.endswith("VibeWorkflow"):
                 constructs_vibeworkflow = True
+            if call_name == "workflow_from_ready":
+                forks_ready_workflow = True
+            if call_name == "apply_ready_template_policy":
+                applies_ready_policy = True
             if call_name in {"json.load", "json.loads", "load_workflow_json", "load_template"}:
                 loads_json_runtime = True
             if call_name.endswith(".compile") or call_name in {"convert_to_vibe_format", "workflow_from_api"}:
@@ -164,7 +170,12 @@ def _classify_ready_template_ast(tree: ast.AST) -> dict[str, Any]:
                 "message": "Template appears to wrap an API dict at runtime instead of building pure Python workflow source.",
             }
         )
-    if constructs_vibeworkflow and not loads_json_runtime and not api_dict_wrapper and has_build:
+    if (
+        (constructs_vibeworkflow or (forks_ready_workflow and applies_ready_policy))
+        and not loads_json_runtime
+        and not api_dict_wrapper
+        and has_build
+    ):
         source_mode = "pure_python"
         runtime_source_of_truth = True
     elif loads_json_runtime:

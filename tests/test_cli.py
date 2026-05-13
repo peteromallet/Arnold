@@ -491,6 +491,23 @@ def test_workflows_source_info_json_reports_pure_python_source(
     assert payload["runtime_source_of_truth"] is True
 
 
+def test_workflows_source_info_accepts_policy_applied_python_fork(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = _cmd_workflows_source_info(
+        argparse.Namespace(
+            template_id="video/ltx2_3_runexx_first_last_raw_video_guide",
+            json=True,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["template_id"] == "video/ltx2_3_runexx_first_last_raw_video_guide"
+    assert payload["source_mode"] == "pure_python"
+    assert payload["runtime_source_of_truth"] is True
+
+
 def test_workflows_enrich_targets_writes_schema_and_asset_metadata(tmp_path: Path) -> None:
     targets_path = tmp_path / "targets.json"
     output_path = tmp_path / "enriched.json"
