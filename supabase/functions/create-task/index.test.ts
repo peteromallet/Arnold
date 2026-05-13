@@ -110,6 +110,7 @@ describe('create-task edge entrypoint', () => {
         if (table === 'projects') return { select: createProjectsLookupChain({ aspect_ratio: '16:9' }).select };
         throw new Error(`Unexpected table: ${table}`);
       }),
+      rpc: vi.fn().mockResolvedValue({ data: 'image_upscale', error: null }),
     };
 
     mocks.bootstrapEdgeHandler.mockResolvedValue({
@@ -207,6 +208,7 @@ describe('create-task edge entrypoint', () => {
         if (table === 'projects') return { select: createProjectsLookupChain({ aspect_ratio: '16:9' }).select };
         throw new Error(`Unexpected table: ${table}`);
       }),
+      rpc: vi.fn().mockResolvedValue({ data: 'image_upscale', error: null }),
     };
 
     mocks.bootstrapEdgeHandler.mockResolvedValue({
@@ -262,6 +264,7 @@ describe('create-task edge entrypoint', () => {
         }
         throw new Error(`Unexpected table: ${table}`);
       }),
+      rpc: vi.fn().mockResolvedValue({ data: 'image_upscale', error: null }),
     };
 
     mocks.bootstrapEdgeHandler.mockResolvedValue({
@@ -318,6 +321,7 @@ describe('create-task edge entrypoint', () => {
         }
         throw new Error(`Unexpected table: ${table}`);
       }),
+      rpc: vi.fn().mockResolvedValue({ data: 'image_upscale', error: null }),
     };
 
     mocks.bootstrapEdgeHandler.mockResolvedValue({

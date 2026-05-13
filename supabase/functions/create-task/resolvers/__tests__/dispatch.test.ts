@@ -169,6 +169,7 @@ describe('create-task resolver dispatch', () => {
             if (table === 'projects') return createProjectsLookupChain({ user_id: 'user-1', aspect_ratio: '16:9' });
             throw new Error(`Unexpected table: ${table}`);
           }),
+          rpc: vi.fn().mockResolvedValue({ data: 'image_upscale', error: null }),
         },
         logger,
         auth: { isServiceRole: false, isJwtAuth: true, userId: 'user-1' },
@@ -246,6 +247,7 @@ describe('create-task resolver dispatch', () => {
             if (table === 'projects') return createProjectsLookupChain({ aspect_ratio: '16:9' });
             throw new Error(`Unexpected table: ${table}`);
           }),
+          rpc: vi.fn().mockResolvedValue({ data: 'z_image_turbo_i2i', error: null }),
         },
         logger,
         auth: { isServiceRole: true, userId: null },

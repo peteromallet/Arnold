@@ -12,7 +12,8 @@ import { JWT_AUTH_REQUIRED } from "../_shared/requestGuards.ts";
 import { getTaskFamilyResolver } from "./resolvers/registry.ts";
 import { createWorkerPassthroughResolver } from "./resolvers/workerPassthrough.ts";
 import { TaskValidationError } from "./resolvers/shared/validation.ts";
-import type { MaterializedInputRecord, ResolveRequest } from "./resolvers/types.ts";
+import { RouteContractStampError, stampTaskRouteContract } from "./routeContract.ts";
+import type { MaterializedInputRecord, ResolveRequest, TaskInsertObject } from "./resolvers/types.ts";
 
 function createErrorResponse(
   message: string,
@@ -499,9 +500,14 @@ serve(async (req) => {
       return createErrorResponse("Resolver did not return any tasks", 500, "invalid_resolver_result");
     }
 
-    const insertObjects = materializedInputs
+    const tasksWithMaterializedInputs: TaskInsertObject[] = materializedInputs
       ? resolverResult.tasks.map((task) => ({ ...task, materialized_inputs: materializedInputs }))
       : resolverResult.tasks;
+
+    const insertObjects: TaskInsertObject[] = [];
+    for (const task of tasksWithMaterializedInputs) {
+      insertObjects.push(await stampTaskRouteContract(supabaseAdmin, task));
+    }
     const responseMeta = resolverResult.meta;
 
     const createdTaskIds: string[] = [];
@@ -560,6 +566,16 @@ serve(async (req) => {
       logger.error("Validation error", { error: error.message, field: error.field });
       await logger.flush();
       return createErrorResponse(error.message, 400, "validation_error", false);
+    }
+
+    if (error instanceof RouteContractStampError) {
+      logger.error("Route contract stamp failed", {
+        task_type: error.taskType,
+        cause: error.cause,
+        error: error.message,
+      });
+      await logger.flush();
+      return createErrorResponse(error.message, 400, "route_contract_stamp_failed", false);
     }
 
     const message = getErrorMessage(error);

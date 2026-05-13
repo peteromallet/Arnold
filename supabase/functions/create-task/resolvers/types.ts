@@ -31,6 +31,16 @@ export interface TaskInsertObject {
   task_type: string;
   updated_at?: string | null;
   worker_id?: string | null;
+  route_key?: string | null;
+  selector_namespace?: string | null;
+  selected_backend?: string | null;
+  selector_version?: string | null;
+  route_selection_snapshot?: Record<string, unknown> | null;
+  support_state?: string | null;
+  selected_profile?: string | null;
+  selected_template_id?: string | null;
+  route_run_id?: string | null;
+  worker_contract_version?: string | null;
 }
 
 export interface ResolveRequest {
