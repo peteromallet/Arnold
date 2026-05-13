@@ -526,6 +526,8 @@ def test_workflows_enrich_targets_writes_schema_and_asset_metadata(tmp_path: Pat
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["producer"] == "vibecomfy.workflows.enrich-targets"
     assert payload["templates"] == ["image/z_image"]
+    assert payload["target_count"] == 1
+    assert payload["template_count"] == 1
     target = payload["targets"][0]
     assert target["source"]["source_mode"] == "pure_python"
     assert target["schema"]["node_count"] > 0
@@ -542,6 +544,52 @@ def test_workflows_enrich_targets_writes_schema_and_asset_metadata(tmp_path: Pat
     assert missing_z_image["detail"]["expected_path"] == assets["z_image_bf16.safetensors"]["expected_path"]
     assert missing_asset_issues[0]["detail"]["paths_checked"]
     assert "curl -L" in (missing_asset_issues[0]["detail"]["remediation"] or "")
+
+
+def test_workflows_enrich_targets_treats_orchestrators_as_non_template_info(tmp_path: Path):
+    targets_path = tmp_path / "targets.json"
+    output_path = tmp_path / "enriched.json"
+    targets_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "selector": {"backend": "vibecomfy"},
+                "selection": {"case_names": ["travel_orchestrator_wan2_1seg"]},
+                "targets": [
+                    {
+                        "case_name": "travel_orchestrator_wan2_1seg",
+                        "task_type": "travel_orchestrator",
+                        "route_key": "travel_orchestrator",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_enrich_targets(
+        argparse.Namespace(
+            targets_json=str(targets_path),
+            output=str(output_path),
+            models_root=str(tmp_path / "models"),
+        )
+    )
+
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["target_count"] == 1
+    assert payload["template_count"] == 0
+    assert payload["templates"] == []
+    target = payload["targets"][0]
+    assert target["enrichment_status"] == "skipped"
+    assert target["issues"] == [
+        {
+            "group": "workflow_source",
+            "code": "non_template_target",
+            "severity": "info",
+            "message": "Target does not execute a VibeComfy template directly.",
+        }
+    ]
 
 
 def test_nodes_list_reports_malformed_index_with_recovery_hint(

@@ -77,9 +77,9 @@ def enrich_target_manifest(
                     "issues": [
                         {
                             "group": "workflow_source",
-                            "code": "missing_template_id",
-                            "severity": "error",
-                            "message": "Target has no VibeComfy template_id.",
+                            "code": "non_template_target",
+                            "severity": "info",
+                            "message": "Target does not execute a VibeComfy template directly.",
                         }
                     ],
                 }
@@ -96,6 +96,8 @@ def enrich_target_manifest(
         "models_root": str(root),
         "selector": manifest.get("selector", {}),
         "selection": manifest.get("selection", {}),
+        "target_count": len(enriched_targets),
+        "template_count": len(selected_template_ids),
         "templates": selected_template_ids,
         "targets": enriched_targets,
     }
