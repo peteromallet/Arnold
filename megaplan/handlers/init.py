@@ -162,6 +162,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["critic"] = args.critic
     if getattr(args, "depth", None):
         state["config"]["depth"] = args.depth
+    if getattr(args, "deepseek_provider", None):
+        state["config"]["deepseek_provider"] = args.deepseek_provider
     if getattr(args, "with_prep", False):
         state["config"]["with_prep"] = True
     if getattr(args, "with_feedback", False):

@@ -71,9 +71,7 @@ class RailwayProvider(Provider):
         if not args or args[0] == "link":
             return command
         scoped: list[str] = []
-        if self._railway.project:
-            scoped.extend(["--project", self._railway.project])
-        if self._railway.environment and args[0] in ("up", "variables", "logs", "ssh", "down"):
+        if self._railway.environment and args[0] == "up":
             scoped.extend(["--environment", self._railway.environment])
         return [*command[:2], *scoped, *command[2:]]
 
@@ -91,6 +89,7 @@ class RailwayProvider(Provider):
                 self._railway_cmd("link", "--project", self._railway.project),
                 cwd=deploy_dir,
             )
+            self._ensure_configured_service(deploy_dir)
 
         for name in self._spec.secrets:
             value = secrets[name]
@@ -116,6 +115,19 @@ class RailwayProvider(Provider):
             cwd=deploy_dir,
         )
         return 0
+
+    def _ensure_configured_service(self, deploy_dir: Path) -> None:
+        result = self._run(self._railway_cmd("service"), cwd=deploy_dir)
+        if _service_output_contains(result.stdout or "", self._railway.service):
+            return
+        command = f"railway service create {shlex.quote(self._railway.service)}"
+        raise CliError(
+            "railway_service_missing",
+            (
+                f"Railway service {self._railway.service!r} was not found after project link. "
+                f"Run this command from the deploy directory, then rerun deploy: {command}"
+            ),
+        )
 
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
         return self._run(
@@ -204,3 +216,27 @@ class RailwayProvider(Provider):
         if volume:
             self._run(self._railway_cmd("volume", "delete", volume))
         return 0
+
+
+def _service_output_contains(output: str, service: str) -> bool:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, str) and item == service:
+                return True
+            if isinstance(item, dict) and item.get("name") == service:
+                return True
+    if isinstance(payload, dict):
+        items = payload.get("services")
+        if isinstance(items, list):
+            return _service_output_contains(json.dumps(items), service)
+        if payload.get("name") == service:
+            return True
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped == service or stripped.startswith(f"{service} ") or f" {service} " in stripped:
+            return True
+    return False

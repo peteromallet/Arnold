@@ -100,6 +100,8 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         del kwargs
         calls.append(argv)
+        if argv == ["/usr/bin/railway", "service"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="svc\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
@@ -110,12 +112,63 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
 
     assert calls == [
         ["/usr/bin/railway", "link", "--project", "my-proj"],
-        ["/usr/bin/railway", "variables", "--project", "my-proj", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
-        ["/usr/bin/railway", "up", "--project", "my-proj", "--service", "svc", "--detach", "--ci"],
+        ["/usr/bin/railway", "service"],
+        ["/usr/bin/railway", "variables", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
+        ["/usr/bin/railway", "up", "--service", "svc", "--detach", "--ci"],
     ]
 
 
-def test_project_and_environment_scope_operational_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_deploy_preserves_environment_scope_for_up_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(argv)
+        if argv == ["/usr/bin/railway", "service"]:
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"services": [{"name": "svc"}]}), stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+
+    provider = RailwayProvider(_spec(project="my-proj", environment="prod", secrets=["OPENAI_API_KEY"]))
+    provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
+
+    assert calls == [
+        ["/usr/bin/railway", "link", "--project", "my-proj"],
+        ["/usr/bin/railway", "service"],
+        ["/usr/bin/railway", "variables", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
+        ["/usr/bin/railway", "up", "--environment", "prod", "--service", "svc", "--detach", "--ci"],
+    ]
+
+
+def test_deploy_with_project_missing_service_fails_with_one_create_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="other-service\n", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+
+    provider = RailwayProvider(_spec(project="my-proj", secrets=["OPENAI_API_KEY"]))
+    with pytest.raises(CliError) as excinfo:
+        provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
+
+    assert excinfo.value.code == "railway_service_missing"
+    assert excinfo.value.message.count("railway service create svc") == 1
+    assert calls == [
+        ["/usr/bin/railway", "link", "--project", "my-proj"],
+        ["/usr/bin/railway", "service"],
+    ]
+
+
+def test_project_scope_is_link_only_and_environment_scope_is_deploy_only(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
     follow_calls: list[list[str]] = []
 
@@ -140,13 +193,11 @@ def test_project_and_environment_scope_operational_commands(monkeypatch: pytest.
     provider.logs(follow=False)
     provider.down()
 
-    scoped = ["--project", "proj-123", "--environment", "env-123"]
     assert [argv for argv, _kwargs in calls] == [
-        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "pwd"],
+        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "pwd"],
         [
             "/usr/bin/railway",
             "ssh",
-            *scoped,
             "--service",
             "svc",
             "--",
@@ -154,11 +205,11 @@ def test_project_and_environment_scope_operational_commands(monkeypatch: pytest.
             f"{base64.b64encode(Path(__file__).read_bytes()).decode('ascii')}\n"
             "MEGAPLAN_UPLOAD",
         ],
-        ["/usr/bin/railway", "ssh", *scoped, "--service", "svc", "--", "cat /workspace/test.py"],
-        ["/usr/bin/railway", "logs", *scoped, "--service", "svc", "--lines", "200"],
-        ["/usr/bin/railway", "down", *scoped, "--service", "svc"],
+        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cat /workspace/test.py"],
+        ["/usr/bin/railway", "logs", "--service", "svc", "--lines", "200"],
+        ["/usr/bin/railway", "down", "--service", "svc"],
     ]
-    assert follow_calls == [["/usr/bin/railway", "logs", *scoped, "--service", "svc"]]
+    assert follow_calls == [["/usr/bin/railway", "logs", "--service", "svc"]]
 
 
 def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytest.MonkeyPatch) -> None:

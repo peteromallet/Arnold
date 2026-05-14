@@ -6,7 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 import yaml
@@ -70,6 +70,7 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
         tmp_path,
         {
             "seed": {"plan": "seed-plan-20260415"},
+            "base_branch": "setup/cloud-chain",
             "milestones": [
                 {
                     "label": "m1",
@@ -88,6 +89,7 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
     )
     spec = load_spec(spec_path)
     assert spec.seed_plan == "seed-plan-20260415"
+    assert spec.base_branch == "setup/cloud-chain"
     assert len(spec.milestones) == 1
     assert spec.milestones[0] == MilestoneSpec(
         label="m1",
@@ -102,6 +104,27 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
     assert spec.on_failure == "stop_chain"
     assert spec.on_escalate == "skip_milestone"
     assert spec.merge_policy == "auto"
+
+
+def test_load_spec_defaults_base_branch_to_main(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(tmp_path, {"milestones": [{"label": "m1", "idea": str(idea)}]})
+
+    assert load_spec(spec_path).base_branch == "main"
+
+
+@pytest.mark.parametrize("value", ["", "   ", 42, ["main"]])
+def test_load_spec_rejects_invalid_base_branch(tmp_path: Path, value: object) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"base_branch": value, "milestones": [{"label": "m1", "idea": str(idea)}]},
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+
+    assert "`base_branch` must be a non-empty string" in excinfo.value.message
 
 
 def test_load_spec_parses_review_merge_policy(tmp_path: Path) -> None:
@@ -513,6 +536,7 @@ def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixtur
             {"label": "m3", "index": 2, "status": "pending"},
         ],
         "seed_plan": "seed-plan-20260421",
+        "base_branch": "main",
         "current_plan_name": "plan-for-m2",
         "last_state": "done",
     }
@@ -522,8 +546,10 @@ def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixtur
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert payload["summary"] == summary
+    assert payload["base_branch"] == "main"
     assert "Current milestone: m2 (index 1)" in captured.err
     assert "Seed plan: seed-plan-20260421" in captured.err
+    assert "Base branch: main" in captured.err
     assert "[in_progress] m2 (index 1)" in captured.err
 
 
@@ -580,10 +606,11 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
 
     with patch("megaplan.chain._init_plan", side_effect=fake_init), \
          patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_main", lambda *a, **k: None):
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
+    assert result["base_branch"] == "main"
     assert len(init_calls) == 2
     assert drive_calls == ["plan-for-m1", "plan-for-m1a"]
     saved = load_chain_state(spec_path)
@@ -600,7 +627,7 @@ def test_run_chain_one_pauses_after_single_milestone(tmp_path: Path) -> None:
 
     with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
          patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_main", lambda *a, **k: None):
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None, one=True)
 
     assert result["status"] == "paused"
@@ -671,7 +698,7 @@ def test_run_chain_stops_on_failure(tmp_path: Path) -> None:
 
     with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
          patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_main", lambda *a, **k: None):
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "stopped"
@@ -704,7 +731,7 @@ def test_run_chain_resumes_from_chain_state(tmp_path: Path) -> None:
 
     with patch("megaplan.chain._init_plan", side_effect=fake_init), \
          patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_main", lambda *a, **k: None):
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     # Only the second idea (m1a) should have been init'd; m1 is skipped.
@@ -749,7 +776,7 @@ def test_run_chain_with_seed_drives_seed_first(tmp_path: Path) -> None:
     with patch("megaplan.chain._plan_state", side_effect=fake_plan_state), \
          patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
          patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_main", lambda *a, **k: None):
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -764,46 +791,46 @@ def test_run_chain_with_seed_drives_seed_first(tmp_path: Path) -> None:
 
 
 def test_no_git_refresh_suppresses_subprocess_calls(tmp_path: Path) -> None:
-    """With no_git_refresh=True, _refresh_main must not invoke any subprocess."""
-    from megaplan.chain import _refresh_main
+    """With no_git_refresh=True, _refresh_base_branch must not invoke any subprocess."""
+    from megaplan.chain import _refresh_base_branch
 
     msgs: list[str] = []
     with patch("megaplan.chain.subprocess.run") as mock_run:
-        _refresh_main(tmp_path, writer=msgs.append, no_git_refresh=True)
+        _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append, no_git_refresh=True)
     assert mock_run.call_count == 0
     assert any("skipping git refresh" in m for m in msgs)
 
 
-def test_refresh_main_default_invokes_git(tmp_path: Path) -> None:
+def test_refresh_base_branch_default_invokes_git(tmp_path: Path) -> None:
     """Default behavior (no_git_refresh=False) still issues the git commands."""
-    from megaplan.chain import _refresh_main
+    from megaplan.chain import _refresh_base_branch
 
     class _Proc:
         returncode = 0
 
     with patch("megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
-        _refresh_main(tmp_path, writer=lambda _m: None)
+        _refresh_base_branch(tmp_path, "setup/cloud", writer=lambda _m: None)
     # fetch + checkout + pull
     assert mock_run.call_count == 3
     cmds = [call.args[0] for call in mock_run.call_args_list]
-    assert cmds[0][:2] == ["git", "fetch"]
-    assert cmds[1] == ["git", "checkout", "main"]
-    assert cmds[2][:2] == ["git", "pull"]
+    assert cmds[0] == ["git", "fetch", "origin", "setup/cloud"]
+    assert cmds[1] == ["git", "checkout", "setup/cloud"]
+    assert cmds[2] == ["git", "pull", "--ff-only", "origin", "setup/cloud"]
 
 
-def test_refresh_main_aborts_on_git_failure(tmp_path: Path) -> None:
+def test_refresh_base_branch_aborts_on_git_failure(tmp_path: Path) -> None:
     """A failed checkout/pull must stop the chain before stale work executes."""
-    from megaplan.chain import _refresh_main
+    from megaplan.chain import _refresh_base_branch
 
     calls = [
         subprocess.CompletedProcess(
-            args=["git", "fetch", "origin", "main"],
+            args=["git", "fetch", "origin", "setup/cloud"],
             returncode=0,
             stdout="",
             stderr="",
         ),
         subprocess.CompletedProcess(
-            args=["git", "checkout", "main"],
+            args=["git", "checkout", "setup/cloud"],
             returncode=1,
             stdout="",
             stderr="local changes would be overwritten",
@@ -813,10 +840,10 @@ def test_refresh_main_aborts_on_git_failure(tmp_path: Path) -> None:
 
     with patch("megaplan.chain.subprocess.run", side_effect=calls):
         with pytest.raises(CliError) as excinfo:
-            _refresh_main(tmp_path, writer=msgs.append)
+            _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
 
     assert excinfo.value.code == "git_refresh_failed"
-    assert "git checkout main exited 1" in excinfo.value.message
+    assert "git checkout setup/cloud exited 1" in excinfo.value.message
     assert any("local changes would be overwritten" in msg for msg in msgs)
 
 
@@ -888,22 +915,22 @@ def test_run_chain_no_git_refresh_skips_refresh(tmp_path: Path) -> None:
     spec_path = _setup_two_milestones(tmp_path)
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
 
-    refresh_calls: list[bool] = []
+    refresh_calls: list[tuple[str, bool]] = []
 
-    def fake_refresh(root, *, writer, no_git_refresh=False):
-        refresh_calls.append(no_git_refresh)
+    def fake_refresh(root, base_branch, *, writer, no_git_refresh=False):
+        refresh_calls.append((base_branch, no_git_refresh))
 
     def fake_drive(plan, **_kwargs):
         return _fake_outcome(plan, "done")
 
     with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
          patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_main", side_effect=fake_refresh):
+         patch("megaplan.chain._refresh_base_branch", side_effect=fake_refresh):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None, no_git_refresh=True)
 
     assert result["status"] == "done"
     assert len(refresh_calls) == 2
-    assert all(call is True for call in refresh_calls)
+    assert all(call == ("main", True) for call in refresh_calls)
 
 
 def test_run_chain_no_push_skips_branch_pr_lifecycle(tmp_path: Path) -> None:
@@ -916,7 +943,7 @@ def test_run_chain_no_push_skips_branch_pr_lifecycle(tmp_path: Path) -> None:
 
     with patch("megaplan.chain._init_plan", return_value="plan-m1"), \
          patch("megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
-         patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("megaplan.chain._checkout_milestone_branch") as checkout, \
          patch("megaplan.chain._ensure_milestone_pr") as ensure_pr:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None, no_push=True)
@@ -963,6 +990,7 @@ def test_ensure_milestone_pr_skips_when_gh_missing(tmp_path: Path) -> None:
         pr_number = _ensure_milestone_pr(
             tmp_path,
             MilestoneSpec(label="m1", idea="idea.txt", branch="mp/m1"),
+            base_branch="setup/cloud",
             writer=messages.append,
         )
 
@@ -972,11 +1000,63 @@ def test_ensure_milestone_pr_skips_when_gh_missing(tmp_path: Path) -> None:
     run_command.assert_not_called()
 
 
+def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: Path) -> None:
+    from megaplan.chain import _checkout_milestone_branch
+
+    commands: list[list[str]] = []
+
+    def fake_run_command(root, cmd, *, writer, timeout=120, error_code="command_failed"):
+        del root, writer, timeout, error_code
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with patch("megaplan.chain._remote_branch_exists", return_value=False), \
+         patch("megaplan.chain._run_command", side_effect=fake_run_command):
+        _checkout_milestone_branch(
+            tmp_path,
+            "mp/m1",
+            base_branch="setup/cloud",
+            writer=lambda _m: None,
+        )
+
+    assert commands == [
+        ["git", "checkout", "-B", "mp/m1", "setup/cloud"],
+        ["git", "push", "-u", "origin", "mp/m1"],
+    ]
+
+
+def test_ensure_milestone_pr_uses_configured_base_branch(tmp_path: Path) -> None:
+    from megaplan.chain import _ensure_milestone_pr
+
+    commands: list[list[str]] = []
+
+    def fake_run_command(root, cmd, *, writer, timeout=120, error_code="command_failed"):
+        del root, writer, timeout, error_code
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "https://github.com/acme/app/pull/42\n", "")
+
+    with patch("megaplan.chain.shutil.which", return_value="/usr/bin/gh"), \
+         patch("megaplan.chain._list_open_pr_for_branch", return_value=None), \
+         patch("megaplan.chain._run_command", side_effect=fake_run_command):
+        number = _ensure_milestone_pr(
+            tmp_path,
+            MilestoneSpec(label="m1", idea="idea.txt", branch="mp/m1"),
+            base_branch="setup/cloud",
+            writer=lambda _m: None,
+        )
+
+    assert number == 42
+    assert commands[0][0:6] == ["gh", "pr", "create", "--draft", "--base", "setup/cloud"]
+
+
 def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
     idea = _touch_idea(tmp_path, "m1.txt")
     spec_path = _write_spec(
         tmp_path,
-        {"milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}]},
+        {
+            "base_branch": "setup/cloud",
+            "milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}],
+        },
     )
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
     commits: list[tuple[str, str, str]] = []
@@ -989,7 +1069,7 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
         on_phase_complete("execute", 0, "", "")
         return _fake_outcome(plan, "done")
 
-    with patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("megaplan.chain._checkout_milestone_branch") as checkout, \
          patch("megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
@@ -1001,8 +1081,18 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
-    checkout.assert_called_once()
-    ensure_pr.assert_called_once()
+    checkout.assert_called_once_with(
+        tmp_path,
+        "mp/m1",
+        base_branch="setup/cloud",
+        writer=ANY,
+    )
+    ensure_pr.assert_called_once_with(
+        tmp_path,
+        MilestoneSpec(label="m1", idea=str(idea), branch="mp/m1"),
+        base_branch="setup/cloud",
+        writer=ANY,
+    )
     assert commits == [
         ("mp/m1", "plan-m1", "init"),
         ("mp/m1", "plan-m1", "plan"),
@@ -1014,6 +1104,46 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
     saved = load_chain_state(spec_path)
     assert saved.current_milestone_index == 1
     assert saved.pr_number is None
+
+
+def test_run_chain_resume_milestone_pr_uses_base_branch(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "base_branch": "setup/cloud",
+            "milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}],
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+    save_chain_state(
+        spec_path,
+        ChainState(current_milestone_index=0, current_plan_name="plan-m1", last_state=None),
+    )
+
+    with patch("megaplan.chain._plan_state", return_value="planned"), \
+         patch("megaplan.chain._checkout_milestone_branch") as checkout, \
+         patch("megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._pr_state", return_value="merged"), \
+         patch("megaplan.chain._mark_pr_ready"), \
+         patch("megaplan.chain._enable_auto_merge"):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    checkout.assert_called_once_with(
+        tmp_path,
+        "mp/m1",
+        base_branch="setup/cloud",
+        writer=ANY,
+    )
+    ensure_pr.assert_called_once_with(
+        tmp_path,
+        MilestoneSpec(label="m1", idea=str(idea), branch="mp/m1"),
+        base_branch="setup/cloud",
+        writer=ANY,
+    )
 
 
 def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: Path) -> None:
@@ -1139,7 +1269,7 @@ def test_run_chain_advances_when_pr_already_merged(tmp_path: Path) -> None:
     )
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
 
-    with patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("megaplan.chain._checkout_milestone_branch"), \
          patch("megaplan.chain._ensure_milestone_pr", return_value=17), \
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
@@ -1173,7 +1303,7 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
     )
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
 
-    with patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("megaplan.chain._checkout_milestone_branch"), \
          patch("megaplan.chain._ensure_milestone_pr", return_value=23), \
          patch("megaplan.chain._init_plan", return_value="plan-m1"), \
@@ -1195,7 +1325,7 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
     assert load_chain_state(spec_path).current_milestone_index == 0
 
     with patch("megaplan.chain._pr_state", return_value="merged"), \
-         patch("megaplan.chain._refresh_main", lambda *a, **k: None), \
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("megaplan.chain._init_plan", return_value="plan-m2"), \
          patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m2", "done")):
         final = run_chain(spec_path, tmp_path, writer=lambda _m: None)

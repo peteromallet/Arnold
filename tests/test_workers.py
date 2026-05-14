@@ -3805,3 +3805,19 @@ def test_shannon_accepted_in_agent_choice_surfaces() -> None:
     """All --agent choice surfaces accept 'shannon'."""
     from megaplan.types import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
+
+
+def test_hermes_high_token_streaming_matches_fireworks_for_direct_deepseek() -> None:
+    from megaplan.hermes_worker import _streaming_run_kwargs
+
+    assert _streaming_run_kwargs("fireworks:accounts/fireworks/models/deepseek-v4-pro", 32768)
+    assert _streaming_run_kwargs("deepseek:deepseek-v4-pro", 32768)
+    assert not _streaming_run_kwargs("deepseek:deepseek-v4-pro", 4096)
+
+
+def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
+    from megaplan.hermes_worker import _reasoning_config_for_model
+
+    assert _reasoning_config_for_model("deepseek-v4-pro") is None
+    assert _reasoning_config_for_model("accounts/fireworks/models/deepseek-v4-pro") is None
+    assert _reasoning_config_for_model("deepseek/deepseek-r1") == {"enabled": False}

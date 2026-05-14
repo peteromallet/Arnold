@@ -1,11 +1,12 @@
-"""Tests for the Fireworks streaming workaround in the Hermes worker.
+"""Tests for high-token streaming in the Hermes worker.
 
 Fireworks rejects requests with ``max_tokens > 4096`` unless ``stream=true``.
+Direct DeepSeek is intentionally kept on the same high-token streaming path so
+it behaves like the known-good Fireworks DeepSeek route.
 The hermes worker must:
-  (a) detect Fireworks-prefixed models with high max_tokens and force the
-      streaming path so the call succeeds, with reassembly hidden from the
-      rest of megaplan; and
-  (b) when Fireworks does return a real 400 (or any other error), propagate
+  (a) detect high-token Fireworks/direct-DeepSeek models and force the streaming
+      path, with reassembly hidden from the rest of megaplan; and
+  (b) when a provider returns a real 400 (or any other error), propagate
       it as a hard failure rather than silently degrading to empty output.
 
 These tests don't hit the network — they exercise the streaming flag plumbing
@@ -105,7 +106,7 @@ def _critique_schema() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_provider_requires_streaming_only_fires_for_fireworks_with_high_max_tokens() -> None:
+def test_provider_requires_streaming_for_high_token_fireworks_and_direct_deepseek() -> None:
     # Fireworks + > 4096 → must stream
     assert _provider_requires_streaming("fireworks:accounts/fireworks/models/kimi-k2p6", 8192) is True
     assert _provider_requires_streaming("fireworks:foo", 4097) is True
@@ -115,9 +116,12 @@ def test_provider_requires_streaming_only_fires_for_fireworks_with_high_max_toke
     assert _provider_requires_streaming("fireworks:foo", 4096) is False
     assert _provider_requires_streaming("fireworks:foo", None) is False
 
+    # Direct DeepSeek mirrors the Fireworks high-token streaming path.
+    assert _provider_requires_streaming("deepseek:deepseek-v4-pro", 16384) is True
+    assert _provider_requires_streaming("deepseek:deepseek-v4-pro", 4096) is False
+
     # Other providers don't need this even at very high max_tokens
     assert _provider_requires_streaming("openrouter/anthropic/claude", 16384) is False
-    assert _provider_requires_streaming("deepseek:deepseek-v4-pro", 16384) is False
     assert _provider_requires_streaming("minimax:MiniMax-M2", 16384) is False
     assert _provider_requires_streaming(None, 16384) is False
 
@@ -127,6 +131,9 @@ def test_streaming_run_kwargs_returns_callback_only_when_required() -> None:
     kwargs = _streaming_run_kwargs("fireworks:foo", 8192)
     assert "stream_callback" in kwargs
     assert kwargs["stream_callback"] is _no_op_stream
+
+    # Direct DeepSeek high max_tokens mirrors Fireworks.
+    assert "stream_callback" in _streaming_run_kwargs("deepseek:deepseek-v4-pro", 8192)
 
     # Other provider → empty kwargs (no streaming forced)
     assert _streaming_run_kwargs("openrouter/anthropic/claude", 16384) == {}
