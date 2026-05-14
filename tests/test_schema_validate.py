@@ -7,7 +7,7 @@ import pytest
 
 from vibecomfy.ingest.normalize import convert_to_vibe_format
 from vibecomfy.schema import InputSpec, LocalSchemaProvider, NodeSchema
-from vibecomfy.schema.validate import SCHEMA_VALIDATION_SKIP_CLASSES
+from vibecomfy.schema.validate import SCHEMA_VALIDATION_SKIP_CLASSES, sanitize_api_against_schema
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -81,6 +81,44 @@ def test_value_not_in_enum_emits_error() -> None:
     assert issue.detail["input"] == "mode"
     assert issue.detail["value"] == "'c'"
     assert issue.detail["choices"] == ["a", "b"]
+
+
+def test_sanitize_api_strips_unknown_runtime_inputs_and_coerces_portable_choices() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "WanVideoLoraSelect": _schema(
+                "WanVideoLoraSelect",
+                {
+                    "lora": InputSpec(
+                        "STRING",
+                        choices=["WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"],
+                    ),
+                    "strength": InputSpec("FLOAT"),
+                },
+            ),
+            "LoadImage": _schema("LoadImage", {"image": InputSpec("STRING")}),
+        }
+    )
+    api = {
+        "1": {
+            "class_type": "WanVideoLoraSelect",
+            "inputs": {
+                "lora": "WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+                "strength": 1.0,
+                "widget_0": "ui copy",
+            },
+        },
+        "2": {"class_type": "LoadImage", "inputs": {"image": "start.png", "widget_0": "start.png"}},
+    }
+
+    sanitized = sanitize_api_against_schema(api, provider)
+
+    assert sanitized["1"]["inputs"] == {
+        "lora": "WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+        "strength": 1.0,
+    }
+    assert sanitized["2"]["inputs"] == {"image": "start.png"}
+    assert api["1"]["inputs"]["widget_0"] == "ui copy"
 
 
 def test_invalid_link_shape_emits_error_for_dict_shaped_link() -> None:

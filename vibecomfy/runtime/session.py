@@ -664,14 +664,8 @@ def _prepare_prompt(
     backend: str,
     schema_provider: Any | None = None,
 ) -> dict[str, Any]:
-    # Schema validation: cache-hit on every submit after the first per-runtime; first-fetch latency acceptable.
-    report = workflow.validate(schema_provider=schema_provider)
-    if not report.ok:
-        messages = "; ".join(issue.message for issue in report.issues)
-        raise ValueError(f"Workflow validation failed: {messages}")
-
     try:
-        return workflow.compile(backend=backend)
+        return _prepare_runtime_prompt(workflow, backend=backend, schema_provider=schema_provider)
     except ValueError as exc:
         raise ValueError(f"Workflow build failed: {exc}") from exc
     except RuntimeError as exc:
@@ -693,12 +687,8 @@ async def _prepare_prompt_async(
         on_unavailable=on_unavailable,
         cache_only=cache_only,
     )
-    report = workflow.validate(schema_provider=effective)
-    if not report.ok:
-        raise ValueError(_validation_failed_message(report))
-
     try:
-        return workflow.compile(backend=backend)
+        return _prepare_runtime_prompt(workflow, backend=backend, schema_provider=effective)
     except ValueError as exc:
         raise ValueError(f"Workflow build failed: {exc}") from exc
     except RuntimeError as exc:
@@ -713,6 +703,35 @@ def _validation_failed_message(report: Any) -> str:
     return "Workflow validation failed:\n  - " + "\n  - ".join(
         format_issue(issue) for issue in report.issues if issue.severity == "error"
     )
+
+
+def _prepare_runtime_prompt(
+    workflow: VibeWorkflow,
+    *,
+    backend: str,
+    schema_provider: Any | None,
+) -> dict[str, Any]:
+    structural_report = workflow.validate(schema_provider=None)
+    if not structural_report.ok:
+        raise ValueError(_validation_failed_message(structural_report))
+    api_dict = workflow.compile(backend=backend)
+    if backend == "api" and schema_provider is not None:
+        from vibecomfy.schema.validate import (
+            sanitize_api_against_schema,
+            validate_api_against_schema,
+            validate_api_link_shapes,
+        )
+
+        api_dict = sanitize_api_against_schema(api_dict, schema_provider)
+        schema_issues = [
+            *validate_api_against_schema(api_dict, schema_provider),
+            *validate_api_link_shapes(api_dict, schema_provider),
+        ]
+        if any(issue.severity == "error" for issue in schema_issues):
+            from vibecomfy.workflow import ValidationReport
+
+            raise ValueError(_validation_failed_message(ValidationReport(ok=False, issues=schema_issues)))
+    return api_dict
 
 
 def _run_metadata(

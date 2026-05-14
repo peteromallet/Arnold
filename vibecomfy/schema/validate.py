@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from vibecomfy.schema.provider import SchemaProvider, schema_for, schema_registry_empty
@@ -22,6 +23,16 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
         api_dict = workflow.compile(backend="api")
     except Exception as exc:
         return [ValidationIssue("api_compile_failed", str(exc), severity="warning")]
+
+    return validate_api_against_schema(api_dict, provider)
+
+
+def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvider) -> list[ValidationIssue]:
+    if schema_registry_empty(provider):
+        return []
+
+    issues: list[ValidationIssue] = []
+    schema_by_node: dict[str, Any] = {}
 
     for node_id, node in api_dict.items():
         if not isinstance(node, dict):
@@ -155,6 +166,42 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
     return issues
 
 
+def sanitize_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvider | None) -> dict[str, Any]:
+    """Drop schema-unknown payload keys and coerce equivalent choice strings.
+
+    Ready templates often keep UI widget aliases as authoring hints. Runtime API
+    prompts must match the live node schema exactly, so this strips fields the
+    runtime will reject and normalizes portable model paths to the exact choice
+    string exposed by Comfy.
+    """
+    if provider is None or schema_registry_empty(provider):
+        return api_dict
+    sanitized = copy.deepcopy(api_dict)
+    for node in sanitized.values():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type")
+        inputs = node.get("inputs")
+        if not isinstance(class_type, str) or not isinstance(inputs, dict):
+            continue
+        schema = schema_for(provider, class_type)
+        schema_inputs = getattr(schema, "inputs", {}) if schema is not None else {}
+        if not schema_inputs:
+            continue
+        for name in list(inputs):
+            if name not in schema_inputs:
+                del inputs[name]
+                continue
+            value = inputs[name]
+            if _is_api_link(value):
+                continue
+            choices = getattr(schema_inputs[name], "choices", None) or []
+            coerced = _coerce_choice_value(value, choices)
+            if coerced is not _NO_MATCH:
+                inputs[name] = coerced
+    return sanitized
+
+
 def validate_api_link_shapes(api_dict: dict[str, Any], provider: SchemaProvider) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     for node_id, node in api_dict.items():
@@ -247,6 +294,32 @@ def _truncate(value: Any, n: int = 120) -> str:
     if len(text) <= n:
         return text
     return text[: max(0, n - 3)] + "..."
+
+
+_NO_MATCH = object()
+
+
+def _coerce_choice_value(value: Any, choices: list[Any]) -> Any:
+    if value in choices:
+        return _NO_MATCH
+    if not isinstance(value, str):
+        return _NO_MATCH
+    normalized_value = _portable_choice_key(value)
+    basename_value = normalized_value.rsplit("/", 1)[-1]
+    matches = [
+        choice
+        for choice in choices
+        if isinstance(choice, str)
+        and (
+            _portable_choice_key(choice) == normalized_value
+            or _portable_choice_key(choice).rsplit("/", 1)[-1] == basename_value
+        )
+    ]
+    return matches[0] if len(matches) == 1 else _NO_MATCH
+
+
+def _portable_choice_key(value: str) -> str:
+    return value.replace("\\", "/").strip()
 
 
 def _issue_suppressed(class_type: str, code: str) -> bool:
