@@ -334,15 +334,7 @@ class EmbeddedSession:
         if self._context is None:
             return
         try:
-            await asyncio.wait_for(
-                self._context.__aexit__(None, None, None),
-                timeout=_embedded_shutdown_timeout_sec(),
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "embedded Comfy shutdown timed out after %.1fs; continuing because the run has already finished",
-                _embedded_shutdown_timeout_sec(),
-            )
+            await self._context.__aexit__(None, None, None)
         except AttributeError as exc:
             if "model_mmap_residency" not in str(exc):
                 raise
