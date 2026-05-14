@@ -53,6 +53,9 @@ READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
  'approach': 'first/last-frame image anchors',
  'runtime_note': None,
  'discord_signal': None,
+ 'runtime_packages': [{'name': 'sageattention',
+                       'reason': 'Required by PathchSageAttentionKJ auto mode for 4090-speed LTX Runexx validation.',
+                       'source': 'SageAttention-ada'}],
  'smoke_resolution': '256x256x5_frames',
  'ltx_best_practices': ['Use the official Lightricks workflows as runtime gates where possible.',
                         'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.',
@@ -458,7 +461,7 @@ def build() -> VibeWorkflow:
         },
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '226',
-        widget_0='disabled',
+        widget_0='auto',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )

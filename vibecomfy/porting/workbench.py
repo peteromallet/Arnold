@@ -132,7 +132,9 @@ def analyze_source(
         report.diagnostics.append(compile_issue)
     report.diagnostics.extend(_known_runtime_required_input_diagnostics(api_prompt))
     report.diagnostics.extend(_known_dynamic_combo_selector_diagnostics(api_prompt))
-    report.diagnostics.extend(_known_runtime_compatibility_diagnostics(api_prompt))
+    report.diagnostics.extend(
+        _known_runtime_compatibility_diagnostics(api_prompt, metadata=workflow.metadata)
+    )
 
     asset_analysis = analyze_model_assets(
         raw_workflow=loaded.raw_workflow,
@@ -320,16 +322,25 @@ def _known_dynamic_combo_selector_diagnostics(api_prompt: dict[str, Any] | None)
     return issues
 
 
-def _known_runtime_compatibility_diagnostics(api_prompt: dict[str, Any] | None) -> list[PortIssue]:
+def _known_runtime_compatibility_diagnostics(
+    api_prompt: dict[str, Any] | None, *, metadata: dict[str, Any] | None = None
+) -> list[PortIssue]:
     if api_prompt is None:
         return []
 
+    runtime_packages = (metadata or {}).get("runtime_packages") or []
+    declares_sageattention = any(
+        isinstance(package, dict) and package.get("name") == "sageattention"
+        for package in runtime_packages
+    )
     issues: list[PortIssue] = []
     for node_id, node in sorted(api_prompt.items(), key=lambda item: _sort_key(item[0])):
         if not isinstance(node, dict):
             continue
         class_type = node.get("class_type")
         if class_type == "LTX2MemoryEfficientSageAttentionPatch":
+            if declares_sageattention:
+                continue
             issues.append(
                 PortIssue(
                     code="optional_acceleration_requires_unavailable_package",
@@ -383,6 +394,8 @@ def _known_runtime_compatibility_diagnostics(api_prompt: dict[str, Any] | None) 
             continue
         sage_attention = inputs.get("sage_attention", inputs.get("widget_0"))
         if sage_attention in {None, "disabled"}:
+            continue
+        if declares_sageattention:
             continue
         issues.append(
             PortIssue(
