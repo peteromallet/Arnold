@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -868,7 +869,7 @@ def _embedded_configuration(workflow: VibeWorkflow) -> Configuration | None:
 
 
 def _comfy_server_argv(config: SessionConfig) -> tuple[str, ...]:
-    argv = [_comfyui_executable(), "serve"]
+    argv = [*_comfyui_command(), "serve"]
     if config.vram_policy in {"high", "low", "normal"}:
         argv.append(f"--{config.vram_policy}vram")
     if config.reserve_vram_gb is not None:
@@ -940,14 +941,20 @@ async def _spawn_comfy_server(
     return process, managed_url, log_handle
 
 
-def _comfyui_executable() -> str:
+def _comfyui_command() -> tuple[str, ...]:
     executable = shutil.which("comfyui")
-    if executable:
-        return executable
+    if executable and Path(executable).is_file():
+        return (executable,)
     sibling = Path(sys.executable).with_name("comfyui")
-    if sibling.exists():
-        return str(sibling)
-    return "comfyui"
+    if sibling.is_file():
+        return (str(sibling),)
+    try:
+        has_comfy_module = importlib.util.find_spec("comfy.cmd.cli") is not None
+    except ModuleNotFoundError:
+        has_comfy_module = False
+    if has_comfy_module:
+        return (sys.executable, "-m", "comfy.cmd.cli")
+    return ("comfyui",)
 
 
 async def _maybe_flush_for_policy(session: VibeSession, fp: tuple[Any, ...]) -> None:
