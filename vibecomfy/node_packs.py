@@ -18,6 +18,7 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         classes=frozenset(
             {
                 "LoadWanVideoT5TextEncoder",
+                "CreateCFGScheduleFloatList",
                 "WanVideoBlockSwap",
                 "WanVideoEncode",
                 "WanVideoVAELoader",
@@ -31,6 +32,8 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "WanVideoSampler",
                 "WanVideoTextEncode",
                 "WanVideoTextEncodeCached",
+                "WanVideoTextEmbedBridge",
+                "WanVideoLoraSelect",
                 "WanVideoLoraSelectMulti",
                 "WanVideoSetBlockSwap",
                 "WanVideoSetLoRAs",
@@ -79,6 +82,7 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "PreviewAnimation",
                 "GetImageRangeFromBatch",
                 "GetImageSize",
+                "GetImageSizeAndCount",
                 "INTConstant",
                 "LTXVAddGuide",
                 "PathchSageAttentionKJ",

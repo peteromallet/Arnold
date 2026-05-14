@@ -496,10 +496,29 @@ def test_missing_packs_for_workflow_ignores_core_comfy_classes(
     workflow = VibeWorkflow("core-classes", WorkflowSource("core-classes"))
     workflow.nodes["1"] = VibeNode("1", "LoadImage")
     workflow.nodes["2"] = VibeNode("2", "SaveImage")
+    workflow.nodes["3"] = VibeNode("3", "CLIPLoader")
 
     packs, unresolved = missing_packs_for_workflow(workflow)
 
     assert packs == []
+    assert unresolved == []
+
+
+def test_missing_packs_for_workflow_resolves_wanvideo_i2v_helpers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("wan-i2v", WorkflowSource("wan-i2v"))
+    workflow.nodes["1"] = VibeNode("1", "WanVideoLoraSelect")
+    workflow.nodes["2"] = VibeNode("2", "CreateCFGScheduleFloatList")
+    workflow.nodes["3"] = VibeNode("3", "WanVideoTextEmbedBridge")
+    workflow.nodes["4"] = VibeNode("4", "GetImageSizeAndCount")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-KJNodes", "ComfyUI-WanVideoWrapper"]
     assert unresolved == []
 
 

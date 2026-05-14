@@ -11,6 +11,7 @@ DEFAULT_INSTALL_ROOT = Path("custom_nodes"); """Canonical install root for custo
 CORE_COMFY_CLASSES = frozenset(
     {
         "CFGGuider",
+        "CLIPLoader",
         "CLIPTextEncode",
         "DualCLIPLoader",
         "ImageScaleBy",
