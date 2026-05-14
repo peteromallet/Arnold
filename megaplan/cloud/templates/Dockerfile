@@ -77,7 +77,7 @@ RUN . "$NVM_DIR/nvm.sh" \
     && command -v shannon
 
 # Megaplan from source
-RUN pip install --no-cache-dir git+https://github.com/peteromallet/megaplan.git \
+RUN pip install --no-cache-dir "megaplan-harness[agent] @ git+https://github.com/peteromallet/megaplan.git" \
     && megaplan --help > /dev/null
 ${TOOLCHAIN_BLOCK}
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
