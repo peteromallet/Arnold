@@ -35,6 +35,15 @@ class FakePopen:
     def poll(self):
         return self.returncode
 
+    def terminate(self):
+        self.returncode = -15
+
+    def kill(self):
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        return self.returncode
+
 
 def test_session_cli_start_list_flush_stop_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -157,6 +166,60 @@ def test_session_cli_start_without_memory_profile_leaves_config_unchanged(
     config = json.loads((tmp_path / "out/sessions/default/config.json").read_text(encoding="utf-8"))
 
     assert "memory_profile" not in config
+
+
+def test_session_cli_start_timeout_terminates_daemon_and_records_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    sleep_calls: list[float] = []
+
+    class SlowPopen:
+        instance: "SlowPopen | None" = None
+
+        def __init__(self, cmd, *, stdout, stderr, start_new_session: bool) -> None:
+            self.cmd = list(cmd)
+            self.returncode = None
+            self.terminated = False
+            SlowPopen.instance = self
+            assert start_new_session is True
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(session_cmd.subprocess, "Popen", SlowPopen)
+    monkeypatch.setattr(session_cmd.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    args = argparse.Namespace(
+        id="default",
+        port=8200,
+        vram_policy="auto",
+        reserve_vram_gb=None,
+        cache_policy="smart",
+        warm_policy="auto",
+        disable_smart_memory=False,
+        memory_profile=None,
+        input_directory=None,
+        output_directory=None,
+        temp_directory=None,
+        ready_timeout_sec=1,
+    )
+
+    assert session_cmd._cmd_session_start(args) == 1
+    assert SlowPopen.instance is not None
+    assert SlowPopen.instance.terminated is True
+    assert "did not become ready within 1 seconds" in capsys.readouterr().err
+    assert json.loads((tmp_path / "out/sessions/default/daemon_argv.json").read_text(encoding="utf-8")) == SlowPopen.instance.cmd
 
 
 def test_find_active_session_returns_url_or_cleans_stale_files(

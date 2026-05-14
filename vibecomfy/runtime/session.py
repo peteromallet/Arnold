@@ -919,18 +919,24 @@ async def _spawn_comfy_server(
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)
         log_handle = Path(log_path).open("ab", buffering=0)
     argv = _comfy_server_argv(config)
+    if log_handle:
+        log_handle.write(f"[vibecomfy] launching managed Comfy server: {json.dumps(list(argv))}\n".encode())
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
     process = await asyncio.create_subprocess_exec(
         *argv,
         stdout=log_handle or asyncio.subprocess.DEVNULL,
         stderr=log_handle or asyncio.subprocess.DEVNULL,
-        env=os.environ.copy(),
+        env=env,
     )
     managed_url = f"http://127.0.0.1:{config.port or 8188}"
     client = ComfyClient(managed_url)
     ready_timeout_sec = int(config.extra.get("ready_timeout_sec") or os.environ.get("VIBECOMFY_SESSION_READY_TIMEOUT_SEC") or 300)
-    for _ in range(ready_timeout_sec):
+    for second in range(ready_timeout_sec):
         if await client.ready():
             break
+        if log_handle and second and second % 30 == 0:
+            log_handle.write(f"[vibecomfy] waiting for managed Comfy server readiness: {second}/{ready_timeout_sec}s\n".encode())
         await asyncio.sleep(1)
     else:
         if process.returncode is None:

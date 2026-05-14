@@ -16,6 +16,7 @@ from vibecomfy.runtime.session import (
     ServerSession,
     SessionConfig,
     _cleanup_session_files,
+    _comfy_server_argv,
     find_active_session,
 )
 
@@ -66,6 +67,11 @@ async def _daemon_main(args: argparse.Namespace) -> int:
     session = ServerSession(SessionConfig.from_dict(config_dict))
     session_dir = _session_dir(args.id)
     stop_event = asyncio.Event()
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "server_argv.json").write_text(
+        json.dumps(list(_comfy_server_argv(session.config)), indent=2),
+        encoding="utf-8",
+    )
 
     def request_stop() -> None:
         stop_event.set()
@@ -79,7 +85,6 @@ async def _daemon_main(args: argparse.Namespace) -> int:
 
     try:
         await session.start()
-        session_dir.mkdir(parents=True, exist_ok=True)
         (session_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
         (session_dir / "url").write_text(str(session.url), encoding="utf-8")
         (session_dir / "config.json").write_text(
@@ -109,6 +114,7 @@ def _cmd_session_start(args: argparse.Namespace) -> int:
         "--config",
         json.dumps(config),
     ]
+    (session_dir / "daemon_argv.json").write_text(json.dumps(cmd, indent=2), encoding="utf-8")
     with log_path.open("ab", buffering=0) as stderr:
         process = subprocess.Popen(
             cmd,
@@ -128,8 +134,20 @@ def _cmd_session_start(args: argparse.Namespace) -> int:
             print(f"session {args.id} failed to start; see {log_path}", file=sys.stderr)
             return 1
         time.sleep(1)
+    _terminate_daemon_process(process)
     print(f"session {args.id} did not become ready within {ready_timeout_sec} seconds", file=sys.stderr)
     return 1
+
+
+def _terminate_daemon_process(process: subprocess.Popen[Any]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=15)
 
 
 def _cmd_session_stop(args: argparse.Namespace) -> int:
