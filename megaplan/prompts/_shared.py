@@ -22,6 +22,17 @@ def _resolve_prompt_root(plan_dir: Path, root: Path | None) -> Path:
     return plan_dir
 
 
+def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
+    gate_path = plan_dir / "gate.json"
+    if gate_path.exists():
+        return read_json(gate_path)
+    return {
+        "summary": "No gate phase ran for this robustness level; continue from the approved plan.",
+        "recommendation": "proceed",
+        "flags": [],
+    }
+
+
 def _grouped_debt_for_prompt(
     plan_dir: Path, root: Path | None
 ) -> dict[str, list[dict[str, object]]]:

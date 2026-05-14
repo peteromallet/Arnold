@@ -1785,118 +1785,21 @@ def run_claude_step(
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
 ) -> WorkerResult:
+    """Compatibility wrapper: the public ``claude`` route runs via Shannon."""
     if effort is not None and effort not in _VALID_CLAUDE_EFFORTS:
         raise CliError("invalid_args", f"Unsupported claude effort level: {effort}")
-    if os.getenv(MOCK_ENV_VAR) == "1":
-        return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
-    project_dir = Path(state["config"]["project_dir"])
-    work_dir = resolve_work_dir(state)
-    plan_mode = state["config"].get("mode", "code")
-    schema_name = (
-        get_execution_schema_key(plan_mode, form=creative_form_id(state))
-        if step == "execute"
-        else STEP_SCHEMA_FILENAMES[step]
-    )
-    schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
-    session_key = session_key_for(step, "claude")
-    session = state["sessions"].get(session_key, {})
-    session_id = session.get("id")
-    command = ["claude", "-p", "--output-format", "json", "--json-schema", schema_text, "--add-dir", str(work_dir)]
-    if effort is not None:
-        command.extend(["--effort", effort])
-    if step in _EXECUTE_STEPS:
-        command.extend(["--permission-mode", "bypassPermissions"])
-    if session_id and not fresh:
-        command.extend(["--resume", session_id])
-    else:
-        session_id = str(uuid.uuid4())
-        command.extend(["--session-id", session_id])
-    prompt = prompt_override if prompt_override is not None else create_claude_prompt(
+    from megaplan.shannon_worker import run_shannon_step
+
+    return run_shannon_step(
         step,
         state,
         plan_dir,
         root=root,
-        **(prompt_kwargs or {}),
-    )
-    try:
-        result = run_command(
-            command,
-            cwd=work_dir,
-            stdin_text=prompt,
-            env=_external_worker_env(turn_id=f'plan_worker_{state["name"]}'),
-            activity_callback=_activity_callback_for_state(state, plan_dir),
-        )
-    except CliError as error:
-        if error.code == "worker_timeout":
-            error.extra["session_id"] = session_id
-        # Mirror run_codex_step's poisoned-session recovery for Claude.
-        resumed = bool(session.get("id")) and not fresh
-        if (
-            resumed
-            and _trusted_container()
-            and _is_poisoned_environmental_failure(
-                str(error.extra.get("raw_output", ""))
-            )
-        ):
-            print(
-                "[megaplan] Detected poisoned session (obsolete sandbox failure belief); "
-                "invalidating session and retrying with --fresh",
-                flush=True,
-            )
-            state["sessions"].pop(session_key, None)
-            return run_claude_step(
-                step,
-                state,
-                plan_dir,
-                root=root,
-                fresh=True,
-                prompt_override=prompt_override,
-                prompt_kwargs=prompt_kwargs,
-                effort=effort,
-            )
-        raise
-    raw = result.stdout or result.stderr
-    # Non-exception poisoned-session recovery. Only trigger when we resumed
-    # (fresh sessions can't carry stale history).
-    if (
-        session.get("id")
-        and not fresh
-        and _trusted_container()
-        and _is_poisoned_environmental_failure(raw)
-    ):
-        print(
-            "[megaplan] Detected poisoned session (obsolete sandbox failure belief); "
-            "invalidating session and retrying with --fresh",
-            flush=True,
-        )
-        state["sessions"].pop(session_key, None)
-        return run_claude_step(
-            step,
-            state,
-            plan_dir,
-            root=root,
-            fresh=True,
-            prompt_override=prompt_override,
-            prompt_kwargs=prompt_kwargs,
-            effort=effort,
-        )
-    envelope, payload = parse_claude_envelope(raw)
-    payload = _normalize_worker_payload(step, payload)
-    try:
-        validate_payload(step, payload)
-    except CliError as error:
-        raise CliError(error.code, error.message, extra={"raw_output": raw}) from error
-    prompt_tokens, completion_tokens = _extract_claude_usage(envelope)
-    return WorkerResult(
-        payload=payload,
-        raw_output=raw,
-        duration_ms=result.duration_ms,
-        cost_usd=float(envelope.get("total_cost_usd", 0.0) or 0.0),
-        session_id=str(envelope.get("session_id") or session_id),
-        rendered_prompt=prompt,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=prompt_tokens + completion_tokens,
+        fresh=fresh,
+        prompt_override=prompt_override,
+        prompt_kwargs=prompt_kwargs,
+        effort=effort,
+        session_agent="claude",
     )
 
 
@@ -2323,6 +2226,9 @@ def _is_agent_available(agent: str) -> bool:
     """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
         return (Path(__file__).resolve().parent / "agent" / "run_agent.py").is_file()
+    if agent in {"claude", "shannon"}:
+        from megaplan._core.io import is_shannon_available
+        return is_shannon_available()
     return bool(shutil.which(agent))
 
 
@@ -2383,18 +2289,37 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
                 agent, model = parse_agent_spec(spec)
 
     # Validate agent availability
-    explicit_agent = args.agent  # was an explicit --agent flag used?
-    if not _is_agent_available(agent):
-        # If explicitly requested (via --agent), fail immediately
-        if explicit_agent and not any(pm.startswith(f"{step}=") for pm in (getattr(args, "phase_model", None) or [])):
+    # MEGAPLAN_MOCK_WORKERS=1 bypasses availability for explicit Shannon
+    if os.environ.get("MEGAPLAN_MOCK_WORKERS") == "1" and agent == "shannon":
+        pass  # Skip availability check; worker handles mock mode
+    elif not _is_agent_available(agent):
+        is_explicit = _agent_requested_explicitly(step, args)
+        if is_explicit:
             if agent == "hermes":
                 raise CliError(
                     "agent_deps_missing",
                     "hermes backend requires: pip install 'megaplan-harness[agent]'",
                 )
+            if agent == "shannon":
+                from megaplan._core.io import shannon_missing_deps
+                missing = shannon_missing_deps()
+                raise CliError(
+                    "agent_deps_missing",
+                    f"Shannon requires: {', '.join(missing)}. "
+                    "Install with: npm install -g @dexh/shannon@0.0.2",
+                )
+            if agent == "claude":
+                from megaplan._core.io import shannon_missing_deps
+                missing = shannon_missing_deps()
+                raise CliError(
+                    "agent_deps_missing",
+                    f"Claude routes through Shannon and requires: {', '.join(missing)}. "
+                    "Install with: npm install -g @dexh/shannon@0.0.2",
+                )
             raise CliError("agent_not_found", f"Agent '{agent}' not found on PATH")
-        # For hermes via --hermes flag, give a specific error
-        if getattr(args, "hermes", None) is not None or agent == "hermes":
+        # For hermes via agent=="hermes" config default when not explicitly requested,
+        # give a specific error
+        if agent == "hermes":
             raise CliError(
                 "agent_deps_missing",
                 "hermes backend requires: pip install 'megaplan-harness[agent]'",
@@ -2464,7 +2389,22 @@ def run_step_with_worker(
                     prompt_override=prompt_override,
                 )
             elif agent == "claude":
-                worker = run_claude_step(
+                from megaplan.shannon_worker import run_shannon_step
+                worker = run_shannon_step(
+                    step,
+                    state,
+                    plan_dir,
+                    root=root,
+                    fresh=effective_refreshed,
+                    prompt_override=prompt_override,
+                    prompt_kwargs=prompt_kwargs,
+                    effort=model,
+                    session_agent="claude",
+                )
+            elif agent == "shannon":
+                # Deferred import to avoid circular import
+                from megaplan.shannon_worker import run_shannon_step
+                worker = run_shannon_step(
                     step,
                     state,
                     plan_dir,

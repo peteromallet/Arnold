@@ -2077,7 +2077,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ["plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"]:
         step_parser = subparsers.add_parser(name)
         step_parser.add_argument("--plan")
-        step_parser.add_argument("--agent", choices=["claude", "codex", "hermes"])
+        step_parser.add_argument("--agent", choices=KNOWN_AGENTS)
         step_parser.add_argument("--hermes", nargs="?", const="", default=None,
                                  help="Use Hermes agent for all phases. Optional: specify default model (e.g. --hermes anthropic/claude-sonnet-4.6)")
         step_parser.add_argument("--phase-model", action="append", default=[],
@@ -2211,7 +2211,7 @@ def build_parser() -> argparse.ArgumentParser:
     loop_init_parser.add_argument("--time-budget", type=int, default=300)
     loop_init_parser.add_argument("--observe-interval", type=int)
     loop_init_parser.add_argument("--observe-break-patterns")
-    loop_init_parser.add_argument("--agent", choices=["claude", "codex", "hermes"])
+    loop_init_parser.add_argument("--agent", choices=KNOWN_AGENTS)
     loop_init_parser.add_argument("--hermes", nargs="?", const="", default=None,
                                   help="Use Hermes agent for loop phases. Optional: specify default model")
     loop_init_parser.add_argument("--phase-model", action="append", default=[],
@@ -2231,7 +2231,7 @@ def build_parser() -> argparse.ArgumentParser:
     loop_run_parser.add_argument("--project-dir")
     loop_run_parser.add_argument("--iterations", type=int)
     loop_run_parser.add_argument("--time-budget", type=int)
-    loop_run_parser.add_argument("--agent", choices=["claude", "codex", "hermes"])
+    loop_run_parser.add_argument("--agent", choices=KNOWN_AGENTS)
     loop_run_parser.add_argument("--hermes", nargs="?", const="", default=None,
                                  help="Use Hermes agent for loop phases. Optional: specify default model")
     loop_run_parser.add_argument("--phase-model", action="append", default=[],
@@ -2291,7 +2291,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run tiebreaker researcher+challenger (used by auto driver)",
     )
     tb_run_parser.add_argument("--plan", required=True, help="Plan name")
-    tb_run_parser.add_argument("--agent", choices=["claude", "codex", "hermes"], default=None)
+    tb_run_parser.add_argument("--agent", choices=KNOWN_AGENTS, default=None)
     tb_run_parser.add_argument("--hermes", nargs="?", const="", default=None)
     tb_run_parser.add_argument("--phase-model", action="append", default=[])
     tb_run_parser.add_argument("--profile", default=None,

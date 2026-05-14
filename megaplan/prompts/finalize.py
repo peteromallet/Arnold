@@ -6,6 +6,7 @@ import textwrap
 from pathlib import Path
 
 from megaplan._core import (
+    configured_robustness,
     intent_and_notes_block,
     is_prose_mode,
     json_dump,
@@ -16,7 +17,7 @@ from megaplan._core import (
 )
 from megaplan.types import PlanState
 
-from ._shared import _finalize_debt_block, _render_prep_block
+from ._shared import _finalize_debt_block, _gate_summary_or_skipped, _render_prep_block
 from .gate import _collect_critique_summaries, _flag_summary
 
 
@@ -25,19 +26,21 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     prep_block, prep_instruction = _render_prep_block(plan_dir)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
-    gate = read_json(plan_dir / "gate.json")
+    gate = _gate_summary_or_skipped(plan_dir)
     flag_registry = load_flag_registry(plan_dir)
     critique_history = _collect_critique_summaries(plan_dir, state["iteration"])
     debt_block = _finalize_debt_block(plan_dir, root)
     plan_mode = state.get("config", {}).get("mode", "code")
+    robustness = configured_robustness(state)
     if is_prose_mode(state):
         task_field_guidance = textwrap.dedent(
-            """
+            f"""
             - Each task represents a document section or group of sections to author.
             - Task objects use `sections_written` (array of section IDs) instead of `files_changed`/`commands_run`.
             - Do NOT include `files_changed` or `commands_run` in task descriptions — the executor writes to a single output file.
             - Do NOT include `baseline_test_failures` or `baseline_test_command` — there are no tests for doc mode.
             - The FINAL task should be a review/polish pass over the assembled document, not a test run.
+            {"- Tiny robustness doc-mode exception: emit exactly one task that both authors and verifies the document, so execution stays single-batch." if robustness == "tiny" else ""}
             """
         ).strip()
     else:

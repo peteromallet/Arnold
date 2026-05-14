@@ -349,3 +349,14 @@ def test_handle_config_use_profile_unknown_profile_raises(
     # The error message should list at least one known built-in profile so the
     # user can recover without consulting docs.
     assert "standard" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# Shannon config validation
+# ---------------------------------------------------------------------------
+
+
+def test_config_accepts_shannon_as_agent() -> None:
+    """Config agent overrides accept 'shannon'."""
+    from megaplan.types import KNOWN_AGENTS
+    assert "shannon" in KNOWN_AGENTS
