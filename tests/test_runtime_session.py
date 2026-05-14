@@ -642,6 +642,24 @@ def test_sage_attention_profile_maps_to_embedded_config_and_server_argv(
     assert "--use-sage-attention" in argv
 
 
+def test_server_argv_includes_configured_io_directories() -> None:
+    config = SessionConfig.from_dict(
+        {
+            "port": 8200,
+            "input_directory": "/tmp/vibe-input",
+            "output_directory": "/tmp/vibe-output",
+            "temp_directory": "/tmp/vibe-temp",
+        }
+    )
+
+    argv = _comfy_server_argv(config)
+
+    assert argv[argv.index("--input-directory") + 1] == "/tmp/vibe-input"
+    assert argv[argv.index("--output-directory") + 1] == "/tmp/vibe-output"
+    assert argv[argv.index("--temp-directory") + 1] == "/tmp/vibe-temp"
+    assert argv[argv.index("--port") + 1] == "8200"
+
+
 def test_run_metadata_includes_memory_profile_telemetry_when_configured() -> None:
     metadata = _run_metadata(
         run_id="run-test",

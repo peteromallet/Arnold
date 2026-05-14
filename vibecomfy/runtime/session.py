@@ -880,6 +880,14 @@ def _comfy_server_argv(config: SessionConfig) -> tuple[str, ...]:
         argv.extend(["--cache-lru", config.cache_policy.split(":", 1)[1]])
     if _config_requests_sage_attention(config):
         argv.append("--use-sage-attention")
+    for key, flag in (
+        ("input_directory", "--input-directory"),
+        ("output_directory", "--output-directory"),
+        ("temp_directory", "--temp-directory"),
+    ):
+        value = config.extra.get(key)
+        if value:
+            argv.extend([flag, str(value)])
     argv.extend(["--port", str(config.port or 8188)])
     return tuple(argv)
 

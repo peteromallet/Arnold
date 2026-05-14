@@ -220,6 +220,9 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
         "reserve_vram_gb": 2.0,
         "cache_policy": "lru:3",
         "warm_policy": "always",
+        "input_directory": "/tmp/session-input",
+        "output_directory": "/tmp/session-output",
+        "temp_directory": "/tmp/session-temp",
     }
     raw = {
         "reserve_vram": 12,
@@ -238,7 +241,11 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
         reserve_vram_gb=2.0,
         cache_policy="lru:3",
         warm_policy="always",
-        extra={},
+        extra={
+            "input_directory": "/tmp/session-input",
+            "output_directory": "/tmp/session-output",
+            "temp_directory": "/tmp/session-temp",
+        },
     )
     assert captured[1] == SessionConfig(
         port=8200,

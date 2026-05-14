@@ -44,6 +44,15 @@ def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
     config["warm_policy"] = args.warm_policy or "auto"
     if args.reserve_vram_gb is not None:
         config["reserve_vram_gb"] = args.reserve_vram_gb
+    input_directory = getattr(args, "input_directory", None)
+    output_directory = getattr(args, "output_directory", None)
+    temp_directory = getattr(args, "temp_directory", None)
+    if input_directory is not None:
+        config["input_directory"] = input_directory
+    if output_directory is not None:
+        config["output_directory"] = output_directory
+    if temp_directory is not None:
+        config["temp_directory"] = temp_directory
     return config
 
 
@@ -191,6 +200,9 @@ def register(subparsers) -> None:
     start.add_argument("--warm-policy", choices=["auto", "always", "never"])
     start.add_argument("--memory-profile", type=int, choices=[1, 2, 3, 4, 5])
     start.add_argument("--port", type=int, default=8188)
+    start.add_argument("--input-directory")
+    start.add_argument("--output-directory")
+    start.add_argument("--temp-directory")
     start.set_defaults(func=_cmd_session_start)
 
     stop = session_sub.add_parser("stop")
