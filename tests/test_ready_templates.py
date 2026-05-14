@@ -522,9 +522,14 @@ def test_wan_2_2_templates_use_canonical_wanvideo_lora_path(template_id: str) ->
         if node.class_type == "WanVideoLoraSelectMulti"
     ]
     assert lora_nodes
+    lora_key = "lora_0" if template_id.endswith("_vace_cocktail") else "widget_0"
+    expected_path = (
+        "WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
+        if template_id.endswith("_vace_cocktail")
+        else "WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
+    )
     assert all(
-        node.inputs["widget_0"]
-        == "WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
+        node.inputs[lora_key] == expected_path
         for node in lora_nodes
     )
     assert any(
@@ -548,7 +553,40 @@ def test_wan_2_2_templates_use_torch_compatible_precision(template_id: str) -> N
         if node.class_type == "WanVideoModelLoader"
     ]
     assert loader_nodes
-    assert all(node.inputs["widget_1"] == "fp16" for node in loader_nodes)
+    precision_key = "base_precision" if template_id.endswith("_vace_cocktail") else "widget_1"
+    assert all(node.inputs[precision_key] == "fp16" for node in loader_nodes)
+
+
+def test_wan_vace_template_uses_live_wanvideo_schema_inputs() -> None:
+    workflow = workflow_from_ready("video/wanvideo_wrapper_22_14b_vace_cocktail")
+    api = workflow.compile("api")
+
+    wanvideo_nodes = {
+        node_id: node
+        for node_id, node in api.items()
+        if str(node.get("class_type", "")).startswith("WanVideo")
+    }
+
+    assert wanvideo_nodes
+    assert [
+        (node_id, node["class_type"], key)
+        for node_id, node in wanvideo_nodes.items()
+        for key in node.get("inputs", {})
+        if key.startswith("widget_")
+    ] == []
+    assert [
+        (node_id, node["class_type"], key, value)
+        for node_id, node in wanvideo_nodes.items()
+        for key, value in node.get("inputs", {}).items()
+        if key in {"model", "model_name", "vace_model"} or key.startswith("lora_")
+        if isinstance(value, str) and "\\" in value
+    ] == []
+    assert "extra_model" in api["22"]["inputs"]
+    assert "extra_model" in api["92"]["inputs"]
+    assert "vace_model" not in api["22"]["inputs"]
+    assert "vace_model" not in api["92"]["inputs"]
+    assert "blocks_to_keep" not in api["39"]["inputs"]
+    assert "offload_img_emb_nonblock" not in api["39"]["inputs"]
 
 
 def test_wan_vace_template_uses_root_vace_module_asset() -> None:

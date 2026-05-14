@@ -84,13 +84,13 @@ def build() -> VibeWorkflow:
         },
     )
 
-    vae = _node(wf, "WanVideoVAELoader", "38", widget_0="wanvideo\\Wan2_1_VAE_bf16.safetensors", widget_1="bf16")
-    vace_model = _node(wf, "WanVideoVACEModelSelect", "224", widget_0="WanVideo\\Wan2_1-VACE_module_14B_fp8_e4m3fn.safetensors")
-    block_swap = _node(wf, "WanVideoBlockSwap", "39", widget_0=30, widget_1=True, widget_2=True, widget_3=True, widget_4=8, widget_5=0, widget_6=False)
-    high_lora = _node(wf, "WanVideoLoraSelectMulti", "98", widget_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", widget_1=1.0, widget_2="none", widget_3=1, widget_4="none", widget_5=1, widget_6="none", widget_7=1, widget_8="none", widget_9=1, widget_10=False, widget_11=False)
-    low_lora = _node(wf, "WanVideoLoraSelectMulti", "93", widget_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", widget_1=1.0, widget_2="none", widget_3=1, widget_4="none", widget_5=1, widget_6="none", widget_7=1, widget_8="none", widget_9=1, widget_10=False, widget_11=False)
-    high_model_raw = _node(wf, "WanVideoModelLoader", "22", widget_0="WanVideo\\2_2\\Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors", widget_1="fp16", widget_2="fp8_e4m3fn_scaled", widget_3="offload_device", widget_4="sdpa", vace_model=vace_model.out(0))
-    low_model_raw = _node(wf, "WanVideoModelLoader", "92", widget_0="WanVideo\\2_2\\Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors", widget_1="fp16", widget_2="fp8_e4m3fn_scaled", widget_3="offload_device", widget_4="sdpa", vace_model=vace_model.out(0))
+    vae = _node(wf, "WanVideoVAELoader", "38", model_name="wanvideo/Wan2_1_VAE_bf16.safetensors", precision="bf16")
+    vace_model = _node(wf, "WanVideoVACEModelSelect", "224", vace_model="WanVideo/Wan2_1-VACE_module_14B_fp8_e4m3fn.safetensors")
+    block_swap = _node(wf, "WanVideoBlockSwap", "39", blocks_to_swap=30, offload_img_emb=True, offload_txt_emb=True, use_non_blocking=True, vace_blocks_to_swap=8, prefetch_blocks=0)
+    high_lora = _node(wf, "WanVideoLoraSelectMulti", "98", lora_0="WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", strength_0=1.0, lora_1="none", strength_1=1, lora_2="none", strength_2=1, lora_3="none", strength_3=1, lora_4="none", strength_4=1, low_mem_load=False, merge_loras=False)
+    low_lora = _node(wf, "WanVideoLoraSelectMulti", "93", lora_0="WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", strength_0=1.0, lora_1="none", strength_1=1, lora_2="none", strength_2=1, lora_3="none", strength_3=1, lora_4="none", strength_4=1, low_mem_load=False, merge_loras=False)
+    high_model_raw = _node(wf, "WanVideoModelLoader", "22", model="WanVideo/2_2/Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors", base_precision="fp16", quantization="fp8_e4m3fn_scaled", load_device="offload_device", attention_mode="sdpa", extra_model=vace_model.out(0))
+    low_model_raw = _node(wf, "WanVideoModelLoader", "92", model="WanVideo/2_2/Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors", base_precision="fp16", quantization="fp8_e4m3fn_scaled", load_device="offload_device", attention_mode="sdpa", extra_model=vace_model.out(0))
     high_model_lora = _node(wf, "WanVideoSetLoRAs", "79", model=high_model_raw.out(0), lora=high_lora.out(0))
     low_model_lora = _node(wf, "WanVideoSetLoRAs", "80", model=low_model_raw.out(0), lora=low_lora.out(0))
     high_model = _node(wf, "WanVideoSetBlockSwap", "86", model=high_model_lora.out(0), block_swap_args=block_swap.out(0))
@@ -100,8 +100,8 @@ def build() -> VibeWorkflow:
         wf,
         "WanVideoVACEStartToEndFrame",
         "111",
-        widget_0=81,
-        widget_1=0.5,
+        num_frames=81,
+        empty_frame_level=0.5,
         start_image=start_image.out(0),
         end_image=end_image.out(0),
         control_images=control_video.out(0),
@@ -110,13 +110,6 @@ def build() -> VibeWorkflow:
         wf,
         "WanVideoVACEEncode",
         "56",
-        widget_0=832,
-        widget_1=480,
-        widget_2=81,
-        widget_3=1.0,
-        widget_4=0.0,
-        widget_5=1.0,
-        widget_6=False,
         vae=vae.out(0),
         input_frames=first_last.out(0),
         input_masks=first_last.out(1),
@@ -128,11 +121,11 @@ def build() -> VibeWorkflow:
         vace_start_percent=0.0,
         vace_end_percent=1.0,
     )
-    text = _node(wf, "WanVideoTextEncodeCached", "16", widget_0="umt5-xxl-enc-bf16.safetensors", widget_1="bf16", widget_2=DEFAULT_PROMPT, widget_3=DEFAULT_NEGATIVE, widget_4="disabled", widget_5=True, widget_6="gpu")
-    phase_1 = _node(wf, "WanVideoSampler", "27", steps=6, widget_0=6, widget_1=3.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=0, widget_12=2, widget_13=False, model=high_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), end_step=2)
-    phase_2 = _node(wf, "WanVideoSampler", "87", steps=6, widget_0=6, widget_1=1.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=2, widget_12=4, widget_13=False, model=high_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), samples=phase_1.out(0), start_step=2, end_step=4)
-    phase_3 = _node(wf, "WanVideoSampler", "197", steps=6, widget_0=6, widget_1=1.0, widget_2=5, widget_3=12345, widget_4="fixed", widget_5=True, widget_6="euler", widget_7=0, widget_8=1, widget_9="", widget_10="comfy", widget_11=4, widget_12=-1, widget_13=False, model=low_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), samples=phase_2.out(0), start_step=4)
-    decoded = _node(wf, "WanVideoDecode", "28", widget_0=False, widget_1=272, widget_2=272, widget_3=144, widget_4=128, widget_5="default", samples=phase_3.out(0), vae=vae.out(0))
+    text = _node(wf, "WanVideoTextEncodeCached", "16", model_name="umt5-xxl-enc-bf16.safetensors", precision="bf16", positive_prompt=DEFAULT_PROMPT, negative_prompt=DEFAULT_NEGATIVE, quantization="disabled", use_disk_cache=True, device="gpu")
+    phase_1 = _node(wf, "WanVideoSampler", "27", steps=6, cfg=3.0, shift=5, seed=12345, force_offload=True, scheduler="euler", riflex_freq_index=0, rope_function="comfy", start_step=0, end_step=2, add_noise_to_samples=False, model=high_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0))
+    phase_2 = _node(wf, "WanVideoSampler", "87", steps=6, cfg=1.0, shift=5, seed=12345, force_offload=True, scheduler="euler", riflex_freq_index=0, rope_function="comfy", start_step=2, end_step=4, add_noise_to_samples=False, model=high_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), samples=phase_1.out(0))
+    phase_3 = _node(wf, "WanVideoSampler", "197", steps=6, cfg=1.0, shift=5, seed=12345, force_offload=True, scheduler="euler", riflex_freq_index=0, rope_function="comfy", start_step=4, end_step=-1, add_noise_to_samples=False, model=low_model.out(0), image_embeds=vace_embeds.out(0), text_embeds=text.out(0), samples=phase_2.out(0))
+    decoded = _node(wf, "WanVideoDecode", "28", enable_vae_tiling=False, tile_x=272, tile_y=272, tile_stride_x=144, tile_stride_y=128, normalization="default", samples=phase_3.out(0), vae=vae.out(0))
     _node(
         wf,
         "VHS_VideoCombine",
