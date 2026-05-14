@@ -23,20 +23,37 @@ def detect_workflow_shape(raw: dict[str, Any]) -> str:
     return "unknown"
 
 
-def normalize_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | None = None) -> dict[str, Any]:
+def normalize_to_api(
+    raw: dict[str, Any],
+    *,
+    schema_provider: SchemaProvider | None = None,
+    use_comfy_converter: bool = True,
+) -> dict[str, Any]:
     shape = detect_workflow_shape(raw)
     if shape == "api":
         return raw.get("prompt", raw)
     if shape != "ui":
         raise ValueError(f"Unsupported workflow shape: {shape}")
 
-    try:
-        from comfy.component_model.workflow_convert import convert_ui_to_api
-    except ImportError:
-        pass
-    else:
-        return convert_ui_to_api(raw)
+    if use_comfy_converter:
+        try:
+            from comfy.component_model.workflow_convert import convert_ui_to_api
+        except ImportError:
+            pass
+        else:
+            try:
+                converted = convert_ui_to_api(raw)
+            except Exception:
+                pass
+            else:
+                if not _has_unknown_widget_inputs(converted):
+                    return converted
+                return _normalize_ui_to_api(raw, schema_provider=schema_provider)
 
+    return _normalize_ui_to_api(raw, schema_provider=schema_provider)
+
+
+def _normalize_ui_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | None = None) -> dict[str, Any]:
     nodes = {str(node["id"]): node for node in raw.get("nodes", []) if isinstance(node, dict) and "id" in node}
     links = raw.get("links", [])
     link_map: dict[int, tuple[str, int]] = {}
@@ -72,6 +89,16 @@ def normalize_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | N
                 inputs[name] = value
         api[node_id] = {"class_type": class_type, "inputs": inputs, "_ui": node}
     return api
+
+
+def _has_unknown_widget_inputs(api: dict[str, Any]) -> bool:
+    for node in api.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if isinstance(inputs, dict) and "UNKNOWN" in inputs:
+            return True
+    return False
 
 
 def convert_to_vibe_format(

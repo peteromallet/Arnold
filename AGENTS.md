@@ -356,6 +356,7 @@ result = router.pick("video", "i2v", model="ltx")    # RouterResult(template_id,
 | "New repeatable composition" | Add a recipe in `recipes/` |
 | "New full graph for a new model" | Add a ready workflow under `ready_templates/<kind>/...` (see "Adding a new workflow") |
 | "Run on a GPU I don't have locally" | `scripts/runpod_validate.py` or the `--runpod` pytest markers |
+| "Drive a Reigh live-test run (worker + vibecomfy parity matrix)" | `reigh-worker/.claude/skills/live-test/SKILL.md` — pass `--variant auto` |
 | "Inspect why an imported or converted workflow doesn't run" | `port check <workflow> --json`, then `nodes install-plan`, `fetch`, `validate`, or `doctor` based on the report |
 | "Inspect why authored Python doesn't run" | `inspect`, `doctor`, `analyze info/trace/path/values`, then `validate` |
 

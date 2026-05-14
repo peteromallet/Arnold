@@ -520,7 +520,12 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     return True
 
 
-def load_port_source(source: str, *, schema_provider: Any | None = None) -> LoadedPortSource:
+def load_port_source(
+    source: str,
+    *,
+    schema_provider: Any | None = None,
+    use_comfy_converter: bool = True,
+) -> LoadedPortSource:
     ready_id = _ready_id_for(source)
     if ready_id is not None:
         workflow = workflow_from_ready(ready_id)
@@ -572,7 +577,7 @@ def load_port_source(source: str, *, schema_provider: Any | None = None) -> Load
         raise FileNotFoundError(source)
 
     raw = load_workflow_json(resolved)
-    api = normalize_to_api(raw, schema_provider=schema_provider)
+    api = normalize_to_api(raw, schema_provider=schema_provider, use_comfy_converter=use_comfy_converter)
     workflow = convert_to_vibe_format(
         api,
         source_path=str(resolved),

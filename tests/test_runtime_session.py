@@ -1049,6 +1049,27 @@ def test_embedded_stop_waits_for_inflight_run(
     asyncio.run(run_case())
 
 
+def test_embedded_stop_does_not_hang_forever_on_context_exit(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIBECOMFY_EMBEDDED_SHUTDOWN_TIMEOUT_SEC", "0.01")
+
+    async def hanging_exit(self, exc_type, exc, tb):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(fake_comfy, "__aexit__", hanging_exit)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        await session.start()
+        await session.stop()
+        assert session._context is None
+        assert session._comfy is None
+
+    asyncio.run(run_case())
+
+
 def test_embedded_stop_reraises_inflight_run_exception_before_teardown(
     fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from vibecomfy.porting.convert import port_convert_workflow
+from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.porting.workbench import analyze_source, load_port_source
 from vibecomfy.schema import get_schema_provider
 
@@ -92,18 +93,23 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
 def _cmd_port_widgets(args: argparse.Namespace) -> int:
     schema_provider = get_schema_provider("local")
     try:
-        report = analyze_source(
+        loaded = load_port_source(
             args.workflow,
             schema_provider=schema_provider,
-            head_check_models=False,
+            use_comfy_converter=False,
         )
     except Exception as exc:
         print(f"port widgets failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    widget_analysis = report.metadata.get("widget_analysis", {})
+    api_prompt = loaded.workflow.compile("api")
+    widget_analysis = widget_alias_analysis(
+        api_prompt,
+        raw_workflow=loaded.raw_workflow,
+        schema_provider=schema_provider,
+    )
     payload = {
-        "source": report.source,
-        "source_hash": report.source_hash,
+        "source": args.workflow,
+        "source_hash": loaded.source_hash,
         **widget_analysis,
     }
     if args.json:

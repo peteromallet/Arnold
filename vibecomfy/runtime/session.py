@@ -334,7 +334,15 @@ class EmbeddedSession:
         if self._context is None:
             return
         try:
-            await self._context.__aexit__(None, None, None)
+            await asyncio.wait_for(
+                self._context.__aexit__(None, None, None),
+                timeout=_embedded_shutdown_timeout_sec(),
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "embedded Comfy shutdown timed out after %.1fs; continuing because the run has already finished",
+                _embedded_shutdown_timeout_sec(),
+            )
         except AttributeError as exc:
             if "model_mmap_residency" not in str(exc):
                 raise
@@ -849,6 +857,15 @@ def _embedded_configuration_for_session(config: SessionConfig) -> Configuration 
     configuration = default_configuration()
     configuration.update(values)
     return configuration
+
+
+def _embedded_shutdown_timeout_sec() -> float:
+    raw = os.environ.get("VIBECOMFY_EMBEDDED_SHUTDOWN_TIMEOUT_SEC", "15")
+    try:
+        value = float(raw)
+    except ValueError:
+        return 15.0
+    return max(value, 0.1)
 
 
 def _embedded_configuration(workflow: VibeWorkflow) -> Configuration | None:
