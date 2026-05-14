@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import ast
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from vibecomfy.comfy_command import has_comfyui_runtime
 from vibecomfy.runtime.client import ComfyClient
 from vibecomfy.runtime.server import comfy_server
 
@@ -212,7 +212,7 @@ def get_schema_provider(
         return RuntimeSchemaProvider(server_url=server_url)
     if Path("node_index.json").exists():
         return LocalSchemaProvider()
-    if shutil.which("comfyui"):
+    if has_comfyui_runtime():
         return RuntimeSchemaProvider(server_url=server_url)
     return LocalSchemaProvider()
 

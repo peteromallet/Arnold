@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
+from vibecomfy.comfy_command import comfyui_command, has_comfyui_runtime
 from vibecomfy.index_types import CustomNodeExampleRow, RuntimeNodeRow
 
 
@@ -27,13 +26,9 @@ def index_custom_node_examples(root: str | Path = "custom_nodes") -> list[Custom
 
 
 def index_runtime_nodes() -> list[RuntimeNodeRow]:
-    executable = shutil.which("comfyui")
-    if executable is None:
-        sibling = Path(sys.executable).with_name("comfyui")
-        executable = str(sibling) if sibling.exists() else None
-    if executable is None:
+    if not has_comfyui_runtime():
         return []
-    proc = subprocess.run([executable, "nodes", "ls", "--format", "json"], text=True, capture_output=True)
+    proc = subprocess.run([*comfyui_command(), "nodes", "ls", "--format", "json"], text=True, capture_output=True)
     if proc.returncode != 0:
         return []
     try:

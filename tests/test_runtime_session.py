@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+import vibecomfy.comfy_command as comfy_command_module
 import vibecomfy.runtime.session as session_module
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.memory_profile import MemoryProfile
@@ -666,9 +667,13 @@ def test_comfyui_command_falls_back_to_runnable_python_module_when_script_shim_i
 ) -> None:
     python = tmp_path / "python"
     python.write_text("", encoding="utf-8")
-    monkeypatch.setattr(session_module.shutil, "which", lambda _name: str(tmp_path / "missing-comfyui"))
-    monkeypatch.setattr(session_module.sys, "executable", str(python))
-    monkeypatch.setattr(session_module.importlib.util, "find_spec", lambda name: object() if name == "comfy.cmd.main" else None)
+    monkeypatch.setattr(comfy_command_module.shutil, "which", lambda _name: str(tmp_path / "missing-comfyui"))
+    monkeypatch.setattr(comfy_command_module.sys, "executable", str(python))
+    monkeypatch.setattr(
+        comfy_command_module.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "comfy.cmd.main" else None,
+    )
 
     assert _comfyui_command() == (str(python), "-m", "comfy.cmd.main")
 

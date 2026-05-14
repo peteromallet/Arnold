@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib.util
 import json
 import logging
 import os
@@ -16,6 +15,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from vibecomfy.comfy_command import comfyui_command
 from vibecomfy.memory_profile import MemoryProfile, apply_memory_profile_overrides
 from vibecomfy.workflow import VibeWorkflow
 
@@ -949,19 +949,7 @@ async def _spawn_comfy_server(
 
 
 def _comfyui_command() -> tuple[str, ...]:
-    try:
-        has_comfy_module = importlib.util.find_spec("comfy.cmd.main") is not None
-    except ModuleNotFoundError:
-        has_comfy_module = False
-    if has_comfy_module:
-        return (sys.executable, "-m", "comfy.cmd.main")
-    executable = shutil.which("comfyui")
-    if executable and Path(executable).is_file():
-        return (executable,)
-    sibling = Path(sys.executable).with_name("comfyui")
-    if sibling.is_file():
-        return (str(sibling),)
-    return ("comfyui",)
+    return comfyui_command()
 
 
 async def _maybe_flush_for_policy(session: VibeSession, fp: tuple[Any, ...]) -> None:

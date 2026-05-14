@@ -397,7 +397,8 @@ class ImageResizeKJv2:
 
 def test_get_schema_provider_auto_selection(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("vibecomfy.schema.provider.shutil.which", lambda _: None)
+    monkeypatch.setattr("vibecomfy.comfy_command.shutil.which", lambda _: None)
+    monkeypatch.setattr("vibecomfy.comfy_command.importlib.util.find_spec", lambda _: None)
 
     assert isinstance(get_schema_provider("auto"), LocalSchemaProvider)
     assert isinstance(get_schema_provider("auto", server_url="http://runtime.test"), RuntimeSchemaProvider)
