@@ -950,11 +950,11 @@ async def _spawn_comfy_server(
 
 def _comfyui_command() -> tuple[str, ...]:
     try:
-        has_comfy_module = importlib.util.find_spec("comfy.cmd.cli") is not None
+        has_comfy_module = importlib.util.find_spec("comfy.cmd.main") is not None
     except ModuleNotFoundError:
         has_comfy_module = False
     if has_comfy_module:
-        return (sys.executable, "-m", "comfy.cmd.cli")
+        return (sys.executable, "-m", "comfy.cmd.main")
     executable = shutil.which("comfyui")
     if executable and Path(executable).is_file():
         return (executable,)

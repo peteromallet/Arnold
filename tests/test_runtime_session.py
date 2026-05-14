@@ -661,16 +661,16 @@ def test_server_argv_includes_configured_io_directories() -> None:
     assert argv[argv.index("--port") + 1] == "8200"
 
 
-def test_comfyui_command_falls_back_to_python_module_when_script_shim_is_missing(
+def test_comfyui_command_falls_back_to_runnable_python_module_when_script_shim_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     python = tmp_path / "python"
     python.write_text("", encoding="utf-8")
     monkeypatch.setattr(session_module.shutil, "which", lambda _name: str(tmp_path / "missing-comfyui"))
     monkeypatch.setattr(session_module.sys, "executable", str(python))
-    monkeypatch.setattr(session_module.importlib.util, "find_spec", lambda name: object() if name == "comfy.cmd.cli" else None)
+    monkeypatch.setattr(session_module.importlib.util, "find_spec", lambda name: object() if name == "comfy.cmd.main" else None)
 
-    assert _comfyui_command() == (str(python), "-m", "comfy.cmd.cli")
+    assert _comfyui_command() == (str(python), "-m", "comfy.cmd.main")
 
 
 def test_run_metadata_includes_memory_profile_telemetry_when_configured() -> None:
