@@ -74,7 +74,7 @@ RUN . "$NVM_DIR/nvm.sh" \
     && ln -sf "$NVBIN/shannon" /usr/local/bin/shannon \
     && codex --version \
     && claude --version \
-    && shannon --version
+    && shannon --help > /dev/null
 
 # Megaplan from source
 RUN pip install --no-cache-dir git+https://github.com/peteromallet/megaplan.git \
