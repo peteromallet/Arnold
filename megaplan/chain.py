@@ -17,6 +17,14 @@ Spec format (YAML)::
       - label: m1
         idea: /workspace/ideas/M1-foundation-store.txt
         branch: megaplan/m1-foundation-store   # optional, currently informational
+        profile: thoughtful                     # optional init rubric knobs
+        robustness: standard
+        vendor: claude
+        depth: high
+        critic: kimi
+        with_prep: true
+        with_feedback: true
+        deepseek_provider: fireworks
       - label: m1a
         idea: /workspace/ideas/M1a-settings-store.txt
     on_failure:
@@ -61,6 +69,12 @@ from megaplan.auto import (
     drive as auto_drive,
 )
 from megaplan._core import resolve_plan_dir
+from megaplan._core.user_config import VALID_VENDORS
+from megaplan.profiles import (
+    VALID_CRITIC_CHOICES,
+    VALID_DEEPSEEK_PROVIDER_CHOICES,
+    VALID_DEPTH_CHOICES,
+)
 from megaplan.types import CliError, STATE_AWAITING_PR_MERGE
 
 
@@ -92,6 +106,33 @@ GH_TRANSIENT_ERROR_PATTERNS = (
 GH_PR_STATE_ATTEMPTS = 3
 
 
+def _optional_choice(
+    raw: dict[str, Any],
+    key: str,
+    choices: tuple[str, ...],
+    *,
+    index: int,
+) -> str | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CliError("invalid_spec", f"milestones[{index}].{key} must be a string")
+    if value not in choices:
+        raise CliError(
+            "invalid_spec",
+            f"milestones[{index}].{key} must be one of {choices}; got {value!r}",
+        )
+    return value
+
+
+def _optional_bool(raw: dict[str, Any], key: str, *, index: int) -> bool:
+    value = raw.get(key, False)
+    if not isinstance(value, bool):
+        raise CliError("invalid_spec", f"milestones[{index}].{key} must be a boolean")
+    return value
+
+
 @dataclass
 class MilestoneSpec:
     label: str
@@ -99,6 +140,12 @@ class MilestoneSpec:
     branch: str | None = None
     profile: str | None = None
     robustness: str | None = None
+    vendor: str | None = None
+    depth: str | None = None
+    critic: str | None = None
+    deepseek_provider: str | None = None
+    with_prep: bool = False
+    with_feedback: bool = False
     phase_model: list[str] = field(default_factory=list)
     bakeoff: dict[str, Any] | None = None
     notes: str | None = None
@@ -122,6 +169,32 @@ class MilestoneSpec:
         robustness = raw.get("robustness")
         if robustness is not None and not isinstance(robustness, str):
             raise CliError("invalid_spec", f"milestones[{index}].robustness must be a string")
+        vendor = _optional_choice(
+            raw,
+            "vendor",
+            VALID_VENDORS,
+            index=index,
+        )
+        depth = _optional_choice(
+            raw,
+            "depth",
+            VALID_DEPTH_CHOICES,
+            index=index,
+        )
+        critic = _optional_choice(
+            raw,
+            "critic",
+            VALID_CRITIC_CHOICES,
+            index=index,
+        )
+        deepseek_provider = _optional_choice(
+            raw,
+            "deepseek_provider",
+            VALID_DEEPSEEK_PROVIDER_CHOICES,
+            index=index,
+        )
+        with_prep = _optional_bool(raw, "with_prep", index=index)
+        with_feedback = _optional_bool(raw, "with_feedback", index=index)
         phase_model_raw = raw.get("phase_model") or []
         if isinstance(phase_model_raw, str):
             phase_model = [phase_model_raw]
@@ -141,6 +214,12 @@ class MilestoneSpec:
             branch=branch,
             profile=profile,
             robustness=robustness,
+            vendor=vendor,
+            depth=depth,
+            critic=critic,
+            deepseek_provider=deepseek_provider,
+            with_prep=with_prep,
+            with_feedback=with_feedback,
             phase_model=phase_model,
             bakeoff=bakeoff,
             notes=notes,
@@ -874,6 +953,12 @@ def _init_plan(
     robustness: str,
     auto_approve: bool,
     profile: str | None = None,
+    vendor: str | None = None,
+    depth: str | None = None,
+    critic: str | None = None,
+    deepseek_provider: str | None = None,
+    with_prep: bool = False,
+    with_feedback: bool = False,
     phase_model: list[str] | None = None,
     writer,
 ) -> str:
@@ -884,6 +969,18 @@ def _init_plan(
     args.extend(["--robustness", robustness])
     if profile:
         args.extend(["--profile", profile])
+    if vendor:
+        args.extend(["--vendor", vendor])
+    if depth:
+        args.extend(["--depth", depth])
+    if critic:
+        args.extend(["--critic", critic])
+    if deepseek_provider:
+        args.extend(["--deepseek-provider", deepseek_provider])
+    if with_prep:
+        args.append("--with-prep")
+    if with_feedback:
+        args.append("--with-feedback")
     for override in phase_model or []:
         args.extend(["--phase-model", override])
     args.extend(["--idea-file", str(idea_path)])
@@ -1107,6 +1204,12 @@ def run_chain(
                 robustness=milestone.robustness or spec.robustness,
                 auto_approve=spec.auto_approve,
                 profile=milestone.profile,
+                vendor=milestone.vendor,
+                depth=milestone.depth,
+                critic=milestone.critic,
+                deepseek_provider=milestone.deepseek_provider,
+                with_prep=milestone.with_prep,
+                with_feedback=milestone.with_feedback,
                 phase_model=milestone.phase_model,
                 writer=writer,
             )

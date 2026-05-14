@@ -78,6 +78,12 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
                     "branch": "mp/m1",
                     "profile": "poirot",
                     "robustness": "standard",
+                    "vendor": "codex",
+                    "depth": "high",
+                    "critic": "kimi",
+                    "with_prep": True,
+                    "with_feedback": True,
+                    "deepseek_provider": "direct",
                     "phase_model": ["plan=claude:high", "revise=claude:high"],
                     "bakeoff": {"enabled": True, "arms": ["poirot", "all-claude", "all-codex"]},
                     "notes": "contract seam",
@@ -97,6 +103,12 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
         branch="mp/m1",
         profile="poirot",
         robustness="standard",
+        vendor="codex",
+        depth="high",
+        critic="kimi",
+        with_prep=True,
+        with_feedback=True,
+        deepseek_provider="direct",
         phase_model=["plan=claude:high", "revise=claude:high"],
         bakeoff={"enabled": True, "arms": ["poirot", "all-claude", "all-codex"]},
         notes="contract seam",
@@ -161,6 +173,49 @@ def test_load_spec_rejects_bad_failure_action(tmp_path: Path) -> None:
     with pytest.raises(CliError) as excinfo:
         load_spec(spec_path)
     assert "on_failure.abort" in excinfo.value.message
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("vendor", "openai"),
+        ("depth", "ultra"),
+        ("critic", "claude"),
+        ("deepseek_provider", "openrouter"),
+    ],
+)
+def test_load_spec_rejects_invalid_milestone_rubric_choice(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), field: value}]},
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+
+    assert f"milestones[0].{field} must be one of" in excinfo.value.message
+
+
+@pytest.mark.parametrize("field", ["with_prep", "with_feedback"])
+def test_load_spec_rejects_non_boolean_milestone_rubric_flags(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), field: "true"}]},
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+
+    assert f"milestones[0].{field} must be a boolean" in excinfo.value.message
 
 
 # ---------------------------------------------------------------------------
@@ -595,7 +650,22 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
     init_calls: list[str] = []
     drive_calls: list[str] = []
 
-    def fake_init(root, idea_path, *, robustness, auto_approve, profile=None, phase_model=None, writer):
+    def fake_init(
+        root,
+        idea_path,
+        *,
+        robustness,
+        auto_approve,
+        profile=None,
+        vendor=None,
+        depth=None,
+        critic=None,
+        deepseek_provider=None,
+        with_prep=False,
+        with_feedback=False,
+        phase_model=None,
+        writer,
+    ):
         plan = f"plan-for-{Path(idea_path).stem}"
         init_calls.append(idea_path)
         return plan
@@ -616,6 +686,59 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
     saved = load_chain_state(spec_path)
     assert saved.current_milestone_index == 2
     assert [c["label"] for c in saved.completed] == ["m1", "m1a"]
+
+
+def test_run_chain_passes_milestone_rubric_knobs_to_init(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "idea": str(idea),
+                    "profile": "thoughtful",
+                    "robustness": "light",
+                    "vendor": "codex",
+                    "depth": "xhigh",
+                    "critic": "cross",
+                    "with_prep": True,
+                    "with_feedback": True,
+                    "deepseek_provider": "fireworks",
+                    "phase_model": "execute=claude:low",
+                }
+            ],
+            "driver": {"robustness": "standard"},
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    init_kwargs: dict[str, object] = {}
+
+    def fake_init(root, idea_path, **kwargs):
+        del root, idea_path
+        init_kwargs.update(kwargs)
+        return "plan-m1"
+
+    with patch("megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    assert init_kwargs == {
+        "robustness": "light",
+        "auto_approve": True,
+        "profile": "thoughtful",
+        "vendor": "codex",
+        "depth": "xhigh",
+        "critic": "cross",
+        "deepseek_provider": "fireworks",
+        "with_prep": True,
+        "with_feedback": True,
+        "phase_model": ["execute=claude:low"],
+        "writer": ANY,
+    }
 
 
 def test_run_chain_one_pauses_after_single_milestone(tmp_path: Path) -> None:
@@ -722,7 +845,22 @@ def test_run_chain_resumes_from_chain_state(tmp_path: Path) -> None:
 
     init_calls: list[str] = []
 
-    def fake_init(root, idea_path, *, robustness, auto_approve, profile=None, phase_model=None, writer):
+    def fake_init(
+        root,
+        idea_path,
+        *,
+        robustness,
+        auto_approve,
+        profile=None,
+        vendor=None,
+        depth=None,
+        critic=None,
+        deepseek_provider=None,
+        with_prep=False,
+        with_feedback=False,
+        phase_model=None,
+        writer,
+    ):
         init_calls.append(idea_path)
         return f"plan-{Path(idea_path).stem}"
 
@@ -885,6 +1023,12 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
             robustness="standard",
             auto_approve=True,
             profile="poirot",
+            vendor="codex",
+            depth="high",
+            critic="kimi",
+            deepseek_provider="direct",
+            with_prep=True,
+            with_feedback=True,
             phase_model=["plan=claude:high", "revise=claude:high"],
             writer=lambda _m: None,
         ) == "demo-plan"
@@ -901,6 +1045,16 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
         "standard",
         "--profile",
         "poirot",
+        "--vendor",
+        "codex",
+        "--depth",
+        "high",
+        "--critic",
+        "kimi",
+        "--deepseek-provider",
+        "direct",
+        "--with-prep",
+        "--with-feedback",
         "--phase-model",
         "plan=claude:high",
         "--phase-model",
