@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import struct
 import tempfile
 import time
@@ -696,13 +697,29 @@ def get_effective(section: str, key: str) -> Any:
     return DEFAULTS[default_key]
 
 
+def is_shannon_available(*, shutil_ref: Any = None) -> bool:
+    """Return True if shannon, tmux, and claude are all on PATH."""
+    if shutil_ref is None:
+        shutil_ref = shutil
+    return all(shutil_ref.which(bin) for bin in ("shannon", "tmux", "claude"))
+
+
+def shannon_missing_deps(*, shutil_ref: Any = None) -> list[str]:
+    """Return list of missing Shannon dependencies (shannon, tmux, claude)."""
+    if shutil_ref is None:
+        shutil_ref = shutil
+    return [bin for bin in ("shannon", "tmux", "claude") if not shutil_ref.which(bin)]
+
+
 def detect_available_agents() -> list[str]:
     # Access shutil via the _core package so monkeypatches on megaplan._core.shutil work.
     import megaplan._core as _core_pkg
     _shutil_ref = _core_pkg.shutil
-    available = [a for a in KNOWN_AGENTS if a != "hermes" and _shutil_ref.which(a)]
+    available = [a for a in KNOWN_AGENTS if a not in ("hermes", "shannon") and _shutil_ref.which(a)]
     if (Path(__file__).resolve().parents[1] / "agent" / "run_agent.py").is_file():
         available.append("hermes")
+    if is_shannon_available(shutil_ref=_shutil_ref):
+        available.append("shannon")
     return available
 
 

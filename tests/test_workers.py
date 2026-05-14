@@ -658,7 +658,7 @@ def test_resolve_agent_mode_uses_configured_fallback() -> None:
 
 
 def test_resolve_agent_mode_for_review_claude_defaults_to_fresh() -> None:
-    with patch("megaplan.workers.shutil.which", return_value="/usr/bin/claude"):
+    with patch("megaplan._core.io.shutil", FakeShutil("shannon", "tmux", "claude")):
         agent, mode, refreshed, model = resolve_agent_mode("review", _make_args(agent="claude"))
     assert agent == "claude"
     assert mode == "persistent"
@@ -1108,7 +1108,7 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
         stderr="",
         duration_ms=500,
     )
-    with patch("megaplan.workers.run_command", return_value=fake_result):
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result):
         result = run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     assert result.payload == plan_payload
     assert result.cost_usd == 0.05
@@ -1144,7 +1144,7 @@ def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
         stderr="",
         duration_ms=10,
     )
-    with patch("megaplan.workers.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
         run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, effort="low")
     invoked_cmd = run_command.call_args.args[0]
     assert "--effort" in invoked_cmd
@@ -1225,10 +1225,17 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
         stderr="",
         duration_ms=10,
     )
-    with patch("megaplan.workers.create_claude_prompt", side_effect=AssertionError("builder should not run")):
-        with patch("megaplan.workers.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.shannon_worker.create_claude_prompt", side_effect=AssertionError("builder should not run")):
+        with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, prompt_override="custom prompt")
-    assert run_command.call_args.kwargs["stdin_text"] == "custom prompt"
+    command = run_command.call_args.args[0]
+    assert command[0:2] == ["shannon", "-p"]
+    assert "Read the full megaplan phase prompt from this file" in command[2]
+    assert run_command.call_args.kwargs["stdin_text"] is None
+    prompt_file = plan_dir / "plan_shannon_prompt.txt"
+    prompt_text = prompt_file.read_text(encoding="utf-8")
+    assert "custom prompt" in prompt_text
+    assert "SHANNON STRUCTURED OUTPUT CONTRACT" in prompt_text
 
 
 def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
@@ -1250,7 +1257,7 @@ def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
         stderr="",
         duration_ms=100,
     )
-    with patch("megaplan.workers.run_command", return_value=fake_result):
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result):
         with pytest.raises(CliError, match="missing required keys"):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
@@ -1270,7 +1277,7 @@ def test_run_claude_step_attaches_session_id_on_timeout(tmp_path: Path) -> None:
     }
 
     timeout_error = CliError("worker_timeout", "Claude timed out", extra={"raw_output": "partial"})
-    with patch("megaplan.workers.run_command", side_effect=timeout_error):
+    with patch("megaplan.shannon_worker.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=False)
 
@@ -2227,7 +2234,7 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
 
     with patch("megaplan.workers.resolve_agent_mode", return_value=("claude", "persistent", False, None)):
         with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
-            with patch("megaplan.workers.run_claude_step", side_effect=auth_error) as mocked_claude:
+            with patch("megaplan.shannon_worker.run_shannon_step", side_effect=auth_error) as mocked_shannon:
                 with patch("megaplan.workers.run_codex_step", return_value=worker) as mocked_codex:
                     result, agent, mode, refreshed = run_step_with_worker(
                         "plan",
@@ -2237,7 +2244,7 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
                         root=tmp_path,
                     )
 
-    assert mocked_claude.call_count == 1
+    assert mocked_shannon.call_count == 1
     assert mocked_codex.call_count == 1
     assert result == worker
     assert agent == "codex"
@@ -2364,15 +2371,13 @@ def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
         )
 
     try:
-        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        with patch("megaplan.shannon_worker.run_command", side_effect=fake_run_command):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     finally:
         set_work_dir_override(None)
 
     command = captured["command"]
-    add_dir_idx = command.index("--add-dir") + 1
-    assert Path(command[add_dir_idx]) == worktree_dir
-    assert Path(command[add_dir_idx]) != Path(state["config"]["project_dir"])
+    assert "--add-dir" not in command
     assert Path(captured["cwd"]) == worktree_dir
 
 
@@ -2415,14 +2420,13 @@ def test_run_claude_step_honors_explicit_work_dir_override(
         )
 
     try:
-        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        with patch("megaplan.shannon_worker.run_command", side_effect=fake_run_command):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     finally:
         set_work_dir_override(None)
 
     command = captured["command"]
-    add_dir_idx = command.index("--add-dir") + 1
-    assert Path(command[add_dir_idx]) == forced_dir
+    assert "--add-dir" not in command
 
 
 def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
@@ -3014,3 +3018,655 @@ def test_codex_step_incremental_cost_within_session(
     assert second.cost_usd == pytest.approx(expected_second)
     # Cumulative bookkeeping advanced.
     assert state["sessions"][session_key]["last_total_tokens"]["input_tokens"] == 3000
+
+
+# =============================================================================
+# Shannon worker tests
+# =============================================================================
+
+
+class FakeShutil:
+    """Minimal shutil stub for testing Shannon dependency detection."""
+
+    def __init__(self, *present: str) -> None:
+        self._present = set(present)
+
+    def which(self, name: str) -> str | None:
+        return f"/usr/bin/{name}" if name in self._present else None
+
+
+# ---------------------------------------------------------------------------
+# Availability tests
+# ---------------------------------------------------------------------------
+
+
+def test_is_shannon_available_all_deps_present() -> None:
+    from megaplan._core.io import is_shannon_available
+    fake = FakeShutil("shannon", "tmux", "claude")
+    assert is_shannon_available(shutil_ref=fake) is True
+
+
+def test_is_shannon_available_missing_tmux() -> None:
+    from megaplan._core.io import is_shannon_available
+    fake = FakeShutil("shannon", "claude")
+    assert is_shannon_available(shutil_ref=fake) is False
+
+
+def test_is_shannon_available_missing_claude() -> None:
+    from megaplan._core.io import is_shannon_available
+    fake = FakeShutil("shannon", "tmux")
+    assert is_shannon_available(shutil_ref=fake) is False
+
+
+def test_is_shannon_available_missing_shannon() -> None:
+    from megaplan._core.io import is_shannon_available
+    fake = FakeShutil("tmux", "claude")
+    assert is_shannon_available(shutil_ref=fake) is False
+
+
+def test_shannon_missing_deps_lists_missing() -> None:
+    from megaplan._core.io import shannon_missing_deps
+    fake = FakeShutil("claude")  # missing shannon and tmux
+    assert sorted(shannon_missing_deps(shutil_ref=fake)) == ["shannon", "tmux"]
+
+
+def test_detect_available_agents_includes_shannon_when_deps_present() -> None:
+    from megaplan._core.io import detect_available_agents
+    # detect_available_agents uses `import megaplan._core as _core_pkg; _core_pkg.shutil`
+    # which resolves to the stdlib shutil re-exported in megaplan/_core/__init__.py.
+    with patch("megaplan._core.shutil", FakeShutil("shannon", "tmux", "claude", "codex")):
+        agents = detect_available_agents()
+    assert "shannon" in agents
+
+
+def test_detect_available_agents_excludes_shannon_when_deps_missing() -> None:
+    from megaplan._core.io import detect_available_agents
+    with patch("megaplan._core.shutil", FakeShutil("claude", "codex")):
+        agents = detect_available_agents()
+    assert "shannon" not in agents
+
+
+def test_is_agent_available_shannon_agrees_with_is_shannon_available() -> None:
+    """_is_agent_available('shannon') delegates to is_shannon_available()."""
+    from megaplan.workers import _is_agent_available
+    # _is_agent_available('shannon') calls is_shannon_available() which uses
+    # the `shutil` imported in io.py, and detect_available_agents uses
+    # megaplan._core.shutil (re-exported in __init__.py).  Patch both.
+    with (
+        patch("megaplan._core.io.shutil", FakeShutil("shannon", "tmux", "claude")),
+        patch("megaplan._core.shutil", FakeShutil("shannon", "tmux", "claude")),
+    ):
+        assert _is_agent_available("shannon") is True
+    with (
+        patch("megaplan._core.io.shutil", FakeShutil("claude")),
+        patch("megaplan._core.shutil", FakeShutil("claude")),
+    ):
+        assert _is_agent_available("shannon") is False
+
+
+def test_is_agent_available_claude_routes_through_shannon_deps() -> None:
+    """The public 'claude' agent now means Shannon-backed Claude."""
+    from megaplan.workers import _is_agent_available
+
+    with patch("megaplan._core.io.shutil", FakeShutil("shannon", "tmux", "claude")):
+        assert _is_agent_available("claude") is True
+    with patch("megaplan._core.io.shutil", FakeShutil("claude")):
+        assert _is_agent_available("claude") is False
+
+
+# ---------------------------------------------------------------------------
+# Routing explicitness tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_agent_mode_agent_shannon_explicit_fails_on_missing_deps() -> None:
+    """--agent shannon when deps missing → CliError('agent_deps_missing')."""
+    with patch("megaplan.workers.shutil.which", return_value=None):
+        with patch("megaplan.workers.load_config", return_value={}):
+            with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
+                with pytest.raises(CliError, match="Shannon requires"):
+                    resolve_agent_mode("plan", _make_args(agent="shannon"))
+
+
+def test_resolve_agent_mode_phase_model_shannon_explicit_fails_on_missing_deps() -> None:
+    """--phase-model plan=shannon when deps missing → CliError('agent_deps_missing')."""
+    with patch("megaplan.workers.shutil.which", return_value=None):
+        with patch("megaplan.workers.load_config", return_value={}):
+            with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
+                with pytest.raises(CliError, match="Shannon requires"):
+                    resolve_agent_mode("plan", _make_args(phase_model=["plan=shannon"]))
+
+
+def test_resolve_agent_mode_non_explicit_shannon_can_fallback() -> None:
+    """When Shannon is not explicitly requested, it can fall back to another agent."""
+    with patch("megaplan.workers.shutil.which", side_effect=lambda name: "/usr/bin/claude" if name == "claude" else None):
+        with patch("megaplan.workers.load_config", return_value={"agents": {"plan": "shannon"}}):
+            # Shannon isn't available, and the config default isn't explicit via --agent,
+            # so fallback to the next available.
+            with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
+                agent, mode, refreshed, model = resolve_agent_mode("plan", _make_args())
+    # Falls back to claude because shannon is unavailable and not explicit
+    assert agent == "claude"
+
+
+# ---------------------------------------------------------------------------
+# Mock-mode bypass
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_agent_mode_shannon_mock_mode_bypasses_availability_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MEGAPLAN_MOCK_WORKERS=1 + --agent shannon must skip availability checks."""
+    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
+    # shutil.which returns None for everything — Shannon deps are missing
+    with patch("megaplan.workers.shutil.which", return_value=None):
+        with patch("megaplan.workers.load_config", return_value={}):
+            agent, mode, refreshed, model = resolve_agent_mode("plan", _make_args(agent="shannon"))
+    assert agent == "shannon"
+    assert mode == "persistent"
+
+
+# ---------------------------------------------------------------------------
+# Dispatch tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_step_with_worker_shannon_calls_run_shannon_step(tmp_path: Path) -> None:
+    from megaplan.workers import run_step_with_worker, CommandResult
+
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "output": "shannon-done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    fake_worker = WorkerResult(
+        payload=payload,
+        raw_output="{}",
+        duration_ms=100,
+        cost_usd=0.0,
+        session_id="shannon-sess",
+        rendered_prompt="prompt",
+        prompt_tokens=10,
+        completion_tokens=5,
+        total_tokens=15,
+    )
+    with patch("megaplan.shannon_worker.run_shannon_step", return_value=fake_worker) as run_shannon:
+        run_step_with_worker(
+            "plan",
+            state,
+            plan_dir,
+            _make_args(agent="shannon"),
+            root=tmp_path,
+            resolved=("shannon", "persistent", False, None),
+        )
+    run_shannon.assert_called_once()
+    assert run_shannon.call_args.args[0] == "plan"
+
+
+def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> None:
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "output": "shannon",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    fake_worker = WorkerResult(
+        payload=payload,
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="sess",
+        rendered_prompt="p",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+    )
+    with patch("megaplan.shannon_worker.run_shannon_step", return_value=fake_worker):
+        result, agent, mode, refreshed = run_step_with_worker(
+            "plan",
+            state,
+            plan_dir,
+            _make_args(agent="shannon"),
+            root=tmp_path,
+            resolved=("shannon", "persistent", False, None),
+        )
+    assert agent == "shannon"
+    assert mode == "persistent"
+    assert refreshed is False
+    assert result.payload == payload
+
+
+def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> None:
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_worker = WorkerResult(
+        payload=payload,
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="shannon-backed-claude",
+        rendered_prompt="p",
+    )
+    with patch("megaplan.shannon_worker.run_shannon_step", return_value=fake_worker) as run_shannon:
+        result, agent, mode, refreshed = run_step_with_worker(
+            "plan",
+            state,
+            plan_dir,
+            _make_args(agent="claude"),
+            root=tmp_path,
+            resolved=("claude", "persistent", False, None),
+        )
+    run_shannon.assert_called_once()
+    assert agent == "claude"
+    assert mode == "persistent"
+    assert refreshed is False
+    assert result.payload == payload
+
+
+# ---------------------------------------------------------------------------
+# Session key coverage
+# ---------------------------------------------------------------------------
+
+
+def test_session_key_for_shannon_steps() -> None:
+    """Generic {agent}_{step} fallback covers all Shannon steps."""
+    assert session_key_for("plan", "shannon") == "shannon_planner"
+    assert session_key_for("critique", "shannon") == "shannon_critic"
+    assert session_key_for("gate", "shannon") == "shannon_gatekeeper"
+    assert session_key_for("execute", "shannon") == "shannon_executor"
+    assert session_key_for("review", "shannon") == "shannon_reviewer"
+    assert session_key_for("finalize", "shannon") == "shannon_finalizer"
+
+
+# ---------------------------------------------------------------------------
+# Output adapter tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_shannon_output_structured_output() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    envelope, payload = _parse_shannon_output(json.dumps({
+        "structured_output": {"plan": "# Plan", "questions": []},
+        "session_id": "sess-1",
+    }))
+    assert payload == {"plan": "# Plan", "questions": []}
+    assert envelope["session_id"] == "sess-1"
+
+
+def test_parse_shannon_output_result_string() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    envelope, payload = _parse_shannon_output(json.dumps({
+        "result": json.dumps({"output": "done"}),
+    }))
+    assert payload == {"output": "done"}
+
+
+def test_parse_shannon_output_transcript_array() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    transcript = [
+        {"type": "user", "message": {"content": "Do X"}},
+        {"type": "assistant", "message": {
+            "structured_output": {"plan": "# Plan"},
+            "usage": {"input_tokens": 100, "output_tokens": 50},
+        }},
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert payload == {"plan": "# Plan"}
+
+
+def test_parse_shannon_output_transcript_with_result_string() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    transcript = [
+        {"type": "user", "message": {"content": "Do X"}},
+        {"type": "assistant", "message": {
+            "result": json.dumps({"output": "done"}),
+        }},
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert payload == {"output": "done"}
+
+
+def test_parse_shannon_output_prefers_result_event() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    transcript = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "ignore"}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": json.dumps({"output": "done"}),
+            "session_id": "shannon-real-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert payload == {"output": "done"}
+    assert envelope["session_id"] == "shannon-real-session"
+    assert envelope["total_cost_usd"] == 0.01
+
+
+def test_parse_shannon_output_invalid_json() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    with pytest.raises(CliError, match="not valid JSON"):
+        _parse_shannon_output("not json")
+
+
+def test_parse_shannon_output_auth_error() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    with pytest.raises(CliError, match="Shannon step failed"):
+        _parse_shannon_output(json.dumps({
+            "is_error": True,
+            "result": "Not logged in. Run /login first.",
+        }))
+
+
+def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    # Transcript with no structured_output → falls back to last element
+    transcript = [
+        {"type": "user", "message": {"content": "hello"}},
+        {"type": "assistant", "message": {"content": "hi"}},
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    # Last message dict is returned
+    assert payload == {"content": "hi"}
+
+
+# ---------------------------------------------------------------------------
+# Timeout test
+# ---------------------------------------------------------------------------
+
+
+def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"][session_key_for("plan", "shannon")] = {
+        "id": "shannon-session-abc",
+        "mode": "persistent",
+        "created_at": "2026-03-20T00:00:00Z",
+        "last_used_at": "2026-03-20T00:00:00Z",
+        "refreshed": False,
+    }
+
+    timeout_error = CliError("worker_timeout", "Shannon timed out", extra={"raw_output": "partial"})
+    with patch("megaplan.shannon_worker.run_command", side_effect=timeout_error):
+        with pytest.raises(CliError) as exc_info:
+            run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=False)
+
+    assert exc_info.value.extra["session_id"] == "shannon-session-abc"
+
+
+def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "real-shannon-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+        )
+
+    command = run_command.call_args.args[0]
+    assert command[0:2] == ["shannon", "-p"]
+    assert "Read the full megaplan phase prompt from this file" in command[2]
+    assert "--output-format=json" in command
+    assert "--json-schema" not in command
+    assert "--add-dir" not in command
+    assert "--permission-mode" in command
+    assert "bypassPermissions" in command
+    assert "--dangerously-skip-permissions" in command
+    assert "--allow-dangerously-skip-permissions" in command
+    assert "--session-id" in command
+    assert run_command.call_args.kwargs["stdin_text"] is None
+    assert run_command.call_args.kwargs["env"]["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
+    assert "ANTHROPIC_API_KEY" not in run_command.call_args.kwargs["env"]
+    prompt_file = plan_dir / "execute_shannon_prompt.txt"
+    prompt_text = prompt_file.read_text(encoding="utf-8")
+    assert "return json" in prompt_text
+    assert "SHANNON STRUCTURED OUTPUT CONTRACT" in prompt_text
+    assert result.payload == payload
+    assert result.session_id == "real-shannon-session"
+    assert result.cost_usd == 0.02
+
+
+def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "real-shannon-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+    prompt_override = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result):
+        run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override=prompt_override,
+        )
+
+    prompt_text = (plan_dir / "execute_shannon_prompt.txt").read_text(encoding="utf-8")
+    assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
+    assert "exactly these task IDs and no others: T2" in prompt_text
+    assert "exactly these sense check IDs and no others: SC2" in prompt_text
+
+
+def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "real-shannon-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+        )
+
+    command = run_command.call_args.args[0]
+    assert "--permission-mode" in command
+    assert "bypassPermissions" in command
+    assert "--dangerously-skip-permissions" in command
+    assert "--allow-dangerously-skip-permissions" in command
+
+
+def test_shannon_worker_patches_known_timeout_and_tool_use_defects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.shannon_worker import _ensure_shannon_parent_timeout_control
+
+    package_dir = tmp_path / "shannon-package"
+    bin_dir = package_dir / "bin"
+    bin_dir.mkdir(parents=True)
+    executable = bin_dir / "shannon"
+    executable.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    entrypoint = package_dir / "index.ts"
+    entrypoint.write_text(
+        "\n".join(
+            [
+                "const TURN_TIMEOUT_MS = 180_000;",
+                "export function assistantReplyFromRows(prompt, rows) {",
+                "  for (const row of rows) {",
+                '    if (textFromContent(row.message.content)) return row;',
+                "  }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: str(executable))
+
+    _ensure_shannon_parent_timeout_control()
+
+    patched = entrypoint.read_text(encoding="utf-8")
+    assert "SHANNON_TURN_TIMEOUT_MS" in patched
+    assert 'row.message?.stop_reason === "tool_use"' in patched
+    assert (package_dir / "index.ts.bak.megaplan-shannon").exists()
+
+
+# ---------------------------------------------------------------------------
+# Mock worker test
+# ---------------------------------------------------------------------------
+
+
+def test_run_shannon_step_mock_worker_no_deps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+
+    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    # Even with no shannon/tmux/claude on PATH, mock mode works
+    result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+    assert isinstance(result, WorkerResult)
+    assert result.payload is not None
+    assert "output" in result.payload or "plan" in result.payload
+
+
+# ---------------------------------------------------------------------------
+# CLI parser surface test
+# ---------------------------------------------------------------------------
+
+
+def test_shannon_accepted_in_agent_choice_surfaces() -> None:
+    """All --agent choice surfaces accept 'shannon'."""
+    from megaplan.types import KNOWN_AGENTS
+    assert "shannon" in KNOWN_AGENTS

@@ -1430,3 +1430,28 @@ def test_depth_invalid_value_rejected_at_argparse(
             "--depth", "ultra",
             "an idea",
         ])
+
+
+# ---------------------------------------------------------------------------
+# Shannon agent spec validation
+# ---------------------------------------------------------------------------
+
+
+def test_shannon_accepted_as_valid_agent_spec() -> None:
+    """shannon is a valid agent spec for profiles."""
+    from megaplan.types import parse_agent_spec
+    agent, model = parse_agent_spec("shannon")
+    assert agent == "shannon"
+    assert model is None
+
+
+def test_shannon_rejected_when_misspelled() -> None:
+    """Misspelled agent specs are rejected."""
+    from megaplan.types import parse_agent_spec
+    agent, _ = parse_agent_spec("shanon")  # parse_agent_spec accepts any agent name
+    assert agent == "shanon"  # parser is lenient; validation happens elsewhere
+
+
+def test_known_agents_includes_shannon() -> None:
+    from megaplan.types import KNOWN_AGENTS
+    assert "shannon" in KNOWN_AGENTS

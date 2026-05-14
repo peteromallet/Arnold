@@ -17,7 +17,7 @@ from megaplan._core import (
 )
 from megaplan.types import PlanState
 
-from ._shared import _debt_watch_lines, _render_prep_block
+from ._shared import _debt_watch_lines, _gate_summary_or_skipped, _render_prep_block
 from .execute import (
     _execute_approval_note,
     _execute_nudges,
@@ -135,7 +135,7 @@ def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = No
     finalize_data = read_json(plan_dir / "finalize.json")
     checkpoint_path = str(plan_dir / "execution_checkpoint.json")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
-    gate = read_json(plan_dir / "gate.json")
+    gate = _gate_summary_or_skipped(plan_dir)
     robustness = configured_robustness(state)
     prior_review_block = _execute_review_block(plan_dir)
     rerun_guidance = _execute_rerun_guidance(plan_dir, finalize_data)

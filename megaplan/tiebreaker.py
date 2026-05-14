@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from megaplan.types import KNOWN_AGENTS
 from megaplan._core import (
     atomic_write_json,
     atomic_write_text,
@@ -190,7 +191,7 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
     """Add the agent/session flags that resolve_agent_mode expects (FLAG-001)."""
     parser.add_argument(
         "--agent",
-        choices=["claude", "codex", "hermes"],
+        choices=KNOWN_AGENTS,
         default=None,
         help="Agent to use for tiebreaker steps",
     )

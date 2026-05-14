@@ -743,6 +743,30 @@ def test_finalize_prompt_requests_structured_tracking_fields(tmp_path: Path) -> 
     assert "_verdict:_" not in prompt
 
 
+def test_finalize_prompt_handles_tiny_without_gate(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"]["robustness"] = "tiny"
+    state["config"]["mode"] = "doc"
+    (plan_dir / "gate.json").unlink()
+    prompt = create_claude_prompt("finalize", state, plan_dir)
+    assert "No gate phase ran for this robustness level" in prompt
+    assert "emit exactly one task" in prompt
+    assert "tasks" in prompt
+
+
+def test_execute_prompts_handle_tiny_without_gate(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    (plan_dir / "gate.json").unlink()
+    code_prompt = create_claude_prompt("execute", state, plan_dir)
+    assert "No gate phase ran for this robustness level" in code_prompt
+
+    state["config"]["mode"] = "doc"
+    state["config"]["output_path"] = "docs/out.md"
+    doc_prompt = create_claude_prompt("execute", state, plan_dir)
+    assert "No gate phase ran for this robustness level" in doc_prompt
+    assert "docs/out.md" in doc_prompt
+
+
 def test_review_prompts_request_verdict_arrays(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     claude_prompt = create_claude_prompt("review", state, plan_dir)

@@ -189,6 +189,7 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
         "description",
         "depends_on",
         "status",
+        "kind",
         "executor_notes",
         "files_changed",
         "commands_run",
