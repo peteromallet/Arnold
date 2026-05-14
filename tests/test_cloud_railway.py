@@ -124,7 +124,7 @@ def test_deploy_preserves_environment_scope_for_cloud_commands(monkeypatch: pyte
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         del kwargs
         calls.append(argv)
-        if argv == ["/usr/bin/railway", "service", "--environment", "prod", "status", "--all", "--json"]:
+        if argv == ["/usr/bin/railway", "service", "status", "--environment", "prod", "--all", "--json"]:
             return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"services": [{"name": "svc"}]}), stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
@@ -136,7 +136,7 @@ def test_deploy_preserves_environment_scope_for_cloud_commands(monkeypatch: pyte
 
     assert calls == [
         ["/usr/bin/railway", "link", "--project", "my-proj", "--environment", "prod"],
-        ["/usr/bin/railway", "service", "--environment", "prod", "status", "--all", "--json"],
+        ["/usr/bin/railway", "service", "status", "--environment", "prod", "--all", "--json"],
         ["/usr/bin/railway", "variables", "--environment", "prod", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
         ["/usr/bin/railway", "up", "--environment", "prod", "--service", "svc", "--detach", "--ci"],
     ]

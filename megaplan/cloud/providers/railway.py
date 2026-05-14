@@ -74,11 +74,17 @@ class RailwayProvider(Provider):
             if self._railway.environment:
                 return [*command, "--environment", self._railway.environment]
             return command
+        if self._railway.environment and args[:2] == ("service", "status"):
+            return [
+                *command[:3],
+                "--environment",
+                self._railway.environment,
+                *command[3:],
+            ]
         scoped: list[str] = []
         if self._railway.environment and args[0] in {
             "down",
             "logs",
-            "service",
             "ssh",
             "up",
             "variables",
