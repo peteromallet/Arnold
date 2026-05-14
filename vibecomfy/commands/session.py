@@ -53,6 +53,9 @@ def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         config["output_directory"] = output_directory
     if temp_directory is not None:
         config["temp_directory"] = temp_directory
+    ready_timeout_sec = getattr(args, "ready_timeout_sec", None)
+    if ready_timeout_sec is not None:
+        config["ready_timeout_sec"] = ready_timeout_sec
     return config
 
 
@@ -114,7 +117,8 @@ def _cmd_session_start(args: argparse.Namespace) -> int:
             start_new_session=True,
         )
     url_path = session_dir / "url"
-    for _ in range(120):
+    ready_timeout_sec = int(config.get("ready_timeout_sec") or os.environ.get("VIBECOMFY_SESSION_READY_TIMEOUT_SEC") or 300)
+    for _ in range(ready_timeout_sec):
         if url_path.exists():
             url = url_path.read_text(encoding="utf-8").strip()
             if url:
@@ -124,7 +128,7 @@ def _cmd_session_start(args: argparse.Namespace) -> int:
             print(f"session {args.id} failed to start; see {log_path}", file=sys.stderr)
             return 1
         time.sleep(1)
-    print(f"session {args.id} did not become ready within 120 seconds", file=sys.stderr)
+    print(f"session {args.id} did not become ready within {ready_timeout_sec} seconds", file=sys.stderr)
     return 1
 
 
@@ -204,6 +208,7 @@ def register(subparsers) -> None:
     start.add_argument("--input-directory")
     start.add_argument("--output-directory")
     start.add_argument("--temp-directory")
+    start.add_argument("--ready-timeout-sec", type=int)
     start.set_defaults(func=_cmd_session_start)
 
     stop = session_sub.add_parser("stop")

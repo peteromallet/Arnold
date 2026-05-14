@@ -927,7 +927,8 @@ async def _spawn_comfy_server(
     )
     managed_url = f"http://127.0.0.1:{config.port or 8188}"
     client = ComfyClient(managed_url)
-    for _ in range(120):
+    ready_timeout_sec = int(config.extra.get("ready_timeout_sec") or os.environ.get("VIBECOMFY_SESSION_READY_TIMEOUT_SEC") or 300)
+    for _ in range(ready_timeout_sec):
         if await client.ready():
             break
         await asyncio.sleep(1)
@@ -937,7 +938,7 @@ async def _spawn_comfy_server(
             await process.wait()
         if log_handle:
             log_handle.close()
-        raise TimeoutError("Managed Comfy server did not become ready within 120 seconds")
+        raise TimeoutError(f"Managed Comfy server did not become ready within {ready_timeout_sec} seconds")
     return process, managed_url, log_handle
 
 

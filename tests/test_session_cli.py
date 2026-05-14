@@ -224,6 +224,7 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
         "input_directory": "/tmp/session-input",
         "output_directory": "/tmp/session-output",
         "temp_directory": "/tmp/session-temp",
+        "ready_timeout_sec": 450,
     }
     raw = {
         "reserve_vram": 12,
@@ -246,6 +247,7 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
             "input_directory": "/tmp/session-input",
             "output_directory": "/tmp/session-output",
             "temp_directory": "/tmp/session-temp",
+            "ready_timeout_sec": 450,
         },
     )
     assert captured[1] == SessionConfig(
