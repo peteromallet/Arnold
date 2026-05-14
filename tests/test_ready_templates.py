@@ -512,6 +512,23 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert api["4989"]["class_type"] == "PrimitiveFloat"
 
 
+def test_ltx_lightricks_first_last_parity_resolves_assets_from_registry() -> None:
+    workflow = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
+    assets = {asset["name"]: asset for asset in _model_assets_from_workflow(workflow)}
+
+    assert assets["ltx-2.3-22b-dev-fp8.safetensors"]["url"] == (
+        "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors"
+    )
+    assert assets["gemma_3_12B_it_fp4_mixed.safetensors"]["url"] == (
+        "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/"
+        "gemma_3_12B_it_fp4_mixed.safetensors"
+    )
+    assert assets["ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors"]["url"] == (
+        "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/"
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+    )
+
+
 def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     workflow = workflow_from_ready("video/ltx2_3_runexx_first_last_raw_video_guide")
     api = workflow.compile("api")

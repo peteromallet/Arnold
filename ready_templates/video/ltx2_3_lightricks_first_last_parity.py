@@ -11,26 +11,8 @@ from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 
 
-LTX_LIGHTRICKS_MODEL_ASSETS = [
-    {
-        "name": "ltx-2.3-22b-dev-fp8.safetensors",
-        "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-2.3-22b-dev-fp8.safetensors",
-        "subdir": "checkpoints",
-    },
-    {
-        "name": "gemma_3_12B_it_fp4_mixed.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
-        "subdir": "text_encoders",
-    },
-    {
-        "name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-        "subdir": "loras",
-    },
-]
-
 READY_METADATA = {
-    "model_assets": LTX_LIGHTRICKS_MODEL_ASSETS,
+    "model_assets": [],
     "unbound_inputs": {"seed": 3779},
     "ready_template": "video/ltx2_3_lightricks_first_last_parity",
     "workflow_template": "ltx2_3_lightricks_first_last_parity",
