@@ -210,20 +210,29 @@ def test_lens_outputs_on_tiny_workflow() -> None:
 
 
 def test_lens_ltx_parity_registered_inputs_via_lens() -> None:
-    """All 12 named LTX parity inputs are discoverable through the lens
+    """All named LTX parity inputs are discoverable through the lens
     without reaching for compiled Comfy API JSON."""
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
     required = {
-        "first_image", "last_image", "prompt", "negative_prompt",
-        "seed_first", "seed_last", "frames", "width", "height", "fps",
-        "model", "vae",
+        "first_image": ("2004", "image"),
+        "last_image": ("2005", "image"),
+        "prompt": ("2483", "text"),
+        "negative_prompt": ("2612", "text"),
+        "seed_first": ("4832", "noise_seed"),
+        "seed_last": ("4967", "noise_seed"),
+        "frames": ("4988", "value"),
+        "width": ("3059", "width"),
+        "height": ("3059", "height"),
+        "fps": ("4989", "value"),
+        "model": ("3940", "ckpt_name"),
     }
-    for name in required:
+    for name, (node_id, field) in required.items():
         inp = l.registered_input_target(name)
         assert inp is not None, f"missing registered input: {name}"
-        assert isinstance(inp.node_id, str) and len(inp.node_id) > 0
+        assert (inp.node_id, inp.field) == (node_id, field)
+    assert l.registered_input_target("vae") is None
 
 
 def test_lens_ltx_parity_first_last_conditioning_via_lens() -> None:
@@ -407,4 +416,4 @@ def test_lens_ltx_parity_diagnostics_produces_readable_summary() -> None:
     assert "LTXVImgToVideoConditionOnly" in diag
     assert "SaveVideo" in diag
     # Verify input count is reasonable
-    assert "inputs (13)" in diag
+    assert "inputs (12)" in diag

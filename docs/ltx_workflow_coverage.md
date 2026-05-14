@@ -22,11 +22,12 @@ Runtime-gated official templates:
 - `video/ltx2_3_lightricks_iclora_hdr`: official HDR IC-LoRA video-guide workflow.
 - `video/ltx2_3_lightricks_iclora_motion_track`: official motion-track IC-LoRA image-anchor workflow.
 - `video/ltx2_3_lightricks_iclora_union_control`: official union-control guide workflow with depth/pose preprocessing.
+- `video/ltx2_3_lightricks_first_last_parity`: app-facing no-control LTX first/last parity template with named inputs and `LTXFirstLastTwoStageContract` local validation.
 - `video/ltx2_3_first_last_frame_travel_iclora_control`: manual first/last-frame travel workflow with full-length raw/pose/depth/canny IC-LoRA guide branches.
 
 Supplemental ready templates:
 
-- `video/ltx2_3_runexx_first_last_frame`: first/last-frame image anchors.
+- `video/ltx2_3_runexx_first_last_frame`: supplemental Runexx first/last-frame image-anchor source; no-control app routes moved to `video/ltx2_3_lightricks_first_last_parity`.
 - `video/ltx2_3_runexx_first_middle_last_frame`: first/middle/last-frame anchors.
 - `video/ltx2_3_runexx_custom_audio`: custom-audio conditioning.
 - `video/ltx2_3_runexx_video_to_video_extend`: video-to-video extension.
@@ -53,6 +54,13 @@ The RunPod smoke path patches LTX workflows to a tiny but real generation shape:
 - Rewrite stale Video-Depth-Anything node class names to the current Kijai `DepthAnything_V2` classes during materialization and RunPod preparation.
 
 This keeps smoke runs cheap enough to repeat while still requiring actual ComfyUI execution and actual media output.
+
+For the no-control app route, local `vibecomfy-workflow-contract-ltx-parity`
+batches 1-7 recorded the route move, lens/contract tests, template-index check,
+worker route/adapter/live-matrix tests, and explicit deferral of fresh RunPod
+validation to the orchestrator after local gates. Previous RunPod evidence for
+`video/ltx2_3_runexx_first_last_frame` is not evidence for
+`video/ltx2_3_lightricks_first_last_parity`.
 
 ## Source Notes
 

@@ -15,7 +15,7 @@ LTX_LIGHTRICKS_MODEL_ASSETS = [
     {
         "name": "ltx-2.3-22b-dev-fp8.safetensors",
         "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-2.3-22b-dev-fp8.safetensors",
-        "subdir": "diffusion_models",
+        "subdir": "checkpoints",
     },
     {
         "name": "gemma_3_12B_it_fp4_mixed.safetensors",
@@ -357,7 +357,6 @@ def build() -> VibeWorkflow:
     wf.register_input("first_image", "2004", "image", value="example.png")
     wf.register_input("last_image", "2005", "image", value="example.png")
     wf.register_input("model", "3940", "ckpt_name", value="ltx-2.3-22b-dev-fp8.safetensors")
-    wf.register_input("vae", "3940", "ckpt_name", value="ltx-2.3-22b-dev-fp8.safetensors")
 
     return wf
 

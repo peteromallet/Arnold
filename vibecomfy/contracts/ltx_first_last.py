@@ -29,9 +29,21 @@ _EXPECTED_INPUTS = frozenset(
         "first_image",
         "last_image",
         "model",
-        "vae",
     }
 )
+_EXPECTED_INPUT_TARGETS = {
+    "prompt": ("2483", "text"),
+    "negative_prompt": ("2612", "text"),
+    "seed_first": ("4832", "noise_seed"),
+    "seed_last": ("4967", "noise_seed"),
+    "width": ("3059", "width"),
+    "height": ("3059", "height"),
+    "frames": ("4988", "value"),
+    "fps": ("4989", "value"),
+    "first_image": ("2004", "image"),
+    "last_image": ("2005", "image"),
+    "model": ("3940", "ckpt_name"),
+}
 
 # ── stage node ids ────────────────────────────────────────────────────
 _FIRST_STAGE_ID = "3159"
@@ -107,6 +119,23 @@ class LTXFirstLastTwoStageContract:
                 f"Missing named inputs: {sorted(missing)}",
                 detail={"expected": sorted(_EXPECTED_INPUTS), "actual": sorted(actual), "missing": sorted(missing)},
             )
+        for name, (expected_node_id, expected_field) in _EXPECTED_INPUT_TARGETS.items():
+            target = self._lens.registered_input_target(name)
+            if target is None:
+                continue
+            if target.node_id != expected_node_id or target.field != expected_field:
+                report.add(
+                    "wrong_named_input_target",
+                    f"Named input {name!r} targets {target.node_id}.{target.field}, "
+                    f"expected {expected_node_id}.{expected_field}",
+                    detail={
+                        "input": name,
+                        "actual_node_id": target.node_id,
+                        "actual_field": target.field,
+                        "expected_node_id": expected_node_id,
+                        "expected_field": expected_field,
+                    },
+                )
 
     def _check_first_last_conditioning(self, report: ContractReport) -> None:
         for stage_id, label in [(_FIRST_STAGE_ID, "first"), (_LAST_STAGE_ID, "last")]:

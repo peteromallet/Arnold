@@ -455,7 +455,6 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
         "first_image",
         "last_image",
         "model",
-        "vae",
     }
     actual_inputs = set(workflow.inputs.keys())
     missing = required_inputs - actual_inputs
