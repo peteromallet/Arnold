@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from vibecomfy.contracts import build_contract, doctor_contract
 from vibecomfy.ingest.normalize import convert_to_vibe_format
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.resolution import resolution
@@ -190,27 +191,28 @@ def test_ready_loader_applies_authored_metadata_for_manual_python_templates() ->
     )
 
 
-def test_ready_templates_do_not_enable_uncontracted_sageattention() -> None:
+def test_ready_templates_contract_doctor_no_error_diagnostics() -> None:
+    """All ready templates pass contract doctor with no error diagnostics.
+
+    Replaces the three bespoke SageAttention/LTX checks with a unified
+    contract doctor loop covering PathchSageAttentionKJ,
+    LTX2MemoryEfficientSageAttentionPatch, and LTX2SamplingPreviewOverride.
+    """
     offenders: list[tuple[str, str, str]] = []
 
     for template_id in ready_template_ids():
         workflow = workflow_from_ready(template_id)
-        runtime_packages = workflow.metadata.get("runtime_packages") or []
-        declared_sageattention = any(
-            isinstance(package, dict) and package.get("name") == "sageattention"
-            for package in runtime_packages
-        )
-        api = workflow.compile("api")
+        contract = build_contract(workflow)
+        report = doctor_contract(workflow, contract)
         offenders.extend(
-            (template_id, node_id, inputs.get("sage_attention"))
-            for node_id, node in api.items()
-            if node.get("class_type") == "PathchSageAttentionKJ"
-            for inputs in [node.get("inputs", {})]
-            if inputs.get("sage_attention") not in {None, "disabled"}
-            if not declared_sageattention
+            (template_id, diagnostic.code, diagnostic.node_id or "")
+            for diagnostic in report.diagnostics
+            if diagnostic.severity == "error"
         )
 
-    assert offenders == []
+    assert offenders == [], (
+        f"Ready templates with contract doctor error diagnostics: {offenders}"
+    )
 
 
 def test_wanvideo_model_loaders_use_portable_runpod_attention_contract() -> None:
@@ -226,34 +228,6 @@ def test_wanvideo_model_loaders_use_portable_runpod_attention_contract() -> None
             base_precision = inputs.get("base_precision")
             if attention_mode == "sageattn" or base_precision == "fp16_fast":
                 offenders.append((template_id, node_id, str(attention_mode), str(base_precision)))
-
-    assert offenders == []
-
-
-def test_ready_templates_do_not_use_uncontracted_ltx_memory_efficient_sage_patch() -> None:
-    offenders: list[tuple[str, str]] = []
-
-    for template_id in ready_template_ids():
-        api = workflow_from_ready(template_id).compile("api")
-        offenders.extend(
-            (template_id, node_id)
-            for node_id, node in api.items()
-            if node.get("class_type") == "LTX2MemoryEfficientSageAttentionPatch"
-        )
-
-    assert offenders == []
-
-
-def test_ready_templates_do_not_use_headless_incompatible_ltx_preview_override() -> None:
-    offenders: list[tuple[str, str]] = []
-
-    for template_id in ready_template_ids():
-        api = workflow_from_ready(template_id).compile("api")
-        offenders.extend(
-            (template_id, node_id)
-            for node_id, node in api.items()
-            if node.get("class_type") == "LTX2SamplingPreviewOverride"
-        )
 
     assert offenders == []
 
@@ -438,6 +412,105 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
         "custom_nodes/comfyui_controlnet_aux/ckpts/hr16/DWPose-TorchScript-BatchSize5/"
         "dw-ll_ucoco_384_bs5.torchscript.pt"
     )
+
+
+def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
+    """LTX Lightricks first/last app-intent validation via contract + lens.
+
+    Compiled Comfy API assertions are limited to runtime materialization smoke.
+    Raw-video guide and IC-LoRA control tests remain separate below.
+    """
+    from vibecomfy.contracts.ltx_first_last import LTXFirstLastTwoStageContract
+    from vibecomfy.lens.core import WorkflowLens
+
+    workflow = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
+    lens = WorkflowLens(workflow)
+
+    # ── source purity ────────────────────────────────────────────────
+    assert workflow.validate().ok
+    assert workflow.metadata["source_role"] == "manual_ready_python_template"
+    assert workflow.metadata["coverage_tier"] == "required"
+
+    # ── contract validates all semantic intent ───────────────────────
+    contract = LTXFirstLastTwoStageContract(workflow)
+    report = contract.validate()
+    assert report.passed, (
+        f"LTX parity contract failed with {len(report.errors())} errors: "
+        + "; ".join(f"[{e.code}] {e.message}" for e in report.errors())
+    )
+    assert len(report.warnings()) == 0, (
+        f"Unexpected warnings: " + "; ".join(f"[{w.code}] {w.message}" for w in report.warnings())
+    )
+
+    # ── named worker patch points via lens ──────────────────────────
+    required_inputs = {
+        "prompt",
+        "negative_prompt",
+        "seed_first",
+        "seed_last",
+        "width",
+        "height",
+        "frames",
+        "fps",
+        "first_image",
+        "last_image",
+        "model",
+        "vae",
+    }
+    actual_inputs = set(workflow.inputs.keys())
+    missing = required_inputs - actual_inputs
+    assert not missing, f"Missing named inputs: {sorted(missing)}"
+
+    # Lens-backed input target assertions (no compiled API links)
+    assert lens.registered_input_target("prompt").node_id == "2483"
+    assert lens.registered_input_target("negative_prompt").node_id == "2612"
+    assert lens.registered_input_target("seed_first").node_id == "4832"
+    assert lens.registered_input_target("seed_last").node_id == "4967"
+    assert lens.registered_input_target("width").node_id == "3059"
+    assert lens.registered_input_target("height").node_id == "3059"
+    assert lens.registered_input_target("frames").node_id == "4988"
+    assert lens.registered_input_target("fps").node_id == "4989"
+    assert lens.registered_input_target("first_image").node_id == "2004"
+    assert lens.registered_input_target("last_image").node_id == "2005"
+
+    # ── structural assertions via lens ───────────────────────────────
+    # Custom node packs
+    assert "ComfyUI-LTXVideo" in workflow.requirements.custom_nodes
+    assert "ComfyUI-KJNodes" in workflow.requirements.custom_nodes
+    assert "rgthree-comfy" not in workflow.requirements.custom_nodes
+
+    # First/last conditioning: LTXVImgToVideoConditionOnly nodes
+    stage_first = lens.node("3159")
+    stage_last = lens.node("4970")
+    assert stage_first is not None
+    assert stage_first.class_type == "LTXVImgToVideoConditionOnly"
+    assert stage_last is not None
+    assert stage_last.class_type == "LTXVImgToVideoConditionOnly"
+
+    # Strength defaults via lens
+    assert lens.node_value("3159", "widget_0") == 1.0
+    assert lens.node_value("4970", "widget_0") == 1.0
+
+    # Image preprocessing chains via lens edge traversal
+    # Stage 1: ResizeImageMaskNode -> LTXVPreprocess -> LTXVImgToVideoConditionOnly
+    image_src_first = lens.edge_source("3159", "image")
+    assert image_src_first is not None and image_src_first.node_id is not None
+    preprocess_first = lens.node(image_src_first.node_id)
+    assert preprocess_first.class_type == "LTXVPreprocess"
+    # Stage 2: ResizeImageMaskNode -> LTXVImgToVideoConditionOnly (direct, no preprocess)
+    image_src_last = lens.edge_source("4970", "image")
+    assert image_src_last is not None and image_src_last.node_id is not None
+    preprocess_last = lens.node(image_src_last.node_id)
+    assert preprocess_last.class_type == "ResizeImageMaskNode"
+
+    # ── runtime materialization smoke (compiled API, minimal) ────────
+    api = workflow.compile("api")
+    assert api["2004"]["class_type"] == "LoadImage"
+    assert api["2005"]["class_type"] == "LoadImage"
+    assert api["4984"]["inputs"]["sigmas"].startswith("1.0, 0.99375")
+    assert api["4985"]["inputs"]["sigmas"] == "0.909375, 0.725, 0.421875, 0.0"
+    assert api["4988"]["class_type"] == "PrimitiveInt"
+    assert api["4989"]["class_type"] == "PrimitiveFloat"
 
 
 def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
@@ -797,6 +870,13 @@ def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
                 continue
             topology[(class_type, key, source_class, int(value[1]))] += 1
     return topology
+
+
+def _edge_source(workflow: VibeWorkflow, to_node: str, to_input: str) -> tuple[str, str] | None:
+    for edge in workflow.edges:
+        if edge.to_node == to_node and edge.to_input == to_input:
+            return edge.from_node, edge.from_output
+    return None
 
 
 def _is_link(value: object) -> bool:

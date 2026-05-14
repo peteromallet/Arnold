@@ -3,7 +3,7 @@
   "generated_from": "runtime ready template discovery",
   "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' | sort",
   "exclude_rule": "exclude __init__.py and files whose basename starts with '_' to match vibecomfy.registry.ready._template_paths",
-  "template_count": 62,
+  "template_count": 63,
   "templates": [
     {
       "id": "audio/ace_step_1_5_t2a_song",
@@ -220,6 +220,17 @@
       "coverage_tier": "supplemental",
       "custom_nodes": [
         "ComfyUI-GGUF",
+        "ComfyUI-KJNodes",
+        "ComfyUI-LTXVideo"
+      ],
+      "model_count": 0
+    },
+    {
+      "id": "video/ltx2_3_lightricks_first_last_parity",
+      "path": "ready_templates/video/ltx2_3_lightricks_first_last_parity.py",
+      "capability": "first_last_frame_video",
+      "coverage_tier": "required",
+      "custom_nodes": [
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],

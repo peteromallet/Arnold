@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from vibecomfy.lens.core import (
+    EdgeSource,
+    EdgeTarget,
+    WorkflowLens,
+    edge_source,
+    edge_targets,
+    edges_from_node,
+    edges_to_node,
+    lens,
+    node_value,
+    nodes_by_class_type,
+    outputs,
+    registered_input_target,
+    upstream,
+    upstream_nodes,
+    downstream,
+    downstream_nodes,
+    diagnostics,
+)
+
+__all__ = [
+    "EdgeSource",
+    "EdgeTarget",
+    "WorkflowLens",
+    "edge_source",
+    "edge_targets",
+    "edges_from_node",
+    "edges_to_node",
+    "lens",
+    "node_value",
+    "nodes_by_class_type",
+    "outputs",
+    "registered_input_target",
+    "upstream",
+    "upstream_nodes",
+    "downstream",
+    "downstream_nodes",
+    "diagnostics",
+]

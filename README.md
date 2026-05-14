@@ -71,7 +71,31 @@ frame-count bindings that are paired with uncapped video loaders; either bind
 `frame_load_cap` to the same effective frame count or have the caller
 materialize a capped source clip before runtime.
 
-The same lifecycle applies when fixing, forking, or authoring workflows from scratch: identify the intended task and output artifact, choose recipe/patch vs new ready template, run the programmatic gates, then use agent judgment for source quality, model provenance, custom-node legitimacy, smoke adaptations, and app/Wan2GP parity before recording live evidence.
+### Semantic Graph Lens and Contract Validation
+
+For app-active workflows, validate intent before GPU time:
+
+```bash
+# Graph diagnostics: nodes, edges, inputs, outputs, upstream/downstream
+python -m vibecomfy.cli workflows lens <template-or-path> [--json]
+
+# Semantic contract validation for LTX first/last two-stage
+python -m vibecomfy.cli workflows contract-validate <template-or-path> --type ltx-first-last-two-stage [--json]
+```
+
+From Python:
+
+```python
+from vibecomfy.lens import WorkflowLens
+from vibecomfy.contracts import LTXFirstLastTwoStageContract
+
+lens = WorkflowLens(workflow)
+print(lens.diagnostics())
+report = LTXFirstLastTwoStageContract().validate(workflow)
+print(report.summary())
+```
+
+> **Compiled Comfy API JSON is runtime materialization only, not the workflow source of truth.** App intent should be validated through `VibeWorkflow`, the lens, and contracts. Tests may inspect compiled API for runtime smoke, but semantic assertions use the lens and contract layers.
 
 ## Thanks
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import vibecomfy.fetch as fetch_assets
 from vibecomfy.commands._output import emit
@@ -16,6 +16,9 @@ from vibecomfy.registry.ready import (
     workflow_from_ready,
 )
 from vibecomfy.runtime.session import _model_assets_from_workflow
+
+if TYPE_CHECKING:
+    from vibecomfy.workflow import VibeWorkflow
 
 
 def _cmd_workflows_list(args: argparse.Namespace) -> int:
@@ -224,23 +227,133 @@ def _render_workflow_rows(rows: list[dict]) -> str:
     return "\n".join(f"{row.get('id')}\t{row.get('media_type', '-')}\t{row.get('path')}" for row in rows)
 
 
+# ── new lens CLI ─────────────────────────────────────────────────────────────
+
+
+def _cmd_workflows_lens(args: argparse.Namespace) -> int:
+    """Print a semantic lens diagnostic summary for a workflow."""
+    from vibecomfy.lens.core import WorkflowLens
+
+    workflow = _resolve_workflow_for_inspection(args.template_or_path)
+    lens = WorkflowLens(workflow)
+    if args.json:
+        nodes_summary = []
+        for nid, node in sorted(
+            workflow.nodes.items(), key=lambda x: (int(x[0]) if x[0].isdigit() else 0, x[0])
+        ):
+            nodes_summary.append(
+                {
+                    "id": nid,
+                    "class_type": node.class_type,
+                    "pack": node.pack,
+                    "upstream": sorted(lens.upstream_nodes(nid)),
+                    "downstream": sorted(lens.downstream_nodes(nid)),
+                }
+            )
+        payload = {
+            "workflow_id": workflow.id,
+            "node_count": len(workflow.nodes),
+            "edge_count": len(workflow.edges),
+            "inputs": sorted(workflow.inputs.keys()),
+            "outputs": [
+                {"node_id": o.node_id, "output_type": o.output_type} for o in workflow.outputs
+            ],
+            "nodes": nodes_summary,
+        }
+        return emit(payload, json=True, text_renderer=lambda x: None)
+    return emit(None, json=False, text_renderer=lambda _: lens.diagnostics())
+
+
+# ── new contract-validate CLI ────────────────────────────────────────────────
+
+
+def _cmd_workflows_contract_validate(args: argparse.Namespace) -> int:
+    """Validate a workflow against a semantic contract type."""
+    from vibecomfy.contracts.ltx_first_last import LTXFirstLastTwoStageContract
+    from vibecomfy.contracts.validation import ContractReport
+
+    workflow = _resolve_workflow_for_inspection(args.template_or_path)
+
+    contract_type = args.type
+    if contract_type != "ltx-first-last-two-stage":
+        print(
+            f"Error: unknown contract type {contract_type!r}; "
+            "supported: ltx-first-last-two-stage"
+        )
+        return 1
+
+    contract = LTXFirstLastTwoStageContract(workflow)
+    report: ContractReport = contract.validate()
+
+    if args.json:
+        payload = {
+            "contract_name": report.contract_name,
+            "passed": report.passed,
+            "issues": [
+                {
+                    "code": i.code,
+                    "message": i.message,
+                    "severity": i.severity,
+                    "detail": i.detail,
+                }
+                for i in report.issues
+            ],
+            "diagnostics": report.diagnostics,
+        }
+        emit(payload, json=True, text_renderer=lambda x: None)
+    else:
+        print(report.summary())
+
+    return 0 if report.passed else 1
+
+
+def _resolve_workflow_for_inspection(template_or_path: str) -> "VibeWorkflow":
+    """Resolve a template id or file path to a VibeWorkflow for CLI inspection."""
+    from vibecomfy.cli_loader import load_workflow_any
+
+    return load_workflow_any(template_or_path)
+
+
+# ── argparse registration ────────────────────────────────────────────────────
+
+
 def register(subparsers) -> None:
     workflows = subparsers.add_parser("workflows")
     workflows_sub = workflows.add_subparsers(dest="subcmd", required=True)
+
+    # list
     workflows_list = workflows_sub.add_parser("list")
     workflows_list.add_argument("--limit", type=int, default=200)
     workflows_list.add_argument("--ready", action="store_true")
     workflows_list.add_argument("--json", action="store_true")
     workflows_list.set_defaults(func=_cmd_workflows_list)
+
+    # source-info
     source_info = workflows_sub.add_parser("source-info")
     source_info.add_argument("template_id")
     source_info.add_argument("--json", action="store_true")
     source_info.set_defaults(func=_cmd_workflows_source_info)
+
+    # enrich-targets
     enrich = workflows_sub.add_parser("enrich-targets")
     enrich.add_argument("--targets-json", required=True)
     enrich.add_argument("--output")
     enrich.add_argument("--models-root", type=Path)
     enrich.set_defaults(func=_cmd_workflows_enrich_targets)
+
+    # lens
+    lens_cmd = workflows_sub.add_parser("lens")
+    lens_cmd.add_argument("template_or_path")
+    lens_cmd.add_argument("--json", action="store_true")
+    lens_cmd.set_defaults(func=_cmd_workflows_lens)
+
+    # contract-validate
+    contract_val = workflows_sub.add_parser("contract-validate")
+    contract_val.add_argument("template_or_path")
+    contract_val.add_argument("--type", required=True, choices=["ltx-first-last-two-stage"])
+    contract_val.add_argument("--json", action="store_true")
+    contract_val.add_argument("--no-schema", action="store_true")
+    contract_val.set_defaults(func=_cmd_workflows_contract_validate)
 
 
 __all__ = ["enrich_target_manifest", "register"]

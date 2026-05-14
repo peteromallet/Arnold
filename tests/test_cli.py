@@ -13,10 +13,11 @@ from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
 from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore
 from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_widgets
+from vibecomfy.commands.contract import _cmd_contract_inspect, _cmd_contract_doctor
 import vibecomfy.node_packs_install as node_packs_install
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
-from vibecomfy.commands.workflows import _cmd_workflows_enrich_targets, _cmd_workflows_list, _cmd_workflows_source_info
+from vibecomfy.commands.workflows import _cmd_workflows_contract_validate, _cmd_workflows_enrich_targets, _cmd_workflows_lens, _cmd_workflows_list, _cmd_workflows_source_info
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -66,6 +67,7 @@ def test_cli_command_registry_is_explicit_and_ordered() -> None:
         "inspect",
         "port",
         "convert",
+        "contract",
         "validate",
         "doctor",
         "fetch",
@@ -947,3 +949,200 @@ def build():
     assert code == 0
     assert installed == ["ComfyUI-Qwen3-TTS", "ComfyUI-VideoHelperSuite"]
     assert "Nodepacks installed/refreshed." in captured.out
+
+
+def test_contract_inspect_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_contract_inspect(argparse.Namespace(workflow="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["version"] == 1
+    assert payload["workflow_id"] == "image/z_image"
+    assert isinstance(payload["model_assets"], list)
+    assert len(payload["model_assets"]) > 0
+    assert isinstance(payload["inputs"], list)
+    assert "model" in payload["inputs"]
+    assert isinstance(payload["outputs"], list)
+    assert isinstance(payload["runtime_nodes"], list)
+    assert isinstance(payload["runtime_class_types"], list)
+    assert payload["readiness_level"] == "ready"
+
+
+def test_contract_doctor_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_contract_doctor(argparse.Namespace(workflow="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert "status" in payload
+    assert payload["status"] == "ok"
+    assert isinstance(payload["contract"], dict)
+    assert payload["contract"]["version"] == 1
+    assert isinstance(payload["diagnostics"], list)
+    # No error diagnostics for a clean image/z_image
+    error_diags = [d for d in payload["diagnostics"] if d["severity"] == "error"]
+    assert error_diags == []
+
+
+# ── T7: workflows lens / contract-validate CLI tests ──────────────────────────
+
+
+def test_workflows_lens_json_output(capsys: pytest.CaptureFixture[str]) -> None:
+    """JSON lens output includes node/edge counts, inputs, outputs, and per-node metadata."""
+    code = _cmd_workflows_lens(
+        argparse.Namespace(template_or_path="video/ltx2_3_lightricks_first_last_parity", json=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["workflow_id"] == "video/ltx2_3_lightricks_first_last_parity"
+    assert payload["node_count"] >= 20
+    assert payload["edge_count"] >= 20
+    assert "prompt" in payload["inputs"]
+    assert "negative_prompt" in payload["inputs"]
+    assert "first_image" in payload["inputs"]
+    assert "last_image" in payload["inputs"]
+    assert "seed_first" in payload["inputs"]
+    assert "seed_last" in payload["inputs"]
+    assert "width" in payload["inputs"]
+    assert "height" in payload["inputs"]
+    assert "frames" in payload["inputs"]
+    assert "fps" in payload["inputs"]
+    outputs = payload["outputs"]
+    assert any(o["output_type"] == "SaveVideo" for o in outputs)
+    nodes = payload["nodes"]
+    assert len(nodes) == payload["node_count"]
+    class_types = {n["class_type"] for n in nodes}
+    assert "LTXVImgToVideoConditionOnly" in class_types
+    assert "RandomNoise" in class_types
+
+
+def test_workflows_lens_human_readable(capsys: pytest.CaptureFixture[str]) -> None:
+    """Human-readable lens diagnostics produce a readable graph summary."""
+    code = _cmd_workflows_lens(
+        argparse.Namespace(template_or_path="video/ltx2_3_lightricks_first_last_parity", json=False)
+    )
+
+    captured = capsys.readouterr().out
+    assert code == 0
+    assert "video/ltx2_3_lightricks_first_last_parity" in captured
+    assert "LTXVImgToVideoConditionOnly" in captured
+
+
+def test_workflows_contract_validate_success_json(capsys: pytest.CaptureFixture[str]) -> None:
+    """Successful LTX contract validation produces passing JSON output."""
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path="video/ltx2_3_lightricks_first_last_parity",
+            type="ltx-first-last-two-stage",
+            json=True,
+            no_schema=False,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["passed"] is True
+    assert payload["contract_name"] == "ltx-first-last-two-stage"
+    assert isinstance(payload["issues"], list)
+    # No errors or warnings for the clean parity template
+    error_issues = [i for i in payload["issues"] if i["severity"] == "error"]
+    assert error_issues == [], f"Unexpected error issues: {error_issues}"
+
+
+def test_workflows_contract_validate_success_human(capsys: pytest.CaptureFixture[str]) -> None:
+    """Successful LTX contract validation produces readable human output."""
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path="video/ltx2_3_lightricks_first_last_parity",
+            type="ltx-first-last-two-stage",
+            json=False,
+            no_schema=False,
+        )
+    )
+
+    captured = capsys.readouterr().out
+    assert code == 0
+    assert "ltx-first-last-two-stage" in captured
+    assert "passed: True" in captured
+
+
+def test_workflows_contract_validate_failure_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A broken workflow produces a stable, readable failure diagnostic."""
+    # Build a deliberately broken workflow: missing named inputs, wrong conditioning, etc.
+    scratchpad = tmp_path / "broken_ltx.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    wf = VibeWorkflow("broken-ltx", WorkflowSource("broken-ltx"))
+    # Only add a SaveVideo output with no conditioning pipeline
+    wf.node("SaveVideo", filename_prefix="broken")
+    wf.node("LoadImage", image="broken.png")
+    wf.finalize_metadata()
+    return wf
+""",
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path=str(scratchpad),
+            type="ltx-first-last-two-stage",
+            json=True,
+            no_schema=False,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["passed"] is False
+    assert payload["contract_name"] == "ltx-first-last-two-stage"
+    issues = payload["issues"]
+    assert len(issues) > 0, "Expected failure diagnostic issues"
+
+    # Verify readable, stable issue codes
+    codes = {i["code"] for i in issues}
+    assert "missing_named_inputs" in codes
+    assert "missing_first_stage_node" in codes
+    assert "missing_last_stage_node" in codes
+
+    # Verify issues have human-readable messages
+    for issue in issues:
+        assert isinstance(issue["code"], str) and issue["code"]
+        assert isinstance(issue["message"], str) and issue["message"]
+        assert issue["severity"] in ("error", "warning")
+
+    # Human-readable version should also show the failure
+    code2 = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path=str(scratchpad),
+            type="ltx-first-last-two-stage",
+            json=False,
+            no_schema=False,
+        )
+    )
+    captured2 = capsys.readouterr().out
+    assert code2 == 1
+    assert "passed: False" in captured2
+    assert "missing_named_inputs" in captured2
+
+
+def test_workflows_contract_validate_rejects_unknown_type(capsys: pytest.CaptureFixture[str]) -> None:
+    """Unknown contract type returns exit code 1 with a clear error."""
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path="video/ltx2_3_lightricks_first_last_parity",
+            type="unknown-contract-type",
+            json=False,
+            no_schema=False,
+        )
+    )
+
+    captured = capsys.readouterr().out
+    assert code == 1
+    assert "unknown contract type" in captured
+    assert "ltx-first-last-two-stage" in captured
