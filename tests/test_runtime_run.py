@@ -239,6 +239,44 @@ def test_run_embedded_ignores_hiddenswitch_cleanup_bug_after_success(
     assert result.outputs == ["output.mp4"]
 
 
+@pytest.mark.parametrize(
+    "cleanup_error",
+    [
+        RuntimeError("cannot cancel futures in this implementation"),
+        RuntimeError("Abnormal termination"),
+    ],
+)
+def test_run_embedded_ignores_comfy_kitchen_cleanup_bug_after_success(
+    cleanup_error: RuntimeError,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    class FakeComfy:
+        def __init__(self, configuration=None) -> None:
+            self.configuration = configuration
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            raise cleanup_error
+
+        async def queue_prompt_api(self, api_dict):
+            return {"outputs": {"1": {"filename": "output.mp4"}}}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(sys.modules, "comfy", types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy.client", types.ModuleType("comfy.client"))
+    embedded = types.ModuleType("comfy.client.embedded_comfy_client")
+    embedded.Comfy = FakeComfy
+    embedded.default_configuration = lambda: {}
+    monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
+
+    result = runtime_run_module.run_embedded_sync(_workflow())
+
+    assert result.outputs == ["output.mp4"]
+
+
 def test_run_embedded_resolves_comfy_filename_outputs_against_configured_output_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

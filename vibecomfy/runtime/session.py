@@ -336,9 +336,10 @@ class EmbeddedSession:
             return
         try:
             await self._context.__aexit__(None, None, None)
-        except AttributeError as exc:
-            if "model_mmap_residency" not in str(exc):
+        except Exception as exc:
+            if not _is_benign_embedded_cleanup_exception(exc):
                 raise
+            logger.warning("embedded Comfy cleanup raised after run completion; ignoring: %s", exc)
         finally:
             self._context = None
             self._comfy = None
@@ -350,9 +351,10 @@ class EmbeddedSession:
         if self._context is not None:
             try:
                 await self._context.__aexit__(None, None, None)
-            except AttributeError as exc:
-                if "model_mmap_residency" not in str(exc):
+            except Exception as exc:
+                if not _is_benign_embedded_cleanup_exception(exc):
                     raise
+                logger.warning("embedded Comfy cleanup raised during reload; ignoring: %s", exc)
         self._comfy = None
         self._context = None
         self._schema_provider = None
@@ -565,6 +567,22 @@ def _cleanup_session_files(session_dir: Path) -> None:
             (session_dir / name).unlink()
         except FileNotFoundError:
             pass
+
+
+def _is_benign_embedded_cleanup_exception(exc: Exception) -> bool:
+    """Return true for known comfy-kitchen teardown-only failures.
+
+    These are emitted after the prompt has completed and outputs have been
+    collected. Treating them as run failures causes successful generations to be
+    retried and eventually marked failed, while leaving the next run no better
+    off. Unknown cleanup failures still propagate.
+    """
+    message = str(exc)
+    return (
+        "model_mmap_residency" in message
+        or "cannot cancel futures in this implementation" in message
+        or message == "Abnormal termination"
+    )
 
 
 def _partition_comfy_config(values: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
