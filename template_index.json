@@ -3,7 +3,7 @@
   "generated_from": "runtime ready template discovery",
   "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' | sort",
   "exclude_rule": "exclude __init__.py and files whose basename starts with '_' to match vibecomfy.registry.ready._template_paths",
-  "template_count": 61,
+  "template_count": 62,
   "templates": [
     {
       "id": "audio/ace_step_1_5_t2a_song",
@@ -420,6 +420,14 @@
         "comfyui_controlnet_aux"
       ],
       "model_count": 9
+    },
+    {
+      "id": "video/wan22_i2v_comfy_lightx2v",
+      "path": "ready_templates/video/wan22_i2v_comfy_lightx2v.py",
+      "capability": "image_to_video",
+      "coverage_tier": "production_parity_candidate",
+      "custom_nodes": [],
+      "model_count": 6
     },
     {
       "id": "video/wan_i2v",
