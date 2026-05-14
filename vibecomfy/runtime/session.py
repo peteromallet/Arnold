@@ -383,7 +383,10 @@ class ServerSession:
             return
         if self.process is not None:
             await self.stop()
-        self.process, self.url, self.log_handle = await _spawn_comfy_server(self.config)
+        self.process, self.url, self.log_handle = await _spawn_comfy_server(
+            self.config,
+            log_path=self.config.extra.get("server_log_path"),
+        )
         self._argv = _comfy_server_argv(self.config)
 
     async def run(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:

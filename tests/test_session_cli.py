@@ -88,6 +88,7 @@ def test_session_cli_start_list_flush_stop_flow(
         "cache_policy": "lru:3",
         "warm_policy": "always",
         "disable_smart_memory": True,
+        "server_log_path": "out/sessions/default/comfy.log",
     }
 
     assert session_cmd._cmd_session_list(argparse.Namespace()) == 0

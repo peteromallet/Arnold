@@ -94,6 +94,7 @@ def _cmd_session_start(args: argparse.Namespace) -> int:
     session_dir = _session_dir(args.id)
     session_dir.mkdir(parents=True, exist_ok=True)
     config = _config_from_args(args)
+    config.setdefault("server_log_path", str(session_dir / "comfy.log"))
     log_path = session_dir / "daemon.log"
     cmd = [
         sys.executable,
