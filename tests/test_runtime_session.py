@@ -629,6 +629,19 @@ def test_memory_profiles_round_trip_to_embedded_config_and_server_argv(fake_comf
             assert "disable_smart_memory" not in embedded
 
 
+def test_sage_attention_profile_maps_to_embedded_config_and_server_argv(
+    fake_comfy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_ATTENTION_PROFILE", "sage")
+
+    embedded = _embedded_configuration_for_session(SessionConfig(port=8200))
+    argv = _comfy_server_argv(SessionConfig(port=8200))
+
+    assert embedded is not None
+    assert embedded.use_sage_attention is True
+    assert "--use-sage-attention" in argv
+
+
 def test_run_metadata_includes_memory_profile_telemetry_when_configured() -> None:
     metadata = _run_metadata(
         run_id="run-test",
@@ -638,10 +651,12 @@ def test_run_metadata_includes_memory_profile_telemetry_when_configured() -> Non
         outputs=[],
         runtime="embedded",
         config=SessionConfig.from_dict({"memory_profile": 3}),
+        timings={"queue_prompt_sec": 1.25},
     )
 
     assert metadata["memory_profile"] == 3
     assert metadata["memory_profile_label"] == "Low VRAM"
+    assert metadata["timings"]["queue_prompt_sec"] == 1.25
 
 
 def test_run_metadata_omits_memory_profile_telemetry_when_unset() -> None:

@@ -236,10 +236,15 @@ class EmbeddedSession:
                 self._inflight_run = None
 
     async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+        total_start = time.monotonic()
+        timings: dict[str, float] = {}
+        phase_start = time.monotonic()
         await self.start()
+        timings["session_start_sec"] = round(time.monotonic() - phase_start, 3)
         assert self._comfy is not None
         if self._schema_provider is None:
             self._schema_provider = _build_schema_provider(None)
+        phase_start = time.monotonic()
         api_dict = await _prepare_prompt_async(
             workflow,
             backend=backend,
@@ -247,9 +252,12 @@ class EmbeddedSession:
             on_unavailable=self._on_schema_unavailable,
             cache_only=True,
         )
+        timings["prepare_prompt_sec"] = round(time.monotonic() - phase_start, 3)
         fp = model_fingerprint(api_dict)
 
+        phase_start = time.monotonic()
         await _maybe_flush_for_policy(self, fp)
+        timings["memory_policy_sec"] = round(time.monotonic() - phase_start, 3)
 
         run_id = f"run-{int(time.time())}"
         run_dir = Path("out/runs") / run_id
@@ -266,6 +274,7 @@ class EmbeddedSession:
         ws_url = _embedded_observation_url(self.config)
         watchdog = await _start_watchdog(server_url=ws_url, client_id=client_id, api_dict=api_dict)
         stop_reason = "completed"
+        phase_start = time.monotonic()
         try:
             try:
                 queued = await self._comfy.queue_prompt_api(api_dict)
@@ -277,13 +286,17 @@ class EmbeddedSession:
                 raise RuntimeError(f"Workflow queue failed: {exc}") from exc
         finally:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
+        timings["queue_prompt_sec"] = round(time.monotonic() - phase_start, 3)
         self.last_fingerprint = fp
 
+        phase_start = time.monotonic()
         comfy_outputs = _raw_comfy_outputs(queued)
         outputs = _collect_output_paths(
             comfy_outputs,
             output_directory=_configured_output_directory(self.config),
         )
+        timings["collect_outputs_sec"] = round(time.monotonic() - phase_start, 3)
+        timings["total_inside_vibecomfy_sec"] = round(time.monotonic() - total_start, 3)
         metadata = _run_metadata(
             run_id=run_id,
             workflow=workflow,
@@ -293,6 +306,7 @@ class EmbeddedSession:
             outputs=outputs,
             runtime="embedded",
             config=self.config,
+            timings=timings,
         )
         metadata_path = run_dir / "metadata.json"
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -384,19 +398,27 @@ class ServerSession:
                 self._inflight_run = None
 
     async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+        total_start = time.monotonic()
+        timings: dict[str, float] = {}
+        phase_start = time.monotonic()
         await self.start()
+        timings["session_start_sec"] = round(time.monotonic() - phase_start, 3)
         assert self.url is not None
         if self._schema_provider is None:
             self._schema_provider = _build_schema_provider(self.url)
+        phase_start = time.monotonic()
         api_dict = await _prepare_prompt_async(
             workflow,
             backend=backend,
             schema_provider=self._schema_provider,
             on_unavailable=self._on_schema_unavailable,
         )
+        timings["prepare_prompt_sec"] = round(time.monotonic() - phase_start, 3)
         fp = model_fingerprint(api_dict)
 
+        phase_start = time.monotonic()
         await _maybe_flush_for_policy(self, fp)
+        timings["memory_policy_sec"] = round(time.monotonic() - phase_start, 3)
 
         run_id = f"run-{int(time.time())}"
         run_dir = Path("out/runs") / run_id
@@ -406,6 +428,7 @@ class ServerSession:
         client_id = uuid.uuid4().hex
         watchdog = await _start_watchdog(server_url=self.url, client_id=client_id, api_dict=api_dict)
         stop_reason = "completed"
+        phase_start = time.monotonic()
         try:
             try:
                 queued = await ComfyClient(self.url).queue_prompt(api_dict)
@@ -417,7 +440,9 @@ class ServerSession:
                 raise RuntimeError(f"Workflow queue failed: {exc}") from exc
         finally:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
+        timings["queue_prompt_sec"] = round(time.monotonic() - phase_start, 3)
         self.last_fingerprint = fp
+        timings["total_inside_vibecomfy_sec"] = round(time.monotonic() - total_start, 3)
         metadata = _run_metadata(
             run_id=run_id,
             workflow=workflow,
@@ -427,6 +452,7 @@ class ServerSession:
             outputs=[],
             runtime="server",
             config=self.config,
+            timings=timings,
         )
         metadata_path = run_dir / "metadata.json"
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -695,6 +721,7 @@ def _run_metadata(
     runtime: str,
     comfy_outputs: Any = None,
     config: SessionConfig | None = None,
+    timings: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     if comfy_outputs is None:
         comfy_outputs = _raw_comfy_outputs(queued)
@@ -712,6 +739,8 @@ def _run_metadata(
         "outputs": outputs,
         "runtime": runtime,
     }
+    if timings:
+        metadata["timings"] = timings
     if config is not None and config.memory_profile is not None:
         metadata.update(MemoryProfile.parse(config.memory_profile).to_telemetry())
     return metadata
@@ -800,6 +829,8 @@ def _embedded_configuration_for_session(config: SessionConfig) -> Configuration 
         values["disable_smart_memory"] = True
 
     values.update(config.extra)
+    if _env_requests_sage_attention() and "use_sage_attention" not in values:
+        values["use_sage_attention"] = True
     env_config = os.environ.get("VIBECOMFY_COMFY_CONFIGURATION")
     if env_config:
         parsed = json.loads(env_config)
@@ -837,8 +868,25 @@ def _comfy_server_argv(config: SessionConfig) -> tuple[str, ...]:
         argv.append("--cache-none")
     elif config.cache_policy.startswith("lru:"):
         argv.extend(["--cache-lru", config.cache_policy.split(":", 1)[1]])
+    if _config_requests_sage_attention(config):
+        argv.append("--use-sage-attention")
     argv.extend(["--port", str(config.port or 8188)])
     return tuple(argv)
+
+
+def _env_requests_sage_attention() -> bool:
+    raw = (
+        os.environ.get("VIBECOMFY_ATTENTION_PROFILE")
+        or os.environ.get("REIGH_VIBECOMFY_ATTENTION_PROFILE")
+        or ""
+    )
+    return raw.strip().lower() in {"sage", "sageattn", "sageattention", "optimized"}
+
+
+def _config_requests_sage_attention(config: SessionConfig) -> bool:
+    if bool(config.extra.get("use_sage_attention")):
+        return True
+    return _env_requests_sage_attention()
 
 
 async def _spawn_comfy_server(
