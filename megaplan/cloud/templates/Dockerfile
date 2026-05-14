@@ -60,6 +60,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh |
     && ln -s "$NVM_DIR/versions/node/$(nvm current)/bin/npm"  /usr/local/bin/npm \
     && ln -s "$NVM_DIR/versions/node/$(nvm current)/bin/npx"  /usr/local/bin/npx
 
+# Bun runtime used by Shannon.
+RUN curl -fsSL https://bun.sh/install | bash \
+    && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
+    && bun --version
+
 # Codex CLI + Claude Code + Shannon, symlinked into /usr/local/bin so non-interactive shells see them.
 RUN . "$NVM_DIR/nvm.sh" \
     && npm i -g @openai/codex @anthropic-ai/claude-code @dexh/shannon@0.0.2 \
@@ -70,11 +75,6 @@ RUN . "$NVM_DIR/nvm.sh" \
     && codex --version \
     && claude --version \
     && shannon --version
-
-# Bun runtime used by Shannon.
-RUN curl -fsSL https://bun.sh/install | bash \
-    && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
-    && bun --version
 
 # Megaplan from source
 RUN pip install --no-cache-dir git+https://github.com/peteromallet/megaplan.git \
