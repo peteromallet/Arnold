@@ -733,6 +733,7 @@ def _run_metadata(
         "workflow_hash": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
         "git_sha": _git_sha(),
         "inputs": {name: item.value for name, item in workflow.inputs.items()},
+        "compiled_prompt": api_dict,
         "queued": queued,
         "comfy_outputs": comfy_outputs,
         "artifact_paths": outputs,

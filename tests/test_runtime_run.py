@@ -295,6 +295,7 @@ def test_run_embedded_resolves_comfy_filename_outputs_against_configured_output_
             ]
         }
     }
+    assert metadata["compiled_prompt"]["1"]["inputs"]["filename_prefix"] == "test"
 
 
 def test_cmd_run_prints_clear_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
