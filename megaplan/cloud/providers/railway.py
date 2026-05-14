@@ -68,10 +68,22 @@ class RailwayProvider(Provider):
 
     def _railway_cmd(self, *args: str) -> list[str]:
         command = [self._binary or "railway", *args]
-        if not args or args[0] == "link":
+        if not args:
+            return command
+        if args[0] == "link":
+            if self._railway.environment:
+                return [*command, "--environment", self._railway.environment]
             return command
         scoped: list[str] = []
-        if self._railway.environment and args[0] == "up":
+        if self._railway.environment and args[0] in {
+            "down",
+            "logs",
+            "service",
+            "ssh",
+            "up",
+            "variables",
+            "volume",
+        }:
             scoped.extend(["--environment", self._railway.environment])
         return [*command[:2], *scoped, *command[2:]]
 
@@ -117,10 +129,13 @@ class RailwayProvider(Provider):
         return 0
 
     def _ensure_configured_service(self, deploy_dir: Path) -> None:
-        result = self._run(self._railway_cmd("service"), cwd=deploy_dir)
+        result = self._run(
+            self._railway_cmd("service", "status", "--all", "--json"),
+            cwd=deploy_dir,
+        )
         if _service_output_contains(result.stdout or "", self._railway.service):
             return
-        command = f"railway service create {shlex.quote(self._railway.service)}"
+        command = f"railway add --service {shlex.quote(self._railway.service)}"
         raise CliError(
             "railway_service_missing",
             (

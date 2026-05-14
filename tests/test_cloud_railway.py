@@ -100,7 +100,7 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         del kwargs
         calls.append(argv)
-        if argv == ["/usr/bin/railway", "service"]:
+        if argv == ["/usr/bin/railway", "service", "status", "--all", "--json"]:
             return subprocess.CompletedProcess(argv, 0, stdout="svc\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
@@ -112,19 +112,19 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
 
     assert calls == [
         ["/usr/bin/railway", "link", "--project", "my-proj"],
-        ["/usr/bin/railway", "service"],
+        ["/usr/bin/railway", "service", "status", "--all", "--json"],
         ["/usr/bin/railway", "variables", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
         ["/usr/bin/railway", "up", "--service", "svc", "--detach", "--ci"],
     ]
 
 
-def test_deploy_preserves_environment_scope_for_up_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_deploy_preserves_environment_scope_for_cloud_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         del kwargs
         calls.append(argv)
-        if argv == ["/usr/bin/railway", "service"]:
+        if argv == ["/usr/bin/railway", "service", "--environment", "prod", "status", "--all", "--json"]:
             return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"services": [{"name": "svc"}]}), stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
@@ -135,9 +135,9 @@ def test_deploy_preserves_environment_scope_for_up_only(monkeypatch: pytest.Monk
     provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
 
     assert calls == [
-        ["/usr/bin/railway", "link", "--project", "my-proj"],
-        ["/usr/bin/railway", "service"],
-        ["/usr/bin/railway", "variables", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
+        ["/usr/bin/railway", "link", "--project", "my-proj", "--environment", "prod"],
+        ["/usr/bin/railway", "service", "--environment", "prod", "status", "--all", "--json"],
+        ["/usr/bin/railway", "variables", "--environment", "prod", "--service", "svc", "--set", "OPENAI_API_KEY=secret"],
         ["/usr/bin/railway", "up", "--environment", "prod", "--service", "svc", "--detach", "--ci"],
     ]
 
@@ -161,14 +161,14 @@ def test_deploy_with_project_missing_service_fails_with_one_create_command(
         provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
 
     assert excinfo.value.code == "railway_service_missing"
-    assert excinfo.value.message.count("railway service create svc") == 1
+    assert excinfo.value.message.count("railway add --service svc") == 1
     assert calls == [
         ["/usr/bin/railway", "link", "--project", "my-proj"],
-        ["/usr/bin/railway", "service"],
+        ["/usr/bin/railway", "service", "status", "--all", "--json"],
     ]
 
 
-def test_project_scope_is_link_only_and_environment_scope_is_deploy_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_project_scope_is_link_only_and_environment_scope_is_applied(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
     follow_calls: list[list[str]] = []
 
@@ -194,10 +194,12 @@ def test_project_scope_is_link_only_and_environment_scope_is_deploy_only(monkeyp
     provider.down()
 
     assert [argv for argv, _kwargs in calls] == [
-        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "pwd"],
+        ["/usr/bin/railway", "ssh", "--environment", "env-123", "--service", "svc", "--", "pwd"],
         [
             "/usr/bin/railway",
             "ssh",
+            "--environment",
+            "env-123",
             "--service",
             "svc",
             "--",
@@ -205,11 +207,11 @@ def test_project_scope_is_link_only_and_environment_scope_is_deploy_only(monkeyp
             f"{base64.b64encode(Path(__file__).read_bytes()).decode('ascii')}\n"
             "MEGAPLAN_UPLOAD",
         ],
-        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cat /workspace/test.py"],
-        ["/usr/bin/railway", "logs", "--service", "svc", "--lines", "200"],
-        ["/usr/bin/railway", "down", "--service", "svc"],
+        ["/usr/bin/railway", "ssh", "--environment", "env-123", "--service", "svc", "--", "cat /workspace/test.py"],
+        ["/usr/bin/railway", "logs", "--environment", "env-123", "--service", "svc", "--lines", "200"],
+        ["/usr/bin/railway", "down", "--environment", "env-123", "--service", "svc"],
     ]
-    assert follow_calls == [["/usr/bin/railway", "logs", "--service", "svc"]]
+    assert follow_calls == [["/usr/bin/railway", "logs", "--environment", "env-123", "--service", "svc"]]
 
 
 def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytest.MonkeyPatch) -> None:
