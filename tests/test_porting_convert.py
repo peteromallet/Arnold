@@ -78,6 +78,22 @@ def test_port_convert_defaults_to_importable_scratchpad_without_ready_metadata()
     assert "'output_mode': 'scratchpad'" in result.text
 
 
+def test_port_convert_emits_registered_output_names() -> None:
+    workflow = _sample_workflow()
+    workflow.nodes["1"].metadata["output_names"] = ["image"]
+
+    result = port_convert_workflow(
+        workflow,
+        source_path="workflow_corpus/source.json",
+        provenance={"source_hash": "sha256:abc"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_provider(),
+    )
+
+    assert "_outputs=('image',)" in result.text
+    assert result.validation is not None and result.validation.ok
+
+
 def test_port_convert_ready_template_candidate_requires_ready_id() -> None:
     result = port_convert_workflow(
         _sample_workflow(),

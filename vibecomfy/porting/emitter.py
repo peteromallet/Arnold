@@ -380,6 +380,9 @@ def _node_kwargs(node: Any, edges_in: dict[str, list[Any]], var_names: dict[str,
 
     out: list[tuple[str, str]] = []
     extras: list[tuple[str, str]] = []
+    output_names = _node_output_names(node)
+    if output_names:
+        out.append(("_outputs", _format_value(tuple(output_names))))
     for key in ordered_static_keys:
         if key in incoming:
             continue
@@ -406,6 +409,14 @@ def _node_kwargs(node: Any, edges_in: dict[str, list[Any]], var_names: dict[str,
         extras_repr = "{" + ", ".join(f"{key!r}: {value}" for key, value in extras) + "}"
         out.append(("_extras", extras_repr))
     return out
+
+
+def _node_output_names(node: Any) -> list[str]:
+    output_names = getattr(node, "metadata", {}).get("output_names")
+    if not isinstance(output_names, (list, tuple)):
+        return []
+    names = [name for name in output_names if isinstance(name, str) and name]
+    return names if len(names) == len(output_names) else []
 
 
 def _format_metadata_dict(name: str, value: dict[str, Any]) -> str:
@@ -452,7 +463,14 @@ def _apply_overrides(nodes: dict[str, Any], edges_in: dict[str, list[Any]], patc
 
 
 _NODE_HELPER_SOURCE = '''
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
+def _node(
+    wf: VibeWorkflow,
+    class_type: str,
+    _id: str,
+    _extras: dict | None = None,
+    _outputs: tuple[str, ...] | None = None,
+    **kwargs,
+):
     """Create a node, preserving the original node id from the source workflow.
 
     `_extras` carries kwargs whose names are not valid Python identifiers
@@ -461,6 +479,8 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
     """
     from vibecomfy.handles import Handle
     builder = wf.node(class_type, **kwargs)
+    if _outputs is not None:
+        builder.node.metadata["output_names"] = list(_outputs)
     if _extras:
         for key, value in _extras.items():
             if isinstance(value, Handle):

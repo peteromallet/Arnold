@@ -9,7 +9,16 @@ import pytest
 from vibecomfy.ingest.index import index_workflows
 from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_shape, normalize_to_api
 from vibecomfy.registry.library import load_workflow_reference, workflow_from_id
+from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+
+class _FakeSchemaProvider:
+    def __init__(self, schemas: dict[str, NodeSchema]) -> None:
+        self._schemas = schemas
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        return self._schemas.get(class_type)
 
 
 def test_api_workflow_converts_to_vibe_workflow() -> None:
@@ -31,6 +40,42 @@ def test_api_workflow_converts_to_vibe_workflow() -> None:
     assert api["2"]["inputs"]["seed"] == 42
     assert api["2"]["inputs"]["steps"] == 8
     assert api["2"]["inputs"]["positive"] == ["1", 0]
+
+
+def test_api_workflow_import_preserves_schema_output_names() -> None:
+    provider = _FakeSchemaProvider(
+        {
+            "GuideNode": NodeSchema(
+                class_type="GuideNode",
+                pack=None,
+                inputs={},
+                outputs=[
+                    OutputSpec("CONDITIONING", "positive"),
+                    OutputSpec("CONDITIONING", "negative"),
+                    OutputSpec("LATENT", "latent"),
+                ],
+            ),
+            "SinkNode": NodeSchema(
+                class_type="SinkNode",
+                pack=None,
+                inputs={"latent": InputSpec("LATENT")},
+                outputs=[],
+            ),
+        }
+    )
+    workflow = convert_to_vibe_format(
+        {
+            "1": {"class_type": "GuideNode", "inputs": {}},
+            "2": {"class_type": "SinkNode", "inputs": {"latent": ["1", 2]}},
+        },
+        workflow_id="sample",
+        schema_provider=provider,
+    )
+
+    assert workflow.nodes["1"].metadata["output_names"] == ["positive", "negative", "latent"]
+    source = workflow.node("GuideNode")
+    source.node.metadata["output_names"] = workflow.nodes["1"].metadata["output_names"]
+    assert source.out("latent").output_slot == 2
 
 
 def test_prompt_override_does_not_bind_conditioning_inputs() -> None:
@@ -75,6 +120,19 @@ def test_graphbuilder_backend_matches_api_backend() -> None:
     workflow.connect("1.0", "2.input")
 
     assert workflow.compile("graphbuilder") == workflow.compile("api")
+
+
+def test_node_builder_named_outputs_use_registered_output_names() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    source = workflow.node("Source")
+    source.node.metadata["output_names"] = ["positive", "negative", "latent"]
+    sink = workflow.node("Sink", positive=source.out("positive"), latent=source.out("latent"))
+
+    api = workflow.compile("api")
+
+    assert api[sink.id]["inputs"]["positive"] == [source.id, 0]
+    assert api[sink.id]["inputs"]["latent"] == [source.id, 2]
+    assert source.out("latent").name == "latent"
 
 
 def test_explicit_inputs_override_imported_widget_values_at_compile_time() -> None:

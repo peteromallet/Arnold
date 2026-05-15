@@ -333,13 +333,16 @@ class _NodeBuilder:
 
     def out(self, slot: int | str) -> Handle:
         try:
-            int(str(slot))
+            output_slot = int(str(slot))
         except ValueError as exc:
+            output_names = self.node.metadata.get("output_names")
+            if isinstance(output_names, (list, tuple)) and slot in output_names:
+                return Handle(node_id=self.node.id, output_slot=output_names.index(slot), name=str(slot))
             raise NotImplementedError(
-                f"Named outputs (e.g. .out({slot!r})) require MP-6 schema integration; "
-                "pass an integer slot for P1."
+                f"Named output {slot!r} is not registered for {self.node.class_type} node {self.node.id}; "
+                "register output_names metadata or pass an integer slot."
             ) from exc
-        return Handle(node_id=self.node.id, output_slot=slot)
+        return Handle(node_id=self.node.id, output_slot=output_slot)
 
 
 def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:

@@ -167,6 +167,7 @@ def build() -> VibeWorkflow:
         wf,
         "LTXVAddGuide",
         "115",
+        _outputs=("positive", "negative", "latent"),
         frame_idx=0,
         strength=1.0,
         image=preprocess_first.out(0),
@@ -179,12 +180,13 @@ def build() -> VibeWorkflow:
         wf,
         "LTXVAddGuide",
         "111",
+        _outputs=("positive", "negative", "latent"),
         frame_idx=-1,
         strength=1.0,
         image=preprocess_last.out(0),
-        latent=first_guide.out(2),
-        negative=first_guide.out(1),
-        positive=first_guide.out(0),
+        latent=first_guide.out("latent"),
+        negative=first_guide.out("negative"),
+        positive=first_guide.out("positive"),
         vae=checkpoint.out(2),
     )
 
@@ -194,8 +196,8 @@ def build() -> VibeWorkflow:
         "116",
         cfg=1,
         model=checkpoint.out(0),
-        negative=last_guide.out(1),
-        positive=last_guide.out(0),
+        negative=last_guide.out("negative"),
+        positive=last_guide.out("positive"),
     )
     sampler = _node(wf, "SamplerEulerAncestral", "117", eta=0, s_noise=1)
     sigmas = _node(
@@ -228,8 +230,8 @@ def build() -> VibeWorkflow:
         "LTXVCropGuides",
         "106",
         latent=separated.out(0),
-        negative=last_guide.out(1),
-        positive=last_guide.out(0),
+        negative=last_guide.out("negative"),
+        positive=last_guide.out("positive"),
     )
     decoded_audio = _node(wf, "LTXVAudioVAEDecode", "107", audio_vae=audio_vae.out(0), samples=separated.out(1))
     decoded_video = _node(
@@ -268,11 +270,20 @@ def build() -> VibeWorkflow:
     return wf
 
 
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
+def _node(
+    wf: VibeWorkflow,
+    class_type: str,
+    _id: str,
+    _extras: dict | None = None,
+    _outputs: tuple[str, ...] | None = None,
+    **kwargs,
+):
     """Create a node while preserving the original source workflow id."""
     from vibecomfy.handles import Handle
 
     builder = wf.node(class_type, **kwargs)
+    if _outputs is not None:
+        builder.node.metadata["output_names"] = list(_outputs)
     if _extras:
         for key, value in _extras.items():
             if isinstance(value, Handle):

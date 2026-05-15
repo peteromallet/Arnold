@@ -9,7 +9,7 @@ from vibecomfy.metadata import (
     _register_common_inputs,
 )
 from vibecomfy.porting.widget_aliases import widget_names_from_schema
-from vibecomfy.schema import SchemaProvider, schema_for
+from vibecomfy.schema import OutputSpec, SchemaProvider, schema_for
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
 
@@ -129,12 +129,17 @@ def convert_to_vibe_format(
                 widgets[key] = value
             else:
                 inputs[key] = value
+        class_type = str(node.get("class_type", "Unknown"))
+        metadata = {key: value for key, value in node.items() if key not in {"class_type", "inputs"}}
+        output_names = _schema_output_names(schema_provider, class_type)
+        if output_names:
+            metadata.setdefault("output_names", output_names)
         workflow.nodes[str(node_id)] = VibeNode(
             id=str(node_id),
-            class_type=str(node.get("class_type", "Unknown")),
+            class_type=class_type,
             inputs=inputs,
             widgets=widgets,
-            metadata={key: value for key, value in node.items() if key not in {"class_type", "inputs"}},
+            metadata=metadata,
         )
         _register_common_inputs(workflow, str(node_id), workflow.nodes[str(node_id)])
         if workflow.nodes[str(node_id)].class_type in OUTPUT_NODE_NAMES:
@@ -159,3 +164,15 @@ def _is_link(value: Any) -> bool:
 def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
     schema = schema_for(schema_provider, class_type)
     return [name for name in widget_names_from_schema(class_type, schema) if name is not None]
+
+
+def _schema_output_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
+    schema = schema_for(schema_provider, class_type)
+    outputs = getattr(schema, "outputs", None) or []
+    names: list[str] = []
+    for output in outputs:
+        name = output.name if isinstance(output, OutputSpec) else getattr(output, "name", None)
+        if not isinstance(name, str) or not name:
+            return []
+        names.append(name)
+    return names
