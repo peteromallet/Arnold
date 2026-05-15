@@ -17,6 +17,7 @@ from vibecomfy.runtime.session import (
     SessionConfig,
     _cleanup_session_files,
     _comfy_server_argv,
+    current_source_revision,
     find_active_session,
 )
 
@@ -91,6 +92,9 @@ async def _daemon_main(args: argparse.Namespace) -> int:
             json.dumps(config_dict, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        revision = current_source_revision()
+        if revision is not None:
+            (session_dir / "source_revision").write_text(revision, encoding="utf-8")
         await stop_event.wait()
     finally:
         await session.stop()

@@ -546,6 +546,7 @@ def find_active_session(id: str = "default") -> str | None:
     session_dir = Path("out/sessions") / id
     pid_path = session_dir / "pid"
     url_path = session_dir / "url"
+    revision_path = session_dir / "source_revision"
     if not pid_path.exists() or not url_path.exists():
         _cleanup_session_files(session_dir)
         return None
@@ -558,6 +559,18 @@ def find_active_session(id: str = "default") -> str | None:
     if not url:
         _cleanup_session_files(session_dir)
         return None
+    current_revision = current_source_revision()
+    if current_revision is not None:
+        try:
+            session_revision = revision_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            _terminate_session_pid(pid)
+            _cleanup_session_files(session_dir)
+            return None
+        if session_revision != current_revision:
+            _terminate_session_pid(pid)
+            _cleanup_session_files(session_dir)
+            return None
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -571,8 +584,38 @@ def find_active_session(id: str = "default") -> str | None:
     return url
 
 
+def _terminate_session_pid(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+
+
+def current_source_revision() -> str | None:
+    """Return a stable source revision for stale-session detection when available."""
+    env_revision = os.environ.get("VIBECOMFY_SOURCE_REVISION")
+    if env_revision:
+        return env_revision.strip() or None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[2],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    revision = result.stdout.strip()
+    return revision or None
+
+
 def _cleanup_session_files(session_dir: Path) -> None:
-    for name in ("pid", "url", "config.json"):
+    for name in ("pid", "url", "config.json", "source_revision"):
         try:
             (session_dir / name).unlink()
         except FileNotFoundError:

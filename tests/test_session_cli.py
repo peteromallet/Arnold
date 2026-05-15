@@ -226,6 +226,7 @@ def test_find_active_session_returns_url_or_cleans_stale_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: None)
     session_dir = tmp_path / "out/sessions/default"
     session_dir.mkdir(parents=True)
     (session_dir / "pid").write_text("4242", encoding="utf-8")
@@ -244,6 +245,75 @@ def test_find_active_session_returns_url_or_cleans_stale_files(
     assert find_active_session("default") == "http://127.0.0.1:8200"
     alive = False
     assert find_active_session("default") is None
+    assert not (session_dir / "pid").exists()
+    assert not (session_dir / "url").exists()
+    assert not (session_dir / "config.json").exists()
+
+
+def test_find_active_session_rejects_stale_source_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: "new-sha")
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+    (session_dir / "source_revision").write_text("old-sha", encoding="utf-8")
+
+    kill_calls: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        kill_calls.append((pid, sig))
+
+    monkeypatch.setattr(session_module.os, "kill", fake_kill)
+
+    assert find_active_session("default") is None
+    assert kill_calls == [(4242, signal.SIGTERM)]
+    assert not (session_dir / "pid").exists()
+    assert not (session_dir / "url").exists()
+    assert not (session_dir / "config.json").exists()
+    assert not (session_dir / "source_revision").exists()
+
+
+def test_find_active_session_accepts_matching_source_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: "same-sha")
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+    (session_dir / "source_revision").write_text("same-sha", encoding="utf-8")
+
+    monkeypatch.setattr(session_module.os, "kill", lambda pid, sig: None)
+
+    assert find_active_session("default") == "http://127.0.0.1:8200"
+
+
+def test_find_active_session_rejects_missing_source_revision_when_current_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: "new-sha")
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+
+    kill_calls: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        kill_calls.append((pid, sig))
+
+    monkeypatch.setattr(session_module.os, "kill", fake_kill)
+
+    assert find_active_session("default") is None
+    assert kill_calls == [(4242, signal.SIGTERM)]
     assert not (session_dir / "pid").exists()
     assert not (session_dir / "url").exists()
     assert not (session_dir / "config.json").exists()
