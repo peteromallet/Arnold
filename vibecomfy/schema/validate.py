@@ -144,6 +144,29 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
             from_schema = schema_by_node.get(from_node)
             if from_schema is None:
                 continue
+            outputs = getattr(from_schema, "outputs", None) or []
+            try:
+                output_index = int(from_output)
+            except (TypeError, ValueError):
+                output_index = None
+            if output_index is not None and (output_index < 0 or output_index >= len(outputs)):
+                issues.append(
+                    ValidationIssue(
+                        "invalid_output_index",
+                        f"Edge {from_node}.{from_output} -> {to_node_id}.{input_name} references output "
+                        f"{from_output}, but {from_schema.class_type} exposes {len(outputs)} output(s).",
+                        severity="error",
+                        detail={
+                            "from_node": from_node,
+                            "from_class_type": from_schema.class_type,
+                            "from_output": from_output,
+                            "output_count": len(outputs),
+                            "to_node": str(to_node_id),
+                            "to_input": input_name,
+                        },
+                    )
+                )
+                continue
             output_type = _edge_output_type(from_schema, from_output)
             input_type = _edge_input_type(to_schema, input_name)
             if output_type and input_type and not _types_compatible(output_type, input_type):

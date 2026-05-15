@@ -222,6 +222,14 @@ def build() -> VibeWorkflow:
         sigmas=sigmas.out(0),
     )
     separated = _node(wf, "LTXVSeparateAVLatent", "121", av_latent=sampled.out(1))
+    cropped = _node(
+        wf,
+        "LTXVCropGuides",
+        "106",
+        latent=separated.out(0),
+        negative=last_guide.out(1),
+        positive=last_guide.out(0),
+    )
     decoded_audio = _node(wf, "LTXVAudioVAEDecode", "107", audio_vae=audio_vae.out(0), samples=separated.out(1))
     decoded_video = _node(
         wf,
@@ -231,7 +239,7 @@ def build() -> VibeWorkflow:
         overlap=64,
         temporal_size=4096,
         temporal_overlap=64,
-        samples=separated.out(2),
+        samples=cropped.out(2),
         vae=checkpoint.out(2),
     )
     video = _node(wf, "CreateVideo", "122", fps=fps.out(0), audio=decoded_audio.out(0), images=decoded_video.out(0))

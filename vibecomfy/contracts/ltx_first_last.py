@@ -240,6 +240,25 @@ class LTXFirstLastTwoStageContract:
                 detail={"actual": str(value), "expected": _SIGMAS},
             )
 
+        crop = self._lens.node("106")
+        if crop is None:
+            report.add("missing_ltx_crop_guides", "Missing LTXVCropGuides node 106 between sampled latent and video decode.")
+        elif crop.class_type != "LTXVCropGuides":
+            report.add("wrong_ltx_crop_guides_class_type", f"Node 106 has class_type {crop.class_type!r}.")
+
+        decode_samples = self._lens.edge_source("105", "samples")
+        if decode_samples is None or decode_samples.node_id != "106" or decode_samples.output_slot != 2:
+            report.add(
+                "wrong_decode_samples_source",
+                "VAEDecodeTiled.samples must consume LTXVCropGuides latent output 2.",
+                detail={
+                    "expected_source_node_id": "106",
+                    "expected_output_slot": 2,
+                    "actual_source_node_id": getattr(decode_samples, "node_id", None),
+                    "actual_output_slot": getattr(decode_samples, "output_slot", None),
+                },
+            )
+
     def _check_video_output(self, report: ContractReport) -> None:
         video_outputs = [o for o in self._workflow.outputs if o.output_type == "SaveVideo"]
         if not video_outputs:

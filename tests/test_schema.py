@@ -105,6 +105,25 @@ def test_schema_validation_reports_type_mismatch_as_warning() -> None:
     assert issue.severity == "warning"
 
 
+def test_schema_validation_reports_invalid_output_index_as_error() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "TwoOutputSource": _schema("TwoOutputSource", outputs=[OutputSpec("LATENT"), OutputSpec("AUDIO")]),
+            "LatentSink": _schema("LatentSink", inputs={"latent": InputSpec("LATENT", required=True)}),
+        }
+    )
+    workflow = _workflow(
+        VibeNode("1", "TwoOutputSource"),
+        VibeNode("2", "LatentSink"),
+        edges=[VibeEdge("1", "2", "2", "latent")],
+    )
+    issue = _only_issue(workflow, provider)
+
+    assert issue.code == "invalid_output_index"
+    assert issue.severity == "error"
+    assert issue.detail["output_count"] == 2
+
+
 def test_validate_without_schema_provider_remains_structural_only() -> None:
     workflow = _workflow(
         VibeNode("1", "CLIPTextEncode", inputs={"text": "old"}),
