@@ -65,3 +65,21 @@ validation to the orchestrator after local gates. Previous RunPod evidence for
 ## Source Notes
 
 Kijai is currently used as a model/custom-node ecosystem source rather than an LTX workflow source: `Kijai/LTX2.3_comfy` exposes model assets, while `ComfyUI-KJNodes` supplies useful runtime nodes. The workflow corpus itself comes from Lightricks, RuneXX, IAMCCS, and official Comfy template sources.
+
+### May 2026 Hivemind Signals
+
+Recent Banodoco Discord/Hivemind searches reinforced two operational rules for
+LTX 2.3 first/last and first/middle/last guide workflows:
+
+- Use RuneXX first/last and FML workflows as practical community references
+  when auditing guide topology. A directly relevant reference is RuneXX's
+  `First-Last-Frame/LTX-2.3_-_FML2V_First_Middle_Last_Frame_guider.json`; a
+  benchmark derivative is
+  `https://github.com/fblissjr/ComfyUI-AudioLoopHelper/blob/main/example_workflows/benchmark_workflows/fml2v_var_d_audio_input.json`.
+- On RTX 4090/Ada, guide-strength workflows are sensitive to masked-attention
+  behavior. Kijai identified an LTX 2.3 guide attention-mask memory regression,
+  and fredbliss validated `SageAttention-ada` v0.5.5 on a real 4090 RuneXX FML
+  workflow with masked calls routed through the Ada fp8 CUDA path and zero
+  fallbacks. For speed-parity validation, the `sage` RunPod profile should use
+  CUDA 12.8/PyTorch cu128 plus `https://github.com/fblissjr/SageAttention-ada`
+  rather than a generic forced SageAttention flag.

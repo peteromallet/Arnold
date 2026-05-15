@@ -36,6 +36,13 @@ VibeComfy already has most of the low-level machinery:
 - `vibecomfy.schema.validate`
   Validates compiled prompts against node schemas and catches missing required inputs, unknown inputs, and link shape/type issues.
 
+- `vibecomfy.schema.cache` and `ConversionSchemaProvider`
+  Reuse captured ComfyUI `/object_info` JSON as offline runtime schema evidence.
+  This is the primary way to resolve installed custom nodes whose source parser
+  misses dynamic inputs/outputs. `port check` and `port convert` default to the
+  newest `out/cache/object_info*.json` when present, with
+  `--object-info-cache` / `--no-object-info-cache` overrides.
+
 - `vibecomfy.patches`
   Reusable graph mutation layer for things like resolution, seed, requirements, low-VRAM LTX changes, and ControlNet wiring.
 
@@ -218,6 +225,9 @@ vibecomfy validate <template-or-path>
 # 4. Port check (source-level diagnostics)
 vibecomfy port check <template-or-path> --strict-ready-template
 
+# 4a. Optional: force a specific captured runtime schema
+vibecomfy port check <template-or-path> --strict-ready-template --object-info-cache out/cache/object_info.<runtime>.json
+
 # 5. Doctor (model/assets/runtime readiness)
 vibecomfy doctor <template-or-path> --json
 ```
@@ -231,7 +241,7 @@ Agent checklist:
 6. Attach or update a semantic contract.
 7. Run `vibecomfy workflows contract-validate`.
 8. Run `vibecomfy validate` for schema checks.
-9. Ensure models and custom nodes are declared.
+9. Ensure models, custom nodes, and runtime-only schema evidence are declared or captured.
 10. Run a small local or RunPod smoke.
 11. Run app-sized parity validation when promoting an app route.
 12. Save evidence and update the route contract status.
