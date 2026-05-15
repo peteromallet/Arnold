@@ -41,7 +41,7 @@ project or fill in `railway.project` / `railway.environment` in `cloud.yaml`:
 railway link
 ```
 
-Required local environment before deploy/start:
+Required cloud secrets before deploy/start:
 
 ```bash
 export OPENAI_API_KEY=...
@@ -54,29 +54,76 @@ The chain spec sets `vendor: codex` for premium phases and
 `deepseek_provider: direct` for DeepSeek phases. Do not switch DeepSeek traffic
 to Fireworks for this chain.
 
-Start from the repository root:
+Codex premium phases should use the same Codex allocation as the operator's
+normal Codex CLI login. If the cloud runner only has API-key auth, `gpt-5.5`
+can fail with `insufficient_quota` even when the Codex CLI account has
+available allocation. Before launch, verify the cloud runner has a usable
+`/root/.codex/auth.json` and that it reports `auth_mode=chatgpt` when the
+intended allocation is the Codex/ChatGPT account rather than a raw OpenAI API
+key. Do not print token contents in logs.
+
+Build and deploy from the repository root:
 
 ```bash
 PYENV_VERSION=3.11.11 python -m megaplan cloud build --cloud-yaml cloud.yaml
 PYENV_VERSION=3.11.11 python -m megaplan cloud deploy --cloud-yaml cloud.yaml
+```
+
+Launch the chain on the cloud runner from an SSH session. Use `--no-push`
+because the operator loop owns same-branch commits/pushes:
+
+```bash
+railway ssh --environment production --service agent -- \
+  'cd /workspace/app && tmux new-session -d -s megaplan-chain \
+  "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml --no-push >> /workspace/app/.megaplan/cloud-chain.log 2>&1"'
+```
+
+The higher-level `cloud chain` wrapper is convenient, but confirm its resolved
+phase map before using it for this chain. At the time this chain was created,
+the wrapper could still resolve DeepSeek through Fireworks even when the
+milestone spec requested `deepseek_provider: direct`.
+
+```bash
 PYENV_VERSION=3.11.11 python -m megaplan cloud chain docs/megaplan_chains/readable_ready_templates/chain.yaml \
   --idea-dir docs/megaplan_chains/readable_ready_templates \
   --cloud-yaml cloud.yaml
 ```
 
-Start the operator loop in a second tmux session after `cloud chain` launches:
+Start the operator loop in a second tmux session after the chain launches:
 
 ```bash
-PYENV_VERSION=3.11.11 python -m megaplan cloud exec --cloud-yaml cloud.yaml \
+railway ssh --environment production --service agent -- \
   "cd /workspace/app && tmux new-session -d -s megaplan-operator './scripts/megaplan_cloud_operator_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml megaplan/production-parity-templates'"
 ```
 
 Observe:
 
 ```bash
-PYENV_VERSION=3.11.11 python -m megaplan cloud status --cloud-yaml cloud.yaml --chain
-PYENV_VERSION=3.11.11 python -m megaplan cloud logs --cloud-yaml cloud.yaml
-PYENV_VERSION=3.11.11 python -m megaplan cloud attach --cloud-yaml cloud.yaml
+railway ssh --environment production --service agent -- \
+  'cd /workspace/app && tmux ls && megaplan chain status --spec /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml'
+
+railway ssh --environment production --service agent -- \
+  'cd /workspace/app && tail -n 120 .megaplan/cloud-chain.log && tail -n 80 .megaplan/cloud-operator-loop.log'
+```
+
+For an active milestone, the freshest progress is usually in the plan state
+file rather than the chain log:
+
+```bash
+railway ssh --environment production --service agent -- \
+  'cd /workspace/app && python - <<'"'"'PY'"'"'
+import json
+from pathlib import Path
+
+state = next(Path(".megaplan/plans").glob("*/state.json"))
+data = json.loads(state.read_text())
+active = data.get("active_step") or {}
+print("plan=", data.get("name"))
+print("state=", data.get("current_state"))
+print("active_step=", active.get("step"))
+print("agent=", active.get("agent"))
+print("last_activity_at=", active.get("last_activity_at"))
+PY'
 ```
 
 ## Local Dry Checks
