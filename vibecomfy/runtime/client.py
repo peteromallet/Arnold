@@ -5,13 +5,26 @@ from typing import Any
 import httpx
 
 
+def _format_response_body(body: str, *, max_chars: int = 20000) -> str:
+    body = body.strip()
+    if len(body) <= max_chars:
+        return body
+    head_chars = 2000
+    tail_chars = max_chars - head_chars - 80
+    return (
+        body[:head_chars]
+        + f"\n... response body truncated; omitted {len(body) - head_chars - tail_chars} chars ...\n"
+        + body[-tail_chars:]
+    )
+
+
 def _raise_for_status_with_body(response: httpx.Response) -> None:
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        body = response.text.strip()
+        body = _format_response_body(response.text)
         if body:
-            raise RuntimeError(f"{exc}; response body: {body[:4000]}") from exc
+            raise RuntimeError(f"{exc}; response body: {body}") from exc
         raise
 
 

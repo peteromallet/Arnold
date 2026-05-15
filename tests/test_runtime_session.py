@@ -51,6 +51,20 @@ def test_comfy_client_http_errors_include_response_body() -> None:
     assert "2077" in message
 
 
+def test_comfy_client_long_http_errors_keep_tail() -> None:
+    request = httpx.Request("POST", "http://comfy.test/prompt")
+    body = "start-" + ("x" * 25000) + "-node_id_2077"
+    response = httpx.Response(400, request=request, text=body)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        client_module._raise_for_status_with_body(response)
+
+    message = str(exc_info.value)
+    assert "start-" in message
+    assert "response body truncated" in message
+    assert "node_id_2077" in message
+
+
 class FakeConfiguration(dict):
     def __getattr__(self, name: str) -> Any:
         try:
