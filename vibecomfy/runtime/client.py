@@ -61,3 +61,9 @@ class ComfyClient:
             response = await client.get(f"{self.server_url}/object_info")
             _raise_for_status_with_body(response)
             return response.json()
+
+    async def history(self, prompt_id: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(f"{self.server_url}/history/{prompt_id}")
+            _raise_for_status_with_body(response)
+            return response.json()

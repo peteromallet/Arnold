@@ -873,6 +873,9 @@ class FakeResponse:
 class FakeAsyncClient:
     posts: list[tuple[str, dict[str, Any] | None]] = []
     gets: list[str] = []
+    history_outputs: dict[str, Any] = {
+        "9": {"images": [{"filename": "server-output.png", "subfolder": "", "type": "output"}]}
+    }
 
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -885,6 +888,9 @@ class FakeAsyncClient:
 
     async def get(self, url: str) -> FakeResponse:
         self.gets.append(url)
+        if "/history/" in url:
+            prompt_id = url.rstrip("/").rsplit("/", 1)[-1]
+            return FakeResponse(200, {prompt_id: {"outputs": self.history_outputs}})
         return FakeResponse(200, {"ready": True})
 
     async def post(self, url: str, json: dict[str, Any] | None = None) -> FakeResponse:
@@ -919,6 +925,9 @@ class FakeProcess:
 def fake_server(monkeypatch: pytest.MonkeyPatch):
     FakeAsyncClient.posts = []
     FakeAsyncClient.gets = []
+    FakeAsyncClient.history_outputs = {
+        "9": {"images": [{"filename": "server-output.png", "subfolder": "", "type": "output"}]}
+    }
     spawned: list[tuple[tuple[str, ...], FakeProcess]] = []
 
     async def fake_create_subprocess_exec(*argv, **kwargs):
@@ -972,6 +981,29 @@ def test_server_session_two_runs_share_one_subprocess(
 
     assert len(fake_server) == 1
     assert [post[0] for post in FakeAsyncClient.posts].count("http://127.0.0.1:8200/prompt") == 2
+
+
+def test_server_session_waits_for_history_and_records_outputs(
+    fake_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    (output_dir / "server-output.png").write_bytes(b"png")
+
+    async def run_case() -> RunResult:
+        session = ServerSession(SessionConfig(port=8200, extra={"output_directory": str(output_dir)}))
+        try:
+            return await session.run(_workflow())
+        finally:
+            await session.stop()
+
+    result = asyncio.run(run_case())
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
+
+    assert result.outputs == [str(output_dir / "server-output.png")]
+    assert metadata["outputs"] == result.outputs
+    assert any(url.endswith("/history/prompt-1") for url in FakeAsyncClient.gets)
 
 
 def test_server_session_flush_posts_api_free_payload(fake_server) -> None:

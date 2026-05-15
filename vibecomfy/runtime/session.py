@@ -448,14 +448,24 @@ class ServerSession:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
         timings["queue_prompt_sec"] = round(time.monotonic() - phase_start, 3)
         self.last_fingerprint = fp
+
+        phase_start = time.monotonic()
+        prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
+        history = await _wait_for_server_history(self.url, prompt_id, config=self.config)
+        comfy_outputs = _outputs_from_server_history(history, prompt_id)
+        outputs = _collect_output_paths(
+            comfy_outputs,
+            output_directory=_configured_output_directory(self.config),
+        )
+        timings["collect_outputs_sec"] = round(time.monotonic() - phase_start, 3)
         timings["total_inside_vibecomfy_sec"] = round(time.monotonic() - total_start, 3)
         metadata = _run_metadata(
             run_id=run_id,
             workflow=workflow,
             api_dict=api_dict,
             queued=queued,
-            comfy_outputs=_raw_comfy_outputs(queued),
-            outputs=[],
+            comfy_outputs=comfy_outputs,
+            outputs=outputs,
             runtime="server",
             config=self.config,
             timings=timings,
@@ -464,8 +474,8 @@ class ServerSession:
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
         return RunResult(
             run_id=run_id,
-            prompt_id=queued.get("prompt_id") if isinstance(queued, dict) else None,
-            outputs=[],
+            prompt_id=prompt_id,
+            outputs=outputs,
             metadata_path=str(metadata_path),
             log_path=str(log_path),
         )
@@ -794,6 +804,49 @@ def _raw_comfy_outputs(queued: Any) -> Any:
     if isinstance(queued, dict) and "outputs" in queued:
         return queued["outputs"]
     return queued
+
+
+async def _wait_for_server_history(
+    server_url: str,
+    prompt_id: str | None,
+    *,
+    config: SessionConfig | None,
+) -> dict[str, Any]:
+    if not prompt_id:
+        return {}
+    timeout_sec = float(
+        (config.extra.get("prompt_timeout_sec") if config is not None else None)
+        or os.environ.get("VIBECOMFY_PROMPT_TIMEOUT_SEC")
+        or 3600
+    )
+    poll_interval_sec = float(os.environ.get("VIBECOMFY_HISTORY_POLL_INTERVAL_SEC") or 1)
+    deadline = time.monotonic() + timeout_sec
+    client = ComfyClient(server_url)
+    while time.monotonic() < deadline:
+        history = await client.history(prompt_id)
+        entry = _history_entry(history, prompt_id)
+        if isinstance(entry, dict):
+            return history
+        await asyncio.sleep(poll_interval_sec)
+    raise TimeoutError(f"Comfy prompt {prompt_id} did not complete within {timeout_sec:.0f}s")
+
+
+def _history_entry(history: Any, prompt_id: str | None) -> dict[str, Any] | None:
+    if not isinstance(history, dict):
+        return None
+    if prompt_id and isinstance(history.get(prompt_id), dict):
+        return history[prompt_id]
+    if prompt_id is None and len(history) == 1:
+        only = next(iter(history.values()))
+        return only if isinstance(only, dict) else None
+    return None
+
+
+def _outputs_from_server_history(history: dict[str, Any], prompt_id: str | None) -> Any:
+    entry = _history_entry(history, prompt_id)
+    if not isinstance(entry, dict):
+        return {}
+    return entry.get("outputs") or {}
 
 
 def _git_sha() -> str | None:
