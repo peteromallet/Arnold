@@ -1003,10 +1003,10 @@ def test_workflows_lens_json_output(capsys: pytest.CaptureFixture[str]) -> None:
     assert "last_image" in payload["inputs"]
     assert "seed_first" in payload["inputs"]
     assert "seed_last" in payload["inputs"]
-    assert "stage1_width" in payload["inputs"]
-    assert "stage1_height" in payload["inputs"]
-    assert "stage1_image_longer_size" in payload["inputs"]
-    assert "stage2_image_longer_size" in payload["inputs"]
+    assert "width" in payload["inputs"]
+    assert "height" in payload["inputs"]
+    assert "first_strength" in payload["inputs"]
+    assert "last_strength" in payload["inputs"]
     assert "frames" in payload["inputs"]
     assert "fps" in payload["inputs"]
     outputs = payload["outputs"]
@@ -1014,7 +1014,7 @@ def test_workflows_lens_json_output(capsys: pytest.CaptureFixture[str]) -> None:
     nodes = payload["nodes"]
     assert len(nodes) == payload["node_count"]
     class_types = {n["class_type"] for n in nodes}
-    assert "LTXVImgToVideoConditionOnly" in class_types
+    assert "LTXVAddGuide" in class_types
     assert "RandomNoise" in class_types
 
 
@@ -1027,7 +1027,7 @@ def test_workflows_lens_human_readable(capsys: pytest.CaptureFixture[str]) -> No
     captured = capsys.readouterr().out
     assert code == 0
     assert "video/ltx2_3_lightricks_first_last_parity" in captured
-    assert "LTXVImgToVideoConditionOnly" in captured
+    assert "LTXVAddGuide" in captured
 
 
 def test_workflows_contract_validate_success_json(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1109,8 +1109,8 @@ def build():
     # Verify readable, stable issue codes
     codes = {i["code"] for i in issues}
     assert "missing_named_inputs" in codes
-    assert "missing_first_stage_node" in codes
-    assert "missing_last_stage_node" in codes
+    assert "missing_first_strength_guide" in codes
+    assert "missing_last_strength_guide" in codes
 
     # Verify issues have human-readable messages
     for issue in issues:

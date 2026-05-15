@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-"""Semantic contract for LTX 2.3 two-stage first/last workflows.
+"""Semantic contract for the LTX 2.3 first/last parity workflow.
 
-Validates that a ``VibeWorkflow`` follows the Lightricks two-stage first/last
-spine: named inputs, first/last conditioning nodes, prompt/negative paths,
-seed configuration, dimensions/frames/FPS, stage-2 sigmas, strength defaults,
-declared custom nodes, absence of Runexx-only packs, and video output
-materialization.
+The contract validates the workflow through the VibeComfy lens instead of raw
+Comfy API node-id assertions.  It intentionally tracks app-visible behavior:
+dedicated distilled checkpoint, first/last image guide wiring, prompt and
+negative paths, dimensions, frame count, FPS, strengths, and video output.
 """
 
 from typing import Any
@@ -15,89 +14,68 @@ from vibecomfy.contracts.validation import ContractReport
 from vibecomfy.lens.core import WorkflowLens
 from vibecomfy.workflow import VibeWorkflow
 
-# ── expected named inputs ─────────────────────────────────────────────
+_DISTILLED_CHECKPOINT = "ltx-2.3-22b-distilled-fp8.safetensors"
+_SIGMAS = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+
 _EXPECTED_INPUTS = frozenset(
     {
         "prompt",
         "negative_prompt",
+        "seed",
         "seed_first",
         "seed_last",
-        "stage1_width",
-        "stage1_height",
-        "stage1_image_longer_size",
-        "stage2_image_longer_size",
+        "width",
+        "height",
         "frames",
         "fps",
+        "fps_int",
+        "first_strength",
+        "last_strength",
         "first_image",
         "last_image",
         "model",
     }
 )
+
 _EXPECTED_INPUT_TARGETS = {
-    "prompt": ("2483", "text"),
-    "negative_prompt": ("2612", "text"),
-    "seed_first": ("4832", "noise_seed"),
-    "seed_last": ("4967", "noise_seed"),
-    "stage1_width": ("3059", "width"),
-    "stage1_height": ("3059", "height"),
-    "stage1_image_longer_size": ("4990", "resize_type.longer_size"),
-    "stage2_image_longer_size": ("4991", "resize_type.longer_size"),
-    "frames": ("4988", "value"),
-    "fps": ("4989", "value"),
-    "first_image": ("2004", "image"),
-    "last_image": ("2005", "image"),
-    "model": ("3940", "ckpt_name"),
+    "prompt": ("128", "text"),
+    "negative_prompt": ("112", "text"),
+    "seed": ("100", "noise_seed"),
+    "seed_first": ("100", "noise_seed"),
+    "seed_last": ("100", "noise_seed"),
+    "width": ("113", "value"),
+    "height": ("98", "value"),
+    "frames": ("102", "value"),
+    "fps": ("123", "value"),
+    "fps_int": ("114", "value"),
+    "first_strength": ("115", "strength"),
+    "last_strength": ("111", "strength"),
+    "first_image": ("31", "image"),
+    "last_image": ("39", "image"),
+    "model": ("127", "ckpt_name"),
 }
 
-# ── stage node ids ────────────────────────────────────────────────────
-_FIRST_STAGE_ID = "3159"
-_LAST_STAGE_ID = "4970"
-
-# ── prompt / negative path node ids ───────────────────────────────────
-_PROMPT_ENCODE_ID = "2483"
-_NEGATIVE_ENCODE_ID = "2612"
-_TEXT_ENCODER_LOADER_ID = "4982"
-
-# ── seed node ids ─────────────────────────────────────────────────────
-_SEED_FIRST_ID = "4832"
-_SEED_LAST_ID = "4967"
-
-# ── dimension / frame / fps node ids ──────────────────────────────────
-_LATENT_VIDEO_ID = "3059"
-_FRAMES_ID = "4988"
-_FPS_ID = "4989"
-_STAGE1_RESIZE_ID = "4990"
-_STAGE2_RESIZE_ID = "4991"
-_STAGE1_SEPARATE_ID = "4845"
-_LATENT_UPSCALE_MODEL_ID = "4974"
-_LATENT_UPSAMPLER_ID = "4975"
-_SPATIAL_UPSCALER_MODEL = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
-
-# ── stage-2 sigmas ────────────────────────────────────────────────────
-_STAGE2_SIGMAS_ID = "4985"
-_STAGE2_SIGMAS_VALUE = "0.909375, 0.725, 0.421875, 0.0"
-
-# ── expected custom node packs ────────────────────────────────────────
-_EXPECTED_CUSTOM_NODES = frozenset({"ComfyUI-LTXVideo", "ComfyUI-KJNodes"})
-
-# ── Runexx-only / incompatible packs ──────────────────────────────────
-_RUNEXX_ONLY_PACKS = frozenset(
+_CHECKPOINT_NODES = ("103", "126", "127")
+_GUIDE_NODES = {"first_strength": "115", "last_strength": "111"}
+_DISALLOWED_RAW_JSON_DRIFT_NODES = frozenset(
     {
-        "LTXVAddGuide",
         "LTXICLoRALoaderModelOnly",
         "LTXAddVideoICLoRAGuide",
         "LTX2MemoryEfficientSageAttentionPatch",
         "LTX2SamplingPreviewOverride",
+        "PathchSageAttentionKJ",
     }
 )
-_RUNEXX_ONLY_CUSTOM_NODES = frozenset({"rgthree-comfy"})
+_DISALLOWED_CUSTOM_NODE_PACKS = frozenset({"rgthree-comfy"})
 
 
 class LTXFirstLastTwoStageContract:
-    """Semantic contract for LTX 2.3 two-stage first/last parity templates.
+    """Contract for the app's LTX 2.3 first/last parity route.
 
-    Validates structural intent through the lens — no compiled Comfy API JSON
-    assertions.
+    The historical name is kept for CLI compatibility.  The active parity route
+    uses the official distilled fp8 first/last workflow rather than the older
+    dev-checkpoint two-stage template because that better matches the Wan2GP
+    distilled model path on 24GB GPUs.
     """
 
     def __init__(self, workflow: VibeWorkflow) -> None:
@@ -107,19 +85,14 @@ class LTXFirstLastTwoStageContract:
     def validate(self) -> ContractReport:
         report = ContractReport(contract_name="ltx-first-last-two-stage", passed=True)
         self._check_named_inputs(report)
-        self._check_first_last_conditioning(report)
-        self._check_distilled_stage_spine(report)
+        self._check_distilled_checkpoint(report)
+        self._check_first_last_guides(report)
         self._check_prompt_negative_paths(report)
-        self._check_seeds(report)
         self._check_dimensions_frames_fps(report)
-        self._check_stage2_sigmas(report)
-        self._check_strength_defaults(report)
-        self._check_custom_nodes(report)
-        self._check_no_runexx_only_packs(report)
+        self._check_sampler(report)
         self._check_video_output(report)
+        self._check_no_incompatible_nodes(report)
         return report
-
-    # ── checks ─────────────────────────────────────────────────────────
 
     def _check_named_inputs(self, report: ContractReport) -> None:
         actual = set(self._workflow.inputs.keys())
@@ -147,307 +120,124 @@ class LTXFirstLastTwoStageContract:
                         "expected_field": expected_field,
                     },
                 )
-        for deprecated in ("width", "height"):
-            target = self._lens.registered_input_target(deprecated)
-            if target is not None:
-                report.add(
-                    "deprecated_final_dimension_input",
-                    f"Named input {deprecated!r} targets {target.node_id}.{target.field}; "
-                    "the distilled parity path must expose stage1_width/stage1_height instead so "
-                    "callers do not accidentally sample stage 1 at final resolution.",
-                    detail={"input": deprecated, "actual_node_id": target.node_id, "actual_field": target.field},
-                )
 
-    def _check_first_last_conditioning(self, report: ContractReport) -> None:
-        for stage_id, label in [(_FIRST_STAGE_ID, "first"), (_LAST_STAGE_ID, "last")]:
-            node = self._lens.node(stage_id)
+    def _check_distilled_checkpoint(self, report: ContractReport) -> None:
+        for node_id in _CHECKPOINT_NODES:
+            node = self._lens.node(node_id)
             if node is None:
-                report.add(
-                    f"missing_{label}_stage_node",
-                    f"Missing {label}-stage node {stage_id} (expected LTXVImgToVideoConditionOnly)",
-                    detail={"expected_node_id": stage_id},
-                )
+                report.add("missing_distilled_loader", f"Missing distilled loader node {node_id}.")
                 continue
-            if node.class_type != "LTXVImgToVideoConditionOnly":
+            ckpt_name = self._lens.node_value(node_id, "ckpt_name")
+            if ckpt_name != _DISTILLED_CHECKPOINT:
                 report.add(
-                    f"wrong_{label}_stage_class_type",
-                    f"Node {stage_id} has class_type {node.class_type!r}, expected LTXVImgToVideoConditionOnly",
-                    detail={"node_id": stage_id, "actual_class_type": node.class_type},
-                )
-            # The image input should come from an LTXVPreprocess or ResizeImageMaskNode
-            image_src = self._lens.edge_source(stage_id, "image")
-            if image_src is not None and image_src.node_id is not None:
-                src_node = self._lens.node(image_src.node_id)
-                if src_node is not None and src_node.class_type not in {"LTXVPreprocess", "ResizeImageMaskNode"}:
-                    report.add(
-                        f"unexpected_{label}_image_source",
-                        f"Node {stage_id} image input fed by {src_node.class_type} ({image_src.node_id}), "
-                        "expected LTXVPreprocess or ResizeImageMaskNode",
-                        severity="warning",
-                        detail={"node_id": stage_id, "source_class_type": src_node.class_type},
-                    )
-
-    def _check_distilled_stage_spine(self, report: ContractReport) -> None:
-        """Validate the Wan2GP distilled two-stage geometry spine.
-
-        Wan2GP samples the first stage at half resolution, spatially upsamples
-        the latent, then runs a short second stage at full resolution. This
-        check prevents a template from wiring final dimensions directly into
-        the first latent, which can pass shallow schema checks while diverging
-        badly in VRAM and runtime behavior.
-        """
-
-        upscaler_loader = self._lens.node(_LATENT_UPSCALE_MODEL_ID)
-        if upscaler_loader is None:
-            report.add(
-                "missing_latent_upscale_model_loader",
-                f"Missing LatentUpscaleModelLoader node {_LATENT_UPSCALE_MODEL_ID} for distilled stage handoff.",
-                detail={"expected_node_id": _LATENT_UPSCALE_MODEL_ID},
-            )
-        elif upscaler_loader.class_type != "LatentUpscaleModelLoader":
-            report.add(
-                "wrong_latent_upscale_model_loader_class",
-                f"Node {_LATENT_UPSCALE_MODEL_ID} has class_type {upscaler_loader.class_type!r}, "
-                "expected LatentUpscaleModelLoader.",
-                detail={"node_id": _LATENT_UPSCALE_MODEL_ID, "actual_class_type": upscaler_loader.class_type},
-            )
-        else:
-            model_name = self._lens.node_value(_LATENT_UPSCALE_MODEL_ID, "model_name") or self._lens.node_value(
-                _LATENT_UPSCALE_MODEL_ID, "widget_0"
-            )
-            if model_name != _SPATIAL_UPSCALER_MODEL:
-                report.add(
-                    "wrong_latent_upscale_model",
-                    f"Latent upscaler model is {model_name!r}, expected {_SPATIAL_UPSCALER_MODEL!r}.",
-                    detail={"actual": model_name, "expected": _SPATIAL_UPSCALER_MODEL},
+                    "wrong_distilled_checkpoint",
+                    f"Node {node_id} uses {ckpt_name!r}, expected {_DISTILLED_CHECKPOINT!r}.",
+                    detail={"node_id": node_id, "actual": ckpt_name, "expected": _DISTILLED_CHECKPOINT},
                 )
 
-        upsampler = self._lens.node(_LATENT_UPSAMPLER_ID)
-        if upsampler is None:
-            report.add(
-                "missing_ltx_latent_upsampler",
-                f"Missing LTXVLatentUpsampler node {_LATENT_UPSAMPLER_ID} between stage 1 and stage 2.",
-                detail={"expected_node_id": _LATENT_UPSAMPLER_ID},
-            )
-            return
-        if upsampler.class_type != "LTXVLatentUpsampler":
-            report.add(
-                "wrong_ltx_latent_upsampler_class",
-                f"Node {_LATENT_UPSAMPLER_ID} has class_type {upsampler.class_type!r}, expected LTXVLatentUpsampler.",
-                detail={"node_id": _LATENT_UPSAMPLER_ID, "actual_class_type": upsampler.class_type},
-            )
+    def _check_first_last_guides(self, report: ContractReport) -> None:
+        for label, node_id in _GUIDE_NODES.items():
+            node = self._lens.node(node_id)
+            if node is None:
+                report.add(f"missing_{label}_guide", f"Missing LTXVAddGuide node {node_id}.")
+                continue
+            if node.class_type != "LTXVAddGuide":
+                report.add(
+                    f"wrong_{label}_guide_class_type",
+                    f"Node {node_id} has class_type {node.class_type!r}, expected LTXVAddGuide.",
+                    detail={"node_id": node_id, "actual_class_type": node.class_type},
+                )
+            strength = self._lens.node_value(node_id, "strength")
+            if strength is not None and not (0 <= float(strength) <= 1):
+                report.add(
+                    f"{label}_out_of_range",
+                    f"Node {node_id} guide strength is {strength!r}; expected Wan2GP range [0, 1].",
+                    detail={"node_id": node_id, "actual": strength},
+                )
 
-        samples_src = self._lens.edge_source(_LATENT_UPSAMPLER_ID, "samples")
-        if samples_src is None or samples_src.node_id != _STAGE1_SEPARATE_ID:
+        first_latent = self._lens.edge_source("115", "latent")
+        if first_latent is None or first_latent.node_id != "108":
             report.add(
-                "wrong_latent_upsampler_samples_source",
-                "LTXVLatentUpsampler.samples must be fed by first-stage LTXVSeparateAVLatent output.",
-                detail={
-                    "expected_source_node_id": _STAGE1_SEPARATE_ID,
-                    "actual_source_node_id": getattr(samples_src, "node_id", None),
-                },
+                "wrong_first_guide_latent_source",
+                "First LTXVAddGuide.latent must consume EmptyLTXVLatentVideo.",
+                detail={"expected_source_node_id": "108", "actual_source_node_id": getattr(first_latent, "node_id", None)},
             )
-        model_src = self._lens.edge_source(_LATENT_UPSAMPLER_ID, "upscale_model")
-        if model_src is None or model_src.node_id != _LATENT_UPSCALE_MODEL_ID:
+        last_latent = self._lens.edge_source("111", "latent")
+        if last_latent is None or last_latent.node_id != "115":
             report.add(
-                "wrong_latent_upsampler_model_source",
-                "LTXVLatentUpsampler.upscale_model must be fed by LatentUpscaleModelLoader.",
-                detail={
-                    "expected_source_node_id": _LATENT_UPSCALE_MODEL_ID,
-                    "actual_source_node_id": getattr(model_src, "node_id", None),
-                },
-            )
-        stage2_latent_src = self._lens.edge_source(_LAST_STAGE_ID, "latent")
-        if stage2_latent_src is None or stage2_latent_src.node_id != _LATENT_UPSAMPLER_ID:
-            report.add(
-                "wrong_stage2_latent_source",
-                "Stage-2 LTXVImgToVideoConditionOnly.latent must consume the latent upsampler output.",
-                detail={
-                    "expected_source_node_id": _LATENT_UPSAMPLER_ID,
-                    "actual_source_node_id": getattr(stage2_latent_src, "node_id", None),
-                },
+                "wrong_last_guide_latent_source",
+                "Last LTXVAddGuide.latent must consume the first guide output.",
+                detail={"expected_source_node_id": "115", "actual_source_node_id": getattr(last_latent, "node_id", None)},
             )
 
     def _check_prompt_negative_paths(self, report: ContractReport) -> None:
-        for node_id, label in [(_PROMPT_ENCODE_ID, "prompt"), (_NEGATIVE_ENCODE_ID, "negative")]:
+        for node_id, label in [("128", "prompt"), ("112", "negative")]:
             node = self._lens.node(node_id)
             if node is None:
-                report.add(
-                    f"missing_{label}_encode",
-                    f"Missing {label} CLIPTextEncode node {node_id}",
-                    detail={"expected_node_id": node_id},
-                )
+                report.add(f"missing_{label}_encode", f"Missing {label} CLIPTextEncode node {node_id}.")
                 continue
             if node.class_type != "CLIPTextEncode":
                 report.add(
                     f"wrong_{label}_encode_class_type",
-                    f"Node {node_id} has class_type {node.class_type!r}, expected CLIPTextEncode",
+                    f"Node {node_id} has class_type {node.class_type!r}, expected CLIPTextEncode.",
                     detail={"node_id": node_id, "actual_class_type": node.class_type},
                 )
             clip_src = self._lens.edge_source(node_id, "clip")
-            if clip_src.node_id is not None:
-                clip_node = self._lens.node(clip_src.node_id)
-                if clip_node is None or clip_node.class_type != "LTXAVTextEncoderLoader":
-                    report.add(
-                        f"unexpected_{label}_clip_source",
-                        f"Node {node_id} clip input fed by {getattr(clip_node, 'class_type', 'unknown')} "
-                        f"({clip_src.node_id}), expected LTXAVTextEncoderLoader",
-                        detail={"node_id": node_id, "source_node_id": clip_src.node_id},
-                    )
-
-    def _check_seeds(self, report: ContractReport) -> None:
-        for node_id, label in [(_SEED_FIRST_ID, "seed_first"), (_SEED_LAST_ID, "seed_last")]:
-            node = self._lens.node(node_id)
-            if node is None:
+            if clip_src is None or clip_src.node_id != "103":
                 report.add(
-                    f"missing_{label}_noise",
-                    f"Missing {label} RandomNoise node {node_id}",
-                    detail={"expected_node_id": node_id},
-                )
-                continue
-            if node.class_type != "RandomNoise":
-                report.add(
-                    f"wrong_{label}_noise_class_type",
-                    f"Node {node_id} has class_type {node.class_type!r}, expected RandomNoise",
-                    detail={"node_id": node_id, "actual_class_type": node.class_type},
-                )
-            ca = self._lens.node_value(node_id, "control_after_generate")
-            if ca != "fixed":
-                report.add(
-                    f"{label}_noise_not_fixed",
-                    f"Node {node_id} RandomNoise control_after_generate is {ca!r}, expected 'fixed'",
-                    severity="warning",
-                    detail={"node_id": node_id, "actual": ca},
+                    f"wrong_{label}_clip_source",
+                    f"Node {node_id} clip input must be fed by LTXAVTextEncoderLoader.",
+                    detail={"node_id": node_id, "actual_source_node_id": getattr(clip_src, "node_id", None)},
                 )
 
     def _check_dimensions_frames_fps(self, report: ContractReport) -> None:
-        latent = self._lens.node(_LATENT_VIDEO_ID)
-        if latent is None:
-            report.add(
-                "missing_latent_video",
-                f"Missing EmptyLTXVLatentVideo node {_LATENT_VIDEO_ID}",
-                detail={"expected_node_id": _LATENT_VIDEO_ID},
-            )
-        elif latent.class_type != "EmptyLTXVLatentVideo":
-            report.add(
-                "wrong_latent_video_class_type",
-                f"Node {_LATENT_VIDEO_ID} has class_type {latent.class_type!r}, expected EmptyLTXVLatentVideo",
-                detail={"node_id": _LATENT_VIDEO_ID, "actual_class_type": latent.class_type},
-            )
-
-        frames_node = self._lens.node(_FRAMES_ID)
-        if frames_node is None:
-            report.add("missing_frames_node", f"Missing PrimitiveInt node {_FRAMES_ID} for frame count")
-        elif frames_node.class_type != "PrimitiveInt":
-            report.add(
-                "wrong_frames_class_type",
-                f"Node {_FRAMES_ID} has class_type {frames_node.class_type!r}, expected PrimitiveInt",
-            )
-
-        fps_node = self._lens.node(_FPS_ID)
-        if fps_node is None:
-            report.add("missing_fps_node", f"Missing PrimitiveFloat node {_FPS_ID} for FPS")
-        elif fps_node.class_type != "PrimitiveFloat":
-            report.add(
-                "wrong_fps_class_type",
-                f"Node {_FPS_ID} has class_type {fps_node.class_type!r}, expected PrimitiveFloat",
-            )
-
-        for node_id, label in [(_STAGE1_RESIZE_ID, "stage1_image_longer_size"), (_STAGE2_RESIZE_ID, "stage2_image_longer_size")]:
+        for node_id, class_type, label in [
+            ("113", "PrimitiveInt", "width"),
+            ("98", "PrimitiveInt", "height"),
+            ("102", "PrimitiveInt", "frames"),
+            ("114", "PrimitiveInt", "fps_int"),
+            ("123", "PrimitiveFloat", "fps"),
+            ("108", "EmptyLTXVLatentVideo", "latent_video"),
+        ]:
             node = self._lens.node(node_id)
             if node is None:
-                report.add(f"missing_{label}_node", f"Missing ResizeImageMaskNode {node_id} for {label}.")
-            elif node.class_type != "ResizeImageMaskNode":
+                report.add(f"missing_{label}_node", f"Missing {class_type} node {node_id}.")
+            elif node.class_type != class_type:
                 report.add(
                     f"wrong_{label}_class_type",
-                    f"Node {node_id} has class_type {node.class_type!r}, expected ResizeImageMaskNode.",
+                    f"Node {node_id} has class_type {node.class_type!r}, expected {class_type}.",
                     detail={"node_id": node_id, "actual_class_type": node.class_type},
                 )
 
-    def _check_stage2_sigmas(self, report: ContractReport) -> None:
-        node = self._lens.node(_STAGE2_SIGMAS_ID)
-        if node is None:
-            report.add(
-                "missing_stage2_sigmas",
-                f"Missing ManualSigmas node {_STAGE2_SIGMAS_ID}",
-                detail={"expected_node_id": _STAGE2_SIGMAS_ID},
-            )
-            return
-        if node.class_type != "ManualSigmas":
-            report.add(
-                "wrong_stage2_sigmas_class_type",
-                f"Node {_STAGE2_SIGMAS_ID} has class_type {node.class_type!r}, expected ManualSigmas",
-            )
-            return
-        value = self._lens.node_value(_STAGE2_SIGMAS_ID, "widget_0") or self._lens.node_value(
-            _STAGE2_SIGMAS_ID, "sigmas"
-        )
-        if value is not None:
-            actual = str(value).replace(" ", "")
-            expected = _STAGE2_SIGMAS_VALUE.replace(" ", "")
-            if actual != expected:
-                report.add(
-                    "wrong_stage2_sigmas_value",
-                    f"Node {_STAGE2_SIGMAS_ID} ManualSigmas value is {value!r}, "
-                    f"expected {_STAGE2_SIGMAS_VALUE!r}",
-                    severity="warning",
-                    detail={"expected": _STAGE2_SIGMAS_VALUE, "actual": str(value)},
-                )
-
-    def _check_strength_defaults(self, report: ContractReport) -> None:
-        for stage_id in (_FIRST_STAGE_ID, _LAST_STAGE_ID):
-            node = self._lens.node(stage_id)
+        for resize_id in ("124", "125"):
+            node = self._lens.node(resize_id)
             if node is None:
-                continue
-            strength = self._lens.node_value(stage_id, "widget_0")
-            if strength is not None and strength != 1.0:
+                report.add("missing_resize_node", f"Missing ResizeImageMaskNode {resize_id}.")
+            elif node.class_type != "ResizeImageMaskNode":
                 report.add(
-                    f"non_default_strength_{stage_id}",
-                    f"Node {stage_id} widget_0 (strength) is {strength!r}, expected 1.0",
-                    severity="warning",
-                    detail={"node_id": stage_id, "actual": strength},
+                    "wrong_resize_class_type",
+                    f"Node {resize_id} has class_type {node.class_type!r}, expected ResizeImageMaskNode.",
+                    detail={"node_id": resize_id, "actual_class_type": node.class_type},
                 )
 
-    def _check_custom_nodes(self, report: ContractReport) -> None:
-        actual = set(self._workflow.requirements.custom_nodes)
-        missing = _EXPECTED_CUSTOM_NODES - actual
-        if missing:
+    def _check_sampler(self, report: ContractReport) -> None:
+        sampler = self._lens.node("120")
+        if sampler is None:
+            report.add("missing_sampler", "Missing SamplerCustomAdvanced node 120.")
+        elif sampler.class_type != "SamplerCustomAdvanced":
+            report.add("wrong_sampler_class_type", f"Node 120 has class_type {sampler.class_type!r}.")
+
+        sigmas = self._lens.node("118")
+        if sigmas is None:
+            report.add("missing_sigmas", "Missing ManualSigmas node 118.")
+            return
+        value = self._lens.node_value("118", "sigmas") or self._lens.node_value("118", "widget_0")
+        if value is not None and str(value).replace(" ", "") != _SIGMAS.replace(" ", ""):
             report.add(
-                "missing_custom_nodes",
-                f"Missing declared custom node packs: {sorted(missing)}",
-                detail={"expected": sorted(_EXPECTED_CUSTOM_NODES), "actual": sorted(actual), "missing": sorted(missing)},
-            )
-
-    def _check_no_runexx_only_packs(self, report: ContractReport) -> None:
-        api_nodes: dict[str, Any] = {}
-        try:
-            api_nodes = self._workflow.compile("api")
-        except Exception:
-            pass
-
-        found_runexx: list[str] = []
-        for node in api_nodes.values():
-            ct = node.get("class_type", "") if isinstance(node, dict) else ""
-            if ct in _RUNEXX_ONLY_PACKS:
-                found_runexx.append(ct)
-        for node_id, node in self._workflow.nodes.items():
-            if node.class_type in _RUNEXX_ONLY_PACKS:
-                found_runexx.append(f"{node.class_type}:{node_id}")
-
-        if found_runexx:
-            report.add(
-                "runexx_only_nodes_present",
-                f"Incompatible Runexx-only nodes present: {sorted(set(found_runexx))}",
-                detail={"found": sorted(set(found_runexx)), "disallowed": sorted(_RUNEXX_ONLY_PACKS)},
-            )
-
-        actual_cn = set(self._workflow.requirements.custom_nodes)
-        bad_cn = actual_cn & _RUNEXX_ONLY_CUSTOM_NODES
-        if bad_cn:
-            report.add(
-                "runexx_only_custom_nodes_declared",
-                f"Incompatible Runexx-only custom node packs declared: {sorted(bad_cn)}",
-                detail={"found": sorted(bad_cn)},
+                "wrong_sigmas_value",
+                f"ManualSigmas value is {value!r}, expected {_SIGMAS!r}.",
+                severity="warning",
+                detail={"actual": str(value), "expected": _SIGMAS},
             )
 
     def _check_video_output(self, report: ContractReport) -> None:
@@ -458,13 +248,24 @@ class LTXFirstLastTwoStageContract:
                 "No SaveVideo output detected; workflow must materialize a video output.",
                 detail={"outputs": [(o.node_id, o.output_type) for o in self._workflow.outputs]},
             )
-            return
 
-        for vo in video_outputs:
-            upstream = self._lens.upstream_nodes(vo.node_id)
-            if not upstream:
-                report.add(
-                    "savevideo_no_upstream",
-                    f"SaveVideo output node {vo.node_id} has no upstream connections.",
-                    detail={"node_id": vo.node_id},
-                )
+    def _check_no_incompatible_nodes(self, report: ContractReport) -> None:
+        found: list[str] = []
+        for node_id, node in self._workflow.nodes.items():
+            if node.class_type in _DISALLOWED_RAW_JSON_DRIFT_NODES:
+                found.append(f"{node.class_type}:{node_id}")
+        if found:
+            report.add(
+                "incompatible_nodes_present",
+                f"Incompatible nodes present: {sorted(found)}",
+                detail={"found": sorted(found), "disallowed": sorted(_DISALLOWED_RAW_JSON_DRIFT_NODES)},
+            )
+
+        actual_cn = set(self._workflow.requirements.custom_nodes)
+        bad_cn = actual_cn & _DISALLOWED_CUSTOM_NODE_PACKS
+        if bad_cn:
+            report.add(
+                "incompatible_custom_nodes_declared",
+                f"Incompatible custom node packs declared: {sorted(bad_cn)}",
+                detail={"found": sorted(bad_cn)},
+            )

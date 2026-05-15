@@ -205,6 +205,19 @@ models:
       - ltx-2.3-22b-dev.safetensors
     tags: [phase:ltx]
 
+  - id: ltx_2_3_22b_distilled_fp8
+    source:
+      kind: huggingface
+      repo: Lightricks/LTX-2.3-fp8
+      filename: ltx-2.3-22b-distilled-fp8.safetensors
+    min_size: 20_000_000_000
+    targets:
+      - node_pack: ltx
+        path: checkpoints/ltx-2.3-22b-distilled-fp8.safetensors
+    aliases:
+      - ltx-2.3-22b-distilled.safetensors
+    tags: [phase:ltx]
+
   - id: ltx_2_3_text_encoder
     source:
       kind: huggingface

@@ -1,9 +1,9 @@
 # vibecomfy: manual
-"""Lightricks LTX 2.3 two-stage first/last parity template.
+"""Lightricks LTX 2.3 distilled first/last parity template.
 
-Pure-Python ready template using the official Lightricks two-stage spine
-for no-control first/last frame video generation.  No Runexx, IC-LoRA,
-raw-video guide, or sageattention dependencies.
+Pure-Python ready template based on the official ComfyUI LTX 2.3 FLF2V
+workflow.  This route uses the dedicated distilled fp8 checkpoint rather than
+the heavier dev checkpoint plus distilled LoRA spine.
 """
 from __future__ import annotations
 
@@ -11,37 +11,55 @@ from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 
 
+LTX_FIRST_LAST_MODEL_ASSETS = [
+    {
+        "name": "ltx-2.3-22b-distilled-fp8.safetensors",
+        "url": "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-distilled-fp8.safetensors",
+        "subdir": "checkpoints",
+    },
+    {
+        "name": "gemma_3_12B_it_fp4_mixed.safetensors",
+        "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
+        "subdir": "text_encoders",
+    },
+]
+
+
 READY_METADATA = {
-    "model_assets": [],
+    "model_assets": LTX_FIRST_LAST_MODEL_ASSETS,
     "unbound_inputs": {"seed": 3779},
     "ready_template": "video/ltx2_3_lightricks_first_last_parity",
     "workflow_template": "ltx2_3_lightricks_first_last_parity",
     "capability": "first_last_frame_video",
     "source_role": "manual_ready_python_template",
-    "source_workflow": None,
+    "source_workflow": "vendor/ComfyUI/tests/unit/playwright_cache/*/video_ltx2_3_flf2v.json",
     "coverage_tier": "required",
-    "approach": "Official Lightricks two-stage first/last spine",
+    "approach": "Official Lightricks distilled fp8 first/last frame route",
     "runtime_note": (
-        "Patches named inputs for prompt, negative, seeds, stage-1 half-resolution dimensions, "
-        "resize targets, frames, fps, and first/last images."
+        "Patches named inputs for prompt, negative, seed, dimensions, frames, fps, "
+        "first/last guide strengths, and first/last images."
     ),
-    "discord_signal": "First/last frame video generation for LTX 2.3 travel segments.",
+    "discord_signal": (
+        "Banodoco LTX notes point to the dedicated distilled fp8/quantized route for "
+        "4090 viability; dev+LoRA two-stage routes can OOM at 24GB."
+    ),
     "smoke_resolution": "256x256x5_frames",
     "ltx_best_practices": [
-        "Use the official Lightricks workflows as runtime gates where possible.",
-        "Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.",
+        "Use the dedicated distilled fp8 checkpoint for first/last workflows on 24GB GPUs.",
+        "Keep guide strengths in Wan2GP's 0..1 range.",
+        "Use tiled VAE decode for full-size app outputs.",
     ],
     "comfy_configuration": {"reserve_vram": 12, "cache_none": True, "fp8_e4m3fn_text_enc": True},
 }
 
 READY_REQUIREMENTS = {
     "models": [],
-    "custom_nodes": ["ComfyUI-KJNodes", "ComfyUI-LTXVideo"],
+    "custom_nodes": ["ComfyUI-LTXVideo"],
 }
 
 
 def build() -> VibeWorkflow:
-    """Build the Lightricks two-stage first/last parity workflow."""
+    """Build the official distilled fp8 first/last workflow."""
     wf = VibeWorkflow(
         READY_METADATA["ready_template"],
         WorkflowSource(
@@ -51,335 +69,198 @@ def build() -> VibeWorkflow:
         ),
     )
 
-    # ── image inputs (first + last) ──────────────────────────────────
-    loadimage_first = _node(wf, "LoadImage", "2004", image="example.png", widget_0="example.png", widget_1="image")
-    loadimage_last = _node(wf, "LoadImage", "2005", image="example.png", widget_0="example.png", widget_1="image")
+    loadimage_first = _node(wf, "LoadImage", "31", image="first.png")
+    loadimage_last = _node(wf, "LoadImage", "39", image="last.png")
 
-    # ── model / VAE loader ───────────────────────────────────────────
-    lowvramcheckpointloader = _node(
-        wf, "LowVRAMCheckpointLoader", "3940", ckpt_name="ltx-2.3-22b-dev-fp8.safetensors"
-    )
-    lowvramaudiovaeloader = _node(
-        wf, "LowVRAMAudioVAELoader", "4010", ckpt_name="ltx-2.3-22b-dev-fp8.safetensors"
-    )
+    randomnoise = _node(wf, "RandomNoise", "100", noise_seed=315253765879496)
+    frames = _node(wf, "PrimitiveInt", "102", value=121)
+    width = _node(wf, "PrimitiveInt", "113", value=1280)
+    height = _node(wf, "PrimitiveInt", "98", value=720)
+    fps_int = _node(wf, "PrimitiveInt", "114", value=24)
+    fps = _node(wf, "PrimitiveFloat", "123", value=24)
 
-    # ── samplers ─────────────────────────────────────────────────────
-    ksamplerselect = _node(wf, "KSamplerSelect", "4831", sampler_name="euler_ancestral_cfg_pp")
-    ksamplerselect_2 = _node(wf, "KSamplerSelect", "4976", sampler_name="euler_cfg_pp")
-
-    # ── seeds ────────────────────────────────────────────────────────
-    randomnoise_first = _node(wf, "RandomNoise", "4832", noise_seed=43, control_after_generate="fixed")
-    randomnoise_last = _node(wf, "RandomNoise", "4967", noise_seed=42, control_after_generate="fixed")
-
-    # ── text encoder ─────────────────────────────────────────────────
-    ltxavtextencoderloader = _node(
+    text_encoder = _node(
         wf,
         "LTXAVTextEncoderLoader",
-        "4982",
-        ckpt_name="ltx-2.3-22b-dev-fp8.safetensors",
-        device="default",
+        "103",
+        ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors",
         text_encoder="gemma_3_12B_it_fp4_mixed.safetensors",
-        widget_0="gemma_3_12B_it_fp4_mixed.safetensors",
-        widget_1="ltx-2.3-22b-dev-fp8.safetensors",
-        widget_2="default",
+        device="default",
     )
+    audio_vae = _node(wf, "LTXVAudioVAELoader", "126", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
+    checkpoint = _node(wf, "CheckpointLoaderSimple", "127", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
 
-    # ── sigmas ───────────────────────────────────────────────────────
-    manualsigmas_stage1 = _node(
-        wf, "ManualSigmas", "4984", widget_0="1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
-    )
-    manualsigmas_stage2 = _node(wf, "ManualSigmas", "4985", widget_0="0.909375, 0.725, 0.421875, 0.0")
-
-    # ── dimensions / frames / fps ────────────────────────────────────
-    primitiveint_frames = _node(wf, "PrimitiveInt", "4988", value=5, widget_1="fixed")
-    primitivefloat_fps = _node(wf, "PrimitiveFloat", "4989", value=8)
-
-    # ── prompt / negative ────────────────────────────────────────────
-    cliptextencode_prompt = _node(
-        wf,
-        "CLIPTextEncode",
-        "2483",
-        text="A serene Japanese tea ceremony in a traditional tatami room.",
-        clip=ltxavtextencoderloader.out(0),
-    )
-    cliptextencode_negative = _node(
-        wf,
-        "CLIPTextEncode",
-        "2612",
-        text="pc game, console game, video game, cartoon, childish, ugly",
-        clip=ltxavtextencoderloader.out(0),
-    )
-
-    # ── latent video ─────────────────────────────────────────────────
-    emptyltxvlatentvideo = _node(
-        wf,
-        "EmptyLTXVLatentVideo",
-        "3059",
-        width=256,
-        height=256,
-        batch_size=1,
-        widget_0=256,
-        widget_1=256,
-        widget_2=5,
-        length=primitiveint_frames.out(0),
-    )
-
-    # ── LoRA ─────────────────────────────────────────────────────────
-    loraloadermodelonly = _node(
-        wf,
-        "LoraLoaderModelOnly",
-        "4922",
-        lora_name="ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-        strength_model=0.5,
-        model=lowvramcheckpointloader.out(0),
-    )
-
-    # ── image preprocessing (first + last) ───────────────────────────
-    resizeimagemask_first = _node(
+    resize_first = _node(
         wf,
         "ResizeImageMaskNode",
-        "4990",
-        _extras={"resize_type.longer_size": 256},
-        resize_type="scale longer dimension",
-        scale_method="lanczos",
-        widget_0="scale longer dimension",
-        widget_1=256,
-        widget_2="lanczos",
+        "124",
+        _extras={
+            "resize_type.width": width.out(0),
+            "resize_type.height": height.out(0),
+            "resize_type.crop": "center",
+        },
+        resize_type="scale dimensions",
+        scale_method="nearest-exact",
         input=loadimage_first.out(0),
     )
-    resizeimagemask_last = _node(
+    resize_last = _node(
         wf,
         "ResizeImageMaskNode",
-        "4991",
-        _extras={"resize_type.longer_size": 256},
-        resize_type="scale longer dimension",
-        scale_method="lanczos",
-        widget_0="scale longer dimension",
-        widget_1=256,
-        widget_2="lanczos",
+        "125",
+        _extras={
+            "resize_type.width": width.out(0),
+            "resize_type.height": height.out(0),
+            "resize_type.crop": "center",
+        },
+        resize_type="scale dimensions",
+        scale_method="nearest-exact",
         input=loadimage_last.out(0),
     )
+    preprocess_first = _node(wf, "LTXVPreprocess", "104", img_compression=25, image=resize_first.out(0))
+    preprocess_last = _node(wf, "LTXVPreprocess", "99", img_compression=25, image=resize_last.out(0))
 
-    ltxvpreprocess_first = _node(
-        wf, "LTXVPreprocess", "3336", widget_0=18, image=resizeimagemask_first.out(0)
+    prompt = _node(
+        wf,
+        "CLIPTextEncode",
+        "128",
+        text="The camera moves from a high position to a low position, keeping the subject centered.",
+        clip=text_encoder.out(0),
     )
-    ltxvpreprocess_last = _node(
-        wf, "LTXVPreprocess", "3337", widget_0=18, image=resizeimagemask_last.out(0)
+    negative = _node(
+        wf,
+        "CLIPTextEncode",
+        "112",
+        text="blurry, oversaturated, pixelated, low resolution, grainy, distorted",
+        clip=text_encoder.out(0),
     )
-
-    # ── conditioning ─────────────────────────────────────────────────
-    ltxfloattoint = _node(wf, "LTXFloatToInt", "5000", widget_0=0, a=primitivefloat_fps.out(0))
-
-    ltxvconditioning = _node(
+    conditioning = _node(
         wf,
         "LTXVConditioning",
-        "1241",
-        widget_0=8,
-        frame_rate=primitivefloat_fps.out(0),
-        negative=cliptextencode_negative.out(0),
-        positive=cliptextencode_prompt.out(0),
+        "109",
+        frame_rate=fps.out(0),
+        negative=negative.out(0),
+        positive=prompt.out(0),
     )
 
-    # ── audio latent (empty — required for two-stage spine) ──────────
-    ltxvemptylatentaudio = _node(
+    image_size = _node(wf, "GetImageSize", "110", image=resize_first.out(0))
+    empty_audio = _node(
         wf,
         "LTXVEmptyLatentAudio",
-        "3980",
-        widget_0=5,
-        widget_1=8,
-        widget_2=1,
-        audio_vae=lowvramaudiovaeloader.out(0),
-        frame_rate=ltxfloattoint.out(0),
-        frames_number=primitiveint_frames.out(0),
+        "101",
+        batch_size=1,
+        frame_rate=fps_int.out(0),
+        frames_number=frames.out(0),
+        audio_vae=audio_vae.out(0),
     )
-
-    # ── stage 1: first frame conditioning ────────────────────────────
-    ltxvimgtovideoconditiononly_first = _node(
+    empty_video = _node(
         wf,
-        "LTXVImgToVideoConditionOnly",
-        "3159",
-        strength=1.0,
-        widget_0=1.0,
-        widget_1=False,
-        bypass=None,
-        image=ltxvpreprocess_first.out(0),
-        latent=emptyltxvlatentvideo.out(0),
-        vae=lowvramcheckpointloader.out(2),
+        "EmptyLTXVLatentVideo",
+        "108",
+        batch_size=1,
+        width=image_size.out(0),
+        height=image_size.out(1),
+        length=frames.out(0),
     )
 
-    cfgguider = _node(
+    first_guide = _node(
+        wf,
+        "LTXVAddGuide",
+        "115",
+        frame_idx=0,
+        strength=1.0,
+        image=preprocess_first.out(0),
+        latent=empty_video.out(0),
+        negative=conditioning.out(1),
+        positive=conditioning.out(0),
+        vae=checkpoint.out(2),
+    )
+    last_guide = _node(
+        wf,
+        "LTXVAddGuide",
+        "111",
+        frame_idx=-1,
+        strength=1.0,
+        image=preprocess_last.out(0),
+        latent=first_guide.out(2),
+        negative=first_guide.out(1),
+        positive=first_guide.out(0),
+        vae=checkpoint.out(2),
+    )
+
+    guider = _node(
         wf,
         "CFGGuider",
-        "4828",
-        cfg=2.5,
-        model=loraloadermodelonly.out(0),
-        negative=ltxvconditioning.out(1),
-        positive=ltxvconditioning.out(0),
+        "116",
+        cfg=1,
+        model=checkpoint.out(0),
+        negative=last_guide.out(1),
+        positive=last_guide.out(0),
     )
-
-    ltxvconcatavlatent_first = _node(
+    sampler = _node(wf, "SamplerEulerAncestral", "117", eta=0, s_noise=1)
+    sigmas = _node(
+        wf,
+        "ManualSigmas",
+        "118",
+        sigmas="1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+        widget_0="1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+    )
+    concat = _node(
         wf,
         "LTXVConcatAVLatent",
-        "4528",
-        audio_latent=ltxvemptylatentaudio.out(0),
-        video_latent=ltxvimgtovideoconditiononly_first.out(0),
+        "119",
+        audio_latent=empty_audio.out(0),
+        video_latent=last_guide.out(2),
     )
-
-    samplercustomadvanced_first = _node(
+    sampled = _node(
         wf,
         "SamplerCustomAdvanced",
-        "4829",
-        guider=cfgguider.out(0),
-        latent_image=ltxvconcatavlatent_first.out(0),
-        noise=randomnoise_first.out(0),
-        sampler=ksamplerselect.out(0),
-        sigmas=manualsigmas_stage1.out(0),
+        "120",
+        guider=guider.out(0),
+        latent_image=concat.out(0),
+        noise=randomnoise.out(0),
+        sampler=sampler.out(0),
+        sigmas=sigmas.out(0),
     )
-
-    ltxvseparateavlatent_first = _node(
+    separated = _node(wf, "LTXVSeparateAVLatent", "121", av_latent=sampled.out(1))
+    decoded_audio = _node(wf, "LTXVAudioVAEDecode", "107", audio_vae=audio_vae.out(0), samples=separated.out(1))
+    decoded_video = _node(
         wf,
-        "LTXVSeparateAVLatent",
-        "4845",
-        av_latent=samplercustomadvanced_first.out(0),
+        "VAEDecodeTiled",
+        "105",
+        tile_size=768,
+        overlap=64,
+        temporal_size=4096,
+        temporal_overlap=64,
+        samples=separated.out(2),
+        vae=checkpoint.out(2),
     )
-
-    # ── latent upscale: Wan2GP distilled stage-1 half-res -> stage-2 full-res ──
-    latentupscalemodelloader = _node(
-        wf,
-        "LatentUpscaleModelLoader",
-        "4974",
-        model_name="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-        widget_0="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-    )
-    ltxvlatentupsampler = _node(
-        wf,
-        "LTXVLatentUpsampler",
-        "4975",
-        samples=ltxvseparateavlatent_first.out(0),
-        upscale_model=latentupscalemodelloader.out(0),
-        vae=lowvramcheckpointloader.out(2),
-    )
-
-    # ── stage 2: last frame conditioning ─────────────────────────────
-    ltxvimgtovideoconditiononly_last = _node(
-        wf,
-        "LTXVImgToVideoConditionOnly",
-        "4970",
-        strength=1.0,
-        widget_0=1.0,
-        widget_1=False,
-        bypass=None,
-        image=resizeimagemask_last.out(0),
-        latent=ltxvlatentupsampler.out(0),
-        vae=lowvramcheckpointloader.out(2),
-    )
-
-    cfgguider_2 = _node(
-        wf,
-        "CFGGuider",
-        "4964",
-        cfg=2.5,
-        model=loraloadermodelonly.out(0),
-        negative=ltxvconditioning.out(1),
-        positive=ltxvconditioning.out(0),
-    )
-
-    ltxvconcatavlatent_last = _node(
-        wf,
-        "LTXVConcatAVLatent",
-        "4969",
-        audio_latent=ltxvseparateavlatent_first.out(1),
-        video_latent=ltxvimgtovideoconditiononly_last.out(0),
-    )
-
-    samplercustomadvanced_last = _node(
-        wf,
-        "SamplerCustomAdvanced",
-        "4971",
-        guider=cfgguider_2.out(0),
-        latent_image=ltxvconcatavlatent_last.out(0),
-        noise=randomnoise_last.out(0),
-        sampler=ksamplerselect_2.out(0),
-        sigmas=manualsigmas_stage2.out(0),
-    )
-
-    ltxvseparateavlatent_last = _node(
-        wf,
-        "LTXVSeparateAVLatent",
-        "4973",
-        av_latent=samplercustomadvanced_last.out(0),
-    )
-
-    # ── decode ───────────────────────────────────────────────────────
-    ltxvaudiovaedecode = _node(
-        wf,
-        "LTXVAudioVAEDecode",
-        "4848",
-        audio_vae=lowvramaudiovaeloader.out(0),
-        samples=ltxvseparateavlatent_last.out(1),
-    )
-
-    ltxvtiledvaedecode = _node(
-        wf,
-        "LTXVTiledVAEDecode",
-        "4995",
-        horizontal_tiles=2,
-        vertical_tiles=2,
-        overlap=6,
-        last_frame_fix=False,
-        widget_0=2,
-        widget_1=2,
-        widget_2=6,
-        widget_3=False,
-        widget_4="auto",
-        widget_5="auto",
-        latents=ltxvseparateavlatent_last.out(0),
-        vae=lowvramcheckpointloader.out(2),
-    )
-
-    createvideo = _node(
-        wf,
-        "CreateVideo",
-        "4849",
-        widget_0=8,
-        fps=primitivefloat_fps.out(0),
-        audio=ltxvaudiovaedecode.out(0),
-        images=ltxvtiledvaedecode.out(0),
-    )
-
-    savevideo = _node(
-        wf,
-        "SaveVideo",
-        "4852",
-        filename_prefix="output",
-        format="auto",
-        codec="auto",
-        video=createvideo.out(0),
-    )
+    video = _node(wf, "CreateVideo", "122", fps=fps.out(0), audio=decoded_audio.out(0), images=decoded_video.out(0))
+    _node(wf, "SaveVideo", "68", filename_prefix="output", format="auto", codec="auto", video=video.out(0))
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
 
-    # ── register named inputs for worker patching (after finalize_metadata) ──
-    wf.register_input("prompt", "2483", "text", value=cliptextencode_prompt.node.inputs.get("text"))
-    wf.register_input("negative_prompt", "2612", "text", value=cliptextencode_negative.node.inputs.get("text"))
-    wf.register_input("seed_first", "4832", "noise_seed", value=43)
-    wf.register_input("seed_last", "4967", "noise_seed", value=42)
-    wf.register_input("stage1_width", "3059", "width", value=256)
-    wf.register_input("stage1_height", "3059", "height", value=256)
-    wf.register_input("stage1_image_longer_size", "4990", "resize_type.longer_size", value=256)
-    wf.register_input("stage2_image_longer_size", "4991", "resize_type.longer_size", value=256)
-    wf.register_input("frames", "4988", "value", value=5)
-    wf.register_input("fps", "4989", "value", value=8)
-    wf.register_input("first_image", "2004", "image", value="example.png")
-    wf.register_input("last_image", "2005", "image", value="example.png")
-    wf.register_input("model", "3940", "ckpt_name", value="ltx-2.3-22b-dev-fp8.safetensors")
+    wf.register_input("prompt", "128", "text", value=prompt.node.inputs.get("text"))
+    wf.register_input("negative_prompt", "112", "text", value=negative.node.inputs.get("text"))
+    wf.register_input("seed", "100", "noise_seed", value=315253765879496)
+    wf.register_input("seed_first", "100", "noise_seed", value=315253765879496)
+    wf.register_input("seed_last", "100", "noise_seed", value=315253765879496)
+    wf.register_input("width", "113", "value", value=1280)
+    wf.register_input("height", "98", "value", value=720)
+    wf.register_input("frames", "102", "value", value=121)
+    wf.register_input("fps", "123", "value", value=24)
+    wf.register_input("fps_int", "114", "value", value=24)
+    wf.register_input("first_strength", "115", "strength", value=1.0)
+    wf.register_input("last_strength", "111", "strength", value=1.0)
+    wf.register_input("first_image", "31", "image", value="first.png")
+    wf.register_input("last_image", "39", "image", value="last.png")
+    wf.register_input("model", "127", "ckpt_name", value="ltx-2.3-22b-distilled-fp8.safetensors")
 
     return wf
 
 
 def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow."""
+    """Create a node while preserving the original source workflow id."""
     from vibecomfy.handles import Handle
 
     builder = wf.node(class_type, **kwargs)

@@ -231,7 +231,6 @@
       "capability": "first_last_frame_video",
       "coverage_tier": "required",
       "custom_nodes": [
-        "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
       "model_count": 0
