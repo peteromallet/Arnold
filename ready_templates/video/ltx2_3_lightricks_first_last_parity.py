@@ -48,13 +48,7 @@ READY_METADATA = {
         "Use the dedicated distilled fp8 checkpoint for first/last workflows on 24GB GPUs.",
         "Keep guide strengths in Wan2GP's 0..1 range.",
         "Use tiled VAE decode for full-size app outputs.",
-    ],
-    "runtime_packages": [
-        {
-            "name": "sageattention",
-            "reason": "Required by the LTX2 memory-efficient attention patch for 4090-speed LTX parity.",
-            "source": "SageAttention-ada",
-        }
+        "Do not force the LTX2 memory-efficient Sage/Triton patch in the portable 4090 profile; LTX 2.3 guide masks must remain on the stable SDPA-compatible path unless a separate optimized profile proves the patch end-to-end.",
     ],
     "comfy_configuration": {"reserve_vram": 12, "cache_none": True, "fp8_e4m3fn_text_enc": True},
 }
@@ -96,13 +90,6 @@ def build() -> VibeWorkflow:
     )
     audio_vae = _node(wf, "LTXVAudioVAELoader", "126", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
     checkpoint = _node(wf, "CheckpointLoaderSimple", "127", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
-    patched_model = _node(
-        wf,
-        "LTX2MemoryEfficientSageAttentionPatch",
-        "2291",
-        triton_kernels=True,
-        model=checkpoint.out(0),
-    )
 
     resize_first = _node(
         wf,
@@ -212,7 +199,7 @@ def build() -> VibeWorkflow:
         "CFGGuider",
         "116",
         cfg=1,
-        model=patched_model.out(0),
+        model=checkpoint.out(0),
         negative=stripped_guides.out(1),
         positive=stripped_guides.out(0),
     )

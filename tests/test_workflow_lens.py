@@ -346,8 +346,8 @@ def test_lens_ltx_parity_distilled_guide_spine_via_lens() -> None:
     assert l.node("111").class_type == "LTXVAddGuide"
     assert l.edge_source("115", "latent").node_id == "108"
     assert l.edge_source("111", "latent").node_id == "115"
-    assert l.node("2291").class_type == "LTX2MemoryEfficientSageAttentionPatch"
-    assert l.edge_source("116", "model").node_id == "2291"
+    assert l.node("2291") is None
+    assert l.edge_source("116", "model").node_id == "127"
     assert l.node("2292").class_type == "VibeComfyStripConditioningKeys"
     assert l.edge_source("116", "positive").node_id == "2292"
     assert l.edge_source("116", "negative").node_id == "2292"

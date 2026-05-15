@@ -186,21 +186,12 @@ class LTXFirstLastTwoStageContract:
                 detail={"expected_source_node_id": "115", "actual_source_node_id": getattr(last_latent, "node_id", None)},
             )
 
-        model_patch = self._lens.node("2291")
-        if model_patch is None:
-            report.add("missing_ltx2_memory_patch", "Missing LTX2MemoryEfficientSageAttentionPatch node 2291.")
-        elif model_patch.class_type != "LTX2MemoryEfficientSageAttentionPatch":
-            report.add(
-                "wrong_ltx2_memory_patch_class_type",
-                f"Node 2291 has class_type {model_patch.class_type!r}, expected LTX2MemoryEfficientSageAttentionPatch.",
-                detail={"node_id": "2291", "actual_class_type": model_patch.class_type},
-            )
         guider_model = self._lens.edge_source("116", "model")
-        if guider_model is None or guider_model.node_id != "2291":
+        if guider_model is None or guider_model.node_id != "127":
             report.add(
                 "wrong_guider_model_source",
-                "CFGGuider.model must consume the LTX2 memory-efficient patch output.",
-                detail={"expected_source_node_id": "2291", "actual_source_node_id": getattr(guider_model, "node_id", None)},
+                "CFGGuider.model must consume the distilled checkpoint directly in the portable parity profile.",
+                detail={"expected_source_node_id": "127", "actual_source_node_id": getattr(guider_model, "node_id", None)},
             )
 
         strip = self._lens.node("2292")

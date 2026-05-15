@@ -524,8 +524,8 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     # The last guide consumes the first guide output, preserving first/last order.
     assert lens.edge_source("115", "latent").node_id == "108"
     assert lens.edge_source("111", "latent").node_id == "115"
-    assert lens.node("2291").class_type == "LTX2MemoryEfficientSageAttentionPatch"
-    assert lens.edge_source("116", "model").node_id == "2291"
+    assert lens.node("2291") is None
+    assert lens.edge_source("116", "model").node_id == "127"
     assert lens.node("2292").class_type == "VibeComfyStripConditioningKeys"
     assert lens.edge_source("116", "positive").node_id == "2292"
     assert lens.edge_source("116", "negative").node_id == "2292"
@@ -549,10 +549,8 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert api["125"]["inputs"]["resize_type.width"] == ["113", 0]
     assert api["125"]["inputs"]["resize_type.height"] == ["98", 0]
     assert api["127"]["inputs"]["ckpt_name"] == "ltx-2.3-22b-distilled-fp8.safetensors"
-    assert api["2291"]["class_type"] == "LTX2MemoryEfficientSageAttentionPatch"
-    assert api["2291"]["inputs"]["triton_kernels"] is True
-    assert api["2291"]["inputs"]["model"] == ["127", 0]
-    assert api["116"]["inputs"]["model"] == ["2291", 0]
+    assert "2291" not in api
+    assert api["116"]["inputs"]["model"] == ["127", 0]
     assert api["2292"]["class_type"] == "VibeComfyStripConditioningKeys"
     assert api["2292"]["inputs"]["keys"] == "guide_attention_entries"
     assert api["2292"]["inputs"]["positive"] == ["111", 0]
