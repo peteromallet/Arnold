@@ -174,6 +174,10 @@ def robustness_overlay(
     compiled Pipeline stays in lock-step with whatever the runtime
     state-machine consults today. Sprint 3 inverts this: ``WORKFLOW`` is
     deleted and the Pipeline becomes the source of truth.
+
+    The ``creative`` flag flips the workflow into creative-mode shape
+    (e.g. the planning state's exit edge differs in some robustness
+    levels). Pass ``creative=True`` for ``mode in {"creative", "joke"}``.
     """
 
     def _apply(pipeline: Pipeline) -> Pipeline:
@@ -197,6 +201,27 @@ def robustness_overlay(
         )
 
     return Overlay(name=f"robustness:{level}", apply=_apply)
+
+
+def mode_overlay(mode: str) -> Overlay:
+    """Overlay that routes the planning Pipeline into a per-mode shape.
+
+    ``mode`` is one of ``"code"``, ``"doc"``, ``"metaplan"``,
+    ``"joke"``, ``"creative"``. The doc/joke/creative paths use the
+    same state machine as code but resolve different prompt-mode
+    variants (``critique_joke.py``, ``execute_doc.py``, etc.) at
+    dispatch time. The overlay names the mode so downstream slot
+    resolution can pick the matching prompt; it does not rewrite the
+    graph for ``code``/``doc``/``metaplan``. For ``joke``/``creative``
+    the overlay is a no-op at this layer because robustness_overlay
+    already applied ``creative=is_creative_mode(state)`` when it was
+    composed with ``compile_pipeline_for``.
+    """
+
+    def _apply(pipeline: Pipeline) -> Pipeline:
+        return pipeline  # mode is carried in StepContext.mode; no graph rewrite
+
+    return Overlay(name=f"mode:{mode}", apply=_apply)
 
 
 def with_prep_overlay(state_payload: Mapping[str, Any]) -> Overlay:
@@ -264,28 +289,36 @@ def compile_pipeline_for(
     *,
     robustness: str = "standard",
     state_payload: Mapping[str, Any] | None = None,
+    mode: str | None = None,
 ) -> Pipeline:
     """Return the planning :class:`Pipeline` with all relevant overlays applied.
 
     ``state_payload`` typically comes from the persisted plan
     ``state.json`` and carries the ``config.with_prep`` /
-    ``config.with_feedback`` flags. Overlays compose left-to-right:
-    robustness first, then with_prep, then with_feedback (the same
-    order today's runtime resolves them).
+    ``config.with_feedback`` / ``config.mode`` flags. Overlays compose
+    left-to-right: robustness first (which already absorbs the
+    creative-mode flag), then with_prep, then with_feedback, then a
+    no-op mode overlay that names the mode for downstream introspection.
     """
 
     state_payload = dict(state_payload or {})
     with_prep = _with_prep_from_state(state_payload)
     with_feedback = _with_feedback_from_state(state_payload)
+    config = state_payload.get("config", {}) if isinstance(state_payload, Mapping) else {}
+    resolved_mode = mode or (config.get("mode", "code") if isinstance(config, Mapping) else "code")
+    creative = resolved_mode in {"creative", "joke"}
+
     pipeline = compile_planning_pipeline()
     overlays = (
         robustness_overlay(
             robustness,
+            creative=creative,
             with_prep=with_prep,
             with_feedback=with_feedback,
         ),
         with_prep_overlay(state_payload),
         with_feedback_overlay(state_payload),
+        mode_overlay(resolved_mode),
     )
     for overlay in overlays:
         pipeline = overlay.apply(pipeline)
