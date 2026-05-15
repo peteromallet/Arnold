@@ -161,6 +161,7 @@ Rules:
 - Commit and push a clear recovery commit to origin/$BRANCH when repaired.
 - If the milestone is genuinely repaired, update the chain state so this milestone is completed and the next milestone can start.
 - Restart or leave the megaplan-chain tmux session running so progress continues.
+- If the failure is an infrastructure/auth/process failure rather than a code-quality failure, fix the runner environment, reset only the failed current plan/milestone state, and restart the chain.
 - If a product/architecture decision is truly ambiguous, stop and write a clear blocker summary to .megaplan/recovery-prompts/latest-blocker.md.
 
 Useful status commands:
@@ -196,11 +197,11 @@ recover_if_needed() {
   index="$(current_index || echo -1)"
   plan="$(current_plan_name || true)"
 
-  if [[ "$state" != "blocked" && "$state" != "worker_blocked" ]]; then
+  if [[ "$state" != "blocked" && "$state" != "worker_blocked" && "$state" != "failed" ]]; then
     return 0
   fi
   if [[ -z "$label" || -z "$plan" || "$index" == "None" ]]; then
-    log "blocked state detected but current label/plan/index missing; leaving for inspection"
+    log "recoverable terminal state detected but current label/plan/index missing; leaving for inspection"
     return 1
   fi
 
