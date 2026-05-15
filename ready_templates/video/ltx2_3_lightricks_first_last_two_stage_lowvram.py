@@ -107,7 +107,7 @@ def build() -> VibeWorkflow:
         "129",
         _outputs=("model",),
         model=checkpoint.out("model"),
-        triton_kernels=False,
+        triton_kernels=True,
     )
     spatial_upscaler = _node(
         wf,

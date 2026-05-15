@@ -548,6 +548,11 @@ def build() -> VibeWorkflow:
     ltxvseparateavlatent = _node(wf, 'LTXVSeparateAVLatent', '18',
         av_latent=samplercustomadvanced.out(0),
     )
+    ltxvlatentupsampler = _node(wf, 'LTXVLatentUpsampler', '25',
+        samples=ltxvseparateavlatent.out(0),
+        upscale_model=getnode_14.out(0),
+        vae=getnode_7.out(0),
+    )
     ltx2attentiontunerpatch = _node(wf, 'LTX2AttentionTunerPatch', '229',
         widget_0='',
         widget_1=1,
@@ -562,7 +567,7 @@ def build() -> VibeWorkflow:
         model=ltx2attentiontunerpatch.out(0),
     )
     ltxvimgtovideoinplacekj_2 = _node(wf, 'LTXVImgToVideoInplaceKJ', '2105',
-        latent=ltxvseparateavlatent.out(0),
+        latent=ltxvlatentupsampler.out(0),
         num_images='1',
         vae=getnode_39.out(0),
         _extras={
