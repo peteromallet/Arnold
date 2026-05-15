@@ -37,6 +37,19 @@ Contract notes (load-bearing for executor authors and Step authors):
     without requiring callers to unwrap an intermediate type. The full
     revision note lives in ``briefs/megaplan-decomposition.md`` under the
     ``## Revision notes`` heading (added in Sprint 1 T5).
+
+(e) Typed-gate dispatch (Sprint 4 Chunk A): ``Verdict.recommendation`` and
+    ``Edge.kind`` together replace the legacy ``"gate_<condition>:<next>"``
+    label-string encoding for gate transitions. When a Step returns a
+    ``Verdict`` whose ``recommendation`` is set (one of the
+    ``GateRecommendation`` literals), the executor matches outgoing edges
+    by ``(kind == "gate" and recommendation == verdict.recommendation)``
+    in preference to label-string matching. ``kind == "normal"`` edges
+    continue to dispatch on ``Edge.label == result.next``. ``kind ==
+    "override"`` is reserved for Chunk D — the executor MUST NOT branch on
+    it in Chunk A. ``Verdict.override`` is added now (defaulted, additive)
+    so that Chunk D can wire override edges without re-freezing ``Verdict``;
+    it is not consumed by the Chunk-A executor.
 """
 
 from __future__ import annotations
@@ -60,18 +73,35 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only aliases
 
 NextEdge = str
 
+GateRecommendation = Literal["proceed", "iterate", "tiebreaker", "escalate"]
+OverrideAction = Literal["force_proceed", "abort", "replan", "add_note"]
+EdgeKind = Literal["normal", "gate", "override"]
+
 
 @dataclass(frozen=True)
 class Edge:
     """A labelled transition from one stage to another.
 
-    ``label`` is matched against ``StepResult.next``; ``target`` is the
-    name of the next stage in ``Pipeline.stages``. The reserved target
-    ``'halt'`` terminates the pipeline.
+    Dispatch depends on ``kind``:
+
+    * ``kind == "normal"`` (default): the executor matches when
+      ``Edge.label == StepResult.next``. ``label`` is the sole match key.
+    * ``kind == "gate"``: the executor matches when
+      ``Edge.recommendation == StepResult.verdict.recommendation``.
+      ``label`` is NOT consulted for dispatch and is held only for
+      debug-readable rendering (planning emits the recommendation name as
+      the label, e.g. ``"iterate"``).
+    * ``kind == "override"``: reserved for Chunk D; not dispatched by the
+      Chunk-A executor.
+
+    ``target`` is the name of the next stage in ``Pipeline.stages``. The
+    reserved target ``'halt'`` terminates the pipeline.
     """
 
     label: str
     target: str
+    kind: EdgeKind = "normal"
+    recommendation: GateRecommendation | None = None
 
 
 @dataclass(frozen=True)
@@ -82,12 +112,22 @@ class Verdict:
     enforced here. ``flags`` and ``notes`` are free-form. ``payload`` is a
     Mapping for arbitrary structured detail; see the immutability note in
     the module docstring.
+
+    ``recommendation`` is the typed gate signal consumed by the executor's
+    ``kind == "gate"`` edge dispatch (Sprint 4 Chunk A). When set, the
+    executor matches the enclosing stage's gate edges by
+    ``Edge.recommendation == verdict.recommendation`` in preference to the
+    legacy ``Edge.label == result.next`` path. ``override`` is added now
+    for forward compatibility with Chunk D's override-edge dispatch; the
+    Chunk-A executor does not consume it.
     """
 
     score: float
     flags: tuple[str, ...] = ()
     notes: str = ""
     payload: Mapping[str, Any] = field(default_factory=dict)
+    recommendation: GateRecommendation | None = None
+    override: OverrideAction | None = None
 
 
 @dataclass(frozen=True)

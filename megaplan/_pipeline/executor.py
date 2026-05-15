@@ -38,6 +38,20 @@ Contract notes:
 (e) Step authors may nest declared outputs at any depth under the
     stage's artifact directory (or anywhere else under ``ctx.plan_dir``).
     The executor verifies existence only, not directory layout.
+
+(f) Verdict-first edge dispatch on ``kind="gate"`` edges: when a Step
+    returns a :class:`StepResult` whose ``verdict.recommendation`` is
+    set, the executor first searches ``node.edges`` for the edge whose
+    ``kind == "gate"`` and ``recommendation == verdict.recommendation``.
+    On miss (or when no recommendation is set), it falls back to the
+    legacy ``kind == "normal"`` + ``label == result.next`` match. If
+    neither path finds an edge, the executor raises ``LookupError``
+    naming both the ``result.next`` label and the ``verdict.recommendation``
+    so debugging starts from both fields. ``kind == "override"`` edges
+    are reserved for Chunk D and are NOT consumed by the Chunk-A
+    dispatcher — any such edges sit inert in ``node.edges`` until that
+    branch lands. The ``result.next == "halt"`` short-circuit above the
+    dispatch block is preserved unchanged.
 """
 
 from __future__ import annotations
@@ -149,11 +163,36 @@ def run_pipeline(
         if result.next == "halt":
             return {"state": state, "final_stage": node.name}
 
-        edge = next((e for e in node.edges if e.label == result.next), None)
+        # Verdict-first edge dispatch: when the Step returns a typed
+        # gate recommendation, match the kind="gate" edge whose
+        # recommendation matches; otherwise (or on miss) fall back to
+        # kind="normal" + label dispatch. kind="override" is reserved
+        # for Chunk D and is not matched here.
+        edge = None
+        rec = None
+        if result.verdict is not None and result.verdict.recommendation is not None:
+            rec = result.verdict.recommendation
+            edge = next(
+                (
+                    e
+                    for e in node.edges
+                    if e.kind == "gate" and e.recommendation == rec
+                ),
+                None,
+            )
+        if edge is None:
+            edge = next(
+                (
+                    e
+                    for e in node.edges
+                    if e.kind == "normal" and e.label == result.next
+                ),
+                None,
+            )
         if edge is None:
             raise LookupError(
-                f"Stage {node.name!r} returned NextEdge {result.next!r} "
-                f"but no matching edge found in stage.edges"
+                f"Stage {node.name!r} produced next={result.next!r} "
+                f"recommendation={rec!r} but no matching edge was found"
             )
         if edge.target == "halt":
             return {"state": state, "final_stage": node.name}
