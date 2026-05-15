@@ -35,5 +35,7 @@ resources:
   port: 8080
 
 railway:
+  project: reigh-megaplan-dev
+  environment: production
   service: agent
   session: agent
