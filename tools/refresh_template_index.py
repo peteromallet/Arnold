@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from vibecomfy.registry.ready import ready_template_ids
+from vibecomfy.registry.static_contract import extract_ready_template_contract
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -52,15 +53,30 @@ def build_template_index(*, generated_at: str | None = None) -> dict[str, Any]:
     for template_id in ready_template_ids():
         path = _ready_template_path(template_id)
         metadata, requirements = _ready_template_metadata(REPO_ROOT / path)
+        static_contract = extract_ready_template_contract(REPO_ROOT / path)
         coverage_row = coverage.get(template_id, {})
+        coverage_tier = metadata.get("coverage_tier") or coverage_row.get("coverage_tier", "")
         templates.append(
             {
                 "id": template_id,
                 "path": path,
                 "capability": metadata.get("capability") or coverage_row.get("task", ""),
-                "coverage_tier": metadata.get("coverage_tier") or coverage_row.get("coverage_tier", ""),
-                "custom_nodes": sorted(_string_items(requirements.get("custom_nodes"))),
-                "model_count": len(_list_items(requirements.get("models"))),
+                "coverage_tier": coverage_tier,
+                "custom_nodes": static_contract.get("custom_nodes")
+                or sorted(_string_items(requirements.get("custom_nodes"))),
+                "model_count": static_contract.get("model_count", len(_list_items(requirements.get("models")))),
+                "public_inputs": static_contract["public_inputs"],
+                "public_outputs": static_contract["public_outputs"],
+                "artifact_expectations": static_contract["artifact_expectations"],
+                "static_diagnostics": static_contract["diagnostics"],
+                "public_input_status": _public_status(static_contract["public_inputs"], static_contract["diagnostics"]),
+                "public_output_status": _public_status(static_contract["public_outputs"], static_contract["diagnostics"]),
+                "readiness_class": static_contract["readiness_class"],
+                "marker": static_contract["marker"],
+                "app_active": static_contract["app_active"] or coverage_tier == "required",
+                "blocked": static_contract["blocked"] or coverage_tier == "blocked",
+                "reference": static_contract["reference"] or coverage_tier == "reference",
+                "supplemental": static_contract["supplemental"] or coverage_tier == "supplemental",
             }
         )
 
@@ -131,6 +147,16 @@ def _list_items(value: Any) -> list[Any]:
 
 def _string_items(value: Any) -> list[str]:
     return [item for item in _list_items(value) if isinstance(item, str)]
+
+
+def _public_status(items: list[dict[str, Any]], diagnostics: list[dict[str, Any]]) -> str:
+    if any(item.get("severity") == "error" for item in diagnostics):
+        return "error"
+    if items:
+        return "declared"
+    if diagnostics:
+        return "partial"
+    return "missing"
 
 
 def _existing_generated_at(path: Path) -> str | None:

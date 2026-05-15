@@ -273,6 +273,14 @@ def bind_input(
     name: str,
     node_id: str,
     field: str,
+    *,
+    type: str | None = None,
+    default: Any = None,
+    required: bool = False,
+    range: Any = None,
+    aliases: list[str] | tuple[str, ...] | None = None,
+    media_semantics: str | None = None,
+    media: str | None = None,
 ) -> VibeWorkflow:
     """Register a public input binding **after** ``finalize_ready_template()``.
 
@@ -291,8 +299,24 @@ def bind_input(
             f"bind_input({name!r}): field {field!r} not found in "
             f"node {node_id!r} ({node.class_type}) inputs or widgets"
         )
+    if media_semantics is not None and media is not None and media_semantics != media:
+        raise ValueError(
+            f"bind_input({name!r}): media_semantics and legacy media "
+            "must match when both are provided"
+        )
     value = node.inputs.get(field, node.widgets.get(field))
-    return wf.register_input(name, node_id, field, value)
+    return wf.register_input(
+        name,
+        node_id,
+        field,
+        value,
+        type=type,
+        default=value if default is None else default,
+        required=required,
+        range=range,
+        aliases=aliases,
+        media_semantics=media_semantics if media_semantics is not None else media,
+    )
 
 
 def bind_output(
@@ -304,6 +328,7 @@ def bind_output(
     artifact_kind: str | None = None,
     mime_type: str | None = None,
     filename_prefix: str | None = None,
+    expected_cardinality: str | int | None = None,
 ) -> VibeWorkflow:
     """Register or update a public output binding.
 
@@ -324,6 +349,8 @@ def bind_output(
                 existing.mime_type = mime_type
             if filename_prefix is not None:
                 existing.filename_prefix = filename_prefix
+            if expected_cardinality is not None:
+                existing.expected_cardinality = expected_cardinality
             if output_type and not existing.output_type:
                 existing.output_type = output_type
             return wf
@@ -335,6 +362,7 @@ def bind_output(
             artifact_kind=artifact_kind,
             mime_type=mime_type,
             filename_prefix=filename_prefix,
+            expected_cardinality=expected_cardinality,
         )
     )
     return wf

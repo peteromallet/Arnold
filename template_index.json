@@ -14,7 +14,19 @@
         "EmptyAceStep1",
         "TextEncodeAceStepAudio1"
       ],
-      "model_count": 4
+      "model_count": 4,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "audio/qwen3_tts_custom_voice",
@@ -24,7 +36,19 @@
       "custom_nodes": [
         "ComfyUI-QwenTTS"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "audio/qwen3_tts_voice_clone",
@@ -34,7 +58,19 @@
       "custom_nodes": [
         "ComfyUI-QwenTTS"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "audio/qwen3_tts_voice_design",
@@ -44,7 +80,19 @@
       "custom_nodes": [
         "ComfyUI-QwenTTS"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "edit/flux2_klein_4b_image_edit_base",
@@ -52,7 +100,19 @@
       "capability": "image_edit",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "edit/flux2_klein_4b_image_edit_distilled",
@@ -60,7 +120,19 @@
       "capability": "image_edit",
       "coverage_tier": "required",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "edit/flux2_klein_9b_image_edit_base",
@@ -68,7 +140,19 @@
       "capability": "image_edit",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "edit/flux2_klein_9b_image_edit_distilled",
@@ -76,7 +160,19 @@
       "capability": "image_edit",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "edit/qwen_image_edit",
@@ -84,7 +180,19 @@
       "capability": "image_edit",
       "coverage_tier": "required",
       "custom_nodes": [],
-      "model_count": 4
+      "model_count": 4,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "image/basic_image_upscale",
@@ -92,7 +200,19 @@
       "capability": "image_upscale",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "image/flux2_klein_4b_t2i",
@@ -100,7 +220,19 @@
       "capability": "text_to_image",
       "coverage_tier": "required",
       "custom_nodes": [],
-      "model_count": 4
+      "model_count": 4,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "image/flux2_klein_9b_gguf_t2i",
@@ -110,7 +242,19 @@
       "custom_nodes": [
         "ComfyUI-GGUF"
       ],
-      "model_count": 1
+      "model_count": 1,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "image/flux2_klein_9b_t2i",
@@ -118,7 +262,19 @@
       "capability": "text_to_image",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "image/qwen_image_2512",
@@ -126,7 +282,19 @@
       "capability": "text_to_image",
       "coverage_tier": "required",
       "custom_nodes": [],
-      "model_count": 4
+      "model_count": 4,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "image/z_image",
@@ -134,7 +302,19 @@
       "capability": "text_to_image",
       "coverage_tier": "required",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "image/z_image_img2img",
@@ -142,7 +322,19 @@
       "capability": "image_to_image",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "smoke/empty_image_red",
@@ -150,7 +342,19 @@
       "capability": "runtime_smoke",
       "coverage_tier": "smoke",
       "custom_nodes": [],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/basic_video_enhance",
@@ -160,7 +364,19 @@
       "custom_nodes": [
         "ComfyUI-VideoHelperSuite"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_first_last_frame_travel_iclora_control",
@@ -175,7 +391,278 @@
         "ComfyUI-VideoHelperSuite",
         "comfyui_controlnet_aux"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [
+        {
+          "name": "start_image",
+          "target": {
+            "node_id": "45",
+            "field": "image"
+          },
+          "node_id": "45",
+          "field": "image",
+          "value": "example.png",
+          "type": null,
+          "default": "example.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "end_image",
+          "target": {
+            "node_id": "47",
+            "field": "image"
+          },
+          "node_id": "47",
+          "field": "image",
+          "value": "egyptian_queen.png",
+          "type": null,
+          "default": "egyptian_queen.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "control_video",
+          "target": {
+            "node_id": "5001",
+            "field": "video"
+          },
+          "node_id": "5001",
+          "field": "video",
+          "value": "ltx_smoke_guide.mp4",
+          "type": null,
+          "default": "ltx_smoke_guide.mp4",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "control_mode",
+          "target": {
+            "node_id": "6000",
+            "field": "value"
+          },
+          "node_id": "6000",
+          "field": "value",
+          "value": "canny",
+          "type": null,
+          "default": "canny",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "16",
+            "field": "text"
+          },
+          "node_id": "16",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "negative",
+          "target": {
+            "node_id": "11",
+            "field": "text"
+          },
+          "node_id": "11",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "14",
+            "field": "noise_seed"
+          },
+          "node_id": "14",
+          "field": "noise_seed",
+          "value": 43,
+          "type": null,
+          "default": 43,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "frames",
+          "target": {
+            "node_id": "2078",
+            "field": "widget_0"
+          },
+          "node_id": "2078",
+          "field": "widget_0",
+          "value": 9,
+          "type": null,
+          "default": 9,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "width",
+          "target": {
+            "node_id": "2080",
+            "field": "widget_0"
+          },
+          "node_id": "2080",
+          "field": "widget_0",
+          "value": 256,
+          "type": null,
+          "default": 256,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "height",
+          "target": {
+            "node_id": "2079",
+            "field": "widget_0"
+          },
+          "node_id": "2079",
+          "field": "widget_0",
+          "value": 256,
+          "type": null,
+          "default": 256,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps",
+          "target": {
+            "node_id": "2076",
+            "field": "value"
+          },
+          "node_id": "2076",
+          "field": "value",
+          "value": 8,
+          "type": null,
+          "default": 8,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "strength",
+          "target": {
+            "node_id": "5012",
+            "field": "strength"
+          },
+          "node_id": "5012",
+          "field": "strength",
+          "value": 1,
+          "type": null,
+          "default": 1,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "ic_lora_filename",
+          "target": {
+            "node_id": "5011",
+            "field": "lora_name"
+          },
+          "node_id": "5011",
+          "field": "lora_name",
+          "value": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+          "type": null,
+          "default": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "ic_lora_strength",
+          "target": {
+            "node_id": "5011",
+            "field": "strength_model"
+          },
+          "node_id": "5011",
+          "field": "strength_model",
+          "value": 1,
+          "type": null,
+          "default": 1,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        }
+      ],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_METADATA contains dynamic values"
+        }
+      ],
+      "public_input_status": "declared",
+      "public_output_status": "partial",
+      "readiness_class": "manual",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_i2v",
@@ -186,7 +673,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_iamccs_audio_extend_low_ram",
@@ -198,7 +697,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_iamccs_audio_image_to_video",
@@ -211,7 +722,19 @@
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_iamccs_long_i2v",
@@ -223,7 +746,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_lightricks_first_last_parity",
@@ -233,7 +768,306 @@
       "custom_nodes": [
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "128",
+            "field": "text"
+          },
+          "node_id": "128",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "negative_prompt",
+          "target": {
+            "node_id": "112",
+            "field": "text"
+          },
+          "node_id": "112",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "100",
+            "field": "noise_seed"
+          },
+          "node_id": "100",
+          "field": "noise_seed",
+          "value": 315253765879496,
+          "type": null,
+          "default": 315253765879496,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed_first",
+          "target": {
+            "node_id": "100",
+            "field": "noise_seed"
+          },
+          "node_id": "100",
+          "field": "noise_seed",
+          "value": 315253765879496,
+          "type": null,
+          "default": 315253765879496,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed_last",
+          "target": {
+            "node_id": "100",
+            "field": "noise_seed"
+          },
+          "node_id": "100",
+          "field": "noise_seed",
+          "value": 315253765879496,
+          "type": null,
+          "default": 315253765879496,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "width",
+          "target": {
+            "node_id": "113",
+            "field": "value"
+          },
+          "node_id": "113",
+          "field": "value",
+          "value": 1280,
+          "type": null,
+          "default": 1280,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "height",
+          "target": {
+            "node_id": "98",
+            "field": "value"
+          },
+          "node_id": "98",
+          "field": "value",
+          "value": 720,
+          "type": null,
+          "default": 720,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "frames",
+          "target": {
+            "node_id": "102",
+            "field": "value"
+          },
+          "node_id": "102",
+          "field": "value",
+          "value": 121,
+          "type": null,
+          "default": 121,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps",
+          "target": {
+            "node_id": "123",
+            "field": "value"
+          },
+          "node_id": "123",
+          "field": "value",
+          "value": 24,
+          "type": null,
+          "default": 24,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps_int",
+          "target": {
+            "node_id": "114",
+            "field": "value"
+          },
+          "node_id": "114",
+          "field": "value",
+          "value": 24,
+          "type": null,
+          "default": 24,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_strength",
+          "target": {
+            "node_id": "115",
+            "field": "strength"
+          },
+          "node_id": "115",
+          "field": "strength",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_strength",
+          "target": {
+            "node_id": "111",
+            "field": "strength"
+          },
+          "node_id": "111",
+          "field": "strength",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_image",
+          "target": {
+            "node_id": "31",
+            "field": "image"
+          },
+          "node_id": "31",
+          "field": "image",
+          "value": "first.png",
+          "type": null,
+          "default": "first.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_image",
+          "target": {
+            "node_id": "39",
+            "field": "image"
+          },
+          "node_id": "39",
+          "field": "image",
+          "value": "last.png",
+          "type": null,
+          "default": "last.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "127",
+            "field": "ckpt_name"
+          },
+          "node_id": "127",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-distilled-fp8.safetensors",
+          "type": null,
+          "default": "ltx-2.3-22b-distilled-fp8.safetensors",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        }
+      ],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_METADATA contains dynamic values"
+        },
+        {
+          "code": "static_dynamic_value",
+          "severity": "warning",
+          "message": "register_input has dynamic 'value'"
+        },
+        {
+          "code": "static_dynamic_value",
+          "severity": "warning",
+          "message": "register_input has dynamic 'value'"
+        }
+      ],
+      "public_input_status": "declared",
+      "public_output_status": "partial",
+      "readiness_class": "manual",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_lightricks_first_last_two_stage_lowvram",
@@ -244,7 +1078,442 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "128",
+            "field": "text"
+          },
+          "node_id": "128",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "negative_prompt",
+          "target": {
+            "node_id": "112",
+            "field": "text"
+          },
+          "node_id": "112",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "negative",
+          "target": {
+            "node_id": "112",
+            "field": "text"
+          },
+          "node_id": "112",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "100",
+            "field": "noise_seed"
+          },
+          "node_id": "100",
+          "field": "noise_seed",
+          "value": 315253765879496,
+          "type": null,
+          "default": 315253765879496,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed_first",
+          "target": {
+            "node_id": "100",
+            "field": "noise_seed"
+          },
+          "node_id": "100",
+          "field": "noise_seed",
+          "value": 315253765879496,
+          "type": null,
+          "default": 315253765879496,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed_last",
+          "target": {
+            "node_id": "101",
+            "field": "noise_seed"
+          },
+          "node_id": "101",
+          "field": "noise_seed",
+          "value": 315253765879496,
+          "type": null,
+          "default": 315253765879496,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "width",
+          "target": {
+            "node_id": "113",
+            "field": "value"
+          },
+          "node_id": "113",
+          "field": "value",
+          "value": 768,
+          "type": null,
+          "default": 768,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "height",
+          "target": {
+            "node_id": "98",
+            "field": "value"
+          },
+          "node_id": "98",
+          "field": "value",
+          "value": 512,
+          "type": null,
+          "default": 512,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "stage1_width",
+          "target": {
+            "node_id": "1131",
+            "field": "value"
+          },
+          "node_id": "1131",
+          "field": "value",
+          "value": 384,
+          "type": null,
+          "default": 384,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "stage1_height",
+          "target": {
+            "node_id": "981",
+            "field": "value"
+          },
+          "node_id": "981",
+          "field": "value",
+          "value": 256,
+          "type": null,
+          "default": 256,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "frames",
+          "target": {
+            "node_id": "102",
+            "field": "value"
+          },
+          "node_id": "102",
+          "field": "value",
+          "value": 81,
+          "type": null,
+          "default": 81,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps",
+          "target": {
+            "node_id": "123",
+            "field": "value"
+          },
+          "node_id": "123",
+          "field": "value",
+          "value": 24,
+          "type": null,
+          "default": 24,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps_int",
+          "target": {
+            "node_id": "114",
+            "field": "value"
+          },
+          "node_id": "114",
+          "field": "value",
+          "value": 24,
+          "type": null,
+          "default": 24,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_strength",
+          "target": {
+            "node_id": "115",
+            "field": "strength"
+          },
+          "node_id": "115",
+          "field": "strength",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_strength",
+          "target": {
+            "node_id": "111",
+            "field": "strength"
+          },
+          "node_id": "111",
+          "field": "strength",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_frame_strength",
+          "target": {
+            "node_id": "2150",
+            "field": "strength"
+          },
+          "node_id": "2150",
+          "field": "strength",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_frame_strength",
+          "target": {
+            "node_id": "2152",
+            "field": "strength"
+          },
+          "node_id": "2152",
+          "field": "strength",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_image",
+          "target": {
+            "node_id": "31",
+            "field": "image"
+          },
+          "node_id": "31",
+          "field": "image",
+          "value": "first.png",
+          "type": null,
+          "default": "first.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_image",
+          "target": {
+            "node_id": "39",
+            "field": "image"
+          },
+          "node_id": "39",
+          "field": "image",
+          "value": "last.png",
+          "type": null,
+          "default": "last.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "start_image",
+          "target": {
+            "node_id": "31",
+            "field": "image"
+          },
+          "node_id": "31",
+          "field": "image",
+          "value": "first.png",
+          "type": null,
+          "default": "first.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "end_image",
+          "target": {
+            "node_id": "39",
+            "field": "image"
+          },
+          "node_id": "39",
+          "field": "image",
+          "value": "last.png",
+          "type": null,
+          "default": "last.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "127",
+            "field": "ckpt_name"
+          },
+          "node_id": "127",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-distilled-fp8.safetensors",
+          "type": null,
+          "default": "ltx-2.3-22b-distilled-fp8.safetensors",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        }
+      ],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_METADATA contains dynamic values"
+        },
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_REQUIREMENTS contains dynamic values"
+        },
+        {
+          "code": "static_dynamic_value",
+          "severity": "warning",
+          "message": "register_input has dynamic 'value'"
+        },
+        {
+          "code": "static_dynamic_value",
+          "severity": "warning",
+          "message": "register_input has dynamic 'value'"
+        },
+        {
+          "code": "static_dynamic_value",
+          "severity": "warning",
+          "message": "register_input has dynamic 'value'"
+        }
+      ],
+      "public_input_status": "declared",
+      "public_output_status": "partial",
+      "readiness_class": "manual",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_hdr",
@@ -255,7 +1524,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_motion_track",
@@ -266,7 +1547,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_union_control",
@@ -279,7 +1572,19 @@
         "ComfyUI-LTXVideo",
         "comfyui_controlnet_aux"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_lightricks_two_stage",
@@ -290,7 +1595,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_runexx_custom_audio",
@@ -304,7 +1621,19 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_runexx_first_last_frame",
@@ -317,7 +1646,373 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [
+        {
+          "name": "start_image",
+          "target": {
+            "node_id": "45",
+            "field": "image"
+          },
+          "node_id": "45",
+          "field": "image",
+          "value": "image (6).png",
+          "type": null,
+          "default": "image (6).png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "end_image",
+          "target": {
+            "node_id": "47",
+            "field": "image"
+          },
+          "node_id": "47",
+          "field": "image",
+          "value": "0 (13).webp",
+          "type": null,
+          "default": "0 (13).webp",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_image",
+          "target": {
+            "node_id": "45",
+            "field": "image"
+          },
+          "node_id": "45",
+          "field": "image",
+          "value": "image (6).png",
+          "type": null,
+          "default": "image (6).png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_image",
+          "target": {
+            "node_id": "47",
+            "field": "image"
+          },
+          "node_id": "47",
+          "field": "image",
+          "value": "0 (13).webp",
+          "type": null,
+          "default": "0 (13).webp",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "2103",
+            "field": "value"
+          },
+          "node_id": "2103",
+          "field": "value",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "negative",
+          "target": {
+            "node_id": "11",
+            "field": "text"
+          },
+          "node_id": "11",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "negative_prompt",
+          "target": {
+            "node_id": "11",
+            "field": "text"
+          },
+          "node_id": "11",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "15",
+            "field": "noise_seed"
+          },
+          "node_id": "15",
+          "field": "noise_seed",
+          "value": 42,
+          "type": null,
+          "default": 42,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed_first",
+          "target": {
+            "node_id": "15",
+            "field": "noise_seed"
+          },
+          "node_id": "15",
+          "field": "noise_seed",
+          "value": 42,
+          "type": null,
+          "default": 42,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed_last",
+          "target": {
+            "node_id": "14",
+            "field": "noise_seed"
+          },
+          "node_id": "14",
+          "field": "noise_seed",
+          "value": 43,
+          "type": null,
+          "default": 43,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "frames",
+          "target": {
+            "node_id": "2078",
+            "field": "widget_0"
+          },
+          "node_id": "2078",
+          "field": "widget_0",
+          "value": 81,
+          "type": null,
+          "default": 81,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "width",
+          "target": {
+            "node_id": "2080",
+            "field": "widget_0"
+          },
+          "node_id": "2080",
+          "field": "widget_0",
+          "value": 1280,
+          "type": null,
+          "default": 1280,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "height",
+          "target": {
+            "node_id": "2079",
+            "field": "widget_0"
+          },
+          "node_id": "2079",
+          "field": "widget_0",
+          "value": 720,
+          "type": null,
+          "default": 720,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps",
+          "target": {
+            "node_id": "2076",
+            "field": "value"
+          },
+          "node_id": "2076",
+          "field": "value",
+          "value": 24,
+          "type": null,
+          "default": 24,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps_int",
+          "target": {
+            "node_id": "2076",
+            "field": "value"
+          },
+          "node_id": "2076",
+          "field": "value",
+          "value": 24,
+          "type": null,
+          "default": 24,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_frame_strength",
+          "target": {
+            "node_id": "2110",
+            "field": "value"
+          },
+          "node_id": "2110",
+          "field": "value",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_frame_strength",
+          "target": {
+            "node_id": "2108",
+            "field": "value"
+          },
+          "node_id": "2108",
+          "field": "value",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_strength",
+          "target": {
+            "node_id": "2110",
+            "field": "value"
+          },
+          "node_id": "2110",
+          "field": "value",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_strength",
+          "target": {
+            "node_id": "2108",
+            "field": "value"
+          },
+          "node_id": "2108",
+          "field": "value",
+          "value": 1.0,
+          "type": null,
+          "default": 1.0,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        }
+      ],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_METADATA contains dynamic values"
+        },
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_REQUIREMENTS contains dynamic values"
+        }
+      ],
+      "public_input_status": "declared",
+      "public_output_status": "partial",
+      "readiness_class": "manual",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_runexx_first_last_raw_video_guide",
@@ -330,7 +2025,265 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [
+        {
+          "name": "start_image",
+          "target": {
+            "node_id": "45",
+            "field": "image"
+          },
+          "node_id": "45",
+          "field": "image",
+          "value": "example.png",
+          "type": null,
+          "default": "example.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "end_image",
+          "target": {
+            "node_id": "47",
+            "field": "image"
+          },
+          "node_id": "47",
+          "field": "image",
+          "value": "egyptian_queen.png",
+          "type": null,
+          "default": "egyptian_queen.png",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "control_video",
+          "target": {
+            "node_id": "5001",
+            "field": "video"
+          },
+          "node_id": "5001",
+          "field": "video",
+          "value": "ltx_smoke_guide.mp4",
+          "type": null,
+          "default": "ltx_smoke_guide.mp4",
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "2103",
+            "field": "value"
+          },
+          "node_id": "2103",
+          "field": "value",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "negative",
+          "target": {
+            "node_id": "11",
+            "field": "text"
+          },
+          "node_id": "11",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "14",
+            "field": "noise_seed"
+          },
+          "node_id": "14",
+          "field": "noise_seed",
+          "value": 43,
+          "type": null,
+          "default": 43,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "frames",
+          "target": {
+            "node_id": "2078",
+            "field": "widget_0"
+          },
+          "node_id": "2078",
+          "field": "widget_0",
+          "value": 9,
+          "type": null,
+          "default": 9,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "width",
+          "target": {
+            "node_id": "2080",
+            "field": "widget_0"
+          },
+          "node_id": "2080",
+          "field": "widget_0",
+          "value": 256,
+          "type": null,
+          "default": 256,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "height",
+          "target": {
+            "node_id": "2079",
+            "field": "widget_0"
+          },
+          "node_id": "2079",
+          "field": "widget_0",
+          "value": 256,
+          "type": null,
+          "default": 256,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "fps",
+          "target": {
+            "node_id": "2076",
+            "field": "value"
+          },
+          "node_id": "2076",
+          "field": "value",
+          "value": 8,
+          "type": null,
+          "default": 8,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "strength",
+          "target": {
+            "node_id": "6102",
+            "field": "value"
+          },
+          "node_id": "6102",
+          "field": "value",
+          "value": 1,
+          "type": null,
+          "default": 1,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "first_frame_strength",
+          "target": {
+            "node_id": "2110",
+            "field": "value"
+          },
+          "node_id": "2110",
+          "field": "value",
+          "value": 0.8,
+          "type": null,
+          "default": 0.8,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        },
+        {
+          "name": "last_frame_strength",
+          "target": {
+            "node_id": "2108",
+            "field": "value"
+          },
+          "node_id": "2108",
+          "field": "value",
+          "value": 0.8,
+          "type": null,
+          "default": 0.8,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
+        }
+      ],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_METADATA contains dynamic values"
+        },
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_REQUIREMENTS contains dynamic values"
+        }
+      ],
+      "public_input_status": "declared",
+      "public_output_status": "partial",
+      "readiness_class": "manual",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/ltx2_3_runexx_first_middle_last_frame",
@@ -344,7 +2297,25 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [
+        {
+          "code": "static_dynamic_assignment",
+          "severity": "warning",
+          "message": "READY_METADATA contains dynamic values"
+        }
+      ],
+      "public_input_status": "partial",
+      "public_output_status": "partial",
+      "readiness_class": "manual",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_runexx_lipsync_custom_audio",
@@ -358,7 +2329,19 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_runexx_motion_transfer_dwpose",
@@ -373,7 +2356,19 @@
         "comfyui_controlnet_aux",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_runexx_music_video_low_ram",
@@ -387,7 +2382,19 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
@@ -402,7 +2409,19 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_runexx_video_to_video_extend",
@@ -415,7 +2434,19 @@
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/ltx2_3_t2v",
@@ -426,7 +2457,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wan22_animate_native_first_stage",
@@ -438,7 +2481,19 @@
         "ComfyUI-segment-anything-2",
         "comfyui_controlnet_aux"
       ],
-      "model_count": 9
+      "model_count": 9,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wan22_i2v_comfy_lightx2v",
@@ -446,7 +2501,19 @@
       "capability": "image_to_video",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
-      "model_count": 6
+      "model_count": 6,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wan_i2v",
@@ -454,7 +2521,19 @@
       "capability": "image_to_video",
       "coverage_tier": "required",
       "custom_nodes": [],
-      "model_count": 4
+      "model_count": 4,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wan_t2v",
@@ -462,7 +2541,19 @@
       "capability": "text_to_video",
       "coverage_tier": "required",
       "custom_nodes": [],
-      "model_count": 3
+      "model_count": 3,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": true,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wanvideo_wrapper_13b_control_lora",
@@ -474,7 +2565,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_13b_recammaster",
@@ -486,7 +2589,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_13b_vace",
@@ -499,7 +2614,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_flf2v",
@@ -511,7 +2638,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_fun_control",
@@ -524,7 +2663,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
@@ -536,7 +2687,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_i2v",
@@ -548,7 +2711,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_t2v",
@@ -560,7 +2735,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
@@ -572,7 +2759,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
@@ -584,7 +2783,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_i2v_kijai",
@@ -596,7 +2807,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 6
+      "model_count": 6,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_t2i",
@@ -607,7 +2830,19 @@
         "ComfyUI-KJNodes",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 5
+      "model_count": 5,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_vace_cocktail",
@@ -619,7 +2854,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 6
+      "model_count": 6,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_i2v",
@@ -631,7 +2878,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
@@ -643,7 +2902,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v",
@@ -655,7 +2926,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_t2v_controlnet",
@@ -667,7 +2950,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_22_s2v_context_window",
@@ -679,7 +2974,19 @@
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
@@ -692,7 +2999,19 @@
         "ComfyUI-WanVideoWrapper",
         "comfyui_controlnet_aux"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     },
     {
       "id": "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai",
@@ -707,7 +3026,19 @@
         "ComfyUI-segment-anything-2",
         "comfyui_controlnet_aux"
       ],
-      "model_count": 11
+      "model_count": 11,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": false
     },
     {
       "id": "video/wanvideo_wrapper_wan_animate",
@@ -720,7 +3051,19 @@
         "ComfyUI-WanVideoWrapper",
         "comfyui_controlnet_aux"
       ],
-      "model_count": 0
+      "model_count": 0,
+      "public_inputs": [],
+      "public_outputs": [],
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "missing",
+      "public_output_status": "missing",
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true
     }
   ]
 }

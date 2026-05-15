@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 
 from vibecomfy.contracts import build_contract, doctor_contract
+from vibecomfy.contracts.model import WorkflowRuntimeContract
 from vibecomfy.registry.ready import workflow_from_ready
-from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
 
 def _synthetic_workflow(**metadata: object) -> VibeWorkflow:
@@ -65,6 +66,52 @@ def test_build_contract_z_image() -> None:
     serialized = json.dumps(payload)
     round_tripped = json.loads(serialized)
     assert round_tripped == payload
+
+
+def test_contract_additive_public_shape_round_trips_without_breaking_legacy_fields() -> None:
+    workflow = VibeWorkflow(
+        id="test/public_contract",
+        source=WorkflowSource(id="test/public_contract"),
+    )
+    workflow.nodes["1"] = VibeNode(id="1", class_type="SaveImage", inputs={"filename_prefix": "old"})
+    workflow.register_input(
+        "filename_prefix",
+        "1",
+        "filename_prefix",
+        "old",
+        type="STRING",
+        default="old",
+        required=True,
+        aliases=["prefix"],
+        media_semantics="image",
+    )
+    workflow.outputs.append(
+        VibeOutput(
+            node_id="1",
+            output_type="SaveImage",
+            name="image",
+            artifact_kind="image",
+            mime_type="image/png",
+            filename_prefix="old",
+            expected_cardinality="one",
+        )
+    )
+
+    payload = json.loads(json.dumps(build_contract(workflow).to_dict()))
+    restored = WorkflowRuntimeContract(**payload)
+
+    assert restored.version == 1
+    assert restored.contract_shape == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert payload["inputs"] == ["filename_prefix"]
+    assert payload["outputs"] == [{"node_id": "1", "output_type": "SaveImage", "name": "image"}]
+    assert payload["public_inputs"][0]["aliases"] == ["prefix"]
+    assert payload["public_inputs"][0]["default"] == "old"
+    assert payload["public_inputs"][0]["media_semantics"] == "image"
+    assert "media" not in payload["public_inputs"][0]
+    assert payload["public_outputs"][0]["artifact_kind"] == "image"
+    assert payload["public_outputs"][0]["expected_cardinality"] == "one"
+    assert restored.public_inputs == payload["public_inputs"]
+    assert restored.public_outputs == payload["public_outputs"]
 
 
 # ─── (b) PathchSageAttentionKJ without sageattention declared → error

@@ -33,7 +33,7 @@ from vibecomfy.runtime.session import (
     model_fingerprint,
 )
 import vibecomfy.runtime.client as client_module
-from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
 runtime_run_module = importlib.import_module("vibecomfy.runtime.run")
 
@@ -63,6 +63,85 @@ def test_comfy_client_long_http_errors_keep_tail() -> None:
     assert "start-" in message
     assert "response body truncated" in message
     assert "node_id_2077" in message
+
+
+def test_run_metadata_groups_single_artifact_by_semantic_output() -> None:
+    workflow = VibeWorkflow("runtime-test", WorkflowSource("runtime-test"))
+    workflow.outputs.append(VibeOutput(node_id="9", output_type="SaveImage", name="image", artifact_kind="image"))
+    metadata = _run_metadata(
+        run_id="run-1",
+        workflow=workflow,
+        api_dict={},
+        queued={"outputs": {}},
+        outputs=["/tmp/out/image.png"],
+        runtime="embedded",
+    )
+
+    assert metadata["artifact_paths"] == ["/tmp/out/image.png"]
+    assert metadata["outputs"] == ["/tmp/out/image.png"]
+    assert metadata["artifact_manifest"] == {
+        "schema_version": 1,
+        "by_output": {"image": ["/tmp/out/image.png"]},
+        "unmapped": [],
+        "attribution": [
+            {"path": "/tmp/out/image.png", "output": "image", "method": "single_named_output"},
+        ],
+    }
+
+
+def test_run_metadata_uses_filename_prefix_and_keeps_uncertain_artifacts_unmapped() -> None:
+    workflow = VibeWorkflow("runtime-test", WorkflowSource("runtime-test"))
+    workflow.outputs.extend(
+        [
+            VibeOutput(
+                node_id="9",
+                output_type="SaveImage",
+                name="preview",
+                artifact_kind="image",
+                filename_prefix="previews/preview",
+            ),
+            VibeOutput(
+                node_id="10",
+                output_type="VHS_VideoCombine",
+                name="clip",
+                artifact_kind="video",
+                filename_prefix="clips/clip",
+            ),
+        ]
+    )
+    metadata = _run_metadata(
+        run_id="run-1",
+        workflow=workflow,
+        api_dict={},
+        queued={"outputs": {}},
+        outputs=[
+            "/tmp/out/previews/preview_00001.png",
+            "/tmp/out/clips/clip_00001.mp4",
+            "/tmp/out/mystery.bin",
+        ],
+        runtime="embedded",
+    )
+
+    assert metadata["artifact_manifest"] == {
+        "schema_version": 1,
+        "by_output": {
+            "preview": ["/tmp/out/previews/preview_00001.png"],
+            "clip": ["/tmp/out/clips/clip_00001.mp4"],
+        },
+        "unmapped": ["/tmp/out/mystery.bin"],
+        "attribution": [
+            {
+                "path": "/tmp/out/previews/preview_00001.png",
+                "output": "preview",
+                "method": "filename_prefix",
+            },
+            {
+                "path": "/tmp/out/clips/clip_00001.mp4",
+                "output": "clip",
+                "method": "filename_prefix",
+            },
+        ],
+    }
 
 
 class FakeConfiguration(dict):
@@ -284,6 +363,9 @@ def test_one_shot_run_validates_against_active_url(tmp_path: Path, monkeypatch: 
     async def fake_prepare(workflow, *, backend, schema_provider, on_unavailable, cache_only=False):
         return workflow.compile(backend=backend)
 
+    async def fake_history(*args, **kwargs):
+        return {}
+
     class FakeClient:
         def __init__(self, server_url: str) -> None:
             queued_urls.append(server_url)
@@ -295,6 +377,7 @@ def test_one_shot_run_validates_against_active_url(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", fake_build)
     monkeypatch.setattr(runtime_run_module, "_prepare_prompt_async", fake_prepare)
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(runtime_run_module, "_wait_for_server_history", fake_history)
 
     asyncio.run(runtime_run_module.run(_workflow(), server_url="http://configured.test"))
 

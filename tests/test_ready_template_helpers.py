@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from vibecomfy.handles import Handle
@@ -12,7 +10,7 @@ from vibecomfy.registry.ready_template import (
     ready_node,
     ready_workflow,
 )
-from vibecomfy.workflow import VibeOutput, VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeOutput, VibeWorkflow
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +241,36 @@ def test_lifecycle_set_input_then_compile_for_node_field() -> None:
     assert api["10"]["inputs"]["filename_prefix"] == "my/prefix"
 
 
+def test_bind_input_records_descriptor_metadata_and_alias_sets_compiled_field() -> None:
+    wf = ready_workflow("test", source_path="/tmp/test.py")
+    ready_node(wf, "SaveImage", source_id="10", filename_prefix="out/default")
+
+    bind_input(
+        wf,
+        "filename_prefix",
+        "10",
+        "filename_prefix",
+        type="STRING",
+        default="out/default",
+        required=True,
+        aliases=["prefix"],
+        media_semantics="image",
+    )
+
+    bound = wf.inputs["filename_prefix"]
+    assert bound.type == "STRING"
+    assert bound.default == "out/default"
+    assert bound.value == "out/default"
+    assert bound.required is True
+    assert bound.aliases == ("prefix",)
+    assert bound.media_semantics == "image"
+
+    wf.set_input("prefix", "out/alias")
+    assert bound.default == "out/default"
+    assert bound.value == "out/alias"
+    assert wf.compile("api")["10"]["inputs"]["filename_prefix"] == "out/alias"
+
+
 # ---------------------------------------------------------------------------
 # (d) bind_output produces a semantic output name in workflow.outputs with
 #     artifact_kind/mime_type/filename_prefix
@@ -259,6 +287,7 @@ def test_bind_output_appends_new_output() -> None:
         artifact_kind="image",
         mime_type="image/png",
         filename_prefix="out/final",
+        expected_cardinality="one",
     )
 
     assert len(wf.outputs) == 1
@@ -269,6 +298,7 @@ def test_bind_output_appends_new_output() -> None:
     assert out.artifact_kind == "image"
     assert out.mime_type == "image/png"
     assert out.filename_prefix == "out/final"
+    assert out.expected_cardinality == "one"
 
 
 def test_bind_output_updates_existing_output_in_place() -> None:
@@ -320,6 +350,7 @@ def test_bind_output_none_fields_are_not_overridden() -> None:
             artifact_kind="image",
             mime_type="image/png",
             filename_prefix="orig_prefix",
+            expected_cardinality="one",
         )
     )
 
@@ -330,6 +361,17 @@ def test_bind_output_none_fields_are_not_overridden() -> None:
     assert out.artifact_kind == "image"  # preserved
     assert out.mime_type == "image/png"  # preserved
     assert out.filename_prefix == "orig_prefix"  # preserved
+    assert out.expected_cardinality == "one"  # preserved
+
+
+def test_bind_output_updates_expected_cardinality() -> None:
+    wf = ready_workflow("test", source_path="/tmp/test.py")
+    ready_node(wf, "SaveImage", source_id="3")
+    wf.outputs.append(VibeOutput(node_id="3", output_type="SaveImage", expected_cardinality="one"))
+
+    bind_output(wf, "3", expected_cardinality="many")
+
+    assert wf.outputs[0].expected_cardinality == "many"
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +445,36 @@ def test_bind_input_validates_against_node_inputs() -> None:
     bind_input(wf, "img_input", "1", "image")
     assert wf.inputs["img_input"].node_id == "1"
     assert wf.inputs["img_input"].field == "image"
+
+
+def test_bind_input_rejects_alias_collision_with_existing_alias() -> None:
+    wf = ready_workflow("test", source_path="/tmp/test.py")
+    ready_node(wf, "SaveImage", source_id="1", filename_prefix="one")
+    ready_node(wf, "SaveImage", source_id="2", filename_prefix="two")
+    bind_input(wf, "first", "1", "filename_prefix", aliases=["prefix"])
+
+    with pytest.raises(ValueError, match="existing alias"):
+        bind_input(wf, "second", "2", "filename_prefix", aliases=["prefix"])
+
+
+def test_bind_input_rejects_alias_collision_with_primary_name() -> None:
+    wf = ready_workflow("test", source_path="/tmp/test.py")
+    ready_node(wf, "SaveImage", source_id="1", filename_prefix="one")
+    ready_node(wf, "SaveImage", source_id="2", filename_prefix="two")
+    bind_input(wf, "first", "1", "filename_prefix")
+
+    with pytest.raises(ValueError, match="existing primary input"):
+        bind_input(wf, "second", "2", "filename_prefix", aliases=["first"])
+
+
+def test_bind_input_rejects_primary_collision_with_existing_alias() -> None:
+    wf = ready_workflow("test", source_path="/tmp/test.py")
+    ready_node(wf, "SaveImage", source_id="1", filename_prefix="one")
+    ready_node(wf, "SaveImage", source_id="2", filename_prefix="two")
+    bind_input(wf, "first", "1", "filename_prefix", aliases=["prefix"])
+
+    with pytest.raises(ValueError, match="existing alias"):
+        bind_input(wf, "prefix", "2", "filename_prefix")
 
 
 # ---------------------------------------------------------------------------

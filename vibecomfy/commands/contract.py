@@ -23,6 +23,9 @@ def _render_contract_inspect(payload: dict) -> str:
         f"custom_nodes: {', '.join(payload['custom_nodes']) or '-'}",
         f"inputs: {', '.join(payload['inputs']) or '-'}",
         f"outputs: {len(payload['outputs'])} entries",
+        f"contract_shape: {payload['contract_shape']}",
+        f"public_inputs: {len(payload['public_inputs'])} entries",
+        f"public_outputs: {len(payload['public_outputs'])} entries",
         f"runtime_nodes: {len(payload['runtime_nodes'])} entries",
         f"runtime_class_types: {len(payload['runtime_class_types'])} entries",
         f"runtime_packages: {len(payload['runtime_packages'])} entries",
@@ -57,7 +60,12 @@ def _cmd_contract_doctor(args: argparse.Namespace) -> int:
 
 
 def _render_contract_doctor(payload: dict) -> str:
+    contract = payload.get("contract") or {}
     lines = [f"status: {payload['status']}"]
+    if contract:
+        lines.append(f"contract_shape: {contract.get('contract_shape', '-')}")
+        lines.append(f"public_inputs: {len(contract.get('public_inputs') or [])} entries")
+        lines.append(f"public_outputs: {len(contract.get('public_outputs') or [])} entries")
     if payload["diagnostics"]:
         lines.append("diagnostics:")
         for d in payload["diagnostics"]:

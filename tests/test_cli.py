@@ -11,6 +11,7 @@ from vibecomfy.cli import build_parser
 from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
+from vibecomfy.commands.inspect import _cmd_inspect
 from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore, _cmd_nodes_spec
 from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_widgets
 from vibecomfy.commands.contract import _cmd_contract_inspect, _cmd_contract_doctor
@@ -231,6 +232,10 @@ def test_port_check_json_returns_zero_for_clean_workflow(
     assert code == 0
     assert payload["ok"] is True
     assert payload["provenance"]["source_kind"] == "raw_json"
+    assert payload["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert isinstance(payload["public_inputs"], list)
+    assert isinstance(payload["public_outputs"], list)
+    assert isinstance(payload["graph_contract"], dict)
 
 
 def test_port_check_returns_nonzero_for_hard_port_errors(
@@ -786,6 +791,63 @@ def test_strict_ready_template_gate_requires_output_contract() -> None:
 
     assert report.has_errors
     assert report.diagnostics[0].code == "strict_ready_missing_output_contract"
+    assert "bind_output" in (report.diagnostics[0].recommendation or "")
+    assert "public_outputs" in (report.diagnostics[0].recommendation or "")
+
+
+def test_inspect_json_exposes_canonical_public_contract_fields(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_inspect(argparse.Namespace(workflow="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["contract_shape"] == payload["contract"]["contract_shape"]
+    assert payload["public_inputs"] == payload["contract"]["public_inputs"]
+    assert payload["public_outputs"] == payload["contract"]["public_outputs"]
+    assert payload["graph_contract"] == payload["contract"]["graph_contract"]
+    assert isinstance(payload["inputs"], list)
+    assert isinstance(payload["outputs"], list)
+
+
+def test_inspect_text_exposes_public_contract_counts(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_inspect(argparse.Namespace(workflow="image/z_image", json=False))
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "public inputs:" in output
+    assert "public outputs:" in output
+    assert "readiness: ready" in output
+
+
+def test_doctor_json_embeds_canonical_public_contract_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from vibecomfy.commands.doctor import _cmd_doctor
+
+    scratchpad = tmp_path / "doctor_contract.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="doctor-contract", source=WorkflowSource(id="doctor-contract"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="SaveImage", inputs={"filename_prefix": "out/test"})
+    workflow.finalize_metadata()
+    return workflow
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
+    code = _cmd_doctor(argparse.Namespace(path=str(scratchpad), json=True, lint=False, allow_drift=False))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["contract_shape"] == payload["contract"]["contract_shape"]
+    assert payload["public_inputs"] == payload["contract"]["public_inputs"]
+    assert payload["public_outputs"] == payload["contract"]["public_outputs"]
+    assert payload["graph_contract"] == payload["contract"]["graph_contract"]
 
 
 def test_nodes_install_plan_suggests_pack_for_missing_class(
@@ -989,9 +1051,23 @@ def test_contract_inspect_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert isinstance(payload["inputs"], list)
     assert "model" in payload["inputs"]
     assert isinstance(payload["outputs"], list)
+    assert payload["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert isinstance(payload["public_inputs"], list)
+    assert isinstance(payload["public_outputs"], list)
+    assert isinstance(payload["graph_contract"], dict)
     assert isinstance(payload["runtime_nodes"], list)
     assert isinstance(payload["runtime_class_types"], list)
     assert payload["readiness_level"] == "ready"
+
+
+def test_contract_text_exposes_public_contract_counts(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_contract_inspect(argparse.Namespace(workflow="image/z_image", json=False))
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "contract_shape: workflow_runtime_contract.v1.public_descriptors.v2" in output
+    assert "public_inputs:" in output
+    assert "public_outputs:" in output
 
 
 def test_contract_doctor_json(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1003,6 +1079,9 @@ def test_contract_doctor_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["status"] == "ok"
     assert isinstance(payload["contract"], dict)
     assert payload["contract"]["version"] == 1
+    assert payload["contract"]["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert isinstance(payload["contract"]["public_inputs"], list)
+    assert isinstance(payload["contract"]["public_outputs"], list)
     assert isinstance(payload["diagnostics"], list)
     # No error diagnostics for a clean image/z_image
     error_diags = [d for d in payload["diagnostics"] if d["severity"] == "error"]

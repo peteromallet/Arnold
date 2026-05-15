@@ -59,6 +59,20 @@ class VibeInput:
     node_id: str
     field: str
     value: Any = None
+    type: str | None = None
+    default: Any = None
+    required: bool = False
+    range: Any = None
+    aliases: tuple[str, ...] = field(default_factory=tuple)
+    media_semantics: str | None = None
+
+    @property
+    def media(self) -> str | None:
+        return self.media_semantics
+
+    @media.setter
+    def media(self, value: str | None) -> None:
+        self.media_semantics = value
 
 
 @dataclass(slots=True)
@@ -69,6 +83,7 @@ class VibeOutput:
     artifact_kind: str | None = None
     mime_type: str | None = None
     filename_prefix: str | None = None
+    expected_cardinality: str | int | None = None
 
 
 @dataclass(slots=True)
@@ -121,12 +136,46 @@ class VibeWorkflow:
         self.requirements = _infer_requirements(self)
         return self
 
-    def register_input(self, name: str, node_id: str, field: str, value: Any = None) -> "VibeWorkflow":
-        self.inputs[name] = VibeInput(name=name, node_id=str(node_id), field=field, value=value)
+    def register_input(
+        self,
+        name: str,
+        node_id: str,
+        field: str,
+        value: Any = None,
+        *,
+        type: str | None = None,
+        default: Any = None,
+        required: bool = False,
+        range: Any = None,
+        aliases: list[str] | tuple[str, ...] | None = None,
+        media_semantics: str | None = None,
+        media: str | None = None,
+    ) -> "VibeWorkflow":
+        if media_semantics is not None and media is not None and media_semantics != media:
+            raise ValueError(
+                f"register_input({name!r}): media_semantics and legacy media "
+                "must match when both are provided"
+            )
+        resolved_media_semantics = media_semantics if media_semantics is not None else media
+        alias_tuple = _normalize_input_aliases(aliases)
+        self._validate_input_aliases(name, alias_tuple)
+        self._validate_input_target(name, node_id, field)
+        self.inputs[name] = VibeInput(
+            name=name,
+            node_id=str(node_id),
+            field=field,
+            value=value,
+            type=type,
+            default=value if default is None else default,
+            required=required,
+            range=range,
+            aliases=alias_tuple,
+            media_semantics=resolved_media_semantics,
+        )
         return self
 
     def set_input(self, name: str, value: Any) -> "VibeWorkflow":
-        target = self.inputs.get(name)
+        target = self._resolve_input(name)
         if target and target.node_id in self.nodes:
             node = self.nodes[target.node_id]
             if target.field in node.inputs:
@@ -138,6 +187,56 @@ class VibeWorkflow:
 
         self.metadata.setdefault("unbound_inputs", {})[name] = value
         return self
+
+    def _resolve_input(self, name: str) -> VibeInput | None:
+        if name in self.inputs:
+            return self.inputs[name]
+        matches = [item for item in self.inputs.values() if name in item.aliases]
+        if len(matches) > 1:
+            raise ValueError(f"Input alias {name!r} is ambiguous in workflow {self.id!r}")
+        return matches[0] if matches else None
+
+    def _validate_input_aliases(self, name: str, aliases: tuple[str, ...]) -> None:
+        if len(set(aliases)) != len(aliases):
+            raise ValueError(f"register_input({name!r}): duplicate aliases are not allowed")
+        if name in aliases:
+            raise ValueError(f"register_input({name!r}): alias cannot equal its primary input name")
+        existing_primary_names = {existing_name for existing_name in self.inputs if existing_name != name}
+        if name in {
+            alias
+            for existing_name, item in self.inputs.items()
+            if existing_name != name
+            for alias in item.aliases
+        }:
+            raise ValueError(f"register_input({name!r}): primary input name conflicts with an existing alias")
+        primary_conflicts = existing_primary_names.intersection(aliases)
+        if primary_conflicts:
+            conflict = sorted(primary_conflicts)[0]
+            raise ValueError(f"register_input({name!r}): alias {conflict!r} conflicts with an existing primary input")
+        existing_aliases = {
+            alias
+            for existing_name, item in self.inputs.items()
+            if existing_name != name
+            for alias in item.aliases
+        }
+        alias_conflicts = existing_aliases.intersection(aliases)
+        if alias_conflicts:
+            conflict = sorted(alias_conflicts)[0]
+            raise ValueError(f"register_input({name!r}): alias {conflict!r} conflicts with an existing alias")
+
+    def _validate_input_target(self, name: str, node_id: str, field: str) -> None:
+        node_key = str(node_id)
+        if node_key not in self.nodes:
+            raise ValueError(
+                f"register_input({name!r}): target node {node_key!r} does not exist "
+                f"in workflow {self.id!r}"
+            )
+        node = self.nodes[node_key]
+        if field not in node.inputs and field not in node.widgets:
+            raise ValueError(
+                f"register_input({name!r}): field {field!r} not found in "
+                f"node {node_key!r} ({node.class_type}) inputs or widgets"
+            )
 
     def add_node(self, class_type: str, **inputs: Any) -> VibeNode:
         node_id = self._next_node_id()
@@ -358,6 +457,12 @@ def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
         for key, value in inputs.items()
         if not _is_ui_only_prompt_input(key, value)
     }
+
+
+def _normalize_input_aliases(aliases: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    if aliases is None:
+        return ()
+    return tuple(str(alias) for alias in aliases)
 
 
 def _is_ui_only_prompt_input(key: str, value: Any) -> bool:

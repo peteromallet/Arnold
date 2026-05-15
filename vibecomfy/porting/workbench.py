@@ -7,13 +7,16 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+PortAnalysisMode = Literal["auto", "scratchpad", "strict_ready", "app_active"]
 
 from vibecomfy.cli_loader import _ready_id_for
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_shape, normalize_to_api
 from vibecomfy.metadata import OUTPUT_NODE_NAMES
+from vibecomfy.contracts import build_contract
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 from vibecomfy.porting.assets import analyze_model_assets
 from vibecomfy.porting.emitter import (
@@ -94,9 +97,11 @@ def analyze_source(
     schema_provider: Any | None = None,
     head_check_models: bool = False,
     head_client: Any | None = None,
+    mode: PortAnalysisMode = "auto",
 ) -> PortReport:
     loaded = load_port_source(source, schema_provider=schema_provider)
     workflow = loaded.workflow
+    resolved_mode = _resolve_analysis_mode(mode, workflow)
 
     api_prompt: dict[str, Any] | None = None
     compile_issue: PortIssue | None = None
@@ -126,11 +131,12 @@ def analyze_source(
             "runtime_class_types": workflow.runtime_class_types(),
         },
     )
+    report.metadata["contract"] = build_contract(workflow).to_dict()
 
     for issue in workflow.helper_diagnostics():
         report.diagnostics.append(_port_issue_from_validation(issue, category="helper"))
 
-    report.diagnostics.extend(_materialization_diagnostics(workflow))
+    report.diagnostics.extend(_materialization_diagnostics(workflow, resolved_mode=resolved_mode))
     report.diagnostics.extend(_save_output_mapping_diagnostics(workflow, source_kind=loaded.source_kind))
 
     custom_node_analysis = _custom_node_analysis(workflow, schema_provider=schema_provider)
@@ -214,7 +220,34 @@ def analyze_source(
     return report
 
 
-def _materialization_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
+def _resolve_analysis_mode(
+    mode: PortAnalysisMode,
+    workflow: VibeWorkflow,
+) -> PortAnalysisMode:
+    """Resolve ``mode=\"auto\"`` to the concrete analysis mode.
+
+    When ``mode`` is ``\"auto\"``, the workflow metadata is inspected:
+    ``app_active`` is True or ``coverage_tier == \"required\"`` selects
+    ``app_active``; otherwise ``scratchpad`` is returned.
+
+    Explicit modes (``scratchpad``, ``strict_ready``, ``app_active``) are
+    returned unchanged.
+    """
+    if mode != "auto":
+        return mode
+    metadata = workflow.metadata or {}
+    if metadata.get("app_active") is True:
+        return "app_active"
+    if metadata.get("coverage_tier") == "required":
+        return "app_active"
+    return "scratchpad"
+
+
+def _materialization_diagnostics(
+    workflow: VibeWorkflow,
+    *,
+    resolved_mode: PortAnalysisMode = "scratchpad",
+) -> list[PortIssue]:
     issues: list[PortIssue] = []
     for node in workflow.nodes.values():
         class_type = str(node.class_type)
@@ -229,7 +262,7 @@ def _materialization_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
                     severity="error",
                     node_id=node.id,
                     class_type=class_type,
-                    detail={"category": "materialization"},
+                    detail={"category": "materialization", "analysis_mode": resolved_mode},
                     recommendation=(
                         "Re-export with all custom/core nodes available, or replace this source with a fully "
                         "materialized API workflow before conversion or RunPod validation."
@@ -237,6 +270,24 @@ def _materialization_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
                 )
             )
         elif _OPAQUE_COMPONENT_CLASS_RE.match(class_type):
+            # Opaque component classes (UUID class types) are a warning in
+            # scratchpad mode but a hard error in strict_ready/app_active.
+            opaque_severity: Literal["error", "warning"] = (
+                "warning" if resolved_mode == "scratchpad" else "error"
+            )
+            opaque_recommendation: str
+            if resolved_mode == "scratchpad":
+                opaque_recommendation = (
+                    "Opaque component node will block promotion to a ready template. "
+                    "Replace with a known first-class replacement node and declared "
+                    "inputs/outputs/requirements before using --ready-id."
+                )
+            else:
+                opaque_recommendation = (
+                    "Inline component/subgraph definitions with graphbuilder or ComfyUI's converter before "
+                    "materializing a ready template. Do not wrap an opaque UUID runtime node in a Python "
+                    "name; promotion requires real workflow-builder code with a known first-class replacement node."
+                )
             issues.append(
                 PortIssue(
                     code="opaque_component_node_class",
@@ -244,14 +295,14 @@ def _materialization_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
                         f"Node {node.id} uses opaque component class {class_type!r}; headless API execution "
                         "will not know this class unless the component is inlined."
                     ),
-                    severity="error",
+                    severity=opaque_severity,
                     node_id=node.id,
                     class_type=class_type,
-                    detail={"category": "materialization"},
-                    recommendation=(
-                        "Inline component/subgraph definitions with graphbuilder or ComfyUI's converter before "
-                        "materializing a ready template."
-                    ),
+                    detail={
+                        "category": "materialization",
+                        "analysis_mode": resolved_mode,
+                    },
+                    recommendation=opaque_recommendation,
                 )
             )
     return issues
@@ -1077,4 +1128,9 @@ def _strict_template_style_diagnostics(loaded: LoadedPortSource) -> list[PortIss
     return issues
 
 
-__all__ = ["LoadedPortSource", "analyze_source", "load_port_source"]
+__all__ = [
+    "LoadedPortSource",
+    "PortAnalysisMode",
+    "analyze_source",
+    "load_port_source",
+]

@@ -94,6 +94,54 @@ def test_prompt_override_does_not_bind_conditioning_inputs() -> None:
     assert api["2"]["inputs"]["positive"] == {"pooled": []}
 
 
+def test_register_input_descriptor_default_survives_alias_set_input() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "old"})
+    workflow.register_input(
+        "filename_prefix",
+        "1",
+        "filename_prefix",
+        "old",
+        type="STRING",
+        default="old",
+        aliases=["prefix"],
+        media_semantics="image",
+    )
+
+    workflow.set_input("prefix", "new")
+
+    assert workflow.inputs["filename_prefix"].value == "new"
+    assert workflow.inputs["filename_prefix"].default == "old"
+    assert workflow.inputs["filename_prefix"].media_semantics == "image"
+    assert workflow.nodes["1"].inputs["filename_prefix"] == "new"
+    assert workflow.compile("api")["1"]["inputs"]["filename_prefix"] == "new"
+
+
+def test_register_input_rejects_bad_target() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "old"})
+
+    with pytest.raises(ValueError, match="does not exist"):
+        workflow.register_input("missing", "404", "filename_prefix", "old")
+
+    with pytest.raises(ValueError, match="not found"):
+        workflow.register_input("bad_field", "1", "missing", "old")
+
+
+def test_register_input_rejects_alias_collisions() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "one"})
+    workflow.nodes["2"] = VibeNode("2", "SaveImage", inputs={"filename_prefix": "two"})
+    workflow.register_input("first", "1", "filename_prefix", "one", aliases=["prefix"])
+
+    with pytest.raises(ValueError, match="existing alias"):
+        workflow.register_input("second", "2", "filename_prefix", "two", aliases=["prefix"])
+    with pytest.raises(ValueError, match="existing primary input"):
+        workflow.register_input("second", "2", "filename_prefix", "two", aliases=["first"])
+    with pytest.raises(ValueError, match="existing alias"):
+        workflow.register_input("prefix", "2", "filename_prefix", "two")
+
+
 def test_ui_workflow_normalizes_to_api() -> None:
     raw = {
         "nodes": [

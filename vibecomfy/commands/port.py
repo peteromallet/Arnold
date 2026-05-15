@@ -32,11 +32,13 @@ custom node install planning, and `fetch` for URL-backed models. Use
 
 def _cmd_port_check(args: argparse.Namespace) -> int:
     schema_provider = _build_conversion_provider(args)
+    port_mode: str = "strict_ready" if getattr(args, "strict_ready_template", False) else "auto"
     try:
         report = analyze_source(
             args.workflow,
             schema_provider=schema_provider,
             head_check_models=args.head_check_models,
+            mode=port_mode,
         )
         if getattr(args, "strict_ready_template", False):
             _apply_strict_ready_template_gate(report)
@@ -45,6 +47,7 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
         return 1
     _inject_schema_source_metadata(report, args)
     payload = report.to_json()
+    _attach_contract_fields(payload)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -54,11 +57,17 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
 
 def _cmd_port_convert(args: argparse.Namespace) -> int:
     schema_provider = _build_conversion_provider(args)
+    port_mode: str = (
+        "strict_ready"
+        if getattr(args, "strict_ready_template", False) or args.ready_id
+        else "auto"
+    )
     try:
         report = analyze_source(
             args.workflow,
             schema_provider=schema_provider,
             head_check_models=args.head_check_models,
+            mode=port_mode,
         )
         _inject_schema_source_metadata(report, args)
         if getattr(args, "strict_ready_template", False) or args.ready_id:
@@ -69,6 +78,7 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
                 "report": report.to_json(),
                 "message": "port convert stopped because port check found hard errors.",
             }
+            _attach_contract_fields(payload["report"])
             _emit_convert_payload(payload, json_output=args.json)
             return 1
 
@@ -106,6 +116,7 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
             "conversion": result.to_json(),
             "report": report.to_json(),
         }
+        _attach_contract_fields(payload["report"])
         _emit_convert_payload(payload, json_output=args.json)
         return 1
     except ConversionWriteError as exc:
@@ -117,6 +128,7 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
             "conversion": result.to_json(),
             "report": report.to_json(),
         }
+        _attach_contract_fields(payload["report"])
         _emit_convert_payload(payload, json_output=args.json)
         return 1
 
@@ -127,8 +139,21 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
         "report": report.to_json(),
         "write": write_result,
     }
+    _attach_contract_fields(payload["report"])
     _emit_convert_payload(payload, json_output=args.json)
     return 0
+
+
+def _attach_contract_fields(payload: dict[str, Any]) -> None:
+    metadata = payload.get("metadata")
+    contract = metadata.get("contract") if isinstance(metadata, dict) else None
+    if not isinstance(contract, dict):
+        return
+    payload["contract"] = contract
+    payload["contract_shape"] = contract.get("contract_shape")
+    payload["public_inputs"] = contract.get("public_inputs", [])
+    payload["public_outputs"] = contract.get("public_outputs", [])
+    payload["graph_contract"] = contract.get("graph_contract", {})
 
 
 def _cmd_port_widgets(args: argparse.Namespace) -> int:
@@ -249,13 +274,30 @@ def _apply_strict_ready_template_gate(report: Any) -> None:
                 "with named inputs before RunPod validation."
             ),
         )
+    # Escalate any opaque_component_node_class diagnostics that are still warnings
+    # (e.g. when analyze_source ran in scratchpad mode but the gate was invoked
+    # separately).  Workbench strict_ready/app_active mode already emits these as
+    # errors, so this is defense-in-depth.
+    for issue in list(report.diagnostics):
+        if issue.code != "opaque_component_node_class":
+            continue
+        if issue.severity == "warning":
+            issue.severity = "error"
+            issue.detail = dict(issue.detail or {})
+            issue.detail["gate_escalation"] = "strict_ready"
+            if "promotion" not in (issue.recommendation or ""):
+                issue.recommendation = (
+                    "Inline component/subgraph definitions with graphbuilder or ComfyUI's converter before "
+                    "materializing a ready template. Do not wrap an opaque UUID runtime node in a Python "
+                    "name; promotion requires real workflow-builder code with a known first-class replacement node."
+                )
     if int((report.workflow_shape or {}).get("outputs") or 0) < 1:
         report.add_issue(
             "strict_ready_missing_output_contract",
-            "Strict ready-template gate requires at least one declared workflow output.",
+            "Strict ready-template gate requires at least one public output contract.",
             severity="error",
             detail={"category": "strict_ready_template"},
-            recommendation="Register the expected artifact with `workflow.register_output(...)` or equivalent ready-template policy before RunPod validation.",
+            recommendation="Register the expected artifact with `bind_output(...)` so `public_outputs` describes the pre-run artifact contract before RunPod validation.",
         )
 
 

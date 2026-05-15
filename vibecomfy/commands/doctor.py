@@ -13,6 +13,7 @@ from typing import Any
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.commands._output import emit
 from vibecomfy.commands._workflow_path import resolve_workflow_path
+from vibecomfy.contracts import build_contract
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.model_assets import extract_from_raw_workflow
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
@@ -38,6 +39,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print("Next: fix the Python file until build() returns a VibeWorkflow.")
         print(f"Port preflight: vibecomfy port check {args.path} --json")
         return 1
+    contract_payload = build_contract(workflow).to_dict()
     if lint:
         for warning in _lint_untyped_raw_refs(Path(args.path)):
             print(f"- untyped_raw_ref: {warning}")
@@ -50,6 +52,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "errors": [issue.message for issue in helper_blockers],
             "recommended_command": f"vibecomfy port check {args.path} --json",
         }
+        _attach_contract(payload, contract_payload)
         if json_output:
             emit(payload, json=True, text_renderer=_render_doctor_error)
         else:
@@ -63,8 +66,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     if drift_errors:
         if allow_drift:
             payload = {"status": "warning", "nodepack_drift": [*drift_warnings, *drift_errors], "suggested_patches": suggested_patches}
+            _attach_contract(payload, contract_payload)
             return emit(payload, json=json_output, text_renderer=_render_doctor_warning)
         payload = {"status": "error", "layer": "nodepack lockfile drift", "errors": drift_errors, "suggested_patches": suggested_patches}
+        _attach_contract(payload, contract_payload)
         return emit(payload, json=json_output, text_renderer=_render_doctor_error) or 1
     if drift_warnings and not json_output:
         print("Nodepack lockfile warnings:")
@@ -81,6 +86,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "suggested_patches": suggested_patches,
             "recommended_command": f"vibecomfy port check {args.path} --json",
         }
+        _attach_contract(payload, contract_payload)
         if json_output:
             emit(payload, json=True, text_renderer=_render_doctor_error)
         else:
@@ -119,10 +125,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "suggested_patches": suggested_patches,
             "recommended_command": f"vibecomfy port check {args.path} --json",
         }
+        _attach_contract(payload, contract_payload)
         emit(payload, json=json_output, text_renderer=_render_missing_models)
         return 1
     if warnings:
         payload = {"status": "warning", "warnings": warnings, "nodepack_warnings": drift_warnings, "suggested_patches": suggested_patches}
+        _attach_contract(payload, contract_payload)
         emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Local checks passed with runtime warnings", data["warnings"], data))
         return 0
     payload = {
@@ -131,7 +139,16 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         "nodepack_warnings": drift_warnings,
         "suggested_patches": suggested_patches,
     }
+    _attach_contract(payload, contract_payload)
     return emit(payload, json=json_output, text_renderer=_render_doctor_ok)
+
+
+def _attach_contract(payload: dict[str, Any], contract: dict[str, Any]) -> None:
+    payload["contract"] = contract
+    payload["contract_shape"] = contract["contract_shape"]
+    payload["public_inputs"] = contract["public_inputs"]
+    payload["public_outputs"] = contract["public_outputs"]
+    payload["graph_contract"] = contract["graph_contract"]
 
 
 def _patch_suggestions(workflow: VibeWorkflow) -> list[dict[str, str]]:

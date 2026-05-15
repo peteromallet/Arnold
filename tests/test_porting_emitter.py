@@ -81,6 +81,8 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "ready_node" in text
     assert "finalize_ready_template" in text
     assert "def _node" not in text
+    assert "bind_input(wf, 'prefix', '20', 'filename_prefix', default='out/sample')" in text
+    assert "artifact_kind='image'" in text
 
     namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
     exec(compile(text, "ready emitted", "exec"), namespace)  # noqa: S102 - generated code under test
@@ -92,6 +94,8 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert sorted(workflow.nodes) == ["10", "20"]
     assert workflow.metadata["ready_template"] == "image/sample"
     assert workflow.inputs["prefix"].node_id == "20"
+    assert workflow.inputs["prefix"].default == "out/sample"
+    assert workflow.outputs[0].artifact_kind == "image"
 
 
 def test_tools_format_as_python_remains_ready_template_wrapper() -> None:
@@ -657,4 +661,3 @@ def test_generated_template_not_formatted_missing_section_comments() -> None:
         assert len(missing_section_diags) == 0, (
             f"Should not flag missing sections when sections are present: {missing_section_diags}"
         )
-

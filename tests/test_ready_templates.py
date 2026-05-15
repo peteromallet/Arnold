@@ -13,6 +13,7 @@ from vibecomfy.patches.resolution import resolution
 from vibecomfy.registry import ready as ready_registry
 from vibecomfy.registry.ready import ready_template_ids, ready_template_source_info, workflow_from_ready
 from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.static_contract import extract_ready_template_contract
 from vibecomfy.runtime.session import SessionConfig, _model_assets_from_workflow
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
@@ -58,6 +59,77 @@ def test_template_index_matches_ready_template_discovery() -> None:
     assert actual["template_count"] == expected["template_count"]
     assert [item["id"] for item in actual["templates"]] == [item["id"] for item in expected["templates"]]
     assert actual["templates"] == expected["templates"]
+
+
+def test_static_contract_extractor_reads_manual_and_helper_public_contracts(tmp_path: Path) -> None:
+    source = tmp_path / "sample.py"
+    source.write_text(
+        """
+READY_METADATA = {"ready_template": "image/sample", "coverage_tier": "required"}
+READY_REQUIREMENTS = {"models": ["m.safetensors"], "custom_nodes": ["Pack"]}
+
+def build():
+    wf.register_input("prompt", "1", "text", "hello", type="STRING", aliases=["caption"])
+    bind_input(wf, "seed", "2", "seed", default=7, type="INT", range={"min": 0, "max": 10})
+    bind_output(wf, "3", output_type="SaveImage", name="image", artifact_kind="image", expected_cardinality="one")
+    wf.outputs.append(VibeOutput(node_id="4", output_type="SaveVideo", name="video", artifact_kind="video"))
+""",
+        encoding="utf-8",
+    )
+
+    summary = extract_ready_template_contract(source)
+
+    assert summary["model_count"] == 1
+    assert summary["custom_nodes"] == ["Pack"]
+    assert summary["app_active"] is True
+    assert [item["name"] for item in summary["public_inputs"]] == ["prompt", "seed"]
+    assert summary["public_inputs"][0]["aliases"] == ["caption"]
+    assert summary["public_inputs"][1]["default"] == 7
+    assert summary["public_inputs"][1]["range"] == {"min": 0, "max": 10}
+    assert [item["name"] for item in summary["public_outputs"]] == ["image", "video"]
+    assert summary["public_outputs"][0]["expected_cardinality"] == "one"
+
+
+def test_static_contract_extractor_reports_dynamic_values_without_guessing(tmp_path: Path) -> None:
+    source = tmp_path / "dynamic.py"
+    source.write_text(
+        """
+READY_METADATA = {"ready_template": "image/dynamic"}
+INPUT_NAME = make_name()
+OUTPUT_NAME = make_name()
+
+def build():
+    bind_input(wf, INPUT_NAME, "1", "text", aliases=[OUTPUT_NAME])
+    bind_output(wf, "2", output_type="SaveImage", name=OUTPUT_NAME)
+""",
+        encoding="utf-8",
+    )
+
+    summary = extract_ready_template_contract(source)
+
+    assert summary["public_inputs"] == []
+    assert summary["public_outputs"][0]["name"] is None
+    assert [diagnostic["code"] for diagnostic in summary["diagnostics"]] == [
+        "static_dynamic_value",
+        "static_dynamic_value",
+    ]
+    assert any("bind_input" in diagnostic["message"] for diagnostic in summary["diagnostics"])
+    assert any("bind_output" in diagnostic["message"] for diagnostic in summary["diagnostics"])
+    assert all(diagnostic["severity"] == "warning" for diagnostic in summary["diagnostics"])
+
+
+def test_template_index_includes_static_public_contract_fields() -> None:
+    from tools.refresh_template_index import build_template_index
+
+    index = build_template_index()
+    rows = {item["id"]: item for item in index["templates"]}
+    row = rows["video/ltx2_3_lightricks_first_last_parity"]
+
+    assert "public_inputs" in row
+    assert "public_outputs" in row
+    assert "static_diagnostics" in row
+    assert "app_active" in row
+    assert any(item["name"] == "prompt" for item in row["public_inputs"])
 
 
 def test_ready_templates_are_pure_python_builders() -> None:

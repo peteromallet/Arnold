@@ -333,6 +333,12 @@ def test_run_embedded_resolves_comfy_filename_outputs_against_configured_output_
     metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
     assert metadata["outputs"] == result.outputs
     assert metadata["artifact_paths"] == result.outputs
+    assert metadata["artifact_manifest"] == {
+        "schema_version": 1,
+        "by_output": {},
+        "unmapped": result.outputs,
+        "attribution": [],
+    }
     assert metadata["comfy_outputs"] == {
         "19": {
             "images": [

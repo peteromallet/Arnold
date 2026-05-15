@@ -178,9 +178,9 @@ def serialize_public_inputs(workflow: VibeWorkflow) -> list[dict[str, Any]]:
             "required": bool(getattr(item, "required", False)),
             "range": _coerce_json_safe(getattr(item, "range", None)),
             "aliases": _string_list(getattr(item, "aliases", [])),
-            "media": _coerce_json_safe(getattr(item, "media", None)),
+            "media_semantics": _coerce_json_safe(getattr(item, "media_semantics", None)),
         }
-        descriptors.append(_drop_none_values(descriptor))
+        descriptors.append(descriptor)
     return descriptors
 
 
@@ -197,7 +197,7 @@ def serialize_public_outputs(workflow: VibeWorkflow) -> list[dict[str, Any]]:
             "filename_prefix": getattr(output, "filename_prefix", None),
             "expected_cardinality": getattr(output, "expected_cardinality", None),
         }
-        descriptors.append(_drop_none_values(descriptor))
+        descriptors.append(descriptor)
     return descriptors
 
 
@@ -219,10 +219,6 @@ def serialize_graph_contract(workflow: VibeWorkflow) -> dict[str, Any]:
     graph_contract.setdefault("named_output_count", named_outputs)
     graph_contract.setdefault("output_count", len(workflow.outputs))
     return graph_contract
-
-
-def _drop_none_values(value: dict[str, Any]) -> dict[str, Any]:
-    return {key: item for key, item in value.items() if item is not None}
 
 
 def _string_list(value: Any) -> list[str]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import vibecomfy.fetch as fetch_assets
 from vibecomfy.commands._output import emit
@@ -17,17 +17,19 @@ from vibecomfy.registry.ready import (
 )
 from vibecomfy.runtime.session import _model_assets_from_workflow
 
-if TYPE_CHECKING:
-    from vibecomfy.workflow import VibeWorkflow
-
+TEMPLATE_INDEX_PATH = Path("template_index.json")
 
 def _cmd_workflows_list(args: argparse.Namespace) -> int:
     rows = []
     if args.ready:
-        rows = [
-            {"id": template_id, "media_type": "ready", "path": str(_resolve_ready_path(template_id))}
-            for template_id in ready_template_ids()[: args.limit]
-        ]
+        index_rows = _ready_rows_from_template_index()
+        if index_rows:
+            rows = index_rows[: args.limit]
+        else:
+            rows = [
+                {"id": template_id, "media_type": "ready", "path": str(_resolve_ready_path(template_id))}
+                for template_id in ready_template_ids()[: args.limit]
+            ]
         return emit(rows, json=args.json, text_renderer=_render_workflow_rows)
     try:
         rows.extend(load_workflow_index_rows())
@@ -35,6 +37,24 @@ def _cmd_workflows_list(args: argparse.Namespace) -> int:
         print_index_error(exc)
         return 1
     return emit(rows[: args.limit], json=args.json, text_renderer=_render_workflow_rows)
+
+
+def _ready_rows_from_template_index() -> list[dict[str, Any]]:
+    if not TEMPLATE_INDEX_PATH.exists():
+        return []
+    try:
+        payload = json.loads(TEMPLATE_INDEX_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    templates = payload.get("templates") if isinstance(payload, dict) else None
+    if not isinstance(templates, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in templates:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        rows.append({"media_type": "ready", **item})
+    return rows
 
 
 def _cmd_workflows_source_info(args: argparse.Namespace) -> int:

@@ -750,14 +750,21 @@ def _emit_build_function(
                     resolved_field = resolve_widget_name(cls, idx)
                 except (ValueError, IndexError):
                     pass
+            descriptor_kwargs: list[str] = []
+            if old_id in workflow_nodes:
+                node = workflow_nodes[old_id]
+                if resolved_field in node.inputs:
+                    descriptor_kwargs.append(f"default={_format_value(node.inputs[resolved_field])}")
+                elif resolved_field in node.widgets:
+                    descriptor_kwargs.append(f"default={_format_value(node.widgets[resolved_field])}")
             if use_shared_helpers:
-                out_lines.append(
-                    f"    bind_input(wf, {input_name!r}, {old_id!r}, {resolved_field!r})"
-                )
+                suffix = ", " + ", ".join(descriptor_kwargs) if descriptor_kwargs else ""
+                out_lines.append(f"    bind_input(wf, {input_name!r}, {old_id!r}, {resolved_field!r}{suffix})")
             else:
+                suffix = ", " + ", ".join(descriptor_kwargs) if descriptor_kwargs else ""
                 out_lines.append(
                     f"    wf.register_input({input_name!r}, {old_id!r}, {resolved_field!r}, "
-                    f"wf.nodes[{old_id!r}].inputs.get({resolved_field!r}, wf.nodes[{old_id!r}].widgets.get({resolved_field!r})))"
+                    f"wf.nodes[{old_id!r}].inputs.get({resolved_field!r}, wf.nodes[{old_id!r}].widgets.get({resolved_field!r})){suffix})"
                 )
 
     # -- bind_output for known output contracts (shared-helper mode only) -----
@@ -783,6 +790,7 @@ def _emit_build_function(
 
             parts: list[str] = [f"    bind_output(wf, {nid!r}"]
             parts.append(f"output_type={output_type!r}")
+            parts.append(f"artifact_kind={output_type!r}")
             if out_name is not None:
                 parts.append(f"name={out_name!r}")
             if prefix_str is not None:

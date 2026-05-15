@@ -837,6 +837,7 @@ def _run_metadata(
     if comfy_outputs is None:
         comfy_outputs = _raw_comfy_outputs(queued)
     serialized = json.dumps(api_dict, sort_keys=True, default=str)
+    artifact_manifest = _artifact_manifest(workflow, outputs)
     metadata = {
         "run_id": run_id,
         "workflow_id": workflow.id,
@@ -847,6 +848,7 @@ def _run_metadata(
         "compiled_prompt": api_dict,
         "queued": queued,
         "comfy_outputs": comfy_outputs,
+        "artifact_manifest": artifact_manifest,
         "artifact_paths": outputs,
         "outputs": outputs,
         "runtime": runtime,
@@ -856,6 +858,52 @@ def _run_metadata(
     if config is not None and config.memory_profile is not None:
         metadata.update(MemoryProfile.parse(config.memory_profile).to_telemetry())
     return metadata
+
+
+def _artifact_manifest(workflow: VibeWorkflow, outputs: list[str]) -> dict[str, Any]:
+    descriptors = [output for output in workflow.outputs if output.name]
+    by_output: dict[str, list[str]] = {str(output.name): [] for output in descriptors}
+    unmapped: list[str] = []
+    attribution: list[dict[str, str]] = []
+
+    single_named_output = descriptors[0] if len(descriptors) == 1 and len(outputs) == 1 else None
+    for path in outputs:
+        output_name: str | None = None
+        method: str | None = None
+        prefix_matches = [
+            output for output in descriptors if output.filename_prefix and _path_matches_filename_prefix(path, output.filename_prefix)
+        ]
+        if len(prefix_matches) == 1:
+            output_name = str(prefix_matches[0].name)
+            method = "filename_prefix"
+        elif single_named_output is not None:
+            output_name = str(single_named_output.name)
+            method = "single_named_output"
+
+        if output_name is None or method is None:
+            unmapped.append(path)
+            continue
+        by_output.setdefault(output_name, []).append(path)
+        attribution.append({"path": path, "output": output_name, "method": method})
+
+    return {
+        "schema_version": 1,
+        "by_output": by_output,
+        "unmapped": unmapped,
+        "attribution": attribution,
+    }
+
+
+def _path_matches_filename_prefix(path: str, filename_prefix: str) -> bool:
+    normalized_path = str(path).replace("\\", "/")
+    normalized_prefix = str(filename_prefix).replace("\\", "/").rstrip("/")
+    if not normalized_prefix:
+        return False
+    if normalized_path.startswith(normalized_prefix):
+        return True
+    path_name = Path(normalized_path).name
+    prefix_name = Path(normalized_prefix).name
+    return bool(prefix_name and path_name.startswith(prefix_name))
 
 
 def _raw_comfy_outputs(queued: Any) -> Any:
