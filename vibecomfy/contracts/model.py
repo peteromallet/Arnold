@@ -52,6 +52,10 @@ class WorkflowRuntimeContract:
     custom_nodes: list[str] = field(default_factory=list)
     inputs: list[str] = field(default_factory=list)
     outputs: list[dict[str, Any]] = field(default_factory=list)
+    contract_shape: str = "workflow_runtime_contract.v1.public_descriptors.v2"
+    public_inputs: list[dict[str, Any]] = field(default_factory=list)
+    public_outputs: list[dict[str, Any]] = field(default_factory=list)
+    graph_contract: dict[str, Any] = field(default_factory=dict)
     runtime_nodes: list[str] = field(default_factory=list)
     runtime_class_types: list[str] = field(default_factory=list)
     runtime_packages: list[dict[str, Any]] = field(default_factory=list)
@@ -118,6 +122,10 @@ def build_contract(workflow: VibeWorkflow) -> WorkflowRuntimeContract:
             out_dict["name"] = output.name
         outputs_list.append(out_dict)
 
+    public_inputs = serialize_public_inputs(workflow)
+    public_outputs = serialize_public_outputs(workflow)
+    graph_contract = serialize_graph_contract(workflow)
+
     # Runtime class types
     runtime_rt = sorted(workflow.runtime_class_types())
 
@@ -134,6 +142,9 @@ def build_contract(workflow: VibeWorkflow) -> WorkflowRuntimeContract:
         custom_nodes=sorted(workflow.requirements.custom_nodes),
         inputs=inputs_list,
         outputs=outputs_list,
+        public_inputs=public_inputs,
+        public_outputs=public_outputs,
+        graph_contract=graph_contract,
         runtime_nodes=runtime_node_ids,
         runtime_class_types=runtime_rt,
         runtime_packages=runtime_packages,
@@ -144,3 +155,81 @@ def build_contract(workflow: VibeWorkflow) -> WorkflowRuntimeContract:
             "coverage_tier": workflow.metadata.get("coverage_tier"),
         },
     )
+
+
+def serialize_public_inputs(workflow: VibeWorkflow) -> list[dict[str, Any]]:
+    """Serialize public input descriptors from workflow bindings.
+
+    This is the canonical additive Sprint 4 shape.  The current IR only
+    guarantees name, target, and current value; later descriptor fields are read
+    opportunistically when present so CLI surfaces do not need parallel schemas.
+    """
+    descriptors: list[dict[str, Any]] = []
+    for name in sorted(workflow.inputs):
+        item = workflow.inputs[name]
+        descriptor: dict[str, Any] = {
+            "name": item.name,
+            "target": {"node_id": str(item.node_id), "field": item.field},
+            "node_id": str(item.node_id),
+            "field": item.field,
+            "value": _coerce_json_safe(getattr(item, "value", None)),
+            "type": _coerce_json_safe(getattr(item, "type", None)),
+            "default": _coerce_json_safe(getattr(item, "default", None)),
+            "required": bool(getattr(item, "required", False)),
+            "range": _coerce_json_safe(getattr(item, "range", None)),
+            "aliases": _string_list(getattr(item, "aliases", [])),
+            "media": _coerce_json_safe(getattr(item, "media", None)),
+        }
+        descriptors.append(_drop_none_values(descriptor))
+    return descriptors
+
+
+def serialize_public_outputs(workflow: VibeWorkflow) -> list[dict[str, Any]]:
+    """Serialize pre-run public output contracts from workflow bindings."""
+    descriptors: list[dict[str, Any]] = []
+    for output in workflow.outputs:
+        descriptor: dict[str, Any] = {
+            "name": output.name,
+            "node_id": str(output.node_id),
+            "output_type": output.output_type,
+            "artifact_kind": getattr(output, "artifact_kind", None),
+            "mime_type": getattr(output, "mime_type", None),
+            "filename_prefix": getattr(output, "filename_prefix", None),
+            "expected_cardinality": getattr(output, "expected_cardinality", None),
+        }
+        descriptors.append(_drop_none_values(descriptor))
+    return descriptors
+
+
+def serialize_graph_contract(workflow: VibeWorkflow) -> dict[str, Any]:
+    """Serialize graph-level contract metadata that is not an input/output."""
+    runtime_nodes = workflow.runtime_nodes()
+    metadata_graph = workflow.metadata.get("graph_contract")
+    graph_contract = _coerce_dict_values(metadata_graph) if isinstance(metadata_graph, dict) else {}
+    graph_contract.setdefault("runtime_node_count", len(runtime_nodes))
+    graph_contract.setdefault("edge_count", len(workflow.edges))
+    graph_contract.setdefault("runtime_class_types", sorted(workflow.runtime_class_types()))
+    graph_contract.setdefault("schema_sources", _string_list(workflow.metadata.get("schema_sources", [])))
+    graph_contract.setdefault("unresolved_widgets", _list_items(workflow.metadata.get("unresolved_widgets", [])))
+    graph_contract.setdefault(
+        "unresolved_positional_outputs",
+        _list_items(workflow.metadata.get("unresolved_positional_outputs", [])),
+    )
+    named_outputs = sum(1 for output in workflow.outputs if output.name)
+    graph_contract.setdefault("named_output_count", named_outputs)
+    graph_contract.setdefault("output_count", len(workflow.outputs))
+    return graph_contract
+
+
+def _drop_none_values(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if item is not None}
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, int, float))]
+
+
+def _list_items(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []

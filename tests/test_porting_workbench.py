@@ -562,3 +562,76 @@ def test_analyze_source_can_include_opt_in_model_head_checks(tmp_path: Path) -> 
         ("https://example.test/model.safetensors", False, 403, "license_gated_or_forbidden")
     ]
     assert "model_asset_head_check_failed" in [issue.code for issue in report.diagnostics]
+
+
+# ---------------------------------------------------------------------------
+# T5: style diagnostics in port check
+# ---------------------------------------------------------------------------
+
+
+def test_port_check_detects_local_helper_copy_in_strict_template(tmp_path: Path) -> None:
+    """local_helper_copy_in_strict_template warning for ready template with def _node."""
+    from vibecomfy.porting.emitter import READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE
+    from vibecomfy.porting.workbench import LoadedPortSource, _strict_template_style_diagnostics
+    from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+
+    # Create a ready template file with def _node
+    template_content = '''\
+# vibecomfy: generated
+READY_METADATA = {"ready_template": "image/test_local_helper", "source_workflow": "test.json", "source_role": "source"}
+READY_REQUIREMENTS = {"models": [], "custom_nodes": []}
+
+def build():
+    from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+    wf = VibeWorkflow("image/test_local_helper", WorkflowSource("image/test_local_helper"))
+    node = wf.node("LoadImage", image="test.png")
+    wf.finalize_metadata()
+    return wf
+
+def _node(wf, class_type, _id, _extras=None, _outputs=None, **kwargs):
+    builder = wf.node(class_type, **kwargs)
+    if _extras:
+        for key, value in _extras.items():
+            builder.node.inputs[key] = value
+    return builder
+'''
+    template_path = tmp_path / "test_local_helper.py"
+    template_path.write_text(template_content, encoding="utf-8")
+
+    # Build a LoadedPortSource with source_kind="ready" and the file path
+    loaded = LoadedPortSource(
+        source_ref="image/test_local_helper",
+        source_kind="ready",
+        workflow=VibeWorkflow("image/test_local_helper", WorkflowSource("image/test_local_helper")),
+        source_path=str(template_path),
+        indexed_id="image/test_local_helper",
+    )
+
+    issues = _strict_template_style_diagnostics(loaded)
+
+    local_helper_codes = [
+        issue.code for issue in issues
+        if issue.code == READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE
+    ]
+    assert len(local_helper_codes) > 0, (
+        f"Expected local_helper_copy_in_strict_template diagnostic, "
+        f"got codes: {[issue.code for issue in issues]}"
+    )
+
+
+def test_port_check_no_false_positive_for_non_ready_source(tmp_path: Path) -> None:
+    """No local_helper_copy_in_strict_template for scratchpad sources."""
+    from vibecomfy.porting.emitter import READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE
+    from vibecomfy.porting.workbench import LoadedPortSource, _strict_template_style_diagnostics
+    from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+
+    # Even with _node in the source, scratchpad kind should not trigger the diagnostic
+    loaded = LoadedPortSource(
+        source_ref="test_scratchpad",
+        source_kind="scratchpad",
+        workflow=VibeWorkflow("test_scratchpad", WorkflowSource("test_scratchpad")),
+        source_path="/nonexistent/path.py",
+    )
+
+    issues = _strict_template_style_diagnostics(loaded)
+    assert len(issues) == 0, f"Should not flag for scratchpad sources"

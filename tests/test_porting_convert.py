@@ -1349,3 +1349,42 @@ def test_model_value_dropped_detected_without_aliasing() -> None:
             f"Expected model value change/drop when widget aliased to None; "
             f"dropped={result.validation.model_value_dropped}, change={result.validation.model_value_change}"
         )
+
+
+# ---------------------------------------------------------------------------
+# T6 - Sprint 3: shared helpers conversion test
+# ---------------------------------------------------------------------------
+
+
+def test_ready_template_uses_shared_helpers_and_passes_import_build_compile_parity() -> None:
+    """Sprint 3 T6(c): generated ready templates import shared helpers and pass
+    the full import/build/compile/parity pipeline."""
+    result = port_convert_workflow(
+        _sample_workflow(),
+        ready_id="image/sample",
+        source_path="workflow_corpus/source.json",
+        provenance={"source_hash": "sha256:abc"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_provider(),
+    )
+
+    assert result.mode == "ready_template"
+    assert result.validation is not None
+
+    # Import check: emitted code must import shared helpers, not define local _node
+    assert "from vibecomfy.registry.ready_template import" in result.text
+    assert "ready_workflow" in result.text
+    assert "ready_node" in result.text
+    assert "finalize_ready_template" in result.text
+    assert "def _node" not in result.text
+
+    # Build/compile check
+    assert result.validation.import_ok, f"Import failed: {result.validation.error}"
+    assert result.validation.build_ok, f"Build failed: {result.validation.error}"
+    assert result.validation.compile_ok, f"Compile failed: {result.validation.error}"
+
+    # Parity check
+    assert result.validation.parity_ok is True, (
+        f"Parity failed; diffs: {result.validation.parity_diffs}"
+    )
+    assert result.validation.parity_diffs == []

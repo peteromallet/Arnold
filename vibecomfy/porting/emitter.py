@@ -16,6 +16,10 @@ READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT = "avoidable_positional_output"
 READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY = "output_name_ambiguity"
 READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED = "schema_backed_widget_alias_not_resolved"
 READABILITY_WARNING_HIDDEN_MODEL_FILENAME = "hidden_model_filename"
+READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE = "local_helper_copy_in_strict_template"
+READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL = "long_one_line_node_call"
+READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED = "generated_template_not_formatted"
+READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG = "generated_variable_name_too_long"
 
 READABILITY_WARNING_CODES: frozenset[str] = frozenset(
     {
@@ -23,6 +27,10 @@ READABILITY_WARNING_CODES: frozenset[str] = frozenset(
         READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
         READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
         READABILITY_WARNING_HIDDEN_MODEL_FILENAME,
+        READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE,
+        READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
+        READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
+        READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
     }
 )
 
@@ -431,6 +439,14 @@ def emit_ready_template_python(
     prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides)
     has_ltx_tail = _has_ltx_lowvram_tail(template_id)
 
+    workflow_nodes = prepared["nodes"]
+    edges_in = prepared["edges_in"]
+    var_names = prepared["var_names"]
+
+    # Hoist constants and build section groups
+    constant_lines, constant_map = _hoist_constants(workflow_nodes, edges_in, var_names)
+    section_groups = _build_section_groups(workflow_nodes, edges_in)
+
     out_lines: list[str] = []
     out_lines.append(GENERATED_HEADER.rstrip("\n"))
     out_lines.append('"""Auto-generated ready_template - see tools/convert_ready_templates.py."""')
@@ -446,6 +462,11 @@ def emit_ready_template_python(
     if has_ltx_tail:
         out_lines.extend(LTX2_3_TAIL_PATCHES)
     out_lines.append("")
+    # -- constants section ----------------------------------------------------
+    if constant_lines:
+        out_lines.append("")
+        out_lines.extend(constant_lines)
+        out_lines.append("")
     out_lines.append("")
     out_lines.append(_format_metadata_dict("READY_METADATA", metadata))
     out_lines.append("")
@@ -463,10 +484,24 @@ def emit_ready_template_python(
             tail_lines=_ready_template_tail_lines(has_ltx_tail),
             diagnostics=diagnostics,
             use_shared_helpers=True,
+            constant_map=constant_map,
+            section_groups=section_groups,
         )
     )
     out_lines.append("")
-    return "\n".join(out_lines) + "\n"
+
+    combined = "\n".join(out_lines) + "\n"
+
+    # -- readability diagnostic: generated_template_not_formatted -------------
+    if diagnostics is not None:
+        _check_template_formatting(combined, workflow_nodes, section_groups, diagnostics)
+
+    # Validate syntax with ast.parse
+    try:
+        ast.parse(combined)
+    except SyntaxError as exc:
+        raise RuntimeError(f"Generated ready-template code failed syntax check: {exc}") from exc
+    return combined
 
 
 def emit_scratchpad_python(
@@ -549,10 +584,29 @@ def _emit_build_function(
     tail_lines: list[str],
     diagnostics: list[EmissionDiagnostic] | None = None,
     use_shared_helpers: bool = False,
+    constant_map: dict[tuple[str, str], str] | None = None,
+    section_groups: dict[str, list[str]] | None = None,
 ) -> list[str]:
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
     var_names = prepared["var_names"]
+
+    if constant_map is None:
+        constant_map = {}
+    if section_groups is None:
+        section_groups = {}
+
+    # Build a set of node IDs covered by section groups for fast lookup
+    section_nids: set[str] = set()
+    for nids in section_groups.values():
+        section_nids.update(nids)
+
+    # Build ordered list of (section_name, nid) for topological-sorted nodes
+    topo_order = _topological_node_order(workflow_nodes, edges_in)
+    section_order_map: dict[str, str] = {}  # nid -> section_name
+    for section_name in _SECTION_ORDER:
+        for nid in section_groups.get(section_name, []):
+            section_order_map[nid] = section_name
 
     out_lines: list[str] = []
     out_lines.append("def build() -> VibeWorkflow:")
@@ -591,10 +645,39 @@ def _emit_build_function(
         )
     out_lines.append("")
 
-    for nid in _topological_node_order(workflow_nodes, edges_in):
+    last_section: str | None = None
+    for nid in topo_order:
         node = workflow_nodes[nid]
         var = var_names[nid]
-        kwargs = _node_kwargs(node, edges_in, var_names, workflow_nodes=workflow_nodes, diagnostics=diagnostics)
+
+        # -- readability diagnostic: variable name too long -------------------
+        if diagnostics is not None and len(var) > 40:
+            diagnostics.append(
+                EmissionDiagnostic(
+                    code=READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
+                    message=(
+                        f"Variable name {var!r} ({len(var)} chars) exceeds 40-character threshold; "
+                        f"consider a shorter semantic name."
+                    ),
+                    severity="warning",
+                    node_id=str(nid),
+                    class_type=node.class_type,
+                    detail={"variable_name": var, "length": len(var)},
+                )
+            )
+
+        # Emit section comment if entering a new section group
+        section = section_order_map.get(nid)
+        if section is not None and section != last_section:
+            out_lines.append(f"    # {section}")
+            last_section = section
+
+        kwargs = _node_kwargs(
+            node, edges_in, var_names,
+            workflow_nodes=workflow_nodes,
+            diagnostics=diagnostics,
+            constant_map=constant_map,
+        )
 
         if use_shared_helpers:
             # Map _outputs -> outputs=, _extras -> extras= for ready_node
@@ -609,17 +692,42 @@ def _emit_build_function(
                 else:
                     ready_kwargs.append((key, expr))
 
-            lines: list[str] = []
-            lines.append(f"    {var} = ready_node(wf, {node.class_type!r},")
-            lines.append(f"        source_id={nid!r},")
+            # Build the ready_node call
+            all_args: list[tuple[str, str]] = [("source_id", repr(nid))]
             if outputs_expr is not None:
-                lines.append(f"        outputs={outputs_expr},")
-            for key, expr in ready_kwargs:
-                lines.append(f"        {key}={expr},")
+                all_args.append(("outputs", outputs_expr))
+            all_args.extend(ready_kwargs)
             if extras_expr is not None:
-                lines.append(f"        extras={extras_expr},")
-            lines.append("    )")
-            out_lines.extend(lines)
+                all_args.append(("extras", extras_expr))
+
+            # Multi-line formatting: use multi-line when >3 kwargs or any line would exceed ~88 chars
+            kwarg_lines = [f"{key}={expr}" for key, expr in all_args]
+            single_line = f"    {var} = ready_node(wf, {node.class_type!r}, {', '.join(kwarg_lines)})"
+
+            # -- readability diagnostic: long one-line node call ----------
+            if diagnostics is not None and len(single_line) > 120:
+                diagnostics.append(
+                    EmissionDiagnostic(
+                        code=READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
+                        message=(
+                            f"ready_node call for {node.class_type!r} (node {nid}) would be a single "
+                            f"line of {len(single_line)} chars (>120); multi-line formatting preferred."
+                        ),
+                        severity="warning",
+                        node_id=str(nid),
+                        class_type=node.class_type,
+                        detail={"line_length": len(single_line)},
+                    )
+                )
+
+            if len(all_args) > 3 or len(single_line) > 88:
+                lines: list[str] = [f"    {var} = ready_node(wf, {node.class_type!r},"]
+                for key, expr in all_args:
+                    lines.append(f"        {key}={expr},")
+                lines.append("    )")
+                out_lines.extend(lines)
+            else:
+                out_lines.append(single_line)
         else:
             head = f"    {var} = _node(wf, {node.class_type!r}, {nid!r}"
             if not kwargs:
@@ -696,6 +804,80 @@ def _ready_template_tail_lines(has_ltx_tail: bool) -> list[str]:
     return [
         "    finalize_ready_template(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
     ]
+
+
+def _check_template_formatting(
+    combined: str,
+    workflow_nodes: dict[str, Any],
+    section_groups: dict[str, list[str]],
+    diagnostics: list[EmissionDiagnostic],
+) -> None:
+    """Check generated template for section comments and indentation hygiene.
+
+    Two checks:
+    1. If the workflow has >=8 nodes and section_groups are non-empty but no
+       section comment lines appear in the output.
+    2. If any line in the tail (after the build function body) is un-indented
+       (does not start with 4 spaces, '#', blank, or a string-like line).
+    """
+    lines = combined.split("\n")
+
+    # Check 1: missing section comments for large workflows
+    if len(workflow_nodes) >= _SECTION_NODE_THRESHOLD and section_groups:
+        has_section_comment = any(
+            line.strip().startswith("# ") and any(
+                line.strip().endswith(f"# {sec}")
+                or line.strip() == f"# {sec}"
+                or line.strip().startswith(f"# {sec}")
+                for sec in _SECTION_ORDER
+            )
+            for line in lines
+        )
+        if not has_section_comment:
+            diagnostics.append(
+                EmissionDiagnostic(
+                    code=READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
+                    message=(
+                        f"Generated template has {len(workflow_nodes)} nodes but lacks section "
+                        f"comments (e.g. # Inputs, # Loaders, # Conditioning). "
+                        f"Section comments improve readability for large workflows."
+                    ),
+                    severity="warning",
+                    detail={
+                        "node_count": len(workflow_nodes),
+                        "section_groups_present": bool(section_groups),
+                    },
+                )
+            )
+
+    # Check 2: un-indented tail lines (after build function)
+    # Find the return wf line and check everything after it
+    in_build = False
+    past_return = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "def build() -> VibeWorkflow:":
+            in_build = True
+            continue
+        if in_build and stripped == "return wf":
+            past_return = True
+            continue
+        if past_return:
+            # After return wf, lines should be empty or start with 4+ spaces
+            # (internal to the build function) or be completely blank
+            if stripped and not line.startswith("    ") and not stripped.startswith("#"):
+                diagnostics.append(
+                    EmissionDiagnostic(
+                        code=READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
+                        message=(
+                            f"Generated template has un-indented tail line: {stripped!r}. "
+                            f"Lines after return wf should be blank or properly indented."
+                        ),
+                        severity="warning",
+                        detail={"unindented_line": stripped},
+                    )
+                )
+                break  # One diagnostic is enough
 
 
 def _is_link(value: Any) -> bool:
@@ -807,6 +989,7 @@ def _node_kwargs(
     *,
     workflow_nodes: dict[str, Any] | None = None,
     diagnostics: list[EmissionDiagnostic] | None = None,
+    constant_map: dict[tuple[str, str], str] | None = None,
 ) -> list[tuple[str, str]]:
     cls = node.class_type
     schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
@@ -817,6 +1000,9 @@ def _node_kwargs(
     # that schema-source evidence wins - the static table is only a fallback.
     node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
     input_aliases: list[str | None] | None = node_metadata.get("input_aliases")
+
+    if constant_map is None:
+        constant_map = {}
 
     incoming: dict[str, tuple[str, int]] = {}
     for edge in edges_in.get(node.id, []):
@@ -874,6 +1060,15 @@ def _node_kwargs(
     def _is_python_ident(name: str) -> bool:
         return name.isidentifier() and not keyword.iskeyword(name)
 
+    def _format_static_value(key: str, value: Any) -> str:
+        """Format a static value, substituting constant name if hoisted."""
+        nid = getattr(node, "id", None)
+        if nid is not None:
+            const_name = constant_map.get((str(nid), key))
+            if const_name is not None:
+                return const_name
+        return _format_value(value)
+
     out: list[tuple[str, str]] = []
     extras: list[tuple[str, str]] = []
     output_names = _node_output_names(node)
@@ -883,9 +1078,9 @@ def _node_kwargs(
         if key in incoming:
             continue
         if not _is_python_ident(key):
-            extras.append((key, _format_value(static_inputs[key])))
+            extras.append((key, _format_static_value(key, static_inputs[key])))
             continue
-        out.append((key, _format_value(static_inputs[key])))
+        out.append((key, _format_static_value(key, static_inputs[key])))
 
     if schema:
         ordered_incoming = [key for key in schema if key in incoming]
@@ -1289,5 +1484,9 @@ __all__ = [
     "READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY",
     "READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED",
     "READABILITY_WARNING_HIDDEN_MODEL_FILENAME",
+    "READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE",
+    "READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL",
+    "READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED",
+    "READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG",
     "READABILITY_WARNING_CODES",
 ]

@@ -11,6 +11,9 @@ import pytest
 from vibecomfy.porting.convert import ManualTemplateRefusal, _check_manual_refusal
 from vibecomfy.porting.emitter import (
     EmissionDiagnostic,
+    READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
+    READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
+    READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
     emit_ready_template_python,
     emit_scratchpad_python,
 )
@@ -72,7 +75,12 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "READY_METADATA =" in text
     assert "READY_REQUIREMENTS =" in text
     assert 'READY_METADATA["ready_template"]' in text
-    assert "source_type='ready_template'" in text
+    # Sprint 3: shared helpers replace inline VibeWorkflow construction
+    assert "from vibecomfy.registry.ready_template import" in text
+    assert "ready_workflow" in text
+    assert "ready_node" in text
+    assert "finalize_ready_template" in text
+    assert "def _node" not in text
 
     namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
     exec(compile(text, "ready emitted", "exec"), namespace)  # noqa: S102 - generated code under test
@@ -493,3 +501,160 @@ def test_emitted_outputs_preservation_with_partial_blank() -> None:
     )
     # Must contain the exact _outputs tuple including the blank
     assert "_outputs=('image', '')" in text
+
+
+# ---------------------------------------------------------------------------
+# T5: style diagnostics for generated ready templates
+# ---------------------------------------------------------------------------
+
+
+def test_variable_name_too_long_diagnostic() -> None:
+    """generated_variable_name_too_long fires when emitted var name >40 chars."""
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test/long", WorkflowSource("test/long", provenance={"origin": "unit"}))
+    # Use a class_type that produces a very long safe variable name
+    very_long_ct = "a" * 41
+    wf.nodes["1"] = VibeNode("1", very_long_ct, inputs={"text": "hello"})
+
+    diags: list[EmissionDiagnostic] = []
+    emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "test/long"},
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="test/long",
+        diagnostics=diags,
+    )
+
+    long_name_codes = [
+        d.code for d in diags
+        if d.code == READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG
+    ]
+    assert len(long_name_codes) > 0, f"Expected generated_variable_name_too_long diagnostic, got: {[d.code for d in diags]}"
+
+
+def test_variable_name_not_too_short_no_diagnostic() -> None:
+    """No diagnostic for variable names <=40 chars."""
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test/short", WorkflowSource("test/short", provenance={"origin": "unit"}))
+    wf.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "test.png"})
+
+    diags: list[EmissionDiagnostic] = []
+    emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "test/short"},
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="test/short",
+        diagnostics=diags,
+    )
+
+    long_name_codes = [
+        d.code for d in diags
+        if d.code == READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG
+    ]
+    assert len(long_name_codes) == 0, f"Unexpected long-name diagnostic for short variable names: {long_name_codes}"
+
+
+def test_long_one_line_node_call_diagnostic() -> None:
+    """long_one_line_node_call fires for a single-line ready_node call >120 chars."""
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test/long_line", WorkflowSource("test/long_line", provenance={"origin": "unit"}))
+    # Create a node with many string inputs to make the ready_node call long
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "LoadImage",
+        inputs={
+            "image": "a_very_long_filename_that_pads_the_call_line_to_exceed_one_hundred_twenty_characters_total.png",
+        },
+    )
+
+    diags: list[EmissionDiagnostic] = []
+    emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "test/long_line"},
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="test/long_line",
+        diagnostics=diags,
+    )
+
+    long_line_codes = [
+        d.code for d in diags
+        if d.code == READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL
+    ]
+    # Note: if multi-line formatting kicks in, the line won't be "single line"
+    # but the diagnostic fires for any ready_node call whose computed single_line > 120
+    # regardless of formatting. Validate that it appears when appropriate.
+    # This test verifies the diagnostic code exists and is emitted under the right conditions.
+    assert len(long_line_codes) > 0, f"Expected long_one_line_node_call diagnostic, got: {[d.code for d in diags]}"
+
+
+def test_generated_template_not_formatted_missing_section_comments() -> None:
+    """generated_template_not_formatted fires for >=8 nodes without section comments."""
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test/no_sections", WorkflowSource("test/no_sections", provenance={"origin": "unit"}))
+    # Create 8 nodes, none of which map to section roles, so section_groups is empty
+    # But the check looks for missing section COMMENTS in the output when nodes >= 8
+    # and section_groups are non-empty. Let's create nodes that map to sections.
+    for i in range(8):
+        nid = str(i + 1)
+        # Use class types that map to section roles
+        if i == 0:
+            ct = "LoadImage"
+        elif i == 1:
+            ct = "CLIPLoader"
+        elif i == 2:
+            ct = "CLIPTextEncode"
+        elif i == 3:
+            ct = "KSampler"
+        elif i == 4:
+            ct = "VAEDecode"
+        elif i == 5:
+            ct = "SaveImage"
+        elif i == 6:
+            ct = "CheckpointLoaderSimple"
+        else:
+            ct = "PrimitiveInt"
+        wf.nodes[nid] = VibeNode(nid, ct, inputs={"test": "val"})
+
+    diags: list[EmissionDiagnostic] = []
+    text = emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "test/no_sections"},
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="test/no_sections",
+        diagnostics=diags,
+    )
+
+    # The emitter should produce section comments for >=8 nodes.
+    # If not, the diagnostic should fire.
+    has_section_comments = any(
+        line.strip().startswith("# ") and any(
+            sec in line for sec in ("Inputs", "Loaders", "Conditioning", "Sampling", "Decode", "Outputs")
+        )
+        for line in text.split("\n")
+    )
+
+    not_formatted_codes = [
+        d.code for d in diags
+        if d.code == READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED
+    ]
+    if not has_section_comments:
+        assert len(not_formatted_codes) > 0, (
+            f"Expected generated_template_not_formatted diagnostic when no section comments found. "
+            f"Diags: {[d.code for d in diags]}"
+        )
+    # If section comments ARE present, we accept either way (no diagnostic needed)
+    # but the diagnostic should NOT fire if sections are present
+    if has_section_comments:
+        # The diagnostic might still fire for un-indented tail, but not for missing sections
+        missing_section_diags = [
+            d for d in not_formatted_codes
+            if "lacks section comments" in d.message
+        ]
+        assert len(missing_section_diags) == 0, (
+            f"Should not flag missing sections when sections are present: {missing_section_diags}"
+        )
+

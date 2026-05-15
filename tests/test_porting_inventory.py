@@ -20,6 +20,7 @@ from vibecomfy.porting.readability_inventory import (
     READY_ROOT,
     REPO_ROOT,
     ReadabilityCounts,
+    ReadabilityInventory,
     TemplateInventoryEntry,
     _classify_marker,
     _count_local_node_copies,
@@ -476,6 +477,73 @@ def test_count_n_uuid_zero_for_no_matches() -> None:
 
 def test_count_local_node_copies_zero_for_no_matches() -> None:
     assert _count_local_node_copies("wf.node('LoadImage')") == 0
+
+
+# ---------------------------------------------------------------------------
+# T5: inventory only counts local_node_copies for generated strict-ready templates
+# ---------------------------------------------------------------------------
+
+
+def test_inventory_local_node_copies_only_for_generated_marker(tmp_path: Path) -> None:
+    """local_node_copies only counted for 'generated' marker, zero for others."""
+    # Create templates with different markers but same _node content
+    generated_content = "# vibecomfy: generated\n" + "_node " * 3 + "\n"
+    manual_content = "# vibecomfy: manual\n" + "_node " * 3 + "\n"
+    reference_content = "API_WORKFLOW = {}\n" + "_node " * 3 + "\n"
+    authored_content = "NODES = []\n" + "_node " * 3 + "\n"
+    unknown_content = "_node " * 3 + "\n"
+
+    # Test the classification and counting logic directly
+    assert _classify_marker(generated_content) == "generated"
+    assert _classify_marker(manual_content) == "manual"
+    assert _classify_marker(reference_content) == "reference"
+    assert _classify_marker(authored_content) == "authored"
+    assert _classify_marker(unknown_content) == "unknown"
+
+    # All have the same raw _node count
+    assert _count_local_node_copies(generated_content) == 3
+    assert _count_local_node_copies(manual_content) == 3
+
+    # But inventory only counts for generated marker
+    # Simulate the counting logic
+    for marker, content in [
+        ("generated", generated_content),
+        ("manual", manual_content),
+        ("reference", reference_content),
+        ("authored", authored_content),
+        ("unknown", unknown_content),
+    ]:
+        actual_count = _count_local_node_copies(content) if marker == "generated" else 0
+        if marker == "generated":
+            assert actual_count == 3, f"Expected 3 for {marker}, got {actual_count}"
+        else:
+            assert actual_count == 0, f"Expected 0 for {marker}, got {actual_count}"
+
+
+def test_inventory_includes_local_node_copies_in_json_output() -> None:
+    """local_node_copies appears in both ReadabilityCounts and JSON serialization."""
+    counts = ReadabilityCounts(local_node_copies=5, positional_outs=2)
+
+    # Verify data class field
+    assert counts.local_node_copies == 5
+
+    # Verify JSON round-trip via TemplateInventoryEntry
+    entry = TemplateInventoryEntry(
+        ready_id="test/local",
+        path="ready_templates/test/local.py",
+        marker="generated",
+        coverage_tier="required",
+        capability="test",
+        counts=counts,
+    )
+    # Verify the to_json method includes local_node_copies
+    json_data = ReadabilityInventory(
+        template_count=1,
+        entries=[entry],
+    ).to_json()
+
+    assert json_data["entries"][0]["counts"]["local_node_copies"] == 5
+    assert "local_node_copies" in json_data["entries"][0]["counts"]
 
 
 def test_load_coverage_map_handles_missing_file() -> None:

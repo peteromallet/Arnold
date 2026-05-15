@@ -19,6 +19,10 @@ from vibecomfy.porting.assets import analyze_model_assets
 from vibecomfy.porting.emitter import (
     READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
     READABILITY_WARNING_HIDDEN_MODEL_FILENAME,
+    READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE,
+    READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
+    READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
+    READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
     READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
     READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
 )
@@ -199,6 +203,8 @@ def analyze_source(
 
     # -- readability diagnostics (T9) --------------------------------------
     report.diagnostics.extend(_readability_diagnostics(workflow, api_prompt=api_prompt))
+    # -- strict-template style diagnostics (T5) ---------------------------
+    report.diagnostics.extend(_strict_template_style_diagnostics(loaded))
 
     if report.asset_candidates:
         report.recommendations.append(f"Review model assets before RunPod validation; use `vibecomfy fetch {source} --dry-run` for URL-backed assets.")
@@ -1018,6 +1024,55 @@ def _hidden_model_filename_diagnostics(
                     recommendation="Ensure model filenames are reachable through named fields after aliasing.",
                 )
             )
+
+    return issues
+
+
+def _strict_template_style_diagnostics(loaded: LoadedPortSource) -> list[PortIssue]:
+    """Check strict-ready templates for style issues detectable from source text.
+
+    Currently checks for:
+    - ``local_helper_copy_in_strict_template``: warns when a strict-ready
+      template source contains a local ``def _node`` copy.
+    """
+    issues: list[PortIssue] = []
+
+    # Only check ready templates (strict-ready and indexed-ready)
+    if loaded.source_kind != "ready":
+        return issues
+
+    source_path = loaded.source_path
+    if not source_path:
+        return issues
+
+    # Read the source file
+    try:
+        source_text = Path(source_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return issues
+
+    # Check for local _node helper definition
+    if "def _node" in source_text:
+        issues.append(
+            PortIssue(
+                code=READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE,
+                message=(
+                    f"Strict-ready template {loaded.indexed_id or loaded.source_ref!r} "
+                    f"contains a local 'def _node' helper. Use shared helpers from "
+                    f"vibecomfy.registry.ready_template instead."
+                ),
+                severity="warning",
+                detail={
+                    "category": "readability",
+                    "file": source_path,
+                },
+                recommendation=(
+                    "Remove the local _node helper and use shared ready_workflow / "
+                    "ready_node / finalize_ready_template / bind_input / bind_output "
+                    "from vibecomfy.registry.ready_template."
+                ),
+            )
+        )
 
     return issues
 

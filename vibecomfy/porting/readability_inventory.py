@@ -363,12 +363,15 @@ def build_readability_inventory() -> ReadabilityInventory:
         app_active = coverage_tier == "required" and source_role is not None
 
         # Readability counts
+        # local_node_copies is only tracked for generated strict-ready templates,
+        # not for scratchpads or manual/reference/authored templates.
+        _local_node_copies = _count_local_node_copies(source) if marker == "generated" else 0
         counts = ReadabilityCounts(
             positional_outs=_count_positional_outs(source),
             widget_n_fields=_count_widget_n_fields(source),
             uuid_class_types=_count_uuid_class_types(source),
             n_uuid_variables=_count_n_uuid_variables(source),
-            local_node_copies=_count_local_node_copies(source),
+            local_node_copies=_local_node_copies,
             missing_output_contract=_detect_missing_output_contract(source),
         )
 

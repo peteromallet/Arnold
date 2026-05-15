@@ -1,9 +1,16 @@
 """Emit a real-Python ready_template module from a VibeWorkflow.
 
-The emitter walks `VibeWorkflow.nodes` in deterministic order, computes a
-stable variable name per node, and produces module text that calls
-`wf.add_node(class_type, **kwargs)` (with explicit ids and `wf.connect`
-edges) so that the resulting `build()` rebuilds the same workflow.
+LEGACY WARNING (Sprint 3, 2026-05-15):
+    Lines ~1–550 below are a pre-existing standalone emitter implementation that
+    is NO LONGER the active code path.  The ACTIVE delegation wrapper lives at
+    the bottom of the file (search for ``# --- ACTIVE delegation wrapper ---``).
+
+    The ACTIVE ``format_as_python()`` (which overrides the legacy definition)
+    delegates to ``vibecomfy.porting.emitter.emit_ready_template_python()`` —
+    the canonical Sprint 3+ emitter.  The legacy body is retained only for
+    historical reference and for CLI bootstrapping of templates that still
+    define ``NODES`` tuples.  Do NOT extend the legacy path; all new work goes
+    into ``vibecomfy/porting/emitter.py``.
 
 Usage as a script:
 
@@ -375,6 +382,10 @@ def _has_ltx_lowvram_tail(category_id: str) -> bool:
     return category_id.startswith("video/ltx2_3_t2v") or category_id.startswith("video/ltx2_3_i2v")
 
 
+# ════════════════════════════════════════════════════════════════════════════════
+# LEGACY emitter body — overridden by the ACTIVE delegation wrapper below.
+# See module docstring for details.  Do NOT add new behaviour here.
+# ════════════════════════════════════════════════════════════════════════════════
 def format_as_python(
     workflow,
     *,
@@ -384,7 +395,11 @@ def format_as_python(
     registered_inputs: dict[str, tuple[str, str]] | None = None,
     apply_overrides: dict | None = None,
 ) -> str:
-    """Emit the converted Python module text for the given VibeWorkflow."""
+    """[LEGACY] Emit the converted Python module text for the given VibeWorkflow.
+
+    This definition is overridden by the ACTIVE delegation wrapper at the
+    bottom of this file.
+    """
     ready_metadata = dict(ready_metadata)
     ready_requirements = dict(ready_requirements)
 
@@ -550,6 +565,11 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
 '''
 
 
+# ════════════════════════════════════════════════════════════════════════════════
+# End of LEGACY emitter body (lines ~16–~560).
+# The ACTIVE delegation wrapper follows below.
+# ════════════════════════════════════════════════════════════════════════════════
+
 def _apply_overrides(nodes: dict, edges_in: dict, patches: list[dict]) -> None:
     """Apply override JSON patches to the IR before emit."""
     for patch in patches:
@@ -585,6 +605,10 @@ def _apply_overrides(nodes: dict, edges_in: dict, patches: list[dict]) -> None:
                 node.inputs.pop(key, None)
 
 
+# --- ACTIVE delegation wrapper (Sprint 3+) ---
+# This definition OVERRIDES the legacy ``format_as_python`` above.
+# All callers (CLI, tests, driver scripts) reach this path, which delegates
+# to the canonical ``vibecomfy.porting.emitter.emit_ready_template_python``.
 def format_as_python(
     workflow,
     *,

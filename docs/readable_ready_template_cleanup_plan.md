@@ -818,22 +818,26 @@ warnings to errors.
 The runtime contract should record the workflow's public and graph surface, not
 only package/runtime requirements.
 
-This should be additive or a version bump. Current contracts store inputs as
-`list[str]`; do not break existing consumers accidentally. Either preserve the
-legacy data field while consumers migrate to the new canonical fields, or make a
-deliberate versioned contract break with a clear error. Do not add a wrapper
-layer to translate indefinitely between contract shapes.
+This is an additive migration on the existing runtime contract. Keep
+`WorkflowRuntimeContract.version == 1` during the migration window. Current
+contracts store legacy `inputs` as `list[str]` and legacy `outputs` as compact
+node dictionaries; those fields remain intact for old consumers. The public v2
+descriptor data is exposed under explicit additive fields instead of changing
+the meaning of legacy fields.
 
-Add `public_inputs`, `public_outputs`, and `graph_contract` fields. Keep legacy
-`inputs` intact until downstream consumers migrate:
+Add `contract_shape`, `public_inputs`, `public_outputs`, and `graph_contract`
+fields from the shared serializer in `vibecomfy/contracts/model.py`. Keep
+legacy `inputs` and `outputs` intact until downstream consumers migrate:
 
 ```json
 {
+  "version": 1,
+  "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
+  "inputs": ["prompt"],
   "public_inputs": [
     {
       "name": "prompt",
-      "node_id": "128",
-      "field": "text",
+      "target": {"node_id": "128", "field": "text"},
       "default": "The camera moves...",
       "type": "STRING",
       "required": false,
@@ -870,6 +874,13 @@ Add `public_inputs`, `public_outputs`, and `graph_contract` fields. Keep legacy
 }
 ```
 
+Alias semantics are descriptor metadata, not a legacy `inputs` replacement:
+primary input names continue to appear in legacy `inputs`, and aliases appear
+only in `public_inputs[].aliases`. Primary names win over aliases. Alias
+collision handling is strict in the IR/helper layer: duplicate aliases, aliases
+that equal any primary name, and primary names that equal existing aliases fail
+at bind/registration time instead of creating ambiguous callable names.
+
 Reigh and Astrid should be able to inspect this contract to understand:
 
 - what can be set before a run;
@@ -879,10 +890,13 @@ Reigh and Astrid should be able to inspect this contract to understand:
 - what schema evidence was used to name handles and inputs.
 
 Split pre-run contracts from post-run manifests. `public_outputs` describes what
-the workflow is expected to produce before queueing. A run artifact manifest
-should record what was actually produced after execution, keyed by the same
-semantic output names. `artifact_paths` belongs to that post-run manifest unless
-the path is only an expected prefix/pattern.
+the workflow is expected to produce before queueing, including semantic output
+names and expected artifact metadata such as kind, MIME type, filename prefix,
+and cardinality when known. A run artifact manifest records what was actually
+produced after execution, keyed by the same semantic output names when
+confidently attributable and by `unmapped` otherwise. Legacy run metadata fields
+such as `artifact_paths` and `outputs` remain as produced path lists for old
+consumers; they are not the pre-run output contract.
 
 ## Agent Skill And Documentation Updates
 
