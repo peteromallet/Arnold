@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from vibecomfy.commands.index_files import read_index_json
+from vibecomfy.commands._index_files import read_index_json
 
 
 WORKFLOW_INDEX_NAMES = ("workflow_index.json", "external_workflow_index.json")

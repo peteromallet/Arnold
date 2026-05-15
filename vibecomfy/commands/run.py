@@ -5,6 +5,7 @@ import sys
 from typing import Any
 
 from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.registry.library import load_workflow_reference
 from vibecomfy.runtime.run import run_embedded_sync, run_sync
 from vibecomfy.runtime.session import SessionConfig, apply_memory_profile_override, find_active_session
 from vibecomfy.schema import get_schema_provider
@@ -24,10 +25,6 @@ _OVERRIDE_HINTS = {
         "a true sample-step count."
     ),
 }
-
-
-def load_workflow_reference(value: str, **kwargs: Any):
-    return load_workflow_any(value)
 
 
 def _override_unwired_message(workflow_id: str, flag: str, override: str) -> str:

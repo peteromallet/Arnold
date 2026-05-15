@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from vibecomfy.commands._output import emit
-from vibecomfy.commands.index_files import IndexReadError, print_index_error, read_index_json
+from vibecomfy.commands._index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceSchemaProvider, get_schema_provider
 from vibecomfy.schema.cache import object_info_cache_candidates

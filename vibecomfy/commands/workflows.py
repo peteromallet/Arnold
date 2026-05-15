@@ -7,7 +7,7 @@ from typing import Any
 
 import vibecomfy.fetch as fetch_assets
 from vibecomfy.commands._output import emit
-from vibecomfy.commands.index_files import IndexReadError, print_index_error
+from vibecomfy.commands._index_files import IndexReadError, print_index_error
 from vibecomfy.commands._workflow_path import load_workflow_index_rows
 from vibecomfy.registry.ready import (
     READY_ROOT,

@@ -6,6 +6,8 @@ __all__ = [
     "WorkflowRuntimeContract",
     "build_contract",
     "doctor_contract",
+    "ContractDoctorDiagnostic",
+    "ContractDoctorReport",
     "ContractIssue",
     "ContractReport",
     "LTXFirstLastTwoStageContract",

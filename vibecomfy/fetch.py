@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
 import httpx
 
 
@@ -109,10 +107,7 @@ def _raise_for_status(status_code: int, url: str) -> None:
         raise RuntimeError(f"HTTP {status_code} fetching {url}")
 
 
-def _strip_download_true(url: str) -> str:
-    parsed = urlsplit(url)
-    params = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if not (key == "download" and value == "true")]
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query and urlencode(params), parsed.fragment))
+from vibecomfy.model_assets import _strip_download_true as _strip_download_true  # noqa: E402,F401
 
 
 __all__ = ["download", "download_many", "is_present", "local_path", "models_root"]
