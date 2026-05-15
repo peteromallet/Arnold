@@ -387,10 +387,29 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
             if isinstance(result_val, str):
                 if not result_val.strip():
                     continue
+                _text = result_val
                 try:
-                    result_val = json.loads(result_val)
+                    result_val = json.loads(_text)
                 except json.JSONDecodeError:
-                    continue
+                    # Prose-prefixed JSON (e.g. "All checks green: ...\n\n{...}").
+                    _dec = json.JSONDecoder()
+                    _cursor = 0
+                    result_val = None
+                    while True:
+                        _brace = _text.find("{", _cursor)
+                        if _brace < 0:
+                            break
+                        try:
+                            _parsed, _end = _dec.raw_decode(_text[_brace:])
+                        except json.JSONDecodeError:
+                            _cursor = _brace + 1
+                            continue
+                        if isinstance(_parsed, dict):
+                            result_val = _parsed
+                            break
+                        _cursor = _brace + 1
+                    if result_val is None:
+                        continue
             if isinstance(result_val, dict):
                 return msg, result_val
 
@@ -431,6 +450,23 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                                 return inner, parsed
                         except json.JSONDecodeError:
                             pass
+                        # Fallback: prose-prefixed JSON, e.g.
+                        # "All checks green: ...\n\n{...}". Scan for the
+                        # first decodable embedded object.
+                        _dec = json.JSONDecoder()
+                        _cursor = 0
+                        while True:
+                            _brace = text.find("{", _cursor)
+                            if _brace < 0:
+                                break
+                            try:
+                                _parsed, _end = _dec.raw_decode(text[_brace:])
+                            except json.JSONDecodeError:
+                                _cursor = _brace + 1
+                                continue
+                            if isinstance(_parsed, dict):
+                                return inner, _parsed
+                            _cursor = _brace + 1
             elif isinstance(content, str):
                 try:
                     parsed = json.loads(content)
