@@ -21,6 +21,11 @@ LTX_FIRST_LAST_TWO_STAGE_ASSETS = [
         "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
         "subdir": "text_encoders",
     },
+    {
+        "name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "subdir": "latent_upscale_models",
+    },
 ]
 
 
@@ -35,8 +40,9 @@ READY_METADATA = {
     "coverage_tier": "required",
     "approach": "two-stage first/last-frame route using LowVRAMCheckpointLoader",
     "runtime_note": (
-        "Stage 1 uses Wan2GP's long sigma schedule; stage 2 reapplies first/last guides "
-        "and uses the Wan2GP refine sigma schedule."
+        "Stage 1 uses Wan2GP's half-resolution long sigma schedule; the latent is "
+        "spatially upsampled before stage 2 reapplies first/last guides and uses "
+        "the Wan2GP refine sigma schedule."
     ),
     "discord_signal": "Use dedicated distilled fp8 + low-VRAM loaders on 24GB GPUs.",
     "smoke_resolution": "256x256x5_frames",
@@ -67,6 +73,8 @@ def build() -> VibeWorkflow:
     frames = _node(wf, "PrimitiveInt", "102", _outputs=("value",), value=81)
     width = _node(wf, "PrimitiveInt", "113", _outputs=("value",), value=768)
     height = _node(wf, "PrimitiveInt", "98", _outputs=("value",), value=512)
+    stage1_width = _node(wf, "PrimitiveInt", "1131", _outputs=("value",), value=384)
+    stage1_height = _node(wf, "PrimitiveInt", "981", _outputs=("value",), value=256)
     fps_int = _node(wf, "PrimitiveInt", "114", _outputs=("value",), value=24)
     fps = _node(wf, "PrimitiveFloat", "123", _outputs=("value",), value=24)
 
@@ -101,6 +109,13 @@ def build() -> VibeWorkflow:
         model=checkpoint.out("model"),
         triton_kernels=True,
     )
+    spatial_upscaler = _node(
+        wf,
+        "LatentUpscaleModelLoader",
+        "182",
+        _outputs=("latent_upscale_model",),
+        model_name="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+    )
 
     resize_first = _node(
         wf,
@@ -130,6 +145,34 @@ def build() -> VibeWorkflow:
         scale_method="nearest-exact",
         input=last_image.out("image"),
     )
+    resize_first_stage1 = _node(
+        wf,
+        "ResizeImageMaskNode",
+        "1241",
+        _outputs=("image",),
+        _extras={
+            "resize_type.width": stage1_width.out("value"),
+            "resize_type.height": stage1_height.out("value"),
+            "resize_type.crop": "center",
+        },
+        resize_type="scale dimensions",
+        scale_method="nearest-exact",
+        input=first_image.out("image"),
+    )
+    resize_last_stage1 = _node(
+        wf,
+        "ResizeImageMaskNode",
+        "1251",
+        _outputs=("image",),
+        _extras={
+            "resize_type.width": stage1_width.out("value"),
+            "resize_type.height": stage1_height.out("value"),
+            "resize_type.crop": "center",
+        },
+        resize_type="scale dimensions",
+        scale_method="nearest-exact",
+        input=last_image.out("image"),
+    )
     preprocess_first = _node(
         wf,
         "LTXVPreprocess",
@@ -145,6 +188,22 @@ def build() -> VibeWorkflow:
         _outputs=("image",),
         img_compression=25,
         image=resize_last.out("image"),
+    )
+    preprocess_first_stage1 = _node(
+        wf,
+        "LTXVPreprocess",
+        "1041",
+        _outputs=("image",),
+        img_compression=25,
+        image=resize_first_stage1.out("image"),
+    )
+    preprocess_last_stage1 = _node(
+        wf,
+        "LTXVPreprocess",
+        "991",
+        _outputs=("image",),
+        img_compression=25,
+        image=resize_last_stage1.out("image"),
     )
 
     prompt = _node(
@@ -173,7 +232,13 @@ def build() -> VibeWorkflow:
         positive=prompt.out("conditioning"),
     )
 
-    image_size = _node(wf, "GetImageSize", "110", _outputs=("width", "height", "batch_size"), image=resize_first.out("image"))
+    stage1_image_size = _node(
+        wf,
+        "GetImageSize",
+        "110",
+        _outputs=("width", "height", "batch_size"),
+        image=resize_first_stage1.out("image"),
+    )
     empty_audio = _node(
         wf,
         "LTXVEmptyLatentAudio",
@@ -190,13 +255,13 @@ def build() -> VibeWorkflow:
         "108",
         _outputs=("latent",),
         batch_size=1,
-        width=image_size.out("width"),
-        height=image_size.out("height"),
+        width=stage1_image_size.out("width"),
+        height=stage1_image_size.out("height"),
         length=frames.out("value"),
     )
 
-    first_guide = _add_guide(wf, "115", preprocess_first, empty_video.out("latent"), conditioning, checkpoint, frame_idx=0)
-    last_guide = _add_guide(wf, "111", preprocess_last, first_guide.out("latent"), first_guide, checkpoint, frame_idx=-1)
+    first_guide = _add_guide(wf, "115", preprocess_first_stage1, empty_video.out("latent"), conditioning, checkpoint, frame_idx=0)
+    last_guide = _add_guide(wf, "111", preprocess_last_stage1, first_guide.out("latent"), first_guide, checkpoint, frame_idx=-1)
     stage1_concat = _node(
         wf,
         "LTXVConcatAVLatent",
@@ -222,12 +287,21 @@ def build() -> VibeWorkflow:
         _outputs=("video_latent", "audio_latent"),
         av_latent=stage1.out("denoised_output"),
     )
+    upscaled_stage1 = _node(
+        wf,
+        "LTXVLatentUpsampler",
+        "1845",
+        _outputs=("latent",),
+        samples=separated_stage1.out("video_latent"),
+        upscale_model=spatial_upscaler.out("latent_upscale_model"),
+        vae=checkpoint.out("vae"),
+    )
     cropped_stage1 = _node(
         wf,
         "LTXVCropGuides",
         "106",
         _outputs=("positive", "negative", "latent"),
-        latent=separated_stage1.out("video_latent"),
+        latent=upscaled_stage1.out("latent"),
         negative=last_guide.out("negative"),
         positive=last_guide.out("positive"),
     )
@@ -311,6 +385,8 @@ def build() -> VibeWorkflow:
     wf.register_input("seed_last", "101", "noise_seed", value=315253765879496)
     wf.register_input("width", "113", "value", value=768)
     wf.register_input("height", "98", "value", value=512)
+    wf.register_input("stage1_width", "1131", "value", value=384)
+    wf.register_input("stage1_height", "981", "value", value=256)
     wf.register_input("frames", "102", "value", value=81)
     wf.register_input("fps", "123", "value", value=24)
     wf.register_input("fps_int", "114", "value", value=24)
