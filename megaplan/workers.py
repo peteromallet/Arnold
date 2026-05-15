@@ -961,6 +961,25 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     return []
                 return _iter_nested_json_dicts(parsed)
+            # Prose-wrapped JSON inside a string field — scan for embedded
+            # JSON objects (e.g. assistant message text that prefaces the
+            # structured output with a sentence or two). Mirrors strategy 3
+            # below but scoped to the string content.
+            embedded: list[dict[str, Any]] = []
+            decoder = json.JSONDecoder()
+            cursor = 0
+            while True:
+                brace = text.find("{", cursor)
+                if brace < 0:
+                    break
+                try:
+                    parsed, _end = decoder.raw_decode(text[brace:])
+                except json.JSONDecodeError:
+                    cursor = brace + 1
+                    continue
+                embedded.extend(_iter_nested_json_dicts(parsed))
+                cursor = brace + 1
+            return embedded
         return []
 
     candidates: list[dict[str, Any]] = []
