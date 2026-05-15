@@ -120,6 +120,81 @@ _GATE_RECS: dict[str, str] = {
     "gate_escalate": "escalate",
 }
 
+_REC_TO_GATE: dict[str, str] = {v: k for k, v in _GATE_RECS.items()}
+
+
+def workflow_dict_from_pipeline(pipeline: Pipeline) -> dict[str, list[Transition]]:
+    """Sprint 4 Chunk E — invert the Pipeline/WORKFLOW relationship.
+
+    Walks ``pipeline.stages`` and reverse-derives the legacy
+    ``WORKFLOW``-shaped ``dict[state_name, list[Transition]]`` from each
+    stage's edges. Round-trips through ``_edges_from_transitions``:
+
+        workflow_dict_from_pipeline(compile_planning_pipeline()) == WORKFLOW
+
+    This proves the Pipeline is sufficient to derive the legacy state
+    machine — the Pipeline IS the source of truth, the dict is the view.
+    Sprint 5 deletes the dict literal entirely.
+    """
+
+    result: dict[str, list[Transition]] = {}
+    for state_name, stage in pipeline.stages.items():
+        transitions: list[Transition] = []
+        if not hasattr(stage, "edges"):
+            result[state_name] = []
+            continue
+        for edge in stage.edges:
+            if edge.kind == "gate" and edge.recommendation is not None:
+                # Reverse-derive: gate edge whose recommendation maps to
+                # gate_<rec> condition. The next_step is implied by the
+                # destination state (gate dispatch routes to gate/revise/
+                # tiebreaker depending on the recommendation).
+                cond = _REC_TO_GATE[edge.recommendation]
+                # next_step recovery: walk the original WORKFLOW table
+                # for a unique transition with this (cond, next_state).
+                next_step = _recover_next_step(state_name, cond, edge.target)
+                transitions.append(
+                    Transition(
+                        next_step=next_step,
+                        next_state=edge.target,
+                        condition=cond,
+                    )
+                )
+                continue
+            label = edge.label
+            if ":" in label and label.split(":", 1)[0].startswith("gate_"):
+                cond, next_step = label.split(":", 1)
+                transitions.append(Transition(
+                    next_step=next_step, next_state=edge.target, condition=cond,
+                ))
+                continue
+            # Collision-bucket fallback edges (gate_escalate fan-out)
+            # land here as kind="normal" with the bare next_step label.
+            cond = _infer_legacy_condition(state_name, edge.target, label)
+            transitions.append(Transition(
+                next_step=label, next_state=edge.target, condition=cond,
+            ))
+        result[state_name] = transitions
+    return result
+
+
+def _recover_next_step(state_name: str, condition: str, next_state: str) -> str:
+    """Look up the original next_step in WORKFLOW for a (cond, next_state) pair."""
+    raw = WORKFLOW.get(state_name, [])
+    for t in raw:
+        if t.condition == condition and t.next_state == next_state:
+            return t.next_step
+    return next_state  # safe fallback — never expected to fire in practice
+
+
+def _infer_legacy_condition(state_name: str, next_state: str, label: str) -> str:
+    """For collision-bucket edges, recover the original condition from WORKFLOW."""
+    raw = WORKFLOW.get(state_name, [])
+    for t in raw:
+        if t.next_state == next_state and t.next_step == label:
+            return t.condition
+    return "always"
+
 
 def _edges_from_transitions(transitions: list[Transition]) -> tuple[Edge, ...]:
     """Map ``Transition`` list to a tuple of :class:`Edge`.
