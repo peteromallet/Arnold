@@ -16,6 +16,7 @@ from vibecomfy.porting.readability_inventory import build_readability_inventory
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.porting.workbench import analyze_source, load_port_source
 from vibecomfy.schema import ConversionSchemaProvider, get_schema_provider
+from vibecomfy.schema.cache import latest_object_info_cache_path
 
 
 PORT_HELP = """Cheap preflight and Python materialization for ComfyUI workflow ports.
@@ -293,7 +294,12 @@ def _render_check(report: Any) -> str:
 def _build_conversion_provider(args: argparse.Namespace) -> ConversionSchemaProvider:
     runtime_enabled = getattr(args, "runtime_object_info", False)
     server_url: str | None = getattr(args, "server_url", None)
+    object_info_cache = getattr(args, "object_info_cache", None)
+    if object_info_cache is None and not getattr(args, "no_object_info_cache", False):
+        latest = latest_object_info_cache_path()
+        object_info_cache = str(latest) if latest is not None else None
     return ConversionSchemaProvider(
+        object_info_cache_path=object_info_cache,
         enable_runtime=runtime_enabled,
         runtime_server_url=server_url,
     )
@@ -306,6 +312,12 @@ def _inject_schema_source_metadata(report: Any, args: argparse.Namespace) -> Non
         "provider": "ConversionSchemaProvider",
         "runtime_enabled": runtime_enabled,
         "server_url": server_url,
+        "object_info_cache": getattr(args, "object_info_cache", None)
+        or (
+            None
+            if getattr(args, "no_object_info_cache", False)
+            else str(latest_object_info_cache_path() or "")
+        ),
     }
 
 
@@ -380,6 +392,15 @@ def register(subparsers) -> None:
         help="Opt in to live /object_info schema evidence from a running ComfyUI server.",
     )
     check.add_argument(
+        "--object-info-cache",
+        help="Use a captured ComfyUI /object_info JSON file as offline schema evidence. Defaults to the newest out/cache/object_info*.json when present.",
+    )
+    check.add_argument(
+        "--no-object-info-cache",
+        action="store_true",
+        help="Do not use cached /object_info schema evidence.",
+    )
+    check.add_argument(
         "--server-url",
         help="ComfyUI server URL for live /object_info (requires --runtime-object-info).",
     )
@@ -407,6 +428,15 @@ def register(subparsers) -> None:
         "--runtime-object-info",
         action="store_true",
         help="Opt in to live /object_info schema evidence from a running ComfyUI server.",
+    )
+    convert.add_argument(
+        "--object-info-cache",
+        help="Use a captured ComfyUI /object_info JSON file as offline schema evidence. Defaults to the newest out/cache/object_info*.json when present.",
+    )
+    convert.add_argument(
+        "--no-object-info-cache",
+        action="store_true",
+        help="Do not use cached /object_info schema evidence.",
     )
     convert.add_argument(
         "--server-url",

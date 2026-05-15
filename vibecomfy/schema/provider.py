@@ -230,11 +230,11 @@ class ConversionSchemaProvider:
 
     1. **Committed node_index.json** – ``LocalSchemaProvider`` against the
        pinned ``node_index_path``.
-    2. **Source parser** – ``SourceSchemaProvider`` scanning installed
-       custom-node source trees under ``source_roots``.
-    3. **Provenance-matched object_info cache** – ``ObjectInfoSchemaProvider``
+    2. **Provenance-matched object_info cache** – ``ObjectInfoSchemaProvider``
        loaded from ``object_info_cache_path`` only when its fingerprint
        metadata matches the expected runtime identity.
+    3. **Source parser** – ``SourceSchemaProvider`` scanning installed
+       custom-node source trees under ``source_roots``.
     4. **Widget schema fallback** – positional ``widget_N`` → named input
        aliases from the local ``WIDGET_SCHEMA`` table (lowest priority).
     5. **Runtime** – ``RuntimeSchemaProvider`` is consulted *only* when
@@ -286,24 +286,7 @@ class ConversionSchemaProvider:
                 ),
             )
 
-        # 2. Source parser
-        schema = self._source.get_schema(class_type)
-        if schema is not None:
-            _logger.info(
-                "schema hit: %s provider=source_parser roots=%s",
-                class_type,
-                self._source.roots,
-            )
-            return self._with_provenance(
-                schema,
-                SchemaSourceInfo(
-                    provider_name="source_parser",
-                    source_path=None,  # resolved per-file inside SourceSchemaProvider
-                    confidence=0.9,
-                ),
-            )
-
-        # 3. Provenance-matched object_info cache
+        # 2. Provenance-matched object_info cache
         if self._object_info is not None:
             try:
                 schema = self._object_info.get_schema(class_type)
@@ -329,6 +312,23 @@ class ConversionSchemaProvider:
                     class_type,
                     self._object_info.object_info_path,
                 )
+
+        # 3. Source parser
+        schema = self._source.get_schema(class_type)
+        if schema is not None:
+            _logger.info(
+                "schema hit: %s provider=source_parser roots=%s",
+                class_type,
+                self._source.roots,
+            )
+            return self._with_provenance(
+                schema,
+                SchemaSourceInfo(
+                    provider_name="source_parser",
+                    source_path=None,  # resolved per-file inside SourceSchemaProvider
+                    confidence=0.9,
+                ),
+            )
 
         # 4. Widget schema fallback – build a minimal NodeSchema from aliases
         widget_names = self._widget_schema.get(class_type)

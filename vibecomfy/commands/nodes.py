@@ -12,6 +12,7 @@ from vibecomfy.commands._output import emit
 from vibecomfy.commands.index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceSchemaProvider, get_schema_provider
+from vibecomfy.schema.cache import object_info_cache_candidates
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
 
@@ -39,7 +40,7 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
     if schema is None:
         schema = SourceSchemaProvider().get_schema(args.class_type)
     if schema is None and not args.object_info_cache:
-        for cache_path in _object_info_cache_candidates():
+        for cache_path in object_info_cache_candidates():
             try:
                 schema = ObjectInfoSchemaProvider(cache_path).get_schema(args.class_type)
             except SchemaIndexError:
@@ -54,14 +55,6 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps(asdict(schema), indent=2, sort_keys=True))
     return 0
-
-
-def _object_info_cache_candidates(cache_dir: str | Path = "out/cache") -> list[Path]:
-    root = Path(cache_dir)
-    if not root.is_dir():
-        return []
-    paths = [path for path in root.glob("object_info*.json") if path.is_file()]
-    return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
 def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:

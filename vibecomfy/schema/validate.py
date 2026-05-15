@@ -97,6 +97,7 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
             if (
                 choices
                 and value not in choices
+                and _coerce_choice_value(value, choices) is _NO_MATCH
                 and not _issue_suppressed(class_type, "value_not_in_enum")
                 and not _is_dynamic_file_choice(class_type, name)
             ):

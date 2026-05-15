@@ -146,7 +146,7 @@ def test_explicit_inputs_override_imported_widget_values_at_compile_time() -> No
 
     api = workflow.compile("api")
 
-    assert api["1"]["inputs"]["widget_0"] == "scratchpad.png"
+    assert "widget_0" not in api["1"]["inputs"]
     assert api["1"]["inputs"]["image"] == "scratchpad.png"
 
 
