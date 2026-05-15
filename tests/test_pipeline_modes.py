@@ -35,13 +35,23 @@ def test_mode_pipeline_matches_runtime_workflow(mode: str, robustness: str) -> N
     for state_name, transitions in runtime.items():
         compiled = pipeline.stages[state_name]
         actual = [(e.label, e.target) for e in compiled.edges]
-        expected = [
-            (
-                t.next_step if t.condition == "always" else f"{t.condition}:{t.next_step}",
-                t.next_state,
-            )
-            for t in transitions
-        ]
+        import collections
+        _GATE_RECS = {"gate_proceed": "proceed", "gate_iterate": "iterate",
+                      "gate_tiebreaker": "tiebreaker", "gate_escalate": "escalate"}
+        gate_counts: collections.Counter = collections.Counter()
+        for t in transitions:
+            if t.condition in _GATE_RECS:
+                gate_counts[t.condition] += 1
+        expected = []
+        for t in transitions:
+            if t.condition == "always":
+                expected.append((t.next_step, t.next_state))
+            elif t.condition in _GATE_RECS and gate_counts[t.condition] == 1:
+                expected.append((_GATE_RECS[t.condition], t.next_state))
+            elif t.condition in _GATE_RECS and gate_counts[t.condition] > 1:
+                expected.append((t.next_step, t.next_state))
+            else:
+                expected.append((f"{t.condition}:{t.next_step}", t.next_state))
         assert actual == expected, (mode, robustness, state_name, actual, expected)
 
     # mode_overlay name reflects the requested mode.

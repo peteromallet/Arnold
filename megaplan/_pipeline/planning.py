@@ -113,27 +113,69 @@ def _step_for(state_name: str) -> Any:
     return _RuntimeStep(name=state_name)
 
 
+_GATE_RECS: dict[str, str] = {
+    "gate_proceed": "proceed",
+    "gate_iterate": "iterate",
+    "gate_tiebreaker": "tiebreaker",
+    "gate_escalate": "escalate",
+}
+
+
 def _edges_from_transitions(transitions: list[Transition]) -> tuple[Edge, ...]:
     """Map ``Transition`` list to a tuple of :class:`Edge`.
 
-    Edge.label is the transition's ``condition`` (``'always'`` for
-    unconditional, ``'gate_iterate'``/``'gate_tiebreaker'``/etc.).
-    Edge.target is the destination state name. The ``next_step``
-    (the CLI subcommand like ``'plan'`` or ``'override force-proceed'``)
-    is encoded into the label as a tuple-style ``"{condition}:{step}"``
-    suffix when condition is not ``always`` — that preserves the override
-    flavour without inventing a new field.
+    Sprint 4 Chunk A: gate-condition transitions become typed
+    ``Edge(kind="gate", recommendation=...)`` so the executor dispatches
+    by ``Verdict.recommendation`` instead of label-string compare. The
+    legacy ``"gate_<condition>:<next_step>"`` packing is gone.
+
+    Per-stage collision guard: if more than one transition in the same
+    stage shares the same gate condition (today: the three
+    ``gate_escalate`` transitions on ``STATE_CRITIQUED``), they fall back
+    to ``kind="normal"`` edges with the bare ``next_step`` as the label
+    so they remain individually addressable.
     """
+
+    import collections
+
+    gate_counts: collections.Counter[str] = collections.Counter()
+    for transition in transitions:
+        if transition.condition in _GATE_RECS:
+            gate_counts[transition.condition] += 1
 
     edges: list[Edge] = []
     for transition in transitions:
         condition = transition.condition
         next_step = transition.next_step
+        next_state = transition.next_state
+
         if condition == "always":
-            label = next_step  # e.g. 'plan', 'finalize', 'review'
-        else:
-            label = f"{condition}:{next_step}"
-        edges.append(Edge(label=label, target=transition.next_state))
+            edges.append(Edge(label=next_step, target=next_state))
+            continue
+
+        if condition in _GATE_RECS and gate_counts[condition] == 1:
+            rec = _GATE_RECS[condition]
+            edges.append(
+                Edge(
+                    label=rec,
+                    target=next_state,
+                    kind="gate",
+                    recommendation=rec,  # type: ignore[arg-type]
+                )
+            )
+            continue
+
+        if condition in _GATE_RECS and gate_counts[condition] > 1:
+            # Collision (e.g. gate_escalate fan-out on STATE_CRITIQUED) —
+            # fall back to addressable normal edges with the bare next_step.
+            edges.append(Edge(label=next_step, target=next_state))
+            continue
+
+        # Unknown / legacy gate condition (gate_unset, gate_proceed_blocked):
+        # preserve the old packed label so existing dispatch keeps working.
+        edges.append(
+            Edge(label=f"{condition}:{next_step}", target=next_state)
+        )
     return tuple(edges)
 
 

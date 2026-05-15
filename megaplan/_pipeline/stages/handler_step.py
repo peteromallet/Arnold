@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from megaplan._pipeline.types import StepContext, StepResult
+from megaplan._pipeline.types import StepContext, StepResult, Verdict
 
 
 _PHASE_STATE: Mapping[str, str] = {
@@ -82,11 +82,14 @@ class HandlerStep:
         next_state = after.get("current_state", before.get("current_state", ""))
 
         next_label = _label_for(phase, next_state)
+        verdict: Verdict | None = None
+        if phase == "gate":
+            verdict = Verdict(score=0.0, recommendation=_gate_recommendation(next_state))
         state_patch = _diff_state_patch(before, after)
         outputs = _collect_outputs(ctx.plan_dir, before, after)
         return StepResult(
             outputs=outputs,
-            verdict=None,
+            verdict=verdict,
             next=next_label,
             state_patch=state_patch,
         )
@@ -112,31 +115,32 @@ def _read_state(plan_dir: Path) -> dict[str, Any]:
 
 
 def _label_for(phase: str, next_state: str) -> str:
-    """Map a (phase, post-subprocess state) pair to the matching edge label.
+    """Bare next-step label for the StepResult.next field.
 
-    For the gate phase, the recommendation field on the state machine
-    determines the label (``gate_iterate``/``gate_proceed``/etc.). For
-    every other phase the label is simply the phase name.
+    Sprint 4 Chunk A: gate no longer returns a packed
+    ``gate_<rec>:<step>`` label — instead the Step returns a typed
+    Verdict and the executor dispatches via ``Edge.kind == "gate"``.
     """
-
     if phase == "gate":
-        # gate's edge label is gate_<condition>:<next_step>. Resolve by
-        # looking at the next state.
-        return _gate_label(next_state)
+        rec = _gate_recommendation(next_state)
+        return {
+            "proceed": "gate",
+            "iterate": "revise",
+            "tiebreaker": "tiebreaker",
+            "escalate": "override force-proceed",
+        }.get(rec, "gate")
     if phase.startswith("override "):
-        # override force-proceed, override abort, etc. — edge label is
-        # the full subcommand.
         return phase
     return phase
 
 
-def _gate_label(next_state: str) -> str:
+def _gate_recommendation(next_state: str):
     return {
-        "gated": "gate_proceed:gate",
-        "planned": "gate_iterate:revise",
-        "tiebreaker_pending": "gate_tiebreaker:tiebreaker",
-        "aborted": "gate_escalate:override abort",
-    }.get(next_state, "gate_proceed:gate")
+        "gated": "proceed",
+        "planned": "iterate",
+        "tiebreaker_pending": "tiebreaker",
+        "aborted": "escalate",
+    }.get(next_state, "proceed")
 
 
 def _diff_state_patch(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
