@@ -17,6 +17,25 @@ from megaplan._pipeline.stages.handler_step import (
     HandlerStep,
     build_planning_steps,
 )
+from megaplan._pipeline.stages.prep import PrepStep
+from megaplan._pipeline.stages.plan import PlanStep
+from megaplan._pipeline.stages.critique import CritiqueStep
+from megaplan._pipeline.stages.gate import GateStep
+from megaplan._pipeline.stages.revise import ReviseStep
+from megaplan._pipeline.stages.finalize import FinalizeStep
+from megaplan._pipeline.stages.execute import ExecuteStep
+from megaplan._pipeline.stages.review import ReviewStep
 
 
-__all__ = ["HandlerStep", "build_planning_steps"]
+__all__ = [
+    "HandlerStep",
+    "build_planning_steps",
+    "PrepStep",
+    "PlanStep",
+    "CritiqueStep",
+    "GateStep",
+    "ReviseStep",
+    "FinalizeStep",
+    "ExecuteStep",
+    "ReviewStep",
+]
