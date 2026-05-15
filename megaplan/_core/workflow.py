@@ -1,10 +1,19 @@
-"""State machine — workflow transitions, robustness levels, step validation."""
+"""State machine — workflow transitions, robustness levels, step validation.
+
+Sprint 3: the raw state-machine data (the ``WORKFLOW`` dict + the
+``_ROBUSTNESS_OVERRIDES`` dict + the ``_ROBUSTNESS_WORKFLOW_LEVELS``
+dict + the ``Transition`` dataclass) now lives in
+``megaplan/_core/workflow_data.py``. This module re-exports those
+names so every existing import keeps working unchanged. The
+``Pipeline`` in ``megaplan/_pipeline/planning.py`` reads from the
+same shared module, so the data is defined exactly once — no
+parallel sources, no parity-drift risk.
+"""
 
 from __future__ import annotations
 
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,104 +38,12 @@ from megaplan.types import (
 from megaplan.store import ProgressEventInput, RevisionConflict, Store
 from .modes import is_creative_mode
 from .io import find_plan_dir
-
-
-@dataclass(frozen=True)
-class Transition:
-    next_step: str
-    next_state: str
-    condition: str = "always"
-
-
-WORKFLOW: dict[str, list[Transition]] = {
-    STATE_INITIALIZED: [
-        Transition("prep", STATE_PREPPED),
-    ],
-    STATE_PREPPED: [
-        Transition("plan", STATE_PLANNED),
-    ],
-    STATE_PLANNED: [
-        Transition("critique", STATE_CRITIQUED),
-        Transition("plan", STATE_PLANNED),
-    ],
-    STATE_CRITIQUED: [
-        Transition("gate", STATE_GATED, "gate_unset"),
-        Transition("revise", STATE_PLANNED, "gate_iterate"),
-        Transition("tiebreaker", STATE_TIEBREAKER_PENDING, "gate_tiebreaker"),
-        Transition("override add-note", STATE_CRITIQUED, "gate_escalate"),
-        Transition("override force-proceed", STATE_GATED, "gate_escalate"),
-        Transition("override abort", STATE_ABORTED, "gate_escalate"),
-        Transition("revise", STATE_PLANNED, "gate_proceed_blocked"),
-        Transition("override force-proceed", STATE_GATED, "gate_proceed_blocked"),
-        Transition("gate", STATE_GATED, "gate_proceed"),
-    ],
-    STATE_GATED: [
-        Transition("finalize", STATE_FINALIZED),
-        Transition("override replan", STATE_PLANNED),
-    ],
-    STATE_FINALIZED: [
-        Transition("execute", STATE_EXECUTED),
-        Transition("override replan", STATE_PLANNED),
-    ],
-    STATE_EXECUTED: [
-        # `handle_review()` may also return STATE_FINALIZED on a `needs_rework`
-        # verdict. That rework loop depends on review payload semantics rather
-        # than gate_* conditions, so it lives in the handler instead of here
-        # because `_transition_matches()` only understands gate-based branches.
-        Transition("review", STATE_DONE),
-    ],
-    STATE_AWAITING_HUMAN: [
-        Transition("verify-human", STATE_DONE),
-    ],
-    STATE_TIEBREAKER_PENDING: [
-        Transition("tiebreaker-run", STATE_TIEBREAKER_READY),
-    ],
-    STATE_TIEBREAKER_READY: [
-        Transition("tiebreaker-decide", STATE_CRITIQUED),
-    ],
-}
-
-# Each level's *own* overrides (not inherited).  Levels inherit from the
-# level below them via _ROBUSTNESS_HIERARCHY so shared transitions are
-# declared once: robust/superrobust have none, standard keeps the
-# planned->critique routing documented explicitly, and light skips
-# prep plus gate/review.
-_ROBUSTNESS_OVERRIDES: dict[str, dict[str, list[Transition]]] = {
-    "superrobust": {},
-    "robust": {},
-    "standard": {
-        STATE_INITIALIZED: [
-            Transition("plan", STATE_PLANNED),
-        ],
-    },
-    "light": {
-        STATE_INITIALIZED: [
-            Transition("plan", STATE_PLANNED),
-        ],
-        STATE_CRITIQUED: [
-            Transition("revise", STATE_GATED),
-        ],
-        STATE_EXECUTED: [],
-    },
-    # tiny inherits light's skip-prep + skip-review, then adds its own
-    # STATE_PLANNED override to bypass critique entirely. Auto-mode flow
-    # at tiny is: INITIALIZED -> plan -> PLANNED -> finalize -> GATED ->
-    # finalize -> FINALIZED -> execute -> EXECUTED. No critique handler
-    # is called; no review handler is called.
-    "tiny": {
-        STATE_PLANNED: [
-            Transition("finalize", STATE_GATED),
-        ],
-    },
-}
-
-_ROBUSTNESS_WORKFLOW_LEVELS: dict[str, tuple[str, ...]] = {
-    "superrobust": ("superrobust",),
-    "robust": ("robust",),
-    "standard": ("standard",),
-    "light": ("standard", "light"),
-    "tiny": ("standard", "light", "tiny"),
-}
+from .workflow_data import (
+    Transition,
+    WORKFLOW,
+    _ROBUSTNESS_OVERRIDES,
+    _ROBUSTNESS_WORKFLOW_LEVELS,
+)
 
 _STEP_CONTEXT_STATES = {
     STATE_PLANNED,
