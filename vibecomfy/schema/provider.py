@@ -12,7 +12,7 @@ from vibecomfy.comfy_command import has_comfyui_runtime
 from vibecomfy.runtime.client import ComfyClient
 from vibecomfy.runtime.server import comfy_server
 
-from .cache import load_object_info_cache, object_info_cache_path, write_object_info_cache
+from .cache import load_object_info_cache, object_info_cache_path, runtime_fingerprint, write_object_info_cache
 
 _logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class NodeSchema:
     pack: str | None
     inputs: dict[str, InputSpec]
     outputs: list[OutputSpec]
-    # ── provenance fields (defaults so existing code works unchanged) ──────
+    # -- provenance fields (defaults so existing code works unchanged) ------
     source_provider: str = "unknown"
     source_path: str | None = None
     source_cache_path: str | None = None
@@ -228,23 +228,23 @@ class ConversionSchemaProvider:
 
     Precedence order (first hit wins):
 
-    1. **Committed node_index.json** – ``LocalSchemaProvider`` against the
-       pinned ``node_index_path``.
-    2. **Provenance-matched object_info cache** – ``ObjectInfoSchemaProvider``
-       loaded from ``object_info_cache_path`` only when its fingerprint
+    1. **Committed node_index.json** - `LocalSchemaProvider` against the
+       pinned `node_index_path`.
+    2. **Provenance-matched object_info cache** - `ObjectInfoSchemaProvider`
+       loaded from `object_info_cache_path` only when its fingerprint
        metadata matches the expected runtime identity.
-    3. **Source parser** – ``SourceSchemaProvider`` scanning installed
-       custom-node source trees under ``source_roots``.
-    4. **Widget schema fallback** – positional ``widget_N`` → named input
-       aliases from the local ``WIDGET_SCHEMA`` table (lowest priority).
-    5. **Runtime** – ``RuntimeSchemaProvider`` is consulted *only* when
-       ``enable_runtime=True`` (off by default).
+    3. **Source parser** - `SourceSchemaProvider` scanning installed
+       custom-node source trees under `source_roots`.
+    4. **Widget schema fallback** - positional `widget_N` -> named input
+       aliases from the local `WIDGET_SCHEMA` table (lowest priority).
+    5. **Runtime** - `RuntimeSchemaProvider` is consulted *only* when
+       `enable_runtime=True` (off by default).
 
-    Each ``get_schema`` hit records a ``SchemaSourceInfo`` provenance note
-    via ``_logger.info`` so callers can attribute emission decisions.
+    Each `get_schema` hit records a `SchemaSourceInfo` provenance note
+    via `_logger.info` so callers can attribute emission decisions.
 
-    Returns ``None`` for unknown types — never silently falls through to
-    a live network call behind the ``enable_runtime`` flag.
+    Returns `None` for unknown types - never silently falls through to
+    a live network call behind the `enable_runtime` flag.
     """
 
     def __init__(
@@ -267,6 +267,7 @@ class ConversionSchemaProvider:
         if enable_runtime:
             self._runtime = RuntimeSchemaProvider(server_url=runtime_server_url)
         self._enable_runtime = enable_runtime
+        self._expected_cache_fingerprint = runtime_fingerprint(runtime_server_url)
 
     def get_schema(self, class_type: str) -> NodeSchema | None:
         # 1. Committed node_index.json
@@ -293,19 +294,15 @@ class ConversionSchemaProvider:
             except SchemaIndexError:
                 schema = None
             if schema is not None:
+                cache_info = self._object_info_cache_info()
                 _logger.info(
-                    "schema hit: %s provider=object_info_cache path=%s",
+                    "schema hit: %s provider=object_info_cache path=%s confidence=%s conflicts=%s",
                     class_type,
                     self._object_info.object_info_path,
+                    cache_info.confidence,
+                    cache_info.conflicts,
                 )
-                return self._with_provenance(
-                    schema,
-                    SchemaSourceInfo(
-                        provider_name="object_info_cache",
-                        cache_path=str(self._object_info.object_info_path),
-                        confidence=0.7,
-                    ),
-                )
+                return self._with_provenance(schema, cache_info)
             else:
                 _logger.info(
                     "schema miss in object_info_cache: %s path=%s",
@@ -330,11 +327,9 @@ class ConversionSchemaProvider:
                 ),
             )
 
-        # 4. Widget schema fallback – build a minimal NodeSchema from aliases
+        # 4. Widget schema fallback - build a minimal NodeSchema from aliases
         widget_names = self._widget_schema.get(class_type)
         if widget_names is not None:
-            from vibecomfy.porting.widget_schema import WIDGET_SCHEMA as _WS
-
             _logger.info(
                 "schema hit: %s provider=widget_schema_fallback names=%s",
                 class_type,
@@ -386,6 +381,50 @@ class ConversionSchemaProvider:
             source_provider="widget_schema",
             confidence=0.3,
         )
+
+    def _object_info_cache_info(self) -> SchemaSourceInfo:
+        if self._object_info is None:
+            return SchemaSourceInfo(provider_name="object_info_cache", confidence=0.0)
+        path = self._object_info.object_info_path
+        data = load_object_info_cache(path) or {}
+        metadata = data.get("_cache_metadata")
+        info = SchemaSourceInfo(
+            provider_name="object_info_cache",
+            cache_path=str(path),
+            confidence=0.8,
+        )
+        metadata_fingerprint: str | None = None
+        if isinstance(metadata, dict):
+            for key in ("runtime_fingerprint", "fingerprint", "cache_fingerprint"):
+                value = metadata.get(key)
+                if isinstance(value, str) and value:
+                    metadata_fingerprint = value
+                    break
+            info.hash = metadata_fingerprint
+            package = metadata.get("package")
+            version = metadata.get("version")
+            if isinstance(package, str):
+                info.package = package
+            if isinstance(version, str):
+                info.version = version
+        else:
+            info.confidence = 0.5
+            info.ignored_evidence.append("metadata_less_cache")
+
+        filename_fingerprint = _cache_fingerprint_for_path(path)
+        if metadata_fingerprint is None and filename_fingerprint is not None:
+            info.hash = filename_fingerprint
+
+        observed = metadata_fingerprint or filename_fingerprint
+        if observed is not None and observed != self._expected_cache_fingerprint:
+            info.confidence = min(info.confidence, 0.4)
+            info.conflicts.append(
+                f"stale_cache_fingerprint:{observed}!={self._expected_cache_fingerprint}"
+            )
+        elif observed is None:
+            info.confidence = min(info.confidence, 0.5)
+            info.ignored_evidence.append("missing_cache_fingerprint")
+        return info
 
     @staticmethod
     def _with_provenance(schema: NodeSchema, info: SchemaSourceInfo) -> NodeSchema:
@@ -488,6 +527,16 @@ def _schema_from_object_info(class_type: str, info: dict[str, Any]) -> NodeSchem
     outputs = _parse_outputs(info)
     pack = _first_string(info, "pack", "package", "category")
     return NodeSchema(class_type=class_type, pack=pack, inputs=inputs, outputs=outputs)
+
+
+def _cache_fingerprint_for_path(path: Path) -> str | None:
+    name = path.name
+    if not name.startswith("object_info.") or not name.endswith(".json"):
+        return None
+    middle = name[len("object_info.") : -len(".json")]
+    if not middle:
+        return None
+    return middle
 
 
 def _schema_from_index_row(row: dict[str, Any]) -> NodeSchema | None:

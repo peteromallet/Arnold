@@ -16,8 +16,14 @@ from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_s
 from vibecomfy.metadata import OUTPUT_NODE_NAMES
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 from vibecomfy.porting.assets import analyze_model_assets
+from vibecomfy.porting.emitter import (
+    READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
+    READABILITY_WARNING_HIDDEN_MODEL_FILENAME,
+    READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
+    READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+)
 from vibecomfy.porting.report import NodePackSuggestion, PortIssue, PortReport
-from vibecomfy.porting.widget_aliases import widget_alias_analysis, widget_names_for_class
+from vibecomfy.porting.widget_aliases import LINK_ONLY_TYPES, widget_alias_analysis, widget_names_for_class
 from vibecomfy.registry.ready import workflow_from_ready
 from vibecomfy.scratchpad_loader import load_scratchpad
 from vibecomfy.schema import schema_for, schema_registry_empty
@@ -190,6 +196,9 @@ def analyze_source(
     }
     for issue in validation_report.issues:
         report.diagnostics.append(_port_issue_from_validation(issue, category="schema"))
+
+    # -- readability diagnostics (T9) --------------------------------------
+    report.diagnostics.extend(_readability_diagnostics(workflow, api_prompt=api_prompt))
 
     if report.asset_candidates:
         report.recommendations.append(f"Review model assets before RunPod validation; use `vibecomfy fetch {source} --dry-run` for URL-backed assets.")
@@ -793,6 +802,224 @@ def _hash_file(path: str | Path) -> str | None:
         return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
     except OSError:
         return None
+
+
+# -- readability diagnostics (T9) ---------------------------------------------
+
+
+def _readability_diagnostics(
+    workflow: VibeWorkflow,
+    *,
+    api_prompt: dict[str, Any] | None = None,
+) -> list[PortIssue]:
+    """Generate readability diagnostics for port check reports.
+
+    Reuses the readability warning codes from `EmissionDiagnostic` to
+    surface the same issues that the emitter would flag during conversion,
+    but without actually running the emitter.  This lets `port check`
+    warn about avoidable positional outputs, unresolved widget aliases, and
+    hidden model filenames before conversion.
+    """
+    issues: list[PortIssue] = []
+
+    # ---- output-name diagnostics -------------------------------------------
+    for node in workflow.nodes.values():
+        nid = str(node.id)
+        ctype = str(node.class_type)
+        metadata = getattr(node, "metadata", {}) or {}
+        output_names = metadata.get("output_names")
+
+        if not isinstance(output_names, (list, tuple)) or not output_names:
+            continue
+
+        # Check for duplicates and blanks
+        seen: set[str] = set()
+        has_duplicate = False
+        has_blank = False
+        for name in output_names:
+            if not isinstance(name, str) or not name:
+                has_blank = True
+            elif name in seen:
+                has_duplicate = True
+            else:
+                seen.add(name)
+
+        if has_duplicate:
+            issues.append(
+                PortIssue(
+                    code=READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
+                    message=(
+                        f"Node {nid} ({ctype}) has duplicate output names; "
+                        f"emitter will fall back to numeric .out(n)."
+                    ),
+                    severity="warning",
+                    node_id=nid,
+                    class_type=ctype,
+                    detail={"output_names": list(output_names), "category": "readability"},
+                    recommendation="Make output names unique in the source schema before conversion.",
+                )
+            )
+        elif has_blank:
+            issues.append(
+                PortIssue(
+                    code=READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
+                    message=(
+                        f"Node {nid} ({ctype}) has partial/blank output names; "
+                        f"some outputs will use numeric .out(n)."
+                    ),
+                    severity="warning",
+                    node_id=nid,
+                    class_type=ctype,
+                    detail={"output_names": list(output_names), "category": "readability"},
+                    recommendation="Fill in missing output names in the source schema before conversion.",
+                )
+            )
+
+    # ---- widget-alias diagnostics ------------------------------------------
+    for node in workflow.nodes.values():
+        nid = str(node.id)
+        ctype = str(node.class_type)
+        metadata = getattr(node, "metadata", {}) or {}
+        input_aliases = metadata.get("input_aliases")
+
+        # Collect widget_N keys on this node
+        widget_keys: set[str] = set()
+        for key in list(getattr(node, "widgets", {}).keys()) + list(getattr(node, "inputs", {}).keys()):
+            if key.startswith("widget_"):
+                widget_keys.add(key)
+
+        if not widget_keys:
+            continue
+
+        if isinstance(input_aliases, (list, tuple)) and input_aliases:
+            # Check for widget_N indices outside the aliases range
+            widget_indices: list[int] = []
+            for k in widget_keys:
+                try:
+                    widget_indices.append(int(k.split("_", 1)[1]))
+                except ValueError:
+                    pass
+            if widget_indices:
+                max_idx = max(widget_indices)
+                if max_idx >= len(input_aliases):
+                    unresolved = sorted(
+                        f"widget_{i}" for i in widget_indices
+                        if i >= len(input_aliases)
+                    )
+                    issues.append(
+                        PortIssue(
+                            code=READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+                            message=(
+                                f"Node {nid} ({ctype}) has {len(unresolved)} widget_N key(s) "
+                                f"({', '.join(unresolved)}) outside input_aliases range "
+                                f"(len={len(input_aliases)}); keeping positional."
+                            ),
+                            severity="warning",
+                            node_id=nid,
+                            class_type=ctype,
+                            detail={
+                                "unresolved_widgets": unresolved,
+                                "input_aliases_length": len(input_aliases),
+                                "category": "readability",
+                            },
+                            recommendation="Update the schema to include aliases for all widget inputs.",
+                        )
+                    )
+        else:
+            # No input_aliases available - count all widget_N as unresolved
+            issues.append(
+                PortIssue(
+                    code=READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+                    message=(
+                        f"Node {nid} ({ctype}) has {len(widget_keys)} unresolved widget_N "
+                        f"key(s) ({', '.join(sorted(widget_keys))}) - no schema aliases available."
+                    ),
+                    severity="warning",
+                    node_id=nid,
+                    class_type=ctype,
+                    detail={
+                        "widget_keys": sorted(widget_keys),
+                        "category": "readability",
+                    },
+                    recommendation="Add the class to the widget schema or provide schema-source evidence.",
+                )
+            )
+
+    # ---- hidden model filename diagnostics ---------------------------------
+    if api_prompt is not None:
+        issues.extend(_hidden_model_filename_diagnostics(api_prompt, workflow))
+
+    return issues
+
+
+def _hidden_model_filename_diagnostics(
+    api_prompt: dict[str, Any],
+    workflow: VibeWorkflow,
+) -> list[PortIssue]:
+    """Detect model filenames hidden under widget_N keys that cannot be aliased."""
+    from vibecomfy.porting.convert import _looks_like_model_value
+
+    issues: list[PortIssue] = []
+
+    # Build class_widget_aliases from node metadata
+    class_widget_aliases: dict[str, list[str | None]] = {}
+    seen_classes: set[str] = set()
+    for node in workflow.nodes.values():
+        ct = node.class_type
+        if ct in seen_classes:
+            continue
+        seen_classes.add(ct)
+        aliases = getattr(node, "metadata", {}).get("input_aliases")
+        if isinstance(aliases, (list, tuple)) and aliases:
+            class_widget_aliases[ct] = list(aliases)
+
+    for node_id, node in api_prompt.items():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type", "")
+        widget_model_values: dict[int, str] = {}
+        named_model_values: set[str] = set()
+
+        for key, value in node.get("inputs", {}).items():
+            if not _looks_like_model_value(value):
+                continue
+            if key.startswith("widget_"):
+                try:
+                    idx = int(key.split("_", 1)[1])
+                    widget_model_values[idx] = str(value)
+                except ValueError:
+                    named_model_values.add(str(value))
+            else:
+                named_model_values.add(str(value))
+
+        aliases = class_widget_aliases.get(class_type)
+        for idx, val in widget_model_values.items():
+            if val in named_model_values:
+                continue
+            if aliases is not None and 0 <= idx < len(aliases):
+                alias = aliases[idx]
+                if alias is not None:
+                    continue
+
+            issues.append(
+                PortIssue(
+                    code=READABILITY_WARNING_HIDDEN_MODEL_FILENAME,
+                    message=(
+                        f"Model filename {val!r} hidden under widget_{idx} "
+                        f"on node {node_id} ({class_type})."
+                    ),
+                    severity="warning",
+                    node_id=str(node_id),
+                    class_type=class_type,
+                    detail={
+                        "hidden": f"{class_type} widget_{idx}={val!r}",
+                        "category": "readability",
+                    },
+                    recommendation="Ensure model filenames are reachable through named fields after aliasing.",
+                )
+            )
+
+    return issues
 
 
 __all__ = ["LoadedPortSource", "analyze_source", "load_port_source"]

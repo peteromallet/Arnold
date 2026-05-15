@@ -9,7 +9,7 @@ from typing import Any, Literal
 from vibecomfy.porting.widget_aliases import resolve_widget_name
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
 
-# ── readability warning codes ────────────────────────────────────────────────
+# -- readability warning codes ------------------------------------------------
 READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT = "avoidable_positional_output"
 READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY = "output_name_ambiguity"
 READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED = "schema_backed_widget_alias_not_resolved"
@@ -31,8 +31,8 @@ EmissionSeverity = Literal["error", "warning", "info"]
 class EmissionDiagnostic:
     """A readability diagnostic recorded during emission.
 
-    These are always *warnings* (or info) — hard errors are surfaced through
-    ``PortConvertValidation`` parity / schema failures, not here.
+    These are always *warnings* (or info) - hard errors are surfaced through
+    `PortConvertValidation` parity / schema failures, not here.
     """
 
     code: str
@@ -219,7 +219,7 @@ def _emit_build_function(
     for nid in _topological_node_order(workflow_nodes, edges_in):
         node = workflow_nodes[nid]
         var = var_names[nid]
-        kwargs = _node_kwargs(node, edges_in, var_names, diagnostics=diagnostics)
+        kwargs = _node_kwargs(node, edges_in, var_names, workflow_nodes=workflow_nodes, diagnostics=diagnostics)
 
         head = f"    {var} = _node(wf, {node.class_type!r}, {nid!r}"
         if not kwargs:
@@ -372,11 +372,18 @@ def _node_kwargs(
     edges_in: dict[str, list[Any]],
     var_names: dict[str, str],
     *,
+    workflow_nodes: dict[str, Any] | None = None,
     diagnostics: list[EmissionDiagnostic] | None = None,
 ) -> list[tuple[str, str]]:
     cls = node.class_type
     schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
     schema_set = set(schema)
+
+    # Per-node widget alias metadata populated by the schema provider during
+    # convert_to_vibe_format.  Prefer this over the static WIDGET_SCHEMA so
+    # that schema-source evidence wins - the static table is only a fallback.
+    node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
+    input_aliases: list[str | None] | None = node_metadata.get("input_aliases")
 
     incoming: dict[str, tuple[str, int]] = {}
     for edge in edges_in.get(node.id, []):
@@ -389,6 +396,14 @@ def _node_kwargs(
             idx = int(key.split("_", 1)[1])
         except ValueError:
             return key
+        # 1. Per-node schema-source evidence (input_aliases from provider).
+        if isinstance(input_aliases, (list, tuple)) and 0 <= idx < len(input_aliases):
+            alias = input_aliases[idx]
+            if alias is not None:
+                return alias
+            # None -> UI-only widget, drop it.
+            return None
+        # 2. Static WIDGET_SCHEMA fallback (lowest priority).
         return resolve_widget_name(cls, idx)
 
     raw_inputs: dict[str, Any] = {}
@@ -447,13 +462,26 @@ def _node_kwargs(
 
     for to_input in ordered_incoming:
         from_node, from_slot = incoming[to_input]
-        expr = f"{var_names[from_node]}.out({from_slot})" if from_node in var_names else f"[{from_node!r}, {from_slot}]"
+        from_node_str = str(from_node)
+        if from_node_str in var_names:
+            safe_name = _safe_output_name(workflow_nodes, from_node_str, from_slot)
+            if safe_name is not None:
+                expr = f"{var_names[from_node_str]}.out({safe_name!r})"
+            else:
+                expr = f"{var_names[from_node_str]}.out({from_slot})"
+                if diagnostics is not None and workflow_nodes is not None:
+                    _output_fallback_diagnostic(
+                        diagnostics, workflow_nodes, from_node_str, from_slot,
+                        target_node=node, target_input=to_input,
+                    )
+        else:
+            expr = f"[{from_node_str!r}, {from_slot}]"
         if not _is_python_ident(to_input):
             extras.append((to_input, expr))
             continue
         out.append((to_input, expr))
 
-    # ── readability diagnostics: positional output detection ────────────
+    # -- readability diagnostics: positional output detection ------------
     if diagnostics is not None:
         emit_diags = _collect_emission_diagnostics(node, output_names, incoming, var_names)
         diagnostics.extend(emit_diags)
@@ -472,24 +500,25 @@ def _collect_emission_diagnostics(
 ) -> list[EmissionDiagnostic]:
     """Collect readability diagnostics for a single node during emission.
 
-    This is called from ``_node_kwargs`` when a diagnostics collector is
+    This is called from `_node_kwargs` when a diagnostics collector is
     provided.  Currently flags:
 
-    * **avoidable_positional_output** — the node has output names available
-      (from schema metadata) but the emitter is using numeric ``.out(n)``
+    * **avoidable_positional_output** - the node has output names available
+      (from schema metadata) but the emitter is using numeric `.out(n)`
       because one or more names are unsafe (blank, duplicate, conflicted).
 
-    * **output_name_ambiguity** — output name is duplicated within the
+    * **output_name_ambiguity** - output name is duplicated within the
       same node, forcing a numeric fallback.
 
-    * **schema_backed_widget_alias_not_resolved** — one or more
-      ``widget_N`` keys remain positional because no alias mapping could
+    * **schema_backed_widget_alias_not_resolved** - one or more
+      `widget_N` keys remain positional because no alias mapping could
       be resolved from schema / widget table evidence.
     """
     diags: list[EmissionDiagnostic] = []
     nid = getattr(node, "id", None)
     ctype = getattr(node, "class_type", None)
     metadata = getattr(node, "metadata", {}) or {}
+    node_input_aliases = metadata.get("input_aliases")
 
     # 1. avoidable_positional_output / output_name_ambiguity
     if output_names:
@@ -530,9 +559,8 @@ def _collect_emission_diagnostics(
                     )
                 )
     else:
-        # No output names at all — check if schema has input_aliases available
-        input_aliases = metadata.get("input_aliases")
-        if not input_aliases:
+        # No output names at all - check if schema has input_aliases available
+        if not node_input_aliases:
             # Check if there are widget_N keys that could be aliased
             widget_keys = [
                 k for k in getattr(node, "widgets", {}).keys()
@@ -559,15 +587,182 @@ def _collect_emission_diagnostics(
                         )
                     )
 
+    # 3. schema_backed_widget_alias_not_resolved - when widget_N keys remain
+    #    positional even though input_aliases could potentially cover them, or
+    #    when the fallback to static WIDGET_SCHEMA was used.
+    if node_input_aliases:
+        # We have input_aliases - check if any widget_N index falls outside
+        # the aliases list, forcing a fallback.
+        widget_indices: list[int] = []
+        for k in list(getattr(node, "widgets", {}).keys()) + list(getattr(node, "inputs", {}).keys()):
+            if k.startswith("widget_"):
+                try:
+                    widget_indices.append(int(k.split("_", 1)[1]))
+                except ValueError:
+                    pass
+        if widget_indices:
+            max_idx = max(widget_indices)
+            if max_idx >= len(node_input_aliases):
+                unresolved = [
+                    f"widget_{i}" for i in widget_indices
+                    if i >= len(node_input_aliases)
+                ]
+                diags.append(
+                    EmissionDiagnostic(
+                        code=READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+                        message=(
+                            f"Node {nid} ({ctype}) has {len(unresolved)} widget_N key(s) "
+                            f"({', '.join(unresolved)}) outside input_aliases range "
+                            f"(len={len(node_input_aliases)}); keeping positional."
+                        ),
+                        severity="warning",
+                        node_id=str(nid) if nid is not None else None,
+                        class_type=ctype,
+                        detail={
+                            "unresolved_widgets": unresolved,
+                            "input_aliases_length": len(node_input_aliases),
+                        },
+                    )
+                )
+
     return diags
 
 
 def _node_output_names(node: Any) -> list[str]:
+    """Return output names for `_outputs` emission, preserving partial evidence.
+
+    Unlike the old all-truthy gate, this always returns the full list from
+    metadata so that `_outputs` is emitted even when some names are blank.
+    The per-slot safety decision for `.out('name')` is made separately by
+    `_safe_output_name` during incoming edge formatting.
+    """
     output_names = getattr(node, "metadata", {}).get("output_names")
     if not isinstance(output_names, (list, tuple)):
         return []
-    names = [name for name in output_names if isinstance(name, str) and name]
-    return names if len(names) == len(output_names) else []
+    result: list[str] = []
+    for name in output_names:
+        if isinstance(name, str) and name:
+            result.append(name)
+        else:
+            result.append("")
+    return result
+
+
+def _safe_output_name(
+    workflow_nodes: dict[str, Any] | None,
+    from_node: str,
+    from_slot: int,
+) -> str | None:
+    """Return the safe output name for a slot, or `None` if numeric fallback is needed.
+
+    A name is *safe* for `.out('name')` when all of these hold:
+
+    * *slot in range:* `from_slot` is a valid index into the source node's
+      `output_names` metadata list.
+    * *name non-empty:* the name at that index is a non-blank string.
+    * *name unique:* the name appears exactly once in the source node's
+      `output_names` list (no duplicates).
+    * *name not conflicted:* the source node's metadata does not list the name
+      in a `conflicted_outputs` key.
+    """
+    if workflow_nodes is None:
+        return None
+    src_node = workflow_nodes.get(from_node)
+    if src_node is None:
+        return None
+    output_names = getattr(src_node, "metadata", {}).get("output_names")
+    if not isinstance(output_names, (list, tuple)):
+        return None
+    if from_slot < 0 or from_slot >= len(output_names):
+        return None
+    name = output_names[from_slot]
+    if not isinstance(name, str) or not name:
+        return None
+    # Duplicate check: the name must appear exactly once.
+    if list(output_names).count(name) > 1:
+        return None
+    # Conflicted check: the name must not be in the conflicted_outputs list.
+    conflicted = getattr(src_node, "metadata", {}).get("conflicted_outputs")
+    if isinstance(conflicted, (list, tuple, set, frozenset)) and name in conflicted:
+        return None
+    return name
+
+
+def _output_fallback_diagnostic(
+    diagnostics: list[EmissionDiagnostic],
+    workflow_nodes: dict[str, Any],
+    from_node: str,
+    from_slot: int,
+    *,
+    target_node: Any,
+    target_input: str,
+) -> None:
+    """Record a diagnostic explaining why `.out(n)` was used instead of `.out('name')`.
+
+    Only fires when the source node *has* output_names metadata - otherwise
+    numeric fallback is expected and not an avoidable concern.
+    """
+    src_node = workflow_nodes.get(from_node)
+    if src_node is None:
+        return
+
+    output_names = getattr(src_node, "metadata", {}).get("output_names")
+    # If the source node has no output_names metadata at all, numeric fallback
+    # is the only option - no diagnostic warranted.
+    if not isinstance(output_names, (list, tuple)):
+        return
+
+    src_ctype = getattr(src_node, "class_type", None)
+    tgt_nid = getattr(target_node, "id", None)
+    tgt_ctype = getattr(target_node, "class_type", None)
+
+    reason_parts: list[str] = []
+    if from_slot < 0 or from_slot >= len(output_names):
+        reason_parts.append(
+            f"slot {from_slot} out of range (source has {len(output_names)} output(s))"
+        )
+    else:
+        name = output_names[from_slot]
+        if not isinstance(name, str) or not name:
+            reason_parts.append(f"output_names[{from_slot}] is blank")
+        elif list(output_names).count(name) > 1:
+            reason_parts.append(
+                f"output_names[{from_slot}]={name!r} is duplicated in source output_names"
+            )
+        else:
+            conflicted = getattr(src_node, "metadata", {}).get("conflicted_outputs")
+            if isinstance(conflicted, (list, tuple, set, frozenset)) and name in conflicted:
+                reason_parts.append(
+                    f"output_names[{from_slot}]={name!r} is marked conflicted"
+                )
+            else:
+                # Should not reach here - _safe_output_name would have succeeded.
+                # Log it anyway as a safety net.
+                reason_parts.append(
+                    f"output_names[{from_slot}]={name!r} is not safe for named emission"
+                )
+
+    reason = "; ".join(reason_parts)
+    diagnostics.append(
+        EmissionDiagnostic(
+            code=READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
+            message=(
+                f"Edge from {from_node} ({src_ctype}).out({from_slot}) to "
+                f"{tgt_nid} ({tgt_ctype}).{target_input} uses numeric .out({from_slot}) "
+                f"because: {reason}"
+            ),
+            severity="warning",
+            node_id=str(tgt_nid) if tgt_nid is not None else None,
+            class_type=tgt_ctype,
+            detail={
+                "from_node": from_node,
+                "from_slot": from_slot,
+                "target_input": target_input,
+                "reason": reason,
+                "output_names": list(output_names),
+            },
+        )
+    )
 
 
 def _format_metadata_dict(name: str, value: dict[str, Any]) -> str:

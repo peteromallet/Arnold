@@ -4,12 +4,17 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from vibecomfy.porting.convert import ManualTemplateRefusal, _check_manual_refusal
-from vibecomfy.porting.emitter import emit_ready_template_python, emit_scratchpad_python
-from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+from vibecomfy.porting.emitter import (
+    EmissionDiagnostic,
+    emit_ready_template_python,
+    emit_scratchpad_python,
+)
+from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 from tools.format_as_python import format_as_python
 
 
@@ -112,14 +117,14 @@ def test_convert_ready_templates_tool_dry_run_remains_compatible() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sprint 1 T10: focused tool tests — shared gates for bulk dry-run / --write
+# Sprint 1 T10: focused tool tests - shared gates for bulk dry-run / --write
 # ---------------------------------------------------------------------------
 
 
 def test_shared_manual_refusal_raises_for_manual_marker() -> None:
     """_check_manual_refusal raises ManualTemplateRefusal for # vibecomfy: manual."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp:
-        tmp.write("# vibecomfy: manual — do not regenerate\n")
+        tmp.write("# vibecomfy: manual - do not regenerate\n")
         tmp.write("def build():\n    pass\n")
         tmp_path = Path(tmp.name)
 
@@ -154,7 +159,7 @@ def test_write_emitted_raises_manual_refusal_before_write(tmp_path: Path) -> Non
     tmpl_dir = tmp_path / "ready_templates" / "image"
     tmpl_dir.mkdir(parents=True)
     manual_path = tmpl_dir / "test_manual.py"
-    manual_path.write_text("# vibecomfy: manual — do not regenerate\ndef build(): pass\n")
+    manual_path.write_text("# vibecomfy: manual - do not regenerate\ndef build(): pass\n")
 
     # Monkey-patch READY_ROOT so the path passes the outside-root guard
     import tools.convert_ready_templates as tmod
@@ -207,7 +212,7 @@ def test_convert_template_refuses_manual_via_shared_gate(tmp_path: Path) -> None
     tmpl_dir = tmp_path / "ready_templates" / "image"
     tmpl_dir.mkdir(parents=True)
     manual_path = tmpl_dir / "test_manual_convert.py"
-    manual_path.write_text("# vibecomfy: manual — do not regenerate\nAPI_WORKFLOW = {}\n")
+    manual_path.write_text("# vibecomfy: manual - do not regenerate\nAPI_WORKFLOW = {}\n")
 
     import tools.convert_ready_templates as tmod
 
@@ -265,30 +270,226 @@ def test_write_gate_requires_both_validate_and_parity() -> None:
     # Simulate the gate check from main():
     #   gated_ok = row.validate == "ok" and row.roundtrip in ("ok", "skip", "skip-authored")
 
-    # Case 1: validate fail → blocked
+    # Case 1: validate fail -> blocked
     r1 = Row(template_id="test/fail_val")
     r1.validate = "fail"
     r1.roundtrip = "ok"
     gated = r1.validate == "ok" and r1.roundtrip in ("ok", "skip", "skip-authored")
     assert not gated
 
-    # Case 2: roundtrip fail → blocked
+    # Case 2: roundtrip fail -> blocked
     r2 = Row(template_id="test/fail_rt")
     r2.validate = "ok"
     r2.roundtrip = "fail"
     gated = r2.validate == "ok" and r2.roundtrip in ("ok", "skip", "skip-authored")
     assert not gated
 
-    # Case 3: both ok → allowed
+    # Case 3: both ok -> allowed
     r3 = Row(template_id="test/ok")
     r3.validate = "ok"
     r3.roundtrip = "ok"
     gated = r3.validate == "ok" and r3.roundtrip in ("ok", "skip", "skip-authored")
     assert gated
 
-    # Case 4: authored shape (skip-authored) → allowed
+    # Case 4: authored shape (skip-authored) -> allowed
     r4 = Row(template_id="test/authored")
     r4.validate = "ok"
     r4.roundtrip = "skip-authored"
     gated = r4.validate == "ok" and r4.roundtrip in ("ok", "skip", "skip-authored")
     assert gated
+
+
+# ---------------------------------------------------------------------------
+# T11 - emitter tests: named outputs, widget aliases, fallbacks, _outputs
+# ---------------------------------------------------------------------------
+
+
+def _workflow_with_output_names(
+    output_names: list[str],
+) -> VibeWorkflow:
+    """Build a minimal multi-output workflow with metadata-driven output_names."""
+    workflow = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    workflow.nodes["1"] = VibeNode("1", "MultiOutput")
+    workflow.nodes["1"].metadata["output_names"] = output_names
+    workflow.nodes["2"] = VibeNode("2", "Consumer")
+    # Connect both outputs from node 1 to node 2 on inputs named "a" and "b"
+    workflow.connect("1.0", "2.a")
+    workflow.connect("1.1", "2.b")
+    return workflow
+
+
+def _workflow_with_widget_aliases(
+    class_type: str,
+    input_aliases: list[str | None],
+    widget_values: dict[str, Any] | None = None,
+) -> VibeWorkflow:
+    """Build a workflow where a node has input_aliases metadata and widget values."""
+    workflow = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    node = VibeNode("1", class_type)
+    node.metadata["input_aliases"] = input_aliases
+    if widget_values:
+        for k, v in widget_values.items():
+            if k.startswith("widget_"):
+                node.widgets[k] = v
+            else:
+                node.inputs[k] = v
+    workflow.nodes["1"] = node
+    workflow.nodes["2"] = VibeNode("2", "SaveImage", inputs={"filename_prefix": "out"})
+    workflow.connect("1.0", "2.images")
+    return workflow
+
+
+def test_unique_safe_names_emit_named_out() -> None:
+    """Unique safe output names produce .out('name') in emitted code."""
+    text = emit_scratchpad_python(
+        _workflow_with_output_names(["image", "latent"]),
+        source_path="test.json",
+    )
+    # Should use named handles
+    assert ".out('image')" in text
+    assert ".out('latent')" in text
+    assert "_outputs=('image', 'latent')" in text
+
+
+def test_duplicate_output_names_fall_back_to_numeric() -> None:
+    """Duplicate output names fall back to .out(n) with diagnostic."""
+    diags: list[EmissionDiagnostic] = []
+    from vibecomfy.porting.emitter import (
+        EmissionDiagnostic,
+        READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
+    )
+
+    text = emit_scratchpad_python(
+        _workflow_with_output_names(["image", "image"]),
+        source_path="test.json",
+        diagnostics=diags,
+    )
+    # Should use numeric handles (duplicate names are unsafe)
+    assert ".out(0)" in text
+    assert ".out(1)" in text
+    # Should NOT use named handles
+    assert ".out('image')" not in text
+    # Should emit _outputs with the partial names (source of truth)
+    assert "_outputs=('image', 'image')" in text
+    # Diagnostic should flag ambiguity
+    ambiguity_codes = [d.code for d in diags if d.code == READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY]
+    assert len(ambiguity_codes) > 0
+
+
+def test_blank_output_names_fall_back_to_numeric() -> None:
+    """Blank output names fall back to .out(n), with named slots where safe."""
+    diags: list[EmissionDiagnostic] = []
+    from vibecomfy.porting.emitter import (
+        READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
+    )
+
+    text = emit_scratchpad_python(
+        _workflow_with_output_names(["image", ""]),
+        source_path="test.json",
+        diagnostics=diags,
+    )
+    # Slot 0 is safe -> .out('image')
+    assert ".out('image')" in text
+    # Slot 1 is blank -> .out(1)
+    assert ".out(1)" in text
+    # _outputs preserves partial evidence
+    assert "_outputs=('image', '')" in text
+    # Should have avoidable_positional_output diagnostic
+    fallback_codes = [d.code for d in diags if d.code == READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT]
+    assert len(fallback_codes) > 0
+
+
+def test_partial_output_evidence_still_emits_outputs_tuple() -> None:
+    """_outputs is emitted even when output_names has blank entries (SC19)."""
+    text = emit_scratchpad_python(
+        _workflow_with_output_names(["image", ""]),
+        source_path="test.json",
+    )
+    # Must contain _outputs with both entries, including the blank
+    assert "_outputs=('image', '')" in text
+
+
+def test_missing_output_names_does_not_emit_outputs() -> None:
+    """When node has no output_names metadata, _outputs is NOT emitted."""
+    wf = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    wf.nodes["1"] = VibeNode("1", "NoMeta")  # no metadata
+    wf.nodes["2"] = VibeNode("2", "Consumer")
+    wf.connect("1.0", "2.a")
+
+    text = emit_scratchpad_python(wf, source_path="test.json")
+    # _outputs= keyword arg should NOT appear in the _node() builder call;
+    # the helper function definition itself contains "_outputs" but that's fine.
+    assert "_outputs=" not in text
+
+
+def test_out_of_range_slot_falls_back_to_numeric() -> None:
+    """An edge with a slot beyond output_names range uses .out(n)."""
+    wf = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    wf.nodes["1"] = VibeNode("1", "SingleOutput")
+    wf.nodes["1"].metadata["output_names"] = ["only"]  # only slot 0 named
+    wf.nodes["2"] = VibeNode("2", "Consumer")
+    # Connect from slot 5 which is out of range
+    wf.edges.append(VibeEdge("1", "5", "2", "a"))
+
+    text = emit_scratchpad_python(wf, source_path="test.json")
+    # Slot 5 is out of range for ["only"] -> .out(5) not .out('only')
+    assert ".out(5)" in text
+    assert ".out('only')" not in text
+
+
+def test_widget_alias_success_emits_named_field() -> None:
+    """When input_aliases maps widget_N to a name, the emitter uses that name."""
+    from vibecomfy.porting.emitter import EmissionDiagnostic
+
+    wf = _workflow_with_widget_aliases(
+        "CheckpointLoaderSimple",
+        ["ckpt_name"],  # widget_0 -> ckpt_name
+        {"widget_0": "v1-5-pruned.safetensors"},
+    )
+
+    diags: list[EmissionDiagnostic] = []
+    text = emit_scratchpad_python(wf, source_path="test.json", diagnostics=diags)
+    # Should use the named field from input_aliases
+    assert "ckpt_name=" in text
+    assert "'v1-5-pruned.safetensors'" in text
+    # Should NOT use raw widget_0
+    assert "'widget_0'" not in text
+
+
+def test_widget_alias_fallback_keeps_positional_widget() -> None:
+    """When widget_N index is beyond input_aliases range, keep positional."""
+    from vibecomfy.porting.emitter import EmissionDiagnostic
+
+    wf = _workflow_with_widget_aliases(
+        "SomeNode",
+        ["only_name"],  # only widget_0 has an alias
+        {"widget_0": "first_val", "widget_3": "out_of_range_val"},
+    )
+
+    diags: list[EmissionDiagnostic] = []
+    text = emit_scratchpad_python(wf, source_path="test.json", diagnostics=diags)
+
+    # widget_0 gets aliased
+    assert "only_name=" in text
+    # widget_3 stays positional (out of range) - emitted as kwarg widget_3=
+    assert "widget_3=" in text
+
+    # Verify diagnostics include schema_backed_widget_alias_not_resolved
+    from vibecomfy.porting.emitter import (
+        READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+    )
+    unresolved_codes = [
+        d.code for d in diags
+        if d.code == READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED
+    ]
+    assert len(unresolved_codes) > 0
+
+
+def test_emitted_outputs_preservation_with_partial_blank() -> None:
+    """SC19: partial output_names ['image', ''] still emits _outputs=('image', '')."""
+    text = emit_scratchpad_python(
+        _workflow_with_output_names(["image", ""]),
+        source_path="test.json",
+    )
+    # Must contain the exact _outputs tuple including the blank
+    assert "_outputs=('image', '')" in text

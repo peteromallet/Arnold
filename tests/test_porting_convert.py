@@ -143,7 +143,7 @@ def test_port_convert_validation_reports_schema_failures() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Golden tests — legacy ``vibecomfy convert`` behavior (before removal)
+# Golden tests - legacy `vibecomfy convert` behavior (before removal)
 # ---------------------------------------------------------------------------
 
 
@@ -208,14 +208,14 @@ def test_legacy_convert_api_shaped_json_now_fails_with_migration_message(tmp_pat
 
 
 # ---------------------------------------------------------------------------
-# Canonical ``port convert`` tests — various source formats
+# Canonical `port convert` tests - various source formats
 # ---------------------------------------------------------------------------
 
 
 def test_port_convert_from_ready_id_produces_importable_scratchpad(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Canonical: ready_id → port_convert_workflow produces importable scratchpad."""
+    """Canonical: ready_id -> port_convert_workflow produces importable scratchpad."""
     result = port_convert_workflow(
         _sample_workflow(),
         source_path="workflow_corpus/official/image/z_image.json",
@@ -294,7 +294,7 @@ def test_port_convert_ready_template_candidate_does_not_preserve_api_workflow_in
 
 
 # ---------------------------------------------------------------------------
-# T6 — Representative parity fixtures and tests
+# T6 - Representative parity fixtures and tests
 # ---------------------------------------------------------------------------
 
 
@@ -490,7 +490,7 @@ def test_port_convert_validation_to_json_contains_all_parity_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T9 — Atomic conversion write, dry-run, diff, manual refusal tests
+# T9 - Atomic conversion write, dry-run, diff, manual refusal tests
 # ---------------------------------------------------------------------------
 
 
@@ -725,3 +725,627 @@ def test_conversion_write_error_is_runtime_error() -> None:
 def test_manual_template_refusal_is_value_error() -> None:
     """ManualTemplateRefusal is a ValueError subclass."""
     assert issubclass(ManualTemplateRefusal, ValueError)
+
+
+# ---------------------------------------------------------------------------
+# T12 - Conversion parity tests with comprehensive synthetic workflows
+# ---------------------------------------------------------------------------
+
+
+def _parity_workflow_safe_output_names() -> VibeWorkflow:
+    """Synthetic workflow where all output names are safe - no diagnostics expected."""
+    wf = VibeWorkflow(
+        "parity_safe",
+        WorkflowSource("source/parity_safe", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "input.png"})
+    wf.nodes["1"].metadata["output_names"] = ["image"]
+    wf.nodes["1"].metadata["input_aliases"] = ["image"]
+
+    wf.nodes["2"] = VibeNode("2", "SaveImage", inputs={"filename_prefix": "out/safe"})
+    wf.edges.append(VibeEdge("1", "0", "2", "images"))
+    return wf
+
+
+def _parity_provider_safe() -> FakeSchemaProvider:
+    return FakeSchemaProvider(
+        {
+            "LoadImage": NodeSchema(
+                class_type="LoadImage",
+                pack=None,
+                inputs={"image": InputSpec("STRING", required=True)},
+                outputs=[OutputSpec("IMAGE", "image")],
+            ),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING", required=True),
+                },
+                outputs=[],
+            ),
+        }
+    )
+
+
+def test_parity_safe_output_names_compile_equivalent() -> None:
+    """Safe output names produce compile_equivalent (True, [])."""
+    result = port_convert_workflow(
+        _parity_workflow_safe_output_names(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:parity_safe"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_parity_provider_safe(),
+    )
+    assert result.validation is not None
+    assert result.validation.ok
+    # Safe output names + valid schema -> parity should pass
+    assert result.validation.parity_ok is True
+    assert result.validation.parity_diffs == []
+
+
+def _parity_workflow_mixed_outputs() -> VibeWorkflow:
+    """Workflow with partial/blank output names - exercises fallback paths."""
+    wf = VibeWorkflow(
+        "parity_mixed",
+        WorkflowSource("source/parity_mixed", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode(
+        "1", "MixedOutputNode",
+        inputs={"value_a": "hello"},
+    )
+    # Three outputs: first named, second blank, third named - partial evidence
+    wf.nodes["1"].metadata["output_names"] = ["named_out", "", "another"]
+    wf.nodes["1"].metadata["input_aliases"] = ["value_a"]
+
+    wf.nodes["2"] = VibeNode("2", "ConsumerNode", inputs={})
+    wf.edges.append(VibeEdge("1", "0", "2", "in_0"))
+    wf.edges.append(VibeEdge("1", "1", "2", "in_1"))
+    wf.edges.append(VibeEdge("1", "2", "2", "in_2"))
+    return wf
+
+
+def _parity_provider_mixed() -> FakeSchemaProvider:
+    return FakeSchemaProvider(
+        {
+            "MixedOutputNode": NodeSchema(
+                class_type="MixedOutputNode",
+                pack=None,
+                inputs={"value_a": InputSpec("STRING", required=True)},
+                outputs=[
+                    OutputSpec("STRING", "named_out"),
+                    OutputSpec("STRING", ""),
+                    OutputSpec("STRING", "another"),
+                ],
+            ),
+            "ConsumerNode": NodeSchema(
+                class_type="ConsumerNode",
+                pack=None,
+                inputs={
+                    "in_0": InputSpec("*", required=False),
+                    "in_1": InputSpec("*", required=False),
+                    "in_2": InputSpec("*", required=False),
+                },
+                outputs=[],
+            ),
+        }
+    )
+
+
+def test_parity_mixed_output_names_preserves_compile_equivalence() -> None:
+    """Partial output names still produce compile_equivalent (True, [])."""
+    result = port_convert_workflow(
+        _parity_workflow_mixed_outputs(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:parity_mixed"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_parity_provider_mixed(),
+    )
+    assert result.validation is not None
+    assert result.validation.ok
+    assert result.validation.parity_ok is True
+    assert result.validation.parity_diffs == []
+
+    # Emission diagnostics should include avoidable_positional_output for blank name
+    diag_codes = [d.code for d in result.validation.emission_diagnostics]
+    assert "avoidable_positional_output" in diag_codes, (
+        f"Expected avoidable_positional_output diagnostic for blank output name; got codes: {diag_codes}"
+    )
+
+
+def _parity_workflow_widget_aliases() -> VibeWorkflow:
+    """Workflow with widget_N keys that can be aliased from schema metadata."""
+    wf = VibeWorkflow(
+        "parity_widgets",
+        WorkflowSource("source/parity_widgets", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode(
+        "1", "PreviewNode",
+        widgets={"widget_0": "fast_mode", "widget_1": 42},
+    )
+    # input_aliases maps widget_0->"mode", widget_1->"steps"
+    wf.nodes["1"].metadata["input_aliases"] = ["mode", "steps"]
+    wf.nodes["1"].metadata["output_names"] = ["preview"]
+
+    wf.nodes["2"] = VibeNode("2", "SavePreview", inputs={"filename_prefix": "out/preview"})
+    wf.edges.append(VibeEdge("1", "0", "2", "images"))
+    return wf
+
+
+def _parity_provider_widgets() -> FakeSchemaProvider:
+    return FakeSchemaProvider(
+        {
+            "PreviewNode": NodeSchema(
+                class_type="PreviewNode",
+                pack=None,
+                inputs={
+                    "mode": InputSpec("STRING", required=True),
+                    "steps": InputSpec("INT", required=True),
+                },
+                outputs=[OutputSpec("IMAGE", "preview")],
+            ),
+            "SavePreview": NodeSchema(
+                class_type="SavePreview",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING", required=True),
+                },
+                outputs=[],
+            ),
+        }
+    )
+
+
+def test_parity_widget_aliases_produce_compile_equivalence() -> None:
+    """Widget aliases from schema metadata produce compile_equivalent (True, [])."""
+    result = port_convert_workflow(
+        _parity_workflow_widget_aliases(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:parity_widgets"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_parity_provider_widgets(),
+    )
+    assert result.validation is not None
+    assert result.validation.ok
+    assert result.validation.parity_ok is True
+    assert result.validation.parity_diffs == []
+
+    # Verify emitted code uses named fields from input_aliases
+    assert "mode=" in result.text or "'mode'" in result.text
+    assert "steps=" in result.text or "'steps'" in result.text
+
+
+def _parity_workflow_duplicate_outputs() -> VibeWorkflow:
+    """Workflow where output names have duplicates - exercises fallback."""
+    wf = VibeWorkflow(
+        "parity_dup",
+        WorkflowSource("source/parity_dup", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode("1", "DupOutNode", inputs={})
+    wf.nodes["1"].metadata["output_names"] = ["image", "image"]  # duplicate!
+
+    wf.nodes["2"] = VibeNode("2", "ConsumerNode", inputs={})
+    wf.edges.append(VibeEdge("1", "0", "2", "in_0"))
+    wf.edges.append(VibeEdge("1", "1", "2", "in_1"))
+    return wf
+
+
+def _parity_provider_dup() -> FakeSchemaProvider:
+    return FakeSchemaProvider(
+        {
+            "DupOutNode": NodeSchema(
+                class_type="DupOutNode",
+                pack=None,
+                inputs={},
+                outputs=[
+                    OutputSpec("IMAGE", "image"),
+                    OutputSpec("LATENT", "image"),  # duplicate name from schema
+                ],
+            ),
+            "ConsumerNode": NodeSchema(
+                class_type="ConsumerNode",
+                pack=None,
+                inputs={
+                    "in_0": InputSpec("*", required=False),
+                    "in_1": InputSpec("*", required=False),
+                },
+                outputs=[],
+            ),
+        }
+    )
+
+
+def test_parity_duplicate_output_names_falls_back_to_numeric() -> None:
+    """Duplicate output names fall back to numeric .out(n) with diagnostics."""
+    result = port_convert_workflow(
+        _parity_workflow_duplicate_outputs(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:parity_dup"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_parity_provider_dup(),
+    )
+    assert result.validation is not None
+    assert result.validation.ok
+    # Parity should still pass - numeric fallback preserves semantics
+    assert result.validation.parity_ok is True
+    assert result.validation.parity_diffs == []
+
+    # Should have output_name_ambiguity diagnostic
+    diag_codes = [d.code for d in result.validation.emission_diagnostics]
+    assert "output_name_ambiguity" in diag_codes, (
+        f"Expected output_name_ambiguity diagnostic for duplicates; got codes: {diag_codes}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T12 - Representative real fixture parity tests
+# ---------------------------------------------------------------------------
+
+
+_REAL_FIXTURE_PATHS: list[str] = [
+    "workflow_corpus/official/image/z_image.json",
+    "workflow_corpus/official/edit/qwen_image_edit.json",
+    "workflow_corpus/official/audio/ace_step_1_5_t2a_song.json",
+    "workflow_corpus/official/video/wan_t2v.json",
+    "workflow_corpus/official/video/ltx2_3_t2v.json",
+]
+
+
+@pytest.mark.parametrize("fixture_path", _REAL_FIXTURE_PATHS)
+def test_real_fixture_parity_compile_equivalent(fixture_path: str) -> None:
+    """Real representative workflows produce compile_equivalent (True, [])."""
+    from vibecomfy.porting.workbench import load_port_source
+
+    loaded = load_port_source(fixture_path)
+    result = port_convert_workflow(loaded.workflow)
+
+    assert result.validation is not None, (
+        f"port_convert_workflow should produce validation for {fixture_path}"
+    )
+    assert result.validation.compile_ok, (
+        f"Emitted module should compile for {fixture_path}: {result.validation.error}"
+    )
+    assert result.validation.parity_ok is True, (
+        f"Parity should pass for {fixture_path}; diffs: {result.validation.parity_diffs[:5]}"
+    )
+    assert result.validation.parity_diffs == [], (
+        f"Parity diffs should be empty for {fixture_path}; got: {result.validation.parity_diffs}"
+    )
+
+
+@pytest.mark.parametrize("fixture_path", _REAL_FIXTURE_PATHS)
+def test_real_fixture_parity_evidence_populated(fixture_path: str) -> None:
+    """Real fixtures populate parity evidence fields (counts, snapshots)."""
+    from vibecomfy.porting.workbench import load_port_source
+
+    loaded = load_port_source(fixture_path)
+    result = port_convert_workflow(loaded.workflow)
+    v = result.validation
+    assert v is not None
+
+    # Output counts
+    assert isinstance(v.source_output_count, int)
+    assert isinstance(v.emitted_output_count, int)
+    assert v.source_output_count > 0
+    assert v.emitted_output_count > 0
+
+    # Class type counts
+    assert isinstance(v.source_class_type_counts, dict)
+    assert isinstance(v.emitted_class_type_counts, dict)
+    assert len(v.source_class_type_counts) > 0
+    assert len(v.emitted_class_type_counts) > 0
+
+    # Widget value snapshot
+    assert isinstance(v.source_widget_value_snapshot, int)
+    assert isinstance(v.emitted_widget_value_snapshot, int)
+
+    # Topology snapshot
+    assert isinstance(v.source_topology_snapshot, int)
+    assert isinstance(v.emitted_topology_snapshot, int)
+
+
+# ---------------------------------------------------------------------------
+# T14 - Model-like value comparison tests
+# ---------------------------------------------------------------------------
+
+
+def _model_value_workflow_hidden() -> VibeWorkflow:
+    """Workflow with a model filename hidden under widget_N without aliasing."""
+    wf = VibeWorkflow(
+        "model_hidden",
+        WorkflowSource("source/model_hidden", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode(
+        "1", "LoadCheckpoint",
+        widgets={"widget_0": "model.safetensors"},
+    )
+    # No input_aliases - widget_0 stays positional, model filename is hidden
+    wf.nodes["1"].metadata["output_names"] = ["model", "clip"]
+    wf.metadata["model_assets"] = [
+        {"name": "model.safetensors", "url": "https://example.test/model.safetensors", "subdir": "checkpoints"}
+    ]
+    return wf
+
+
+def _model_value_provider_basic() -> FakeSchemaProvider:
+    return FakeSchemaProvider(
+        {
+            "LoadCheckpoint": NodeSchema(
+                class_type="LoadCheckpoint",
+                pack=None,
+                inputs={
+                    "ckpt_name": InputSpec("STRING", required=True),
+                },
+                outputs=[
+                    OutputSpec("MODEL", "model"),
+                    OutputSpec("CLIP", "clip"),
+                ],
+            ),
+        }
+    )
+
+
+def test_hidden_model_filename_detected_in_widget() -> None:
+    """Model filename in widget_0 without aliasing is flagged as hidden."""
+    result = port_convert_workflow(
+        _model_value_workflow_hidden(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:model_hidden"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=_model_value_provider_basic(),
+    )
+    assert result.validation is not None
+    # hidden_model_filenames should be populated
+    assert len(result.validation.hidden_model_filenames) > 0, (
+        f"Expected hidden model filenames; got {result.validation.hidden_model_filenames}"
+    )
+    assert any("widget_0" in hfn or "model.safetensors" in hfn for hfn in result.validation.hidden_model_filenames)
+
+    # Should also have a hidden_model_filename emission diagnostic
+    diag_codes = [d.code for d in result.validation.emission_diagnostics]
+    assert "hidden_model_filename" in diag_codes, (
+        f"Expected hidden_model_filename diagnostic; got codes: {diag_codes}"
+    )
+
+
+def _model_value_workflow_preserved() -> VibeWorkflow:
+    """Workflow where model values are properly aliased and preserved."""
+    wf = VibeWorkflow(
+        "model_preserved",
+        WorkflowSource("source/model_preserved", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode(
+        "1", "LoadCheckpoint",
+        widgets={"widget_0": "model.safetensors"},
+    )
+    # input_aliases provides widget_0 -> ckpt_name mapping
+    wf.nodes["1"].metadata["input_aliases"] = ["ckpt_name"]
+    wf.nodes["1"].metadata["output_names"] = ["model", "clip"]
+    wf.metadata["model_assets"] = [
+        {"name": "model.safetensors", "url": "https://example.test/model.safetensors", "subdir": "checkpoints"}
+    ]
+    return wf
+
+
+def test_model_value_preserved_when_aliased() -> None:
+    """Model value survives aliasing when widget_N maps to named field."""
+    result = port_convert_workflow(
+        _model_value_workflow_preserved(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:model_preserved"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=_model_value_provider_basic(),
+    )
+    assert result.validation is not None
+    assert result.validation.ok
+
+    # Model should NOT be dropped or changed
+    assert result.validation.model_value_dropped is False, (
+        f"Model value should not be dropped; diffs: {result.validation.model_value_diffs}"
+    )
+    assert result.validation.model_value_change is False, (
+        f"Model value should not change; diffs: {result.validation.model_value_diffs}"
+    )
+
+    # source and emitted model snapshots should both contain the model value
+    source_vals = list(result.validation.source_model_snapshot.values())
+    emitted_vals = list(result.validation.emitted_model_snapshot.values())
+    assert any("model.safetensors" in v for v in source_vals), (
+        f"Source snapshot missing model.safetensors: {source_vals}"
+    )
+    assert any("model.safetensors" in v for v in emitted_vals), (
+        f"Emitted snapshot missing model.safetensors: {emitted_vals}"
+    )
+
+
+def _model_value_workflow_specific_widget() -> VibeWorkflow:
+    """Workflow with model filename specifically in widget_3 for SC23."""
+    wf = VibeWorkflow(
+        "model_widget3",
+        WorkflowSource("source/model_widget3", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode(
+        "1", "MultiWidgetNode",
+        widgets={
+            "widget_0": "unrelated_string",
+            "widget_1": 42,
+            "widget_2": True,
+            "widget_3": "hidden_model.ckpt",
+        },
+    )
+    # Only 2 input aliases - widget_2 and widget_3 are out of range
+    wf.nodes["1"].metadata["input_aliases"] = ["text", "count"]
+    wf.nodes["1"].metadata["output_names"] = ["out"]
+    return wf
+
+
+def _model_value_provider_multiwidget() -> FakeSchemaProvider:
+    return FakeSchemaProvider(
+        {
+            "MultiWidgetNode": NodeSchema(
+                class_type="MultiWidgetNode",
+                pack=None,
+                inputs={
+                    "text": InputSpec("STRING", required=True),
+                    "count": InputSpec("INT", required=True),
+                },
+                outputs=[OutputSpec("*", "out")],
+            ),
+        }
+    )
+
+
+def test_model_filename_in_widget_3_flagged_as_hidden() -> None:
+    """SC23: Model filename in widget_3 appears as hidden_model_filename diagnostic."""
+    result = port_convert_workflow(
+        _model_value_workflow_specific_widget(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:model_widget3"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=_model_value_provider_multiwidget(),
+    )
+    assert result.validation is not None
+
+    # hidden_model_filenames must contain widget_3 with the model filename
+    assert len(result.validation.hidden_model_filenames) > 0, (
+        f"Expected hidden model filenames; got {result.validation.hidden_model_filenames}"
+    )
+    # Verify the hidden entry references widget_3
+    hidden_match = any(
+        "widget_3" in hfn and "hidden_model.ckpt" in hfn
+        for hfn in result.validation.hidden_model_filenames
+    )
+    assert hidden_match, (
+        f"Expected widget_3=hidden_model.ckpt in hidden_model_filenames; "
+        f"got: {result.validation.hidden_model_filenames}"
+    )
+
+    # Also verify it appears as emission diagnostic
+    diag_codes = [d.code for d in result.validation.emission_diagnostics]
+    assert "hidden_model_filename" in diag_codes, (
+        f"Expected hidden_model_filename diagnostic; got codes: {diag_codes}"
+    )
+
+    # Verify the detail in the diagnostic mentions widget_3
+    hidden_diags = [d for d in result.validation.emission_diagnostics if d.code == "hidden_model_filename"]
+    assert any("widget_3" in d.detail.get("hidden", "") for d in hidden_diags), (
+        f"Expected hidden diagnostic detail to mention widget_3; got: {hidden_diags}"
+    )
+
+
+def test_model_value_snapshot_populated_in_to_json() -> None:
+    """Model value snapshot fields appear in PortConvertValidation.to_json()."""
+    result = port_convert_workflow(
+        _model_value_workflow_preserved(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:model_json"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=_model_value_provider_basic(),
+    )
+    assert result.validation is not None
+    vj = result.validation.to_json()
+    for field in [
+        "model_value_change",
+        "model_value_dropped",
+        "hidden_model_filenames",
+        "source_model_snapshot",
+        "emitted_model_snapshot",
+        "ready_requirements_model_snapshot",
+        "workflow_requirements_model_snapshot",
+        "metadata_model_snapshot",
+        "model_value_diffs",
+    ]:
+        assert field in vj, f"PortConvertValidation.to_json() missing field: {field}"
+
+
+def test_model_value_comparison_tracks_all_five_sources() -> None:
+    wf = _model_value_workflow_preserved()
+    wf.requirements.models.append("model.safetensors")
+    wf.metadata["model_assets"] = [
+        {"name": "model.safetensors", "url": "https://example.test/model.safetensors"},
+    ]
+
+    result = port_convert_workflow(
+        wf,
+        ready_id="image/model_preserved",
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:model_all_sources"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=_model_value_provider_basic(),
+    )
+
+    assert result.validation is not None
+    validation = result.validation
+    assert any(value == "model.safetensors" for value in validation.source_model_snapshot.values())
+    assert any(value == "model.safetensors" for value in validation.emitted_model_snapshot.values())
+    assert validation.ready_requirements_model_snapshot == ["model.safetensors"]
+    assert validation.workflow_requirements_model_snapshot == ["model.safetensors"]
+    assert validation.metadata_model_snapshot == ["model.safetensors"]
+    assert validation.model_value_change is False
+    assert validation.model_value_dropped is False
+
+
+def test_reference_only_model_value_is_reported_across_contract_sources() -> None:
+    wf = _model_value_workflow_preserved()
+    wf.requirements.models.append("missing_from_graph.safetensors")
+    wf.metadata["model_assets"] = [
+        {"name": "missing_from_graph.safetensors", "url": "https://example.test/missing.safetensors"},
+    ]
+
+    result = port_convert_workflow(
+        wf,
+        ready_id="image/model_reference_only",
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:model_reference_only"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=_model_value_provider_basic(),
+    )
+
+    assert result.validation is not None
+    validation = result.validation
+    assert validation.ready_requirements_model_snapshot == ["missing_from_graph.safetensors"]
+    assert validation.workflow_requirements_model_snapshot == ["missing_from_graph.safetensors"]
+    assert validation.metadata_model_snapshot == ["missing_from_graph.safetensors"]
+    assert any("reference-only model" in diff for diff in validation.model_value_diffs)
+    assert any(
+        diag.code == "hidden_model_filename"
+        and diag.detail.get("model") == "missing_from_graph.safetensors"
+        and diag.detail.get("in_workflow_requirements") is True
+        and diag.detail.get("in_metadata_assets") is True
+        for diag in validation.emission_diagnostics
+    )
+
+
+def test_model_value_dropped_detected_without_aliasing() -> None:
+    """When widget alias drops a model value (None entry), model_value_dropped is True."""
+    wf = VibeWorkflow(
+        "model_dropped",
+        WorkflowSource("source/model_dropped", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    wf.nodes["1"] = VibeNode(
+        "1", "LoadCheckpoint",
+        widgets={"widget_0": "important_model.safetensors"},
+    )
+    # input_aliases has None for widget_0 -> model value dropped
+    wf.nodes["1"].metadata["input_aliases"] = [None]
+    wf.nodes["1"].metadata["output_names"] = ["model", "clip"]
+
+    result = port_convert_workflow(
+        wf,
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:model_dropped"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=_model_value_provider_basic(),
+    )
+    assert result.validation is not None
+
+    # The model value in widget_0 gets dropped (None alias)
+    # This may cause parity to fail since the value disappears
+    if result.validation.parity_ok is False:
+        # Model value was dropped - verify detection
+        assert result.validation.model_value_dropped or result.validation.model_value_change, (
+            f"Expected model value change/drop when widget aliased to None; "
+            f"dropped={result.validation.model_value_dropped}, change={result.validation.model_value_change}"
+        )

@@ -427,7 +427,7 @@ class ImageResizeKJv2:
 
 
 def test_named_output_handle_has_numeric_slot() -> None:
-    """``builder.out('image')`` produces a Handle whose output_slot is always int."""
+    """`builder.out('image')` produces a Handle whose output_slot is always int."""
     from vibecomfy.handles import Handle
     from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
@@ -456,7 +456,7 @@ def test_named_output_handle_has_numeric_slot() -> None:
 
 
 def test_named_output_compile_emits_numeric_links() -> None:
-    """``compile('api')`` emits ``[node_id, 0]`` numeric links after named handle use."""
+    """`compile('api')` emits `[node_id, 0]` numeric links after named handle use."""
     from vibecomfy.handles import Handle
     from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
@@ -748,3 +748,496 @@ def test_convert_to_vibe_format_conflicting_provider_evidence() -> None:
     assert source["provider"] == "source_parser"
     assert source["path"] == "/custom_nodes/checkpoint.py"
     assert source["confidence"] == 0.9
+
+
+# ---------------------------------------------------------------------------
+# Sprint 2 T10: ConversionSchemaProvider precedence tests
+# ---------------------------------------------------------------------------
+
+
+def test_conversion_schema_provider_empty_returns_none_without_network() -> None:
+    """ConversionSchemaProvider with no providers returns None without network access."""
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    provider = ConversionSchemaProvider(
+        node_index_path="/nonexistent/node_index.json",
+        source_roots=[],
+        object_info_cache_path=None,
+        widget_schema={},
+        enable_runtime=False,
+    )
+    # Must return None, not try to reach a server
+    assert provider.get_schema("UnknownNode") is None
+
+
+def test_conversion_schema_provider_prefers_node_index_over_source(
+    tmp_path,
+) -> None:
+    """Node index (committed) beats source parser in precedence."""
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Create a node_index.json with a known type
+    index = tmp_path / "node_index.json"
+    index.write_text(
+        json.dumps(
+            [
+                {
+                    "class_type": "TestNode",
+                    "pack": "core",
+                    "inputs": {"text": {"type": "STRING", "required": True}},
+                    "outputs": [{"type": "IMAGE", "name": "image"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=None,
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("TestNode")
+    assert schema is not None
+    assert schema.source_provider == "node_index"
+    assert schema.inputs["text"].type == "STRING"
+    assert schema.confidence == 1.0
+
+
+def test_conversion_schema_provider_falls_back_to_source_parser(
+    tmp_path,
+) -> None:
+    """When node_index lacks a type, source parser is tried next."""
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Create an empty node_index
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+
+    # Create a source tree with a Python node definition
+    source_root = tmp_path / "custom_nodes"
+    node_dir = source_root / "test_pack" / "nodes"
+    node_dir.mkdir(parents=True)
+    (node_dir / "test_nodes.py").write_text(
+        """
+class SourceOnlyNode:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"prompt": ("STRING", {"default": ""})}}
+    RETURN_TYPES = ("CONDITIONING",)
+    RETURN_NAMES = ("conditioning",)
+""",
+        encoding="utf-8",
+    )
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[str(source_root)],
+        object_info_cache_path=None,
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("SourceOnlyNode")
+    assert schema is not None
+    assert schema.source_provider == "source_parser"
+    assert schema.inputs["prompt"].type == "STRING"
+    assert schema.confidence == 0.9
+
+
+def test_conversion_schema_provider_falls_back_to_object_info_cache(
+    tmp_path,
+) -> None:
+    """When node_index and source parser miss, object_info cache is tried."""
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Create an empty node_index
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+
+    # Create an object_info cache with provenance metadata
+    import hashlib
+    fp = hashlib.sha256(b"test-cache").hexdigest()[:16]
+    cache = tmp_path / f"object_info.{fp}.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "_cache_metadata": {
+                    "fingerprint": fp,
+                    "source": "test-cache",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                },
+                "CacheOnlyNode": {
+                    "input": {"required": {"image": ["IMAGE", {}]}},
+                    "output": ["MASK"],
+                    "output_name": ["mask"],
+                    "category": "test/cache",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=str(cache),
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("CacheOnlyNode")
+    assert schema is not None
+    assert schema.source_provider == "object_info_cache"
+    assert schema.inputs["image"].type == "IMAGE"
+    assert schema.confidence == 0.4
+    assert any(item.startswith("stale_cache_fingerprint:") for item in schema.conflicts)
+
+
+def test_conversion_schema_provider_falls_back_to_widget_schema(
+    tmp_path,
+) -> None:
+    """When all other providers miss, widget_schema fallback is used."""
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Create an empty node_index
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+
+    widget_schema = {
+        "WidgetOnlyNode": ["text", "mode", None],
+    }
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=None,
+        widget_schema=widget_schema,
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("WidgetOnlyNode")
+    assert schema is not None
+    assert schema.source_provider == "widget_schema"
+    assert "text" in schema.inputs
+    assert schema.inputs["text"].type is None  # widget fallback has no type info
+    assert schema.confidence == 0.3
+
+
+def test_conversion_schema_provider_never_calls_runtime_without_flag(
+    tmp_path,
+) -> None:
+    """Without enable_runtime, ConversionSchemaProvider never reaches runtime."""
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Create an empty node_index
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=None,
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    # Even with all other providers empty, runtime is NOT consulted
+    assert provider.get_schema("AnyMissingNode") is None
+    # The _runtime attribute should be None when enable_runtime=False
+    assert provider._runtime is None
+
+
+def test_conversion_schema_provider_with_runtime_enabled(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """With enable_runtime=True, runtime provider is used as last resort."""
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Create an empty node_index
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+
+    # Set up a fake RuntimeSchemaProvider that returns a schema
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=None,
+        widget_schema={},
+        enable_runtime=True,
+        runtime_server_url="http://runtime.test",
+    )
+
+    # Verify runtime provider was created
+    assert provider._runtime is not None
+
+    # Pre-populate the runtime cache so no actual network call happens
+    from vibecomfy.schema.provider import NodeSchema, OutputSpec
+    from vibecomfy.schema.cache import load_object_info_cache
+
+    # Write directly to the runtime cache path
+    runtime_cache_path = provider._runtime.cache_path
+    runtime_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    import json
+
+    runtime_cache_path.write_text(
+        json.dumps(
+            {
+                "RuntimeNode": {
+                    "input": {"required": {"seed": ["INT", {"default": 0}]}},
+                    "output": ["IMAGE"],
+                    "output_name": ["image"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    schema = provider.get_schema("RuntimeNode")
+    assert schema is not None
+    assert schema.source_provider == "runtime"
+    assert schema.confidence == 0.6
+    assert schema.inputs["seed"].type == "INT"
+
+
+def test_conversion_schema_provider_precedence_order_is_correct(
+    tmp_path,
+) -> None:
+    """Full precedence: node_index > source > cache > widget > runtime.
+
+    When a type is available in multiple providers, the highest-priority
+    one wins.
+    """
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Set up node_index with TestNode (confidence 1.0)
+    index = tmp_path / "node_index.json"
+    index.write_text(
+        json.dumps(
+            [
+                {
+                    "class_type": "TestNode",
+                    "pack": "core",
+                    "inputs": {"text": {"type": "STRING", "required": True}},
+                    "outputs": [{"type": "IMAGE", "name": "image"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    # Also set up source parser with same type
+    source_root = tmp_path / "custom_nodes"
+    node_dir = source_root / "test_pack" / "nodes"
+    node_dir.mkdir(parents=True)
+    (node_dir / "test_nodes.py").write_text(
+        """
+class TestNode:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"prompt": ("STRING", {"default": ""})}}
+    RETURN_TYPES = ("CONDITIONING",)
+""",
+        encoding="utf-8",
+    )
+
+    # And object_info cache with same type
+    cache = tmp_path / "object_info.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "TestNode": {
+                    "input": {"required": {"image": ["IMAGE", {}]}},
+                    "output": ["MASK"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # And widget schema with same type
+    widget_schema = {"TestNode": ["mode"]}
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[str(source_root)],
+        object_info_cache_path=str(cache),
+        widget_schema=widget_schema,
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("TestNode")
+    assert schema is not None
+    # Should come from node_index (highest priority)
+    assert schema.source_provider == "node_index"
+    assert schema.confidence == 1.0
+    assert "text" in schema.inputs
+
+
+def test_conversion_schema_provider_provenance_fields_populated(
+    tmp_path,
+) -> None:
+    """Provider provenance fields are correctly populated on returned schemas."""
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Node index hit
+    index = tmp_path / "node_index.json"
+    index.write_text(
+        json.dumps(
+            [
+                {
+                    "class_type": "ProvenanceNode",
+                    "pack": "test-pack",
+                    "inputs": {"value": {"type": "FLOAT", "required": False}},
+                    "outputs": [],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=None,
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("ProvenanceNode")
+    assert schema is not None
+    assert schema.source_provider == "node_index"
+    assert schema.source_path == str(index)
+    assert schema.confidence == 1.0
+    assert schema.pack == "test-pack"
+
+
+def test_conversion_schema_provider_stale_cache_does_not_block_other_providers(
+    tmp_path,
+) -> None:
+    """A malformed object_info cache does not prevent fallback to widget schema."""
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    # Empty node_index
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+
+    # Malformed cache
+    cache = tmp_path / "object_info.json"
+    cache.write_text("{not-json", encoding="utf-8")
+
+    widget_schema = {"FallbackNode": ["alpha"]}
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=str(cache),
+        widget_schema=widget_schema,
+        enable_runtime=False,
+    )
+
+    # Malformed cache should be caught, falling through to widget schema
+    schema = provider.get_schema("FallbackNode")
+    assert schema is not None
+    assert schema.source_provider == "widget_schema"
+    assert schema.confidence == 0.3
+
+
+def test_conversion_schema_provider_marks_metadata_less_object_info_cache(
+    tmp_path,
+) -> None:
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+    cache = tmp_path / "object_info.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "CachedNode": {
+                    "input": {"required": {"prompt": ["STRING", {}]}},
+                    "output": ["IMAGE"],
+                    "output_name": ["image"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=str(cache),
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("CachedNode")
+    assert schema is not None
+    assert schema.source_provider == "object_info_cache"
+    assert schema.source_cache_path == str(cache)
+    assert schema.confidence == 0.5
+    assert "metadata_less_cache" in schema.ignored_evidence
+    assert "missing_cache_fingerprint" in schema.ignored_evidence
+
+
+def test_conversion_schema_provider_marks_stale_object_info_cache_fingerprint(
+    tmp_path,
+) -> None:
+    import json
+
+    from vibecomfy.schema.provider import ConversionSchemaProvider
+
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+    cache = tmp_path / "object_info.stale-fingerprint.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "_cache_metadata": {"runtime_fingerprint": "stale-fingerprint"},
+                "CachedNode": {
+                    "input": {"required": {"prompt": ["STRING", {}]}},
+                    "output": ["IMAGE"],
+                    "output_name": ["image"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=str(cache),
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("CachedNode")
+    assert schema is not None
+    assert schema.source_provider == "object_info_cache"
+    assert schema.source_hash == "stale-fingerprint"
+    assert schema.confidence == 0.4
+    assert any(item.startswith("stale_cache_fingerprint:") for item in schema.conflicts)

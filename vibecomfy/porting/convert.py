@@ -20,6 +20,12 @@ from vibecomfy.porting.parity import (
 )
 from vibecomfy.workflow import ValidationIssue, ValidationReport, VibeWorkflow
 
+# -- model-like value detection ----------------------------------------------
+
+_MODEL_LIKE_EXTENSIONS: frozenset[str] = frozenset(
+    {".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".onnx"}
+)
+
 
 PortConvertMode = Literal["scratchpad", "ready_template"]
 
@@ -50,6 +56,26 @@ class PortConvertValidation:
     # Readability diagnostics collected during emission
     emission_diagnostics: list[EmissionDiagnostic] = field(default_factory=list)
 
+    # Model-like value comparison (T8)
+    model_value_change: bool = False
+    """True when aliasing changed a model-like value between source and emitted."""
+    model_value_dropped: bool = False
+    """True when a model-like value present in source is absent from emitted."""
+    hidden_model_filenames: list[str] = field(default_factory=list)
+    """Model filenames only present under widget_N keys that cannot be aliased."""
+    source_model_snapshot: dict[str, str] = field(default_factory=dict)
+    """{(node_id, key): value} snapshot of model-like values from source API."""
+    emitted_model_snapshot: dict[str, str] = field(default_factory=dict)
+    """{(node_id, key): value} snapshot of model-like values from emitted API."""
+    ready_requirements_model_snapshot: list[str] = field(default_factory=list)
+    """Model-like values from READY_REQUIREMENTS['models'] for ready templates."""
+    workflow_requirements_model_snapshot: list[str] = field(default_factory=list)
+    """Model-like values declared by workflow.requirements.models."""
+    metadata_model_snapshot: list[str] = field(default_factory=list)
+    """Model-like values declared by READY_METADATA['model_assets']."""
+    model_value_diffs: list[str] = field(default_factory=list)
+    """Human-readable diffs between source and emitted model values."""
+
     def to_json(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
@@ -71,6 +97,15 @@ class PortConvertValidation:
             "source_topology_snapshot": self.source_topology_snapshot,
             "emitted_topology_snapshot": self.emitted_topology_snapshot,
             "emission_diagnostics": [d.to_json() for d in self.emission_diagnostics],
+            "model_value_change": self.model_value_change,
+            "model_value_dropped": self.model_value_dropped,
+            "hidden_model_filenames": self.hidden_model_filenames,
+            "source_model_snapshot": self.source_model_snapshot,
+            "emitted_model_snapshot": self.emitted_model_snapshot,
+            "ready_requirements_model_snapshot": self.ready_requirements_model_snapshot,
+            "workflow_requirements_model_snapshot": self.workflow_requirements_model_snapshot,
+            "metadata_model_snapshot": self.metadata_model_snapshot,
+            "model_value_diffs": self.model_value_diffs,
         }
 
 
@@ -146,6 +181,41 @@ def port_convert_workflow(
     # Compile the source workflow before emission for parity comparison.
     source_api = workflow.compile("api") if validate else None
 
+    # Build class_widget_aliases from source workflow node metadata for
+    # parity canonicalization.  This uses schema-source evidence (from the
+    # conversion schema provider) rather than the static WIDGET_SCHEMA so
+    # the comparison cannot mask incorrect aliases by canonicalising both
+    # sides through the same (potentially wrong) static table.
+    #
+    # Precedence: (1) node metadata input_aliases, (2) schema_provider.
+    class_widget_aliases: dict[str, list[str | None]] = {}
+    seen_classes: set[str] = set()
+    for node in workflow.nodes.values():
+        ct = node.class_type
+        if ct in seen_classes:
+            continue
+        seen_classes.add(ct)
+        aliases = getattr(node, "metadata", {}).get("input_aliases")
+        if isinstance(aliases, (list, tuple)) and aliases:
+            class_widget_aliases[ct] = list(aliases)
+        elif schema_provider is not None:
+            try:
+                from vibecomfy.porting.widget_aliases import LINK_ONLY_TYPES
+                schema = schema_provider.get_schema(ct) if hasattr(schema_provider, "get_schema") else None
+                if schema is not None:
+                    inputs = getattr(schema, "inputs", None)
+                    if isinstance(inputs, dict):
+                        provider_aliases: list[str | None] = []
+                        for name, spec in inputs.items():
+                            input_type = str(getattr(spec, "type", "") or "").upper()
+                            if input_type in LINK_ONLY_TYPES:
+                                continue
+                            provider_aliases.append(str(name))
+                        if provider_aliases:
+                            class_widget_aliases[ct] = provider_aliases
+            except Exception:
+                pass
+
     result = PortConvertResult(mode=mode, text=text, ready_id=ready_id)
     if validate:
         result.validation = validate_emitted_module(text, schema_provider=schema_provider)
@@ -168,7 +238,10 @@ def port_convert_workflow(
                             emitted_wf = build_fn()
                             if isinstance(emitted_wf, VibeWorkflow):
                                 emitted_api = emitted_wf.compile("api")
-                                parity_ok, parity_diffs = compile_equivalent(source_api, emitted_api)
+                                parity_ok, parity_diffs = compile_equivalent(
+                                    source_api, emitted_api,
+                                    class_widget_aliases=class_widget_aliases,
+                                )
 
                                 result.validation.parity_ok = parity_ok
                                 result.validation.parity_diffs = parity_diffs
@@ -194,6 +267,15 @@ def port_convert_workflow(
                                 emit_topo = topology_counter(emitted_api)
                                 result.validation.source_topology_snapshot = len(src_topo)
                                 result.validation.emitted_topology_snapshot = len(emit_topo)
+
+                                # -- model-like value comparison (T8) --------
+                                _run_model_value_comparison(
+                                    result.validation,
+                                    source_api,
+                                    emitted_api,
+                                    workflow,
+                                    ready_id=ready_id,
+                                )
             except Exception:
                 # Parity failure is non-fatal for the result; diffs are reported.
                 pass
@@ -322,12 +404,12 @@ def _ready_requirements(workflow: VibeWorkflow) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Atomic conversion write — temp file, validate, parity-check, then replace
+# Atomic conversion write - temp file, validate, parity-check, then replace
 # ---------------------------------------------------------------------------
 
 
 class ManualTemplateRefusal(ValueError):
-    """Raised when a target file has ``# vibecomfy: manual`` marker."""
+    """Raised when a target file has `# vibecomfy: manual` marker."""
 
 
 class ConversionWriteError(RuntimeError):
@@ -335,7 +417,7 @@ class ConversionWriteError(RuntimeError):
 
 
 def _check_manual_refusal(target: Path) -> None:
-    """Refuse to overwrite a template marked ``# vibecomfy: manual``."""
+    """Refuse to overwrite a template marked `# vibecomfy: manual`."""
     if not target.exists():
         return
     first_line = target.read_text(encoding="utf-8").splitlines()[0].strip() if target.exists() else ""
@@ -376,17 +458,17 @@ def port_convert_and_write(
     """Write emitted text via temp-file atomic replace after all gates pass.
 
     Args:
-        result: The conversion result from ``port_convert_workflow``.
+        result: The conversion result from `port_convert_workflow`.
         target: Destination file path.
         dry_run: If True, emit conversion payload and evidence without writing.
         diff: If True, produce unified diff + JSON diff metadata (forces dry_run).
         schema_provider: Optional schema provider for validation.
 
     Returns:
-        A dict with ``written``, ``dry_run``, ``diff``, and ``validation`` keys.
+        A dict with `written`, `dry_run`, `diff`, and `validation` keys.
 
     Raises:
-        ManualTemplateRefusal: If target has ``# vibecomfy: manual`` marker.
+        ManualTemplateRefusal: If target has `# vibecomfy: manual` marker.
         ConversionWriteError: If validation or parity fails.
     """
     # Gate 1: manual-template refusal
@@ -398,7 +480,7 @@ def port_convert_and_write(
     # Gate 2: validation must pass
     validation = result.validation
     if validation is None:
-        raise ConversionWriteError("No validation available — conversion may have been skipped.")
+        raise ConversionWriteError("No validation available - conversion may have been skipped.")
     if not validation.ok:
         raise ConversionWriteError(
             f"Validation failed for {target}: {validation.error}. "
@@ -409,6 +491,18 @@ def port_convert_and_write(
         raise ConversionWriteError(
             f"Parity check failed for {target}. "
             f"Diffs: {validation.parity_diffs[:5]}"
+        )
+
+    # Gate 2b: model-like value change / drop prevents write (T8)
+    if validation.model_value_change:
+        raise ConversionWriteError(
+            f"Model-like value changed after aliasing for {target}. "
+            f"Diffs: {validation.model_value_diffs[:5]}"
+        )
+    if validation.model_value_dropped:
+        raise ConversionWriteError(
+            f"Model-like value dropped after aliasing for {target}. "
+            f"Diffs: {validation.model_value_diffs[:5]}"
         )
 
     # Diff mode
@@ -431,7 +525,7 @@ def port_convert_and_write(
             payload["diff"] = _compute_diff(original_content, result.text, str(target))
         return payload
 
-    # Gate 3: atomic write — temp file in target directory, validate, then replace
+    # Gate 3: atomic write - temp file in target directory, validate, then replace
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -472,13 +566,304 @@ def port_convert_and_write(
     }
 
 
+# -- model-like value snapshot & comparison (T8) -----------------------------
+
+
+def _looks_like_model_value(value: Any) -> bool:
+    """Return True when *value* is a string that looks like a model filename."""
+    if not isinstance(value, str):
+        return False
+    lower = value.lower()
+    for ext in _MODEL_LIKE_EXTENSIONS:
+        if lower.endswith(ext):
+            return True
+    return False
+
+
+def snapshot_model_values(api: dict) -> dict[tuple[str, str], str]:
+    """Extract model-like values from a compiled API dict.
+
+    Returns `{(node_id, input_key): value}` for every input whose value
+    looks like a model filename (e.g. `.safetensors`, `.ckpt`).
+    """
+    models: dict[tuple[str, str], str] = {}
+    for node_id, node in api.items():
+        for key, value in node.get("inputs", {}).items():
+            if _looks_like_model_value(value):
+                models[(str(node_id), key)] = str(value)
+    return models
+
+
+def _detect_hidden_model_filenames(
+    source_api: dict,
+    class_widget_aliases: dict[str, list[str | None]],
+) -> list[str]:
+    """Find model filenames only referenced under `widget_N` keys."""
+    hidden: list[str] = []
+    for _node_id, node in source_api.items():
+        class_type = node.get("class_type", "")
+        widget_model_values: dict[int, str] = {}
+        named_model_values: set[str] = set()
+
+        for key, value in node.get("inputs", {}).items():
+            if not _looks_like_model_value(value):
+                continue
+            if key.startswith("widget_"):
+                try:
+                    idx = int(key.split("_", 1)[1])
+                    widget_model_values[idx] = str(value)
+                except ValueError:
+                    named_model_values.add(str(value))
+            else:
+                named_model_values.add(str(value))
+
+        aliases = class_widget_aliases.get(class_type)
+        for idx, val in widget_model_values.items():
+            if val in named_model_values:
+                continue
+            if aliases is not None and 0 <= idx < len(aliases):
+                alias = aliases[idx]
+                if alias is not None:
+                    continue
+            hidden.append(
+                f"{class_type} widget_{idx}={val!r} (node {_node_id})"
+            )
+
+    return hidden
+
+
+def _compare_model_values(
+    source_snapshot: dict[tuple[str, str], str],
+    emitted_snapshot: dict[tuple[str, str], str],
+) -> tuple[bool, bool, list[str]]:
+    """Compare source and emitted model-value snapshots.
+
+    Returns `(changed, dropped, diffs)`.
+    """
+    diffs: list[str] = []
+    changed = False
+    dropped = False
+
+    source_by_value: dict[str, set[tuple[str, str]]] = {}
+    for (nid, key), val in source_snapshot.items():
+        source_by_value.setdefault(val, set()).add((nid, key))
+
+    emitted_by_value: dict[str, set[tuple[str, str]]] = {}
+    for (nid, key), val in emitted_snapshot.items():
+        emitted_by_value.setdefault(val, set()).add((nid, key))
+
+    for val_src, src_keys in source_by_value.items():
+        if val_src not in emitted_by_value:
+            dropped = True
+            for nid, key in sorted(src_keys):
+                diffs.append(f"dropped: ({nid}, {key})={val_src!r}")
+
+    for (nid, key), val_src in source_snapshot.items():
+        if key in {k for (_, k), _ in emitted_snapshot.items()}:
+            for (enid, ekey), evalue in emitted_snapshot.items():
+                if ekey == key and enid == nid:
+                    if evalue != val_src:
+                        changed = True
+                        diffs.append(
+                            f"changed: ({nid}, {key}) from {val_src!r} to {evalue!r}"
+                        )
+                    break
+
+    src_vals = sorted(source_snapshot.values())
+    emt_vals = sorted(emitted_snapshot.values())
+    if src_vals != emt_vals:
+        changed = True
+
+    return changed, dropped, diffs
+
+
+def _run_model_value_comparison(
+    validation: PortConvertValidation,
+    source_api: dict,
+    emitted_api: dict,
+    workflow: VibeWorkflow,
+    *,
+    ready_id: str | None,
+) -> None:
+    """Populate model-value comparison fields on *validation*.
+
+    Compares across five sources:
+    1. source API
+    2. emitted API
+    3. READY_REQUIREMENTS['models'] (ready templates only)
+    4. workflow.requirements.models
+    5. READY_METADATA['model_assets']
+    """
+    class_widget_aliases: dict[str, list[str | None]] = {}
+    seen_classes: set[str] = set()
+    for node in workflow.nodes.values():
+        ct = node.class_type
+        if ct in seen_classes:
+            continue
+        seen_classes.add(ct)
+        aliases = getattr(node, "metadata", {}).get("input_aliases")
+        if isinstance(aliases, (list, tuple)) and aliases:
+            class_widget_aliases[ct] = list(aliases)
+
+    src_snapshot = snapshot_model_values(source_api)
+    emit_snapshot = snapshot_model_values(emitted_api)
+    validation.source_model_snapshot = {
+        f"{nid}:{key}": val for (nid, key), val in src_snapshot.items()
+    }
+    validation.emitted_model_snapshot = {
+        f"{nid}:{key}": val for (nid, key), val in emit_snapshot.items()
+    }
+
+    changed, dropped, diffs = _compare_model_values(src_snapshot, emit_snapshot)
+    validation.model_value_change = changed
+    validation.model_value_dropped = dropped
+    validation.model_value_diffs = diffs
+
+    validation.hidden_model_filenames = _detect_hidden_model_filenames(
+        source_api, class_widget_aliases,
+    )
+
+    if validation.hidden_model_filenames:
+        for hfn in validation.hidden_model_filenames:
+            validation.emission_diagnostics.append(
+                EmissionDiagnostic(
+                    code="hidden_model_filename",
+                    message=f"Model filename hidden under widget_N key: {hfn}",
+                    severity="warning",
+                    detail={"hidden": hfn},
+                )
+            )
+
+    # Compare model-like values across all five sources (T8)
+    _compare_model_values_across_sources(
+        validation,
+        src_snapshot,
+        emit_snapshot,
+        workflow,
+        ready_id=ready_id,
+    )
+
+
+def _compare_model_values_across_sources(
+    validation: PortConvertValidation,
+    src_snapshot: dict[tuple[str, str], str],
+    emit_snapshot: dict[tuple[str, str], str],
+    workflow: VibeWorkflow,
+    *,
+    ready_id: str | None,
+) -> None:
+    """Cross-compare model-like values across all five required sources.
+
+    Sources:
+    1. source API (src_snapshot)
+    2. emitted API (emit_snapshot)
+    3. READY_REQUIREMENTS['models'] (ready templates only)
+    4. workflow.requirements.models
+    5. READY_METADATA['model_assets']
+    """
+    src_model_vals: set[str] = set(src_snapshot.values())
+    emit_model_vals: set[str] = set(emit_snapshot.values())
+
+    # Source 3: READY_REQUIREMENTS['models']
+    ready_req_models: set[str] = set()
+    if ready_id is not None:
+        reqs = _ready_requirements(workflow)
+        ready_req_models = _model_names_from_sequence(reqs.get("models", []))
+
+    # Source 4: workflow.requirements.models
+    wf_req_models = _model_names_from_sequence(workflow.requirements.models)
+
+    # Source 5: READY_METADATA['model_assets']
+    model_assets = workflow.metadata.get("model_assets") or []
+    meta_models = _model_names_from_sequence(model_assets if isinstance(model_assets, list) else [])
+
+    validation.ready_requirements_model_snapshot = sorted(ready_req_models)
+    validation.workflow_requirements_model_snapshot = sorted(wf_req_models)
+    validation.metadata_model_snapshot = sorted(meta_models)
+
+    all_ref_models = ready_req_models | wf_req_models | meta_models
+
+    for model_name in sorted(all_ref_models):
+        in_src = model_name in src_model_vals
+        in_emit = model_name in emit_model_vals
+
+        if in_src and not in_emit:
+            validation.model_value_change = True
+            validation.model_value_dropped = True
+            validation.model_value_diffs.append(
+                f"dropped reference model: {model_name!r} present in source API but missing from emitted API"
+            )
+            validation.emission_diagnostics.append(
+                EmissionDiagnostic(
+                    code="hidden_model_filename",
+                    message=(
+                        f"Model {model_name!r} found in source API, requirements, or metadata "
+                        f"but missing from emitted API - may have been dropped during aliasing."
+                    ),
+                    severity="warning",
+                    detail={
+                        "model": model_name,
+                        "in_source_api": True,
+                        "in_emitted_api": False,
+                        "in_ready_requirements": model_name in ready_req_models,
+                        "in_workflow_requirements": model_name in wf_req_models,
+                        "in_metadata_assets": model_name in meta_models,
+                    },
+                )
+            )
+        elif not in_src and not in_emit:
+            if _looks_like_model_value(model_name):
+                validation.model_value_diffs.append(
+                    f"reference-only model: {model_name!r} not found in source or emitted API inputs"
+                )
+                validation.emission_diagnostics.append(
+                    EmissionDiagnostic(
+                        code="hidden_model_filename",
+                        message=(
+                            f"Model {model_name!r} referenced in requirements/metadata "
+                            f"but not found in source or emitted API inputs."
+                        ),
+                        severity="warning",
+                        detail={
+                            "model": model_name,
+                            "in_source_api": False,
+                            "in_emitted_api": False,
+                            "in_ready_requirements": model_name in ready_req_models,
+                            "in_workflow_requirements": model_name in wf_req_models,
+                            "in_metadata_assets": model_name in meta_models,
+                        },
+                    )
+                )
+        elif not in_src and in_emit:
+            validation.model_value_change = True
+            validation.model_value_diffs.append(
+                f"emitted-only reference model: {model_name!r} missing from source API"
+            )
+
+
+def _model_names_from_sequence(values: Any) -> set[str]:
+    names: set[str] = set()
+    for value in values if isinstance(values, list) else []:
+        if isinstance(value, dict):
+            name = value.get("name") or value.get("filename") or value.get("file")
+        elif isinstance(value, str):
+            name = value
+        else:
+            continue
+        if isinstance(name, str) and name:
+            names.add(name)
+    return names
+
+
 __all__ = [
     "ConversionWriteError",
     "ManualTemplateRefusal",
     "PortConvertResult",
     "PortConvertValidation",
     "_check_manual_refusal",
+    "_looks_like_model_value",
     "port_convert_and_write",
     "port_convert_workflow",
+    "snapshot_model_values",
     "validate_emitted_module",
 ]
