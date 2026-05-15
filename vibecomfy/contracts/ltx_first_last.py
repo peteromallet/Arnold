@@ -56,11 +56,12 @@ _EXPECTED_INPUT_TARGETS = {
 }
 
 _CHECKPOINT_NODES = ("103", "126", "127")
-_GUIDE_NODES = {"last_strength": "111"}
+_GUIDE_NODES = {"first_strength": "115", "last_strength": "111"}
 _DISALLOWED_RAW_JSON_DRIFT_NODES = frozenset(
     {
         "LTXICLoRALoaderModelOnly",
         "LTXAddVideoICLoRAGuide",
+        "LTX2MemoryEfficientSageAttentionPatch",
         "LTX2SamplingPreviewOverride",
         "PathchSageAttentionKJ",
     }
@@ -154,35 +155,18 @@ class LTXFirstLastTwoStageContract:
                     detail={"node_id": node_id, "actual": strength},
                 )
 
-        first_node = self._lens.node("115")
-        if first_node is None:
-            report.add("missing_first_latent_replacement", "Missing first-frame LTXVImgToVideoInplace node 115.")
-        elif first_node.class_type != "LTXVImgToVideoInplace":
-            report.add(
-                "wrong_first_latent_replacement_class_type",
-                f"Node 115 has class_type {first_node.class_type!r}, expected LTXVImgToVideoInplace.",
-                detail={"node_id": "115", "actual_class_type": first_node.class_type},
-            )
-        first_strength = self._lens.node_value("115", "strength")
-        if first_strength is not None and not (0 <= float(first_strength) <= 1):
-            report.add(
-                "first_strength_out_of_range",
-                f"Node 115 first-frame strength is {first_strength!r}; expected Wan2GP range [0, 1].",
-                detail={"node_id": "115", "actual": first_strength},
-            )
-
         first_latent = self._lens.edge_source("115", "latent")
         if first_latent is None or first_latent.node_id != "108":
             report.add(
-                "wrong_first_latent_replacement_source",
-                "First LTXVImgToVideoInplace.latent must consume EmptyLTXVLatentVideo.",
+                "wrong_first_guide_latent_source",
+                "First LTXVAddGuide.latent must consume EmptyLTXVLatentVideo.",
                 detail={"expected_source_node_id": "108", "actual_source_node_id": getattr(first_latent, "node_id", None)},
             )
         last_latent = self._lens.edge_source("111", "latent")
         if last_latent is None or last_latent.node_id != "115":
             report.add(
                 "wrong_last_guide_latent_source",
-                "Last LTXVAddGuide.latent must consume the first in-place latent output.",
+                "Last LTXVAddGuide.latent must consume the first guide output.",
                 detail={"expected_source_node_id": "115", "actual_source_node_id": getattr(last_latent, "node_id", None)},
             )
 
@@ -194,21 +178,12 @@ class LTXFirstLastTwoStageContract:
                 detail={"expected_source_node_id": "127", "actual_source_node_id": getattr(guider_model, "node_id", None)},
             )
 
-        strip = self._lens.node("2292")
-        if strip is None:
-            report.add("missing_guide_attention_strip", "Missing VibeComfyStripConditioningKeys node 2292.")
-        elif strip.class_type != "VibeComfyStripConditioningKeys":
-            report.add(
-                "wrong_guide_attention_strip_class_type",
-                f"Node 2292 has class_type {strip.class_type!r}, expected VibeComfyStripConditioningKeys.",
-                detail={"node_id": "2292", "actual_class_type": strip.class_type},
-            )
         for node_id, field in (("116", "positive"), ("116", "negative"), ("106", "positive"), ("106", "negative")):
             source = self._lens.edge_source(node_id, field)
-            if source is None or source.node_id != "2292":
+            if source is None or source.node_id != "111":
                 report.add(
-                    "wrong_stripped_conditioning_consumer",
-                    f"{node_id}.{field} must consume stripped conditioning from node 2292.",
+                    "wrong_last_guide_conditioning_consumer",
+                    f"{node_id}.{field} must consume conditioning from last guide node 111.",
                     detail={"node_id": node_id, "field": field, "actual_source_node_id": getattr(source, "node_id", None)},
                 )
 

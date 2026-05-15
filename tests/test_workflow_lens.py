@@ -245,15 +245,15 @@ def test_lens_ltx_parity_first_last_conditioning_via_lens() -> None:
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
-    # Wan2GP parity uses an in-place first-frame latent replacement and a
-    # single last-frame guide.  This avoids carrying a first-frame guide mask
-    # through the sampler path.
+    # Portable parity uses the official Lightricks first/last spine that has
+    # passed live on 4090: two LTXVAddGuide nodes and direct checkpoint model.
     cond_nodes = nodes_by_class_type(wf, "LTXVAddGuide")
     cond_by_id = {n.id: n for n in cond_nodes}
+    assert "115" in cond_by_id, "first-frame guide node missing"
     assert "111" in cond_by_id, "last-frame guide node missing"
     first_node = l.node("115")
     assert first_node is not None
-    assert first_node.class_type == "LTXVImgToVideoInplace"
+    assert first_node.class_type == "LTXVAddGuide"
 
     # First frame: node 115 receives image from upstream
     src_stage1 = l.edge_source("115", "image")
@@ -342,17 +342,17 @@ def test_lens_ltx_parity_distilled_guide_spine_via_lens() -> None:
     l = lens(wf)
 
     assert l.node_value("127", "ckpt_name") == "ltx-2.3-22b-distilled-fp8.safetensors"
-    assert l.node("115").class_type == "LTXVImgToVideoInplace"
+    assert l.node("115").class_type == "LTXVAddGuide"
     assert l.node("111").class_type == "LTXVAddGuide"
     assert l.edge_source("115", "latent").node_id == "108"
     assert l.edge_source("111", "latent").node_id == "115"
     assert l.node("2291") is None
     assert l.edge_source("116", "model").node_id == "127"
-    assert l.node("2292").class_type == "VibeComfyStripConditioningKeys"
-    assert l.edge_source("116", "positive").node_id == "2292"
-    assert l.edge_source("116", "negative").node_id == "2292"
-    assert l.edge_source("106", "positive").node_id == "2292"
-    assert l.edge_source("106", "negative").node_id == "2292"
+    assert l.node("2292") is None
+    assert l.edge_source("116", "positive").node_id == "111"
+    assert l.edge_source("116", "negative").node_id == "111"
+    assert l.edge_source("106", "positive").node_id == "111"
+    assert l.edge_source("106", "negative").node_id == "111"
 
 
 def test_lens_ltx_parity_sigmas_via_lens() -> None:

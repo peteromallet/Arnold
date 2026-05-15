@@ -163,14 +163,16 @@ def build() -> VibeWorkflow:
         length=frames.out(0),
     )
 
-    first_latent = _node(
+    first_guide = _node(
         wf,
-        "LTXVImgToVideoInplace",
+        "LTXVAddGuide",
         "115",
-        bypass=False,
+        frame_idx=0,
         strength=1.0,
         image=preprocess_first.out(0),
         latent=empty_video.out(0),
+        negative=conditioning.out(1),
+        positive=conditioning.out(0),
         vae=checkpoint.out(2),
     )
     last_guide = _node(
@@ -180,18 +182,10 @@ def build() -> VibeWorkflow:
         frame_idx=-1,
         strength=1.0,
         image=preprocess_last.out(0),
-        latent=first_latent.out(0),
-        negative=conditioning.out(1),
-        positive=conditioning.out(0),
+        latent=first_guide.out(2),
+        negative=first_guide.out(1),
+        positive=first_guide.out(0),
         vae=checkpoint.out(2),
-    )
-    stripped_guides = _node(
-        wf,
-        "VibeComfyStripConditioningKeys",
-        "2292",
-        keys="guide_attention_entries",
-        negative=last_guide.out(1),
-        positive=last_guide.out(0),
     )
 
     guider = _node(
@@ -200,8 +194,8 @@ def build() -> VibeWorkflow:
         "116",
         cfg=1,
         model=checkpoint.out(0),
-        negative=stripped_guides.out(1),
-        positive=stripped_guides.out(0),
+        negative=last_guide.out(1),
+        positive=last_guide.out(0),
     )
     sampler = _node(wf, "SamplerEulerAncestral", "117", eta=0, s_noise=1)
     sigmas = _node(
@@ -234,8 +228,8 @@ def build() -> VibeWorkflow:
         "LTXVCropGuides",
         "106",
         latent=separated.out(0),
-        negative=stripped_guides.out(1),
-        positive=stripped_guides.out(0),
+        negative=last_guide.out(1),
+        positive=last_guide.out(0),
     )
     decoded_audio = _node(wf, "LTXVAudioVAEDecode", "107", audio_vae=audio_vae.out(0), samples=separated.out(1))
     decoded_video = _node(
