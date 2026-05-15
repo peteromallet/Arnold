@@ -6,10 +6,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from vibecomfy.porting.convert import port_convert_workflow
+from vibecomfy.porting.convert import (
+    ManualTemplateRefusal,
+    ConversionWriteError,
+    port_convert_and_write,
+    port_convert_workflow,
+)
+from vibecomfy.porting.readability_inventory import build_readability_inventory
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.porting.workbench import analyze_source, load_port_source
-from vibecomfy.schema import get_schema_provider
+from vibecomfy.schema import ConversionSchemaProvider, get_schema_provider
 
 
 PORT_HELP = """Cheap preflight and Python materialization for ComfyUI workflow ports.
@@ -24,7 +30,7 @@ custom node install planning, and `fetch` for URL-backed models. Use
 
 
 def _cmd_port_check(args: argparse.Namespace) -> int:
-    schema_provider = get_schema_provider("auto")
+    schema_provider = _build_conversion_provider(args)
     try:
         report = analyze_source(
             args.workflow,
@@ -36,6 +42,7 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"port check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
+    _inject_schema_source_metadata(report, args)
     payload = report.to_json()
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -45,13 +52,14 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_port_convert(args: argparse.Namespace) -> int:
-    schema_provider = get_schema_provider("auto")
+    schema_provider = _build_conversion_provider(args)
     try:
         report = analyze_source(
             args.workflow,
             schema_provider=schema_provider,
             head_check_models=args.head_check_models,
         )
+        _inject_schema_source_metadata(report, args)
         if getattr(args, "strict_ready_template", False) or args.ready_id:
             _apply_strict_ready_template_gate(report)
         if report.has_errors:
@@ -78,16 +86,48 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
         return 1
 
     out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(result.text, encoding="utf-8")
+    dry_run = getattr(args, "dry_run", False)
+    diff_mode = getattr(args, "diff", False)
+
+    try:
+        write_result = port_convert_and_write(
+            result,
+            out,
+            dry_run=dry_run,
+            diff=diff_mode,
+        )
+    except ManualTemplateRefusal as exc:
+        print(f"port convert refused: {exc}", file=sys.stderr)
+        payload = {
+            "status": "refused",
+            "out": str(out),
+            "message": str(exc),
+            "conversion": result.to_json(),
+            "report": report.to_json(),
+        }
+        _emit_convert_payload(payload, json_output=args.json)
+        return 1
+    except ConversionWriteError as exc:
+        print(f"port convert failed: {exc}", file=sys.stderr)
+        payload = {
+            "status": "error",
+            "out": str(out),
+            "message": str(exc),
+            "conversion": result.to_json(),
+            "report": report.to_json(),
+        }
+        _emit_convert_payload(payload, json_output=args.json)
+        return 1
+
     payload = {
-        "status": "ok" if result.validation is None or result.validation.ok else "error",
+        "status": "ok" if write_result["written"] or write_result["dry_run"] else "error",
         "out": str(out),
         "conversion": result.to_json(),
         "report": report.to_json(),
+        "write": write_result,
     }
     _emit_convert_payload(payload, json_output=args.json)
-    return 0 if payload["status"] == "ok" else 1
+    return 0
 
 
 def _cmd_port_widgets(args: argparse.Namespace) -> int:
@@ -117,6 +157,67 @@ def _cmd_port_widgets(args: argparse.Namespace) -> int:
     else:
         print(_render_widgets(payload))
     return 0
+
+
+def _cmd_port_inventory(args: argparse.Namespace) -> int:
+    """Repo-only readability inventory for checked-in ready templates.
+
+    ``port inventory --ready --json`` emits a deterministic, versioned JSON
+    report built from the static ``ready_templates/**/*.py`` glob.  The report
+    never consults plugin/cwd/user-global paths.
+    """
+    inventory = build_readability_inventory()
+    if args.json:
+        print(json.dumps(inventory.to_json(), indent=2, sort_keys=True))
+    else:
+        print(_render_inventory(inventory))
+    return 0
+
+
+def _render_inventory(inventory) -> str:
+    entries = inventory.entries
+    summary = inventory.summary
+    flag_count = sum(1 for e in entries if e.missing_source_provenance)
+
+    lines = [
+        f"port inventory: {inventory.template_count} checked-in ready templates",
+        f"missing source provenance: {flag_count}",
+        f"markers: "
+        + " ".join(
+            f"{k.split('_', 1)[1]}={v}"
+            for k, v in sorted(summary.items())
+            if k.startswith("marker_")
+        ),
+    ]
+    # Summary counts
+    lines.append(
+        f"issues: "
+        + ", ".join(
+            f"{key}={summary.get(key, 0)}"
+            for key in [
+                "positional_outs_total",
+                "widget_n_fields_total",
+                "uuid_class_types_total",
+                "n_uuid_variables_total",
+                "local_node_copies_total",
+                "missing_output_contract",
+            ]
+        )
+    )
+    lines.append(f"app_active: {summary.get('app_active', 0)}")
+    lines.append(f"templates_with_issues: {summary.get('templates_with_issues', 0)}")
+
+    # Flagged entries
+    flagged = [e for e in entries if e.missing_source_provenance]
+    if flagged:
+        lines.append("")
+        lines.append("Flagged (no source provenance):")
+        for e in flagged[:20]:
+            lines.append(f"  {e.ready_id} ({e.marker})")
+        if len(flagged) > 20:
+            lines.append(f"  ... {len(flagged) - 20} more flagged entries; rerun with --json for full list")
+
+    return "\n".join(lines)
 
 
 def _apply_strict_ready_template_gate(report: Any) -> None:
@@ -189,6 +290,25 @@ def _render_check(report: Any) -> str:
     return "\n".join(lines)
 
 
+def _build_conversion_provider(args: argparse.Namespace) -> ConversionSchemaProvider:
+    runtime_enabled = getattr(args, "runtime_object_info", False)
+    server_url: str | None = getattr(args, "server_url", None)
+    return ConversionSchemaProvider(
+        enable_runtime=runtime_enabled,
+        runtime_server_url=server_url,
+    )
+
+
+def _inject_schema_source_metadata(report: Any, args: argparse.Namespace) -> None:
+    runtime_enabled = getattr(args, "runtime_object_info", False)
+    server_url: str | None = getattr(args, "server_url", None)
+    report.metadata["schema_source"] = {
+        "provider": "ConversionSchemaProvider",
+        "runtime_enabled": runtime_enabled,
+        "server_url": server_url,
+    }
+
+
 def _emit_convert_payload(payload: dict[str, Any], *, json_output: bool) -> None:
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -254,6 +374,15 @@ def register(subparsers) -> None:
         action="store_true",
         help="Escalate unresolved positional widget aliases to errors before promotion or RunPod validation.",
     )
+    check.add_argument(
+        "--runtime-object-info",
+        action="store_true",
+        help="Opt in to live /object_info schema evidence from a running ComfyUI server.",
+    )
+    check.add_argument(
+        "--server-url",
+        help="ComfyUI server URL for live /object_info (requires --runtime-object-info).",
+    )
     check.set_defaults(func=_cmd_port_check)
 
     convert = port_subparsers.add_parser(
@@ -266,11 +395,22 @@ def register(subparsers) -> None:
     convert.add_argument("--out", required=True)
     convert.add_argument("--ready-id", help="Emit ready-template candidate mode; must have kind/name shape.")
     convert.add_argument("--json", action="store_true")
+    convert.add_argument("--dry-run", action="store_true", help="Emit conversion payload and evidence without writing target file.")
+    convert.add_argument("--diff", action="store_true", help="Produce unified diff + JSON diff metadata (implies dry-run).")
     convert.add_argument("--head-check-models", action="store_true", help="Opt in to non-downloading HEAD checks for model URLs.")
     convert.add_argument(
         "--strict-ready-template",
         action="store_true",
         help="Escalate unresolved positional widget aliases to errors. Ready-template conversion enables this by default.",
+    )
+    convert.add_argument(
+        "--runtime-object-info",
+        action="store_true",
+        help="Opt in to live /object_info schema evidence from a running ComfyUI server.",
+    )
+    convert.add_argument(
+        "--server-url",
+        help="ComfyUI server URL for live /object_info (requires --runtime-object-info).",
     )
     convert.set_defaults(func=_cmd_port_convert)
 
@@ -286,5 +426,17 @@ def register(subparsers) -> None:
     widgets.add_argument("--json", action="store_true")
     widgets.set_defaults(func=_cmd_port_widgets)
 
+    inventory = port_subparsers.add_parser(
+        "inventory",
+        help="Repo-only readability inventory for checked-in ready templates.",
+        description=(
+            "Emit a deterministic, versioned JSON report built from the static "
+            "ready_templates/**/*.py glob. Never consults plugin/cwd/user-global paths."
+        ),
+    )
+    inventory.add_argument("--ready", action="store_true", default=True, help=argparse.SUPPRESS)
+    inventory.add_argument("--json", action="store_true")
+    inventory.set_defaults(func=_cmd_port_inventory)
 
-__all__ = ["register", "_cmd_port_check", "_cmd_port_convert", "_cmd_port_widgets"]
+
+__all__ = ["register", "_cmd_port_check", "_cmd_port_convert", "_cmd_port_inventory", "_cmd_port_widgets"]

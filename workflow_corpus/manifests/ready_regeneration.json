@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "description": "Regeneration manifest for every checked-in ready template. Each row records source provenance, current marker, coverage tier, app-active proxy, emitter identity, and the latest parity evidence snapshot. Generated repos that lack known source provenance or a manual/reference review status are flagged before regeneration.",
+  "generated_at": null,
+  "generated_by": null,
+  "entries": []
+}

@@ -39,7 +39,9 @@ Run the porting workbench before manual edits and before RunPod validation:
 ```bash
 python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json
 python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scratchpads/<id>.py --json
+python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out ready_templates/<kind>/<id>.py --ready-id <kind>/<id> --json
 python -m vibecomfy.cli port check ready_templates/<media>/<id>.py --strict-ready-template --json
+python -m vibecomfy.cli port inventory --ready --json
 ```
 
 When replacing a node or hand-authoring a Python template, inspect the target node schema before writing kwargs:

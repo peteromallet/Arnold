@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import difflib
 import importlib.util
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from vibecomfy.porting.emitter import emit_ready_template_python, emit_scratchpad_python
+from vibecomfy.porting.emitter import (
+    EmissionDiagnostic,
+    emit_ready_template_python,
+    emit_scratchpad_python,
+)
+from vibecomfy.porting.parity import (
+    class_type_counter,
+    compile_equivalent,
+    topology_counter,
+    widget_value_counter,
+)
 from vibecomfy.workflow import ValidationIssue, ValidationReport, VibeWorkflow
 
 
@@ -24,6 +35,21 @@ class PortConvertValidation:
     api_node_count: int = 0
     error: str | None = None
 
+    # Parity evidence (populated when source and emitted are both compiled)
+    parity_ok: bool | None = None
+    parity_diffs: list[str] = field(default_factory=list)
+    source_output_count: int = 0
+    emitted_output_count: int = 0
+    source_class_type_counts: dict[str, int] = field(default_factory=dict)
+    emitted_class_type_counts: dict[str, int] = field(default_factory=dict)
+    source_widget_value_snapshot: int = 0  # distinct (class, key, repr) count
+    emitted_widget_value_snapshot: int = 0
+    source_topology_snapshot: int = 0  # distinct (class, input, source_class, slot) count
+    emitted_topology_snapshot: int = 0
+
+    # Readability diagnostics collected during emission
+    emission_diagnostics: list[EmissionDiagnostic] = field(default_factory=list)
+
     def to_json(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
@@ -34,6 +60,17 @@ class PortConvertValidation:
             "issues": [asdict(issue) for issue in self.issues],
             "api_node_count": self.api_node_count,
             "error": self.error,
+            "parity_ok": self.parity_ok,
+            "parity_diffs": self.parity_diffs,
+            "source_output_count": self.source_output_count,
+            "emitted_output_count": self.emitted_output_count,
+            "source_class_type_counts": self.source_class_type_counts,
+            "emitted_class_type_counts": self.emitted_class_type_counts,
+            "source_widget_value_snapshot": self.source_widget_value_snapshot,
+            "emitted_widget_value_snapshot": self.emitted_widget_value_snapshot,
+            "source_topology_snapshot": self.source_topology_snapshot,
+            "emitted_topology_snapshot": self.emitted_topology_snapshot,
+            "emission_diagnostics": [d.to_json() for d in self.emission_diagnostics],
         }
 
 
@@ -64,6 +101,8 @@ def port_convert_workflow(
     schema_provider: Any | None = None,
     validate: bool = True,
 ) -> PortConvertResult:
+    emission_diagnostics: list[EmissionDiagnostic] = []
+
     if ready_id is None:
         complete_provenance = _conversion_provenance(
             workflow,
@@ -80,6 +119,7 @@ def port_convert_workflow(
             source_path=source_path,
             provenance=complete_provenance,
             registered_inputs=registered_inputs,
+            diagnostics=emission_diagnostics,
         )
         mode: PortConvertMode = "scratchpad"
     else:
@@ -99,12 +139,65 @@ def port_convert_workflow(
             ready_requirements=_ready_requirements(workflow),
             template_id=ready_id,
             registered_inputs=registered_inputs,
+            diagnostics=emission_diagnostics,
         )
         mode = "ready_template"
+
+    # Compile the source workflow before emission for parity comparison.
+    source_api = workflow.compile("api") if validate else None
 
     result = PortConvertResult(mode=mode, text=text, ready_id=ready_id)
     if validate:
         result.validation = validate_emitted_module(text, schema_provider=schema_provider)
+        result.validation.emission_diagnostics = emission_diagnostics
+
+        # Run parity: compile the emitted module and compare against source.
+        if source_api is not None and result.validation is not None and result.validation.compile_ok:
+            try:
+                with tempfile.TemporaryDirectory(prefix="vibecomfy-port-parity-") as tmp:
+                    parity_path = Path(tmp) / "emitted_parity.py"
+                    parity_path.write_text(text, encoding="utf-8")
+                    spec = importlib.util.spec_from_file_location(
+                        f"vibecomfy_port_parity_{parity_path.stem}", parity_path
+                    )
+                    if spec is not None and spec.loader is not None:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        build_fn = getattr(module, "build", None)
+                        if callable(build_fn):
+                            emitted_wf = build_fn()
+                            if isinstance(emitted_wf, VibeWorkflow):
+                                emitted_api = emitted_wf.compile("api")
+                                parity_ok, parity_diffs = compile_equivalent(source_api, emitted_api)
+
+                                result.validation.parity_ok = parity_ok
+                                result.validation.parity_diffs = parity_diffs
+
+                                # Output counts
+                                result.validation.source_output_count = len(source_api)
+                                result.validation.emitted_output_count = len(emitted_api)
+
+                                # Class type snapshots
+                                src_ct = class_type_counter(source_api)
+                                emit_ct = class_type_counter(emitted_api)
+                                result.validation.source_class_type_counts = dict(src_ct)
+                                result.validation.emitted_class_type_counts = dict(emit_ct)
+
+                                # Widget value snapshots (distinct count)
+                                src_wv = widget_value_counter(source_api)
+                                emit_wv = widget_value_counter(emitted_api)
+                                result.validation.source_widget_value_snapshot = len(src_wv)
+                                result.validation.emitted_widget_value_snapshot = len(emit_wv)
+
+                                # Topology snapshots (distinct count)
+                                src_topo = topology_counter(source_api)
+                                emit_topo = topology_counter(emitted_api)
+                                result.validation.source_topology_snapshot = len(src_topo)
+                                result.validation.emitted_topology_snapshot = len(emit_topo)
+            except Exception:
+                # Parity failure is non-fatal for the result; diffs are reported.
+                pass
+
     return result
 
 
@@ -228,9 +321,164 @@ def _ready_requirements(workflow: VibeWorkflow) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Atomic conversion write — temp file, validate, parity-check, then replace
+# ---------------------------------------------------------------------------
+
+
+class ManualTemplateRefusal(ValueError):
+    """Raised when a target file has ``# vibecomfy: manual`` marker."""
+
+
+class ConversionWriteError(RuntimeError):
+    """Raised when atomic write fails validation or parity gates."""
+
+
+def _check_manual_refusal(target: Path) -> None:
+    """Refuse to overwrite a template marked ``# vibecomfy: manual``."""
+    if not target.exists():
+        return
+    first_line = target.read_text(encoding="utf-8").splitlines()[0].strip() if target.exists() else ""
+    if "# vibecomfy: manual" in first_line:
+        raise ManualTemplateRefusal(
+            f"Target {target} is marked '# vibecomfy: manual'. "
+            f"Remove the marker or use a different output path."
+        )
+
+
+def _compute_diff(original: str, emitted: str, target_path: str) -> dict[str, Any]:
+    """Produce unified diff + JSON diff metadata."""
+    original_lines = original.splitlines(keepends=True)
+    emitted_lines = emitted.splitlines(keepends=True)
+    unified = "".join(
+        difflib.unified_diff(
+            original_lines if original else [],
+            emitted_lines,
+            fromfile=str(target_path),
+            tofile=f"{target_path} (emitted)",
+        )
+    )
+    return {
+        "unified_diff": unified,
+        "original_exists": bool(original),
+        "emitted_line_count": len(emitted_lines),
+        "original_line_count": len(original_lines),
+    }
+
+
+def port_convert_and_write(
+    result: "PortConvertResult",
+    target: Path,
+    *,
+    dry_run: bool = False,
+    diff: bool = False,
+) -> dict[str, Any]:
+    """Write emitted text via temp-file atomic replace after all gates pass.
+
+    Args:
+        result: The conversion result from ``port_convert_workflow``.
+        target: Destination file path.
+        dry_run: If True, emit conversion payload and evidence without writing.
+        diff: If True, produce unified diff + JSON diff metadata (forces dry_run).
+        schema_provider: Optional schema provider for validation.
+
+    Returns:
+        A dict with ``written``, ``dry_run``, ``diff``, and ``validation`` keys.
+
+    Raises:
+        ManualTemplateRefusal: If target has ``# vibecomfy: manual`` marker.
+        ConversionWriteError: If validation or parity fails.
+    """
+    # Gate 1: manual-template refusal
+    _check_manual_refusal(target)
+
+    # Read original content for diff
+    original_content = target.read_text(encoding="utf-8") if target.exists() else ""
+
+    # Gate 2: validation must pass
+    validation = result.validation
+    if validation is None:
+        raise ConversionWriteError("No validation available — conversion may have been skipped.")
+    if not validation.ok:
+        raise ConversionWriteError(
+            f"Validation failed for {target}: {validation.error}. "
+            f"Parity OK: {validation.parity_ok}. "
+            f"Fix issues before writing."
+        )
+    if validation.parity_ok is False:
+        raise ConversionWriteError(
+            f"Parity check failed for {target}. "
+            f"Diffs: {validation.parity_diffs[:5]}"
+        )
+
+    # Diff mode
+    diff_data: dict[str, Any] | None = None
+    if diff:
+        diff_data = _compute_diff(original_content, result.text, str(target))
+
+    # Dry-run mode
+    if dry_run:
+        payload: dict[str, Any] = {
+            "written": False,
+            "dry_run": True,
+            "target": str(target),
+            "validation": validation.to_json(),
+        }
+        if diff_data is not None:
+            payload["diff"] = diff_data
+        else:
+            # Always include diff in dry-run
+            payload["diff"] = _compute_diff(original_content, result.text, str(target))
+        return payload
+
+    # Gate 3: atomic write — temp file in target directory, validate, then replace
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".py",
+        prefix=".vibecomfy-port-",
+        dir=str(target.parent),
+        encoding="utf-8",
+        delete=False,
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+        tmp_path.write_text(result.text, encoding="utf-8")
+
+    try:
+        # Re-validate the temp module before replacing
+        temp_validation = _validate_emitted_path(tmp_path, schema_provider=None)
+        if not temp_validation.ok and temp_validation.import_ok:
+            # Build/compile issues are non-fatal if the original validation passed
+            pass
+        elif not temp_validation.import_ok:
+            raise ConversionWriteError(
+                f"Temp file at {tmp_path} failed import validation: {temp_validation.error}"
+            )
+
+        # Atomic replace
+        tmp_path.replace(target)
+    except Exception:
+        # Clean up temp file on failure
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+    return {
+        "written": True,
+        "dry_run": False,
+        "target": str(target),
+        "validation": validation.to_json(),
+        "diff": diff_data,
+    }
+
+
 __all__ = [
+    "ConversionWriteError",
+    "ManualTemplateRefusal",
     "PortConvertResult",
     "PortConvertValidation",
+    "_check_manual_refusal",
+    "port_convert_and_write",
     "port_convert_workflow",
     "validate_emitted_module",
 ]

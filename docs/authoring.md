@@ -11,9 +11,12 @@ When starting from a ComfyUI JSON export, indexed workflow, or failing ready tem
 ```bash
 python -m vibecomfy.cli port check <workflow> --json
 python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py --json
+python -m vibecomfy.cli port inventory --ready --json
 ```
 
-`port check` is the cheap preflight for helper/UI nodes, missing custom-node packs, missing required inputs, widget alias drift, and model asset problems. `port convert` turns the source into Python scratchpad form by default; add `--ready-id <kind>/<name>` only when you are intentionally creating a ready-template candidate. See [template_porting_workbench.md](template_porting_workbench.md) for the full workflow and when to use `doctor`, `validate`, `nodes install-plan`, `fetch`, and `--head-check-models`.
+`port check` is the cheap preflight for helper/UI nodes, missing custom-node packs, missing required inputs, widget alias drift, and model asset problems. `port convert` turns the source into Python scratchpad form by default; add `--ready-id <kind>/<name>` only when you are intentionally creating a ready-template candidate. `port convert` uses atomic writes (temp file → validate/parity-check → `Path.replace()`), refuses to overwrite `# vibecomfy: manual` templates, and supports `--dry-run` and `--diff` modes. `port inventory` reports readability issues and source-provenance across all checked-in templates.
+
+See [template_porting_workbench.md](template_porting_workbench.md) for the full workflow and when to use `doctor`, `validate`, `nodes install-plan`, `fetch`, and `--head-check-models`.
 
 ## Blocks
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import ast
 import json
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -12,6 +13,8 @@ from vibecomfy.runtime.client import ComfyClient
 from vibecomfy.runtime.server import comfy_server
 
 from .cache import load_object_info_cache, object_info_cache_path, write_object_info_cache
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -30,12 +33,57 @@ class OutputSpec:
     name: str | None = None
 
 
+@dataclass
+class SchemaSourceInfo:
+    """Provenance metadata describing where a schema came from and with what confidence.
+
+    This is intentionally a plain (non-frozen) dataclass so callers can
+    mutate it incrementally while merging evidence from multiple providers.
+    """
+
+    provider_name: str = "unknown"
+    source_path: str | None = None
+    cache_path: str | None = None
+    server_url: str | None = None
+    package: str | None = None
+    version: str | None = None
+    hash: str | None = None
+    confidence: float = 1.0
+    conflicts: list[str] = field(default_factory=list)
+    ignored_evidence: list[str] = field(default_factory=list)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "provider_name": self.provider_name,
+            "source_path": self.source_path,
+            "cache_path": self.cache_path,
+            "server_url": self.server_url,
+            "package": self.package,
+            "version": self.version,
+            "hash": self.hash,
+            "confidence": self.confidence,
+            "conflicts": list(self.conflicts),
+            "ignored_evidence": list(self.ignored_evidence),
+        }
+
+
 @dataclass(frozen=True)
 class NodeSchema:
     class_type: str
     pack: str | None
     inputs: dict[str, InputSpec]
     outputs: list[OutputSpec]
+    # ── provenance fields (defaults so existing code works unchanged) ──────
+    source_provider: str = "unknown"
+    source_path: str | None = None
+    source_cache_path: str | None = None
+    source_server_url: str | None = None
+    source_package: str | None = None
+    source_version: str | None = None
+    source_hash: str | None = None
+    confidence: float = 1.0
+    conflicts: tuple[str, ...] = ()
+    ignored_evidence: tuple[str, ...] = ()
 
 
 class SchemaIndexError(ValueError):
@@ -173,6 +221,191 @@ class CompositeSchemaProvider:
             if schema is not None:
                 return schema
         return None
+
+
+class ConversionSchemaProvider:
+    """Deterministic offline schema provider for port check/convert.
+
+    Precedence order (first hit wins):
+
+    1. **Committed node_index.json** – ``LocalSchemaProvider`` against the
+       pinned ``node_index_path``.
+    2. **Source parser** – ``SourceSchemaProvider`` scanning installed
+       custom-node source trees under ``source_roots``.
+    3. **Provenance-matched object_info cache** – ``ObjectInfoSchemaProvider``
+       loaded from ``object_info_cache_path`` only when its fingerprint
+       metadata matches the expected runtime identity.
+    4. **Widget schema fallback** – positional ``widget_N`` → named input
+       aliases from the local ``WIDGET_SCHEMA`` table (lowest priority).
+    5. **Runtime** – ``RuntimeSchemaProvider`` is consulted *only* when
+       ``enable_runtime=True`` (off by default).
+
+    Each ``get_schema`` hit records a ``SchemaSourceInfo`` provenance note
+    via ``_logger.info`` so callers can attribute emission decisions.
+
+    Returns ``None`` for unknown types — never silently falls through to
+    a live network call behind the ``enable_runtime`` flag.
+    """
+
+    def __init__(
+        self,
+        *,
+        node_index_path: str | Path = "node_index.json",
+        source_roots: list[str | Path] | None = None,
+        object_info_cache_path: str | Path | None = None,
+        widget_schema: dict[str, list[str | None]] | None = None,
+        runtime_server_url: str | None = None,
+        enable_runtime: bool = False,
+    ) -> None:
+        self._local = LocalSchemaProvider(node_index_path)
+        self._source = SourceSchemaProvider(source_roots)
+        self._object_info: ObjectInfoSchemaProvider | None = None
+        if object_info_cache_path is not None:
+            self._object_info = ObjectInfoSchemaProvider(object_info_cache_path)
+        self._widget_schema: dict[str, list[str | None]] = widget_schema or {}
+        self._runtime: RuntimeSchemaProvider | None = None
+        if enable_runtime:
+            self._runtime = RuntimeSchemaProvider(server_url=runtime_server_url)
+        self._enable_runtime = enable_runtime
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        # 1. Committed node_index.json
+        schema = self._local.get_schema(class_type)
+        if schema is not None:
+            _logger.info(
+                "schema hit: %s provider=node_index path=%s",
+                class_type,
+                self._local.index_path,
+            )
+            return self._with_provenance(
+                schema,
+                SchemaSourceInfo(
+                    provider_name="node_index",
+                    source_path=str(self._local.index_path),
+                    confidence=1.0,
+                ),
+            )
+
+        # 2. Source parser
+        schema = self._source.get_schema(class_type)
+        if schema is not None:
+            _logger.info(
+                "schema hit: %s provider=source_parser roots=%s",
+                class_type,
+                self._source.roots,
+            )
+            return self._with_provenance(
+                schema,
+                SchemaSourceInfo(
+                    provider_name="source_parser",
+                    source_path=None,  # resolved per-file inside SourceSchemaProvider
+                    confidence=0.9,
+                ),
+            )
+
+        # 3. Provenance-matched object_info cache
+        if self._object_info is not None:
+            try:
+                schema = self._object_info.get_schema(class_type)
+            except SchemaIndexError:
+                schema = None
+            if schema is not None:
+                _logger.info(
+                    "schema hit: %s provider=object_info_cache path=%s",
+                    class_type,
+                    self._object_info.object_info_path,
+                )
+                return self._with_provenance(
+                    schema,
+                    SchemaSourceInfo(
+                        provider_name="object_info_cache",
+                        cache_path=str(self._object_info.object_info_path),
+                        confidence=0.7,
+                    ),
+                )
+            else:
+                _logger.info(
+                    "schema miss in object_info_cache: %s path=%s",
+                    class_type,
+                    self._object_info.object_info_path,
+                )
+
+        # 4. Widget schema fallback – build a minimal NodeSchema from aliases
+        widget_names = self._widget_schema.get(class_type)
+        if widget_names is not None:
+            from vibecomfy.porting.widget_schema import WIDGET_SCHEMA as _WS
+
+            _logger.info(
+                "schema hit: %s provider=widget_schema_fallback names=%s",
+                class_type,
+                widget_names,
+            )
+            fallback_schema = self._widget_names_to_schema(class_type, widget_names)
+            return self._with_provenance(
+                fallback_schema,
+                SchemaSourceInfo(
+                    provider_name="widget_schema",
+                    confidence=0.3,
+                ),
+            )
+
+        # 5. Runtime (only when explicitly enabled)
+        if self._runtime is not None:
+            schema = self._runtime.get_schema(class_type)
+            if schema is not None:
+                _logger.info(
+                    "schema hit: %s provider=runtime server=%s",
+                    class_type,
+                    self._runtime.server_url,
+                )
+                return self._with_provenance(
+                    schema,
+                    SchemaSourceInfo(
+                        provider_name="runtime",
+                        server_url=self._runtime.server_url,
+                        cache_path=str(self._runtime.cache_path) if self._runtime.cache_path else None,
+                        confidence=0.6,
+                    ),
+                )
+
+        _logger.info("schema miss: %s (no provider had it)", class_type)
+        return None
+
+    @staticmethod
+    def _widget_names_to_schema(class_type: str, names: list[str | None]) -> NodeSchema:
+        inputs: dict[str, InputSpec] = {}
+        outputs: list[OutputSpec] = []
+        for idx, name in enumerate(names):
+            if name is not None:
+                inputs[name] = InputSpec(type=None, required=False)
+        return NodeSchema(
+            class_type=class_type,
+            pack=None,
+            inputs=inputs,
+            outputs=outputs,
+            source_provider="widget_schema",
+            confidence=0.3,
+        )
+
+    @staticmethod
+    def _with_provenance(schema: NodeSchema, info: SchemaSourceInfo) -> NodeSchema:
+        # NodeSchema is frozen, so we must construct a new one with provenance.
+        return NodeSchema(
+            class_type=schema.class_type,
+            pack=schema.pack,
+            inputs=schema.inputs,
+            outputs=schema.outputs,
+            source_provider=info.provider_name,
+            source_path=info.source_path,
+            source_cache_path=info.cache_path,
+            source_server_url=info.server_url,
+            source_package=info.package,
+            source_version=info.version,
+            source_hash=info.hash,
+            confidence=info.confidence,
+            conflicts=tuple(info.conflicts),
+            ignored_evidence=tuple(info.ignored_evidence),
+        )
 
 
 class RuntimeSchemaProvider:

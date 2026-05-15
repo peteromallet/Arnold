@@ -31,9 +31,17 @@ Before manually editing a raw Comfy workflow, converting it into a template, or 
 python -m vibecomfy.cli port check <workflow> --json
 python -m vibecomfy.cli port check <workflow> --strict-ready-template --json
 python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py --json
+python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<name> --out ready_templates/<kind>/<name>.py --json
+python -m vibecomfy.cli port inventory --ready --json
 ```
 
-`port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, output-contract gaps, and model asset issues while staying offline by default. Use `--strict-ready-template` before promoting or RunPod-testing production/app-parity templates; it turns schema-backed unresolved widgets and missing workflow outputs into hard errors. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies. See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
+`port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, output-contract gaps, and model asset issues while staying offline by default. Use `--strict-ready-template` before promoting or RunPod-testing production/app-parity templates; it turns schema-backed unresolved widgets and missing workflow outputs into hard errors. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies.
+
+`port convert` uses atomic writes (temp file → validate/parity-check → `Path.replace()`), refuses to overwrite `# vibecomfy: manual` templates, and supports `--dry-run` (emit evidence without writing) and `--diff` (unified diff + JSON metadata). Parity evidence includes widget snapshots, output counts, class type counts, and topology snapshots.
+
+`port inventory` scans only checked-in `ready_templates/**/*.py` and reports readability issues (positional `.out(<int>)`, `widget_N` fields, UUID class types, local `_node` copies, missing output contracts), marker classification, and source-provenance flags. The JSON output is deterministic and versioned.
+
+See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
 
 When replacing or hand-authoring a node, inspect the node's real accepted inputs first:
 

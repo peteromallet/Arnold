@@ -123,9 +123,11 @@ def test_port_subcommand_help_is_discoverable(capsys: pytest.CaptureFixture[str]
     assert convert_help.value.code == 0
     assert "before manual template editing or expensive RunPod validation" in check_text
     assert "--head-check-models" in check_text
+    assert "--runtime-object-info" in check_text
     assert "turn source workflows into Python scratchpads" in convert_text
     assert "--ready-id" in convert_text
     assert "--head-check-models" in convert_text
+    assert "--runtime-object-info" in convert_text
 
 
 def test_validate_no_schema_skips_schema_provider(

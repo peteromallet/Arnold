@@ -131,9 +131,19 @@ def convert_to_vibe_format(
                 inputs[key] = value
         class_type = str(node.get("class_type", "Unknown"))
         metadata = {key: value for key, value in node.items() if key not in {"class_type", "inputs"}}
+        # ── enrich node metadata from schema ──
         output_names = _schema_output_names(schema_provider, class_type)
         if output_names:
             metadata.setdefault("output_names", output_names)
+        output_types = _schema_output_types(schema_provider, class_type)
+        if output_types:
+            metadata.setdefault("output_types", output_types)
+        input_aliases = _schema_input_aliases(schema_provider, class_type)
+        if input_aliases:
+            metadata.setdefault("input_aliases", input_aliases)
+        schema_source = _schema_source_provenance(schema_provider, class_type)
+        if schema_source is not None:
+            metadata.setdefault("schema_source", schema_source)
         workflow.nodes[str(node_id)] = VibeNode(
             id=str(node_id),
             class_type=class_type,
@@ -167,12 +177,61 @@ def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str)
 
 
 def _schema_output_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
+    """Return output names from schema, preserving blank entries for partial evidence.
+
+    The emitter will decide per-slot safety later (e.g. blank/duplicate names
+    fall back to numeric ``.out(n)``).  Never drop the whole list just because
+    one entry is missing.
+    """
     schema = schema_for(schema_provider, class_type)
     outputs = getattr(schema, "outputs", None) or []
     names: list[str] = []
     for output in outputs:
         name = output.name if isinstance(output, OutputSpec) else getattr(output, "name", None)
-        if not isinstance(name, str) or not name:
-            return []
-        names.append(name)
+        names.append(name if isinstance(name, str) else "")
     return names
+
+
+def _schema_output_types(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
+    schema = schema_for(schema_provider, class_type)
+    outputs = getattr(schema, "outputs", None) or []
+    types: list[str] = []
+    for output in outputs:
+        typ = output.type if isinstance(output, OutputSpec) else getattr(output, "type", None)
+        types.append(typ if isinstance(typ, str) else "")
+    return types
+
+
+def _schema_input_aliases(schema_provider: SchemaProvider | None, class_type: str) -> list[str | None]:
+    """Build input aliases from schema, excluding link-only types so widget positions do not shift."""
+    from vibecomfy.porting.widget_aliases import LINK_ONLY_TYPES
+
+    schema = schema_for(schema_provider, class_type)
+    if schema is None:
+        return []
+    inputs = getattr(schema, "inputs", None)
+    if not isinstance(inputs, dict):
+        return []
+    aliases: list[str | None] = []
+    for name, spec in inputs.items():
+        input_type = str(getattr(spec, "type", "") or "").upper()
+        if input_type in LINK_ONLY_TYPES:
+            continue
+        aliases.append(str(name))
+    return aliases if aliases else []
+
+
+def _schema_source_provenance(schema_provider: SchemaProvider | None, class_type: str) -> dict[str, Any] | None:
+    schema = schema_for(schema_provider, class_type)
+    if schema is None:
+        return None
+    return {
+        "provider": getattr(schema, "source_provider", "unknown"),
+        "path": getattr(schema, "source_path", None),
+        "cache_path": getattr(schema, "source_cache_path", None),
+        "server_url": getattr(schema, "source_server_url", None),
+        "package": getattr(schema, "source_package", None),
+        "version": getattr(schema, "source_version", None),
+        "hash": getattr(schema, "source_hash", None),
+        "confidence": getattr(schema, "confidence", 1.0),
+    }

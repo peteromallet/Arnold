@@ -36,8 +36,10 @@ Other ready templates still show the broader problem:
 - public controls are often only present as `metadata["unbound_inputs"]`, not
   real `wf.register_input(...)` bindings;
 - every generated template carries repeated `_node` helper boilerplate;
-- conversion paths diverge between older `vibecomfy convert` behavior and the
-  newer `port convert` / `port_convert_workflow()` path.
+- conversion paths diverge between older `vibecomfy convert` behavior (now removed
+  in Sprint 1 — the command exits non-zero with a migration message pointing to
+  `port check` / `port convert`) and the canonical `port convert` /
+  `port_convert_workflow()` path.
 
 The cleanup should be generator-led. Hand-polishing individual templates without
 fixing the import/emitter path would only make the next import reintroduce the
@@ -966,24 +968,23 @@ This is a feature-complete path split into ambitious but bounded two-week
 sprints. Each sprint should leave the repo better than it found it and should
 avoid depending on broad manual cleanup before the mechanical pipeline is safe.
 
-### Sprint 1: Safe Compiler Foundation
+### Sprint 1: Safe Compiler Foundation ✅ (Completed)
 
 Goal: make conversion safe to run repeatedly before changing generated output
 style broadly.
 
-Scope:
+Scope (all completed):
 
-- baseline inventory command/report for ready-template readability issues;
-- parity harness comparing original normalized API to emitted-template compiled
-  API;
-- widget-value snapshot comparison for representative workflows;
-- atomic conversion writes: temp file, validate/parity check, then replace;
-- dry-run/diff mode for regeneration;
-- explicit refusal to overwrite `# vibecomfy: manual` templates;
-- golden tests for legacy `vibecomfy convert` behavior;
-- migrate useful legacy converter behavior, then remove the old invocation with
-  a clear migration error;
-- initial regeneration manifest schema and inventory report.
+- ✅ `port inventory --ready --json` — baseline inventory command for ready-template readability issues;
+- ✅ Parity harness comparing original normalized API to emitted-template compiled API;
+- ✅ Widget-value snapshot comparison for representative workflows (image, edit, audio/TTS, Wan, LTX, opaque);
+- ✅ Atomic conversion writes: temp file, validate/parity check, then replace (`port_convert_and_write`);
+- ✅ `--dry-run` / `--diff` mode for regeneration;
+- ✅ Explicit refusal to overwrite `# vibecomfy: manual` templates (`ManualTemplateRefusal`);
+- ✅ Golden tests for legacy `vibecomfy convert` behavior;
+- ✅ Legacy converter removed — exits non-zero with migration message pointing to `port check` / `port convert`;
+- ✅ Regeneration manifest schema (`workflow_corpus/manifests/ready_regeneration.json`);
+- ✅ All docs updated: README, AGENTS, authoring, porting workbench, adding templates/models, cleanup plan.
 
 Representative fixtures:
 
@@ -1234,7 +1235,7 @@ making inconsistent local choices.
 
 | Decision | Needed by | Accepted direction |
 | --- | --- | --- |
-| Legacy `vibecomfy convert` fate | Sprint 1 | Remove the legacy path rather than keeping a wrapper. If invoked, fail with a clear migration message pointing to `port convert`. Migrate any useful behavior first. |
+| Legacy `vibecomfy convert` fate | ✅ Sprint 1 | Removed. The command exits non-zero with a migration message pointing to `port check` and `port convert`. Useful behavior (source acceptance) migrated to canonical `port convert`. No behavioral wrapper. |
 | Default schema mode | Sprint 2 | Offline deterministic by default; live `/object_info` only behind explicit flag. |
 | Output-name safety | Sprint 2 | Emit named `.out("...")` only for unique, non-empty, non-conflicting names; otherwise numeric fallback with diagnostic. |
 | Widget alias conflict policy | Sprint 2 | Alias only when schema evidence plus parity agrees; keep `widget_N` with diagnostic otherwise. |

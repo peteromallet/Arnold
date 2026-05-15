@@ -3,6 +3,7 @@ from __future__ import annotations
 from .provider import (
     InputSpec,
     CompositeSchemaProvider,
+    ConversionSchemaProvider,
     LocalSchemaProvider,
     NodeSchema,
     ObjectInfoSchemaProvider,
@@ -10,6 +11,7 @@ from .provider import (
     RuntimeSchemaProvider,
     SchemaIndexError,
     SchemaProvider,
+    SchemaSourceInfo,
     SourceSchemaProvider,
     get_schema_provider,
     schema_for,
@@ -20,6 +22,7 @@ from .provider import (
 __all__ = [
     "InputSpec",
     "CompositeSchemaProvider",
+    "ConversionSchemaProvider",
     "LocalSchemaProvider",
     "NodeSchema",
     "ObjectInfoSchemaProvider",
@@ -27,6 +30,7 @@ __all__ = [
     "RuntimeSchemaProvider",
     "SchemaIndexError",
     "SchemaProvider",
+    "SchemaSourceInfo",
     "SourceSchemaProvider",
     "get_schema_provider",
     "schema_for",

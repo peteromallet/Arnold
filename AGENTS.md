@@ -124,6 +124,20 @@ Use `--strict-ready-template` before promoting or RunPod-testing a production/ap
 
 Use `--head-check-models` only when you intentionally want model URL HEAD checks. It checks status, redirects, timeouts, and likely gated/404 URLs without downloading bodies. Normal `port check`, `doctor`, `validate`, `fetch`, and `run` should stay offline by default.
 
+### 1c. Port Inventory
+
+```bash
+python -m vibecomfy.cli port inventory --ready --json
+python -m vibecomfy.cli port inventory --ready
+```
+
+`port inventory` scans the checked-in `ready_templates/**/*.py` glob and reports
+readability issues (positional `.out(<int>)`, `widget_N` fields, UUID class types,
+local `_node` copies, missing output contracts), marker classification (`# vibecomfy:
+manual`, `# vibecomfy: generated`), coverage-tier joins, and source-provenance flags.
+The JSON output is deterministic and versioned. It never consults plugin/cwd/user-global
+template paths.
+
 Decision map:
 
 | Situation | Start with |
@@ -154,10 +168,17 @@ To **convert** an arbitrary JSON workflow into an editable Python scratchpad you
 python -m vibecomfy.cli port convert <workflow_id_or_path> --out out/scratchpads/<name>.py --json
 ```
 
-The legacy converter is still available for compatibility:
+The legacy `vibecomfy convert` command has been removed in Sprint 1. Use the canonical
+porting commands instead:
+
 ```bash
-python -m vibecomfy.cli convert <workflow_id_or_path> --out out/scratchpads/<name>.py
+python -m vibecomfy.cli port convert <workflow_id_or_path> --out out/scratchpads/<name>.py --json
+python -m vibecomfy.cli port convert <workflow_id_or_path> --ready-id <kind>/<name> --out ready_templates/<kind>/<name>.py --json
 ```
+
+`port convert` uses atomic writes (temp file + validate/parity check + `Path.replace()`),
+refuses to overwrite `# vibecomfy: manual` templates, supports `--dry-run` and `--diff`
+modes, and includes parity evidence in its JSON output.
 
 ### 3. Edit / compose
 

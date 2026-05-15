@@ -4,12 +4,15 @@ The porting workbench is the first stop when importing or repairing a ComfyUI wo
 
 The steady-state output should be Python: an editable scratchpad or a ready-template candidate. Raw JSON is source material, not the long-term authoring surface.
 
+The converter writes atomically: emitted text goes to a temp file in the target directory, is re-validated and parity-checked, then replaced via `Path.replace()` only when all gates pass. Failed conversions leave pre-existing files byte-for-byte unchanged. Templates marked `# vibecomfy: manual` on their first line are never overwritten.
+
 ## Quick Start
 
 ```bash
 python -m vibecomfy.cli port check <workflow> --json
 python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<id>.py --json
 python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<name> --out ready_templates/<kind>/<name>.py --json
+python -m vibecomfy.cli port inventory --ready --json
 ```
 
 Use `<workflow>` as a ready id, scratchpad path, raw JSON path, or indexed workflow reference. `port check` is offline by default and cheap enough to run before every manual template edit and before every RunPod validation attempt.
@@ -68,6 +71,42 @@ python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
 ```
 
 The converter validates emitted Python by importing the module, calling `build()`, compiling API output, and running schema validation when a provider is available.
+
+### Dry-Run And Diff Modes
+
+Use `--dry-run` to inspect conversion output and parity evidence without touching the filesystem:
+
+```bash
+python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
+  --out out/scratchpads/example.py \
+  --dry-run --json
+```
+
+Use `--diff` to get a unified diff and JSON diff metadata alongside the write:
+
+```bash
+python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
+  --out out/scratchpads/example.py \
+  --diff --json
+```
+
+### Manual Template Refusal
+
+Templates whose first line contains `# vibecomfy: manual` will not be overwritten.
+This is a hard gate evaluated before emission work. To regenerate a manual template,
+remove the marker or use a different output path.
+
+### Port Inventory
+
+```bash
+python -m vibecomfy.cli port inventory --ready --json
+```
+
+The inventory reports readability issues across all checked-in `ready_templates/**/*.py`
+files: positional `.out(<int>)` calls, `widget_N` field references, UUID class types,
+local `_node` helper copies, missing output contracts, marker classification, coverage-tier
+joins, and source-provenance flags. It never consults plugin, cwd-extra, or user-global
+paths. The JSON output is deterministic and versioned.
 
 ## From JSON To Checked-In Python
 

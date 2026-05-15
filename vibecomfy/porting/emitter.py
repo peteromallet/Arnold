@@ -3,10 +3,47 @@ from __future__ import annotations
 import keyword
 import pprint
 import re
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
 
 from vibecomfy.porting.widget_aliases import resolve_widget_name
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+
+# ── readability warning codes ────────────────────────────────────────────────
+READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT = "avoidable_positional_output"
+READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY = "output_name_ambiguity"
+READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED = "schema_backed_widget_alias_not_resolved"
+READABILITY_WARNING_HIDDEN_MODEL_FILENAME = "hidden_model_filename"
+
+READABILITY_WARNING_CODES: frozenset[str] = frozenset(
+    {
+        READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
+        READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
+        READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+        READABILITY_WARNING_HIDDEN_MODEL_FILENAME,
+    }
+)
+
+EmissionSeverity = Literal["error", "warning", "info"]
+
+
+@dataclass(slots=True)
+class EmissionDiagnostic:
+    """A readability diagnostic recorded during emission.
+
+    These are always *warnings* (or info) — hard errors are surfaced through
+    ``PortConvertValidation`` parity / schema failures, not here.
+    """
+
+    code: str
+    message: str
+    severity: EmissionSeverity = "warning"
+    node_id: str | None = None
+    class_type: str | None = None
+    detail: dict[str, Any] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 GENERATED_HEADER = (
@@ -32,6 +69,7 @@ def emit_ready_template_python(
     template_id: str,
     registered_inputs: dict[str, tuple[str, str]] | None = None,
     apply_overrides: dict[str, Any] | None = None,
+    diagnostics: list[EmissionDiagnostic] | None = None,
 ) -> str:
     metadata = dict(ready_metadata)
     requirements = dict(ready_requirements)
@@ -67,6 +105,7 @@ def emit_ready_template_python(
             source_provenance=metadata.get("provenance") if isinstance(metadata.get("provenance"), dict) else None,
             registered_inputs=registered_inputs,
             tail_lines=_ready_template_tail_lines(has_ltx_tail),
+            diagnostics=diagnostics,
         )
     )
     out_lines.append("")
@@ -82,6 +121,7 @@ def emit_scratchpad_python(
     provenance: dict[str, Any] | None = None,
     registered_inputs: dict[str, tuple[str, str]] | None = None,
     apply_overrides: dict[str, Any] | None = None,
+    diagnostics: list[EmissionDiagnostic] | None = None,
 ) -> str:
     workflow_id = workflow_id or getattr(workflow, "id", "scratchpad")
     prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides)
@@ -104,6 +144,7 @@ def emit_scratchpad_python(
             source_provenance=provenance or {},
             registered_inputs=registered_inputs,
             tail_lines=["    wf.finalize_metadata()"],
+            diagnostics=diagnostics,
         )
     )
     out_lines.append("")
@@ -150,6 +191,7 @@ def _emit_build_function(
     source_provenance: dict[str, Any] | None,
     registered_inputs: dict[str, tuple[str, str]] | None,
     tail_lines: list[str],
+    diagnostics: list[EmissionDiagnostic] | None = None,
 ) -> list[str]:
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
@@ -177,7 +219,7 @@ def _emit_build_function(
     for nid in _topological_node_order(workflow_nodes, edges_in):
         node = workflow_nodes[nid]
         var = var_names[nid]
-        kwargs = _node_kwargs(node, edges_in, var_names)
+        kwargs = _node_kwargs(node, edges_in, var_names, diagnostics=diagnostics)
 
         head = f"    {var} = _node(wf, {node.class_type!r}, {nid!r}"
         if not kwargs:
@@ -325,7 +367,13 @@ def _compute_variable_names(workflow_nodes: dict[str, Any], edges: list[Any]) ->
     return var_names
 
 
-def _node_kwargs(node: Any, edges_in: dict[str, list[Any]], var_names: dict[str, str]) -> list[tuple[str, str]]:
+def _node_kwargs(
+    node: Any,
+    edges_in: dict[str, list[Any]],
+    var_names: dict[str, str],
+    *,
+    diagnostics: list[EmissionDiagnostic] | None = None,
+) -> list[tuple[str, str]]:
     cls = node.class_type
     schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
     schema_set = set(schema)
@@ -405,10 +453,113 @@ def _node_kwargs(node: Any, edges_in: dict[str, list[Any]], var_names: dict[str,
             continue
         out.append((to_input, expr))
 
+    # ── readability diagnostics: positional output detection ────────────
+    if diagnostics is not None:
+        emit_diags = _collect_emission_diagnostics(node, output_names, incoming, var_names)
+        diagnostics.extend(emit_diags)
+
     if extras:
         extras_repr = "{" + ", ".join(f"{key!r}: {value}" for key, value in extras) + "}"
         out.append(("_extras", extras_repr))
     return out
+
+
+def _collect_emission_diagnostics(
+    node: Any,
+    output_names: list[str],
+    incoming: dict[str, tuple[str, int]],
+    var_names: dict[str, str],
+) -> list[EmissionDiagnostic]:
+    """Collect readability diagnostics for a single node during emission.
+
+    This is called from ``_node_kwargs`` when a diagnostics collector is
+    provided.  Currently flags:
+
+    * **avoidable_positional_output** — the node has output names available
+      (from schema metadata) but the emitter is using numeric ``.out(n)``
+      because one or more names are unsafe (blank, duplicate, conflicted).
+
+    * **output_name_ambiguity** — output name is duplicated within the
+      same node, forcing a numeric fallback.
+
+    * **schema_backed_widget_alias_not_resolved** — one or more
+      ``widget_N`` keys remain positional because no alias mapping could
+      be resolved from schema / widget table evidence.
+    """
+    diags: list[EmissionDiagnostic] = []
+    nid = getattr(node, "id", None)
+    ctype = getattr(node, "class_type", None)
+    metadata = getattr(node, "metadata", {}) or {}
+
+    # 1. avoidable_positional_output / output_name_ambiguity
+    if output_names:
+        safe_names: set[str] = set()
+        has_unsafe = False
+        has_duplicate = False
+        seen: set[str] = set()
+        for name in output_names:
+            if not name:
+                has_unsafe = True
+            elif name in seen:
+                has_unsafe = True
+                has_duplicate = True
+            else:
+                seen.add(name)
+                safe_names.add(name)
+        if has_unsafe:
+            if has_duplicate:
+                diags.append(
+                    EmissionDiagnostic(
+                        code=READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
+                        message=f"Node {nid} ({ctype}) has duplicate output names; falling back to numeric .out(n).",
+                        severity="warning",
+                        node_id=str(nid) if nid is not None else None,
+                        class_type=ctype,
+                        detail={"output_names": output_names},
+                    )
+                )
+            else:
+                diags.append(
+                    EmissionDiagnostic(
+                        code=READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
+                        message=f"Node {nid} ({ctype}) has partial/blank output names; some outputs use numeric .out(n).",
+                        severity="warning",
+                        node_id=str(nid) if nid is not None else None,
+                        class_type=ctype,
+                        detail={"output_names": output_names},
+                    )
+                )
+    else:
+        # No output names at all — check if schema has input_aliases available
+        input_aliases = metadata.get("input_aliases")
+        if not input_aliases:
+            # Check if there are widget_N keys that could be aliased
+            widget_keys = [
+                k for k in getattr(node, "widgets", {}).keys()
+                if k.startswith("widget_")
+            ] + [
+                k for k in getattr(node, "inputs", {}).keys()
+                if k.startswith("widget_")
+            ]
+            if widget_keys:
+                schema_source = metadata.get("schema_source")
+                schema_available = schema_source is not None
+                if schema_available:
+                    diags.append(
+                        EmissionDiagnostic(
+                            code=READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+                            message=f"Node {nid} ({ctype}) has {len(set(widget_keys))} unresolved widget_N keys despite schema being available.",
+                            severity="warning",
+                            node_id=str(nid) if nid is not None else None,
+                            class_type=ctype,
+                            detail={
+                                "widget_keys": list(set(widget_keys)),
+                                "schema_source": schema_source,
+                            },
+                        )
+                    )
+
+    return diags
 
 
 def _node_output_names(node: Any) -> list[str]:
@@ -504,4 +655,11 @@ def _node(
 __all__ = [
     "emit_ready_template_python",
     "emit_scratchpad_python",
+    "EmissionDiagnostic",
+    "EmissionSeverity",
+    "READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT",
+    "READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY",
+    "READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED",
+    "READABILITY_WARNING_HIDDEN_MODEL_FILENAME",
+    "READABILITY_WARNING_CODES",
 ]

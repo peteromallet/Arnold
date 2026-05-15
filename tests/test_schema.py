@@ -5,7 +5,14 @@ import json
 
 import pytest
 
-from vibecomfy.ingest.normalize import normalize_to_api
+from vibecomfy.ingest.normalize import (
+    convert_to_vibe_format,
+    normalize_to_api,
+    _schema_input_aliases,
+    _schema_output_names,
+    _schema_output_types,
+    _schema_source_provenance,
+)
 from vibecomfy.schema import (
     InputSpec,
     LocalSchemaProvider,
@@ -414,6 +421,87 @@ class ImageResizeKJv2:
     assert schema.outputs == [OutputSpec(type="IMAGE", name="image")]
 
 
+# ---------------------------------------------------------------------------
+# Sprint 2 T4: numeric runtime semantics for named output handles
+# ---------------------------------------------------------------------------
+
+
+def test_named_output_handle_has_numeric_slot() -> None:
+    """``builder.out('image')`` produces a Handle whose output_slot is always int."""
+    from vibecomfy.handles import Handle
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("named-test", WorkflowSource("named-test"))
+    node = VibeNode("1", "LoadImage", metadata={"output_names": ["image", "mask"]})
+    wf.nodes["1"] = node
+
+    builder = wf.node("LoadImage")
+    # Overwrite the auto-created node with our metadata-carrying node
+    wf.nodes[builder.node.id] = node
+    builder = type(builder)(workflow=wf, node=node)  # _NodeBuilder is frozen so reconstruct
+
+    # Named lookup
+    h = builder.out("image")
+    assert isinstance(h, Handle)
+    assert h.output_slot == 0
+    assert h.name == "image"
+
+    # Stringified handle is always numeric
+    assert str(h) == f"1.0"
+
+    # Integer lookup also works
+    h2 = builder.out(1)
+    assert h2.output_slot == 1
+    assert str(h2) == "1.1"
+
+
+def test_named_output_compile_emits_numeric_links() -> None:
+    """``compile('api')`` emits ``[node_id, 0]`` numeric links after named handle use."""
+    from vibecomfy.handles import Handle
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("compile-test", WorkflowSource("compile-test"))
+    src_node = VibeNode("10", "LoadImage", inputs={"image": "input.png"}, metadata={"output_names": ["image", "mask"]})
+    dst_node = VibeNode("20", "SaveImage")
+    wf.nodes["10"] = src_node
+    wf.nodes["20"] = dst_node
+
+    # Simulate named handle usage: connect via named output
+    h = Handle(node_id="10", output_slot=0, name="image")
+    wf.connect(h, "20.images")
+
+    api = wf.compile("api")
+    # The edge must be a numeric link
+    assert api["20"]["inputs"]["images"] == ["10", 0]
+    assert isinstance(api["20"]["inputs"]["images"][1], int)
+
+
+def test_named_output_api_shape_unchanged_after_named_authoring() -> None:
+    """API dict shape is identical whether handles are built with names or plain ints."""
+    from vibecomfy.handles import Handle
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    # Build via named authoring
+    wf_named = VibeWorkflow("named", WorkflowSource("named"))
+    wf_named.nodes["10"] = VibeNode("10", "LoadImage", inputs={"image": "input.png"}, metadata={"output_names": ["image"]})
+    wf_named.nodes["20"] = VibeNode("20", "SaveImage")
+    wf_named.connect(Handle(node_id="10", output_slot=0, name="image"), "20.images")
+
+    # Build via numeric authoring
+    wf_num = VibeWorkflow("num", WorkflowSource("num"))
+    wf_num.nodes["10"] = VibeNode("10", "LoadImage", inputs={"image": "input.png"})
+    wf_num.nodes["20"] = VibeNode("20", "SaveImage")
+    wf_num.connect(Handle(node_id="10", output_slot=0), "20.images")
+
+    api_named = wf_named.compile("api")
+    api_num = wf_num.compile("api")
+
+    # Both APIs should be structurally identical after stripping output_names metadata
+    assert api_named.keys() == api_num.keys()
+    assert api_named["20"]["inputs"]["images"] == api_num["20"]["inputs"]["images"]
+    assert api_named["20"]["inputs"]["images"] == ["10", 0]
+
+
 def test_get_schema_provider_auto_selection(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("vibecomfy.comfy_command.shutil.which", lambda _: None)
@@ -424,3 +512,239 @@ def test_get_schema_provider_auto_selection(tmp_path, monkeypatch) -> None:
 
     (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
     assert isinstance(get_schema_provider("auto"), LocalSchemaProvider)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 2 T3: enriched node metadata (output_names, output_types,
+# input_aliases, schema_source) with partial evidence preservation
+# ---------------------------------------------------------------------------
+
+
+def test_schema_output_names_full() -> None:
+    """All output names are returned when every entry is valid."""
+    provider = FakeSchemaProvider(
+        {
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={},
+                outputs=[OutputSpec(type="IMAGE", name="image")],
+            ),
+        }
+    )
+    names = _schema_output_names(provider, "SaveImage")
+    assert names == ["image"]
+
+
+def test_schema_output_names_partial_preserves_blank() -> None:
+    """A blank entry in the middle is preserved, not dropped."""
+    provider = FakeSchemaProvider(
+        {
+            "MultiOut": NodeSchema(
+                class_type="MultiOut",
+                pack=None,
+                inputs={},
+                outputs=[
+                    OutputSpec(type="IMAGE", name="image"),
+                    OutputSpec(type="LATENT", name=""),
+                    OutputSpec(type="VAE", name="latent"),
+                ],
+            ),
+        }
+    )
+    names = _schema_output_names(provider, "MultiOut")
+    # All three entries preserved, including the blank one
+    assert names == ["image", "", "latent"]
+
+
+def test_schema_output_names_all_blank_preserved() -> None:
+    """When all names are blank, the list is preserved (not dropped to empty)."""
+    provider = FakeSchemaProvider(
+        {
+            "Silent": NodeSchema(
+                class_type="Silent",
+                pack=None,
+                inputs={},
+                outputs=[
+                    OutputSpec(type="IMAGE", name=None),
+                    OutputSpec(type="LATENT", name=""),
+                ],
+            ),
+        }
+    )
+    names = _schema_output_names(provider, "Silent")
+    # Both entries preserved as empty strings
+    assert names == ["", ""]
+
+
+def test_schema_output_names_duplicate_preserved() -> None:
+    """Duplicate output names are preserved as-is; emitter decides safety later."""
+    provider = FakeSchemaProvider(
+        {
+            "DupOut": NodeSchema(
+                class_type="DupOut",
+                pack=None,
+                inputs={},
+                outputs=[
+                    OutputSpec(type="IMAGE", name="image"),
+                    OutputSpec(type="MASK", name="image"),
+                ],
+            ),
+        }
+    )
+    names = _schema_output_names(provider, "DupOut")
+    assert names == ["image", "image"]
+
+
+def test_schema_input_aliases_excludes_link_only_types() -> None:
+    """Link-only types (IMAGE, LATENT, MODEL, etc.) are excluded from input_aliases."""
+    provider = FakeSchemaProvider(
+        {
+            "CheckpointLoader": NodeSchema(
+                class_type="CheckpointLoader",
+                pack=None,
+                inputs={
+                    "ckpt_name": InputSpec(type="STRING"),
+                    "model": InputSpec(type="MODEL"),
+                    "clip": InputSpec(type="CLIP"),
+                    "vae": InputSpec(type="VAE"),
+                },
+                outputs=[],
+            ),
+        }
+    )
+    aliases = _schema_input_aliases(provider, "CheckpointLoader")
+    # Only the non-link-type input (ckpt_name) should appear
+    assert aliases == ["ckpt_name"]
+
+
+def test_schema_input_aliases_empty_when_all_link_only() -> None:
+    """When all inputs are link-only types, input_aliases is empty."""
+    provider = FakeSchemaProvider(
+        {
+            "ImagePass": NodeSchema(
+                class_type="ImagePass",
+                pack=None,
+                inputs={
+                    "image": InputSpec(type="IMAGE"),
+                    "latent": InputSpec(type="LATENT"),
+                },
+                outputs=[],
+            ),
+        }
+    )
+    aliases = _schema_input_aliases(provider, "ImagePass")
+    assert aliases == []
+
+
+def test_convert_to_vibe_format_stores_output_names_with_partial_evidence() -> None:
+    """Metadata stores all output names including blanks; emitter decides per slot."""
+    provider = FakeSchemaProvider(
+        {
+            "MultiOut": NodeSchema(
+                class_type="MultiOut",
+                pack=None,
+                inputs={},
+                outputs=[
+                    OutputSpec(type="IMAGE", name="image"),
+                    OutputSpec(type="LATENT", name=""),
+                    OutputSpec(type="VAE", name="latent"),
+                ],
+                source_provider="node_index",
+                confidence=1.0,
+            ),
+        }
+    )
+    api = {"1": {"class_type": "MultiOut", "inputs": {}}}
+    wf = convert_to_vibe_format(api, schema_provider=provider)
+    node = wf.nodes["1"]
+    meta = node.metadata
+    assert meta.get("output_names") == ["image", "", "latent"]
+    assert meta.get("output_types") == ["IMAGE", "LATENT", "VAE"]
+
+
+def test_convert_to_vibe_format_stores_input_aliases_excluding_link_only() -> None:
+    """input_aliases only includes widget-type inputs, not link-only types."""
+    provider = FakeSchemaProvider(
+        {
+            "Loader": NodeSchema(
+                class_type="Loader",
+                pack=None,
+                inputs={
+                    "ckpt_name": InputSpec(type="STRING"),
+                    "model": InputSpec(type="MODEL"),
+                    "clip": InputSpec(type="CLIP"),
+                },
+                outputs=[OutputSpec(type="MODEL", name="model")],
+                source_provider="widget_schema",
+                confidence=0.3,
+            ),
+        }
+    )
+    api = {"1": {"class_type": "Loader", "inputs": {}}}
+    wf = convert_to_vibe_format(api, schema_provider=provider)
+    node = wf.nodes["1"]
+    meta = node.metadata
+    assert meta.get("input_aliases") == ["ckpt_name"]
+
+
+def test_convert_to_vibe_format_stores_schema_source_provenance() -> None:
+    """schema_source provenance is recorded per node from schema metadata."""
+    provider = FakeSchemaProvider(
+        {
+            "PromptNode": NodeSchema(
+                class_type="PromptNode",
+                pack=None,
+                inputs={"text": InputSpec(type="STRING")},
+                outputs=[],
+                source_provider="node_index",
+                source_path="/path/to/node_index.json",
+                source_cache_path=None,
+                source_server_url=None,
+                source_package="core",
+                source_version="1.0",
+                source_hash="abc123",
+                confidence=1.0,
+            ),
+        }
+    )
+    api = {"1": {"class_type": "PromptNode", "inputs": {}}}
+    wf = convert_to_vibe_format(api, schema_provider=provider)
+    node = wf.nodes["1"]
+    meta = node.metadata
+    source = meta.get("schema_source")
+    assert source is not None
+    assert source["provider"] == "node_index"
+    assert source["path"] == "/path/to/node_index.json"
+    assert source["package"] == "core"
+    assert source["version"] == "1.0"
+    assert source["hash"] == "abc123"
+    assert source["confidence"] == 1.0
+
+
+def test_convert_to_vibe_format_conflicting_provider_evidence() -> None:
+    """When multiple providers could serve a node, stored provenance reflects
+    the winning (highest-priority) evidence."""
+    provider = FakeSchemaProvider(
+        {
+            "CheckpointLoader": NodeSchema(
+                class_type="CheckpointLoader",
+                pack=None,
+                inputs={"ckpt_name": InputSpec(type="STRING")},
+                outputs=[OutputSpec(type="MODEL", name="model")],
+                source_provider="source_parser",
+                source_path="/custom_nodes/checkpoint.py",
+                confidence=0.9,
+                conflicts=("node_index_missing",),
+                ignored_evidence=("widget_schema_stale",),
+            ),
+        }
+    )
+    api = {"1": {"class_type": "CheckpointLoader", "inputs": {}}}
+    wf = convert_to_vibe_format(api, schema_provider=provider)
+    node = wf.nodes["1"]
+    source = node.metadata.get("schema_source")
+    assert source is not None
+    assert source["provider"] == "source_parser"
+    assert source["path"] == "/custom_nodes/checkpoint.py"
+    assert source["confidence"] == 0.9

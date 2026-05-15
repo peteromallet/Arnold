@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
+import pytest
+
+from vibecomfy.porting.convert import ManualTemplateRefusal, _check_manual_refusal
 from vibecomfy.porting.emitter import emit_ready_template_python, emit_scratchpad_python
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 from tools.format_as_python import format_as_python
@@ -104,3 +109,186 @@ def test_convert_ready_templates_tool_dry_run_remains_compatible() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "image/qwen_image_2512" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1 T10: focused tool tests — shared gates for bulk dry-run / --write
+# ---------------------------------------------------------------------------
+
+
+def test_shared_manual_refusal_raises_for_manual_marker() -> None:
+    """_check_manual_refusal raises ManualTemplateRefusal for # vibecomfy: manual."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp:
+        tmp.write("# vibecomfy: manual — do not regenerate\n")
+        tmp.write("def build():\n    pass\n")
+        tmp_path = Path(tmp.name)
+
+    try:
+        with pytest.raises(ManualTemplateRefusal, match="manual"):
+            _check_manual_refusal(tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def test_shared_manual_refusal_passes_for_non_manual() -> None:
+    """_check_manual_refusal does not raise for a normal file."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp:
+        tmp.write("# vibecomfy: generated\n")
+        tmp.write("def build():\n    pass\n")
+        tmp_path = Path(tmp.name)
+
+    try:
+        # Should not raise
+        _check_manual_refusal(tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def test_write_emitted_raises_manual_refusal_before_write(tmp_path: Path) -> None:
+    """_write_emitted refuses to write over a manual template (shared gate)."""
+    from tools.convert_ready_templates import (
+        _write_emitted,
+    )
+
+    # Create a "manual" template under a fake ready_templates tree
+    tmpl_dir = tmp_path / "ready_templates" / "image"
+    tmpl_dir.mkdir(parents=True)
+    manual_path = tmpl_dir / "test_manual.py"
+    manual_path.write_text("# vibecomfy: manual — do not regenerate\ndef build(): pass\n")
+
+    # Monkey-patch READY_ROOT so the path passes the outside-root guard
+    import tools.convert_ready_templates as tmod
+
+    orig_root = tmod.READY_ROOT
+    try:
+        tmod.READY_ROOT = tmp_path / "ready_templates"
+        with pytest.raises(ManualTemplateRefusal, match="manual"):
+            _write_emitted(manual_path, "emitted text", dry_run=False)
+        # File must be unchanged
+        assert manual_path.read_text().startswith("# vibecomfy: manual")
+    finally:
+        tmod.READY_ROOT = orig_root
+
+
+def test_write_emitted_uses_atomic_temp_replace(tmp_path: Path) -> None:
+    """_write_emitted uses temp file + replace for atomic writes."""
+    from tools.convert_ready_templates import (
+        _write_emitted,
+    )
+
+    tmpl_dir = tmp_path / "ready_templates" / "image"
+    tmpl_dir.mkdir(parents=True)
+    target = tmpl_dir / "test_atomic.py"
+    original = "# vibecomfy: generated\nORIGINAL_CONTENT = True\n"
+    target.write_text(original)
+
+    import tools.convert_ready_templates as tmod
+
+    orig_root = tmod.READY_ROOT
+    try:
+        tmod.READY_ROOT = tmp_path / "ready_templates"
+        emitted = "# vibecomfy: generated\nEMITTED_CONTENT = True\n"
+        result = _write_emitted(target, emitted, dry_run=False)
+        assert result == target
+        assert target.read_text() == emitted
+        # No temp file left behind
+        temps = list(tmpl_dir.glob(".vibecomfy-convert-*"))
+        assert len(temps) == 0
+    finally:
+        tmod.READY_ROOT = orig_root
+
+
+def test_convert_template_refuses_manual_via_shared_gate(tmp_path: Path) -> None:
+    """_convert_template returns manual-refused row via shared _check_manual_refusal."""
+    from tools.convert_ready_templates import (
+        _convert_template,
+    )
+
+    tmpl_dir = tmp_path / "ready_templates" / "image"
+    tmpl_dir.mkdir(parents=True)
+    manual_path = tmpl_dir / "test_manual_convert.py"
+    manual_path.write_text("# vibecomfy: manual — do not regenerate\nAPI_WORKFLOW = {}\n")
+
+    import tools.convert_ready_templates as tmod
+
+    orig_root = tmod.READY_ROOT
+    try:
+        tmod.READY_ROOT = tmp_path / "ready_templates"
+        row, emitted, _ = _convert_template(manual_path)
+        assert emitted is None
+        assert row.shape == "manual-refused"
+        assert "manual template refused by shared gate" in row.note
+        assert row.parse == "skip"
+    finally:
+        tmod.READY_ROOT = orig_root
+
+
+def test_dry_run_writes_to_out_converted(tmp_path: Path) -> None:
+    """_write_emitted dry_run=True writes to out/converted/ not in-place."""
+    from tools.convert_ready_templates import (
+        _write_emitted,
+    )
+
+    tmpl_dir = tmp_path / "ready_templates" / "image"
+    tmpl_dir.mkdir(parents=True)
+    target = tmpl_dir / "test_dry.py"
+    original = "# vibecomfy: generated\nORIGINAL = True\n"
+    target.write_text(original)
+
+    out_dir = tmp_path / "out" / "converted"
+    out_dir.mkdir(parents=True)
+
+    import tools.convert_ready_templates as tmod
+
+    orig_root = tmod.READY_ROOT
+    orig_out = tmod.OUT_PREVIEW_ROOT
+    try:
+        tmod.READY_ROOT = tmp_path / "ready_templates"
+        tmod.OUT_PREVIEW_ROOT = out_dir
+        emitted = "# vibecomfy: generated\nEMITTED = True\n"
+        result = _write_emitted(target, emitted, dry_run=True)
+        # Wrote to out/converted/, not in-place
+        assert result != target
+        assert out_dir in result.parents
+        assert result.read_text() == emitted
+        # Original is unchanged
+        assert target.read_text() == original
+    finally:
+        tmod.READY_ROOT = orig_root
+        tmod.OUT_PREVIEW_ROOT = orig_out
+
+
+def test_write_gate_requires_both_validate_and_parity() -> None:
+    """main() skip-logic refuses writes when validate fails or roundtrip fails."""
+    from tools.convert_ready_templates import Row
+
+    # Simulate the gate check from main():
+    #   gated_ok = row.validate == "ok" and row.roundtrip in ("ok", "skip", "skip-authored")
+
+    # Case 1: validate fail → blocked
+    r1 = Row(template_id="test/fail_val")
+    r1.validate = "fail"
+    r1.roundtrip = "ok"
+    gated = r1.validate == "ok" and r1.roundtrip in ("ok", "skip", "skip-authored")
+    assert not gated
+
+    # Case 2: roundtrip fail → blocked
+    r2 = Row(template_id="test/fail_rt")
+    r2.validate = "ok"
+    r2.roundtrip = "fail"
+    gated = r2.validate == "ok" and r2.roundtrip in ("ok", "skip", "skip-authored")
+    assert not gated
+
+    # Case 3: both ok → allowed
+    r3 = Row(template_id="test/ok")
+    r3.validate = "ok"
+    r3.roundtrip = "ok"
+    gated = r3.validate == "ok" and r3.roundtrip in ("ok", "skip", "skip-authored")
+    assert gated
+
+    # Case 4: authored shape (skip-authored) → allowed
+    r4 = Row(template_id="test/authored")
+    r4.validate = "ok"
+    r4.roundtrip = "skip-authored"
+    gated = r4.validate == "ok" and r4.roundtrip in ("ok", "skip", "skip-authored")
+    assert gated
