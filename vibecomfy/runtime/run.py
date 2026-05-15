@@ -16,10 +16,13 @@ from .session import (
     RunResult,
     SessionConfig,
     _build_schema_provider,
+    _collect_output_paths,
+    _configured_output_directory,
     _embedded_configuration,
+    _outputs_from_server_history,
     _prepare_prompt_async,
-    _raw_comfy_outputs,
     _run_metadata,
+    _wait_for_server_history,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,13 +61,20 @@ async def run(
             queued = await ComfyClient(active_url).queue_prompt(api_dict)
         except Exception as exc:
             raise RuntimeError(f"Workflow queue failed: {exc}") from exc
+        prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
+        history = await _wait_for_server_history(active_url, prompt_id, config=resolved_config)
+        comfy_outputs = _outputs_from_server_history(history, prompt_id)
+        outputs = _collect_output_paths(
+            comfy_outputs,
+            output_directory=_configured_output_directory(resolved_config),
+        )
     metadata = _run_metadata(
         run_id=run_id,
         workflow=workflow,
         api_dict=api_dict,
         queued=queued,
-        comfy_outputs=_raw_comfy_outputs(queued),
-        outputs=[],
+        comfy_outputs=comfy_outputs,
+        outputs=outputs,
         runtime="server",
         config=managed_config,
     )
@@ -72,8 +82,8 @@ async def run(
     metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
     return RunResult(
         run_id=run_id,
-        prompt_id=queued.get("prompt_id") if isinstance(queued, dict) else None,
-        outputs=[],
+        prompt_id=prompt_id,
+        outputs=outputs,
         metadata_path=str(metadata_path),
         log_path=str(log_path),
     )

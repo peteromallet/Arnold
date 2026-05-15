@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from vibecomfy.commands.run import _cmd_run
+import vibecomfy.runtime.session as session_module
 from vibecomfy.runtime.session import SessionConfig
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
@@ -136,14 +137,19 @@ def test_run_managed_server_uses_workflow_session_config(
         async def queue_prompt(self, prompt: dict) -> dict:
             return {"prompt_id": "prompt-managed"}
 
+        async def history(self, prompt_id: str) -> dict:
+            return {prompt_id: {"outputs": {"9": {"filename": "managed.mp4"}}}}
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(session_module, "ComfyClient", FakeClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     result = asyncio.run(runtime_run_module.run(workflow, server_url=None))
 
     assert result.prompt_id == "prompt-managed"
+    assert result.outputs == ["managed.mp4"]
     assert len(captured_configs) == 1
     config = captured_configs[0]
     assert config.memory_profile == 5
@@ -173,14 +179,19 @@ def test_run_external_server_does_not_apply_workflow_session_config(
         async def queue_prompt(self, prompt: dict) -> dict:
             return {"prompt_id": "prompt-external"}
 
+        async def history(self, prompt_id: str) -> dict:
+            return {prompt_id: {"outputs": {"9": {"filename": "external.mp4"}}}}
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(session_module, "ComfyClient", FakeClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     result = asyncio.run(runtime_run_module.run(workflow, server_url="http://external.test"))
 
     assert result.prompt_id == "prompt-external"
+    assert result.outputs == ["external.mp4"]
     assert captured_configs == [None]
 
 
