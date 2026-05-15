@@ -74,7 +74,10 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                 )
 
         for name in sorted(provided_inputs - declared_inputs):
-            if not _issue_suppressed(class_type, "unknown_input") and not _is_dynamic_payload_input(class_type, name):
+            if (
+                not _issue_suppressed(class_type, "unknown_input")
+                and not _is_dynamic_payload_input(class_type, name, payload_inputs)
+            ):
                 issues.append(
                     ValidationIssue(
                         "unknown_input",
@@ -220,7 +223,7 @@ def sanitize_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
         if not schema_inputs:
             continue
         for name in list(inputs):
-            if name not in schema_inputs and not _is_dynamic_payload_input(class_type, name):
+            if name not in schema_inputs and not _is_dynamic_payload_input(class_type, name, inputs):
                 del inputs[name]
                 continue
             value = inputs[name]
@@ -278,7 +281,7 @@ def _incoming_inputs(workflow: VibeWorkflow) -> dict[str, set[str]]:
 _LTX_IMAGE_SLOT_RE = re.compile(r"^num_images\.(?:image|index|strength)_(\d+)$")
 
 
-def _is_dynamic_payload_input(class_type: str, input_name: str) -> bool:
+def _is_dynamic_payload_input(class_type: str, input_name: str, inputs: dict[str, Any] | None = None) -> bool:
     """Return whether an input is generated from a runtime payload count.
 
     Some custom nodes declare a compact controller input in object_info but
@@ -289,6 +292,8 @@ def _is_dynamic_payload_input(class_type: str, input_name: str) -> bool:
 
     if class_type == "LTXVImgToVideoInplaceKJ":
         return _LTX_IMAGE_SLOT_RE.match(input_name) is not None
+    if class_type == "SimpleCalculatorKJ":
+        return input_name in _simple_calculator_variables(inputs or {})
     return False
 
 
@@ -299,6 +304,8 @@ def _validate_dynamic_payload_inputs(
     inputs: dict[str, Any],
 ) -> list[ValidationIssue]:
     if class_type != "LTXVImgToVideoInplaceKJ":
+        if class_type == "SimpleCalculatorKJ":
+            return _validate_simple_calculator_variables(node_id=node_id, class_type=class_type, inputs=inputs)
         return []
     raw_count = inputs.get("num_images")
     if raw_count is None or _is_api_link(raw_count):
@@ -329,6 +336,32 @@ def _validate_dynamic_payload_inputs(
                     )
                 )
     return issues
+
+
+def _simple_calculator_variables(inputs: dict[str, Any]) -> set[str]:
+    raw = inputs.get("variables")
+    if not isinstance(raw, str):
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _validate_simple_calculator_variables(
+    *,
+    node_id: str,
+    class_type: str,
+    inputs: dict[str, Any],
+) -> list[ValidationIssue]:
+    variables = _simple_calculator_variables(inputs)
+    return [
+        ValidationIssue(
+            "missing_dynamic_input",
+            f"Node {node_id} ({class_type}) is missing dynamic input {name}.",
+            severity="error",
+            detail={"node_id": node_id, "class_type": class_type, "input": name},
+        )
+        for name in sorted(variables)
+        if name not in inputs
+    ]
 
 
 def _edge_output_type(schema, from_output: str) -> str | None:

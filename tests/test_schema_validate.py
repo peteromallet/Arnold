@@ -205,6 +205,57 @@ def test_ltx_dynamic_image_slots_validate_required_fields() -> None:
     ]
 
 
+def test_sanitize_preserves_simple_calculator_autogrow_variables() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "SimpleCalculatorKJ": _schema(
+                "SimpleCalculatorKJ",
+                {"expression": InputSpec("STRING"), "variables": InputSpec("COMFY_AUTOGROW_V3")},
+            )
+        }
+    )
+    api = {
+        "2077": {
+            "class_type": "SimpleCalculatorKJ",
+            "inputs": {
+                "expression": "a",
+                "variables": "a,b",
+                "a": ["2078", 0],
+                "b": ["2076", 0],
+                "widget_0": "ui alias",
+            },
+        }
+    }
+
+    sanitized = sanitize_api_against_schema(api, provider)
+
+    assert sanitized["2077"]["inputs"] == {
+        "expression": "a",
+        "variables": "a,b",
+        "a": ["2078", 0],
+        "b": ["2076", 0],
+    }
+
+
+def test_simple_calculator_autogrow_variables_validate_required_fields() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "SimpleCalculatorKJ": _schema(
+                "SimpleCalculatorKJ",
+                {"expression": InputSpec("STRING"), "variables": InputSpec("COMFY_AUTOGROW_V3")},
+            )
+        }
+    )
+    workflow = _workflow(
+        VibeNode("2077", "SimpleCalculatorKJ", inputs={"expression": "a", "variables": "a,b", "a": ["2078", 0]})
+    )
+
+    report = workflow.validate(schema_provider=provider)
+
+    assert not report.ok
+    assert [(issue.code, issue.detail["input"]) for issue in report.issues] == [("missing_dynamic_input", "b")]
+
+
 def test_invalid_link_shape_emits_error_for_dict_shaped_link() -> None:
     provider = FakeSchemaProvider({"Sink": _schema("Sink", {"latent": InputSpec("LATENT")})})
     report = _workflow(VibeNode("1", "Sink", inputs={"latent": {"link": 1, "node": "2"}})).validate(
