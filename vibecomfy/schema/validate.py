@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 from vibecomfy.schema.provider import SchemaProvider, schema_for, schema_registry_empty
@@ -73,7 +74,7 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                 )
 
         for name in sorted(provided_inputs - declared_inputs):
-            if not _issue_suppressed(class_type, "unknown_input"):
+            if not _issue_suppressed(class_type, "unknown_input") and not _is_dynamic_payload_input(class_type, name):
                 issues.append(
                     ValidationIssue(
                         "unknown_input",
@@ -81,6 +82,8 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                         detail={"node_id": str(node_id), "class_type": class_type, "input": name},
                     )
                 )
+
+        issues.extend(_validate_dynamic_payload_inputs(node_id=str(node_id), class_type=class_type, inputs=payload_inputs))
 
         for name in sorted(provided_inputs & declared_inputs):
             value = payload_inputs[name]
@@ -217,11 +220,13 @@ def sanitize_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
         if not schema_inputs:
             continue
         for name in list(inputs):
-            if name not in schema_inputs:
+            if name not in schema_inputs and not _is_dynamic_payload_input(class_type, name):
                 del inputs[name]
                 continue
             value = inputs[name]
             if _is_api_link(value):
+                continue
+            if name not in schema_inputs:
                 continue
             choices = getattr(schema_inputs[name], "choices", None) or []
             coerced = _coerce_choice_value(value, choices)
@@ -268,6 +273,62 @@ def _incoming_inputs(workflow: VibeWorkflow) -> dict[str, set[str]]:
     for edge in workflow.edges:
         incoming.setdefault(edge.to_node, set()).add(edge.to_input)
     return incoming
+
+
+_LTX_IMAGE_SLOT_RE = re.compile(r"^num_images\.(?:image|index|strength)_(\d+)$")
+
+
+def _is_dynamic_payload_input(class_type: str, input_name: str) -> bool:
+    """Return whether an input is generated from a runtime payload count.
+
+    Some custom nodes declare a compact controller input in object_info but
+    validate expanded dotted inputs at queue time. These are not UI aliases:
+    stripping them changes the executable prompt. Keep this list narrow and
+    add class-specific validation below so dynamic inputs remain intentional.
+    """
+
+    if class_type == "LTXVImgToVideoInplaceKJ":
+        return _LTX_IMAGE_SLOT_RE.match(input_name) is not None
+    return False
+
+
+def _validate_dynamic_payload_inputs(
+    *,
+    node_id: str,
+    class_type: str,
+    inputs: dict[str, Any],
+) -> list[ValidationIssue]:
+    if class_type != "LTXVImgToVideoInplaceKJ":
+        return []
+    raw_count = inputs.get("num_images")
+    if raw_count is None or _is_api_link(raw_count):
+        return []
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        return [
+            ValidationIssue(
+                "invalid_dynamic_input_count",
+                f"Node {node_id} ({class_type}) input num_images must be an integer count.",
+                severity="error",
+                detail={"node_id": node_id, "class_type": class_type, "input": "num_images", "value": _truncate(raw_count)},
+            )
+        ]
+
+    issues: list[ValidationIssue] = []
+    for index in range(1, count + 1):
+        for suffix in ("image", "index", "strength"):
+            name = f"num_images.{suffix}_{index}"
+            if name not in inputs:
+                issues.append(
+                    ValidationIssue(
+                        "missing_dynamic_input",
+                        f"Node {node_id} ({class_type}) is missing dynamic input {name}.",
+                        severity="error",
+                        detail={"node_id": node_id, "class_type": class_type, "input": name},
+                    )
+                )
+    return issues
 
 
 def _edge_output_type(schema, from_output: str) -> str | None:

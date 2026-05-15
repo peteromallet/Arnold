@@ -141,6 +141,70 @@ def test_sanitize_api_strips_unknown_runtime_inputs_and_coerces_portable_choices
     assert api["1"]["inputs"]["widget_0"] == "ui copy"
 
 
+def test_sanitize_preserves_ltx_dynamic_image_slots() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "LTXVImgToVideoInplaceKJ": _schema(
+                "LTXVImgToVideoInplaceKJ",
+                {"num_images": InputSpec("INT"), "latent": InputSpec("LATENT"), "vae": InputSpec("VAE")},
+            )
+        }
+    )
+    api = {
+        "210": {
+            "class_type": "LTXVImgToVideoInplaceKJ",
+            "inputs": {
+                "num_images": "2",
+                "num_images.image_1": ["1", 0],
+                "num_images.index_1": 0,
+                "num_images.strength_1": 1.0,
+                "num_images.image_2": ["2", 0],
+                "num_images.index_2": -1,
+                "num_images.strength_2": 1.0,
+                "widget_0": "ui alias",
+            },
+        }
+    }
+
+    sanitized = sanitize_api_against_schema(api, provider)
+
+    assert "widget_0" not in sanitized["210"]["inputs"]
+    assert sanitized["210"]["inputs"]["num_images.strength_1"] == 1.0
+    assert sanitized["210"]["inputs"]["num_images.strength_2"] == 1.0
+
+
+def test_ltx_dynamic_image_slots_validate_required_fields() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "LTXVImgToVideoInplaceKJ": _schema(
+                "LTXVImgToVideoInplaceKJ",
+                {"num_images": InputSpec("INT"), "latent": InputSpec("LATENT"), "vae": InputSpec("VAE")},
+            )
+        }
+    )
+    workflow = _workflow(
+        VibeNode(
+            "210",
+            "LTXVImgToVideoInplaceKJ",
+            inputs={
+                "num_images": "2",
+                "num_images.image_1": ["1", 0],
+                "num_images.index_1": 0,
+                "num_images.strength_1": 1.0,
+                "num_images.image_2": ["2", 0],
+                "num_images.index_2": -1,
+            },
+        )
+    )
+
+    report = workflow.validate(schema_provider=provider)
+
+    assert not report.ok
+    assert [(issue.code, issue.detail["input"]) for issue in report.issues] == [
+        ("missing_dynamic_input", "num_images.strength_2")
+    ]
+
+
 def test_invalid_link_shape_emits_error_for_dict_shaped_link() -> None:
     provider = FakeSchemaProvider({"Sink": _schema("Sink", {"latent": InputSpec("LATENT")})})
     report = _workflow(VibeNode("1", "Sink", inputs={"latent": {"link": 1, "node": "2"}})).validate(
