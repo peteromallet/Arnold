@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -577,11 +579,26 @@ def find_active_session(id: str = "default") -> str | None:
         _cleanup_session_files(session_dir)
         return None
     except PermissionError:
-        return url
+        if _session_url_healthy(url):
+            return url
+        _cleanup_session_files(session_dir)
+        return None
     except OSError:
         _cleanup_session_files(session_dir)
         return None
+    if not _session_url_healthy(url):
+        _terminate_session_pid(pid)
+        _cleanup_session_files(session_dir)
+        return None
     return url
+
+
+def _session_url_healthy(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/system_stats", timeout=2) as response:
+            return 200 <= response.status < 500
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
 
 
 def _terminate_session_pid(pid: int) -> None:

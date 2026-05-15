@@ -76,6 +76,7 @@ def test_session_cli_start_list_flush_stop_flow(
     monkeypatch.setattr(session_module.os, "kill", fake_kill)
     monkeypatch.setattr(session_cmd, "ComfyClient", FakeClient)
     monkeypatch.setattr(session_module, "current_source_revision", lambda: None)
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: True)
 
     start_args = argparse.Namespace(
         id="default",
@@ -242,6 +243,7 @@ def test_find_active_session_returns_url_or_cleans_stale_files(
             raise ProcessLookupError(pid)
 
     monkeypatch.setattr(session_module.os, "kill", fake_kill)
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: alive)
 
     assert find_active_session("default") == "http://127.0.0.1:8200"
     alive = False
@@ -283,6 +285,7 @@ def test_find_active_session_accepts_matching_source_revision(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(session_module, "current_source_revision", lambda: "same-sha")
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: True)
     session_dir = tmp_path / "out/sessions/default"
     session_dir.mkdir(parents=True)
     (session_dir / "pid").write_text("4242", encoding="utf-8")
@@ -293,6 +296,37 @@ def test_find_active_session_accepts_matching_source_revision(
     monkeypatch.setattr(session_module.os, "kill", lambda pid, sig: None)
 
     assert find_active_session("default") == "http://127.0.0.1:8200"
+
+
+def test_find_active_session_rejects_dead_server_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: None)
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+    terminated: list[int] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        assert pid == 4242
+        if sig == 0:
+            return
+        if sig == signal.SIGTERM:
+            terminated.append(pid)
+            return
+        raise AssertionError(f"unexpected signal {sig}")
+
+    monkeypatch.setattr(session_module.os, "kill", fake_kill)
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: False)
+
+    assert find_active_session("default") is None
+    assert terminated == [4242]
+    assert not (session_dir / "pid").exists()
+    assert not (session_dir / "url").exists()
+    assert not (session_dir / "config.json").exists()
 
 
 def test_find_active_session_rejects_missing_source_revision_when_current_known(
