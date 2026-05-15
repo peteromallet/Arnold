@@ -45,6 +45,13 @@ READY_METADATA = {
         "the Wan2GP refine sigma schedule."
     ),
     "discord_signal": "Use dedicated distilled fp8 + low-VRAM loaders on 24GB GPUs.",
+    "runtime_packages": [
+        {
+            "name": "sageattention",
+            "reason": "Required by LTX2MemoryEfficientSageAttentionPatch auto mode for 4090-speed LTX 2.3 validation.",
+            "source": "SageAttention-ada",
+        },
+    ],
     "smoke_resolution": "256x256x5_frames",
     "ltx_best_practices": [
         "Use LowVRAMCheckpointLoader for 4090 viability.",
