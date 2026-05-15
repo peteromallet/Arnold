@@ -377,12 +377,12 @@ The canonical Kimi spec changed from `hermes:moonshotai/kimi-k2.6` (OpenRouter-r
 - **Scripts that don't pin the spec** keep working without changes — the rewrite is internal.
 - **Scripts that pin the old spec via `--phase-model critique=hermes:moonshotai/kimi-k2.6`** still parse and run *as strings*, but they'll be calling a model that may no longer be available on OpenRouter. Replace the pinned spec with `hermes:fireworks:accounts/fireworks/models/kimi-k2p6`, or — usually cleaner — drop the `--phase-model` pin in favor of `--critic kimi`, which always tracks the canonical Kimi spec.
 
-### DeepSeek spec migrated to Fireworks `deepseek-v4-pro`
+### DeepSeek v4-pro defaults to direct API
 
-The canonical DeepSeek spec changed from `hermes:deepseek/deepseek-v4-pro` (DeepSeek's direct API via OpenRouter) and `hermes:deepseek:deepseek-v4-pro` (direct-provider form) to `hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro` (Fireworks-direct). Every built-in profile that used DeepSeek (`basic`, `led`, `thoughtful`, `marlowe`, `holmes`, `nancy`, the detective cluster, `all-deepseek-pro`) has been updated.
+Canonical DeepSeek v4-pro slots in built-in profiles are provider-swapped at runtime. The default route is `hermes:deepseek:deepseek-v4-pro` through `DEEPSEEK_API_KEY`; pass `--deepseek-provider fireworks` to route those same canonical slots through `hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro`.
 
 - **Scripts that don't pin the spec** keep working without changes — the rewrite is internal.
-- **Scripts that pin the old spec via `--phase-model`** still parse and run *as strings*; they'll route via the previous provider as long as those routes remain configured. Migrate the pinned spec to `hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro` to match the new canonical routing.
+- **Scripts that pin a spec via `--phase-model`** run that exact string; provider rewriting only applies to profile slots.
 
 ---
 

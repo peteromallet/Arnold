@@ -32,6 +32,7 @@ PROFILE_METADATA_KEYS = frozenset({"vendor_locked"})
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_DEEPSEEK_PROVIDER_CHOICES = ("fireworks", "direct")
+DEFAULT_DEEPSEEK_PROVIDER = "direct"
 KIMI_SPEC = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 FIREWORKS_DEEPSEEK_V4_PRO_SPEC = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 DIRECT_DEEPSEEK_V4_PRO_SPEC = "hermes:deepseek:deepseek-v4-pro"
@@ -472,7 +473,11 @@ def apply_profile_expansion(
         effective_vendor_flag = cli_vendor or state_vendor
         effective_critic_flag = cli_critic or state_critic
         effective_depth_flag = cli_depth or state_depth
-        effective_deepseek_provider_flag = cli_deepseek_provider or state_deepseek_provider
+        effective_deepseek_provider_flag = (
+            cli_deepseek_provider
+            or state_deepseek_provider
+            or DEFAULT_DEEPSEEK_PROVIDER
+        )
 
         # Vendor-locked profiles silently ignore --vendor and --critic.
         # The lock is about which vendor, not which depth — --depth is
@@ -517,8 +522,7 @@ def apply_profile_expansion(
             # --depth is still applied to author phases.
             resolved = apply_depth_rewrite(resolved, effective_depth_flag)
 
-        if effective_deepseek_provider_flag is not None:
-            resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag)
+        resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag)
 
         for pm in profile_to_phase_models(resolved):
             if "=" not in pm:
@@ -568,6 +572,7 @@ __all__ = [
     "DEPTH_AUTHOR_PHASES",
     "VALID_CRITIC_CHOICES",
     "VALID_DEEPSEEK_PROVIDER_CHOICES",
+    "DEFAULT_DEEPSEEK_PROVIDER",
     "VALID_DEPTH_CHOICES",
     "VALID_PHASE_KEYS",
     "PROFILE_METADATA_KEYS",

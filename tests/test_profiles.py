@@ -290,7 +290,7 @@ def test_apply_profile_expansion_falls_back_to_state_profile(
     assert args.profile == "all-open"
 
 
-def test_all_deepseek_pro_profile_uses_fireworks_deepseek_v4_pro(
+def test_all_deepseek_pro_profile_defaults_to_direct_deepseek_v4_pro(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -301,6 +301,26 @@ def test_all_deepseek_pro_profile_uses_fireworks_deepseek_v4_pro(
     )
 
     args = _worker_args(profile="all-deepseek-pro")
+    apply_profile_expansion(args, None)
+
+    with patch("megaplan.workers._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
+
+    assert agent == "hermes"
+    assert model == "deepseek:deepseek-v4-pro"
+
+
+def test_all_deepseek_pro_profile_can_explicitly_use_fireworks_deepseek_v4_pro(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+
+    args = _worker_args(profile="all-deepseek-pro", deepseek_provider="fireworks")
     apply_profile_expansion(args, None)
 
     with patch("megaplan.workers._is_agent_available", return_value=True):
@@ -522,8 +542,8 @@ def test_vendor_codex_preserves_effort_tier(
     # Critique was already codex:medium — --vendor codex is monotonic ("make
     # this codex"), so it stays codex:medium.
     assert resolved["critique"] == "codex:medium"
-    # Hermes deepseek prep stays untouched.
-    assert resolved["prep"] == "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+    # Hermes deepseek prep stays on the default direct provider.
+    assert resolved["prep"] == "hermes:deepseek:deepseek-v4-pro"
 
     # Sanity check on the inverse: holmes-codex --vendor claude should
     # collapse everything premium to claude:medium.
@@ -940,7 +960,7 @@ def test_basic_profile_resolves_to_deepseek_author_kimi_critic(
         "tiebreaker_researcher",
         "tiebreaker_challenger",
     ):
-        assert resolved[phase] == DEEPSEEK, f"basic.{phase} should be DeepSeek, got {resolved[phase]!r}"
+        assert resolved[phase] == DEEPSEEK_DIRECT, f"basic.{phase} should be DeepSeek, got {resolved[phase]!r}"
     assert resolved["critique"] == KIMI
     assert resolved["review"] == KIMI
 
@@ -981,7 +1001,7 @@ def test_led_profile_default_resolves_with_claude_plan_only(
     assert resolved["tiebreaker_challenger"] == "claude:low"
     # DeepSeek on the mechanical block.
     for phase in ("prep", "revise", "gate", "finalize", "execute", "loop_execute"):
-        assert resolved[phase] == DEEPSEEK
+        assert resolved[phase] == DEEPSEEK_DIRECT
     # Kimi on critique + review.
     assert resolved["critique"] == KIMI
     assert resolved["review"] == KIMI
@@ -1007,7 +1027,7 @@ def test_led_profile_flips_to_codex_under_vendor_codex(
     assert resolved["tiebreaker_challenger"] == "codex:low"
     # Mechanical phases untouched.
     for phase in ("prep", "revise", "gate", "finalize", "execute", "loop_execute"):
-        assert resolved[phase] == DEEPSEEK
+        assert resolved[phase] == DEEPSEEK_DIRECT
     # Kimi critic untouched.
     assert resolved["critique"] == KIMI
     assert resolved["review"] == KIMI
@@ -1036,7 +1056,7 @@ def test_thoughtful_profile_default_resolves_with_claude_reasoning(
             f"thoughtful.{phase} should be claude:low, got {resolved[phase]!r}"
         )
     for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
-        assert resolved[phase] == DEEPSEEK
+        assert resolved[phase] == DEEPSEEK_DIRECT
 
 
 def test_thoughtful_profile_flips_all_premium_under_vendor_codex(
@@ -1064,7 +1084,7 @@ def test_thoughtful_profile_flips_all_premium_under_vendor_codex(
         )
     # Mechanical phases stay DeepSeek.
     for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
-        assert resolved[phase] == DEEPSEEK
+        assert resolved[phase] == DEEPSEEK_DIRECT
 
 
 def test_thoughtful_critic_kimi_overrides_critique_and_review(
@@ -1104,7 +1124,7 @@ def test_thoughtful_critic_cross_with_default_claude_flips_critic_to_codex(
     assert resolved["plan"] == "claude:low"
     assert resolved["revise"] == "claude:low"
     # Mechanical phases stay DeepSeek.
-    assert resolved["execute"] == DEEPSEEK
+    assert resolved["execute"] == DEEPSEEK_DIRECT
 
 
 def test_deepseek_provider_direct_rewrites_thoughtful_mechanical_phases(
@@ -1389,10 +1409,11 @@ def test_depth_rewrites_author_phases_on_thoughtful(
     # critique + review plateau at the existing depth.
     assert resolved["critique"] == "claude:low"
     assert resolved["review"] == "claude:low"
-    # Mechanical phases (DeepSeek/hermes) — depth doesn't touch them.
-    assert resolved["prep"] == "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-    assert resolved["finalize"] == "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-    assert resolved["execute"] == "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+    # Mechanical phases (DeepSeek/hermes) — depth doesn't touch them beyond
+    # the default provider rewrite.
+    assert resolved["prep"] == "hermes:deepseek:deepseek-v4-pro"
+    assert resolved["finalize"] == "hermes:deepseek:deepseek-v4-pro"
+    assert resolved["execute"] == "hermes:deepseek:deepseek-v4-pro"
 
 
 def test_depth_rewrites_author_phases_on_premium(
