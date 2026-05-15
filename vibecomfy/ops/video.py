@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Any, Union
 
-from vibecomfy.artifacts import Video
+from vibecomfy.artifacts import Image, Video
 from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.ops._common import first_output, set_prompt_preserving_registration
 from vibecomfy.ops._namespace import dispatch, namespace_getattr
 from vibecomfy.ops.registry import register_op
-from vibecomfy.patches.types import Patch
 from vibecomfy.router import pick
-from vibecomfy.workflow import VibeInput, VibeOutput, VibeWorkflow
+
+I2VImage = Union[Image, str, Path, bytes]
 
 
 def t2v(
@@ -49,10 +51,10 @@ def _t2v(
 ) -> Video:
     result = pick("video", "t2v", model=model, width=width, height=height, length=length, fps=fps, seed=seed, **overrides)
     workflow = load_workflow_any(result.template_id)
-    _set_prompt_preserving_registration(workflow, prompt, result.explicit_patches)
+    set_prompt_preserving_registration(workflow, prompt, result.explicit_patches)
     if seed is not None:
         workflow.set_seed(seed)
-    output = _first_output(workflow, "SaveVideo")
+    output = first_output(workflow, "SaveVideo")
     return Video(
         workflow=workflow,
         node_id=output.node_id,
@@ -96,43 +98,16 @@ def _i2v(
 ) -> Video:
     result = pick("video", "i2v", model=model, image=image, length=length, fps=fps, seed=seed, **overrides)
     workflow = load_workflow_any(result.template_id)
-    _set_prompt_preserving_registration(workflow, prompt, result.explicit_patches)
+    set_prompt_preserving_registration(workflow, prompt, result.explicit_patches)
     if seed is not None:
         workflow.set_seed(seed)
-    output = _first_output(workflow, "SaveVideo")
+    output = first_output(workflow, "SaveVideo")
     return Video(
         workflow=workflow,
         node_id=output.node_id,
         output_slot=0,
         metadata={"template_id": result.template_id, "model": model},
     )
-
-
-def _set_prompt_preserving_registration(workflow: VibeWorkflow, prompt: str, patches: list[Patch]) -> None:
-    prompt_target = workflow.inputs.get("prompt")
-    workflow.set_prompt(prompt)
-    for patch in patches:
-        patch.apply(workflow)
-    if prompt_target is not None:
-        _restore_input(workflow, "prompt", prompt_target)
-    workflow.set_prompt(prompt)
-
-
-def _restore_input(workflow: VibeWorkflow, name: str, target: VibeInput) -> None:
-    if name in workflow.inputs or target.node_id not in workflow.nodes:
-        return
-    node = workflow.nodes[target.node_id]
-    value = node.inputs.get(target.field, node.widgets.get(target.field, target.value))
-    workflow.register_input(name, target.node_id, target.field, value)
-
-
-def _first_output(workflow: VibeWorkflow, output_type: str) -> VibeOutput:
-    if not workflow.outputs:
-        workflow.finalize_metadata()
-    for output in workflow.outputs:
-        if output.output_type == output_type:
-            return output
-    raise ValueError(f"Workflow has no {output_type} output")
 
 
 def __getattr__(name: str) -> Any:
