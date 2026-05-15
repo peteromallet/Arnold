@@ -171,7 +171,7 @@ def _run_pipeline(root: Path, project_dir: Path, plan_name: str, plan_dir: Path)
         )
         result = step.run(ctx)
 
-        if step.name == "gate" and result.next == "gate_iterate:revise":
+        if step.name == "gate" and result.verdict is not None and result.verdict.recommendation == "iterate":
             revise_ctx = StepContext(
                 plan_dir=plan_dir,
                 state={"name": plan_name, **json.loads((plan_dir / "state.json").read_text())},

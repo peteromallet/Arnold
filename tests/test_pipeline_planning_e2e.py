@@ -182,7 +182,7 @@ def _drive_pipeline(
 
         # Handle the gate's iterate path: gate sets state back to planned
         # via revise. We invoke revise explicitly when gate iterates.
-        if step.name == "gate" and result.next == "gate_iterate:revise":
+        if step.name == "gate" and result.verdict is not None and result.verdict.recommendation == "iterate":
             import json as _json2
             revise_ctx = StepContext(
                 plan_dir=plan_dir,

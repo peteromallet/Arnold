@@ -20,17 +20,39 @@ from megaplan._pipeline.planning import (
 )
 
 
+_GATE_RECS = {
+    "gate_proceed": "proceed",
+    "gate_iterate": "iterate",
+    "gate_tiebreaker": "tiebreaker",
+    "gate_escalate": "escalate",
+}
+
+
 def _stage_edge_pairs(pipeline, state_name):
     return [(edge.label, edge.target) for edge in pipeline.stages[state_name].edges]
 
 
 def _expected_edge_pairs(workflow_dict, state_name):
+    """Mirror megaplan._pipeline.planning._edges_from_transitions."""
+    import collections
+
+    transitions = workflow_dict[state_name]
+    gate_counts: collections.Counter = collections.Counter()
+    for t in transitions:
+        if t.condition in _GATE_RECS:
+            gate_counts[t.condition] += 1
+
     pairs = []
-    for t in workflow_dict[state_name]:
-        if t.condition == "always":
+    for t in transitions:
+        cond = t.condition
+        if cond == "always":
+            pairs.append((t.next_step, t.next_state))
+        elif cond in _GATE_RECS and gate_counts[cond] == 1:
+            pairs.append((_GATE_RECS[cond], t.next_state))
+        elif cond in _GATE_RECS and gate_counts[cond] > 1:
             pairs.append((t.next_step, t.next_state))
         else:
-            pairs.append((f"{t.condition}:{t.next_step}", t.next_state))
+            pairs.append((f"{cond}:{t.next_step}", t.next_state))
     return pairs
 
 

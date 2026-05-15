@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from megaplan._pipeline.types import StepContext, StepResult
+from megaplan._pipeline.types import StepContext, StepResult, Verdict
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,11 @@ class InProcessHandlerStep:
         next_state = after.get("current_state", before.get("current_state", ""))
         next_label = _label_for(self.name, response, next_state)
 
+        verdict: Verdict | None = None
+        if self.name == "gate":
+            rec = _gate_recommendation(response, next_state)
+            verdict = Verdict(score=0.0, recommendation=rec)
+
         state_patch: dict[str, Any] = {}
         for key in ("current_state", "iteration", "last_gate"):
             if after.get(key) != before.get(key):
@@ -85,7 +90,7 @@ class InProcessHandlerStep:
         outputs = _collect_outputs(ctx.plan_dir, before, after)
         return StepResult(
             outputs=outputs,
-            verdict=None,
+            verdict=verdict,
             next=next_label,
             state_patch=state_patch,
         )
@@ -123,8 +128,16 @@ def _read_state(plan_dir: Path) -> dict[str, Any]:
 
 
 def _label_for(phase: str, response: Mapping[str, Any], next_state: str) -> str:
+    """Return the executor's bare `next` label for a phase result.
+
+    Sprint 4 Chunk A: the gate phase no longer returns a packed
+    `gate_<rec>:<step>` label. Instead, the Step returns a Verdict
+    whose `recommendation` field drives `kind="gate"` edge dispatch.
+    The `next` string returned here is just the bare next step name
+    for debug readability — the executor matches on the Verdict.
+    """
     if phase == "gate":
-        return _gate_label(response, next_state)
+        return _gate_next_step(response, next_state)
     if phase == "revise":
         return "critique"
     if phase == "review":
@@ -142,22 +155,38 @@ def _label_for(phase: str, response: Mapping[str, Any], next_state: str) -> str:
     return phase
 
 
-def _gate_label(response: Mapping[str, Any], next_state: str) -> str:
+def _gate_recommendation(response: Mapping[str, Any], next_state: str):
+    """Return the typed gate recommendation for a gate response.
+
+    Reads the response's `recommendation` field first; falls back to
+    a state-name mapping when absent.
+    """
     rec = (response or {}).get("recommendation", "").upper()
     if rec == "PROCEED":
-        return "gate_proceed:gate"
+        return "proceed"
     if rec == "ITERATE":
-        return "gate_iterate:revise"
+        return "iterate"
     if rec == "TIEBREAKER":
-        return "gate_tiebreaker:tiebreaker"
+        return "tiebreaker"
     if rec == "ESCALATE":
-        return "gate_escalate:override force-proceed"
+        return "escalate"
     return {
-        "gated": "gate_proceed:gate",
-        "planned": "gate_iterate:revise",
-        "tiebreaker_pending": "gate_tiebreaker:tiebreaker",
-        "aborted": "gate_escalate:override abort",
-    }.get(next_state, "gate_proceed:gate")
+        "gated": "proceed",
+        "planned": "iterate",
+        "tiebreaker_pending": "tiebreaker",
+        "aborted": "escalate",
+    }.get(next_state, "proceed")
+
+
+def _gate_next_step(response: Mapping[str, Any], next_state: str) -> str:
+    """Bare next-step name corresponding to the gate's recommendation."""
+    rec = _gate_recommendation(response, next_state)
+    return {
+        "proceed": "gate",
+        "iterate": "revise",
+        "tiebreaker": "tiebreaker",
+        "escalate": "override force-proceed",
+    }.get(rec, "gate")
 
 
 def _collect_outputs(
