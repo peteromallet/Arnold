@@ -174,6 +174,27 @@ Lifecycle:
 Subcommands: `init`, `build`, `deploy`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
 Typical flow: `megaplan cloud init` scaffolds `cloud.yaml`; edit it; export the secrets it lists; `megaplan cloud deploy`; then use `status`, `logs`, and `attach` to observe.
 See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), secret handling, and troubleshooting.
+
+### Cloud Operator Loop
+For long-running cloud plans, especially chain runs, do not rely on a passive `tail` or one-off `cloud exec` as the only supervision. Run the plan in one tmux session and a separate monitor/supervisor in another tmux session.
+
+Recommended check cadence:
+1. Check immediately after launch, to catch bad branches, missing secrets, bad provider config, or command syntax.
+2. Check again after 10-15 minutes, because most cloud setup and first model-call failures surface early.
+3. Check hourly after that for long execution, review, or chain progress.
+
+Use separate cloud workspaces for unrelated mutating tasks. If `/workspace/<repo>` is already running a plan, create a sibling checkout such as `/workspace/<repo>-task-foo`, use a separate branch, separate tmux session names, and separate logs. Do not launch two mutating plans in the same checkout unless the user explicitly wants them to share branch state.
+
+An operator loop may automatically handle infrastructure recovery:
+- restart a dead tmux runner when no active phase process exists;
+- rerun `megaplan auto` for states with an unambiguous valid next step;
+- recover provider quota/failure by switching to an already-approved fallback model/provider for the same phase;
+- continue a chain after a completed milestone;
+- commit and push after each completed milestone when the user asked for push-after-sprint behavior.
+
+An operator loop should not silently decide product or architecture questions, resolve merge conflicts, accept destructive cleanup, or ignore failing tests. Those are implementation decisions, not supervision. Surface them to the user or write a clear ticket unless the plan already contains an explicit settled decision that covers the case.
+
+Today this operator loop is usually a small project-local shell script under `.megaplan/` plus tmux. Treat that as an operational shim, not the ideal abstraction. The durable Megaplan feature should be first-class cloud supervision: built-in early check, hourly tick, provider fallback policy, single-PR chain mode, and push-after-milestone support.
 ## Tickets
 `megaplan ticket new` creates a repo-scoped issue ticket. Use it when:
 - During epic/plan work you notice an out-of-scope problem, bug, or rough edge
