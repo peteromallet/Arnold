@@ -609,6 +609,14 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["2291"]["inputs"]["triton_kernels"] is True
     assert api["2291"]["inputs"]["model"] == ["229", 0]
     assert api["2107"]["inputs"]["model"] == ["2291", 0]
+    assert api["2292"]["class_type"] == "VibeComfyStripConditioningKeys"
+    assert api["2292"]["inputs"]["keys"] == "guide_attention_entries"
+    assert api["2292"]["inputs"]["positive"] == ["2152", 0]
+    assert api["2292"]["inputs"]["negative"] == ["2152", 1]
+    assert api["8"]["inputs"]["positive"] == ["2292", 0]
+    assert api["8"]["inputs"]["negative"] == ["2292", 1]
+    assert api["2156"]["inputs"]["positive"] == ["2292", 0]
+    assert api["2156"]["inputs"]["negative"] == ["2292", 1]
     assert api["197"]["inputs"]["nag_scale"] == 11
     assert api["43"]["inputs"]["filename_prefix"] == "reigh_vibecomfy_ltx_raw_guide"
     assert api["43"]["inputs"]["save_output"] is True

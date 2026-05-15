@@ -35,6 +35,9 @@ vibecomfy = "vibecomfy.cli:main"
 [project.entry-points."vibecomfy.plugins"]
 # my_plugin = "my_pkg:register"
 
+[project.entry-points."comfyui.custom_nodes"]
+vibecomfy = "vibecomfy.comfy_nodes"
+
 [tool.hatch.build.targets.wheel]
 packages = ["vibecomfy"]
 

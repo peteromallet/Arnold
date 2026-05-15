@@ -128,6 +128,7 @@ def build() -> VibeWorkflow:
     wf.nodes["2152"].inputs["frame_idx"] = 0
     guide_strength = _node(wf, "PrimitiveFloat", "6102", value=1)
     wf.replace_edge("2152.strength", guide_strength.out(0))
+    _strip_raw_guide_attention_mask(wf)
     _apply_runtime_schema_defaults(wf)
 
     wf.finalize_metadata()
@@ -175,6 +176,32 @@ def _use_ltx2_memory_efficient_sage_attention(wf: VibeWorkflow) -> None:
         model=Handle("229", "0"),
     )
     wf.replace_edge("2107.model", mem_patch.out(0))
+
+
+def _strip_raw_guide_attention_mask(wf: VibeWorkflow) -> None:
+    """Match Wan2GP VG conditioning by keeping keyframes, not guide masks.
+
+    Wan2GP's distilled LTX VG path appends encoded video keyframes with a
+    denoise mask; it does not add Comfy's extra guide_attention_entries
+    metadata. When raw guide strength is 1.0, that metadata is redundant and
+    forces the slower masked-attention path. Leave non-1.0 guide strengths to a
+    future mask-aware route.
+    """
+    if "2152" not in wf.nodes or "2164" not in wf.nodes or "2165" not in wf.nodes:
+        return
+    strip = _node(
+        wf,
+        "VibeComfyStripConditioningKeys",
+        "2292",
+        keys="guide_attention_entries",
+        positive=Handle("2152", "0"),
+        negative=Handle("2152", "1"),
+    )
+    if "8" in wf.nodes:
+        wf.replace_edge("8.positive", strip.out(0))
+        wf.replace_edge("8.negative", strip.out(1))
+    wf.replace_edge("2164.CONDITIONING", strip.out(0))
+    wf.replace_edge("2165.CONDITIONING", strip.out(1))
 
 
 def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
