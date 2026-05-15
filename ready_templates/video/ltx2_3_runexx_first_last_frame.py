@@ -549,9 +549,17 @@ def build() -> VibeWorkflow:
         av_latent=samplercustomadvanced.out(0),
     )
     ltxvlatentupsampler = _node(wf, 'LTXVLatentUpsampler', '25',
+        _outputs=("latent",),
         samples=ltxvseparateavlatent.out(0),
         upscale_model=getnode_14.out(0),
         vae=getnode_7.out(0),
+    )
+    stage_boundary = _node(wf, 'VRAM_Debug', '1846',
+        _outputs=("any_output", "image_pass", "model_pass", "freemem_before", "freemem_after"),
+        any_input=ltxvlatentupsampler.out("latent"),
+        empty_cache=True,
+        gc_collect=True,
+        unload_all_models=True,
     )
     ltx2attentiontunerpatch = _node(wf, 'LTX2AttentionTunerPatch', '229',
         widget_0='',
@@ -567,7 +575,7 @@ def build() -> VibeWorkflow:
         model=ltx2attentiontunerpatch.out(0),
     )
     ltxvimgtovideoinplacekj_2 = _node(wf, 'LTXVImgToVideoInplaceKJ', '2105',
-        latent=ltxvlatentupsampler.out(0),
+        latent=stage_boundary.out("any_output"),
         num_images='1',
         vae=getnode_39.out(0),
         _extras={
@@ -690,7 +698,14 @@ def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
         )
 
 
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
+def _node(
+    wf: VibeWorkflow,
+    class_type: str,
+    _id: str,
+    _extras: dict | None = None,
+    _outputs: tuple[str, ...] | None = None,
+    **kwargs,
+):
     """Create a node, preserving the original node id from the source workflow.
 
     `_extras` carries kwargs whose names are not valid Python identifiers
@@ -699,6 +714,8 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
     """
     from vibecomfy.handles import Handle
     builder = wf.node(class_type, **kwargs)
+    if _outputs is not None:
+        builder.node.metadata["output_names"] = list(_outputs)
     if _extras:
         for key, value in _extras.items():
             if isinstance(value, Handle):
