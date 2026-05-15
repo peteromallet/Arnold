@@ -88,7 +88,12 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                 continue
             spec = raw_schema_inputs[name]
             choices = getattr(spec, "choices", None) or []
-            if choices and value not in choices and not _issue_suppressed(class_type, "value_not_in_enum"):
+            if (
+                choices
+                and value not in choices
+                and not _issue_suppressed(class_type, "value_not_in_enum")
+                and not _is_dynamic_file_choice(class_type, name)
+            ):
                 issues.append(
                     ValidationIssue(
                         "value_not_in_enum",
@@ -349,6 +354,25 @@ def _issue_suppressed(class_type: str, code: str) -> bool:
     if class_type not in SCHEMA_VALIDATION_SKIP_CLASSES:
         return False
     return code == "unknown_input" or code.startswith("value_")
+
+
+def _is_dynamic_file_choice(class_type: str, input_name: str) -> bool:
+    """Return whether a Comfy enum is a runtime file picker, not a semantic enum.
+
+    Object-info choices for these inputs reflect files present in the active
+    input directory when object_info was fetched. Task scratchpads often copy
+    images/videos immediately before queueing, so treating stale file-picker
+    choices as hard schema errors rejects valid runs. Model/checkpoint enums are
+    intentionally not listed here.
+    """
+
+    return (class_type, input_name) in {
+        ("LoadImage", "image"),
+        ("LoadVideo", "video"),
+        ("LoadVideo", "file"),
+        ("VHS_LoadVideo", "video"),
+        ("VHS_LoadVideo", "file"),
+    }
 
 
 def _schema_accepts_dict(spec: Any) -> bool:

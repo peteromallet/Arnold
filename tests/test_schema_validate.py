@@ -83,6 +83,26 @@ def test_value_not_in_enum_emits_error() -> None:
     assert issue.detail["choices"] == ["a", "b"]
 
 
+def test_dynamic_file_picker_choices_do_not_reject_task_inputs() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "LoadImage": _schema("LoadImage", {"image": InputSpec("STRING", choices=["previous.png"])}),
+            "UNETLoader": _schema("UNETLoader", {"unet_name": InputSpec("STRING", choices=["model-a.safetensors"])}),
+        }
+    )
+    workflow = _workflow(
+        VibeNode("1", "LoadImage", inputs={"image": "task-specific.png"}),
+        VibeNode("2", "UNETLoader", inputs={"unet_name": "missing-model.safetensors"}),
+    )
+
+    report = workflow.validate(schema_provider=provider)
+
+    assert not report.ok
+    assert [(issue.code, issue.detail["class_type"], issue.detail["input"]) for issue in report.issues] == [
+        ("value_not_in_enum", "UNETLoader", "unet_name")
+    ]
+
+
 def test_sanitize_api_strips_unknown_runtime_inputs_and_coerces_portable_choices() -> None:
     provider = FakeSchemaProvider(
         {
