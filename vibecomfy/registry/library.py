@@ -6,17 +6,18 @@ from pathlib import Path
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.ingest.normalize import convert_to_vibe_format, normalize_to_api
 from vibecomfy.schema import SchemaProvider
+from vibecomfy.workflow import VibeWorkflow
 from .ready import workflow_from_ready
 from vibecomfy.scratchpad_loader import load_scratchpad
 
 
-def workflow_from_file(path: str, *, schema_provider: SchemaProvider | None = None):
+def workflow_from_file(path: str, *, schema_provider: SchemaProvider | None = None) -> VibeWorkflow:
     raw = load_workflow_json(path)
     api = normalize_to_api(raw, schema_provider=schema_provider)
     return convert_to_vibe_format(api, source_path=path, schema_provider=schema_provider)
 
 
-def workflow_from_id(workflow_id: str, *, schema_provider: SchemaProvider | None = None):
+def workflow_from_id(workflow_id: str, *, schema_provider: SchemaProvider | None = None) -> VibeWorkflow:
     """Load a workflow by id from the ready-template registry or the indexed corpus."""
     try:
         return workflow_from_ready(workflow_id)
@@ -42,18 +43,13 @@ def workflow_from_id(workflow_id: str, *, schema_provider: SchemaProvider | None
     return convert_to_vibe_format(api, source_path=match["path"], workflow_id=match["id"], schema_provider=schema_provider)
 
 
-# Back-compat alias. The old name was misleading: this loads any workflow by id,
-# not just hand-authored ready templates.
-workflow_from_template = workflow_from_id
-
-
 def load_workflow_reference(
     value: str,
     *,
     schema_provider: SchemaProvider | None = None,
     allow_scratchpad: bool = False,
     ready: bool = False,
-):
+) -> VibeWorkflow:
     if ready:
         return workflow_from_ready(value)
     path = Path(value)

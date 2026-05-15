@@ -11,6 +11,3 @@ def load_workflow_json(path: str | Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Workflow {path} did not decode to a JSON object")
     return data
-
-
-load_template = load_workflow_json

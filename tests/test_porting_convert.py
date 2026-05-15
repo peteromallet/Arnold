@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from vibecomfy.commands.convert import _cmd_convert
 from vibecomfy.porting.convert import (
     ConversionWriteError,
     ManualTemplateRefusal,
@@ -146,66 +145,6 @@ def test_port_convert_validation_reports_schema_failures() -> None:
 # ---------------------------------------------------------------------------
 # Golden tests - legacy `vibecomfy convert` behavior (before removal)
 # ---------------------------------------------------------------------------
-
-
-def test_legacy_vibecomfy_convert_now_fails_with_migration_message(tmp_path: Path) -> None:
-    """Legacy convert exits non-zero with migration message, produces no output file."""
-    workflow_path = tmp_path / "workflow.json"
-    workflow_path.write_text(json.dumps({"nodes": []}), encoding="utf-8")
-    out = tmp_path / "scratch.py"
-
-    exit_code = _cmd_convert(argparse.Namespace(workflow=str(workflow_path), out=str(out)))
-    assert exit_code != 0
-
-    # No output file should have been written.
-    assert not out.exists()
-
-
-def test_legacy_convert_indexed_id_now_fails_with_migration_message(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Legacy convert on indexed id exits non-zero with migration message, no output file."""
-    workflow_path = tmp_path / "indexed_workflow.json"
-    workflow_path.write_text(json.dumps({"nodes": []}), encoding="utf-8")
-
-    index_path = tmp_path / "workflow_index.json"
-    index_path.write_text(
-        json.dumps([{"id": "my-workflow", "path": str(workflow_path)}]),
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-
-    out = tmp_path / "scratch.py"
-    exit_code = _cmd_convert(argparse.Namespace(workflow="my-workflow", out=str(out)))
-    assert exit_code != 0
-    assert not out.exists()
-
-
-def test_legacy_convert_ready_id_now_fails_with_migration_message(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Legacy convert on ready-id exits non-zero with migration message, no output file."""
-    out = tmp_path / "scratch.py"
-    exit_code = _cmd_convert(argparse.Namespace(workflow="z_image", out=str(out)))
-    assert exit_code != 0
-    assert not out.exists()
-
-
-def test_legacy_convert_api_shaped_json_now_fails_with_migration_message(tmp_path: Path) -> None:
-    """Legacy convert on API-shaped JSON exits non-zero with migration message, no output file."""
-    workflow_path = tmp_path / "api_shaped.json"
-    workflow_path.write_text(
-        json.dumps({
-            "1": {"class_type": "LoadImage", "inputs": {"image": "test.png"}},
-            "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0], "filename_prefix": "out"}},
-        }),
-        encoding="utf-8",
-    )
-    out = tmp_path / "scratch.py"
-
-    exit_code = _cmd_convert(argparse.Namespace(workflow=str(workflow_path), out=str(out)))
-    assert exit_code != 0
-    assert not out.exists()
 
 
 # ---------------------------------------------------------------------------

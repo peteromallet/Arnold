@@ -4,7 +4,6 @@ from .library import (
     load_workflow_reference,
     workflow_from_file,
     workflow_from_id,
-    workflow_from_template,
 )
 from .ready import (
     dynamic_ready_template_rows,
@@ -42,7 +41,6 @@ __all__ = [
     "workflow_from_file",
     "load_workflow_reference",
     "workflow_from_id",
-    "workflow_from_template",
     "ready_template_ids",
     "dynamic_ready_template_rows",
     "repo_ready_template_id_for_path",

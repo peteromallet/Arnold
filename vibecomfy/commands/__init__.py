@@ -19,7 +19,6 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("search", "vibecomfy.commands.search"),
     CommandSpec("inspect", "vibecomfy.commands.inspect"),
     CommandSpec("port", "vibecomfy.commands.port"),
-    CommandSpec("convert", "vibecomfy.commands.convert"),
     CommandSpec("contract", "vibecomfy.commands.contract"),
     CommandSpec("validate", "vibecomfy.commands.validate"),
     CommandSpec("doctor", "vibecomfy.commands.doctor"),
