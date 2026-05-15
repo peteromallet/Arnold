@@ -513,11 +513,15 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert api["3159"]["inputs"]["strength"] == 1.0
     assert api["4970"]["inputs"]["strength"] == 1.0
     assert api["4982"]["inputs"]["device"] == "default"
+    assert api["4990"]["inputs"]["resize_type"] == "scale longer dimension"
+    assert api["4990"]["inputs"]["resize_type.longer_size"] == 256
+    assert api["4991"]["inputs"]["resize_type"] == "scale longer dimension"
+    assert api["4991"]["inputs"]["resize_type.longer_size"] == 256
     assert api["4995"]["inputs"]["horizontal_tiles"] == 2
     assert api["4995"]["inputs"]["vertical_tiles"] == 2
     assert api["4995"]["inputs"]["overlap"] == 6
     assert api["4995"]["inputs"]["last_frame_fix"] is False
-    for node_id in ("3159", "4970", "4982", "4995"):
+    for node_id in ("3159", "4970", "4982", "4990", "4991", "4995"):
         unresolved = [key for key in api[node_id]["inputs"] if key.startswith("widget_")]
         assert unresolved == [], f"{node_id} has unresolved widget inputs: {unresolved}"
 

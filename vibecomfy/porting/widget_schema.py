@@ -276,7 +276,7 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "OnnxDetectionModelLoader": ["vitpose_model", "yolo_model", "onnx_device"],
     "PoseAndFaceDetection": ["width", "height", "face_padding"],
     "DrawViTPose": ["width", "height", "retarget_padding", "body_stick_width", "hand_stick_width", "draw_head"],
-    "ResizeImageMaskNode": [None, None, "scale_method"],
+    "ResizeImageMaskNode": ["resize_type", None, "scale_method"],
     "VHS_VideoCombine": [
         "frame_rate",
         "loop_count",
