@@ -487,8 +487,8 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert stage_last.class_type == "LTXVImgToVideoConditionOnly"
 
     # Strength defaults via lens
-    assert lens.node_value("3159", "widget_0") == 1.0
-    assert lens.node_value("4970", "widget_0") == 1.0
+    assert lens.node_value("3159", "strength") == 1.0
+    assert lens.node_value("4970", "strength") == 1.0
 
     # Image preprocessing chains via lens edge traversal
     # Stage 1: ResizeImageMaskNode -> LTXVPreprocess -> LTXVImgToVideoConditionOnly
@@ -510,6 +510,16 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert api["4985"]["inputs"]["sigmas"] == "0.909375, 0.725, 0.421875, 0.0"
     assert api["4988"]["class_type"] == "PrimitiveInt"
     assert api["4989"]["class_type"] == "PrimitiveFloat"
+    assert api["3159"]["inputs"]["strength"] == 1.0
+    assert api["4970"]["inputs"]["strength"] == 1.0
+    assert api["4982"]["inputs"]["device"] == "default"
+    assert api["4995"]["inputs"]["horizontal_tiles"] == 2
+    assert api["4995"]["inputs"]["vertical_tiles"] == 2
+    assert api["4995"]["inputs"]["overlap"] == 6
+    assert api["4995"]["inputs"]["last_frame_fix"] is False
+    for node_id in ("3159", "4970", "4982", "4995"):
+        unresolved = [key for key in api[node_id]["inputs"] if key.startswith("widget_")]
+        assert unresolved == [], f"{node_id} has unresolved widget inputs: {unresolved}"
 
 
 def test_ltx_lightricks_first_last_parity_resolves_assets_from_registry() -> None:

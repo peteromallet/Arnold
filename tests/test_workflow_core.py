@@ -266,6 +266,40 @@ def test_compile_replaces_known_positional_widget_aliases() -> None:
     assert api["1"]["inputs"] == {"chunks": 2, "dim_threshold": 4096}
 
 
+def test_compile_replaces_ltx_runtime_positional_widget_aliases() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "LTXVImgToVideoConditionOnly",
+        inputs={"widget_0": 1.0, "widget_1": False},
+    )
+    workflow.nodes["2"] = VibeNode(
+        "2",
+        "LTXAVTextEncoderLoader",
+        inputs={"widget_0": "gemma.safetensors", "widget_1": "ltx.safetensors", "widget_2": "default"},
+    )
+    workflow.nodes["3"] = VibeNode(
+        "3",
+        "LTXVTiledVAEDecode",
+        inputs={"widget_0": 2, "widget_1": 2, "widget_2": 6, "widget_3": False, "widget_4": "auto"},
+    )
+
+    api = workflow.compile("api")
+
+    assert api["1"]["inputs"] == {"strength": 1.0, "bypass": False}
+    assert api["2"]["inputs"] == {
+        "text_encoder": "gemma.safetensors",
+        "ckpt_name": "ltx.safetensors",
+        "device": "default",
+    }
+    assert api["3"]["inputs"] == {
+        "horizontal_tiles": 2,
+        "vertical_tiles": 2,
+        "overlap": 6,
+        "last_frame_fix": False,
+    }
+
+
 def test_compile_rewrites_set_node_passthrough_outputs_to_direct_links() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
