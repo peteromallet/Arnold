@@ -50,7 +50,7 @@ READY_METADATA = {
         "Use tiled VAE decode for full-size app outputs.",
         "Do not force the LTX2 memory-efficient Sage/Triton patch in the portable 4090 profile; LTX 2.3 guide masks must remain on the stable SDPA-compatible path unless a separate optimized profile proves the patch end-to-end.",
     ],
-    "comfy_configuration": {"reserve_vram": 12, "cache_none": True, "fp8_e4m3fn_text_enc": True},
+    "comfy_configuration": {"memory_profile": 1, "fp8_e4m3fn_text_enc": True},
 }
 
 READY_REQUIREMENTS = {
@@ -70,15 +70,15 @@ def build() -> VibeWorkflow:
         ),
     )
 
-    loadimage_first = _node(wf, "LoadImage", "31", image="first.png")
-    loadimage_last = _node(wf, "LoadImage", "39", image="last.png")
+    loadimage_first = _node(wf, "LoadImage", "31", _outputs=("image", "mask"), image="first.png")
+    loadimage_last = _node(wf, "LoadImage", "39", _outputs=("image", "mask"), image="last.png")
 
-    randomnoise = _node(wf, "RandomNoise", "100", noise_seed=315253765879496)
-    frames = _node(wf, "PrimitiveInt", "102", value=121)
-    width = _node(wf, "PrimitiveInt", "113", value=1280)
-    height = _node(wf, "PrimitiveInt", "98", value=720)
-    fps_int = _node(wf, "PrimitiveInt", "114", value=24)
-    fps = _node(wf, "PrimitiveFloat", "123", value=24)
+    randomnoise = _node(wf, "RandomNoise", "100", _outputs=("noise",), noise_seed=315253765879496)
+    frames = _node(wf, "PrimitiveInt", "102", _outputs=("value",), value=121)
+    width = _node(wf, "PrimitiveInt", "113", _outputs=("value",), value=1280)
+    height = _node(wf, "PrimitiveInt", "98", _outputs=("value",), value=720)
+    fps_int = _node(wf, "PrimitiveInt", "114", _outputs=("value",), value=24)
+    fps = _node(wf, "PrimitiveFloat", "123", _outputs=("value",), value=24)
 
     text_encoder = _node(
         wf,
@@ -87,80 +87,114 @@ def build() -> VibeWorkflow:
         ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors",
         text_encoder="gemma_3_12B_it_fp4_mixed.safetensors",
         device="default",
+        _outputs=("clip",),
     )
-    audio_vae = _node(wf, "LTXVAudioVAELoader", "126", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
-    checkpoint = _node(wf, "CheckpointLoaderSimple", "127", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
+    audio_vae = _node(
+        wf,
+        "LTXVAudioVAELoader",
+        "126",
+        _outputs=("audio_vae",),
+        ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors",
+    )
+    checkpoint = _node(
+        wf,
+        "CheckpointLoaderSimple",
+        "127",
+        _outputs=("model", "clip", "vae"),
+        ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors",
+    )
 
     resize_first = _node(
         wf,
         "ResizeImageMaskNode",
         "124",
         _extras={
-            "resize_type.width": width.out(0),
-            "resize_type.height": height.out(0),
+            "resize_type.width": width.out("value"),
+            "resize_type.height": height.out("value"),
             "resize_type.crop": "center",
         },
+        _outputs=("image",),
         resize_type="scale dimensions",
         scale_method="nearest-exact",
-        input=loadimage_first.out(0),
+        input=loadimage_first.out("image"),
     )
     resize_last = _node(
         wf,
         "ResizeImageMaskNode",
         "125",
         _extras={
-            "resize_type.width": width.out(0),
-            "resize_type.height": height.out(0),
+            "resize_type.width": width.out("value"),
+            "resize_type.height": height.out("value"),
             "resize_type.crop": "center",
         },
+        _outputs=("image",),
         resize_type="scale dimensions",
         scale_method="nearest-exact",
-        input=loadimage_last.out(0),
+        input=loadimage_last.out("image"),
     )
-    preprocess_first = _node(wf, "LTXVPreprocess", "104", img_compression=25, image=resize_first.out(0))
-    preprocess_last = _node(wf, "LTXVPreprocess", "99", img_compression=25, image=resize_last.out(0))
+    preprocess_first = _node(
+        wf,
+        "LTXVPreprocess",
+        "104",
+        _outputs=("image",),
+        img_compression=25,
+        image=resize_first.out("image"),
+    )
+    preprocess_last = _node(
+        wf,
+        "LTXVPreprocess",
+        "99",
+        _outputs=("image",),
+        img_compression=25,
+        image=resize_last.out("image"),
+    )
 
     prompt = _node(
         wf,
         "CLIPTextEncode",
         "128",
+        _outputs=("conditioning",),
         text="The camera moves from a high position to a low position, keeping the subject centered.",
-        clip=text_encoder.out(0),
+        clip=text_encoder.out("clip"),
     )
     negative = _node(
         wf,
         "CLIPTextEncode",
         "112",
+        _outputs=("conditioning",),
         text="blurry, oversaturated, pixelated, low resolution, grainy, distorted",
-        clip=text_encoder.out(0),
+        clip=text_encoder.out("clip"),
     )
     conditioning = _node(
         wf,
         "LTXVConditioning",
         "109",
-        frame_rate=fps.out(0),
-        negative=negative.out(0),
-        positive=prompt.out(0),
+        _outputs=("positive", "negative"),
+        frame_rate=fps.out("value"),
+        negative=negative.out("conditioning"),
+        positive=prompt.out("conditioning"),
     )
 
-    image_size = _node(wf, "GetImageSize", "110", image=resize_first.out(0))
+    image_size = _node(wf, "GetImageSize", "110", _outputs=("width", "height", "batch_size"), image=resize_first.out("image"))
     empty_audio = _node(
         wf,
         "LTXVEmptyLatentAudio",
         "101",
+        _outputs=("audio_latent",),
         batch_size=1,
-        frame_rate=fps_int.out(0),
-        frames_number=frames.out(0),
-        audio_vae=audio_vae.out(0),
+        frame_rate=fps_int.out("value"),
+        frames_number=frames.out("value"),
+        audio_vae=audio_vae.out("audio_vae"),
     )
     empty_video = _node(
         wf,
         "EmptyLTXVLatentVideo",
         "108",
+        _outputs=("latent",),
         batch_size=1,
-        width=image_size.out(0),
-        height=image_size.out(1),
-        length=frames.out(0),
+        width=image_size.out("width"),
+        height=image_size.out("height"),
+        length=frames.out("value"),
     )
 
     first_guide = _node(
@@ -170,11 +204,11 @@ def build() -> VibeWorkflow:
         _outputs=("positive", "negative", "latent"),
         frame_idx=0,
         strength=1.0,
-        image=preprocess_first.out(0),
-        latent=empty_video.out(0),
-        negative=conditioning.out(1),
-        positive=conditioning.out(0),
-        vae=checkpoint.out(2),
+        image=preprocess_first.out("image"),
+        latent=empty_video.out("latent"),
+        negative=conditioning.out("negative"),
+        positive=conditioning.out("positive"),
+        vae=checkpoint.out("vae"),
     )
     last_guide = _node(
         wf,
@@ -183,27 +217,29 @@ def build() -> VibeWorkflow:
         _outputs=("positive", "negative", "latent"),
         frame_idx=-1,
         strength=1.0,
-        image=preprocess_last.out(0),
+        image=preprocess_last.out("image"),
         latent=first_guide.out("latent"),
         negative=first_guide.out("negative"),
         positive=first_guide.out("positive"),
-        vae=checkpoint.out(2),
+        vae=checkpoint.out("vae"),
     )
 
     guider = _node(
         wf,
         "CFGGuider",
         "116",
+        _outputs=("guider",),
         cfg=1,
-        model=checkpoint.out(0),
+        model=checkpoint.out("model"),
         negative=last_guide.out("negative"),
         positive=last_guide.out("positive"),
     )
-    sampler = _node(wf, "SamplerEulerAncestral", "117", eta=0, s_noise=1)
+    sampler = _node(wf, "SamplerEulerAncestral", "117", _outputs=("sampler",), eta=0, s_noise=1)
     sigmas = _node(
         wf,
         "ManualSigmas",
         "118",
+        _outputs=("sigmas",),
         sigmas="1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
         widget_0="1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
     )
@@ -211,42 +247,67 @@ def build() -> VibeWorkflow:
         wf,
         "LTXVConcatAVLatent",
         "119",
-        audio_latent=empty_audio.out(0),
-        video_latent=last_guide.out(2),
+        _outputs=("latent",),
+        audio_latent=empty_audio.out("audio_latent"),
+        video_latent=last_guide.out("latent"),
     )
     sampled = _node(
         wf,
         "SamplerCustomAdvanced",
         "120",
-        guider=guider.out(0),
-        latent_image=concat.out(0),
-        noise=randomnoise.out(0),
-        sampler=sampler.out(0),
-        sigmas=sigmas.out(0),
+        _outputs=("output", "denoised_output"),
+        guider=guider.out("guider"),
+        latent_image=concat.out("latent"),
+        noise=randomnoise.out("noise"),
+        sampler=sampler.out("sampler"),
+        sigmas=sigmas.out("sigmas"),
     )
-    separated = _node(wf, "LTXVSeparateAVLatent", "121", av_latent=sampled.out(1))
+    separated = _node(
+        wf,
+        "LTXVSeparateAVLatent",
+        "121",
+        _outputs=("video_latent", "audio_latent"),
+        av_latent=sampled.out("denoised_output"),
+    )
     cropped = _node(
         wf,
         "LTXVCropGuides",
         "106",
-        latent=separated.out(0),
+        _outputs=("positive", "negative", "latent"),
+        latent=separated.out("video_latent"),
         negative=last_guide.out("negative"),
         positive=last_guide.out("positive"),
     )
-    decoded_audio = _node(wf, "LTXVAudioVAEDecode", "107", audio_vae=audio_vae.out(0), samples=separated.out(1))
+    decoded_audio = _node(
+        wf,
+        "LTXVAudioVAEDecode",
+        "107",
+        _outputs=("audio",),
+        audio_vae=audio_vae.out("audio_vae"),
+        samples=separated.out("audio_latent"),
+    )
     decoded_video = _node(
         wf,
         "VAEDecodeTiled",
         "105",
+        _outputs=("images",),
         tile_size=768,
         overlap=64,
         temporal_size=4096,
         temporal_overlap=64,
-        samples=cropped.out(2),
-        vae=checkpoint.out(2),
+        samples=cropped.out("latent"),
+        vae=checkpoint.out("vae"),
     )
-    video = _node(wf, "CreateVideo", "122", fps=fps.out(0), audio=decoded_audio.out(0), images=decoded_video.out(0))
-    _node(wf, "SaveVideo", "68", filename_prefix="output", format="auto", codec="auto", video=video.out(0))
+    video = _node(
+        wf,
+        "CreateVideo",
+        "122",
+        _outputs=("video",),
+        fps=fps.out("value"),
+        audio=decoded_audio.out("audio"),
+        images=decoded_video.out("images"),
+    )
+    _node(wf, "SaveVideo", "68", filename_prefix="output", format="auto", codec="auto", video=video.out("video"))
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
