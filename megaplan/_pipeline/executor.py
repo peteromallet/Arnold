@@ -163,14 +163,19 @@ def run_pipeline(
         if result.next == "halt":
             return {"state": state, "final_stage": node.name}
 
-        # Verdict-first edge dispatch: when the Step returns a typed
-        # gate recommendation, match the kind="gate" edge whose
-        # recommendation matches; otherwise (or on miss) fall back to
-        # kind="normal" + label dispatch. kind="override" is reserved
-        # for Chunk D and is not matched here.
+        # Verdict-first edge dispatch:
+        #  - If verdict.override is set (Chunk D), match a kind="override" edge.
+        #  - Else if verdict.recommendation is set (Chunk A), match a
+        #    kind="gate" edge by recommendation.
+        #  - Otherwise (or on miss) fall back to kind="normal" +
+        #    label == result.next dispatch.
+        from megaplan._pipeline.override import find_override_edge
+
         edge = None
         rec = None
-        if result.verdict is not None and result.verdict.recommendation is not None:
+        if result.verdict is not None and result.verdict.override is not None:
+            edge = find_override_edge(node.edges, result.verdict.override)
+        if edge is None and result.verdict is not None and result.verdict.recommendation is not None:
             rec = result.verdict.recommendation
             edge = next(
                 (
