@@ -316,6 +316,60 @@ def _ensure_shannon_parent_timeout_control() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Best-effort recovery of a JSON object embedded in free-form text.
+
+    Handles the common cases that bare ``json.loads`` rejects:
+
+    * Claude responses wrapped in markdown code fences::
+
+          ```json
+          {"plan": "..."}
+          ```
+
+    * Prose preceding the JSON object (``Here is the plan: {...}``).
+    * JSON followed by trailing prose (``{...}  Hope that helps!``).
+
+    Returns the decoded dict on success, or ``None`` when no JSON object
+    could be recovered. Non-object payloads (lists, scalars) also return
+    ``None`` since callers expect a mapping.
+    """
+
+    if not isinstance(text, str):
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    # Already-valid JSON object.
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+    # Try raw_decode from the first '{' to consume a leading object even
+    # with trailing prose.
+    start = stripped.find("{")
+    if start != -1:
+        try:
+            data, _end = json.JSONDecoder().raw_decode(stripped[start:])
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+        # Last-resort: trim to outermost braces.
+        end = stripped.rfind("}")
+        if end > start:
+            try:
+                data = json.loads(stripped[start : end + 1])
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
 def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """Parse Shannon CLI JSON output into ``(envelope, payload)``.
 
@@ -390,7 +444,10 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                 try:
                     result_val = json.loads(result_val)
                 except json.JSONDecodeError:
-                    continue
+                    extracted = _extract_json_object(result_val)
+                    if extracted is None:
+                        continue
+                    result_val = extracted
             if isinstance(result_val, dict):
                 return msg, result_val
 
@@ -416,7 +473,10 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                     try:
                         result_val = json.loads(result_val)
                     except json.JSONDecodeError:
-                        continue
+                        extracted = _extract_json_object(result_val)
+                        if extracted is None:
+                            continue
+                        result_val = extracted
                 if isinstance(result_val, dict):
                     return inner, result_val
             # content blocks that might embed JSON
@@ -430,14 +490,18 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                             if isinstance(parsed, dict):
                                 return inner, parsed
                         except json.JSONDecodeError:
-                            pass
+                            extracted = _extract_json_object(text)
+                            if isinstance(extracted, dict):
+                                return inner, extracted
             elif isinstance(content, str):
                 try:
                     parsed = json.loads(content)
                     if isinstance(parsed, dict):
                         return inner, parsed
                 except json.JSONDecodeError:
-                    pass
+                    extracted = _extract_json_object(content)
+                    if isinstance(extracted, dict):
+                        return inner, extracted
 
         # Fallback: return the last dict in the array
         if data and isinstance(data[-1], dict):

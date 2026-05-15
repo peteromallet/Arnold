@@ -3368,6 +3368,79 @@ def test_parse_shannon_output_prefers_result_event() -> None:
     assert envelope["total_cost_usd"] == 0.01
 
 
+def test_parse_shannon_output_result_event_markdown_fenced_json() -> None:
+    """Regression: Claude commonly wraps structured JSON in ```json ... ``` fences.
+
+    Prior to the fix, _parse_shannon_output called json.loads on the result
+    field and `continue`d on JSONDecodeError, so fenced responses fell through
+    and downstream gates surfaced "parse_error: <step> output missing required
+    keys: plan". The parser should now fall back to _extract_json_object.
+    """
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    plan_payload = {
+        "plan": "Step 1: do the thing.",
+        "questions": [],
+        "success_criteria": ["it works"],
+        "assumptions": ["env is sane"],
+    }
+    fenced = "```json\n" + json.dumps(plan_payload) + "\n```"
+    transcript = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "thinking..."}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": fenced,
+            "session_id": "shannon-fenced-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 12, "output_tokens": 8},
+        },
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert isinstance(payload, dict)
+    assert payload == plan_payload
+    assert set(payload.keys()) == {"plan", "questions", "success_criteria", "assumptions"}
+    assert envelope["session_id"] == "shannon-fenced-session"
+
+
+def test_parse_shannon_output_assistant_message_markdown_fenced_json() -> None:
+    """Regression: fenced JSON in an assistant message's `result` field should also parse."""
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    plan_payload = {
+        "plan": "Do it.",
+        "questions": ["q?"],
+        "success_criteria": ["ok"],
+        "assumptions": [],
+    }
+    fenced = "```json\n" + json.dumps(plan_payload) + "\n```"
+    transcript = [
+        {"type": "user", "message": {"content": "Plan this"}},
+        {"type": "assistant", "message": {"result": fenced}},
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert payload == plan_payload
+
+
+def test_parse_shannon_output_assistant_content_block_fenced_json() -> None:
+    """Regression: fenced JSON inside an assistant content-block text should also parse."""
+    from megaplan.shannon_worker import _parse_shannon_output
+
+    plan_payload = {
+        "plan": "P",
+        "questions": [],
+        "success_criteria": [],
+        "assumptions": [],
+    }
+    fenced = "Here is the plan:\n\n```json\n" + json.dumps(plan_payload) + "\n```"
+    transcript = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": fenced}]}},
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert payload == plan_payload
+
+
 def test_parse_shannon_output_invalid_json() -> None:
     from megaplan.shannon_worker import _parse_shannon_output
 
