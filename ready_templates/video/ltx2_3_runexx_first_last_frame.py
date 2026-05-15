@@ -567,7 +567,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=False,
+        widget_5=True,
         model=ltxvchunkfeedforward.out(0),
     )
     ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '2291',
