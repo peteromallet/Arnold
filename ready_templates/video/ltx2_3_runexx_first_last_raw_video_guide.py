@@ -167,6 +167,9 @@ def _use_ltx2_memory_efficient_sage_attention(wf: VibeWorkflow) -> None:
     """
     if "229" not in wf.nodes or "2107" not in wf.nodes:
         return
+    if "2291" in wf.nodes:
+        wf.replace_edge("2107.model", Handle("2291", "0"))
+        return
     mem_patch = _node(
         wf,
         "LTX2MemoryEfficientSageAttentionPatch",

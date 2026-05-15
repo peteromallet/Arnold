@@ -271,6 +271,9 @@ def test_ltx_runexx_first_last_frame_omits_dead_gguf_branch_and_validates_calcul
     assert api["216"]["inputs"]["sigmas"] == "0.909375, 0.725, 0.421875, 0.0"
     assert api["210"]["inputs"]["num_images.strength_1"] == ["2110", 0]
     assert api["210"]["inputs"]["num_images.strength_2"] == ["2108", 0]
+    assert api["2291"]["class_type"] == "LTX2MemoryEfficientSageAttentionPatch"
+    assert api["2291"]["inputs"]["triton_kernels"] is True
+    assert api["2107"]["inputs"]["model"] == ["2291", 0]
     assert workflow.inputs["start_image"].node_id == "45"
     assert workflow.inputs["end_image"].node_id == "47"
     assert workflow.inputs["frames"].node_id == "2078"

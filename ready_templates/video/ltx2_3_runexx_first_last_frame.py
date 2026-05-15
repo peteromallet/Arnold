@@ -557,6 +557,10 @@ def build() -> VibeWorkflow:
         widget_5=False,
         model=ltxvchunkfeedforward.out(0),
     )
+    ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '2291',
+        triton_kernels=True,
+        model=ltx2attentiontunerpatch.out(0),
+    )
     ltxvimgtovideoinplacekj_2 = _node(wf, 'LTXVImgToVideoInplaceKJ', '2105',
         latent=ltxvseparateavlatent.out(0),
         num_images='1',
@@ -569,7 +573,7 @@ def build() -> VibeWorkflow:
     )
     power_lora_loader__rgthree_ = _node(wf, 'Power Lora Loader (rgthree)', '2107',
         widget_3='',
-        model=ltx2attentiontunerpatch.out(0),
+        model=ltx2memoryefficientsageattentionpatch.out(0),
     )
     setnode_12 = _node(wf, 'SetNode', '192',
         widget_0='model',
