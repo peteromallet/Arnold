@@ -39,7 +39,7 @@ from megaplan._pipeline.types import (
 )
 
 
-def _make_mock_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, robustness: str = "robust"):
+def _make_mock_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, robustness: str = "standard"):
     """Mirror tests/conftest.py::_make_plan_fixture_with_robustness."""
     from argparse import Namespace
 
@@ -198,10 +198,11 @@ def _drive_pipeline(
     return {"visits": visits, "final_state": "max_steps_exhausted"}
 
 
+@pytest.mark.parametrize("robustness", ["standard", "robust"])
 def test_pipeline_drives_plan_end_to_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, robustness: str,
 ) -> None:
-    root, project_dir, plan_name, plan_dir = _make_mock_root(tmp_path, monkeypatch)
+    root, project_dir, plan_name, plan_dir = _make_mock_root(tmp_path, monkeypatch, robustness)
 
     result = _drive_pipeline(plan_dir, root, project_dir, plan_name)
 
