@@ -86,8 +86,9 @@ def test_authoring_dsl_builds_compileable_text_to_image_chain() -> None:
     assert saved.image == "7"
     assert workflow.nodes["4"].metadata["block"] == "vibecomfy.blocks.encoding.text_pair"
     assert workflow.nodes["7"].metadata["block"] == "vibecomfy.blocks.save.image"
-    assert api["4"]["inputs"] == {"widget_0": "a red cube", "clip": ["2", 0]}
-    assert api["5"]["inputs"] == {"widget_0": "blurry", "clip": ["2", 0]}
+    # CLIPTextEncode is a committed widget alias class; widget_0 -> text at compile.
+    assert api["4"]["inputs"] == {"text": "a red cube", "clip": ["2", 0]}
+    assert api["5"]["inputs"] == {"text": "blurry", "clip": ["2", 0]}
     assert api["6"]["inputs"]["model"] == ["1", 0]
     assert api["6"]["inputs"]["positive"] == ["4", 0]
     assert api["6"]["inputs"]["negative"] == ["5", 0]
@@ -191,7 +192,8 @@ def test_block_compile_smoke_widget_keys() -> None:
     assert api["1"]["inputs"].keys() == {"widget_0", "widget_1"}
     assert api["2"]["inputs"].keys() == {"widget_0", "widget_1", "widget_2"}
     assert api["4"]["class_type"] == "CLIPVisionLoader"
-    assert api["6"]["inputs"]["widget_0"] == "prompt"
+    # CLIPTextEncode is a committed widget alias class; widget_0 -> text at compile.
+    assert api["6"]["inputs"]["text"] == "prompt"
     assert api["8"]["class_type"] == "CLIPVisionEncode"
     assert api["9"]["inputs"].keys() == {"widget_0", "widget_1", "widget_2", "widget_3"}
     assert api["14"]["class_type"] == "SaveImage"
