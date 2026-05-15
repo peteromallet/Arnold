@@ -1729,7 +1729,7 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
 
 
 def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
-    """Wire ``--vendor``, ``--depth``, and ``--critic`` onto a subparser.
+    """Wire profile modifier flags onto a subparser.
 
     Kept as one helper so the wiring stays consistent across the five
     subcommands that take a ``--profile``. All flags default to
@@ -1768,6 +1768,15 @@ def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
              "in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other "
              "premium vendor relative to --vendor. Silently ignored on "
              "vendor_locked profiles.",
+    )
+    parser.add_argument(
+        "--deepseek-provider",
+        choices=["fireworks", "direct"],
+        default=None,
+        help="Choose the provider for canonical DeepSeek v4-pro profile slots. "
+             "'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; "
+             "'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. "
+             "Non-DeepSeek slots are untouched.",
     )
     parser.add_argument(
         "--with-prep",

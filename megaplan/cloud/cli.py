@@ -16,6 +16,8 @@ from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any
 
+import yaml
+
 from megaplan.cloud.providers.base import _write_redacted_output, get_provider
 from megaplan.cloud.spec import CloudSpec, RailwaySpec, apply_repo_overrides, load_spec as load_cloud_spec
 from megaplan.cloud.template import materialize_deploy_dir, render_ensure_repo_command
@@ -264,9 +266,10 @@ def _ensure_repo_command(spec: CloudSpec) -> str:
     return render_ensure_repo_command(spec.repo)
 
 
-def _ensure_repo_checkout(spec: CloudSpec, provider) -> None:
+def _ensure_repo_checkout(spec: CloudSpec, provider, *, relay: bool = True) -> None:
     result = provider.ssh_exec(_ensure_repo_command(spec))
-    _relay_output(result, secret_names=spec.secrets, env=os.environ)
+    if relay:
+        _relay_output(result, secret_names=spec.secrets, env=os.environ)
     if result.returncode != 0:
         raise CliError(
             "provider_failed",
@@ -292,46 +295,262 @@ def _run_init(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
-def _resolve_local_idea_source(*, idea_dir: Path, workspace: str, remote_path: str) -> Path:
+def _relative_remote_path(*, workspace: str, remote_path: str) -> Path:
     remote = PurePosixPath(remote_path)
     workspace_path = PurePosixPath(workspace)
     if remote == workspace_path:
-        tail = Path()
+        return Path()
     elif str(remote).startswith(f"{workspace_path}/"):
-        tail = Path(*remote.relative_to(workspace_path).parts)
+        return Path(*remote.relative_to(workspace_path).parts)
     elif remote.is_absolute():
-        tail = Path(remote.name)
-    else:
-        tail = Path(*remote.parts)
-    return idea_dir / tail
+        return Path(*remote.parts[1:])
+    return Path(*remote.parts)
+
+
+def _append_unique_path(paths: list[Path], candidate: Path) -> None:
+    if candidate not in paths:
+        paths.append(candidate)
+
+
+def _local_idea_source_candidates(*, root: Path, idea_dir: Path, workspace: str, remote_path: str) -> list[Path]:
+    relative_remote = _relative_remote_path(workspace=workspace, remote_path=remote_path)
+    candidates: list[Path] = []
+    _append_unique_path(candidates, idea_dir / relative_remote)
+    _append_unique_path(candidates, root / relative_remote)
+
+    try:
+        idea_dir_tail = idea_dir.relative_to(root)
+    except ValueError:
+        idea_dir_tail = None
+    if idea_dir_tail is not None:
+        try:
+            deduped_tail = relative_remote.relative_to(idea_dir_tail)
+        except ValueError:
+            deduped_tail = None
+        if deduped_tail is not None:
+            _append_unique_path(candidates, idea_dir / deduped_tail)
+
+    remote = PurePosixPath(remote_path)
+    if remote.is_absolute() and not str(remote).startswith(f"{PurePosixPath(workspace)}/"):
+        _append_unique_path(candidates, idea_dir / remote.name)
+    return candidates
+
+
+def _resolve_local_idea_source(*, root: Path, idea_dir: Path, workspace: str, remote_path: str) -> tuple[Path | None, list[Path]]:
+    candidates = _local_idea_source_candidates(root=root, idea_dir=idea_dir, workspace=workspace, remote_path=remote_path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate, candidates
+    return None, candidates
+
+
+def _read_chain_yaml(path: Path) -> dict[str, Any]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return raw if isinstance(raw, dict) else {}
+
+
+def _chain_spec_has_explicit_base_branch(path: Path) -> bool:
+    return "base_branch" in _read_chain_yaml(path)
+
+
+def _normalized_chain_upload_spec(local_spec_path: Path, *, base_branch: str) -> Path:
+    raw = _read_chain_yaml(local_spec_path)
+    if "base_branch" in raw:
+        return local_spec_path
+    normalized = dict(raw)
+    normalized["base_branch"] = base_branch
+    with NamedTemporaryFile("w", suffix=".yaml", encoding="utf-8", delete=False) as handle:
+        yaml.safe_dump(normalized, handle, sort_keys=False)
+        return Path(handle.name)
+
+
+def _missing_configured_secrets(spec: CloudSpec, env: dict[str, str]) -> list[str]:
+    return sorted(name for name in spec.secrets if not env.get(name))
+
+
+def _remote_dependency_check_command(commands: list[str]) -> str:
+    quoted_commands = " ".join(shlex.quote(command) for command in commands)
+    return (
+        "missing=''; "
+        f"for cmd in {quoted_commands}; do "
+        'if ! command -v "$cmd" >/dev/null 2>&1; then missing="$missing $cmd"; fi; '
+        "done; "
+        'printf "%s\\n" "$missing"'
+    )
+
+
+def _run_remote_dependency_check(provider, commands: list[str]) -> list[str]:
+    if not commands:
+        return []
+    result = provider.ssh_exec(_remote_dependency_check_command(commands))
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "remote dependency check failed").strip()
+        raise CliError("provider_failed", message)
+    return sorted({part for part in result.stdout.split() if part})
+
+
+def _remote_repo_head(provider, workspace: str) -> dict[str, str | None]:
+    command = (
+        f"git -C {shlex.quote(workspace)} rev-parse --abbrev-ref HEAD 2>/dev/null && "
+        f"git -C {shlex.quote(workspace)} rev-parse HEAD 2>/dev/null"
+    )
+    result = provider.ssh_exec(command)
+    if result.returncode != 0:
+        return {"branch": None, "head": None}
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return {
+        "branch": lines[0] if len(lines) >= 1 else None,
+        "head": lines[1] if len(lines) >= 2 else None,
+    }
+
+
+def _tmux_launch_status(result) -> str:
+    output = f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}"
+    if "already running" in output:
+        return "already_running"
+    if "started megaplan-chain session" in output:
+        return "started"
+    return "unknown"
+
+
+def _resolved_phase_map_summary(preflight_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for milestone in preflight_summary.get("milestones", []):
+        if not isinstance(milestone, dict):
+            continue
+        summaries.append(
+            {
+                "label": milestone.get("label"),
+                "profile": milestone.get("profile"),
+                "explicit_phase_model": milestone.get("explicit_phase_model", []),
+                "resolved_phase_map": milestone.get("resolved_phase_map", {}),
+                "required_agents": milestone.get("required_agents", []),
+                "runtime_commands": milestone.get("runtime_commands", []),
+                "env_hints": milestone.get("env_hints", []),
+                "provider_requirements": milestone.get("provider_requirements", []),
+            }
+        )
+    return summaries
+
+
+def _cloud_chain_launch_provenance(
+    *,
+    spec: CloudSpec,
+    remote_spec_path: str,
+    chain_spec,
+    preflight_summary: dict[str, Any],
+    uploaded_idea_count: int,
+    repo_head: dict[str, str | None],
+    tmux_result,
+) -> dict[str, Any]:
+    current_milestone = chain_spec.milestones[0].label if chain_spec.milestones else None
+    return {
+        "success": True,
+        "event": "cloud_chain_launched",
+        "remote_spec": remote_spec_path,
+        "current_milestone": current_milestone,
+        "plan_name": None,
+        "pr_number": None,
+        "repo": {
+            "url": spec.repo.url,
+            "branch": spec.repo.branch,
+            "workspace": spec.repo.workspace,
+            "head": repo_head.get("head"),
+            "checked_out_branch": repo_head.get("branch"),
+        },
+        "chain": {
+            "base_branch": chain_spec.base_branch,
+            "milestone_count": len(chain_spec.milestones),
+            "resolved_phase_map_summary": _resolved_phase_map_summary(preflight_summary),
+        },
+        "megaplan": {
+            "ref": spec.megaplan.ref,
+            "install_source": "cloud_image_runtime",
+        },
+        "uploaded_idea_count": uploaded_idea_count,
+        "tmux": {
+            "session": "megaplan-chain",
+            "status": _tmux_launch_status(tmux_result),
+        },
+    }
 
 
 def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
     from megaplan import chain as chain_module
+    from megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 
     local_spec_path = Path(args.spec).expanduser().resolve()
     chain_spec = chain_module.load_spec(local_spec_path)
+    explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
+    if not explicit_base_branch:
+        chain_spec.base_branch = spec.repo.branch
+    preflight_summary = resolve_cloud_chain_runtime_dependencies(
+        chain_spec,
+        project_dir=root,
+        cloud_default_agent=spec.agents.get("default"),
+    )
     idea_dir = Path(args.idea_dir).expanduser().resolve() if args.idea_dir else local_spec_path.parent.resolve()
     remote_spec_path = str(PurePosixPath(spec.repo.workspace) / "chain.yaml")
     uploads: list[tuple[Path, str]] = []
 
     for milestone in chain_spec.milestones:
-        local_source = _resolve_local_idea_source(
+        local_source, tried_paths = _resolve_local_idea_source(
+            root=root,
             idea_dir=idea_dir,
             workspace=spec.repo.workspace,
             remote_path=milestone.idea,
         )
-        if not local_source.exists():
+        if local_source is None:
+            tried = "\n".join(f"- {path}" for path in tried_paths)
             raise CliError(
                 "missing_idea_file",
-                f"milestone '{milestone.label}' idea not found on disk at {local_source}. Use --idea-dir to point at the directory containing ideas.",
+                (
+                    f"milestone '{milestone.label}' idea not found on disk. Tried:\n"
+                    f"{tried}\n"
+                    "Invoke from the repository root or adjust --idea-dir to the directory containing chain ideas."
+                ),
+                extra={
+                    "milestone": milestone.label,
+                    "tried_paths": [str(path) for path in tried_paths],
+                },
             )
         uploads.append((local_source, milestone.idea))
 
-    _ensure_repo_checkout(spec, provider)
+    missing_env = _missing_configured_secrets(spec, os.environ)
+    if missing_env:
+        raise CliError(
+            "cloud_preflight_failed",
+            "Missing configured cloud secrets in the local environment: " + ", ".join(missing_env),
+            extra={
+                "missing_commands": [],
+                "missing_env": missing_env,
+                "preflight": preflight_summary,
+            },
+        )
+
+    _ensure_repo_checkout(spec, provider, relay=False)
+    required_commands = list(preflight_summary.get("runtime_commands", []))
+    missing_commands = _run_remote_dependency_check(provider, required_commands)
+    if missing_commands:
+        raise CliError(
+            "agent_deps_missing",
+            "Remote cloud runner is missing required runtime commands: " + ", ".join(missing_commands),
+            extra={
+                "missing_commands": missing_commands,
+                "missing_env": [],
+                "preflight": preflight_summary,
+            },
+        )
+
+    repo_head = _remote_repo_head(provider, spec.repo.workspace)
     for local_source, remote_path in uploads:
         provider.upload_file(local_source, remote_path)
-    provider.upload_file(local_spec_path, remote_spec_path)
+    upload_spec_path = _normalized_chain_upload_spec(local_spec_path, base_branch=chain_spec.base_branch)
+    try:
+        provider.upload_file(upload_spec_path, remote_spec_path)
+    finally:
+        if upload_spec_path != local_spec_path:
+            upload_spec_path.unlink(missing_ok=True)
     chain_command = (
         f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec {shlex.quote(remote_spec_path)} "
         ">> .megaplan/cloud-chain.log 2>&1"
@@ -352,6 +571,16 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
+    provenance = _cloud_chain_launch_provenance(
+        spec=spec,
+        remote_spec_path=remote_spec_path,
+        chain_spec=chain_spec,
+        preflight_summary=preflight_summary,
+        uploaded_idea_count=len(uploads),
+        repo_head=repo_head,
+        tmux_result=result,
+    )
+    sys.stdout.write(json.dumps(provenance, indent=2) + "\n")
 
     marker_path = _marker_dir(_cloud_yaml_path(root, args)) / "last_chain.json"
     marker_path.write_text(
@@ -359,6 +588,8 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             {
                 "remote_spec": remote_spec_path,
                 "started_at": datetime.now(timezone.utc).isoformat(),
+                "base_branch": chain_spec.base_branch,
+                "provenance": provenance,
             },
             indent=2,
         )
@@ -533,5 +764,6 @@ def _relay_output(
 
 def _emit_error(error: CliError) -> int:
     payload = {"success": False, "error": error.code, "message": error.message}
+    payload.update(error.extra)
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     return error.exit_code or 1

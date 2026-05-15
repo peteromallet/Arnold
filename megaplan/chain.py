@@ -10,12 +10,21 @@ deciding the next step — only for process/container liveness.
 
 Spec format (YAML)::
 
+    base_branch: main
     seed:
       plan: milestone-m0-from-docs-state-20260415-0217
     milestones:
       - label: m1
         idea: /workspace/ideas/M1-foundation-store.txt
         branch: megaplan/m1-foundation-store   # optional, currently informational
+        profile: thoughtful                     # optional init rubric knobs
+        robustness: standard
+        vendor: claude
+        depth: high
+        critic: kimi
+        with_prep: true
+        with_feedback: true
+        deepseek_provider: fireworks
       - label: m1a
         idea: /workspace/ideas/M1a-settings-store.txt
     on_failure:
@@ -60,6 +69,12 @@ from megaplan.auto import (
     drive as auto_drive,
 )
 from megaplan._core import resolve_plan_dir
+from megaplan._core.user_config import VALID_VENDORS
+from megaplan.profiles import (
+    VALID_CRITIC_CHOICES,
+    VALID_DEEPSEEK_PROVIDER_CHOICES,
+    VALID_DEPTH_CHOICES,
+)
 from megaplan.types import CliError, STATE_AWAITING_PR_MERGE
 
 
@@ -91,6 +106,33 @@ GH_TRANSIENT_ERROR_PATTERNS = (
 GH_PR_STATE_ATTEMPTS = 3
 
 
+def _optional_choice(
+    raw: dict[str, Any],
+    key: str,
+    choices: tuple[str, ...],
+    *,
+    index: int,
+) -> str | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CliError("invalid_spec", f"milestones[{index}].{key} must be a string")
+    if value not in choices:
+        raise CliError(
+            "invalid_spec",
+            f"milestones[{index}].{key} must be one of {choices}; got {value!r}",
+        )
+    return value
+
+
+def _optional_bool(raw: dict[str, Any], key: str, *, index: int) -> bool:
+    value = raw.get(key, False)
+    if not isinstance(value, bool):
+        raise CliError("invalid_spec", f"milestones[{index}].{key} must be a boolean")
+    return value
+
+
 @dataclass
 class MilestoneSpec:
     label: str
@@ -98,6 +140,12 @@ class MilestoneSpec:
     branch: str | None = None
     profile: str | None = None
     robustness: str | None = None
+    vendor: str | None = None
+    depth: str | None = None
+    critic: str | None = None
+    deepseek_provider: str | None = None
+    with_prep: bool = False
+    with_feedback: bool = False
     phase_model: list[str] = field(default_factory=list)
     bakeoff: dict[str, Any] | None = None
     notes: str | None = None
@@ -121,6 +169,32 @@ class MilestoneSpec:
         robustness = raw.get("robustness")
         if robustness is not None and not isinstance(robustness, str):
             raise CliError("invalid_spec", f"milestones[{index}].robustness must be a string")
+        vendor = _optional_choice(
+            raw,
+            "vendor",
+            VALID_VENDORS,
+            index=index,
+        )
+        depth = _optional_choice(
+            raw,
+            "depth",
+            VALID_DEPTH_CHOICES,
+            index=index,
+        )
+        critic = _optional_choice(
+            raw,
+            "critic",
+            VALID_CRITIC_CHOICES,
+            index=index,
+        )
+        deepseek_provider = _optional_choice(
+            raw,
+            "deepseek_provider",
+            VALID_DEEPSEEK_PROVIDER_CHOICES,
+            index=index,
+        )
+        with_prep = _optional_bool(raw, "with_prep", index=index)
+        with_feedback = _optional_bool(raw, "with_feedback", index=index)
         phase_model_raw = raw.get("phase_model") or []
         if isinstance(phase_model_raw, str):
             phase_model = [phase_model_raw]
@@ -140,6 +214,12 @@ class MilestoneSpec:
             branch=branch,
             profile=profile,
             robustness=robustness,
+            vendor=vendor,
+            depth=depth,
+            critic=critic,
+            deepseek_provider=deepseek_provider,
+            with_prep=with_prep,
+            with_feedback=with_feedback,
             phase_model=phase_model,
             bakeoff=bakeoff,
             notes=notes,
@@ -150,6 +230,7 @@ class MilestoneSpec:
 class ChainSpec:
     milestones: list[MilestoneSpec]
     seed_plan: str | None = None
+    base_branch: str = "main"
     on_failure: str = "stop_chain"
     on_escalate: str = "stop_chain"
     merge_policy: str = "auto"
@@ -167,6 +248,10 @@ class ChainSpec:
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
         if not isinstance(raw, dict):
             raise CliError("invalid_spec", "chain spec must be a YAML mapping")
+        base_branch = raw.get("base_branch", "main")
+        if not isinstance(base_branch, str) or not base_branch.strip():
+            raise CliError("invalid_spec", "`base_branch` must be a non-empty string")
+        base_branch = base_branch.strip()
         milestones_raw = raw.get("milestones") or []
         if not isinstance(milestones_raw, list):
             raise CliError("invalid_spec", "`milestones` must be a list")
@@ -225,6 +310,7 @@ class ChainSpec:
         return cls(
             milestones=milestones,
             seed_plan=seed_plan,
+            base_branch=base_branch,
             on_failure=on_failure,
             on_escalate=on_escalate,
             merge_policy=merge_policy,
@@ -372,21 +458,27 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
         return "unknown"
 
 
-def _refresh_main(root: Path, *, writer, no_git_refresh: bool = False) -> None:
-    """Run `git fetch + checkout main + pull`, aborting on refresh failures.
+def _refresh_base_branch(
+    root: Path,
+    base_branch: str,
+    *,
+    writer,
+    no_git_refresh: bool = False,
+) -> None:
+    """Run `git fetch + checkout <base_branch> + pull`, aborting on refresh failures.
 
     When ``no_git_refresh`` is True, this is a no-op (still logs that it was
     skipped). This guard exists so developer checkouts running ``megaplan
     chain`` do not get their currently checked-out branch stomped by an
-    automatic ``git checkout main``.
+    automatic base-branch checkout.
     """
     if no_git_refresh:
         writer("[chain] skipping git refresh (--no-git-refresh)\n")
         return
     for cmd in (
-        ["git", "fetch", "origin", "main"],
-        ["git", "checkout", "main"],
-        ["git", "pull", "--ff-only", "origin", "main"],
+        ["git", "fetch", "origin", base_branch],
+        ["git", "checkout", base_branch],
+        ["git", "pull", "--ff-only", "origin", base_branch],
     ):
         try:
             proc = subprocess.run(
@@ -489,7 +581,7 @@ def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
     )
 
 
-def _checkout_milestone_branch(root: Path, branch: str, *, writer) -> None:
+def _checkout_milestone_branch(root: Path, branch: str, *, base_branch: str, writer) -> None:
     """Create or resume the milestone branch and push it to origin."""
     if _remote_branch_exists(root, branch, writer=writer):
         _run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
@@ -500,7 +592,7 @@ def _checkout_milestone_branch(root: Path, branch: str, *, writer) -> None:
             error_code="git_branch_failed",
         )
         return
-    _run_command(root, ["git", "checkout", "-B", branch, "main"], writer=writer, error_code="git_branch_failed")
+    _run_command(root, ["git", "checkout", "-B", branch, base_branch], writer=writer, error_code="git_branch_failed")
     _run_command(root, ["git", "push", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
 
 
@@ -527,7 +619,7 @@ def _list_open_pr_for_branch(root: Path, branch: str, *, writer) -> dict[str, An
     return None
 
 
-def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int | None:
+def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, base_branch: str, writer) -> int | None:
     """Create or reuse the draft PR for a milestone branch."""
     if not milestone.branch:
         raise CliError("missing_branch", f"milestone {milestone.label!r} has no branch")
@@ -554,7 +646,7 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, writer) -> int
             "create",
             "--draft",
             "--base",
-            "main",
+            base_branch,
             "--head",
             milestone.branch,
             "--title",
@@ -861,6 +953,12 @@ def _init_plan(
     robustness: str,
     auto_approve: bool,
     profile: str | None = None,
+    vendor: str | None = None,
+    depth: str | None = None,
+    critic: str | None = None,
+    deepseek_provider: str | None = None,
+    with_prep: bool = False,
+    with_feedback: bool = False,
     phase_model: list[str] | None = None,
     writer,
 ) -> str:
@@ -871,6 +969,18 @@ def _init_plan(
     args.extend(["--robustness", robustness])
     if profile:
         args.extend(["--profile", profile])
+    if vendor:
+        args.extend(["--vendor", vendor])
+    if depth:
+        args.extend(["--depth", depth])
+    if critic:
+        args.extend(["--critic", critic])
+    if deepseek_provider:
+        args.extend(["--deepseek-provider", deepseek_provider])
+    if with_prep:
+        args.append("--with-prep")
+    if with_feedback:
+        args.append("--with-feedback")
     for override in phase_model or []:
         args.extend(["--phase-model", override])
     args.extend(["--idea-file", str(idea_path)])
@@ -987,14 +1097,14 @@ def run_chain(
             save_chain_state(spec_path, state)
             decision = _handle_outcome(outcome, spec=spec, writer=writer)
             if decision == "stop":
-                return _result("stopped", state, events, reason=f"seed plan {outcome.status}")
+                return _result("stopped", state, events, spec=spec, reason=f"seed plan {outcome.status}")
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
                 outcome = _drive_plan(root, spec.seed_plan, spec, writer=writer)
                 state.last_state = outcome.status
                 save_chain_state(spec_path, state)
                 if outcome.status != "done":
-                    return _result("stopped", state, events, reason="seed retry failed")
+                    return _result("stopped", state, events, spec=spec, reason="seed retry failed")
             # skip / advance both proceed to milestones
         state.completed.append(
             {"label": "seed", "plan": spec.seed_plan, "status": state.last_state or seed_state}
@@ -1028,6 +1138,7 @@ def run_chain(
                         STATE_AWAITING_PR_MERGE,
                         state,
                         events,
+                        spec=spec,
                         reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
@@ -1059,20 +1170,46 @@ def run_chain(
             plan_name = state.current_plan_name
             log(f"resuming existing plan {plan_name} for {milestone.label}")
             if use_pr and state.pr_number is None:
-                _checkout_milestone_branch(root, milestone.branch or "", writer=writer)
-                state.pr_number = _ensure_milestone_pr(root, milestone, writer=writer)
+                _checkout_milestone_branch(
+                    root,
+                    milestone.branch or "",
+                    base_branch=spec.base_branch,
+                    writer=writer,
+                )
+                state.pr_number = _ensure_milestone_pr(
+                    root,
+                    milestone,
+                    base_branch=spec.base_branch,
+                    writer=writer,
+                )
                 state.pr_state = "open"
                 save_chain_state(spec_path, state)
         else:
-            _refresh_main(root, writer=writer, no_git_refresh=no_git_refresh)
+            _refresh_base_branch(
+                root,
+                spec.base_branch,
+                writer=writer,
+                no_git_refresh=no_git_refresh,
+            )
             if use_pr:
-                _checkout_milestone_branch(root, milestone.branch or "", writer=writer)
+                _checkout_milestone_branch(
+                    root,
+                    milestone.branch or "",
+                    base_branch=spec.base_branch,
+                    writer=writer,
+                )
             plan_name = _init_plan(
                 root,
                 milestone.idea,
                 robustness=milestone.robustness or spec.robustness,
                 auto_approve=spec.auto_approve,
                 profile=milestone.profile,
+                vendor=milestone.vendor,
+                depth=milestone.depth,
+                critic=milestone.critic,
+                deepseek_provider=milestone.deepseek_provider,
+                with_prep=milestone.with_prep,
+                with_feedback=milestone.with_feedback,
                 phase_model=milestone.phase_model,
                 writer=writer,
             )
@@ -1088,7 +1225,12 @@ def run_chain(
                     writer=writer,
                     preexisting_dirty_paths=preexisting_dirty_paths,
                 )
-                state.pr_number = _ensure_milestone_pr(root, milestone, writer=writer)
+                state.pr_number = _ensure_milestone_pr(
+                    root,
+                    milestone,
+                    base_branch=spec.base_branch,
+                    writer=writer,
+                )
                 state.pr_state = "open"
                 save_chain_state(spec_path, state)
 
@@ -1119,6 +1261,7 @@ def run_chain(
                 "stopped",
                 state,
                 events,
+                spec=spec,
                 reason=f"milestone {milestone.label} ended {outcome.status}",
             )
         if decision == "retry":
@@ -1152,6 +1295,7 @@ def run_chain(
                         STATE_AWAITING_PR_MERGE,
                         state,
                         events,
+                        spec=spec,
                         reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
                     )
                 state.pr_state = _enable_auto_merge(root, state.pr_number, writer=writer)
@@ -1178,22 +1322,26 @@ def run_chain(
                 "paused",
                 state,
                 events,
+                spec=spec,
                 reason=f"completed one milestone: {milestone.label}",
             )
 
     log("all milestones complete")
-    return _result("done", state, events)
+    return _result("done", state, events, spec=spec)
 
 
 def _result(
-    status: str, state: ChainState, events: list[dict[str, Any]], *, reason: str = ""
+    status: str, state: ChainState, events: list[dict[str, Any]], *, spec: ChainSpec | None = None, reason: str = ""
 ) -> dict[str, Any]:
-    return {
+    result = {
         "status": status,
         "reason": reason,
         "chain_state": state.to_dict(),
         "events": events,
     }
+    if spec is not None:
+        result["base_branch"] = spec.base_branch
+    return result
 
 
 def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
@@ -1235,6 +1383,7 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
         "remaining": remaining,
         "per_milestone": per_milestone,
         "seed_plan": spec.seed_plan,
+        "base_branch": spec.base_branch,
         "current_plan_name": state.current_plan_name,
         "last_state": state.last_state,
     }
@@ -1258,6 +1407,7 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
     writer(f"Remaining: {remaining_labels}\n")
     if summary.get("seed_plan"):
         writer(f"Seed plan: {summary['seed_plan']}\n")
+    writer(f"Base branch: {summary.get('base_branch') or 'main'}\n")
     if summary.get("current_plan_name"):
         writer(f"Current plan: {summary['current_plan_name']}\n")
     if summary.get("last_state"):
@@ -1291,7 +1441,7 @@ def build_chain_parser(subparsers: Any) -> None:
         "--no-git-refresh",
         action="store_true",
         help=(
-            "Skip the automatic `git checkout main && git pull` that runs "
+            "Skip the automatic base-branch checkout and pull that runs "
             "before each milestone. Use this on developer checkouts where "
             "you do not want chain to stomp on the currently checked-out "
             "branch. Default: refresh enabled (preserves CI/orchestrator "
@@ -1318,7 +1468,7 @@ def build_chain_parser(subparsers: Any) -> None:
         "--no-git-refresh",
         action="store_true",
         help=(
-            "Skip the automatic `git checkout main && git pull` that runs "
+            "Skip the automatic base-branch checkout and pull that runs "
             "before each milestone."
         ),
     )
@@ -1360,6 +1510,7 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
             "spec": str(spec_path),
             "milestone_count": len(spec.milestones),
             "seed_plan": spec.seed_plan,
+            "base_branch": spec.base_branch,
             "chain_state": chain_state.to_dict(),
             "summary": summary,
         }

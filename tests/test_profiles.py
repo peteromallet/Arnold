@@ -28,6 +28,7 @@ def _worker_args(**overrides: object) -> Namespace:
         "fresh": False,
         "hermes": None,
         "persist": False,
+        "deepseek_provider": None,
         "phase_model": [],
         "profile": None,
     }
@@ -47,6 +48,7 @@ def _init_args(project_dir: Path, **overrides: object) -> Namespace:
         "mode": "code",
         "name": "profile-state",
         "output": None,
+        "deepseek_provider": None,
         "phase_model": [],
         "primary_criterion": None,
         "profile": None,
@@ -70,6 +72,7 @@ def test_profiles_package_layout_and_builtins_only(tmp_path: Path) -> None:
         "standard.toml",
         "all-open.toml",
         "all-deepseek-pro.toml",
+        "all-deepseek-pro-direct.toml",
         "all-deepseek-flash.toml",
         "all-fireworks-deepseek.toml",
     }.issubset(package_entries)
@@ -81,6 +84,7 @@ def test_profiles_package_layout_and_builtins_only(tmp_path: Path) -> None:
         "standard",
         "all-open",
         "all-deepseek-pro",
+        "all-deepseek-pro-direct",
         "all-deepseek-flash",
         "all-fireworks-deepseek",
     }.issubset(profiles)
@@ -96,6 +100,7 @@ def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(t
         "standard",
         "all-open",
         "all-deepseek-pro",
+        "all-deepseek-pro-direct",
         "all-deepseek-flash",
         "all-fireworks-deepseek",
     }.issubset(builtins_only)
@@ -377,6 +382,30 @@ def test_handle_init_persists_profile_name_in_state(
     state = json.loads(state_path.read_text(encoding="utf-8"))
 
     assert state["config"]["profile"] == "all-open"
+
+
+def test_handle_init_persists_deepseek_provider_in_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+
+    response = megaplan.handle_init(
+        root,
+        _init_args(project_dir, profile="thoughtful", deepseek_provider="direct"),
+    )
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert state["config"]["deepseek_provider"] == "direct"
 
 
 def test_handle_config_profiles_list_and_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -872,6 +901,7 @@ def test_unknown_metadata_key_is_rejected(
 
 
 DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+DEEPSEEK_DIRECT = "hermes:deepseek:deepseek-v4-pro"
 KIMI = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 
 _TIER_NAMES = ("basic", "led", "thoughtful", "premium", "super-premium")
@@ -1075,6 +1105,70 @@ def test_thoughtful_critic_cross_with_default_claude_flips_critic_to_codex(
     assert resolved["revise"] == "claude:low"
     # Mechanical phases stay DeepSeek.
     assert resolved["execute"] == DEEPSEEK
+
+
+def test_deepseek_provider_direct_rewrites_thoughtful_mechanical_phases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="thoughtful", deepseek_provider="direct")
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
+        assert resolved[phase] == DEEPSEEK_DIRECT
+    assert resolved["plan"] == "claude:low"
+    assert resolved["critique"] == "claude:low"
+    assert resolved["review"] == "claude:low"
+
+
+def test_deepseek_provider_direct_composes_with_vendor_and_depth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="thoughtful", deepseek_provider="direct")
+    args.vendor = "codex"
+    args.depth = "high"
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    for phase in (
+        "plan",
+        "revise",
+        "loop_plan",
+        "tiebreaker_researcher",
+        "tiebreaker_challenger",
+    ):
+        assert resolved[phase] == "codex:high"
+    assert resolved["critique"] == "codex:low"
+    assert resolved["review"] == "codex:low"
+    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
+        assert resolved[phase] == DEEPSEEK_DIRECT
+
+
+def test_persisted_deepseek_provider_in_state_picked_up_by_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    persisted_state = {
+        "config": {
+            "profile": "thoughtful",
+            "deepseek_provider": "direct",
+        }
+    }
+
+    args = _worker_args(profile=None)
+    apply_profile_expansion(args, None, state=persisted_state)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    assert resolved["execute"] == DEEPSEEK_DIRECT
+    assert resolved["prep"] == DEEPSEEK_DIRECT
 
 
 def test_premium_profile_is_all_claude_low(
@@ -1428,6 +1522,23 @@ def test_depth_invalid_value_rejected_at_argparse(
             "--project-dir", str(tmp_path),
             "--profile", "thoughtful",
             "--depth", "ultra",
+            "an idea",
+        ])
+
+
+def test_deepseek_provider_invalid_value_rejected_at_argparse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.cli import build_parser
+
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "init",
+            "--project-dir", str(tmp_path),
+            "--profile", "thoughtful",
+            "--deepseek-provider", "openrouter",
             "an idea",
         ])
 

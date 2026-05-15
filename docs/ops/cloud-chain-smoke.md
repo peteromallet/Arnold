@@ -15,6 +15,7 @@ This is the credentialed live procedure for release signoff when provider access
 Create `cloud-chain-smoke.yaml`:
 
 ```yaml
+base_branch: main
 milestones:
   - label: sprint-1
     idea: /workspace/app/ideas/sprint-1.md

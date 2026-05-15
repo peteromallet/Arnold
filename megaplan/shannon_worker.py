@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import time
@@ -35,6 +36,170 @@ from megaplan.workers import (
     session_key_for,
     validate_payload,
 )
+
+
+# ---------------------------------------------------------------------------
+# Readiness handshake
+# ---------------------------------------------------------------------------
+
+
+_SHANNON_READINESS_PROMPTS = (
+    "Hey, I just opened this agent window. Say ready when you are good to go.",
+    "Hi, checking that this new agent tab is awake. A quick ready is enough.",
+    "Hello. I am about to send the actual brief. Tell me when you are ready.",
+    "Hey there, this is just a quick warmup message. Say all set when you are.",
+    "Hi, making sure this new session is live. Just say yep when you can take the brief.",
+    "Hey, I am getting this agent window started. Let me know when you are ready.",
+    "Hello, I will send the task in a moment. Say good to go when you are set.",
+    "Hi, just checking that you are loaded in. Answer with ready when you are.",
+    "Hey, new session check before I paste the work. Say send it when ready.",
+    "Hello, this is a quick hello before the real request. Just confirm you are ready.",
+    "Hey, can you confirm this window is ready? A short yes is fine.",
+    "Hi, I am opening a fresh agent session. Say all good when you are set.",
+    "Hello, I am going to hand you a brief next. Tell me when you are ready.",
+    "Hey, quick startup check. Say ready when you can continue.",
+    "Hi, making sure the agent is ready before the task. Give me a quick okay.",
+    "Hey, I just spun up this session. Say ready whenever you are.",
+    "Hello, checking in before I send the work. A quick all set is fine.",
+    "Hi, this is the little pre-task ping. Just answer when you are ready.",
+    "Hey, waiting for this new agent window to settle. Say settled when it has.",
+    "Hello, I am about to send instructions. Confirm when you can receive them.",
+    "Hi, quick check that you are here. Say here when you are ready.",
+    "Hey, I opened this session for a task. Let me know when you are set.",
+    "Hello, the actual brief is coming next. Say ready for it when you are.",
+    "Hi, just making sure the session started cleanly. Send a quick okay.",
+    "Hey, before I send the real prompt, tell me you are ready.",
+    "Hello, new agent window is up. Say good to go when you are.",
+    "Hi, I am checking this session before sending the brief. Confirm you are ready.",
+    "Hey, this is just a starter message. Say all set when you are.",
+    "Hello, can you let me know you are ready? Any short confirmation works.",
+    "Hi, I will send the request after you answer. Say ready when ready.",
+    "Hey, quick agent-window check. Tell me when you can start.",
+    "Hello, I am waiting for the new session to be usable. Say usable when it is.",
+    "Hi, this is just to wake up the session. Give me a quick yep.",
+    "Hey, I am opening with a small check first. Let me know when you are ready.",
+    "Hello, please confirm you are ready for the brief. Keep it short.",
+    "Hi, new window looks open. Say ready when it is actually ready.",
+    "Hey, I have a task to send after this. Say all set when you are.",
+    "Hello, just testing the session before the brief. A quick ready is fine.",
+    "Hi, I am here with the next task shortly. Tell me when you are ready.",
+    "Hey, let me know this agent window is responsive. Say yep if it is.",
+    "Hello, I am going to pass you the real request next. Say send it when ready.",
+    "Hi, quick first message for the new session. Say ready when you are set.",
+    "Hey, checking that this session can accept input. Confirm when it can.",
+    "Hello, please answer with any short ready check once this window is ready.",
+    "Hi, I just launched this agent. Say good when you are good.",
+    "Hey, the task is coming in the next message. Tell me when you are ready.",
+    "Hello, warmup first, brief second. Say all set when you are.",
+    "Hi, making sure this fresh session is working. A quick okay works.",
+    "Hey, I am about to give you work. Say ready when you are set.",
+    "Hello, this is just a quick session check. Reply with a short confirmation.",
+    "Hi, new agent session here. Say ready for the brief when you can take it.",
+    "Hey, checking the room before I send the actual request. Say good when ready.",
+    "Hello, I need this session ready before the brief. Confirm when it is.",
+    "Hi, I am waiting on this agent window to be ready. Say ready when ready.",
+    "Hey, simple startup ping. A quick yep is enough.",
+    "Hello, I will paste the task after this. Say send it when ready.",
+    "Hi, can you confirm the session is ready? Just say yes if it is.",
+    "Hey, first message in a new agent window. Say all set when you are.",
+    "Hello, the actual instructions will follow. Give me a short ready check.",
+    "Hi, just making sure you are not still starting up. Say ready when you are done.",
+    "Hey, I am checking that this new window is alive. Say alive when ready.",
+    "Hello, please get ready for the brief. Tell me when you are ready.",
+    "Hi, this is only the handshake message. Say all set when you are.",
+    "Hey, quick check before I send the actual prompt. A short okay is fine.",
+    "Hello, I opened a new session for the next task. Confirm when ready.",
+    "Hi, I am going to send the brief once you answer. Say ready when ready.",
+    "Hey, confirm you are ready and I will send the work. Any short yes works.",
+    "Hello, just starting this agent window. Say good to go when you are good.",
+    "Hi, I am giving the session a second before the task. Let me know when ready.",
+    "Hey, this is a preflight hello. Say set when you are set.",
+    "Hello, checking that you can respond before the real ask. Say yep if you can.",
+    "Hi, I have the task queued up. Tell me when you are ready.",
+    "Hey, new Claude window check. Say ready when you are ready.",
+    "Hello, I am about to hand over the brief. Say send it when ready.",
+    "Hi, please confirm this session is ready to work. A quick ready works.",
+    "Hey, I am waiting for the agent to be ready. Say all good when it is.",
+    "Hello, this is just the opener for a new session. Say ready when ready.",
+    "Hi, I will send details once you confirm. Say set when you are set.",
+    "Hey, making sure the window is responsive first. Give me a quick yep.",
+    "Hello, the real message comes next. Tell me when you are ready.",
+    "Hi, I am doing a quick startup check. A short ready is enough.",
+    "Hey, I just opened this for a task. Say good to go when you are set.",
+    "Hello, please answer with ready when this session can take the brief.",
+    "Hi, quick handshake before the request. Say all set when ready.",
+    "Hey, I need to know you are ready before I send the task. Just confirm.",
+    "Hello, checking this new agent window before the brief. Say okay when ready.",
+    "Hi, I am about to send the work over. Say good when you are good.",
+    "Hey, just confirming this session is usable. Tell me when it is.",
+    "Hello, I will send the main request after your reply. Say send it when ready.",
+    "Hi, new session opened. Say ready for the brief when you are.",
+    "Hey, small opening message before the task. A quick yep works.",
+    "Hello, please confirm you are up and ready. Keep it short.",
+    "Hi, I am checking that this agent has started. Say started when it has.",
+    "Hey, the next message will have the actual brief. Say ready when ready.",
+    "Hello, first I need a ready check. Say all set when you are set.",
+    "Hi, just a quick new-window hello. Tell me when ready.",
+    "Hey, I am about to send you the real prompt. Say send it when ready.",
+    "Hello, making sure we are connected before the task. A short yes works.",
+    "Hi, please let me know this session is ready. Say ready when ready.",
+    "Hey, ready check before I pass over the brief. Say good to go when ready.",
+)
+
+
+def _env_truthy(name: str) -> bool | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _shannon_readiness_probe_enabled(session_agent: str) -> bool:
+    configured = _env_truthy("MEGAPLAN_SHANNON_READINESS_PROBE")
+    if configured is not None:
+        return configured
+    if session_agent == "claude":
+        return True
+    # Cloud workers set trusted-container mode. Keep local Shannon runs as a
+    # single turn unless explicitly opted in, because the probe adds latency.
+    return _env_truthy("MEGAPLAN_TRUSTED_CONTAINER") is True
+
+
+def _shannon_readiness_timeout_seconds() -> int:
+    raw = os.getenv("MEGAPLAN_SHANNON_READINESS_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return 120
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 120
+
+
+def _shannon_handshake_probability() -> float:
+    raw = os.getenv("MEGAPLAN_SHANNON_HANDSHAKE_PROBABILITY", "").strip()
+    if not raw:
+        return 0.8
+    try:
+        return min(1.0, max(0.0, float(raw)))
+    except ValueError:
+        return 0.8
+
+
+def _shannon_should_send_handshake() -> bool:
+    return random.random() < _shannon_handshake_probability()
+
+
+def _shannon_random_handshake_prompt() -> str:
+    return random.choice(_SHANNON_READINESS_PROMPTS)
+
+
+def _shannon_random_handshake_delay_seconds() -> float:
+    return random.randrange(10, 151) / 10
 
 
 # ---------------------------------------------------------------------------
@@ -359,28 +524,29 @@ def run_shannon_step(
     # ``-p`` is the reliable path. Real megaplan prompts can exceed argv
     # limits, so the full prompt is written to a plan-local file and the
     # command-line prompt only points Claude at that file.
-    command = [
+    base_command = [
         "shannon",
         "-p",
         launcher_prompt,
         "--output-format=json",
     ]
     if effort is not None:
-        command.extend(["--effort", effort])
-    command.extend([
+        base_command.extend(["--effort", effort])
+    base_command.extend([
         "--permission-mode",
         "bypassPermissions",
         "--dangerously-skip-permissions",
         "--allow-dangerously-skip-permissions",
     ])
 
+    new_session = not (session_id and not fresh)
     if session_id and not fresh:
-        # Shannon sessions are tmux-scoped; we pass the session_id so the
+        # Shannon sessions are tmux-scoped; pass the session_id so the
         # downstream CLI can resume the tmux pane if supported.
-        command.extend(["--resume", session_id])
+        command = [*base_command, "--resume", session_id]
     else:
         session_id = str(uuid.uuid4())
-        command.extend(["--session-id", session_id])
+        command = [*base_command, "--session-id", session_id]
 
     # ── (e) execute with timeout / activity callback ────────────────────
     started = time.monotonic()
@@ -395,6 +561,61 @@ def run_shannon_step(
     # phases, so keep Shannon's internal watchdog above megaplan's worker
     # budget and let the parent process decide when to stop waiting.
     env.setdefault("SHANNON_TURN_TIMEOUT_MS", "7200000")
+    if (
+        new_session
+        and _shannon_readiness_probe_enabled(session_agent)
+        and _shannon_should_send_handshake()
+    ):
+        readiness_prompt = _shannon_random_handshake_prompt()
+        readiness_command = [
+            "shannon",
+            "-p",
+            readiness_prompt,
+            "--output-format=json",
+        ]
+        if effort is not None:
+            readiness_command.extend(["--effort", effort])
+        readiness_command.extend(
+            [
+                "--permission-mode",
+                "bypassPermissions",
+                "--dangerously-skip-permissions",
+                "--allow-dangerously-skip-permissions",
+                "--session-id",
+                session_id,
+            ]
+        )
+        time.sleep(_shannon_random_handshake_delay_seconds())
+        try:
+            readiness = run_command(
+                readiness_command,
+                cwd=work_dir,
+                stdin_text=None,
+                env=env,
+                timeout=_shannon_readiness_timeout_seconds(),
+                activity_callback=_activity_callback_for_state(state, plan_dir),
+            )
+        except CliError as error:
+            if error.code == "worker_timeout":
+                error.extra["session_id"] = session_id
+            raise
+        if readiness.returncode != 0:
+            raise CliError(
+                "worker_error",
+                f"Shannon readiness probe failed with exit code {readiness.returncode}",
+                extra={
+                    "raw_output": (readiness.stdout or "") + (readiness.stderr or ""),
+                    "session_id": session_id,
+                },
+            )
+        if not ((readiness.stdout or "") + (readiness.stderr or "")).strip():
+            raise CliError(
+                "worker_error",
+                "Shannon readiness probe returned no output",
+                extra={"raw_output": "", "session_id": session_id},
+            )
+        time.sleep(_shannon_random_handshake_delay_seconds())
+        command = [*base_command, "--resume", session_id]
     try:
         result = run_command(
             command,

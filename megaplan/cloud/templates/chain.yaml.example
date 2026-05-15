@@ -12,6 +12,16 @@ milestones:
   - label: m1
     idea: /workspace/ideas/M1-foundation-store.txt
     branch: megaplan/m1-foundation-store
+    # Optional per-milestone init rubric knobs. Omit any of these to keep
+    # existing profile/default behavior.
+    profile: thoughtful
+    robustness: standard
+    vendor: claude              # claude | codex
+    depth: high                 # minimal | low | medium | high | xhigh | max
+    critic: kimi                # kimi | cross
+    with_prep: true
+    with_feedback: true
+    deepseek_provider: fireworks # fireworks | direct
   - label: m1a
     idea: /workspace/ideas/M1a-settings-store.txt
     branch: megaplan/m1a-settings-store

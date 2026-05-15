@@ -3494,6 +3494,141 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path) -> None:
     assert result.cost_usd == 0.02
 
 
+def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    final_raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "real-shannon-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    calls: list[list[str]] = []
+    sleeps: list[float] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            assert kwargs["timeout"] == 120
+            return CommandResult(
+                command=command,
+                cwd=tmp_path,
+                returncode=0,
+                stdout=json.dumps({"result": "READY"}),
+                stderr="",
+                duration_ms=10,
+            )
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=final_raw,
+            stderr="",
+            duration_ms=123,
+        )
+
+    with (
+        patch("megaplan.shannon_worker.random.choice", return_value="Handshake test prompt. Reply READY."),
+        patch("megaplan.shannon_worker.random.random", return_value=0.0),
+        patch("megaplan.shannon_worker.random.randrange", side_effect=[13, 149]),
+        patch("megaplan.shannon_worker.time.sleep", side_effect=sleeps.append),
+        patch("megaplan.shannon_worker.run_command", side_effect=fake_run_command),
+    ):
+        result = run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+            session_agent="claude",
+        )
+
+    assert len(calls) == 2
+    assert calls[0][2] == "Handshake test prompt. Reply READY."
+    assert sleeps == [1.3, 14.9]
+    assert "--session-id" in calls[0]
+    session_id = calls[0][calls[0].index("--session-id") + 1]
+    assert "--resume" in calls[1]
+    assert calls[1][calls[1].index("--resume") + 1] == session_id
+    assert "Read the full megaplan phase prompt from this file" in calls[1][2]
+    assert result.payload == payload
+
+
+def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "real-shannon-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    with (
+        patch("megaplan.shannon_worker.random.random", return_value=0.99),
+        patch("megaplan.shannon_worker.time.sleep") as sleep,
+        patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+            session_agent="claude",
+        )
+
+    assert run_command.call_count == 1
+    command = run_command.call_args.args[0]
+    assert "--session-id" in command
+    assert "--resume" not in command
+    assert "Read the full megaplan phase prompt from this file" in command[2]
+    sleep.assert_not_called()
+    assert result.payload == payload
+
+
 def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
     tmp_path: Path,
 ) -> None:
@@ -3670,3 +3805,19 @@ def test_shannon_accepted_in_agent_choice_surfaces() -> None:
     """All --agent choice surfaces accept 'shannon'."""
     from megaplan.types import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
+
+
+def test_hermes_high_token_streaming_matches_fireworks_for_direct_deepseek() -> None:
+    from megaplan.hermes_worker import _streaming_run_kwargs
+
+    assert _streaming_run_kwargs("fireworks:accounts/fireworks/models/deepseek-v4-pro", 32768)
+    assert _streaming_run_kwargs("deepseek:deepseek-v4-pro", 32768)
+    assert not _streaming_run_kwargs("deepseek:deepseek-v4-pro", 4096)
+
+
+def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
+    from megaplan.hermes_worker import _reasoning_config_for_model
+
+    assert _reasoning_config_for_model("deepseek-v4-pro") is None
+    assert _reasoning_config_for_model("accounts/fireworks/models/deepseek-v4-pro") is None
+    assert _reasoning_config_for_model("deepseek/deepseek-r1") == {"enabled": False}
