@@ -296,12 +296,22 @@ def build() -> VibeWorkflow:
         upscale_model=spatial_upscaler.out("latent_upscale_model"),
         vae=checkpoint.out("vae"),
     )
+    stage_boundary = _node(
+        wf,
+        "VRAM_Debug",
+        "1846",
+        _outputs=("any_output", "image_pass", "model_pass", "freemem_before", "freemem_after"),
+        any_input=upscaled_stage1.out("latent"),
+        empty_cache=True,
+        gc_collect=True,
+        unload_all_models=True,
+    )
     cropped_stage1 = _node(
         wf,
         "LTXVCropGuides",
         "106",
         _outputs=("positive", "negative", "latent"),
-        latent=upscaled_stage1.out("latent"),
+        latent=stage_boundary.out("any_output"),
         negative=last_guide.out("negative"),
         positive=last_guide.out("positive"),
     )
