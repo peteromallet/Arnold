@@ -43,6 +43,7 @@ Contract notes:
 from __future__ import annotations
 
 import concurrent.futures
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -112,6 +113,11 @@ def run_pipeline(
     cursor = pipeline.entry
     while True:
         node = pipeline.stages[cursor]
+
+        # Refresh ctx.state with the executor's working state so each
+        # iteration of a loop sees the latest state_patches. ctx is
+        # frozen; build a new instance via dataclasses.replace.
+        ctx = dataclasses.replace(ctx, state=state)
 
         try:
             if isinstance(node, ParallelStage):
