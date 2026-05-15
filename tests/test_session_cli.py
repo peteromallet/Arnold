@@ -75,6 +75,7 @@ def test_session_cli_start_list_flush_stop_flow(
     monkeypatch.setattr(session_cmd.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(session_module.os, "kill", fake_kill)
     monkeypatch.setattr(session_cmd, "ComfyClient", FakeClient)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: None)
 
     start_args = argparse.Namespace(
         id="default",
