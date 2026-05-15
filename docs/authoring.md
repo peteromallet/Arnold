@@ -35,9 +35,9 @@ Use blocks when the call changes the handles available to the caller: a loader c
 
 ## Typed Handles in P1
 
-P1 ships typed handle metadata, not mypy-grade static validation. New authoring code should prefer `wf.node(...).out(<int_slot>)`, which returns a `Handle` carrying the source node id, output slot, optional output type, and optional name. Blocks should return `Handles({"image": Handle(node_id=node.id, output_slot=0, name="image")})` instead of raw string references.
+P1 ships typed handle metadata, not mypy-grade static validation. New authoring code should prefer `wf.node(...).out(<slot_or_name>)`, which returns a `Handle` carrying the source node id, output slot, optional output type, and optional name. Blocks should return `Handles({"image": Handle(node_id=node.id, output_slot=0, name="image")})` instead of raw string references.
 
-Named output strings such as `.out("IMAGE")` are intentionally gated until MP-6 schema integration can map Comfy output names to slots. In P1, pass an integer slot or digit string; non-numeric output names raise `NotImplementedError`.
+Named output strings such as `.out("image")` are supported when the node has `metadata["output_names"]` and the requested name maps unambiguously to a slot. Use integer slots only when output names are genuinely unavailable or ambiguous. See [readable_ready_template_cleanup_plan.md](readable_ready_template_cleanup_plan.md) for the plan to make named handles the generated-template default.
 
 ## Patches
 

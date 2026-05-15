@@ -1,0 +1,77 @@
+base_branch: megaplan/production-parity-templates
+merge_policy: review
+
+driver:
+  robustness: standard
+  auto_approve: true
+  on_escalate: force-proceed
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+
+milestones:
+  - label: sprint-01-safe-compiler-foundation
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-01-safe-compiler-foundation.md
+    profile: thoughtful
+    robustness: standard
+    vendor: codex
+    depth: high
+    deepseek_provider: direct
+  - label: sprint-02-schema-backed-readable-emission
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-02-schema-backed-readable-emission.md
+    profile: thoughtful
+    robustness: standard
+    vendor: codex
+    depth: high
+    deepseek_provider: direct
+  - label: sprint-03-public-helper-template-shape
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-03-public-helper-template-shape.md
+    profile: thoughtful
+    robustness: standard
+    vendor: codex
+    depth: medium
+    deepseek_provider: direct
+  - label: sprint-04-public-contract-v2
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-04-public-contract-v2.md
+    profile: premium
+    robustness: standard
+    vendor: codex
+    depth: high
+    deepseek_provider: direct
+  - label: sprint-05-import-to-ready-orchestrator
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-05-import-to-ready-orchestrator.md
+    profile: thoughtful
+    robustness: standard
+    vendor: codex
+    depth: high
+    deepseek_provider: direct
+  - label: sprint-06-generated-template-regeneration
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-06-generated-template-regeneration.md
+    profile: led
+    robustness: standard
+    vendor: codex
+    depth: medium
+    deepseek_provider: direct
+  - label: sprint-07-manual-app-active-curation
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-07-manual-app-active-curation.md
+    profile: thoughtful
+    robustness: standard
+    vendor: codex
+    depth: medium
+    deepseek_provider: direct
+  - label: sprint-08-strict-gates-docs
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-08-strict-gates-docs.md
+    profile: thoughtful
+    robustness: standard
+    vendor: codex
+    depth: medium
+    deepseek_provider: direct
+  - label: publish-shared-branch
+    idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/publish-shared-branch.md
+    profile: basic
+    robustness: light
+    vendor: codex
+    depth: low
+    deepseek_provider: direct

@@ -1,0 +1,39 @@
+provider: railway
+mode: idle
+
+repo:
+  url: https://github.com/peteromallet/VibeComfy.git
+  branch: megaplan/production-parity-templates
+  workspace: /workspace/app
+
+secrets:
+  - OPENAI_API_KEY
+  - GITHUB_TOKEN
+  - ANTHROPIC_API_KEY
+  - DEEPSEEK_API_KEY
+
+agents:
+  default: codex
+  plan: codex
+  prep: codex
+  critique: codex
+  revise: codex
+  gate: codex
+  finalize: codex
+  execute: codex
+  review: codex
+
+codex:
+  model: gpt-5.5
+  reasoning: high
+
+megaplan:
+  ref: main
+
+resources:
+  volume: vibecomfy-readable-ready-templates
+  port: 8080
+
+railway:
+  service: agent
+  session: agent
