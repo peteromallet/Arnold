@@ -134,6 +134,32 @@ class SourceSchemaProvider:
         return None
 
 
+class ObjectInfoSchemaProvider:
+    """Schema provider backed by a captured ComfyUI /object_info JSON file."""
+
+    def __init__(self, object_info_path: str | Path) -> None:
+        self.object_info_path = Path(object_info_path)
+        self._schemas: dict[str, NodeSchema] | None = None
+
+    def get(self, class_type: str) -> NodeSchema | None:
+        return self.schemas().get(class_type)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        return self.get(class_type)
+
+    def schemas(self) -> dict[str, NodeSchema]:
+        if self._schemas is None:
+            data = load_object_info_cache(self.object_info_path)
+            if data is None:
+                raise SchemaIndexError(self.object_info_path, ValueError("expected object_info JSON object"))
+            self._schemas = {
+                class_type: _schema_from_object_info(class_type, info)
+                for class_type, info in data.items()
+                if isinstance(info, dict)
+            }
+        return self._schemas
+
+
 class CompositeSchemaProvider:
     def __init__(self, *providers: SchemaProvider) -> None:
         self.providers = providers

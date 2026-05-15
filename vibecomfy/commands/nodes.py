@@ -11,7 +11,7 @@ import sys
 from vibecomfy.commands._output import emit
 from vibecomfy.commands.index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.registry import load_workflow_reference
-from vibecomfy.schema import SchemaIndexError, SourceSchemaProvider, get_schema_provider
+from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceSchemaProvider, get_schema_provider
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
 
@@ -30,7 +30,7 @@ def _cmd_nodes_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_nodes_spec(args: argparse.Namespace) -> int:
-    provider = get_schema_provider("auto")
+    provider = ObjectInfoSchemaProvider(args.object_info_cache) if args.object_info_cache else get_schema_provider("auto")
     try:
         schema = provider.get_schema(args.class_type)
     except SchemaIndexError as exc:
@@ -224,6 +224,10 @@ def register(subparsers) -> None:
     nodes_list.set_defaults(func=_cmd_nodes_list)
     nodes_spec = nodes_sub.add_parser("spec")
     nodes_spec.add_argument("class_type")
+    nodes_spec.add_argument(
+        "--object-info-cache",
+        help="Use a captured ComfyUI /object_info JSON file, for example one fetched from a RunPod runtime.",
+    )
     nodes_spec.set_defaults(func=_cmd_nodes_spec)
     nodes_install = nodes_sub.add_parser("install-plan")
     nodes_install.add_argument("path")

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
+import json
 import sys
 from pathlib import Path
 
+from vibecomfy.schema import ObjectInfoSchemaProvider
 from vibecomfy.search import SearchBootstrapError, build_search_corpus, ensure_indexes, search_entries
 from vibecomfy.search.aliases import TASK_ALIASES
 
@@ -16,10 +19,34 @@ def _cmd_search(args: argparse.Namespace) -> int:
         return 1
 
     warnings = []
-    entries = build_search_corpus(auto_sync=False, warnings=warnings)
+    schema_provider = ObjectInfoSchemaProvider(args.object_info_cache) if args.object_info_cache else None
+    entries = build_search_corpus(auto_sync=False, schema_provider=schema_provider, warnings=warnings)
     for warning in warnings:
         print(f"warning: {warning.message}", file=sys.stderr)
     results = search_entries(entries, args.query, task=args.task, limit=args.limit)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "query": args.query,
+                    "task": args.task,
+                    "results": [
+                        {
+                            "id": _entry_id(result.entry.path, result.entry.class_type),
+                            "score": result.score,
+                            "reasons": list(result.reasons),
+                            "entry": asdict(result.entry),
+                        }
+                        for result in results
+                    ],
+                    "warnings": [asdict(warning) for warning in warnings],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
 
     print("id\tclass_type\tpack\tscore\tsource")
     for result in results:
@@ -50,4 +77,9 @@ def register(subparsers) -> None:
     search.add_argument("--task", choices=sorted(TASK_ALIASES))
     search.add_argument("--limit", type=int, default=10)
     search.add_argument("--auto-sync", action="store_true")
+    search.add_argument(
+        "--object-info-cache",
+        help="Use a captured ComfyUI /object_info JSON file as the runtime node corpus.",
+    )
+    search.add_argument("--json", action="store_true")
     search.set_defaults(func=_cmd_search)

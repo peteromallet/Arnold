@@ -11,7 +11,7 @@ from vibecomfy.cli import build_parser
 from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
-from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore
+from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore, _cmd_nodes_spec
 from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_widgets
 from vibecomfy.commands.contract import _cmd_contract_inspect, _cmd_contract_doctor
 import vibecomfy.node_packs_install as node_packs_install
@@ -635,6 +635,30 @@ def test_doctor_warns_about_optional_video_audio_edge() -> None:
     warnings = _doctor_warnings(workflow)
 
     assert any("CreateVideo node 2 has optional audio input connected from 1:LTXVAudioVAEDecode" in item for item in warnings)
+
+
+def test_nodes_spec_reads_object_info_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cache = tmp_path / "object_info.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "RuntimeOnlyNode": {
+                    "input": {"required": {"latent": ["LATENT", {}]}},
+                    "output": ["IMAGE"],
+                    "output_name": ["image"],
+                    "category": "runtime/test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _cmd_nodes_spec(argparse.Namespace(class_type="RuntimeOnlyNode", object_info_cache=str(cache))) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["class_type"] == "RuntimeOnlyNode"
+    assert payload["inputs"]["latent"]["type"] == "LATENT"
+    assert payload["outputs"][0]["name"] == "image"
 
 
 def test_doctor_warns_about_kj_ltx_audio_vae_loader() -> None:
