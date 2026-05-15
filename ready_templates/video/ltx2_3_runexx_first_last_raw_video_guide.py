@@ -98,6 +98,7 @@ def build() -> VibeWorkflow:
         source_type="ready_template",
     )
     _use_ltx_audio_vae_loader(wf)
+    _use_ltx2_memory_efficient_sage_attention(wf)
 
     control_video = _node(
         wf,
@@ -152,6 +153,28 @@ def _use_ltx_audio_vae_loader(wf: VibeWorkflow) -> None:
     if "175" in wf.nodes:
         wf.nodes["175"].class_type = "LTXVAudioVAELoader"
         wf.nodes["175"].inputs = {"ckpt_name": "LTX23_audio_vae_bf16.safetensors"}
+
+
+def _use_ltx2_memory_efficient_sage_attention(wf: VibeWorkflow) -> None:
+    """Route LTX 2.3 raw-guide sampling through KJ's LTX2-specific Sage patch.
+
+    The generic PathchSageAttentionKJ path is correct but slow for the second
+    raw-video guide pass. This patch keeps that global attention override for
+    cross-attention while replacing LTX2 self-attention with the faster
+    model-local implementation. It is only used here because this template's
+    guide strengths are kept at 1.0, so no per-guide self-attention mask is
+    required.
+    """
+    if "229" not in wf.nodes or "2107" not in wf.nodes:
+        return
+    mem_patch = _node(
+        wf,
+        "LTX2MemoryEfficientSageAttentionPatch",
+        "2291",
+        triton_kernels=True,
+        model=Handle("229", "0"),
+    )
+    wf.replace_edge("2107.model", mem_patch.out(0))
 
 
 def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:

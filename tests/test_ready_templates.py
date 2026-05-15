@@ -605,6 +605,10 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["228"]["inputs"]["dim_threshold"] == 4096
     assert api["228"]["inputs"]["model"] == ["226", 0]
     assert api["229"]["inputs"]["triton_kernels"] is False
+    assert api["2291"]["class_type"] == "LTX2MemoryEfficientSageAttentionPatch"
+    assert api["2291"]["inputs"]["triton_kernels"] is True
+    assert api["2291"]["inputs"]["model"] == ["229", 0]
+    assert api["2107"]["inputs"]["model"] == ["2291", 0]
     assert api["197"]["inputs"]["nag_scale"] == 11
     assert api["43"]["inputs"]["filename_prefix"] == "reigh_vibecomfy_ltx_raw_guide"
     assert api["43"]["inputs"]["save_output"] is True
