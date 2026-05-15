@@ -49,6 +49,13 @@ READY_METADATA = {
         "Keep guide strengths in Wan2GP's 0..1 range.",
         "Use tiled VAE decode for full-size app outputs.",
     ],
+    "runtime_packages": [
+        {
+            "name": "sageattention",
+            "reason": "Required by the LTX2 memory-efficient attention patch for 4090-speed LTX parity.",
+            "source": "SageAttention-ada",
+        }
+    ],
     "comfy_configuration": {"reserve_vram": 12, "cache_none": True, "fp8_e4m3fn_text_enc": True},
 }
 
@@ -89,6 +96,13 @@ def build() -> VibeWorkflow:
     )
     audio_vae = _node(wf, "LTXVAudioVAELoader", "126", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
     checkpoint = _node(wf, "CheckpointLoaderSimple", "127", ckpt_name="ltx-2.3-22b-distilled-fp8.safetensors")
+    patched_model = _node(
+        wf,
+        "LTX2MemoryEfficientSageAttentionPatch",
+        "2291",
+        triton_kernels=True,
+        model=checkpoint.out(0),
+    )
 
     resize_first = _node(
         wf,
@@ -162,16 +176,14 @@ def build() -> VibeWorkflow:
         length=frames.out(0),
     )
 
-    first_guide = _node(
+    first_latent = _node(
         wf,
-        "LTXVAddGuide",
+        "LTXVImgToVideoInplace",
         "115",
-        frame_idx=0,
+        bypass=False,
         strength=1.0,
         image=preprocess_first.out(0),
         latent=empty_video.out(0),
-        negative=conditioning.out(1),
-        positive=conditioning.out(0),
         vae=checkpoint.out(2),
     )
     last_guide = _node(
@@ -181,10 +193,18 @@ def build() -> VibeWorkflow:
         frame_idx=-1,
         strength=1.0,
         image=preprocess_last.out(0),
-        latent=first_guide.out(2),
-        negative=first_guide.out(1),
-        positive=first_guide.out(0),
+        latent=first_latent.out(0),
+        negative=conditioning.out(1),
+        positive=conditioning.out(0),
         vae=checkpoint.out(2),
+    )
+    stripped_guides = _node(
+        wf,
+        "VibeComfyStripConditioningKeys",
+        "2292",
+        keys="guide_attention_entries",
+        negative=last_guide.out(1),
+        positive=last_guide.out(0),
     )
 
     guider = _node(
@@ -192,9 +212,9 @@ def build() -> VibeWorkflow:
         "CFGGuider",
         "116",
         cfg=1,
-        model=checkpoint.out(0),
-        negative=last_guide.out(1),
-        positive=last_guide.out(0),
+        model=patched_model.out(0),
+        negative=stripped_guides.out(1),
+        positive=stripped_guides.out(0),
     )
     sampler = _node(wf, "SamplerEulerAncestral", "117", eta=0, s_noise=1)
     sigmas = _node(
@@ -227,8 +247,8 @@ def build() -> VibeWorkflow:
         "LTXVCropGuides",
         "106",
         latent=separated.out(0),
-        negative=last_guide.out(1),
-        positive=last_guide.out(0),
+        negative=stripped_guides.out(1),
+        positive=stripped_guides.out(0),
     )
     decoded_audio = _node(wf, "LTXVAudioVAEDecode", "107", audio_vae=audio_vae.out(0), samples=separated.out(1))
     decoded_video = _node(

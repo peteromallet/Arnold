@@ -484,11 +484,12 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert "ComfyUI-LTXVideo" in workflow.requirements.custom_nodes
     assert "rgthree-comfy" not in workflow.requirements.custom_nodes
 
-    # First/last conditioning: official LTXVAddGuide nodes
+    # Wan2GP parity uses an in-place first-frame latent replacement plus one
+    # last-frame guide, not two guide-attention masks.
     stage_first = lens.node("115")
     stage_last = lens.node("111")
     assert stage_first is not None
-    assert stage_first.class_type == "LTXVAddGuide"
+    assert stage_first.class_type == "LTXVImgToVideoInplace"
     assert stage_last is not None
     assert stage_last.class_type == "LTXVAddGuide"
 
@@ -496,8 +497,8 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert lens.node_value("115", "strength") == 1.0
     assert lens.node_value("111", "strength") == 1.0
 
-    # Image preprocessing chains via lens edge traversal
-    # First guide: ResizeImageMaskNode -> LTXVPreprocess -> LTXVAddGuide
+    # Image preprocessing chains via lens edge traversal.
+    # First frame: ResizeImageMaskNode -> LTXVPreprocess -> LTXVImgToVideoInplace
     image_src_first = lens.edge_source("115", "image")
     assert image_src_first is not None and image_src_first.node_id is not None
     preprocess_first = lens.node(image_src_first.node_id)
@@ -511,6 +512,13 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     # The last guide consumes the first guide output, preserving first/last order.
     assert lens.edge_source("115", "latent").node_id == "108"
     assert lens.edge_source("111", "latent").node_id == "115"
+    assert lens.node("2291").class_type == "LTX2MemoryEfficientSageAttentionPatch"
+    assert lens.edge_source("116", "model").node_id == "2291"
+    assert lens.node("2292").class_type == "VibeComfyStripConditioningKeys"
+    assert lens.edge_source("116", "positive").node_id == "2292"
+    assert lens.edge_source("116", "negative").node_id == "2292"
+    assert lens.edge_source("106", "positive").node_id == "2292"
+    assert lens.edge_source("106", "negative").node_id == "2292"
 
     # ── runtime materialization smoke (compiled API, minimal) ────────
     api = workflow.compile("api")
@@ -529,6 +537,18 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert api["125"]["inputs"]["resize_type.width"] == ["113", 0]
     assert api["125"]["inputs"]["resize_type.height"] == ["98", 0]
     assert api["127"]["inputs"]["ckpt_name"] == "ltx-2.3-22b-distilled-fp8.safetensors"
+    assert api["2291"]["class_type"] == "LTX2MemoryEfficientSageAttentionPatch"
+    assert api["2291"]["inputs"]["triton_kernels"] is True
+    assert api["2291"]["inputs"]["model"] == ["127", 0]
+    assert api["116"]["inputs"]["model"] == ["2291", 0]
+    assert api["2292"]["class_type"] == "VibeComfyStripConditioningKeys"
+    assert api["2292"]["inputs"]["keys"] == "guide_attention_entries"
+    assert api["2292"]["inputs"]["positive"] == ["111", 0]
+    assert api["2292"]["inputs"]["negative"] == ["111", 1]
+    assert api["116"]["inputs"]["positive"] == ["2292", 0]
+    assert api["116"]["inputs"]["negative"] == ["2292", 1]
+    assert api["106"]["inputs"]["positive"] == ["2292", 0]
+    assert api["106"]["inputs"]["negative"] == ["2292", 1]
     assert api["105"]["inputs"]["tile_size"] == 768
     assert api["105"]["inputs"]["overlap"] == 64
     assert api["105"]["inputs"]["temporal_overlap"] == 64

@@ -245,18 +245,22 @@ def test_lens_ltx_parity_first_last_conditioning_via_lens() -> None:
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
-    # Find the two guide conditioning nodes
+    # Wan2GP parity uses an in-place first-frame latent replacement and a
+    # single last-frame guide.  This avoids carrying a first-frame guide mask
+    # through the sampler path.
     cond_nodes = nodes_by_class_type(wf, "LTXVAddGuide")
     cond_by_id = {n.id: n for n in cond_nodes}
-    assert "115" in cond_by_id, "first-frame guide node missing"
     assert "111" in cond_by_id, "last-frame guide node missing"
+    first_node = l.node("115")
+    assert first_node is not None
+    assert first_node.class_type == "LTXVImgToVideoInplace"
 
     # First frame: node 115 receives image from upstream
     src_stage1 = l.edge_source("115", "image")
-    assert src_stage1 is not None, "first guide node has no image feed"
+    assert src_stage1 is not None, "first latent replacement node has no image feed"
     upstream_stage1 = wf.nodes[src_stage1.from_node]
     assert upstream_stage1.class_type == "LTXVPreprocess", (
-        f"first guide image should come from LTXVPreprocess, got {upstream_stage1.class_type}"
+        f"first latent replacement image should come from LTXVPreprocess, got {upstream_stage1.class_type}"
     )
 
     # Last frame: node 111 receives image from upstream
@@ -333,13 +337,22 @@ def test_lens_ltx_parity_dimensions_frames_fps_via_lens() -> None:
 
 
 def test_lens_ltx_parity_distilled_guide_spine_via_lens() -> None:
-    """Distilled LTX first/last must use the dedicated checkpoint and guide order."""
+    """Distilled LTX first/last must use the dedicated checkpoint and Wan2GP guide order."""
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
     assert l.node_value("127", "ckpt_name") == "ltx-2.3-22b-distilled-fp8.safetensors"
+    assert l.node("115").class_type == "LTXVImgToVideoInplace"
+    assert l.node("111").class_type == "LTXVAddGuide"
     assert l.edge_source("115", "latent").node_id == "108"
     assert l.edge_source("111", "latent").node_id == "115"
+    assert l.node("2291").class_type == "LTX2MemoryEfficientSageAttentionPatch"
+    assert l.edge_source("116", "model").node_id == "2291"
+    assert l.node("2292").class_type == "VibeComfyStripConditioningKeys"
+    assert l.edge_source("116", "positive").node_id == "2292"
+    assert l.edge_source("116", "negative").node_id == "2292"
+    assert l.edge_source("106", "positive").node_id == "2292"
+    assert l.edge_source("106", "negative").node_id == "2292"
 
 
 def test_lens_ltx_parity_sigmas_via_lens() -> None:
@@ -381,7 +394,6 @@ def test_lens_ltx_parity_no_runexx_only_packs_via_lens() -> None:
     forbidden = {
         "LTXICLoRALoaderModelOnly",
         "LTXAddVideoICLoRAGuide",
-        "LTX2MemoryEfficientSageAttentionPatch",
         "LTX2SamplingPreviewOverride",
     }
     found = forbidden & {n.class_type for n in wf.nodes.values()}
