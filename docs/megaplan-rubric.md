@@ -222,7 +222,7 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 - **`--vendor claude|codex`** — vendor override at tiers 2-4. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset). Tier 1 ignores it (no premium phases); tier 5 silently ignores it (vendor-locked).
 - **`--critic kimi|cross`** — overrides the critique+review pair (preserving the invariant — see below). `kimi` swaps in Kimi for both phases; `cross` swaps to the other premium vendor relative to `--vendor`. Silently ignored at tier 5.
-- **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Useful when you want a mixed profile like `thoughtful` but want its mechanical phases to use `DEEPSEEK_API_KEY`.
+- **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Defaults to `direct`; use `fireworks` as the explicit secondary/fallback route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `robust`/`superrobust`. See "When to add a prep phase" above.
 - **`--with-feedback`** — force the `feedback` phase into the workflow regardless of `--robustness`. Scaffolds `feedback.md` (a per-stage ratings template) between `review` and `done`, then completes the plan non-interactively. Off by default. See "When to add a feedback phase" above.</
 

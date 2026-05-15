@@ -79,7 +79,7 @@ Built-in profiles:
 
 - **standard** — Claude for planning/revision, Codex for execution and critique (mirrors the default routing)
 - **all-open** — Fireworks-hosted Kimi `kimi-k2p6` for planning/revision, `glm-5.1` for execution and critique (via Hermes)
-- **all-deepseek-pro** — `deepseek-v4-pro` for every phase (via Fireworks)
+- **all-deepseek-pro** — `deepseek-v4-pro` for every phase (defaults to DeepSeek's direct API; add `--deepseek-provider fireworks` for Fireworks)
 - **all-deepseek-pro-direct** — `deepseek-v4-pro` for every phase (via DeepSeek's direct API)
 - **all-deepseek-flash** — native DeepSeek `deepseek-v4-flash` for every phase (via Hermes)
 - **all-fireworks-deepseek** — Fireworks-hosted DeepSeek for every phase (via Hermes)
@@ -95,7 +95,7 @@ review   = "codex"
 
 Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
 
-For mixed profiles that include canonical DeepSeek v4-pro slots, add `--deepseek-provider direct` to route those slots through `DEEPSEEK_API_KEY` instead of Fireworks.
+Mixed profiles that include canonical DeepSeek v4-pro slots default to DeepSeek's direct API through `DEEPSEEK_API_KEY`. Add `--deepseek-provider fireworks` to route those slots through Fireworks instead.
 
 Model strings take the form `<agent>[:<model>]`. Agents are `claude`, `codex`, or `hermes`. After `hermes:`, a slug with a slash (e.g. `meta-llama/llama-3.3-70b`) routes via OpenRouter; a prefixed direct model (`deepseek:deepseek-v4-pro`, `hermes:fireworks:accounts/fireworks/models/kimi-k2p6`) uses that provider directly; a bare name (`glm-5.1`) uses the matching direct provider. Direct-provider keys live in `~/.hermes/.env`:
 
