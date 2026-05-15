@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import httpx
 
 import vibecomfy.comfy_command as comfy_command_module
 import vibecomfy.runtime.session as session_module
@@ -35,6 +36,19 @@ import vibecomfy.runtime.client as client_module
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 runtime_run_module = importlib.import_module("vibecomfy.runtime.run")
+
+
+def test_comfy_client_http_errors_include_response_body() -> None:
+    request = httpx.Request("POST", "http://comfy.test/prompt")
+    response = httpx.Response(400, request=request, text='{"error": "bad prompt", "node_id": "2077"}')
+
+    with pytest.raises(RuntimeError) as exc_info:
+        client_module._raise_for_status_with_body(response)
+
+    message = str(exc_info.value)
+    assert "400 Bad Request" in message
+    assert "bad prompt" in message
+    assert "2077" in message
 
 
 class FakeConfiguration(dict):

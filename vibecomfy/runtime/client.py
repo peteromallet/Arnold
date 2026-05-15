@@ -5,6 +5,16 @@ from typing import Any
 import httpx
 
 
+def _raise_for_status_with_body(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = response.text.strip()
+        if body:
+            raise RuntimeError(f"{exc}; response body: {body[:4000]}") from exc
+        raise
+
+
 class ComfyClient:
     def __init__(self, server_url: str) -> None:
         self.server_url = server_url.rstrip("/")
@@ -20,7 +30,7 @@ class ComfyClient:
     async def queue_prompt(self, prompt: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(f"{self.server_url}/prompt", json={"prompt": prompt})
-            response.raise_for_status()
+            _raise_for_status_with_body(response)
             return response.json()
 
     async def free(self, *, unload_models: bool = True, free_memory: bool = True) -> dict[str, Any]:
@@ -28,7 +38,7 @@ class ComfyClient:
         payload = {"unload_models": unload_models, "free_memory": free_memory}
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(f"{self.server_url}/api/free", json=payload)
-            response.raise_for_status()
+            _raise_for_status_with_body(response)
             if not getattr(response, "content", b""):
                 return {}
             return response.json()
@@ -36,5 +46,5 @@ class ComfyClient:
     async def object_info(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(f"{self.server_url}/object_info")
-            response.raise_for_status()
+            _raise_for_status_with_body(response)
             return response.json()
