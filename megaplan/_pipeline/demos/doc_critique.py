@@ -1,21 +1,29 @@
 """3× critique → revise loop on a document, built on the Sprint-1 primitives.
 
-Sprint 2 secondary demo. Hermetic — no network, no model calls, no
-imports of ``key_pool`` / Hermes / Claude / Codex modules.
+Sprint 2 secondary demo, refined in Sprint 3 to demonstrate the
+elegantly-composable architecture:
 
-The loop is expressed as a backwards edge under a gate condition, exactly
-as the brief specifies (loops are not a primitive — they fall out of
-labelled edges):
+- **Loops fall out of edges.** ``critique → revise → critique``
+  (backwards edge) plus ``critique → halt`` (under a max-iter gate
+  condition encoded in the next-label) — no new combinator.
+- **Prompts are pluggable per mode** via
+  :mod:`megaplan._pipeline.prompts`. ``mode="doc"`` resolves a
+  documentation-reviewer prompt; ``mode="joke"`` resolves a punch-up
+  prompt — same Step, different output.
+- **Critic ↔ reviser interact via typed Verdict.** The critic returns
+  a :class:`Verdict` whose ``flags`` tuple carries structured issue
+  identifiers; the reviser reads ``ctx.state['last_verdict_flags']``
+  and applies them deterministically. Output of one step is wired into
+  the input of the next through ``state_patch``, not via shared
+  globals.
+- **Step.prompt_key is honored at runtime.** The critic's
+  ``prompt_key='critique'`` is rendered via
+  :func:`resolve_prompt(ctx, 'critique')`. A new mode overriding the
+  rubric only needs to register ``'critique:<mode>'`` — no Step
+  subclass.
 
-    critique ──to_revise──▶ revise ──to_critique──▶ critique
-    critique ──to_done──▶ halt   (when state['critique_iter'] >= max_iter)
-
-A trivial rubric-based critic counts uppercase letters and short sentences
-and emits a verdict; the reviser appends a "Revision pass N" line to the
-document and writes a new version. The gate decision is encoded directly
-in the critic's returned ``next`` label so we don't need a separate Decide
-step for the demo. (Sprint 2's real planning port keeps Decide as a
-distinct primitive.)
+Hermetic — no network, no model calls. The Steps deterministically
+score the doc on a rubric and append a marker on revise.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._pipeline.executor import run_pipeline
+from megaplan._pipeline.prompts import resolve_prompt
 from megaplan._pipeline.types import (
     Edge,
     Pipeline,
@@ -58,8 +67,8 @@ def _current_doc_path(ctx: StepContext) -> Path:
 class DocCritic:
     name = "critique"
     kind = "judge"
-    prompt_key = None
-    slot = None
+    prompt_key = "critique"
+    slot = "critique"
 
     def run(self, ctx: StepContext) -> StepResult:
         state = dict(ctx.state) if isinstance(ctx.state, dict) else {}
@@ -67,6 +76,13 @@ class DocCritic:
 
         doc_path = _current_doc_path(ctx)
         body = doc_path.read_text() if doc_path.exists() else ""
+
+        # The Step's behaviour resolves the mode-aware prompt at
+        # runtime; the prompt itself isn't used by this hermetic
+        # rubric, but the resolve call exercises the registry and
+        # raises if a mode forgets to register an override.
+        prompt = resolve_prompt(ctx, self.prompt_key)
+        assert "rate" in prompt.lower() or "review" in prompt.lower(), prompt
 
         sentences = [s for s in body.replace("\n", " ").split(".") if s.strip()]
         short = sum(1 for s in sentences if len(s.split()) < 6)
@@ -76,13 +92,15 @@ class DocCritic:
         critique_dir = Path(ctx.plan_dir) / "critique_versions"
         critique_dir.mkdir(parents=True, exist_ok=True)
         out_path = critique_dir / f"critique_v{iteration + 1}.json"
+        flags = tuple([f"short:{short}", f"upper:{upper}"])
         out_path.write_text(
             json.dumps(
                 {
                     "iteration": iteration + 1,
                     "score": score,
-                    "flags": [f"short:{short}", f"upper:{upper}"],
+                    "flags": list(flags),
                     "doc_read": str(doc_path),
+                    "prompt_used": prompt[:64],
                 },
                 indent=2,
             )
@@ -90,32 +108,53 @@ class DocCritic:
 
         verdict = Verdict(
             score=score,
-            flags=(f"short:{short}", f"upper:{upper}"),
-            payload={"iteration": iteration + 1},
+            flags=flags,
+            payload={"iteration": iteration + 1, "critique_path": str(out_path)},
         )
 
+        # Encode the loop termination in the edge label: while
+        # iteration < MAX, take the iterate path; otherwise halt.
         next_label = "to_revise" if iteration + 1 < _MAX_ITER else "to_done"
         return StepResult(
             outputs={"critique": out_path},
             verdict=verdict,
             next=next_label,
-            state_patch={"critique_iter": iteration + 1, "last_score": score},
+            state_patch={
+                "critique_iter": iteration + 1,
+                "last_score": score,
+                # ⬇️ critique → revise data flow: flags get threaded
+                # into the revise Step via state_patch (a Mapping that
+                # the executor merges into state.json before the next
+                # step's ctx is built).
+                "last_verdict_flags": list(flags),
+                "last_critique_path": str(out_path),
+            },
         )
 
 
 class DocReviser:
     name = "revise"
     kind = "produce"
-    prompt_key = None
-    slot = None
+    prompt_key = "revise"
+    slot = "revise"
 
     def run(self, ctx: StepContext) -> StepResult:
         state = dict(ctx.state) if isinstance(ctx.state, dict) else {}
         iteration = int(state.get("critique_iter", 0))
 
+        # Pull the prior critique's flags directly from state.
+        flags = state.get("last_verdict_flags", [])
+        prompt = resolve_prompt(ctx, self.prompt_key, params={"flags": flags})
+        assert "Revise" in prompt, prompt
+
         prev_path = _current_doc_path(ctx)
         prev_body = prev_path.read_text() if prev_path.exists() else ""
-        next_body = prev_body.rstrip() + f"\n\nRevision pass {iteration}: edits applied.\n"
+        flag_summary = ", ".join(str(f) for f in flags) or "no flags"
+        next_body = (
+            prev_body.rstrip()
+            + f"\n\nRevision pass {iteration} (resolving {flag_summary}): "
+            "edits applied.\n"
+        )
 
         versions_dir = Path(ctx.plan_dir) / "doc_versions"
         versions_dir.mkdir(parents=True, exist_ok=True)
@@ -125,7 +164,12 @@ class DocReviser:
         return StepResult(
             outputs={"doc": new_path},
             next="to_critique",
-            state_patch={"latest_doc": str(new_path)},
+            state_patch={
+                "latest_doc": str(new_path),
+                # Clear consumed flags so a subsequent critique sees a
+                # fresh state — no leaking between iterations.
+                "last_verdict_flags": [],
+            },
         )
 
 
@@ -150,7 +194,7 @@ def build_pipeline() -> Pipeline:
     return Pipeline(stages=stages, entry="critique")
 
 
-def run_demo(fixture_path: Path, artifact_root: Path) -> dict[str, Any]:
+def run_demo(fixture_path: Path, artifact_root: Path, *, mode: str = "code") -> dict[str, Any]:
     fixture_path = Path(fixture_path)
     artifact_root = Path(artifact_root)
     artifact_root.mkdir(parents=True, exist_ok=True)
@@ -160,7 +204,7 @@ def run_demo(fixture_path: Path, artifact_root: Path) -> dict[str, Any]:
         plan_dir=artifact_root,
         state={"critique_iter": 0},
         profile=None,
-        mode="demo",
+        mode=mode,
         inputs={"doc": fixture_path},
         budget=None,
     )
@@ -184,11 +228,13 @@ if __name__ == "__main__":
         fixture_path = Path(sys.argv[1])
     else:
         fixture_path = _default_fixture_path()
-    result = run_demo(fixture_path, artifact_root)
+    mode = sys.argv[2] if len(sys.argv) > 2 else "code"
+    result = run_demo(fixture_path, artifact_root, mode=mode)
     print(
         json.dumps(
             {
                 "artifact_root": str(artifact_root),
+                "mode": mode,
                 "final_stage": result.get("final_stage"),
                 "iterations": result.get("state", {}).get("critique_iter"),
             },
